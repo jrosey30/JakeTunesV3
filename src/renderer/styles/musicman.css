@@ -1,0 +1,1618 @@
+.musicman {
+  height: 100%;
+  background: var(--musicman-bg);
+  color: #e8dcc8;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.musicman-header {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid rgba(200,120,40,0.2);
+}
+
+.musicman-avatar {
+  flex-shrink: 0;
+}
+
+.musicman-avatar img {
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.musicman-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.musicman-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: #f0e0c0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.musicman-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--musicman-accent);
+  color: #1e140a;
+  padding: 3px 10px;
+  border-radius: 10px;
+}
+
+.musicman-tagline {
+  font-size: 14px;
+  font-style: italic;
+  color: #a89878;
+  margin-top: 6px;
+}
+
+.musicman-voice-toggle {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6a5a40;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(200,120,40,0.2);
+  transition: all 0.15s;
+}
+
+.musicman-voice-toggle:hover { color: #a89878; border-color: rgba(200,120,40,0.4); }
+.musicman-voice-toggle--on { color: var(--musicman-accent); border-color: var(--musicman-accent); }
+
+/* Tabs */
+.musicman-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 24px;
+  background: rgba(0,0,0,0.3);
+  flex-shrink: 0;
+}
+
+.musicman-tab {
+  padding: 10px 18px;
+  font-size: 13px;
+  color: #a89878;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.musicman-tab:hover { color: #e8dcc8; }
+
+.musicman-tab--active {
+  color: var(--musicman-accent);
+  border-bottom-color: var(--musicman-accent);
+}
+
+/* Content */
+.musicman-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Chat Layout */
+.musicman-chat-layout {
+  display: flex;
+  height: 100%;
+  gap: 0;
+}
+
+.musicman-chat-history {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(200,120,40,0.15);
+  display: flex;
+  flex-direction: column;
+  margin-right: 16px;
+}
+
+.musicman-chat-new {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--musicman-accent);
+  border-bottom: 1px solid rgba(200,120,40,0.12);
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.musicman-chat-new:hover {
+  background: rgba(200,120,40,0.1);
+}
+
+.musicman-chat-history-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.musicman-chat-history-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 6px;
+}
+
+.musicman-chat-history-item:hover {
+  background: rgba(200,120,40,0.08);
+}
+
+.musicman-chat-history-item--active {
+  background: rgba(200,120,40,0.15);
+}
+
+.musicman-chat-history-title {
+  flex: 1;
+  font-size: 11px;
+  color: #a89878;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.musicman-chat-history-item--active .musicman-chat-history-title {
+  color: #e8dcc8;
+}
+
+.musicman-chat-history-delete {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  color: #6a5a40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.musicman-chat-history-item:hover .musicman-chat-history-delete {
+  opacity: 1;
+}
+
+.musicman-chat-history-delete:hover {
+  color: #e05040;
+  background: rgba(224,80,64,0.12);
+}
+
+/* Chat */
+.musicman-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+.musicman-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.musicman-chat-msg {
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.musicman-chat-msg--system {
+  color: #c8b898;
+}
+
+.musicman-chat-msg--user {
+  background: rgba(200,120,40,0.15);
+  border: 1px solid rgba(200,120,40,0.25);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #f0e0c0;
+}
+
+.musicman-chat-msg--assistant {
+  color: #e8dcc8;
+  padding: 4px 0;
+}
+
+.musicman-chat-msg p { margin-bottom: 8px; }
+.musicman-chat-msg p:last-child { margin-bottom: 0; }
+.musicman-chat-msg em { color: var(--musicman-accent); font-style: italic; }
+.musicman-chat-msg strong { color: #f0e0c0; }
+
+.musicman-typing {
+  color: #8a7a60;
+  font-style: italic;
+}
+
+.musicman-chat-input-row {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: 12px;
+}
+
+.musicman-chat-input {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(200,120,40,0.3);
+  border-radius: 6px;
+  padding: 12px 16px;
+  color: #e8dcc8;
+  font-size: 14px;
+  outline: none;
+  min-height: 42px;
+}
+
+.musicman-chat-input:focus {
+  border-color: var(--musicman-accent);
+}
+
+.musicman-chat-input::placeholder { color: #6a5a40; }
+
+.musicman-chat-send {
+  padding: 10px 20px;
+  background: var(--musicman-accent);
+  color: #1e140a;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 6px;
+  transition: opacity 0.15s;
+  min-height: 42px;
+}
+
+.musicman-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.musicman-chat-send:hover:not(:disabled) { opacity: 0.85; }
+
+/* Recommendations */
+.musicman-recs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.musicman-recs-intro {
+  font-size: var(--font-body);
+  color: #a89878;
+  line-height: 1.4;
+}
+.musicman-recs-intro em { color: var(--musicman-accent); }
+
+.musicman-recs-refresh {
+  background: none;
+  border: 1px solid rgba(200,120,40,0.3);
+  border-radius: 4px;
+  color: #a89878;
+  cursor: pointer;
+  padding: 4px 6px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, border-color 0.15s;
+}
+.musicman-recs-refresh:hover {
+  color: var(--musicman-accent);
+  border-color: var(--musicman-accent);
+}
+
+.musicman-recs-loading {
+  color: #a89878;
+  text-align: center;
+  padding: 40px 0;
+}
+
+.musicman-recs-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.musicman-rec-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(200,120,40,0.15);
+  border-radius: 6px;
+  transition: border-color 0.15s;
+}
+
+.musicman-rec-card:hover { border-color: rgba(200,120,40,0.4); }
+
+.musicman-rec-art {
+  width: 56px;
+  height: 56px;
+  background: rgba(200,120,40,0.1);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  overflow: hidden;
+}
+.musicman-rec-art-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.musicman-rec-info { flex: 1; min-width: 0; }
+.musicman-rec-title { font-weight: 600; font-size: var(--font-body); color: #f0e0c0; }
+.musicman-rec-artist { font-size: var(--font-label); color: #a89878; }
+
+.musicman-rec-tags {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.musicman-rec-source {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.musicman-rec-source--bandcamp { background: #1da000; color: #fff; }
+.musicman-rec-source--qobuz { background: #2c6fbb; color: #fff; }
+.musicman-rec-source--streaming { background: #555; color: #ccc; }
+
+.musicman-rec-tag {
+  font-size: 8px;
+  color: #8a7a60;
+  padding: 1px 6px;
+  border: 1px solid rgba(200,120,40,0.2);
+  border-radius: 3px;
+}
+
+.musicman-rec-why {
+  font-size: 11px;
+  color: #8a7a60;
+  margin-top: 4px;
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.musicman-rec-links {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.musicman-rec-link {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.musicman-rec-link--bandcamp {
+  background: rgba(29, 185, 184, 0.15);
+  color: #1db9b8;
+  border: 1px solid rgba(29, 185, 184, 0.3);
+}
+
+.musicman-rec-link--bandcamp:hover {
+  background: rgba(29, 185, 184, 0.25);
+}
+
+.musicman-rec-link--qobuz {
+  background: rgba(0, 130, 200, 0.15);
+  color: #4aa8e0;
+  border: 1px solid rgba(0, 130, 200, 0.3);
+}
+
+.musicman-rec-link--qobuz:hover {
+  background: rgba(0, 130, 200, 0.25);
+}
+
+.musicman-rec-btn {
+  padding: 4px 12px;
+  font-size: var(--font-label);
+  font-weight: 600;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+
+.musicman-rec-btn:hover { opacity: 0.85; }
+
+.musicman-rec-btn--buy {
+  background: var(--musicman-accent);
+  color: #1e140a;
+}
+
+.musicman-rec-btn--preview {
+  background: rgba(255,255,255,0.08);
+  color: #c8b898;
+  border: 1px solid rgba(200,120,40,0.2);
+}
+
+/* Placeholder tabs */
+.musicman-placeholder {
+  color: #a89878;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.musicman-placeholder p { margin-bottom: 8px; }
+
+/* Playlist builder */
+.musicman-playlist {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.musicman-playlist-input-row {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.musicman-playlist-loading {
+  margin-top: 20px;
+}
+
+.musicman-playlist-result {
+  margin-top: 16px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.musicman-playlist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.musicman-playlist-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.musicman-playlist-save {
+  padding: 6px 16px;
+  background: rgba(255,255,255,0.08);
+  color: #c8b898;
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(200,120,40,0.3);
+  transition: all 0.15s;
+  min-height: 28px;
+}
+
+.musicman-playlist-save:hover:not(:disabled) { border-color: var(--musicman-accent); color: var(--musicman-accent); }
+.musicman-playlist-save:disabled { opacity: 0.5; cursor: default; }
+
+.musicman-commentary-play {
+  display: inline;
+  font-size: 16px;
+  color: var(--musicman-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 3px;
+  vertical-align: middle;
+  transition: opacity 0.15s;
+}
+
+.musicman-commentary-play:hover { opacity: 0.7; }
+.musicman-commentary-play--active { animation: dj-pulse 1s ease-in-out infinite; }
+
+.musicman-playlist-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--musicman-accent);
+}
+
+.musicman-playlist-play-all {
+  padding: 6px 16px;
+  background: var(--musicman-accent);
+  color: #1e140a;
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+
+.musicman-playlist-play-all:hover { opacity: 0.85; }
+
+.musicman-playlist-commentary {
+  color: #a89878;
+  font-style: italic;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.musicman-playlist-tracks {
+  display: flex;
+  flex-direction: column;
+}
+
+.musicman-playlist-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.musicman-playlist-track:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.musicman-playlist-num {
+  width: 24px;
+  text-align: right;
+  color: #6a5a40;
+  font-size: 11px;
+}
+
+.musicman-playlist-title {
+  flex: 1;
+  color: #f0e0c0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.musicman-playlist-artist {
+  color: #a89878;
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.musicman-playlist-duration {
+  color: #6a5a40;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.musicman-playlist-count {
+  margin-top: 12px;
+  color: #6a5a40;
+  font-size: 11px;
+}
+
+/* Speak button */
+.musicman-speak-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #8a7a60;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(200,120,40,0.2);
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+
+.musicman-speak-btn:hover {
+  color: var(--musicman-accent);
+  border-color: rgba(200,120,40,0.4);
+}
+
+.musicman-speak-btn--active {
+  color: var(--musicman-accent);
+  border-color: var(--musicman-accent);
+  animation: dj-pulse 1s ease-in-out infinite;
+}
+
+/* Metadata Scanner */
+.musicman-metadata {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.musicman-metadata-intro {
+  line-height: 1.5;
+}
+
+.musicman-metadata-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #c8b898;
+}
+
+.musicman-metadata-rescan {
+  font-size: 11px;
+  color: #8a7a60;
+  border: 1px solid rgba(200,120,40,0.2);
+  border-radius: 4px;
+  padding: 3px 10px;
+  background: rgba(255,255,255,0.05);
+  transition: all 0.15s;
+}
+
+.musicman-metadata-rescan:hover {
+  color: var(--musicman-accent);
+  border-color: rgba(200,120,40,0.4);
+}
+
+.musicman-metadata-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.musicman-metadata-issue {
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(200,120,40,0.15);
+  border-radius: 6px;
+  transition: border-color 0.15s;
+}
+
+.musicman-metadata-issue:hover { border-color: rgba(200,120,40,0.3); }
+
+.musicman-metadata-issue--fixed {
+  opacity: 0.5;
+  border-color: rgba(100,180,100,0.3);
+}
+
+.musicman-metadata-issue-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.musicman-metadata-type {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.musicman-metadata-type--misspelling { background: #c0392b; color: #fff; }
+.musicman-metadata-type--inconsistent { background: #e67e22; color: #fff; }
+.musicman-metadata-type--generic { background: #7f8c8d; color: #fff; }
+.musicman-metadata-type--missing { background: #8e44ad; color: #fff; }
+.musicman-metadata-type--genre { background: #2980b9; color: #fff; }
+
+.musicman-metadata-field {
+  font-size: 11px;
+  color: #8a7a60;
+  flex: 1;
+}
+
+.musicman-metadata-fix {
+  padding: 3px 14px;
+  background: var(--musicman-accent);
+  color: #1e140a;
+  font-weight: 700;
+  font-size: 11px;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+
+.musicman-metadata-fix:hover { opacity: 0.85; }
+
+.musicman-metadata-fixed-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #27ae60;
+}
+
+.musicman-metadata-detail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.musicman-metadata-current {
+  color: #c0392b;
+  text-decoration: line-through;
+  text-decoration-color: rgba(192,57,43,0.4);
+}
+
+.musicman-metadata-arrow { color: #6a5a40; }
+
+.musicman-metadata-suggested {
+  color: #27ae60;
+  font-weight: 600;
+}
+
+.musicman-metadata-alt {
+  color: #8a7a60;
+  font-size: 11px;
+}
+
+.musicman-metadata-commentary {
+  font-size: 11px;
+  font-style: italic;
+  color: #a89878;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.musicman-metadata-tracks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.musicman-metadata-track-tag {
+  font-size: 10px;
+  color: #8a7a60;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(200,120,40,0.12);
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.musicman-metadata-track-tag--alt {
+  border-color: rgba(200,120,40,0.25);
+}
+
+.musicman-metadata-track-more {
+  font-size: 10px;
+  color: #6a5a40;
+  padding: 1px 6px;
+}
+
+/* Saved Playlist View */
+.playlist-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.playlist-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.playlist-view-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.playlist-view-name--editable { cursor: default; }
+
+.playlist-view-name-input {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  border: 1px solid var(--selection-top);
+  border-radius: 3px;
+  padding: 2px 6px;
+  outline: none;
+  background: #fff;
+}
+
+.playlist-view-meta {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.playlist-view-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.playlist-view-play {
+  padding: 5px 14px;
+  background: linear-gradient(180deg, #4a90d9, #2a6db8);
+  color: #fff;
+  font-weight: 600;
+  font-size: var(--font-label);
+  border-radius: 4px;
+  border: 1px solid #2060a0;
+}
+
+.playlist-view-play:hover { opacity: 0.9; }
+
+.playlist-view-save {
+  padding: 5px 14px;
+  background: linear-gradient(180deg, #f0f0f0, #d0d0d0);
+  color: #555;
+  font-weight: 600;
+  font-size: var(--font-label);
+  border-radius: 4px;
+  border: 1px solid #999;
+}
+
+.playlist-view-save:hover:not(:disabled) { background: linear-gradient(180deg, #f8f8f8, #d8d8d8); }
+.playlist-view-save:disabled { opacity: 0.5; cursor: default; }
+
+.playlist-view-delete {
+  padding: 5px 14px;
+  background: linear-gradient(180deg, #f0f0f0, #d0d0d0);
+  color: #555;
+  font-weight: 600;
+  font-size: var(--font-label);
+  border-radius: 4px;
+  border: 1px solid #999;
+}
+
+.playlist-view-delete:hover { background: linear-gradient(180deg, #f8f8f8, #d8d8d8); }
+
+.playlist-view-commentary {
+  padding: 12px 20px;
+  font-size: var(--font-body);
+  font-style: italic;
+  color: var(--text-secondary);
+  background: var(--row-alt);
+  border-bottom: 1px solid var(--border-subtle);
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.playlist-view-commentary--musicman {
+  background: #2a1e10;
+  color: #c8b898;
+  border-bottom-color: rgba(200,120,40,0.2);
+}
+
+.playlist-view-columns {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  height: 19px;
+  background: linear-gradient(180deg, #f0f0f0, #e0e0e0);
+  border-bottom: 1px solid #c0c0c0;
+  flex-shrink: 0;
+}
+
+.playlist-view-col {
+  font-size: var(--font-label);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: none;
+}
+
+.playlist-view-col--num { width: 28px; text-align: right; padding-right: 8px; }
+.playlist-view-col--title { flex: 3; }
+.playlist-view-col--artist { flex: 2; }
+.playlist-view-col--album { flex: 2; }
+.playlist-view-col--duration { width: 40px; text-align: right; }
+.playlist-view-col--extra { width: 80px; text-align: right; padding-right: 8px; }
+
+.playlist-view-tracks {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.playlist-view-track {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  height: 19px;
+  font-size: var(--font-body);
+  cursor: default;
+}
+
+.playlist-view-track:nth-child(odd) { background: var(--row-alt); }
+.playlist-view-track:hover { background: rgba(74, 144, 217, 0.08); }
+
+.playlist-view-track--selected {
+  background: linear-gradient(180deg, #b8d4f0, #a0c4e8) !important;
+  color: var(--text-primary);
+}
+
+.playlist-view-track--playing,
+.playlist-view-track--playing.playlist-view-track--selected {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom)) !important;
+  color: #fff;
+}
+
+.playlist-view-track--playing .playlist-view-artist,
+.playlist-view-track--playing .playlist-view-album,
+.playlist-view-track--playing .playlist-view-duration,
+.playlist-view-track--playing .playlist-view-num {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.playlist-view-track--dragover {
+  border-top: 2px solid var(--selection-top) !important;
+}
+
+.playlist-view-num {
+  width: 28px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: var(--font-label);
+  padding-right: 8px;
+}
+
+.playlist-view-title {
+  flex: 3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.playlist-view-artist {
+  flex: 2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.playlist-view-album {
+  flex: 2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.playlist-view-duration {
+  width: 40px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-label);
+}
+
+.playlist-view-extra {
+  width: 80px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-label);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Album Art Fetcher */
+.musicman-artwork {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.musicman-artwork-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.musicman-artwork-stats {
+  font-size: 12px;
+  color: #a89878;
+}
+
+.musicman-artwork-progress {
+  height: 3px;
+  background: rgba(200,120,40,0.15);
+  border-radius: 2px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.musicman-artwork-progress-bar {
+  height: 100%;
+  background: var(--musicman-accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.musicman-artwork-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  padding-bottom: 12px;
+}
+
+.musicman-artwork-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.musicman-artwork-img {
+  aspect-ratio: 1;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(200,120,40,0.1);
+}
+
+.musicman-artwork-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.musicman-artwork-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(200,120,40,0.05);
+}
+
+.musicman-artwork-fetch-btn {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--musicman-accent);
+  color: #1e140a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.musicman-artwork-card:hover .musicman-artwork-fetch-btn {
+  opacity: 1;
+}
+
+.musicman-artwork-fetch-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.musicman-artwork-fetching {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30,20,10,0.5);
+}
+
+.musicman-artwork-label {
+  min-width: 0;
+}
+
+.musicman-artwork-album {
+  font-size: 11px;
+  color: #e8dcc8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.musicman-artwork-artist {
+  font-size: 10px;
+  color: #8a7a60;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+/* Organize Library */
+.musicman-organize {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.musicman-org-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.musicman-org-stat {
+  flex: 1;
+  background: rgba(200,120,40,0.08);
+  border: 1px solid rgba(200,120,40,0.15);
+  border-radius: 8px;
+  padding: 14px 12px;
+  text-align: center;
+}
+
+.musicman-org-stat-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--musicman-accent);
+  line-height: 1.2;
+}
+
+.musicman-org-stat-label {
+  font-size: 10px;
+  color: #8a7a60;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.musicman-org-section {
+  margin-bottom: 6px;
+  border: 1px solid rgba(200,120,40,0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.musicman-org-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #c8b898;
+  background: rgba(200,120,40,0.06);
+  transition: background 0.15s;
+}
+
+.musicman-org-section-header:hover {
+  background: rgba(200,120,40,0.12);
+}
+
+.musicman-org-toggle {
+  font-size: 16px;
+  color: #8a7a60;
+  width: 20px;
+  text-align: center;
+}
+
+.musicman-org-bars {
+  padding: 10px 14px;
+}
+
+.musicman-org-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+  position: relative;
+}
+.musicman-org-bar-row:hover .musicman-org-rename-btn {
+  opacity: 1;
+}
+
+.musicman-org-bar-label {
+  width: 80px;
+  font-size: 11px;
+  color: #a89878;
+  text-align: right;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.musicman-org-bar-track {
+  flex: 1;
+  height: 14px;
+  background: rgba(200,120,40,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.musicman-org-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(200,120,40,0.5), var(--musicman-accent));
+  border-radius: 3px;
+  min-width: 2px;
+  transition: width 0.3s ease;
+}
+
+.musicman-org-bar-count {
+  width: 35px;
+  font-size: 11px;
+  color: #8a7a60;
+  text-align: right;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.musicman-org-list {
+  padding: 10px 14px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.musicman-org-empty {
+  color: #8a7a60;
+  font-style: italic;
+  font-size: 12px;
+}
+
+.musicman-org-dupe-group {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(200,120,40,0.08);
+}
+
+.musicman-org-dupe-group:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.musicman-org-dupe-title {
+  font-size: 12px;
+  color: #e8dcc8;
+  margin-bottom: 4px;
+}
+
+.musicman-org-dupe-count {
+  color: var(--musicman-accent);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.musicman-org-dupe-track {
+  display: flex;
+  gap: 12px;
+  padding-left: 12px;
+  font-size: 11px;
+}
+
+.musicman-org-dupe-album {
+  color: #a89878;
+}
+
+.musicman-org-dupe-genre {
+  color: #6a5a40;
+}
+
+.musicman-org-single-row {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.musicman-org-single-album {
+  flex: 1;
+  color: #c8b898;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.musicman-org-single-artist {
+  color: #8a7a60;
+  flex-shrink: 0;
+}
+
+.musicman-org-more {
+  color: #6a5a40;
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.musicman-org-missing {
+  padding: 10px 14px;
+}
+
+.musicman-org-missing-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(200,120,40,0.06);
+}
+
+.musicman-org-missing-row:last-child {
+  border-bottom: none;
+}
+
+.musicman-org-missing-label {
+  font-size: 12px;
+  color: #a89878;
+}
+
+.musicman-org-missing-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--musicman-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.musicman-org-missing-count--good {
+  color: #5a9a5a;
+}
+
+/* Organize — Hint text */
+.musicman-org-hint {
+  color: #a89878;
+  font-size: 12px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+/* Organize — Action button */
+.musicman-org-action-btn {
+  background: linear-gradient(180deg, #d49a3e, #b07820);
+  color: #fff;
+  border: 1px solid #8a5c10;
+  border-radius: 4px;
+  padding: 3px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.musicman-org-action-btn:hover {
+  background: linear-gradient(180deg, #e0a84a, #c08828);
+}
+.musicman-org-action-btn--all {
+  padding: 4px 16px;
+  font-size: 12px;
+}
+
+/* Organize — Applied badge */
+.musicman-org-applied-badge {
+  color: #5a9a5a;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Organize — Genre Merge rows */
+.musicman-org-merge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(200,120,40,0.1);
+  gap: 10px;
+}
+.musicman-org-merge-row:last-child {
+  border-bottom: none;
+}
+.musicman-org-merge-row--applied {
+  opacity: 0.5;
+}
+.musicman-org-merge-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.musicman-org-merge-from {
+  color: #d49a3e;
+  font-weight: 600;
+  font-size: 12px;
+}
+.musicman-org-merge-to {
+  color: #e8d8b8;
+  font-weight: 600;
+  font-size: 12px;
+}
+.musicman-org-merge-count {
+  color: #7a6a58;
+  font-size: 11px;
+}
+.musicman-org-merge-arrow {
+  color: #7a6a58;
+  font-size: 13px;
+}
+
+/* Organize — Genre Fill rows */
+.musicman-org-fill-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.musicman-org-fill-header .musicman-org-hint {
+  margin-bottom: 0;
+}
+.musicman-org-fill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(200,120,40,0.1);
+  gap: 10px;
+}
+.musicman-org-fill-row:last-child {
+  border-bottom: none;
+}
+.musicman-org-fill-row--applied {
+  opacity: 0.5;
+}
+.musicman-org-fill-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.musicman-org-fill-title {
+  color: #e8d8b8;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.musicman-org-fill-artist {
+  color: #7a6a58;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.musicman-org-fill-arrow {
+  color: #7a6a58;
+  font-size: 13px;
+}
+.musicman-org-fill-genre {
+  color: #d49a3e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Organize — Genre Rename button (on hover) */
+.musicman-org-rename-btn {
+  opacity: 0;
+  background: none;
+  border: 1px solid rgba(200,120,40,0.3);
+  border-radius: 3px;
+  color: #a89878;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+  transition: opacity 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+}
+.musicman-org-rename-btn:hover {
+  color: #d49a3e;
+  border-color: #d49a3e;
+}
+
+/* Organize — Inline rename row */
+.musicman-org-rename-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.musicman-org-rename-input {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--musicman-accent);
+  border-radius: 3px;
+  color: #e8d8b8;
+  font-size: 12px;
+  padding: 3px 8px;
+  width: 160px;
+  outline: none;
+  font-family: inherit;
+}
+.musicman-org-rename-input:focus {
+  box-shadow: 0 0 0 1px var(--musicman-accent);
+}
+
+/* Organize — Editable merge target input */
+.musicman-org-merge-target-input {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(200,120,40,0.4);
+  border-radius: 3px;
+  color: #e8d8b8;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  width: 140px;
+  outline: none;
+  font-family: inherit;
+}
+.musicman-org-merge-target-input:focus {
+  border-color: var(--musicman-accent);
+  box-shadow: 0 0 0 1px rgba(200,120,40,0.3);
+}
+
+/* Organize — Manual genre fill rows */
+.musicman-org-manual-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(200,120,40,0.1);
+  gap: 10px;
+}
+.musicman-org-manual-row:last-child {
+  border-bottom: none;
+}
+.musicman-org-manual-row--applied {
+  opacity: 0.5;
+}
+.musicman-org-manual-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.musicman-org-manual-artist {
+  color: #e8d8b8;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.musicman-org-manual-count {
+  color: #7a6a58;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.musicman-org-manual-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.musicman-org-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

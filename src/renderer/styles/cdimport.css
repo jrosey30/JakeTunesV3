@@ -1,0 +1,408 @@
+/* ── CD Import View ── */
+
+.cd-view {
+  height: 100%;
+  overflow-y: auto;
+  font-family: -apple-system, 'Lucida Grande', sans-serif;
+  font-size: 11px;
+  color: #222;
+  background: #fff;
+}
+
+.cd-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 200px;
+  color: #888;
+  font-size: 12px;
+}
+
+.cd-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 200px;
+  color: #888;
+  text-align: center;
+}
+
+.cd-error-detail {
+  font-size: 10px;
+  color: #aaa;
+  max-width: 400px;
+}
+
+/* Header */
+.cd-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.cd-header-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.cd-header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cd-header-album {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0 0 4px;
+  width: 100%;
+  outline: none;
+  font-family: inherit;
+}
+
+.cd-header-album:focus {
+  border-bottom: 1px solid #4a90d9;
+}
+
+.cd-header-album--static {
+  border: none !important;
+}
+
+.cd-header-artist {
+  display: block;
+  font-size: 13px;
+  color: #555;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0 0 8px;
+  width: 100%;
+  outline: none;
+  font-family: inherit;
+}
+
+.cd-header-artist:focus {
+  border-bottom: 1px solid #4a90d9;
+}
+
+.cd-header-artist--static {
+  border: none !important;
+}
+
+.cd-header-meta-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.cd-meta-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #888;
+}
+
+.cd-meta-input {
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 2px 6px;
+  width: 120px;
+  outline: none;
+  color: #333;
+}
+
+.cd-meta-input:focus {
+  border-color: #4a90d9;
+}
+
+.cd-meta-input--year {
+  width: 60px;
+}
+
+.cd-import-settings {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.cd-format-select {
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 2px 4px;
+  outline: none;
+  color: #333;
+  background: #fff;
+  cursor: pointer;
+}
+
+.cd-format-select:focus {
+  border-color: #4a90d9;
+}
+
+.cd-format-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cd-header-summary {
+  font-size: 10px;
+  color: #999;
+}
+
+.cd-header-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+
+/* Buttons */
+.cd-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid #bbb;
+  background: linear-gradient(180deg, #f8f8f8, #e0e0e0);
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cd-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fff, #e8e8e8);
+}
+
+.cd-btn:active:not(:disabled) {
+  background: linear-gradient(180deg, #d0d0d0, #e0e0e0);
+}
+
+.cd-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cd-btn--import {
+  background: linear-gradient(180deg, #5a9ee0, #3a7dc8);
+  color: #fff;
+  border-color: #2a6db8;
+  font-weight: 600;
+}
+
+.cd-btn--import:hover:not(:disabled) {
+  background: linear-gradient(180deg, #6aaeef, #4a8dd8);
+}
+
+.cd-btn--import:active:not(:disabled) {
+  background: linear-gradient(180deg, #3a7dc8, #2a6db8);
+}
+
+.cd-btn--eject {
+  padding: 5px 10px;
+}
+
+.cd-done-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2d8a3e;
+  padding: 5px 14px;
+  background: #e8f5e9;
+  border-radius: 4px;
+  border: 1px solid #c8e6c9;
+}
+
+/* Progress bar */
+.cd-progress-bar {
+  height: 3px;
+  background: #e0e0e0;
+  position: relative;
+}
+
+.cd-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a90d9, #3a7dc8);
+  transition: width 0.3s ease;
+  border-radius: 0 2px 2px 0;
+}
+
+/* Column headers */
+.cd-columns {
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  height: 22px;
+  border-bottom: 1px solid #ddd;
+  background: linear-gradient(180deg, #f0f0f0, #e4e4e4);
+  font-size: 10px;
+  font-weight: 600;
+  color: #666;
+  user-select: none;
+}
+
+.cd-col--check {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.cd-col--check input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.cd-col--num {
+  width: 32px;
+  text-align: right;
+  padding-right: 8px;
+  flex-shrink: 0;
+}
+
+.cd-col--title {
+  flex: 1;
+  min-width: 0;
+}
+
+.cd-col--duration {
+  width: 50px;
+  text-align: right;
+  padding-right: 12px;
+  flex-shrink: 0;
+}
+
+.cd-col--status {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Track rows */
+.cd-tracks {
+  overflow-y: auto;
+}
+
+.cd-track {
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  height: 22px;
+  cursor: default;
+  user-select: none;
+}
+
+.cd-track:nth-child(even) {
+  background: #f7f7f7;
+}
+
+.cd-track:hover {
+  background: #eef4fc;
+}
+
+.cd-track--active {
+  background: #e3edf9 !important;
+}
+
+.cd-track--done {
+  color: #999;
+}
+
+.cd-track-check {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.cd-track-check input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.cd-track-num {
+  width: 32px;
+  text-align: right;
+  padding-right: 8px;
+  flex-shrink: 0;
+  color: #888;
+  font-size: 10px;
+}
+
+.cd-track-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cd-track-title-input {
+  width: 100%;
+  font-size: 11px;
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  outline: none;
+  color: inherit;
+}
+
+.cd-track-title-input:focus {
+  background: #fff;
+  border-bottom: 1px solid #4a90d9;
+}
+
+.cd-track-duration {
+  width: 50px;
+  text-align: right;
+  padding-right: 12px;
+  flex-shrink: 0;
+  color: #888;
+  font-size: 10px;
+}
+
+.cd-track-status {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Spinner animation */
+@keyframes cd-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.cd-spinner {
+  animation: cd-spin 1s linear infinite;
+}
+
+/* Done message */
+.cd-done-message {
+  padding: 16px 24px;
+  color: #2d8a3e;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  border-top: 1px solid #e0e0e0;
+  background: #f8fdf8;
+}

@@ -1,0 +1,330 @@
+/* ── Get Info Modal ── */
+
+.getinfo-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.getinfo-modal {
+  background: linear-gradient(180deg, #e8e8e8 0%, #d0d0d0 100%);
+  border: 1px solid #777;
+  border-radius: 8px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  width: 500px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ── Header ── */
+
+.getinfo-header {
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid #b0b0b0;
+  background: linear-gradient(180deg, #ececec 0%, #dcdcdc 100%);
+  border-radius: 8px 8px 0 0;
+}
+
+.getinfo-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  display: block;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Body ── */
+
+.getinfo-body {
+  display: flex;
+  gap: 20px;
+  padding: 16px 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Left column: artwork + file info */
+
+.getinfo-art-section {
+  flex-shrink: 0;
+  width: 130px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.getinfo-art {
+  width: 130px;
+  height: 130px;
+  background: #f0f0f0;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.getinfo-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.getinfo-art-placeholder {
+  color: #bbb;
+}
+
+.getinfo-art-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.getinfo-fetch-art-btn {
+  font-size: 10px;
+  font-family: var(--font-family);
+  padding: 3px 8px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #f4f4f4 0%, #ddd 100%);
+  color: #444;
+  cursor: pointer;
+  text-align: center;
+  width: 100%;
+}
+
+.getinfo-fetch-art-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fff 0%, #e8e8e8 100%);
+}
+
+.getinfo-fetch-art-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.getinfo-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 2px;
+}
+
+.getinfo-file-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.getinfo-file-label {
+  color: #888;
+  font-weight: 500;
+}
+
+.getinfo-file-value {
+  color: #555;
+}
+
+/* Right column: editable fields */
+
+.getinfo-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.getinfo-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.getinfo-label {
+  width: 48px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 500;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.getinfo-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+  font-family: var(--font-family);
+  outline: none;
+  color: #222;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.getinfo-input:focus {
+  border-color: #5b9bd5;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.08),
+    0 0 0 2px rgba(91, 155, 213, 0.3);
+}
+
+.getinfo-input::placeholder {
+  color: #bbb;
+  font-style: italic;
+}
+
+/* iTunes-style "X of Y" paired inputs */
+
+.getinfo-paired {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.getinfo-paired .getinfo-input {
+  flex: 0 0 52px;
+  width: 52px;
+  text-align: center;
+}
+
+.getinfo-paired-of {
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.getinfo-field-row--readonly {
+  align-items: flex-start;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid #c0c0c0;
+}
+
+.getinfo-path {
+  flex: 1;
+  font-size: 9px;
+  color: #999;
+  word-break: break-all;
+  line-height: 1.4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ── Footer ── */
+
+.getinfo-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px 10px;
+  border-top: 1px solid #b0b0b0;
+  background: linear-gradient(180deg, #dcdcdc 0%, #ccc 100%);
+  border-radius: 0 0 8px 8px;
+}
+
+/* Prev / Next navigation */
+
+.getinfo-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.getinfo-nav-btn {
+  background: linear-gradient(180deg, #f0f0f0 0%, #ddd 100%);
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-size: 9px;
+  cursor: pointer;
+  color: #555;
+  line-height: 1;
+}
+
+.getinfo-nav-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fff 0%, #e8e8e8 100%);
+}
+
+.getinfo-nav-btn:active:not(:disabled) {
+  background: linear-gradient(180deg, #ccc 0%, #bbb 100%);
+}
+
+.getinfo-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.getinfo-nav-pos {
+  font-size: 10px;
+  color: #888;
+  min-width: 56px;
+  text-align: center;
+}
+
+/* OK / Cancel buttons */
+
+.getinfo-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.getinfo-btn {
+  padding: 4px 18px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-weight: 500;
+}
+
+.getinfo-btn--cancel {
+  background: linear-gradient(180deg, #f0f0f0 0%, #ddd 100%);
+  border: 1px solid #aaa;
+  color: #333;
+}
+
+.getinfo-btn--cancel:hover {
+  background: linear-gradient(180deg, #fff 0%, #e8e8e8 100%);
+}
+
+.getinfo-btn--cancel:active {
+  background: linear-gradient(180deg, #ccc 0%, #bbb 100%);
+}
+
+.getinfo-btn--ok {
+  background: linear-gradient(180deg, #6cb3f0 0%, #2a7ed8 100%);
+  border: 1px solid #1d6ab5;
+  color: #fff;
+  font-weight: 600;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.2);
+  min-width: 64px;
+}
+
+.getinfo-btn--ok:hover {
+  background: linear-gradient(180deg, #7cc0f8 0%, #3488e0 100%);
+}
+
+.getinfo-btn--ok:active {
+  background: linear-gradient(180deg, #2a6db8 0%, #1d5a9e 100%);
+}

@@ -1,0 +1,29 @@
+:root {
+  --chrome-top: #d8d8d8;
+  --chrome-bottom: #b8b8b8;
+  --sidebar-top: #c0c0c0;
+  --sidebar-bottom: #b0b0b0;
+  --selection-top: #4a90d9;
+  --selection-bottom: #2a6db8;
+  --row-alt: #f7f7f7;
+  --pill-top: #f0eedc;
+  --pill-bottom: #dddbb8;
+  --musicman-bg: #1e140a;
+  --musicman-accent: #c87828;
+  --text-primary: #1a1a1a;
+  --text-secondary: #666666;
+  --text-dim: #999999;
+  --border-subtle: #a0a0a0;
+  --border-light: #c8c8c8;
+  --white: #ffffff;
+  --sidebar-width: 148px;
+  --titlebar-height: 38px;
+  --toolbar-height: 78px;
+  --statusbar-height: 24px;
+  --row-height: 19px;
+  --font-family: -apple-system, "Lucida Grande", sans-serif;
+  --font-body: 11px;
+  --font-label: 10px;
+  --font-timestamp: 9px;
+  --font-title: 12px;
+}

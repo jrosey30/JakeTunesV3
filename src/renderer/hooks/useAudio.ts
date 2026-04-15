@@ -1,0 +1,221 @@
+import { useRef, useEffect, useCallback } from 'react'
+import { Howl } from 'howler'
+import { usePlayback } from '../context/PlaybackContext'
+import { useLibrary } from '../context/LibraryContext'
+import { Track } from '../types'
+
+const IPOD_MOUNT = '/Users/jacobrosenbaum/Music2/JakeTunesLibrary'
+
+const FORMAT_MAP: Record<string, string> = {
+  '.mp3': 'mp3', '.m4a': 'mp4', '.m4p': 'mp4', '.aac': 'aac',
+  '.wav': 'wav', '.wave': 'wav', '.aif': 'aiff', '.aiff': 'aiff',
+  '.flac': 'flac', '.ogg': 'ogg', '.oga': 'ogg', '.wma': 'wma', '.alac': 'mp4',
+}
+
+function ipodPathToAudioURL(ipodPath: string): { url: string; format: string } {
+  const fsPath = IPOD_MOUNT + ipodPath.replace(/:/g, '/')
+  const ext = fsPath.slice(fsPath.lastIndexOf('.')).toLowerCase()
+  const format = FORMAT_MAP[ext] || 'mp3'
+  const url = 'ipod-audio://' + encodeURIComponent(fsPath)
+  return { url, format }
+}
+
+// Module-level singleton so all components share the same Howl
+let sharedHowl: Howl | null = null
+let sharedRaf = 0
+let isPaused = false
+let autoDjMode = false
+export function setAutoDjMode(on: boolean) { autoDjMode = on }
+
+export function useAudio() {
+  const { state, dispatch } = usePlayback()
+  const { state: libState, dispatch: libDispatch } = useLibrary()
+  const dispatchRef = useRef(dispatch)
+  dispatchRef.current = dispatch
+  const stateRef = useRef(state)
+  stateRef.current = state
+  const libDispatchRef = useRef(libDispatch)
+  libDispatchRef.current = libDispatch
+  const tracksRef = useRef(libState.tracks)
+  tracksRef.current = libState.tracks
+
+  const updatePosition = useCallback(() => {
+    if (isPaused || !sharedHowl || !sharedHowl.playing()) return
+    const pos = sharedHowl.seek() as number
+    dispatchRef.current({ type: 'SET_POSITION', position: pos })
+    const dur = sharedHowl.duration()
+    if (dur > 0) {
+      dispatchRef.current({ type: 'SET_DURATION', duration: dur })
+    }
+    sharedRaf = requestAnimationFrame(updatePosition)
+  }, [])
+
+  const loadAndPlay = useCallback((track: Track, queue: Track[], queueIndex: number) => {
+    isPaused = false
+    if (sharedHowl) {
+      sharedHowl.unload()
+      sharedHowl = null
+    }
+    cancelAnimationFrame(sharedRaf)
+
+    const { url, format } = ipodPathToAudioURL(track.path || '')
+    const howl = new Howl({
+      src: [url],
+      format: [format],
+      html5: true,
+      volume: stateRef.current.volume,
+      onplay: () => {
+        dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
+        sharedRaf = requestAnimationFrame(updatePosition)
+      },
+      onend: () => {
+        cancelAnimationFrame(sharedRaf)
+
+        // Increment play count (look up latest count from tracks ref)
+        const latest = tracksRef.current.find(tr => tr.id === track.id)
+        const newCount = (Number(latest?.playCount ?? track.playCount) || 0) + 1
+        libDispatchRef.current({
+          type: 'UPDATE_TRACKS',
+          updates: [{ id: track.id, field: 'playCount', value: String(newCount) }],
+        })
+        window.electronAPI.saveMetadataOverride(track.id, 'playCount', String(newCount))
+
+        const s = stateRef.current
+        if (s.repeat === 'one') {
+          loadAndPlay(track, s.queue, s.queueIndex)
+          return
+        }
+        let nextIdx: number
+        if (s.shuffle) {
+          nextIdx = Math.floor(Math.random() * s.queue.length)
+          if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+            nextIdx = (nextIdx + 1) % s.queue.length
+          }
+        } else {
+          nextIdx = s.queueIndex + 1
+          if (nextIdx >= s.queue.length) {
+            if (autoDjMode) {
+              // Signal DJ mode to fetch a new set
+              window.dispatchEvent(new Event('musicman-dj-set-ended'))
+              return
+            }
+            if (s.repeat === 'all') nextIdx = 0
+            else {
+              dispatchRef.current({ type: 'STOP' })
+              return
+            }
+          }
+        }
+        const nextTrack = s.queue[nextIdx]
+        if (!nextTrack) return
+        if (autoDjMode) {
+          window.dispatchEvent(new CustomEvent('musicman-dj-transition', {
+            detail: { prevTrack: track, nextTrack, nextIdx, queue: s.queue }
+          }))
+          return
+        }
+        dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
+        loadAndPlay(nextTrack, s.queue, nextIdx)
+      },
+      onloaderror: (_id: number, err: unknown) => {
+        console.error('Audio load error:', err, url)
+      }
+    })
+
+    sharedHowl = howl
+    howl.play()
+  }, [updatePosition])
+
+  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => {
+    if (autoDjMode && !djTransition) {
+      window.dispatchEvent(new Event('musicman-dj-cancel'))
+    }
+    const q = queue ?? stateRef.current.queue
+    const qi = queueIndex ?? 0
+    dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi })
+    loadAndPlay(track, q, qi)
+  }, [loadAndPlay])
+
+  const togglePlayPause = useCallback(() => {
+    if (stateRef.current.isPlaying) {
+      isPaused = true
+      cancelAnimationFrame(sharedRaf)
+      sharedHowl?.pause()
+      dispatchRef.current({ type: 'PAUSE' })
+    } else if (stateRef.current.nowPlaying) {
+      isPaused = false
+      sharedHowl?.play()
+      dispatchRef.current({ type: 'RESUME' })
+    }
+  }, [])
+
+  const nextTrack = useCallback(() => {
+    const s = stateRef.current
+    if (s.queue.length === 0) return
+    let nextIdx: number
+    if (s.shuffle) {
+      nextIdx = Math.floor(Math.random() * s.queue.length)
+      // Avoid repeating same track if possible
+      if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+        nextIdx = (nextIdx + 1) % s.queue.length
+      }
+    } else {
+      nextIdx = s.queueIndex + 1
+      if (nextIdx >= s.queue.length) {
+        if (s.repeat === 'all') nextIdx = 0
+        else return
+      }
+    }
+    const track = s.queue[nextIdx]
+    if (track) playTrack(track, s.queue, nextIdx)
+  }, [playTrack])
+
+  const prevTrack = useCallback(() => {
+    const s = stateRef.current
+    if (s.queue.length === 0) return
+    // If more than 3 seconds in, restart current track
+    if (s.position > 3 && sharedHowl) {
+      sharedHowl.seek(0)
+      dispatchRef.current({ type: 'SET_POSITION', position: 0 })
+      return
+    }
+    // In shuffle mode, go back through shuffle history
+    if (s.shuffle && s.shuffleHistory.length > 0) {
+      const history = [...s.shuffleHistory]
+      const prevIdx = history.pop()!
+      dispatchRef.current({ type: 'SET_SHUFFLE_HISTORY', history })
+      const track = s.queue[prevIdx]
+      if (track) {
+        dispatchRef.current({ type: 'PLAY_TRACK', track, queue: s.queue, queueIndex: prevIdx, skipHistory: true })
+        loadAndPlay(track, s.queue, prevIdx)
+      }
+      return
+    }
+    let prevIdx = s.queueIndex - 1
+    if (prevIdx < 0) {
+      if (s.repeat === 'all') prevIdx = s.queue.length - 1
+      else prevIdx = 0
+    }
+    const track = s.queue[prevIdx]
+    if (track) playTrack(track, s.queue, prevIdx)
+  }, [playTrack, loadAndPlay])
+
+  const seek = useCallback((pct: number) => {
+    if (sharedHowl && stateRef.current.duration > 0) {
+      const pos = pct * stateRef.current.duration
+      sharedHowl.seek(pos)
+      dispatchRef.current({ type: 'SET_POSITION', position: pos })
+    }
+  }, [])
+
+  const setVolume = useCallback((v: number) => {
+    if (sharedHowl) sharedHowl.volume(v)
+    dispatchRef.current({ type: 'SET_VOLUME', volume: v })
+  }, [])
+
+  useEffect(() => {
+    if (sharedHowl) sharedHowl.volume(state.volume)
+  }, [state.volume])
+
+  return { playTrack, togglePlayPause, nextTrack, prevTrack, seek, setVolume }
+}

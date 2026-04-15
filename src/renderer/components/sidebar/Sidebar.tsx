@@ -1,0 +1,298 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useLibrary } from '../../context/LibraryContext'
+import SidebarSection from './SidebarSection'
+import SidebarItem from './SidebarItem'
+import AlbumArtPanel from './AlbumArtPanel'
+import ContextMenu from '../ContextMenu'
+import ConfirmDialog from '../ConfirmDialog'
+import type { ViewName, SmartPlaylistId } from '../../types'
+
+const LIBRARY_ICONS: Record<string, JSX.Element> = {
+  songs: <SongsIcon />,
+  artists: <ArtistsIcon />,
+  albums: <AlbumsIcon />,
+  genres: <GenresIcon />,
+}
+
+const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
+  { label: 'Songs', view: 'songs' },
+  { label: 'Artists', view: 'artists' },
+  { label: 'Albums', view: 'albums' },
+  { label: 'Genres', view: 'genres' },
+  { label: 'The Music Man', view: 'musicman', highlight: '#c87828' },
+]
+
+const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
+  { label: 'Recently Added', id: 'recently-added' },
+  { label: 'Recently Played', id: 'recently-played' },
+  { label: 'Top 25 Most Played', id: 'top-25' },
+  { label: 'My Top Rated', id: 'top-rated' },
+  { label: 'The Music Man Picks', id: 'musicman-picks' },
+]
+
+// iPod playlists with these names duplicate the built-in smart playlists — hide them
+const SMART_PLAYLIST_NAMES = new Set([
+  'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated',
+  'Classical Music', // empty iPod smart playlist
+])
+
+function SongsIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="#555">
+      <path d="M10 1.5v7a1.75 1.75 0 11-1.2-1.6V3L5 4v5.5a1.75 1.75 0 11-1.2-1.6V2.5L10 1.5z" />
+    </svg>
+  )
+}
+
+function ArtistsIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="#555">
+      <circle cx="6" cy="4" r="2.2" />
+      <path d="M2 10.5c0-2.2 1.8-3.5 4-3.5s4 1.3 4 3.5" />
+    </svg>
+  )
+}
+
+function AlbumsIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="#555">
+      <circle cx="6" cy="6" r="5" fill="none" stroke="#555" strokeWidth="1.2" />
+      <circle cx="6" cy="6" r="2" fill="none" stroke="#555" strokeWidth="1" />
+      <circle cx="6" cy="6" r="0.8" />
+    </svg>
+  )
+}
+
+function GenresIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1.2">
+      <rect x="1" y="1" width="4.5" height="4.5" rx="0.8" />
+      <rect x="6.5" y="1" width="4.5" height="4.5" rx="0.8" />
+      <rect x="1" y="6.5" width="4.5" height="4.5" rx="0.8" />
+      <rect x="6.5" y="6.5" width="4.5" height="4.5" rx="0.8" />
+    </svg>
+  )
+}
+
+function PlaylistIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1.2">
+      <path d="M1 3h8M1 6h8M1 9h5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function SmartPlaylistIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      {/* Playlist lines */}
+      <path d="M1 2.5h5M1 5h4" stroke="#555" strokeWidth="1.2" strokeLinecap="round" />
+      {/* Gear */}
+      <g transform="translate(8,8)">
+        <circle cx="0" cy="0" r="1.2" stroke="#555" strokeWidth="0.7" fill="none" />
+        <path d="M0-2.8v1M0 1.8v1M-2.8 0h1M1.8 0h1M-2-2 l.7.7M1.3 1.3 l.7.7M2-2 l-.7.7M-1.3 1.3 l-.7.7"
+              stroke="#555" strokeWidth="0.7" strokeLinecap="round" />
+      </g>
+    </svg>
+  )
+}
+
+function MusicManPicksIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      {/* Vinyl record */}
+      <circle cx="6" cy="6" r="5" stroke="#c87828" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#c87828" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#c87828" />
+      {/* Sparkle */}
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#c87828" />
+    </svg>
+  )
+}
+
+function EjectIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="#555">
+      <path d="M5 1L1 6h8zM1 8h8v1.5H1z" />
+    </svg>
+  )
+}
+
+function IpodIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1">
+      <rect x="2" y="1" width="8" height="10" rx="1" />
+      <rect x="3" y="2" width="6" height="4" rx="0.5" fill="#555" opacity="0.2" />
+      <circle cx="6" cy="8.5" r="1.5" />
+    </svg>
+  )
+}
+
+function CdIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <circle cx="6" cy="6" r="5" fill="none" stroke="#555" strokeWidth="1" />
+      <circle cx="6" cy="6" r="2" fill="none" stroke="#555" strokeWidth="0.7" />
+      <circle cx="6" cy="6" r="0.6" fill="#555" />
+    </svg>
+  )
+}
+
+export default function Sidebar() {
+  const { state, dispatch } = useLibrary()
+  const [ipodMounted, setIpodMounted] = useState(false)
+  const [cdMounted, setCdMounted] = useState(false)
+  const [cdName, setCdName] = useState('Audio CD')
+  const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string } | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null)
+
+  const handlePlaylistContextMenu = useCallback((e: React.MouseEvent, id: string, name: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setPlCtxMenu({ x: e.clientX, y: e.clientY, playlistId: id, playlistName: name })
+  }, [])
+
+  const handleRenamePlaylist = useCallback(() => {
+    if (!plCtxMenu) return
+    const newName = window.prompt('Rename playlist:', plCtxMenu.playlistName)
+    if (!newName || !newName.trim()) return
+    dispatch({ type: 'RENAME_PLAYLIST', id: plCtxMenu.playlistId, name: newName.trim() })
+    setPlCtxMenu(null)
+  }, [plCtxMenu, dispatch])
+
+  const handleDeletePlaylist = useCallback(() => {
+    if (!plCtxMenu) return
+    setDeleteConfirm({ id: plCtxMenu.playlistId, name: plCtxMenu.playlistName })
+    setPlCtxMenu(null)
+  }, [plCtxMenu])
+
+  useEffect(() => {
+    const check = () => {
+      window.electronAPI.checkIpodMounted().then(r => setIpodMounted(r.mounted)).catch(() => {})
+      window.electronAPI.checkCdDrive().then(r => {
+        setCdMounted(r.hasCd)
+        if (r.volumeName) setCdName(r.volumeName)
+      }).catch(() => {})
+    }
+    check()
+    const interval = setInterval(check, 5000)
+    // Listen for eject events so sidebar updates immediately
+    const onEject = () => setTimeout(check, 500)
+    window.addEventListener('jaketunes-ipod-ejected', onEject)
+    window.addEventListener('jaketunes-cd-ejected', onEject)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('jaketunes-ipod-ejected', onEject)
+      window.removeEventListener('jaketunes-cd-ejected', onEject)
+    }
+  }, [])
+
+  // If iPod is unmounted while viewing device page, switch to songs
+  useEffect(() => {
+    if (!ipodMounted && state.currentView === 'device') {
+      dispatch({ type: 'SET_VIEW', view: 'songs' })
+    }
+  }, [ipodMounted, state.currentView, dispatch])
+
+  // If CD is ejected while viewing cd-import page, switch to songs
+  useEffect(() => {
+    if (!cdMounted && state.currentView === 'cd-import') {
+      dispatch({ type: 'SET_VIEW', view: 'songs' })
+    }
+  }, [cdMounted, state.currentView, dispatch])
+
+  return (
+    <div className="sidebar">
+      <div className="sidebar-scroll">
+        <SidebarSection title="LIBRARY">
+          {libraryItems.map((item) => (
+            <SidebarItem
+              key={item.view}
+              label={item.label}
+              icon={LIBRARY_ICONS[item.view]}
+              highlight={item.highlight}
+              selected={state.currentView === item.view}
+              onClick={() => dispatch({ type: 'SET_VIEW', view: item.view })}
+            />
+          ))}
+        </SidebarSection>
+
+        <SidebarSection title="PLAYLISTS">
+          {smartPlaylists.map((sp) => (
+            <SidebarItem
+              key={sp.id}
+              label={sp.label}
+              icon={sp.id === 'musicman-picks' ? <MusicManPicksIcon /> : <SmartPlaylistIcon />}
+              selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
+              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
+            />
+          ))}
+          {state.playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name)).map((pl) => (
+            <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+              <SidebarItem
+                label={pl.name}
+                icon={<PlaylistIcon />}
+                selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+                onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                droppable
+                onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+              />
+            </div>
+          ))}
+        </SidebarSection>
+
+        {(ipodMounted || cdMounted) && (
+          <SidebarSection title="DEVICES">
+            {ipodMounted && (
+              <li
+                className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
+                onClick={() => dispatch({ type: 'SET_VIEW', view: 'device' })}
+              >
+                <span className="sidebar-item-icon"><IpodIcon /></span>
+                <span className="sidebar-item-label">JACOBROSENB</span>
+                <button className="sidebar-eject-btn" title="Eject" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectIpod().then(() => window.dispatchEvent(new Event('jaketunes-ipod-ejected'))) }}><EjectIcon /></button>
+              </li>
+            )}
+            {cdMounted && (
+              <li
+                className={`sidebar-item sidebar-device-row ${state.currentView === 'cd-import' ? 'sidebar-item--selected' : ''}`}
+                onClick={() => dispatch({ type: 'SET_VIEW', view: 'cd-import' })}
+              >
+                <span className="sidebar-item-icon"><CdIcon /></span>
+                <span className="sidebar-item-label">{cdName}</span>
+                <button className="sidebar-eject-btn" title="Eject CD" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectCd().then(() => window.dispatchEvent(new Event('jaketunes-cd-ejected'))) }}><EjectIcon /></button>
+              </li>
+            )}
+          </SidebarSection>
+        )}
+      </div>
+
+      <AlbumArtPanel />
+
+      {plCtxMenu && (
+        <ContextMenu
+          x={plCtxMenu.x}
+          y={plCtxMenu.y}
+          items={[
+            { label: 'Rename…', onClick: handleRenamePlaylist },
+            { separator: true as const },
+            { label: 'Delete Playlist', onClick: handleDeletePlaylist },
+          ]}
+          onClose={() => setPlCtxMenu(null)}
+        />
+      )}
+      {deleteConfirm && (
+        <ConfirmDialog
+          message={`Delete the playlist "${deleteConfirm.name}"?`}
+          detail="The songs will remain in your library."
+          confirmLabel="Delete"
+          onConfirm={() => {
+            dispatch({ type: 'REMOVE_PLAYLIST', id: deleteConfirm.id })
+            setDeleteConfirm(null)
+          }}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+    </div>
+  )
+}

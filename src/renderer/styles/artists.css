@@ -1,0 +1,137 @@
+.artists-view {
+  height: 100%;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.artist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #eee;
+  user-select: none;
+}
+
+.artist-row:hover { background: rgba(0,0,0,0.03); }
+
+.artist-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.artist-name {
+  flex: 1;
+  font-size: var(--font-body);
+  font-weight: 600;
+}
+
+.artist-count {
+  font-size: var(--font-label);
+  color: var(--text-dim);
+}
+
+.artist-chevron {
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.artist-chevron.open { transform: rotate(90deg); }
+
+/* Album grid inside expanded artist */
+.artist-albums-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  padding: 12px 12px 12px 50px;
+  background: #f8f8f8;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.artist-album-card {
+  text-align: center;
+}
+
+.artist-album-art {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #ddd;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.artist-album-art:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.artist-album-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.artist-album-title {
+  font-size: var(--font-label);
+  font-weight: 600;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artist-album-count {
+  font-size: var(--font-timestamp);
+  color: var(--text-dim);
+}
+
+/* Tracklist inside album */
+.artist-album-tracklist {
+  text-align: left;
+  margin-top: 6px;
+  border-top: 1px solid #ddd;
+  padding-top: 4px;
+}
+
+.artist-track-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  font-size: var(--font-label);
+  cursor: default;
+  border-radius: 2px;
+}
+
+.artist-track-row:hover { background: rgba(0,0,0,0.05); }
+
+.artist-track-row--playing {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+  color: #fff;
+}
+
+.artist-track-icon {
+  width: 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.artist-track-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

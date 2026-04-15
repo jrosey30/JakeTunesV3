@@ -1,0 +1,101 @@
+.genres-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.genres-browser {
+  display: flex;
+  height: 200px;
+  border-bottom: 1px solid #c0c0c0;
+  flex-shrink: 0;
+}
+
+.genres-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #c0c0c0;
+  min-width: 0;
+}
+
+.genres-column:last-child { border-right: none; }
+
+.genres-column-header {
+  padding: 3px 8px;
+  font-size: var(--font-label);
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
+  border-bottom: 1px solid #b0b0b0;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.genres-column-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.genres-column-item {
+  padding: 1px 8px;
+  font-size: var(--font-body);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.genres-column-item:hover { background: rgba(0,0,0,0.04); }
+
+.genres-column-item--selected {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+  color: #fff;
+}
+
+.genres-column-item--selected:hover {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+}
+
+/* Track list */
+.genres-tracklist {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.genres-track-row {
+  display: grid;
+  grid-template-columns: 20px 1fr 1fr 1fr;
+  height: 19px;
+  align-items: center;
+  font-size: var(--font-body);
+  cursor: default;
+}
+
+.genres-track-row--alt { background: var(--row-alt); }
+.genres-track-row:hover { background: rgba(74,144,217,0.08); }
+
+.genres-track-row--playing {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+  color: #fff;
+}
+
+.genres-track-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.genres-track-title,
+.genres-track-artist,
+.genres-track-album {
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genres-track-title { font-weight: 500; }
+.genres-track-artist, .genres-track-album { color: var(--text-secondary); }
+.genres-track-row--playing .genres-track-artist,
+.genres-track-row--playing .genres-track-album { color: rgba(255,255,255,0.8); }

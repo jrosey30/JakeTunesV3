@@ -1,0 +1,155 @@
+/* ── Splash screen ── */
+.app-splash {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #e0e0e0, #c8c8c8);
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app-splash-inner {
+  text-align: center;
+  animation: splash-fade-in 0.5s ease-out;
+}
+
+.app-splash-icon {
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  margin-bottom: 16px;
+}
+
+.app-splash-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #333;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+}
+
+.app-splash-sub {
+  font-size: 12px;
+  color: #888;
+  margin-top: 6px;
+}
+
+@keyframes splash-fade-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ── Drop overlay ── */
+.app-drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(74, 144, 217, 0.15);
+  border: 3px dashed rgba(74, 144, 217, 0.6);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  pointer-events: none;
+}
+
+.app-drop-overlay--importing {
+  background: rgba(0, 0, 0, 0.3);
+  border: none;
+}
+
+.app-drop-message {
+  font-size: 20px;
+  font-weight: 700;
+  color: #4a90d9;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 16px 32px;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.app-drop-overlay--importing .app-drop-message {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* ── Main shell ── */
+.app-shell {
+  display: grid;
+  grid-template-rows: var(--titlebar-height) var(--toolbar-height) 1fr var(--statusbar-height);
+  grid-template-columns: 170px 1fr;
+  grid-template-areas:
+    "titlebar  titlebar"
+    "toolbar   toolbar"
+    "sidebar   content"
+    "statusbar statusbar";
+  height: 100vh;
+  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+}
+
+.titlebar {
+  grid-area: titlebar;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+  padding-left: 72px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+}
+
+.toolbar-area {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-area {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--sidebar-top), var(--sidebar-bottom));
+  border-right: 1px solid var(--border-subtle);
+  overflow: hidden;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.content-area {
+  grid-area: content;
+  background: var(--white);
+  overflow: hidden;
+}
+
+.statusbar-area {
+  grid-area: statusbar;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  background: linear-gradient(180deg, #e0e0e0, #c8c8c8);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+}
