@@ -456,6 +456,9 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) 
   // Dynamic import for ESM module
   const mm = await import('music-metadata')
 
+  const batchBaseTime = Date.now()
+  let trackIndex = 0
+
   for (const srcPath of resolvedPaths) {
     const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
 
@@ -513,6 +516,9 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) 
 
       const fileStats = await stat(destPath)
 
+      // Each track in batch gets a unique timestamp so sort order is preserved
+      const trackTime = new Date(batchBaseTime + trackIndex)
+
       const track: Record<string, unknown> = {
         id,
         title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
@@ -527,13 +533,14 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) 
         discNumber: common.disk?.no || 0,
         discCount: common.disk?.of || 0,
         playCount: 0,
-        dateAdded: new Date().toISOString().split('T')[0],
+        dateAdded: trackTime.toISOString(),
         fileSize: fileStats.size,
         rating: 0,
       }
 
       imported.push(track)
       id++
+      trackIndex++
     } catch (err) {
       console.error(`Failed to import ${srcPath}:`, err)
     }
@@ -1344,6 +1351,9 @@ ipcMain.handle('rip-cd-tracks', async (_e,
   }
   const cfg = formatConfig[fmt] || formatConfig['aac-256']
 
+  const cdBatchBaseTime = Date.now()
+  let cdTrackIndex = 0
+
   for (const cdTrack of cdTracks) {
     const subDir = `F${String(id % 50).padStart(2, '0')}`
     const destDir = join(MUSIC_DIR, subDir)
@@ -1365,6 +1375,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
       }
 
       const fileStats = await stat(destPath)
+      const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
 
       imported.push({
         id,
@@ -1380,7 +1391,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
         discNumber: 1,
         discCount: 1,
         playCount: 0,
-        dateAdded: new Date().toISOString().split('T')[0],
+        dateAdded: cdTrackTime.toISOString(),
         fileSize: fileStats.size,
         rating: 0,
       })
@@ -1394,6 +1405,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
       })
 
       id++
+      cdTrackIndex++
     } catch (err) {
       console.error(`Failed to rip track ${cdTrack.number}:`, err)
       mainWindow?.webContents.send('cd-rip-progress', {

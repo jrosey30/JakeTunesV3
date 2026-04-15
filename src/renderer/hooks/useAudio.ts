@@ -27,6 +27,24 @@ let isPaused = false
 let autoDjMode = false
 export function setAutoDjMode(on: boolean) { autoDjMode = on }
 
+// Audio output device (AirPlay, Bluetooth, etc.)
+let currentSinkId = ''
+export function getAudioSinkId() { return currentSinkId }
+export function setAudioSinkId(deviceId: string) {
+  currentSinkId = deviceId
+  // Apply to current playing audio if any
+  if (sharedHowl) {
+    try {
+      const sounds = (sharedHowl as unknown as { _sounds: { _node: HTMLMediaElement }[] })._sounds
+      if (sounds?.[0]?._node?.setSinkId) {
+        sounds[0]._node.setSinkId(deviceId)
+      }
+    } catch (e) {
+      console.warn('[Audio] setSinkId failed:', e)
+    }
+  }
+}
+
 export function useAudio() {
   const { state, dispatch } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
@@ -123,6 +141,17 @@ export function useAudio() {
     })
 
     sharedHowl = howl
+    // Route to selected audio output device (AirPlay, Bluetooth, etc.)
+    if (currentSinkId) {
+      try {
+        const sounds = (howl as unknown as { _sounds: { _node: HTMLMediaElement }[] })._sounds
+        if (sounds?.[0]?._node?.setSinkId) {
+          sounds[0]._node.setSinkId(currentSinkId)
+        }
+      } catch (e) {
+        console.warn('[Audio] setSinkId on new howl failed:', e)
+      }
+    }
     howl.play()
   }, [updatePosition])
 

@@ -388,6 +388,63 @@
   75% { content: '...'; }
 }
 
+/* AirPlay / Audio Output */
+.airplay-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+.airplay-btn {
+  color: #555;
+  width: 32px;
+  height: 32px;
+}
+.airplay-btn--active {
+  color: var(--selection-top);
+}
+.airplay-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: -20px;
+  min-width: 200px;
+  background: linear-gradient(180deg, #f4f4f4, #e0e0e0);
+  border: 1px solid #999;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  z-index: 1000;
+  overflow: hidden;
+  font-size: var(--font-body);
+}
+.airplay-menu-header {
+  padding: 6px 12px 4px;
+  font-size: var(--font-label);
+  font-weight: 700;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #ccc;
+}
+.airplay-menu-item {
+  padding: 5px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #222;
+}
+.airplay-menu-item:hover {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+  color: #fff;
+}
+.airplay-menu-item--active {
+  font-weight: 600;
+}
+.airplay-check {
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
 /* Queue toggle */
 .queue-toggle {
   color: #555;

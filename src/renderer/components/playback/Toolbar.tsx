@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
-import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
+import { useAudio, setAutoDjMode, getAudioSinkId, setAudioSinkId } from '../../hooks/useAudio'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
@@ -48,6 +48,18 @@ function RadioIcon() {
       <path d="M6 2.5a8 8 0 0112 0" strokeWidth="1.3" />
       {/* Antenna tip */}
       <circle cx="12" cy="5.5" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function AirPlayIcon({ active }: { active?: boolean }) {
+  return (
+    <svg width="20" height="18" viewBox="0 0 20 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      {/* Screen */}
+      <path d="M2 1h16a1 1 0 011 1v10a1 1 0 01-1 1H14" />
+      <path d="M6 13H2a1 1 0 01-1-1V2a1 1 0 011-1" />
+      {/* Triangle (AirPlay symbol) */}
+      <polygon points="10,10 5,17 15,17" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -271,6 +283,57 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     return () => window.removeEventListener('musicman-dj-transition', handler)
   }, [autoDj, playTrack])
 
+  // ── AirPlay / Audio Output ──
+  const [airplayOpen, setAirplayOpen] = useState(false)
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
+  const [activeSinkId, setActiveSinkId] = useState('')
+  const airplayRef = useRef<HTMLDivElement>(null)
+
+  const refreshDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const outputs = devices.filter(d => d.kind === 'audiooutput' && d.deviceId !== '')
+      setAudioDevices(outputs)
+      setActiveSinkId(getAudioSinkId())
+    } catch (e) {
+      console.warn('[AirPlay] enumerateDevices failed:', e)
+    }
+  }, [])
+
+  const handleAirplayClick = useCallback(() => {
+    if (airplayOpen) {
+      setAirplayOpen(false)
+    } else {
+      refreshDevices()
+      setAirplayOpen(true)
+    }
+  }, [airplayOpen, refreshDevices])
+
+  const handleSelectDevice = useCallback((deviceId: string) => {
+    setAudioSinkId(deviceId)
+    setActiveSinkId(deviceId)
+    setAirplayOpen(false)
+  }, [])
+
+  // Close airplay menu on outside click
+  useEffect(() => {
+    if (!airplayOpen) return
+    const handler = (e: MouseEvent) => {
+      if (airplayRef.current && !airplayRef.current.contains(e.target as Node)) {
+        setAirplayOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [airplayOpen])
+
+  // Listen for device changes (e.g. AirPlay device connects/disconnects)
+  useEffect(() => {
+    const handler = () => { if (airplayOpen) refreshDevices() }
+    navigator.mediaDevices.addEventListener('devicechange', handler)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', handler)
+  }, [airplayOpen, refreshDevices])
+
   // ── DJ Mode (Spotify-style AI DJ) ──
   const [djModeActive, setDjModeActive] = useState(false)
   const [djModeLoading, setDjModeLoading] = useState(false)
@@ -412,6 +475,37 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       <TransportControls />
       <NowPlaying />
       <VolumeSlider />
+      <div className="airplay-wrapper" ref={airplayRef}>
+        <button
+          className={`transport-toggle airplay-btn ${activeSinkId ? 'airplay-btn--active' : ''}`}
+          onClick={handleAirplayClick}
+          title="Audio Output (AirPlay)"
+        >
+          <AirPlayIcon active={!!activeSinkId} />
+        </button>
+        {airplayOpen && (
+          <div className="airplay-menu">
+            <div className="airplay-menu-header">Audio Output</div>
+            <div
+              className={`airplay-menu-item ${!activeSinkId ? 'airplay-menu-item--active' : ''}`}
+              onClick={() => handleSelectDevice('')}
+            >
+              <span className="airplay-check">{!activeSinkId ? '\u2713' : ''}</span>
+              System Default
+            </div>
+            {audioDevices.filter(d => d.deviceId !== 'default').map(d => (
+              <div
+                key={d.deviceId}
+                className={`airplay-menu-item ${activeSinkId === d.deviceId ? 'airplay-menu-item--active' : ''}`}
+                onClick={() => handleSelectDevice(d.deviceId)}
+              >
+                <span className="airplay-check">{activeSinkId === d.deviceId ? '\u2713' : ''}</span>
+                {d.label || d.deviceId}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <button
         className={`transport-toggle dj-mode-btn ${djModeActive ? 'dj-mode-btn--active' : ''} ${djModeLoading ? 'dj-btn--loading' : ''}`}
         onClick={handleDjModeClick}

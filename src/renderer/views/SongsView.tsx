@@ -29,7 +29,9 @@ interface ColDef {
 
 function formatDateAdded(d: string): string {
   if (!d) return ''
-  const [y, m, day] = d.split('-')
+  // Handle both full ISO timestamps and YYYY-MM-DD
+  const datePart = d.length > 10 ? d.substring(0, 10) : d
+  const [y, m, day] = datePart.split('-')
   return `${m}-${day}-${y}`
 }
 

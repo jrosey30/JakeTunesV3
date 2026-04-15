@@ -594,8 +594,12 @@ export default function SmartPlaylistView() {
                     return <div key={col.key} className="songs-cell">{track.genre}</div>
                   case 'year':
                     return <div key={col.key} className="songs-cell">{track.year || ''}</div>
-                  case 'dateAdded':
-                    return <div key={col.key} className="songs-cell">{track.dateAdded || ''}</div>
+                  case 'dateAdded': {
+                    const da = track.dateAdded || ''
+                    const dp = da.length > 10 ? da.substring(0, 10) : da
+                    const [y, mo, dy] = dp.split('-')
+                    return <div key={col.key} className="songs-cell">{dp ? `${mo}-${dy}-${y}` : ''}</div>
+                  }
                   case 'playCount':
                     return <div key={col.key} className="songs-cell">{track.playCount || ''}</div>
                   case 'rating':
