@@ -88,6 +88,7 @@ declare global {
       ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number, format?: string) => Promise<{ ok: boolean; tracks?: Track[]; error?: string }>
       onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
+      openSoundSettings: () => Promise<void>
     }
   }
 }

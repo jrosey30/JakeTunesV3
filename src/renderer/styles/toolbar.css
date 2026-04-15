@@ -403,33 +403,34 @@
 }
 .airplay-menu {
   position: absolute;
-  bottom: calc(100% + 6px);
-  right: -20px;
-  min-width: 200px;
-  background: linear-gradient(180deg, #f4f4f4, #e0e0e0);
-  border: 1px solid #999;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  background: linear-gradient(180deg, #f6f6f6, #e4e4e4);
+  border: 1px solid #888;
+  border-radius: 5px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.28);
   z-index: 1000;
   overflow: hidden;
   font-size: var(--font-body);
+  padding: 3px 0;
 }
 .airplay-menu-header {
-  padding: 6px 12px 4px;
-  font-size: var(--font-label);
+  padding: 5px 12px 4px;
+  font-size: 9px;
   font-weight: 700;
-  color: #666;
+  color: #777;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  border-bottom: 1px solid #ccc;
 }
 .airplay-menu-item {
-  padding: 5px 12px;
-  cursor: pointer;
+  padding: 4px 10px;
+  cursor: default;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   color: #222;
+  white-space: nowrap;
 }
 .airplay-menu-item:hover {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
@@ -438,11 +439,33 @@
 .airplay-menu-item--active {
   font-weight: 600;
 }
+.airplay-menu-item--settings {
+  color: #555;
+  font-size: 10px;
+}
+.airplay-menu-item--settings:hover {
+  color: #fff;
+}
 .airplay-check {
   width: 14px;
   text-align: center;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.airplay-device-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.airplay-menu-item:hover .airplay-device-icon { opacity: 1; }
+.airplay-menu-divider {
+  height: 1px;
+  background: #ccc;
+  margin: 3px 8px;
 }
 
 /* Queue toggle */

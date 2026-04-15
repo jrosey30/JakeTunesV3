@@ -1433,6 +1433,11 @@ ipcMain.handle('eject-cd', async () => {
   }
 })
 
+ipcMain.handle('open-sound-settings', async () => {
+  const { exec } = await import('child_process')
+  exec('open "x-apple.systempreferences:com.apple.Sound-Settings.extension?output"')
+})
+
 app.whenReady().then(() => {
   // Serve album artwork images
   protocol.handle('album-art', async (request) => {

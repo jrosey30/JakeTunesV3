@@ -76,6 +76,8 @@ const electronAPI = {
   },
   ejectCd: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-cd'),
+  openSoundSettings: (): Promise<void> =>
+    ipcRenderer.invoke('open-sound-settings'),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

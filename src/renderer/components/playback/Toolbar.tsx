@@ -491,18 +491,49 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
               onClick={() => handleSelectDevice('')}
             >
               <span className="airplay-check">{!activeSinkId ? '\u2713' : ''}</span>
+              <span className="airplay-device-icon">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 3a1 1 0 011-1h8a1 1 0 011 1v5a1 1 0 01-1 1H7l-1 2-1-2H2a1 1 0 01-1-1V3z"/></svg>
+              </span>
               System Default
             </div>
-            {audioDevices.filter(d => d.deviceId !== 'default').map(d => (
-              <div
-                key={d.deviceId}
-                className={`airplay-menu-item ${activeSinkId === d.deviceId ? 'airplay-menu-item--active' : ''}`}
-                onClick={() => handleSelectDevice(d.deviceId)}
-              >
-                <span className="airplay-check">{activeSinkId === d.deviceId ? '\u2713' : ''}</span>
-                {d.label || d.deviceId}
-              </div>
-            ))}
+            {audioDevices.filter(d => d.deviceId !== 'default').map(d => {
+              const label = d.label || d.deviceId
+              const isAirplay = /airplay|homepod|apple\s*tv/i.test(label)
+              const isBluetooth = /bluetooth|bt|airpods|beats|bose|sony|jabra|jbl/i.test(label)
+              return (
+                <div
+                  key={d.deviceId}
+                  className={`airplay-menu-item ${activeSinkId === d.deviceId ? 'airplay-menu-item--active' : ''}`}
+                  onClick={() => handleSelectDevice(d.deviceId)}
+                >
+                  <span className="airplay-check">{activeSinkId === d.deviceId ? '\u2713' : ''}</span>
+                  <span className="airplay-device-icon">
+                    {isAirplay ? (
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><rect x="1" y="1" width="10" height="7" rx="0.5"/><polygon points="6,7 3,11 9,11" fill="currentColor"/></svg>
+                    ) : isBluetooth ? (
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M3 3l6 3-6 3M6 0v12M9 3L6 0v5"/><path d="M9 9L6 12V7"/></svg>
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 5v2h2l3 3V2L3 5H1z"/><path d="M8.5 3.5a3.5 3.5 0 010 5" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg>
+                    )}
+                  </span>
+                  {label}
+                </div>
+              )
+            })}
+            <div className="airplay-menu-divider" />
+            <div
+              className="airplay-menu-item airplay-menu-item--settings"
+              onClick={() => {
+                setAirplayOpen(false)
+                window.electronAPI?.openSoundSettings?.()
+              }}
+            >
+              <span className="airplay-check" />
+              <span className="airplay-device-icon">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><circle cx="6" cy="6" r="2"/><path d="M6 1v1M6 10v1M1 6h1M10 6h1M2.5 2.5l.7.7M8.8 8.8l.7.7M9.5 2.5l-.7.7M3.2 8.8l-.7.7"/></svg>
+              </span>
+              Sound Settings...
+            </div>
           </div>
         )}
       </div>
