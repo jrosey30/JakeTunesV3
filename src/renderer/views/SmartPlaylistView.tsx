@@ -297,15 +297,27 @@ export default function SmartPlaylistView() {
       audioRef.current.pause()
       audioRef.current = null
       setSpeaking(false)
+      window.dispatchEvent(new Event('musicman-speaking-end'))
       return
     }
     setSpeaking(true)
     const tts = await window.electronAPI.musicmanSpeak(picks.commentary)
     if (tts.ok && tts.audio) {
+      window.dispatchEvent(new Event('musicman-speaking-start'))
+      await new Promise<void>(resolve => {
+        window.addEventListener('musicman-fade-ready', resolve, { once: true })
+        setTimeout(resolve, 2000)
+      })
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
       audioRef.current = audio
-      audio.onended = () => { setSpeaking(false) }
-      audio.play().catch(() => { setSpeaking(false) })
+      audio.onended = () => {
+        setSpeaking(false)
+        window.dispatchEvent(new Event('musicman-speaking-end'))
+      }
+      audio.play().catch(() => {
+        setSpeaking(false)
+        window.dispatchEvent(new Event('musicman-speaking-end'))
+      })
     } else {
       setSpeaking(false)
     }

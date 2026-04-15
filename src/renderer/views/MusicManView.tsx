@@ -188,6 +188,7 @@ export default function MusicManView() {
     if (isSpeaking && audioRef.current) {
       audioRef.current.pause()
       audioRef.current = null
+      window.dispatchEvent(new Event('musicman-speaking-end'))
       if (speakingIdx === index) {
         setIsSpeaking(false)
         setSpeakingIdx(-1)
@@ -200,8 +201,17 @@ export default function MusicManView() {
     if (tts.ok && tts.audio) {
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
       audioRef.current = audio
-      audio.onended = () => { setIsSpeaking(false); setSpeakingIdx(-1) }
-      audio.play().catch(() => { setIsSpeaking(false); setSpeakingIdx(-1) })
+      audio.onended = () => {
+        setIsSpeaking(false)
+        setSpeakingIdx(-1)
+        window.dispatchEvent(new Event('musicman-speaking-end'))
+      }
+      window.dispatchEvent(new Event('musicman-speaking-start'))
+      audio.play().catch(() => {
+        setIsSpeaking(false)
+        setSpeakingIdx(-1)
+        window.dispatchEvent(new Event('musicman-speaking-end'))
+      })
     } else {
       setIsSpeaking(false)
       setSpeakingIdx(-1)
@@ -259,6 +269,7 @@ export default function MusicManView() {
       audioRef.current.pause()
       audioRef.current = null
       setSpeakingCommentary(false)
+      window.dispatchEvent(new Event('musicman-speaking-end'))
       return
     }
     setSpeakingCommentary(true)
@@ -266,8 +277,15 @@ export default function MusicManView() {
     if (tts.ok && tts.audio) {
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
       audioRef.current = audio
-      audio.onended = () => { setSpeakingCommentary(false) }
-      audio.play().catch(() => { setSpeakingCommentary(false) })
+      audio.onended = () => {
+        setSpeakingCommentary(false)
+        window.dispatchEvent(new Event('musicman-speaking-end'))
+      }
+      window.dispatchEvent(new Event('musicman-speaking-start'))
+      audio.play().catch(() => {
+        setSpeakingCommentary(false)
+        window.dispatchEvent(new Event('musicman-speaking-end'))
+      })
     } else {
       setSpeakingCommentary(false)
     }

@@ -326,13 +326,18 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           setDjText(result.intro)
           const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
           djAudioRef.current = audio
+          await fadeVolumeOut()
           await new Promise<void>((resolve) => {
             audio.onended = () => {
               djAudioRef.current = null
+              fadeVolumeIn()
+              isFadedRef.current = false
               resolve()
             }
             audio.onerror = () => {
               djAudioRef.current = null
+              fadeVolumeIn()
+              isFadedRef.current = false
               resolve()
             }
             audio.play()
