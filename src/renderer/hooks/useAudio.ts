@@ -25,7 +25,11 @@ let sharedHowl: Howl | null = null
 let sharedRaf = 0
 let isPaused = false
 let autoDjMode = false
-export function setAutoDjMode(on: boolean) { autoDjMode = on }
+export function setAutoDjMode(on: boolean) {
+  console.log('[Audio] autoDjMode:', on)
+  autoDjMode = on
+}
+export function getAutoDjMode() { return autoDjMode }
 
 
 export function useAudio() {
@@ -96,9 +100,16 @@ export function useAudio() {
           nextIdx = s.queueIndex + 1
           if (nextIdx >= s.queue.length) {
             if (autoDjMode) {
-              // Signal DJ mode to fetch a new set
+              // Check if DJ mode is actually active and listening
+              let handled = false
+              const ackHandler = () => { handled = true }
+              window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
               window.dispatchEvent(new Event('musicman-dj-set-ended'))
-              return
+              window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
+              if (handled) return
+              // Nobody handled it — force off
+              console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
+              autoDjMode = false
             }
             if (s.repeat === 'all') nextIdx = 0
             else {
@@ -110,10 +121,18 @@ export function useAudio() {
         const nextTrack = s.queue[nextIdx]
         if (!nextTrack) return
         if (autoDjMode) {
+          // Check if a DJ transition handler is actually listening
+          let handled = false
+          const ackHandler = () => { handled = true }
+          window.addEventListener('musicman-dj-transition-ack', ackHandler, { once: true })
           window.dispatchEvent(new CustomEvent('musicman-dj-transition', {
             detail: { prevTrack: track, nextTrack, nextIdx, queue: s.queue }
           }))
-          return
+          window.removeEventListener('musicman-dj-transition-ack', ackHandler)
+          if (handled) return
+          // Nobody handled it — autoDjMode is stale, force it off and play normally
+          console.warn('[Audio] DJ transition not handled, forcing autoDjMode off')
+          autoDjMode = false
         }
         dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
         loadAndPlay(nextTrack, s.queue, nextIdx)

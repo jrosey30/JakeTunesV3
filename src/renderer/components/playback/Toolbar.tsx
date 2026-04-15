@@ -236,6 +236,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (!autoDj) return
 
     const handler = async (e: Event) => {
+      // Acknowledge so useAudio knows we're handling this
+      window.dispatchEvent(new Event('musicman-dj-transition-ack'))
       const { prevTrack, nextTrack, nextIdx, queue } = (e as CustomEvent).detail
       setDjActive(true)
       setDjLoading(true)
@@ -484,6 +486,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (!djModeActive || !autoDj) return
 
     const handler = () => {
+      // Acknowledge so useAudio knows we're handling this
+      window.dispatchEvent(new Event('musicman-dj-set-ended-ack'))
       // The STOP action fires when queue ends — fetch a new set
       if (djModeActive) {
         startDjSet()
