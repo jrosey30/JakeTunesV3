@@ -232,7 +232,8 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
   }
 ]
 
-async function searchWeb(query: string): Promise<string> {
+// Search Wikipedia for artist info
+async function searchWikipedia(query: string): Promise<string> {
   try {
     const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=2&origin=*`
     const res = await fetch(url)
@@ -248,6 +249,73 @@ async function searchWeb(query: string): Promise<string> {
   } catch {
     return ''
   }
+}
+
+// Search MusicBrainz for accurate music data (genre, country, years active, releases)
+async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
+  try {
+    const headers = { 'User-Agent': 'JakeTunes/3.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    // Search for artist
+    const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
+    const artistRes = await fetch(artistUrl, { headers })
+    if (!artistRes.ok) return ''
+    const artistData = await artistRes.json() as { artists?: { name: string; type: string; country: string; 'life-span'?: { begin?: string; ended?: boolean }; tags?: { name: string; count: number }[]; disambiguation?: string; area?: { name: string } }[] }
+    const artists = artistData.artists || []
+    if (artists.length === 0) return ''
+
+    // Verify the result actually matches the artist we searched for
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const best = artists.find(a => {
+      const nameNorm = normalize(a.name)
+      const queryNorm = normalize(artist)
+      return nameNorm === queryNorm || nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm)
+    })
+    if (!best) return ''
+
+    const parts: string[] = []
+    parts.push(`${best.name}${best.disambiguation ? ` (${best.disambiguation})` : ''}`)
+    if (best.type) parts.push(`Type: ${best.type}`)
+    if (best.country || best.area?.name) parts.push(`From: ${best.area?.name || best.country}`)
+    if (best['life-span']?.begin) parts.push(`Active since: ${best['life-span'].begin}${best['life-span'].ended ? ' (disbanded)' : ''}`)
+    if (best.tags?.length) {
+      const topTags = best.tags.sort((a, b) => b.count - a.count).slice(0, 5).map(t => t.name)
+      parts.push(`Genres/tags: ${topTags.join(', ')}`)
+    }
+
+    // If album provided, search for release info
+    if (album) {
+      try {
+        const releaseUrl = `https://musicbrainz.org/ws/2/release/?query=release:"${encodeURIComponent(album)}" AND artist:"${encodeURIComponent(artist)}"&fmt=json&limit=1`
+        const releaseRes = await fetch(releaseUrl, { headers })
+        if (releaseRes.ok) {
+          const releaseData = await releaseRes.json() as { releases?: { title: string; date?: string; 'label-info'?: { label?: { name: string } }[] }[] }
+          const release = releaseData.releases?.[0]
+          if (release) {
+            if (release.date) parts.push(`"${release.title}" released: ${release.date}`)
+            const label = release['label-info']?.[0]?.label?.name
+            if (label) parts.push(`Label: ${label}`)
+          }
+        }
+      } catch { /* ignore release lookup errors */ }
+    }
+
+    return parts.join('. ')
+  } catch {
+    return ''
+  }
+}
+
+// Combined multi-source search for artist info
+async function searchWeb(query: string, album?: string): Promise<string> {
+  const artist = query.replace(/\s*(musician|band|artist|music)\s*/gi, '').trim()
+  const [wiki, mb] = await Promise.all([
+    searchWikipedia(query),
+    searchMusicBrainz(artist, album),
+  ])
+  const parts = []
+  if (mb) parts.push(`[MusicBrainz] ${mb}`)
+  if (wiki) parts.push(`[Wikipedia] ${wiki}`)
+  return parts.join('\n')
 }
 
 // ── Check if iPod is mounted ──
@@ -649,12 +717,14 @@ IMPORTANT: Your opinions are CONSISTENT. You never flip-flop on an artist. Your 
 
 IMPORTANT: Never use acronyms or abbreviations for band names. Say the full name or a natural nickname that fans actually use. For example: say "the Chili Peppers" or "the Peppers" not "RHCP". Say "Queens of the Stone Age" or "Queens" not "QOTSA". Say "Rage Against the Machine" or "Rage" not "RATM". Only use an abbreviation if the band themselves made it part of their identity (like "MGMT" or "AC/DC").
 
+CRITICAL: When background info is provided below from MusicBrainz or Wikipedia, USE IT for accurate facts — where the band is from, their genre, their label. Do NOT guess or make up facts about lesser-known artists. If you have no background info on an artist and aren't confident you know them, say something genuine rather than fabricating details. If the background info looks wrong or is about a different artist, just IGNORE it silently — never mention the data source or complain about it. Just talk about the music.
+
 ${libraryContext ? `Library context: ${libraryContext}` : ''}`
 
-  // Look up artist facts for accuracy
+  // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
   const [artistFacts, nextArtistFacts] = await Promise.all([
-    searchWeb(`${track.artist} musician`),
-    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`) : Promise.resolve('')
+    searchWeb(`${track.artist} musician`, track.album),
+    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve('')
   ])
 
   let userMessage = nextTrack
