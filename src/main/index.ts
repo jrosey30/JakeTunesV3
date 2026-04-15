@@ -1438,6 +1438,40 @@ ipcMain.handle('open-sound-settings', async () => {
   exec('open "x-apple.systempreferences:com.apple.Sound-Settings.extension?output"')
 })
 
+ipcMain.handle('list-audio-devices', async () => {
+  const helperPath = join(
+    app.isPackaged ? process.resourcesPath : app.getAppPath(),
+    'core/audio_helper'
+  )
+  try {
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const execP = promisify(execFile)
+    const { stdout } = await execP(helperPath, ['list'], { timeout: 5000 })
+    return { ok: true, devices: JSON.parse(stdout) }
+  } catch (err) {
+    console.error('[AudioHelper] list failed:', err)
+    return { ok: false, devices: [], error: String(err) }
+  }
+})
+
+ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
+  const helperPath = join(
+    app.isPackaged ? process.resourcesPath : app.getAppPath(),
+    'core/audio_helper'
+  )
+  try {
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const execP = promisify(execFile)
+    const { stdout } = await execP(helperPath, ['set', String(deviceId)], { timeout: 5000 })
+    return JSON.parse(stdout)
+  } catch (err) {
+    console.error('[AudioHelper] set failed:', err)
+    return { ok: false, error: String(err) }
+  }
+})
+
 app.whenReady().then(() => {
   // Serve album artwork images
   protocol.handle('album-art', async (request) => {

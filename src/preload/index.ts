@@ -78,6 +78,10 @@ const electronAPI = {
     ipcRenderer.invoke('eject-cd'),
   openSoundSettings: (): Promise<void> =>
     ipcRenderer.invoke('open-sound-settings'),
+  listAudioDevices: (): Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }> =>
+    ipcRenderer.invoke('list-audio-devices'),
+  setAudioDevice: (deviceId: number): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('set-audio-device', deviceId),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

@@ -89,6 +89,8 @@ declare global {
       onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
+      listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
+      setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
     }
   }
 }

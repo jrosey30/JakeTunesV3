@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
-import { useAudio, setAutoDjMode, getAudioSinkId, setAudioSinkId } from '../../hooks/useAudio'
+import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
@@ -284,19 +284,22 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   }, [autoDj, playTrack])
 
   // ── AirPlay / Audio Output ──
+  interface AudioDevice { id: number; name: string; transport: string; isDefault: boolean }
   const [airplayOpen, setAirplayOpen] = useState(false)
-  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
-  const [activeSinkId, setActiveSinkId] = useState('')
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([])
+  const [defaultDeviceId, setDefaultDeviceId] = useState<number | null>(null)
   const airplayRef = useRef<HTMLDivElement>(null)
 
   const refreshDevices = useCallback(async () => {
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const outputs = devices.filter(d => d.kind === 'audiooutput' && d.deviceId !== '')
-      setAudioDevices(outputs)
-      setActiveSinkId(getAudioSinkId())
+      const result = await window.electronAPI.listAudioDevices()
+      if (result.ok) {
+        setAudioDevices(result.devices)
+        const def = result.devices.find(d => d.isDefault)
+        setDefaultDeviceId(def ? def.id : null)
+      }
     } catch (e) {
-      console.warn('[AirPlay] enumerateDevices failed:', e)
+      console.warn('[AirPlay] listAudioDevices failed:', e)
     }
   }, [])
 
@@ -309,9 +312,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
   }, [airplayOpen, refreshDevices])
 
-  const handleSelectDevice = useCallback((deviceId: string) => {
-    setAudioSinkId(deviceId)
-    setActiveSinkId(deviceId)
+  const handleSelectDevice = useCallback(async (deviceId: number) => {
+    const result = await window.electronAPI.setAudioDevice(deviceId)
+    if (result.ok) {
+      setDefaultDeviceId(deviceId)
+    }
     setAirplayOpen(false)
   }, [])
 
@@ -327,12 +332,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     return () => document.removeEventListener('mousedown', handler)
   }, [airplayOpen])
 
-  // Listen for device changes (e.g. AirPlay device connects/disconnects)
-  useEffect(() => {
-    const handler = () => { if (airplayOpen) refreshDevices() }
-    navigator.mediaDevices.addEventListener('devicechange', handler)
-    return () => navigator.mediaDevices.removeEventListener('devicechange', handler)
-  }, [airplayOpen, refreshDevices])
+  // Check if a non-builtin device is active (for icon highlight)
+  const isExternalOutput = audioDevices.length > 0 && defaultDeviceId != null &&
+    audioDevices.find(d => d.id === defaultDeviceId)?.transport !== 'builtin'
 
   // ── DJ Mode (Spotify-style AI DJ) ──
   const [djModeActive, setDjModeActive] = useState(false)
@@ -477,46 +479,36 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       <VolumeSlider />
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
-          className={`transport-toggle airplay-btn ${activeSinkId ? 'airplay-btn--active' : ''}`}
+          className={`transport-toggle airplay-btn ${isExternalOutput ? 'airplay-btn--active' : ''}`}
           onClick={handleAirplayClick}
           title="Audio Output (AirPlay)"
         >
-          <AirPlayIcon active={!!activeSinkId} />
+          <AirPlayIcon active={isExternalOutput} />
         </button>
         {airplayOpen && (
           <div className="airplay-menu">
             <div className="airplay-menu-header">Audio Output</div>
-            <div
-              className={`airplay-menu-item ${!activeSinkId ? 'airplay-menu-item--active' : ''}`}
-              onClick={() => handleSelectDevice('')}
-            >
-              <span className="airplay-check">{!activeSinkId ? '\u2713' : ''}</span>
-              <span className="airplay-device-icon">
+            {audioDevices.map(d => {
+              const icon = d.transport === 'airplay' ? (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><rect x="1" y="1" width="10" height="7" rx="0.5"/><polygon points="6,7 3,11 9,11" fill="currentColor"/></svg>
+              ) : d.transport === 'bluetooth' ? (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M3 3l6 3-6 3M6 0v12M9 3L6 0v5"/><path d="M9 9L6 12V7"/></svg>
+              ) : d.transport === 'builtin' ? (
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 3a1 1 0 011-1h8a1 1 0 011 1v5a1 1 0 01-1 1H7l-1 2-1-2H2a1 1 0 01-1-1V3z"/></svg>
-              </span>
-              System Default
-            </div>
-            {audioDevices.filter(d => d.deviceId !== 'default').map(d => {
-              const label = d.label || d.deviceId
-              const isAirplay = /airplay|homepod|apple\s*tv/i.test(label)
-              const isBluetooth = /bluetooth|bt|airpods|beats|bose|sony|jabra|jbl/i.test(label)
+              ) : d.transport === 'usb' || d.transport === 'hdmi' ? (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 5v2h2l3 3V2L3 5H1z"/><path d="M8.5 3.5a3.5 3.5 0 010 5" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg>
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" opacity="0.5"><path d="M1 5v2h2l3 3V2L3 5H1z"/></svg>
+              )
               return (
                 <div
-                  key={d.deviceId}
-                  className={`airplay-menu-item ${activeSinkId === d.deviceId ? 'airplay-menu-item--active' : ''}`}
-                  onClick={() => handleSelectDevice(d.deviceId)}
+                  key={d.id}
+                  className={`airplay-menu-item ${d.id === defaultDeviceId ? 'airplay-menu-item--active' : ''}`}
+                  onClick={() => handleSelectDevice(d.id)}
                 >
-                  <span className="airplay-check">{activeSinkId === d.deviceId ? '\u2713' : ''}</span>
-                  <span className="airplay-device-icon">
-                    {isAirplay ? (
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><rect x="1" y="1" width="10" height="7" rx="0.5"/><polygon points="6,7 3,11 9,11" fill="currentColor"/></svg>
-                    ) : isBluetooth ? (
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M3 3l6 3-6 3M6 0v12M9 3L6 0v5"/><path d="M9 9L6 12V7"/></svg>
-                    ) : (
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1 5v2h2l3 3V2L3 5H1z"/><path d="M8.5 3.5a3.5 3.5 0 010 5" fill="none" stroke="currentColor" strokeWidth="1.2"/></svg>
-                    )}
-                  </span>
-                  {label}
+                  <span className="airplay-check">{d.id === defaultDeviceId ? '\u2713' : ''}</span>
+                  <span className="airplay-device-icon">{icon}</span>
+                  {d.name}
                 </div>
               )
             })}
@@ -525,7 +517,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
               className="airplay-menu-item airplay-menu-item--settings"
               onClick={() => {
                 setAirplayOpen(false)
-                window.electronAPI?.openSoundSettings?.()
+                window.electronAPI.openSoundSettings()
               }}
             >
               <span className="airplay-check" />
