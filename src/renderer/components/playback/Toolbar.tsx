@@ -136,6 +136,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // Cancel DJ when user manually plays a track
   useEffect(() => {
     const handler = () => {
+      djCancelledRef.current = true
+      setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
         djAudioRef.current.pause()
         djAudioRef.current = null
@@ -145,6 +147,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjActive(false)
       setDjLoading(false)
       setDjText('')
+      setDjModeActive(false)
+      setDjModeTheme('')
     }
     window.addEventListener('musicman-dj-cancel', handler)
     return () => window.removeEventListener('musicman-dj-cancel', handler)
@@ -155,9 +159,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setAutoDjMode(autoDj)
   }, [autoDj])
 
-  // Click mic: if actively speaking/loading, stop. Otherwise fire one-shot.
+  // Click mic: one-shot DJ comment on current track. Click again to stop.
   const handleDjClick = useCallback(async () => {
-    if (djActive) {
+    // If actively speaking or autoDj is lingering from a previous mic click, stop everything
+    if (djActive || autoDj) {
       if (djAudioRef.current) {
         djAudioRef.current.pause()
         djAudioRef.current = null
@@ -171,7 +176,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
 
     if (!pb.nowPlaying) return
-    setAutoDj(true)
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
@@ -196,6 +200,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             fadeVolumeIn()
             djAudioRef.current = null
             setDjActive(false)
+            setAutoDj(false)
             setTimeout(() => {
               setDjExiting(true)
               setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
@@ -206,6 +211,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             setVolume(savedVolumeRef.current)
             djAudioRef.current = null
             setDjActive(false)
+            setAutoDj(false)
             setDjText('')
           }
           await fadeVolumeOut()
@@ -223,7 +229,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
-  }, [djActive, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
+  }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
 
   // Auto-DJ: listen for track transitions
   useEffect(() => {
@@ -341,6 +347,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djModeLoading, setDjModeLoading] = useState(false)
   const [djModeTheme, setDjModeTheme] = useState('')
   const djRecentIds = useRef<number[]>([])
+  const djCancelledRef = useRef(false)
 
   const startDjSet = useCallback(async () => {
     setDjModeLoading(true)
@@ -355,6 +362,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         genre: t.genre, year: t.year,
       }))
       const result = await window.electronAPI.musicmanDjSet(compact, djRecentIds.current)
+
+      // Bail out if DJ was cancelled while we were waiting for API
+      if (djCancelledRef.current) return
+
       if (!result.ok || !result.trackIds || result.trackIds.length === 0) {
         console.error('[DJ Mode] Failed to get set:', result.error)
         setDjModeActive(false)
@@ -386,6 +397,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Speak the intro
       if (result.intro) {
         const tts = await window.electronAPI.musicmanSpeak(result.intro, false)
+
+        // Bail out if cancelled during TTS
+        if (djCancelledRef.current) return
+
         setDjLoading(false)
         if (tts.ok && tts.audio) {
           setDjText(result.intro)
@@ -415,6 +430,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         setDjLoading(false)
       }
 
+      // Bail out if cancelled during intro playback
+      if (djCancelledRef.current) return
+
       // Start playing the DJ set with auto-DJ transitions enabled
       setAutoDj(true)
       setDjActive(false)
@@ -439,10 +457,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
   const handleDjModeClick = useCallback(() => {
     if (djModeActive) {
-      // Stop DJ mode
+      // Stop DJ mode — kill everything immediately
+      djCancelledRef.current = true
       setDjModeActive(false)
       setDjModeTheme('')
       setAutoDj(false)
+      setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
         djAudioRef.current.pause()
         djAudioRef.current = null
@@ -454,6 +474,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
 
     // Start DJ mode
+    djCancelledRef.current = false
     setDjModeActive(true)
     startDjSet()
   }, [djModeActive, startDjSet])
