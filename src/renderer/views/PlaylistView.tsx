@@ -110,17 +110,15 @@ export default function PlaylistView() {
     ? playlist.trackIds.map(id => trackMap.get(id)).filter((t): t is Track => t !== undefined)
     : []
 
-  // Apply search filter
+  // Apply search filter — every word must appear somewhere across all fields
   const tracks = state.searchQuery
-    ? allPlaylistTracks.filter(t => {
-        const q = state.searchQuery.toLowerCase()
-        return (
-          t.title?.toLowerCase().includes(q) ||
-          t.artist?.toLowerCase().includes(q) ||
-          t.album?.toLowerCase().includes(q) ||
-          t.genre?.toLowerCase().includes(q)
-        )
-      })
+    ? (() => {
+        const words = state.searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 0)
+        return allPlaylistTracks.filter(t => {
+          const haystack = `${t.title || ''} ${t.artist || ''} ${t.album || ''} ${t.genre || ''} ${t.year || ''}`.toLowerCase()
+          return words.every(w => haystack.includes(w))
+        })
+      })()
     : allPlaylistTracks
 
   // Apply local sort AFTER search filter

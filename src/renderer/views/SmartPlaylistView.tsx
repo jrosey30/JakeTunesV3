@@ -164,16 +164,14 @@ export default function SmartPlaylistView() {
     }
   }, [playlistId, libState.tracks, pbState.recentlyPlayed, picks])
 
-  // Apply search filter
+  // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
     if (!libState.searchQuery) return smartTracks
-    const q = libState.searchQuery.toLowerCase()
-    return smartTracks.filter(t =>
-      t.title?.toLowerCase().includes(q) ||
-      t.artist?.toLowerCase().includes(q) ||
-      t.album?.toLowerCase().includes(q) ||
-      t.genre?.toLowerCase().includes(q)
-    )
+    const words = libState.searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 0)
+    return smartTracks.filter(t => {
+      const haystack = `${t.title || ''} ${t.artist || ''} ${t.album || ''} ${t.genre || ''} ${t.year || ''}`.toLowerCase()
+      return words.every(w => haystack.includes(w))
+    })
   }, [smartTracks, libState.searchQuery])
 
   // --- Column visibility ---
