@@ -60,6 +60,10 @@
       {
         "from": "core",
         "to": "core"
+      },
+      {
+        "from": ".env",
+        "to": ".env"
       }
     ],
     "asar": true

@@ -178,6 +178,7 @@
   color: #222;
   user-select: text;
   -webkit-user-select: text;
+  cursor: text;
 }
 
 .getinfo-input:focus {

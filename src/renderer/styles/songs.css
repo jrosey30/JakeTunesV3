@@ -2,23 +2,6 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  user-select: none !important;
-  -webkit-user-select: none !important;
-}
-
-.songs-view * {
-  user-select: none !important;
-  -webkit-user-select: none !important;
-}
-
-.songs-view ::selection {
-  background: transparent !important;
-  color: inherit !important;
-}
-
-.songs-view *::selection {
-  background: transparent !important;
-  color: inherit !important;
 }
 
 .songs-header {
@@ -44,6 +27,8 @@
   gap: 3px;
   position: relative;
   min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .songs-header-cell:hover { background: rgba(0,0,0,0.04); }
@@ -80,6 +65,7 @@
   cursor: default;
   border-bottom: 1px solid transparent;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .songs-row--alt {
@@ -136,10 +122,11 @@
 }
 
 .star-rating-star {
-  font-size: 11px;
   color: #ccc;
   cursor: pointer;
   padding: 0 0.5px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .star-rating-star:hover,

@@ -20,21 +20,25 @@ export default function TransportControls() {
 
   return (
     <div className="transport-controls">
-      <button className="transport-btn" onClick={prevTrack} title="Previous">
-        <PrevIcon size={18} />
-      </button>
-      <button className="transport-btn transport-btn--play" onClick={togglePlayPause} title={state.isPlaying ? 'Pause' : 'Play'}>
-        {state.isPlaying ? <PauseIcon size={22} /> : <PlayIcon size={22} />}
-      </button>
-      <button className="transport-btn" onClick={nextTrack} title="Next">
-        <NextIcon size={18} />
-      </button>
-      <button className={`transport-toggle ${state.repeat !== 'off' ? 'transport-toggle--active' : ''}`} onClick={cycleRepeat} title={`Repeat: ${state.repeat}`}>
-        <RepeatIcon active={state.repeat !== 'off'} one={state.repeat === 'one'} />
-      </button>
-      <button className={`transport-toggle ${state.shuffle ? 'transport-toggle--active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_SHUFFLE' })} title="Shuffle">
-        <ShuffleIcon active={state.shuffle} />
-      </button>
+      <div className="transport-main">
+        <button className="transport-btn" onClick={prevTrack} title="Previous">
+          <PrevIcon size={18} />
+        </button>
+        <button className="transport-btn transport-btn--play" onClick={togglePlayPause} title={state.isPlaying ? 'Pause' : 'Play'}>
+          {state.isPlaying ? <PauseIcon size={22} /> : <PlayIcon size={22} />}
+        </button>
+        <button className="transport-btn" onClick={nextTrack} title="Next">
+          <NextIcon size={18} />
+        </button>
+      </div>
+      <div className="transport-modes">
+        <button className={`transport-toggle ${state.repeat !== 'off' ? 'transport-toggle--active' : ''}`} onClick={cycleRepeat} title={`Repeat: ${state.repeat}`}>
+          <RepeatIcon active={state.repeat !== 'off'} one={state.repeat === 'one'} />
+        </button>
+        <button className={`transport-toggle ${state.shuffle ? 'transport-toggle--active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_SHUFFLE' })} title="Shuffle">
+          <ShuffleIcon active={state.shuffle} />
+        </button>
+      </div>
     </div>
   )
 }

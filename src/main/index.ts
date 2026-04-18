@@ -20,7 +20,21 @@ for (const p of envPaths) {
   config({ path: p, override: false })
 }
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+// Fallback: read API keys directly from userData .env if dotenv missed them
+if (!process.env.ANTHROPIC_API_KEY || !process.env.DISCOGS_API_TOKEN || !process.env.ELEVENLABS_API_KEY) {
+  try {
+    const fs = require('fs')
+    const envFile = fs.readFileSync(join(app.getPath('userData'), '.env'), 'utf8')
+    for (const key of ['ANTHROPIC_API_KEY', 'ELEVENLABS_API_KEY', 'DISCOGS_API_TOKEN']) {
+      if (!process.env[key]) {
+        const match = envFile.match(new RegExp(`${key}=(.+)`))
+        if (match) process.env[key] = match[1].trim()
+      }
+    }
+  } catch { /* no .env file */ }
+}
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' })
 
 let mainWindow: BrowserWindow | null = null
 
@@ -318,14 +332,30 @@ async function searchWeb(query: string, album?: string): Promise<string> {
   return parts.join('\n')
 }
 
-// ── Check if iPod is mounted ──
-const IPOD_VOLUME_NAME = 'JACOBROSENB'
+// ── Auto-detect iPod by scanning /Volumes/ for iPod_Control ──
+let detectedIpodVolume: string | null = null
+
+async function findIpodVolume(): Promise<string | null> {
+  try {
+    const { readdir: readdirFS } = await import('fs/promises')
+    const volumes = await readdirFS('/Volumes')
+    for (const vol of volumes) {
+      try {
+        await stat(`/Volumes/${vol}/iPod_Control/iTunes/iTunesDB`)
+        return vol
+      } catch { /* not an iPod */ }
+    }
+  } catch { /* /Volumes not readable */ }
+  return null
+}
 
 ipcMain.handle('check-ipod-mounted', async () => {
   try {
-    const { access } = await import('fs/promises')
-    await access(`/Volumes/${IPOD_VOLUME_NAME}`)
-    return { mounted: true, name: IPOD_VOLUME_NAME }
+    detectedIpodVolume = await findIpodVolume()
+    if (detectedIpodVolume) {
+      return { mounted: true, name: detectedIpodVolume }
+    }
+    return { mounted: false, name: null }
   } catch {
     return { mounted: false, name: null }
   }
@@ -333,10 +363,12 @@ ipcMain.handle('check-ipod-mounted', async () => {
 
 ipcMain.handle('eject-ipod', async () => {
   try {
+    if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
     const { execFile } = await import('child_process')
     const { promisify } = await import('util')
     const execP = promisify(execFile)
-    await execP('diskutil', ['eject', `/Volumes/${IPOD_VOLUME_NAME}`])
+    await execP('diskutil', ['eject', `/Volumes/${detectedIpodVolume}`])
+    detectedIpodVolume = null
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err) }
@@ -345,9 +377,18 @@ ipcMain.handle('eject-ipod', async () => {
 
 // Read directly from iPod database (used for sync only)
 function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknown>>; playlists: Array<{ name: string; trackIds: number[] }> }> {
+  if (!detectedIpodVolume) return Promise.reject(new Error('No iPod detected'))
+  const ipodDbPath = `/Volumes/${detectedIpodVolume}/iPod_Control/iTunes/iTunesDB`
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return new Promise((resolve, reject) => {
-    const py = spawn('python3', [scriptPath, '--json'])
+    const py = spawn('python3', [scriptPath, '--json', ipodDbPath])
+    py.on('error', (err: Error) => {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        reject(new Error('Python 3 is not installed. Install it from python.org or run: xcode-select --install'))
+      } else {
+        reject(err)
+      }
+    })
     let stdout = ''
     let stderr = ''
     py.stdout.on('data', (data: Buffer) => { stdout += data.toString() })
@@ -363,11 +404,14 @@ function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknown>>; p
         }
       }
     })
-    py.on('error', (err: Error) => reject(err))
   })
 }
 
 const LIBRARY_PATH = join(app.getPath('userData'), 'library.json')
+
+ipcMain.handle('get-music-library-path', () => {
+  return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
+})
 
 // Load the JakeTunes master library (independent of iPod)
 ipcMain.handle('load-tracks', async () => {
@@ -416,8 +460,9 @@ ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
 
 // ── Sync library TO iPod ──
 ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
-  const IPOD_MOUNT = `/Volumes/${IPOD_VOLUME_NAME}`
-  const LOCAL_MOUNT = join(process.env.HOME || '', 'Music2/JakeTunesLibrary')
+  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected', copied: 0 }
+  const IPOD_MOUNT = `/Volumes/${detectedIpodVolume}`
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
 
   // Check iPod is mounted
   try {
@@ -464,6 +509,13 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   return new Promise((resolve) => {
     const input = JSON.stringify({ tracks, playlists })
     const py = spawn('python3', [scriptPath, '--write', ipodDb])
+    py.on('error', (err: Error) => {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        resolve({ ok: false, error: 'Python 3 is not installed. Install it from python.org or run: xcode-select --install', copied, copyErrors })
+      } else {
+        resolve({ ok: false, error: String(err), copied, copyErrors })
+      }
+    })
     py.stdin.write(input)
     py.stdin.end()
 
@@ -487,10 +539,11 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
 })
 
 // ── Import tracks from dropped files ──
-const MUSIC_DIR = join(
-  process.env.HOME || '',
-  'Music2/JakeTunesLibrary/iPod_Control/Music'
-)
+// Music library storage — check ~/Music2/JakeTunesLibrary (legacy) then ~/Music/JakeTunesLibrary
+import { existsSync } from 'fs'
+const LEGACY_MUSIC_DIR = join(process.env.HOME || '', 'Music2/JakeTunesLibrary/iPod_Control/Music')
+const DEFAULT_MUSIC_DIR = join(app.getPath('music'), 'JakeTunesLibrary/iPod_Control/Music')
+const MUSIC_DIR = existsSync(LEGACY_MUSIC_DIR) ? LEGACY_MUSIC_DIR : DEFAULT_MUSIC_DIR
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
 
@@ -719,7 +772,8 @@ IMPORTANT: Never use acronyms or abbreviations for band names. Say the full name
 
 CRITICAL: When background info is provided below from MusicBrainz or Wikipedia, USE IT for accurate facts — where the band is from, their genre, their label. Do NOT guess or make up facts about lesser-known artists. If you have no background info on an artist and aren't confident you know them, say something genuine rather than fabricating details. If the background info looks wrong or is about a different artist, just IGNORE it silently — never mention the data source or complain about it. Just talk about the music.
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}`
+${libraryContext ? `Library context: ${libraryContext}` : ''}
+${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
 
   // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
   const [artistFacts, nextArtistFacts] = await Promise.all([
@@ -789,6 +843,249 @@ ${libraryContext ? `Library context: ${libraryContext}` : ''}${recentStr}`
     return { ok: false, error: msg }
   }
 })
+
+// ── Discogs Collection — Music Man knows your vinyl/CD collection ──
+const DISCOGS_CACHE_PATH = join(app.getPath('userData'), 'discogs-collection.json')
+let discogsCollection = ''
+
+async function fetchDiscogsCollection() {
+  const token = process.env.DISCOGS_API_TOKEN
+  if (!token) return
+
+  // Use cache if less than 24 hours old
+  try {
+    const cached = JSON.parse(await readFile(DISCOGS_CACHE_PATH, 'utf-8'))
+    if (cached.ts && Date.now() - cached.ts < 24 * 60 * 60 * 1000) {
+      discogsCollection = cached.summary
+      console.log(`Discogs: loaded ${cached.count} releases from cache`)
+      return
+    }
+  } catch { /* no cache */ }
+
+  try {
+    // First get the username
+    const identityRes = await fetch('https://api.discogs.com/oauth/identity', {
+      headers: { 'Authorization': `Discogs token=${token}`, 'User-Agent': 'JakeTunes/3.0' }
+    })
+    if (!identityRes.ok) { console.error('Discogs identity failed:', identityRes.status); return }
+    const identity = await identityRes.json() as { username: string }
+    const username = identity.username
+
+    // Fetch collection (folder 0 = all) — paginate up to 500 releases
+    const releases: { artist: string; title: string; year: number; formats: string[] }[] = []
+    let page = 1
+    while (releases.length < 500) {
+      const url = `https://api.discogs.com/users/${username}/collection/folders/0/releases?page=${page}&per_page=100&sort=added&sort_order=desc`
+      const res = await fetch(url, {
+        headers: { 'Authorization': `Discogs token=${token}`, 'User-Agent': 'JakeTunes/3.0' }
+      })
+      if (!res.ok) break
+      const data = await res.json() as { releases: { basic_information: { artists: { name: string }[]; title: string; year: number; formats: { name: string }[] } }[]; pagination: { pages: number } }
+      for (const r of data.releases) {
+        const bi = r.basic_information
+        releases.push({
+          artist: bi.artists?.map((a: { name: string }) => a.name).join(', ') || 'Unknown',
+          title: bi.title,
+          year: bi.year,
+          formats: bi.formats?.map((f: { name: string }) => f.name) || []
+        })
+      }
+      if (page >= data.pagination.pages) break
+      page++
+    }
+
+    if (releases.length === 0) return
+
+    // Build summary for Music Man
+    const formatCounts: Record<string, number> = {}
+    const artistCounts: Record<string, number> = {}
+    for (const r of releases) {
+      for (const f of r.formats) formatCounts[f] = (formatCounts[f] || 0) + 1
+      artistCounts[r.artist] = (artistCounts[r.artist] || 0) + 1
+    }
+    const topCollected = Object.entries(artistCounts).sort((a, b) => b[1] - a[1]).slice(0, 30)
+    const formatStr = Object.entries(formatCounts).sort((a, b) => b[1] - a[1]).map(([f, n]) => `${n} ${f}s`).join(', ')
+    const recentAdds = releases.slice(0, 15).map(r => `${r.artist} — ${r.title} (${r.year})`).join(', ')
+    const collectedArtists = topCollected.map(([a, n]) => `${a} (${n})`).join(', ')
+
+    discogsCollection = `Discogs collection: ${releases.length} releases (${formatStr}). Most collected artists: ${collectedArtists}. Recently added: ${recentAdds}`
+
+    // Cache it
+    await writeFile(DISCOGS_CACHE_PATH, JSON.stringify({ ts: Date.now(), count: releases.length, summary: discogsCollection }))
+    console.log(`Discogs: fetched ${releases.length} releases for ${username}`)
+  } catch (err) {
+    console.error('Discogs fetch error:', err)
+  }
+}
+
+// ── Listener Profile — Music Man learns your taste over time ──
+const PROFILE_PATH = join(app.getPath('userData'), 'listener-profile.json')
+
+interface ListenerProfile {
+  totalPlays: number
+  totalSkips: number
+  firstSeen: string
+  artistPlays: Record<string, number>
+  artistSkips: Record<string, number>
+  albumPlays: Record<string, number>
+  genrePlays: Record<string, number>
+  recentPlays: { title: string; artist: string; album: string; genre: string; ts: string }[]
+  recentSkips: { title: string; artist: string; ts: string }[]
+  topRated: { title: string; artist: string; album: string; rating: number }[]
+  observations: string[]  // Music Man's own notes about the listener
+}
+
+const defaultProfile: ListenerProfile = {
+  totalPlays: 0, totalSkips: 0, firstSeen: new Date().toISOString().split('T')[0],
+  artistPlays: {}, artistSkips: {}, albumPlays: {}, genrePlays: {},
+  recentPlays: [], recentSkips: [], topRated: [], observations: []
+}
+
+let listenerProfile: ListenerProfile = { ...defaultProfile }
+
+async function loadListenerProfile(): Promise<ListenerProfile> {
+  try {
+    const raw = await readFile(PROFILE_PATH, 'utf-8')
+    listenerProfile = { ...defaultProfile, ...JSON.parse(raw) }
+  } catch {
+    listenerProfile = { ...defaultProfile }
+  }
+  return listenerProfile
+}
+
+async function saveListenerProfile() {
+  try { await writeFile(PROFILE_PATH, JSON.stringify(listenerProfile, null, 2)) } catch { /* ignore */ }
+}
+
+// Called when a song finishes playing (not skipped)
+ipcMain.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string }) => {
+  if (!listenerProfile.firstSeen) listenerProfile.firstSeen = new Date().toISOString().split('T')[0]
+  listenerProfile.totalPlays++
+  if (track.artist) listenerProfile.artistPlays[track.artist] = (listenerProfile.artistPlays[track.artist] || 0) + 1
+  if (track.album) {
+    const key = `${track.artist} — ${track.album}`
+    listenerProfile.albumPlays[key] = (listenerProfile.albumPlays[key] || 0) + 1
+  }
+  if (track.genre) listenerProfile.genrePlays[track.genre] = (listenerProfile.genrePlays[track.genre] || 0) + 1
+  listenerProfile.recentPlays.unshift({ title: track.title, artist: track.artist, album: track.album, genre: track.genre, ts: new Date().toISOString() })
+  listenerProfile.recentPlays = listenerProfile.recentPlays.slice(0, 200)
+  await saveListenerProfile()
+  // Every 20 plays, Music Man reflects on the listener's taste
+  if (listenerProfile.totalPlays % 20 === 0) {
+    generateObservation().catch(() => {})
+  }
+  return { ok: true }
+})
+
+// Called when a song is skipped (next button pressed before song finishes)
+ipcMain.handle('record-skip', async (_event, track: { title: string; artist: string }) => {
+  listenerProfile.totalSkips++
+  if (track.artist) listenerProfile.artistSkips[track.artist] = (listenerProfile.artistSkips[track.artist] || 0) + 1
+  listenerProfile.recentSkips.unshift({ title: track.title, artist: track.artist, ts: new Date().toISOString() })
+  listenerProfile.recentSkips = listenerProfile.recentSkips.slice(0, 100)
+  await saveListenerProfile()
+  return { ok: true }
+})
+
+// Called when user rates a track highly (4-5 stars)
+ipcMain.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) => {
+  if (track.rating >= 4) {
+    const existing = listenerProfile.topRated.findIndex(t => t.title === track.title && t.artist === track.artist)
+    if (existing >= 0) listenerProfile.topRated[existing].rating = track.rating
+    else listenerProfile.topRated.push({ title: track.title, artist: track.artist, album: track.album, rating: track.rating })
+    listenerProfile.topRated.sort((a, b) => b.rating - a.rating)
+    listenerProfile.topRated = listenerProfile.topRated.slice(0, 50)
+  } else {
+    listenerProfile.topRated = listenerProfile.topRated.filter(t => !(t.title === track.title && t.artist === track.artist))
+  }
+  await saveListenerProfile()
+  return { ok: true }
+})
+
+// Build a rich taste summary for Music Man prompts
+function buildTasteProfile(): string {
+  const p = listenerProfile
+  if (p.totalPlays === 0 && !discogsCollection) return ''
+
+  const lines: string[] = []
+  if (p.totalPlays > 0) {
+    lines.push(`Listener since ${p.firstSeen}. ${p.totalPlays} plays, ${p.totalSkips} skips.`)
+  }
+
+  // Top artists by plays
+  const topArtists = Object.entries(p.artistPlays).sort((a, b) => b[1] - a[1]).slice(0, 20)
+  if (topArtists.length > 0) {
+    lines.push(`Most played artists: ${topArtists.map(([a, n]) => `${a} (${n})`).join(', ')}`)
+  }
+
+  // Most skipped artists (taste signal — they have these artists but skip them)
+  const skippedArtists = Object.entries(p.artistSkips).sort((a, b) => b[1] - a[1]).slice(0, 10).filter(([, n]) => n >= 2)
+  if (skippedArtists.length > 0) {
+    lines.push(`Frequently skipped artists: ${skippedArtists.map(([a, n]) => `${a} (${n} skips)`).join(', ')}`)
+  }
+
+  // Top albums
+  const topAlbums = Object.entries(p.albumPlays).sort((a, b) => b[1] - a[1]).slice(0, 15)
+  if (topAlbums.length > 0) {
+    lines.push(`Most played albums: ${topAlbums.map(([a, n]) => `${a} (${n})`).join(', ')}`)
+  }
+
+  // Genre breakdown
+  const topGenres = Object.entries(p.genrePlays).sort((a, b) => b[1] - a[1]).slice(0, 10)
+  if (topGenres.length > 0) {
+    lines.push(`Genre breakdown: ${topGenres.map(([g, n]) => `${g} (${n})`).join(', ')}`)
+  }
+
+  // Highly rated tracks
+  if (p.topRated.length > 0) {
+    const faves = p.topRated.slice(0, 10).map(t => `"${t.title}" by ${t.artist} (${t.rating}★)`).join(', ')
+    lines.push(`Favorites (rated highly): ${faves}`)
+  }
+
+  // Recent listening (last ~10)
+  if (p.recentPlays.length > 0) {
+    const recent = p.recentPlays.slice(0, 10).map(t => `"${t.title}" by ${t.artist}`).join(', ')
+    lines.push(`Recent plays: ${recent}`)
+  }
+
+  // Music Man's own accumulated observations
+  if (p.observations.length > 0) {
+    lines.push(`Your previous observations about this listener: ${p.observations.join('; ')}`)
+  }
+
+  // Discogs vinyl/record collection — what they actually own on physical media
+  if (discogsCollection) {
+    lines.push(`\nPhysical record collection (Discogs): ${discogsCollection}`)
+    lines.push(`This tells you what they care about enough to own on vinyl/CD. Use this for deeper recommendations and conversation.`)
+  }
+
+  return lines.join('\n')
+}
+
+// Periodically generate new Music Man observations (called after every ~20 plays)
+async function generateObservation() {
+  const p = listenerProfile
+  if (p.totalPlays < 10) return // not enough data yet
+
+  const tasteCtx = buildTasteProfile()
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 200,
+      system: `You are analyzing a music listener's habits. Based on the data below, write 1-2 SHORT, specific observations about their taste that a DJ would find useful. Be concrete — don't say "they like rock", say "they keep coming back to post-punk revival bands" or "they listen to Radiohead more than anything but skip the later albums." If you've already made similar observations, note what's CHANGED or NEW. Return ONLY the observations, no preamble.`,
+      messages: [{ role: 'user', content: tasteCtx }]
+    })
+    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    if (text) {
+      // Keep only the most recent 15 observations
+      listenerProfile.observations.push(text.trim())
+      if (listenerProfile.observations.length > 15) {
+        listenerProfile.observations = listenerProfile.observations.slice(-15)
+      }
+      await saveListenerProfile()
+    }
+  } catch { /* non-critical */ }
+}
 
 // Music Man chat
 let libraryContext = ''
@@ -866,7 +1163,8 @@ Rules:
 - Be bold and opinionated about your choices
 - If the mood is vague, interpret it with confidence
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}`
+${libraryContext ? `Library context: ${libraryContext}` : ''}
+${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
 
   try {
     const response = await anthropic.messages.create({
@@ -914,7 +1212,8 @@ Rules:
 - Be bold, opinionated, and personal about why you picked these today
 - This should feel different every single day
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}`
+${libraryContext ? `Library context: ${libraryContext}` : ''}
+${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
 
   try {
     const response = await anthropic.messages.create({
@@ -1034,7 +1333,8 @@ Rules:
 - Sort issues by severity (most impactful first)
 - Return an empty array [] if there are no certain issues. That's fine.
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}`
+${libraryContext ? `Library context: ${libraryContext}` : ''}
+${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
 
   try {
     const response = await anthropic.messages.create({
@@ -1543,6 +1843,11 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
 })
 
 app.whenReady().then(() => {
+  // Load listener profile for Music Man
+  loadListenerProfile()
+  // Fetch Discogs collection for Music Man taste context
+  fetchDiscogsCollection()
+
   // Serve album artwork images
   protocol.handle('album-art', async (request) => {
     const url = request.url.replace('album-art://', '')

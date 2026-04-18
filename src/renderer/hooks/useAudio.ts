@@ -4,7 +4,9 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
 
-const IPOD_MOUNT = '/Users/jacobrosenbaum/Music2/JakeTunesLibrary'
+// Resolved at runtime from main process via IPC — set by init call
+let IPOD_MOUNT = ''
+window.electronAPI?.getMusicLibraryPath?.().then((p: string) => { IPOD_MOUNT = p }).catch(() => {})
 
 const FORMAT_MAP: Record<string, string> = {
   '.mp3': 'mp3', '.m4a': 'mp4', '.m4p': 'mp4', '.aac': 'aac',
@@ -84,6 +86,8 @@ export function useAudio() {
           updates: [{ id: track.id, field: 'playCount', value: String(newCount) }],
         })
         window.electronAPI.saveMetadataOverride(track.id, 'playCount', String(newCount))
+        // Record play for Music Man taste learning
+        window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
 
         const s = stateRef.current
         if (s.repeat === 'one') {
@@ -172,6 +176,10 @@ export function useAudio() {
   const nextTrack = useCallback(() => {
     const s = stateRef.current
     if (s.queue.length === 0) return
+    // Record skip if current song was playing and less than 80% complete
+    if (s.currentTrack && s.duration > 0 && (s.position / s.duration) < 0.8) {
+      window.electronAPI.recordSkip?.({ title: s.currentTrack.title, artist: s.currentTrack.artist })
+    }
     let nextIdx: number
     if (s.shuffle) {
       nextIdx = Math.floor(Math.random() * s.queue.length)

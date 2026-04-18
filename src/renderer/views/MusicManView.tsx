@@ -56,7 +56,7 @@ const CHAT_INTROS = [
   "I've been told I'm 'a lot.' I prefer 'thorough.' Ask me anything about music — I dare you to stump me.",
 ]
 
-const TABS = ['Ask Me Anything', 'Recommendations', 'Build a Playlist', 'Album Art', 'Organize Library', 'Fix Metadata'] as const
+const TABS = ['Ask Me Anything', 'Recommendations', 'Build a Playlist', 'Organize Library', 'Fix Metadata'] as const
 type Tab = typeof TABS[number]
 
 interface ChatMessage {
@@ -892,72 +892,6 @@ export default function MusicManView() {
                 Tell me a mood, a memory, or a moment. I'll build you something you didn't know you needed.
               </p>
             )}
-          </div>
-        )}
-
-        {activeTab === 'Album Art' && (
-          <div className="musicman-artwork">
-            <div className="musicman-artwork-header">
-              <div className="musicman-artwork-stats">
-                {uniqueAlbums.filter(a => libState.artworkMap[a.key]).length} of {uniqueAlbums.length} albums have artwork
-              </div>
-              <button
-                className="musicman-chat-send"
-                onClick={fetchAllMissing}
-                disabled={artProgress !== null || uniqueAlbums.every(a => libState.artworkMap[a.key])}
-              >
-                {artProgress
-                  ? `Fetching... ${artProgress.done}/${artProgress.total}`
-                  : 'Fetch All Missing'}
-              </button>
-            </div>
-            {artProgress && (
-              <div className="musicman-artwork-progress">
-                <div className="musicman-artwork-progress-bar" style={{ width: `${(artProgress.done / artProgress.total) * 100}%` }} />
-              </div>
-            )}
-            <div className="musicman-artwork-grid">
-              {uniqueAlbums.map(({ key, artist, album, trackCount }) => {
-                const hash = libState.artworkMap[key]
-                const fetching = artFetching.has(key)
-                return (
-                  <div key={key} className="musicman-artwork-card">
-                    <div className="musicman-artwork-img">
-                      {hash ? (
-                        <img src={`album-art://${hash}.jpg`} alt={album} />
-                      ) : (
-                        <div className="musicman-artwork-placeholder">
-                          <svg width="28" height="28" viewBox="0 0 28 28" fill="#c87828" opacity="0.3">
-                            <circle cx="14" cy="14" r="12" fill="none" stroke="#c87828" strokeWidth="1" />
-                            <circle cx="14" cy="14" r="4" fill="none" stroke="#c87828" strokeWidth="1" />
-                          </svg>
-                        </div>
-                      )}
-                      {!hash && !fetching && (
-                        <button
-                          className="musicman-artwork-fetch-btn"
-                          onClick={() => fetchSingleArt(artist, album)}
-                          title="Fetch artwork"
-                        >
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                            <path d="M8 3v10M3 8l5 5 5-5" />
-                          </svg>
-                        </button>
-                      )}
-                      {fetching && (
-                        <div className="musicman-artwork-fetching">
-                          <span className="musicman-typing">...</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="musicman-artwork-label">
-                      <div className="musicman-artwork-album">{album}</div>
-                      <div className="musicman-artwork-artist">{artist}</div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
           </div>
         )}
 

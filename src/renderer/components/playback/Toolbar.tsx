@@ -9,57 +9,48 @@ import SearchPill from './SearchPill'
 
 function QueueIcon() {
   return (
-    <svg width="28" height="26" viewBox="0 0 22 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-      <path d="M2 4h12" />
-      <path d="M2 9h12" />
-      <path d="M2 14h8" />
-      <path d="M16 10v8" />
-      <path d="M13 14h6" />
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <path d="M2 5h12" />
+      <path d="M2 10h12" />
+      <path d="M2 15h7" />
+      <path d="M15 11v6" />
+      <path d="M12 14h6" />
     </svg>
   )
 }
 
 function MicIcon() {
   return (
-    <svg width="18" height="22" viewBox="0 0 18 22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-      <rect x="5" y="1" width="8" height="12" rx="4" />
-      <path d="M2 10a7 7 0 0014 0" />
-      <path d="M9 17v4M6 21h6" />
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <rect x="7" y="2" width="6" height="9" rx="3" />
+      <path d="M4 10a6 6 0 0012 0" />
+      <path d="M10 16v3M7 19h6" />
     </svg>
   )
 }
 
 function RadioIcon() {
   return (
-    <svg width="24" height="28" viewBox="0 -1 24 29" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      {/* Tower mast */}
-      <path d="M12 6v18" strokeWidth="2" />
-      {/* Base feet */}
-      <path d="M12 24L7 26" />
-      <path d="M12 24L17 26" />
-      {/* Cross bars */}
-      <path d="M9 13h6" />
-      <path d="M10 18h4" />
-      {/* Tower taper lines */}
-      <path d="M12 8L8 24" strokeWidth="1.2" />
-      <path d="M12 8L16 24" strokeWidth="1.2" />
-      {/* Signal waves */}
-      <path d="M8.5 5a4.5 4.5 0 017 0" strokeWidth="1.4" />
-      <path d="M6 2.5a8 8 0 0112 0" strokeWidth="1.3" />
-      {/* Antenna tip */}
-      <circle cx="12" cy="5.5" r="1.2" fill="currentColor" stroke="none" />
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 5v12" strokeWidth="1.8" />
+      <path d="M10 17L6 19M10 17L14 19" />
+      <path d="M8 10h4" />
+      <path d="M9 13h2" />
+      <path d="M10 7L7 17" strokeWidth="1" />
+      <path d="M10 7L13 17" strokeWidth="1" />
+      <path d="M7 4.5a4 4 0 016 0" strokeWidth="1.3" />
+      <path d="M5 2.5a7 7 0 0110 0" strokeWidth="1.2" />
+      <circle cx="10" cy="4.2" r="1" fill="currentColor" stroke="none" />
     </svg>
   )
 }
 
 function AirPlayIcon({ active }: { active?: boolean }) {
   return (
-    <svg width="20" height="18" viewBox="0 0 20 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      {/* Screen */}
-      <path d="M2 1h16a1 1 0 011 1v10a1 1 0 01-1 1H14" />
-      <path d="M6 13H2a1 1 0 01-1-1V2a1 1 0 011-1" />
-      {/* Triangle (AirPlay symbol) */}
-      <polygon points="10,10 5,17 15,17" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 2h14a1 1 0 011 1v9a1 1 0 01-1 1h-3" />
+      <path d="M6 13H3a1 1 0 01-1-1V3a1 1 0 011-1" />
+      <polygon points="10,11 6,18 14,18" fill={active ? 'currentColor' : 'none'} strokeWidth="1.5" />
     </svg>
   )
 }
@@ -159,10 +150,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setAutoDjMode(autoDj)
   }, [autoDj])
 
+
   // Click mic: one-shot DJ comment on current track. Click again to stop.
   const handleDjClick = useCallback(async () => {
     // If actively speaking or autoDj is lingering from a previous mic click, stop everything
     if (djActive || autoDj) {
+      djCancelledRef.current = true
       if (djAudioRef.current) {
         djAudioRef.current.pause()
         djAudioRef.current = null
@@ -176,6 +169,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
 
     if (!pb.nowPlaying) return
+    djCancelledRef.current = false
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
@@ -187,9 +181,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         title: track.title || '', artist: track.artist || '',
         album: track.album || '', genre: track.genre || '', year: track.year || '',
       })
+      if (djCancelledRef.current) return
       console.log('[DJ] Claude response:', result)
       if (result.ok && result.text) {
         const tts = await window.electronAPI.musicmanSpeak(result.text, false)
+        if (djCancelledRef.current) return
         console.log('[DJ] TTS response:', tts.ok, tts.error || '')
         setDjLoading(false)
         if (tts.ok && tts.audio) {
@@ -462,6 +458,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Stop DJ mode — kill everything immediately
       djCancelledRef.current = true
       setDjModeActive(false)
+      setDjModeLoading(false)
       setDjModeTheme('')
       setAutoDj(false)
       setAutoDjMode(false) // immediately clear module-level flag
@@ -480,6 +477,13 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjModeActive(true)
     startDjSet()
   }, [djModeActive, startDjSet])
+
+  // Listen for DJ Mode toggle from sidebar button
+  useEffect(() => {
+    const handler = () => handleDjModeClick()
+    window.addEventListener('toggle-dj-mode', handler)
+    return () => window.removeEventListener('toggle-dj-mode', handler)
+  }, [handleDjModeClick])
 
   // When the DJ set queue ends and DJ mode is still active, fetch another set
   useEffect(() => {
@@ -500,7 +504,35 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   return (
     <div className="toolbar">
       <TransportControls />
-      <NowPlaying />
+      <div className="now-playing-group">
+        <NowPlaying />
+        <div className="dj-btn-wrapper">
+          <button
+            className={`transport-toggle dj-btn ${djActive && !djModeActive ? 'dj-btn--active' : ''} ${djLoading && !djModeActive ? 'dj-btn--loading' : ''}`}
+            onClick={handleDjClick}
+            onContextMenu={(e) => { e.preventDefault(); setShowBubble(s => !s) }}
+            disabled={!pb.nowPlaying}
+            title="Music Man comment (right-click: toggle bubble)"
+          >
+            <MicIcon />
+          </button>
+          {showBubble && (djLoading || djText) && (
+            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
+              {djLoading ? (
+                <>
+                  <span className="dj-bubble-label">The Music Man</span>{' '}
+                  <span className="dj-loading-dots">is listening</span>
+                </>
+              ) : (
+                <>
+                  <span className="dj-bubble-label">The Music Man:</span> {djText}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="volume-group">
       <VolumeSlider />
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
@@ -554,38 +586,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           </div>
         )}
       </div>
-      <button
-        className={`transport-toggle dj-mode-btn ${djModeActive ? 'dj-mode-btn--active' : ''} ${djModeLoading ? 'dj-btn--loading' : ''}`}
-        onClick={handleDjModeClick}
-        title={djModeActive ? `DJ Mode: ${djModeTheme || 'On'} (click to stop)` : 'Start DJ Mode'}
-      >
-        <RadioIcon />
-      </button>
-      <div className="dj-btn-wrapper">
-        <button
-          className={`transport-toggle dj-btn ${djActive && !djModeActive ? 'dj-btn--active' : ''} ${djLoading && !djModeActive ? 'dj-btn--loading' : ''}`}
-          onClick={handleDjClick}
-          onContextMenu={(e) => { e.preventDefault(); setShowBubble(s => !s) }}
-          disabled={!pb.nowPlaying}
-          title="Music Man comment (right-click: toggle bubble)"
-        >
-          <MicIcon />
-        </button>
-        {showBubble && (djLoading || djText) && (
-          <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
-            {djLoading ? (
-              <>
-                <span className="dj-bubble-label">The Music Man</span>{' '}
-                <span className="dj-loading-dots">is listening</span>
-              </>
-            ) : (
-              <>
-                <span className="dj-bubble-label">The Music Man:</span> {djText}
-              </>
-            )}
-          </div>
-        )}
       </div>
+      <div className="toolbar-icons">
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}
@@ -597,6 +599,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       >
         <QueueIcon />
       </button>
+      </div>
       <SearchPill />
     </div>
   )

@@ -141,6 +141,7 @@ function CdIcon() {
 export default function Sidebar() {
   const { state, dispatch } = useLibrary()
   const [ipodMounted, setIpodMounted] = useState(false)
+  const [ipodName, setIpodName] = useState('iPod')
   const [cdMounted, setCdMounted] = useState(false)
   const [cdName, setCdName] = useState('Audio CD')
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string } | null>(null)
@@ -168,7 +169,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     const check = () => {
-      window.electronAPI.checkIpodMounted().then(r => setIpodMounted(r.mounted)).catch(() => {})
+      window.electronAPI.checkIpodMounted().then(r => { setIpodMounted(r.mounted); if (r.name) setIpodName(r.name) }).catch(() => {})
       window.electronAPI.checkCdDrive().then(r => {
         setCdMounted(r.hasCd)
         if (r.volumeName) setCdName(r.volumeName)
@@ -249,7 +250,7 @@ export default function Sidebar() {
                 onClick={() => dispatch({ type: 'SET_VIEW', view: 'device' })}
               >
                 <span className="sidebar-item-icon"><IpodIcon /></span>
-                <span className="sidebar-item-label">JACOBROSENB</span>
+                <span className="sidebar-item-label">{ipodName}</span>
                 <button className="sidebar-eject-btn" title="Eject" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectIpod().then(() => window.dispatchEvent(new Event('jaketunes-ipod-ejected'))) }}><EjectIcon /></button>
               </li>
             )}

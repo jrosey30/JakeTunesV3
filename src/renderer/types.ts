@@ -75,6 +75,7 @@ declare global {
       chooseArtworkFile: () => Promise<{ ok: boolean; path?: string }>
       loadArtworkMap: () => Promise<{ ok: boolean; map: Record<string, string> }>
       checkIpodMounted: () => Promise<{ mounted: boolean; name: string | null }>
+      getMusicLibraryPath: () => Promise<string>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
       importTracks: (filePaths: string[], nextId: number) => Promise<{ ok: boolean; tracks: Track[] }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>

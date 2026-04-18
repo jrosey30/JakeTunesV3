@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import type { Playlist, Track } from '../types'
 import '../styles/device.css'
@@ -106,6 +106,11 @@ export default function DeviceView() {
   const { state, dispatch } = useLibrary()
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
+  const [ipodName, setIpodName] = useState('iPod')
+
+  useEffect(() => {
+    window.electronAPI.checkIpodMounted().then(r => { if (r.name) setIpodName(r.name) }).catch(() => {})
+  }, [])
 
   const stats = useMemo(() => {
     const tracks = state.tracks
@@ -141,9 +146,8 @@ export default function DeviceView() {
           <IpodLargeIcon />
         </div>
         <div className="device-header-info">
-          <h1 className="device-name">JACOBROSENB</h1>
-          <div className="device-model">iPod Mini — 64 GB (CF Mod)</div>
-          <div className="device-serial">Software Version 1.4.1</div>
+          <h1 className="device-name">{ipodName}</h1>
+          <div className="device-model">iPod</div>
         </div>
       </div>
 

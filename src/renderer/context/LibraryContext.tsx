@@ -63,7 +63,7 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
       return { ...state, tracks: [...state.tracks, ...newTracks] }
     }
     case 'SET_VIEW':
-      return { ...state, currentView: action.view }
+      return { ...state, currentView: action.view, searchQuery: '' }
     case 'SET_SEARCH':
       return { ...state, searchQuery: action.query }
     case 'SET_SORT': {

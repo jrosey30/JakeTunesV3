@@ -2,10 +2,28 @@ import struct
 import json
 import sys
 import os
+import random
+import time
 import plistlib
 
-IPOD_PATH = os.path.expanduser("~/Music2/JakeTunesLibrary/iPod_Control/iTunes/iTunesDB")
-ITUNES_XML_PATH = os.path.expanduser("~/Desktop/April 10 2026 library.xml")
+MAC_EPOCH_OFFSET = 2082844800  # seconds between 1904-01-01 and 1970-01-01
+
+_legacy_lib = os.path.expanduser("~/Music2/JakeTunesLibrary")
+_default_lib = os.path.expanduser("~/Music/JakeTunesLibrary")
+_lib_root = _legacy_lib if os.path.isdir(_legacy_lib) else _default_lib
+IPOD_PATH = os.path.join(_lib_root, "iPod_Control/iTunes/iTunesDB")
+# iTunes XML is optional — used for enrichment only. Auto-discover from common locations.
+_xml_candidates = [
+    os.path.expanduser("~/Music/iTunes/iTunes Music Library.xml"),
+    os.path.expanduser("~/Music/iTunes/iTunes Library.xml"),
+]
+# Also check Desktop for any exported XML
+_desktop = os.path.expanduser("~/Desktop")
+if os.path.isdir(_desktop):
+    for f in os.listdir(_desktop):
+        if f.endswith('.xml') and 'library' in f.lower():
+            _xml_candidates.insert(0, os.path.join(_desktop, f))
+ITUNES_XML_PATH = next((p for p in _xml_candidates if os.path.exists(p)), _xml_candidates[0] if _xml_candidates else '')
 
 def read_utf16(data, offset, length):
     try:
@@ -32,10 +50,10 @@ def parse_tracks(db_path=IPOD_PATH):
         if header_len >= 44:
             duration_ms = struct.unpack_from('<I', data, pos + 0x28)[0]
 
-        # Try to extract year from mhit header
+        # Try to extract year from mhit header (offset 0x34 = 52)
         year = ''
-        if header_len >= 208:
-            raw_year = struct.unpack_from('<I', data, pos + 204)[0]
+        if header_len >= 56:
+            raw_year = struct.unpack_from('<I', data, pos + 0x34)[0]
             if 1900 <= raw_year <= 2030:
                 year = raw_year
 
@@ -273,7 +291,7 @@ def enrich_tracks(tracks, xml_path=ITUNES_XML_PATH):
     return tracks
 
 
-IPOD_MOUNT = os.path.expanduser("~/Music2/JakeTunesLibrary")
+IPOD_MOUNT = _lib_root
 
 def add_file_sizes(tracks):
     """Get actual file sizes from iPod filesystem (not iTunes XML source sizes)."""
@@ -321,8 +339,10 @@ def build_order_mhod():
     return bytes(rec)
 
 
-def build_mhip(dbid, position):
+def build_mhip(dbid, position, timestamp_mac=None):
     """Build an mhip record (76-byte header + 44-byte type-100 mhod)."""
+    if timestamp_mac is None:
+        timestamp_mac = int(time.time()) + MAC_EPOCH_OFFSET
     hdr = bytearray(76)
     struct.pack_into('<4s', hdr, 0, b'mhip')
     struct.pack_into('<I', hdr, 4, 76)
@@ -330,38 +350,80 @@ def build_mhip(dbid, position):
     struct.pack_into('<I', hdr, 0x0C, 1)    # mhod_count
     struct.pack_into('<I', hdr, 0x14, position)
     struct.pack_into('<I', hdr, 0x18, dbid)
+    struct.pack_into('<I', hdr, 0x1C, timestamp_mac)  # date added to playlist
     return bytes(hdr) + build_order_mhod()
 
 
-def build_mhit_record(track, dbid, template_header):
-    """Build an mhit record from a library track, using a 624-byte template."""
+def _safe_int(val, default=0):
+    """Safely convert a value to int, returning default on failure."""
+    try:
+        return int(val) if val else default
+    except (ValueError, TypeError):
+        return default
+
+
+# Filetype markers in mhit header (offset 0x18) — ASCII codec identifiers
+CODEC_MARKERS = {
+    'm4a': b'M4A ', 'aac': b'M4A ', 'alac': b'M4A ',
+    'mp3': b'MP3 ',
+    'wav': b'WAV ', 'wave': b'WAV ',
+    'aif': b'AIFF', 'aiff': b'AIFF',
+    'flac': b'FLAC',
+}
+
+# mhod types that we rebuild from JakeTunes metadata (may have changed)
+REBUILT_MHOD_TYPES = {1, 2, 3, 4, 5, 6, 22}
+
+
+def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=False):
+    """Build an mhit record.
+    template_header: either the track's own header (existing track) or a generic template (new track).
+    extra_mhods:     raw bytes of mhod types NOT in REBUILT_MHOD_TYPES, to preserve from existing DB.
+    is_new:          True if this track is not in the existing DB (needs codec/timestamp init).
+    """
     hdr = bytearray(template_header)
 
     struct.pack_into('<I', hdr, 0x10, dbid)
     struct.pack_into('<I', hdr, 0x14, 1)  # visible
 
-    # File size
-    struct.pack_into('<I', hdr, 0x24, int(track.get('fileSize', 0) or 0))
-    # Duration (ms)
-    struct.pack_into('<I', hdr, 0x28, int(track.get('duration', 0) or 0))
+    # File size — only overwrite if we have a value (don't zero-out existing header data)
+    fs = _safe_int(track.get('fileSize', 0))
+    if fs > 0 or is_new:
+        struct.pack_into('<I', hdr, 0x24, fs)
+    # Duration (ms) — same guard
+    dur = _safe_int(track.get('duration', 0))
+    if dur > 0 or is_new:
+        struct.pack_into('<I', hdr, 0x28, dur)
     # Track number / count
-    tn = track.get('trackNumber', 0)
-    tc = track.get('trackCount', 0)
-    struct.pack_into('<I', hdr, 0x2C, int(tn) if tn and int(tn) > 0 else 0)
-    struct.pack_into('<I', hdr, 0x30, int(tc) if tc and int(tc) > 0 else 0)
-    # Year (at 0x34 in this DB version)
-    try:
-        y = int(track.get('year', 0) or 0)
-        struct.pack_into('<I', hdr, 0x34, y if 1900 <= y <= 2030 else 0)
-    except (ValueError, TypeError):
-        struct.pack_into('<I', hdr, 0x34, 0)
+    tn = _safe_int(track.get('trackNumber', 0))
+    tc = _safe_int(track.get('trackCount', 0))
+    struct.pack_into('<I', hdr, 0x2C, tn if tn > 0 else 0)
+    struct.pack_into('<I', hdr, 0x30, tc if tc > 0 else 0)
+    # Year
+    y = _safe_int(track.get('year', 0))
+    struct.pack_into('<I', hdr, 0x34, y if 1900 <= y <= 2030 else 0)
     # Play count
-    struct.pack_into('<I', hdr, 0x50, int(track.get('playCount', 0) or 0))
+    struct.pack_into('<I', hdr, 0x50, _safe_int(track.get('playCount', 0)))
 
-    # Build 7 mhod children: title, artist, sort-artist, album, genre, filetype, path
+    # For new tracks: set filetype marker and timestamps (template has wrong values)
     path = str(track.get('path', ''))
     ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
-    ft = 'AAC audio file' if ext in ('m4a', 'aac') else 'MPEG audio file'
+    if is_new:
+        marker = CODEC_MARKERS.get(ext, b'MP3 ')
+        struct.pack_into('<4s', hdr, 0x18, marker)
+        # Set codec sub-type flag at 0x1C (MP3 uses 0x100, AAC uses 0)
+        if ext in ('mp3',):
+            struct.pack_into('<I', hdr, 0x1C, 0x100)
+        else:
+            struct.pack_into('<I', hdr, 0x1C, 0)
+        # Set timestamps (Mac classic epoch: seconds since 1904-01-01)
+        now_mac = int(time.time()) + MAC_EPOCH_OFFSET
+        struct.pack_into('<I', hdr, 0x20, now_mac)   # date created
+        struct.pack_into('<I', hdr, 0x58, now_mac)   # date modified
+        struct.pack_into('<I', hdr, 0x68, now_mac)   # date added
+
+    # Build standard mhod children: title(1), path(2), album(3), artist(4), genre(5), filetype(6), sort-artist(22)
+    ft = 'AAC audio file' if ext in ('m4a', 'aac', 'alac') else 'MPEG audio file'
 
     mhods = bytearray()
     mhods += build_string_mhod(1, track.get('title', ''))
@@ -372,20 +434,102 @@ def build_mhit_record(track, dbid, template_header):
     mhods += build_string_mhod(6, ft)
     mhods += build_string_mhod(2, path)
 
-    struct.pack_into('<I', hdr, 0x0C, 7)                    # mhod count
+    # Append preserved extra mhods from existing DB (composer, comment, artwork refs, etc.)
+    mhod_count = 7
+    if extra_mhods:
+        mhods += extra_mhods
+        # Count how many extra mhods there are
+        p = 0
+        while p < len(extra_mhods) - 4:
+            if extra_mhods[p:p+4] == b'mhod':
+                mt = struct.unpack_from('<I', extra_mhods, p + 8)[0]
+                mhod_count += 1
+                p += mt
+            else:
+                break
+
+    struct.pack_into('<I', hdr, 0x0C, mhod_count)
     struct.pack_into('<I', hdr, 8, len(hdr) + len(mhods))   # total_len
     return bytes(hdr) + bytes(mhods)
 
 
-def build_mhyp_record(name, dbids, is_master, template_mhods=None):
+def build_sort_mhod(sort_key, sorted_indices):
+    """Build a type-52 sort index mhod for the master playlist.
+    sorted_indices: list of 0-based track indices in sorted order.
+    """
+    num = len(sorted_indices)
+    header_size = 72   # 72-byte header as seen in existing iPod DBs
+    total = header_size + num * 4
+    rec = bytearray(total)
+    struct.pack_into('<4s', rec, 0, b'mhod')
+    struct.pack_into('<I', rec, 4, 24)          # header_len (standard mhod)
+    struct.pack_into('<I', rec, 8, total)       # total_len
+    struct.pack_into('<I', rec, 12, 52)         # type = 52
+    struct.pack_into('<I', rec, 24, sort_key)   # sort key
+    struct.pack_into('<I', rec, 28, num)        # entry count
+    # Bytes 32-71 are zero padding
+    for i, idx in enumerate(sorted_indices):
+        struct.pack_into('<I', rec, 72 + i * 4, idx)
+    return bytes(rec)
+
+
+def _sort_indices(tracks, sort_key):
+    """Return list of track indices sorted by the given sort key."""
+    def key_fn(idx):
+        t = tracks[idx]
+        if sort_key == 3:  # album
+            return (str(t.get('album', '') or '').lower(),
+                    int(t.get('discNumber', 0) or 0),
+                    int(t.get('trackNumber', 0) or 0))
+        elif sort_key == 4:  # artist
+            return (str(t.get('artist', '') or '').lower(),
+                    str(t.get('album', '') or '').lower(),
+                    int(t.get('discNumber', 0) or 0),
+                    int(t.get('trackNumber', 0) or 0))
+        elif sort_key == 5:  # genre
+            return (str(t.get('genre', '') or '').lower(),
+                    str(t.get('artist', '') or '').lower(),
+                    str(t.get('album', '') or '').lower())
+        elif sort_key == 7:  # title
+            return (str(t.get('title', '') or '').lower(),)
+        elif sort_key == 18:  # artist + album + track (secondary sort)
+            return (str(t.get('artist', '') or '').lower(),
+                    str(t.get('album', '') or '').lower(),
+                    int(t.get('discNumber', 0) or 0),
+                    int(t.get('trackNumber', 0) or 0))
+        elif sort_key in (35, 36):  # album artist / composer sort
+            return (str(t.get('artist', '') or '').lower(),
+                    str(t.get('album', '') or '').lower(),
+                    int(t.get('trackNumber', 0) or 0))
+        return (idx,)  # unknown key — preserve insertion order
+
+    indices = list(range(len(tracks)))
+    indices.sort(key=key_fn)
+    return indices
+
+
+def build_mhyp_record(name, dbids, is_master, template_header=None,
+                       template_mhods=None, sort_mhods=None):
     """Build an mhyp playlist record with mhip items.
-    template_mhods: tuple of (type100_bytes, type102_bytes) extracted from existing DB.
+    template_header:  existing 184-byte mhyp header to reuse (preserves playlist ID, flags).
+    template_mhods:   tuple of (type100_bytes, type102_bytes) from existing DB.
+    sort_mhods:       list of type-52 sort index mhod bytes (master playlist only).
     """
     hlen = 184
-    hdr = bytearray(hlen)
-    struct.pack_into('<4s', hdr, 0, b'mhyp')
-    struct.pack_into('<I', hdr, 4, hlen)
+    if template_header and len(template_header) >= hlen:
+        # Reuse existing header — preserves playlist ID, flags, timestamps
+        hdr = bytearray(template_header[:hlen])
+    else:
+        hdr = bytearray(hlen)
+        struct.pack_into('<4s', hdr, 0, b'mhyp')
+        struct.pack_into('<I', hdr, 4, hlen)
+        # Generate a unique 64-bit playlist ID
+        struct.pack_into('<Q', hdr, 0x18, random.getrandbits(64))
+        struct.pack_into('<I', hdr, 0x28, 1)   # visible flag
+        struct.pack_into('<I', hdr, 0x2C, 1)   # sort order
+
     struct.pack_into('<I', hdr, 0x14, 1 if is_master else 0)
+    struct.pack_into('<I', hdr, 0x10, len(dbids))
 
     mhods = bytearray()
     mhod_count = 0
@@ -408,8 +552,13 @@ def build_mhyp_record(name, dbids, is_master, template_mhods=None):
             mhods += t102
             mhod_count += 1
 
+    # Type-52 sort index mhods (master playlist)
+    if sort_mhods:
+        for sm in sort_mhods:
+            mhods += sm
+            mhod_count += 1
+
     struct.pack_into('<I', hdr, 0x0C, mhod_count)
-    struct.pack_into('<I', hdr, 0x10, len(dbids))
 
     items = bytearray()
     for i, d in enumerate(dbids):
@@ -448,8 +597,10 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     mhit_hlen  = struct.unpack_from('<I', existing, first_mhit + 4)[0]
     template_mhit = bytearray(existing[first_mhit : first_mhit + mhit_hlen])
 
-    # ── Build path → dbid mapping from existing tracks ──
+    # ── Build path → dbid, path → per-track mhit header, path → extra mhods ──
     path_to_dbid = {}
+    path_to_mhit = {}
+    path_to_extra_mhods = {}   # mhods we don't rebuild (composer, comment, artwork refs, etc.)
     max_dbid = 0
     tp = first_mhit
     ex_count = struct.unpack_from('<I', existing, mhlt_pos + 8)[0]
@@ -460,8 +611,12 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
         t = struct.unpack_from('<I', existing, tp + 8)[0]
         dbid = struct.unpack_from('<I', existing, tp + 0x10)[0]
         max_dbid = max(max_dbid, dbid)
+        # Save this track's own mhit header (preserves codec, bitrate, sample rate, etc.)
+        track_mhit_hdr = bytes(existing[tp:tp+h])
         mc = struct.unpack_from('<I', existing, tp + 12)[0]
         mp = tp + h
+        track_path = None
+        extra_mhods = bytearray()
         for _ in range(mc):
             if existing[mp:mp+4] == b'mhod':
                 mt   = struct.unpack_from('<I', existing, mp + 8)[0]
@@ -469,12 +624,88 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
                 if mtyp == 2:  # path
                     slen = struct.unpack_from('<I', existing, mp + 28)[0]
                     if slen > 0:
-                        p = existing[mp+40:mp+40+slen].decode('utf-16-le', errors='replace').rstrip('\x00')
-                        path_to_dbid[p] = dbid
+                        track_path = existing[mp+40:mp+40+slen].decode('utf-16-le', errors='replace').rstrip('\x00')
+                # Preserve mhods we don't rebuild (composer, comment, sort fields, artwork, etc.)
+                if mtyp not in REBUILT_MHOD_TYPES:
+                    extra_mhods += existing[mp:mp+mt]
                 mp += mt
             else:
                 break
+        if track_path:
+            path_to_dbid[track_path] = dbid
+            path_to_mhit[track_path] = track_mhit_hdr
+            if extra_mhods:
+                path_to_extra_mhods[track_path] = bytes(extra_mhods)
         tp += t
+
+    # ── Extract existing playlist headers & mhods ──
+    master_mhyp_hdr = None
+    template_t100 = None
+    template_t102 = None
+    existing_sort_keys = []
+    name_to_mhyp_hdr = {}   # map playlist name → its 184-byte mhyp header
+
+    for sec in sections:
+        if sec['type'] not in (2, 3):
+            continue
+        mhlp_pos = sec['start'] + sec['hlen']
+        if existing[mhlp_pos:mhlp_pos+4] != b'mhlp':
+            continue
+        mhlp_hlen = struct.unpack_from('<I', existing, mhlp_pos + 4)[0]
+        pl_count = struct.unpack_from('<I', existing, mhlp_pos + 8)[0]
+
+        yp = mhlp_pos + mhlp_hlen
+        for _ in range(pl_count):
+            if existing[yp:yp+4] != b'mhyp':
+                break
+            yh = struct.unpack_from('<I', existing, yp + 4)[0]
+            yt = struct.unpack_from('<I', existing, yp + 8)[0]
+            mc = struct.unpack_from('<I', existing, yp + 0x0C)[0]
+            is_master_flag = struct.unpack_from('<I', existing, yp + 0x14)[0]
+
+            pl_hdr = bytes(existing[yp:yp+yh])
+
+            # Parse mhods to get name, type-100/102 templates, and sort key list
+            cp = yp + yh
+            pl_name = None
+            for _ in range(mc):
+                if existing[cp:cp+4] != b'mhod':
+                    break
+                mt = struct.unpack_from('<I', existing, cp + 8)[0]
+                mtyp = struct.unpack_from('<I', existing, cp + 12)[0]
+
+                if mtyp == 1:  # name string
+                    slen = struct.unpack_from('<I', existing, cp + 28)[0]
+                    if slen > 0:
+                        pl_name = existing[cp+40:cp+40+slen].decode('utf-16-le', errors='replace').rstrip('\x00')
+                if mtyp == 100 and not template_t100:
+                    template_t100 = bytes(existing[cp:cp+mt])
+                elif mtyp == 102 and not template_t102:
+                    template_t102 = bytes(existing[cp:cp+mt])
+                if is_master_flag and mtyp == 52:
+                    sort_key = struct.unpack_from('<I', existing, cp + 24)[0]
+                    if sort_key not in existing_sort_keys:
+                        existing_sort_keys.append(sort_key)
+                cp += mt
+
+            if is_master_flag and not master_mhyp_hdr:
+                master_mhyp_hdr = pl_hdr
+            elif not is_master_flag and pl_name:
+                name_to_mhyp_hdr[pl_name] = pl_hdr
+            yp += yt
+        break  # Only need one playlist section for templates
+
+    if existing_sort_keys:
+        print(f"Existing sort keys: {existing_sort_keys}", file=sys.stderr)
+    else:
+        existing_sort_keys = [3, 4, 5, 7, 18, 35, 36]
+        print("No existing sort keys found, using defaults: [3,4,5,7,18,35,36]", file=sys.stderr)
+
+    template_pl_mhods = (template_t100, template_t102)
+    print(f"Template mhods: type100={len(template_t100) if template_t100 else 0}b, "
+          f"type102={len(template_t102) if template_t102 else 0}b", file=sys.stderr)
+    print(f"Master mhyp header: {'reused' if master_mhyp_hdr else 'new'}", file=sys.stderr)
+    print(f"Matched {len(name_to_mhyp_hdr)} existing playlist headers by name", file=sys.stderr)
 
     # ── Assign dbids ──
     track_dbids = {}
@@ -487,9 +718,11 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
             track_dbids[t['id']] = next_dbid
             next_dbid += 2
 
-    new_count = sum(1 for t in tracks if t.get('path', '') not in path_to_dbid)
+    reused = sum(1 for t in tracks if t.get('path', '') in path_to_mhit)
+    new_count = len(tracks) - reused
+    extra_count = sum(1 for t in tracks if t.get('path', '') in path_to_extra_mhods)
     print(f"Existing: {ex_count} tracks, max_dbid={max_dbid}", file=sys.stderr)
-    print(f"Writing: {len(tracks)} tracks ({new_count} new)", file=sys.stderr)
+    print(f"Writing: {len(tracks)} tracks ({reused} reused headers, {new_count} new, {extra_count} with preserved extra mhods)", file=sys.stderr)
 
     # ── Build type 1: track list ──
     mhlt = bytearray(92)
@@ -499,7 +732,13 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
 
     track_data = bytearray(mhlt)
     for t in tracks:
-        track_data += build_mhit_record(t, track_dbids[t['id']], template_mhit)
+        # Use track's own existing mhit header if available (preserves codec, bitrate, etc.)
+        path = t.get('path', '')
+        is_new = path not in path_to_mhit
+        per_track_hdr = path_to_mhit.get(path, template_mhit)
+        extra_mhods = path_to_extra_mhods.get(path)
+        track_data += build_mhit_record(t, track_dbids[t['id']], per_track_hdr,
+                                         extra_mhods=extra_mhods, is_new=is_new)
 
     type1_mhsd = bytearray(96)
     struct.pack_into('<4s', type1_mhsd, 0, b'mhsd')
@@ -508,44 +747,12 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     struct.pack_into('<I', type1_mhsd, 12, 1)
     type1_section = bytes(type1_mhsd) + bytes(track_data)
 
-    # ── Extract template playlist mhods (type 100 + 102) from existing DB ──
-    template_pl_mhods = (None, None)
-    type2_sec = next((s for s in sections if s['type'] == 2), None)
-    if type2_sec:
-        mhlp_pos2 = type2_sec['start'] + type2_sec['hlen']
-        if existing[mhlp_pos2:mhlp_pos2+4] == b'mhlp':
-            mhlp_hlen2 = struct.unpack_from('<I', existing, mhlp_pos2 + 4)[0]
-            pl_count2 = struct.unpack_from('<I', existing, mhlp_pos2 + 8)[0]
-            # Find the first non-master playlist to get template mhods
-            yp2 = mhlp_pos2 + mhlp_hlen2
-            for _ in range(pl_count2):
-                if existing[yp2:yp2+4] != b'mhyp':
-                    break
-                yh2 = struct.unpack_from('<I', existing, yp2 + 4)[0]
-                yt2 = struct.unpack_from('<I', existing, yp2 + 8)[0]
-                mc2 = struct.unpack_from('<I', existing, yp2 + 0x0C)[0]
-                master2 = struct.unpack_from('<I', existing, yp2 + 0x14)[0]
-                if not master2 and mc2 >= 3:
-                    # Extract type 100 and type 102 mhods
-                    cp2 = yp2 + yh2
-                    t100 = None
-                    t102 = None
-                    for _ in range(mc2):
-                        if existing[cp2:cp2+4] == b'mhod':
-                            mt2 = struct.unpack_from('<I', existing, cp2 + 8)[0]
-                            mtyp2 = struct.unpack_from('<I', existing, cp2 + 12)[0]
-                            if mtyp2 == 100 and not t100:
-                                t100 = bytes(existing[cp2:cp2+mt2])
-                            elif mtyp2 == 102 and not t102:
-                                t102 = bytes(existing[cp2:cp2+mt2])
-                            cp2 += mt2
-                        else:
-                            break
-                    if t100 or t102:
-                        template_pl_mhods = (t100, t102)
-                        print(f"Extracted playlist template mhods: type100={len(t100) if t100 else 0}b, type102={len(t102) if t102 else 0}b", file=sys.stderr)
-                        break
-                yp2 += yt2
+    # ── Build type-52 sort index mhods for master playlist ──
+    sort_mhods = []
+    for sk in existing_sort_keys:
+        sorted_idx = _sort_indices(tracks, sk)
+        sort_mhods.append(build_sort_mhod(sk, sorted_idx))
+    print(f"Built {len(sort_mhods)} type-52 sort index mhods", file=sys.stderr)
 
     # ── Build playlist data (shared by types 2 and 3) ──
     all_dbids = [track_dbids[t['id']] for t in tracks]
@@ -557,10 +764,17 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     struct.pack_into('<I', mhlp, 8, total_pl)
 
     pl_data = bytearray(mhlp)
-    pl_data += build_mhyp_record('', all_dbids, is_master=True, template_mhods=template_pl_mhods)
+    pl_data += build_mhyp_record('', all_dbids, is_master=True,
+                                  template_header=master_mhyp_hdr,
+                                  template_mhods=template_pl_mhods,
+                                  sort_mhods=sort_mhods)
     for pl in playlists:
+        pl_name = pl.get('name', '')
         pl_dbids = [track_dbids[tid] for tid in pl.get('trackIds', []) if tid in track_dbids]
-        pl_data += build_mhyp_record(pl.get('name', ''), pl_dbids, is_master=False, template_mhods=template_pl_mhods)
+        existing_hdr = name_to_mhyp_hdr.get(pl_name)
+        pl_data += build_mhyp_record(pl_name, pl_dbids, is_master=False,
+                                      template_header=existing_hdr,
+                                      template_mhods=template_pl_mhods)
 
     def wrap_mhsd(typ, payload):
         h = bytearray(96)

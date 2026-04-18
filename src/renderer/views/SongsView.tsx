@@ -47,7 +47,9 @@ function StarRating({ value, onChange }: { value: number; onChange: (r: number) 
             onChange(star === value ? 0 : star)
           }}
         >
-          {star <= value ? '\u2605' : '\u2606'}
+          <svg width="10" height="10" viewBox="0 0 10 10" fill={star <= value ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+            <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+          </svg>
         </span>
       ))}
     </span>

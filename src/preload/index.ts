@@ -48,6 +48,8 @@ const electronAPI = {
     ipcRenderer.invoke('load-artwork-map'),
   checkIpodMounted: (): Promise<{ mounted: boolean; name: string | null }> =>
     ipcRenderer.invoke('check-ipod-mounted'),
+  getMusicLibraryPath: (): Promise<string> =>
+    ipcRenderer.invoke('get-music-library-path'),
   ejectIpod: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-ipod'),
   importTracks: (filePaths: string[], nextId: number): Promise<{ ok: boolean; tracks: unknown[] }> =>
@@ -78,6 +80,12 @@ const electronAPI = {
     ipcRenderer.invoke('eject-cd'),
   openSoundSettings: (): Promise<void> =>
     ipcRenderer.invoke('open-sound-settings'),
+  recordPlay: (track: { title: string; artist: string; album: string; genre: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('record-play', track),
+  recordSkip: (track: { title: string; artist: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('record-skip', track),
+  recordRating: (track: { title: string; artist: string; album: string; rating: number }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('record-rating', track),
   listAudioDevices: (): Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }> =>
     ipcRenderer.invoke('list-audio-devices'),
   setAudioDevice: (deviceId: number): Promise<{ ok: boolean; error?: string }> =>
