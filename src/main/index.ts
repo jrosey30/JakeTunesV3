@@ -803,7 +803,10 @@ protocol.registerSchemesAsPrivileged([
 // ElevenLabs TTS
 ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean) => {
   try {
-    const voice = process.env.ELEVENLABS_VOICE_ID || 'JZBRao5Zg3hp0BQgJOEZ'
+    // Public default Music Man voice. Override via ELEVENLABS_VOICE_ID
+    // in .env — userData/.env takes precedence over the bundled one, so
+    // a personal voice override in userData won't be clobbered on updates.
+    const voice = process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w'
     const model = fast ? 'eleven_flash_v2_5' : 'eleven_v3'
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
