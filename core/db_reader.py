@@ -98,7 +98,7 @@ def parse_tracks(db_path=IPOD_PATH):
                 str_len    = struct.unpack_from('<I', data, child_pos+28)[0]
                 if str_len > 0 and child_pos+40+str_len <= len(data):
                     str_val = read_utf16(data, child_pos+40, str_len)
-                    type_map = {1:'title', 2:'path', 3:'album', 4:'artist', 5:'genre'}
+                    type_map = {1:'title', 2:'path', 3:'album', 4:'artist', 5:'genre', 32:'albumArtist'}
                     if str_type in type_map and str_val:
                         track_info[type_map[str_type]] = str_val
                 child_pos += mhod_total
@@ -371,8 +371,10 @@ CODEC_MARKERS = {
     'flac': b'FLAC',
 }
 
-# mhod types that we rebuild from JakeTunes metadata (may have changed)
-REBUILT_MHOD_TYPES = {1, 2, 3, 4, 5, 6, 22}
+# mhod types that we rebuild from JakeTunes metadata (may have changed).
+# Type 32 is album artist — included so we can restore it instead of
+# preserving whatever stale value was embedded in the existing mhod pool.
+REBUILT_MHOD_TYPES = {1, 2, 3, 4, 5, 6, 22, 32}
 
 
 def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=False):
@@ -404,6 +406,15 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     struct.pack_into('<I', hdr, 0x34, y if 1900 <= y <= 2030 else 0)
     # Play count
     struct.pack_into('<I', hdr, 0x50, _safe_int(track.get('playCount', 0)))
+    # Disc number / count — mirror parse_tracks offsets (0x64 / 0x68).
+    # Only overwrite when a value is provided, so tracks without disc
+    # metadata keep whatever the template had.
+    dn = _safe_int(track.get('discNumber', 0))
+    dc = _safe_int(track.get('discCount', 0))
+    if 0 < dn <= 99:
+        struct.pack_into('<I', hdr, 0x64, dn)
+    if 0 < dc <= 99:
+        struct.pack_into('<I', hdr, 0x68, dc)
 
     # For new tracks: set filetype marker and timestamps (template has wrong values)
     path = str(track.get('path', ''))
@@ -433,9 +444,16 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     mhods += build_string_mhod(5, track.get('genre', ''))
     mhods += build_string_mhod(6, ft)
     mhods += build_string_mhod(2, path)
+    mhod_count = 7
+
+    # Album artist (mhod type 32). Only emit if present — don't pollute the
+    # DB with empty strings.
+    album_artist = str(track.get('albumArtist', '') or '').strip()
+    if album_artist:
+        mhods += build_string_mhod(32, album_artist)
+        mhod_count += 1
 
     # Append preserved extra mhods from existing DB (composer, comment, artwork refs, etc.)
-    mhod_count = 7
     if extra_mhods:
         mhods += extra_mhods
         # Count how many extra mhods there are

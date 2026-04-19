@@ -188,8 +188,15 @@ def _match_one(ipod_track, by_dur, by_name):
 
 
 def _field_differs(old_v, new_v):
-    ov = '' if old_v in (None, 0) else str(old_v).strip()
+    """Field counts as different only when the XML has a NON-EMPTY value that
+    disagrees with the iPod's value. An empty XML value isn't evidence that
+    the iPod is wrong — it's evidence that the XML has nothing to contribute,
+    so we preserve what's already on the iPod.
+    """
     nv = '' if new_v in (None, 0) else str(new_v).strip()
+    if not nv:
+        return False
+    ov = '' if old_v in (None, 0) else str(old_v).strip()
     return ov != nv
 
 
@@ -325,9 +332,10 @@ def apply(ipod_mount, xml_path, approved_ids):
                 t[field] = v
         restored += 1
 
-    # Enrich the rest from XML too (picks up dateAdded, rating, albumArtist
-    # for tracks we didn't explicitly restore but whose titles might now match)
-    tracks = db_reader.enrich_tracks(tracks)
+    # Deliberately NOT calling db_reader.enrich_tracks here. It pulls from a
+    # different iTunes XML auto-discovered on disk, and its lookup-by-title
+    # matching would stomp the values we just restored whenever the two
+    # XMLs disagree (e.g. track/disc numbering on multi-disc albums).
     tracks = db_reader.add_file_sizes(tracks)
 
     # Play counts: preserve iPod-side (more recent than XML)
