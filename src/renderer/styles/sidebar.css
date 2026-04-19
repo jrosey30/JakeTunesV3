@@ -103,6 +103,24 @@
   flex-shrink: 0;
 }
 
+/* Inline input for new/rename playlist */
+.sidebar-inline-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-body);
+  font-family: inherit;
+  padding: 1px 4px;
+  border: 1px solid var(--selection-top, #4a90d9);
+  border-radius: 3px;
+  background: #fff;
+  outline: none;
+  color: #000;
+}
+
+.sidebar-inline-input:focus {
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.3);
+}
+
 .sidebar-item--highlight {
   border-radius: 4px;
   margin: 1px 6px;
@@ -234,8 +252,27 @@
   background: #e0812e;
   color: #fff;
   border-color: #c87020;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
 }
 
 .album-art-btn--dj:hover {
   background: #e88a35;
+}
+
+.album-art-btn--dj-active {
+  background: linear-gradient(180deg, #e8912e, #c87020) !important;
+  border-color: #a85e18 !important;
+  color: #fff !important;
+  box-shadow:
+    0 0 6px rgba(200, 120, 40, 0.5),
+    0 0 12px rgba(200, 120, 40, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.album-art-btn--dj-active:hover {
+  background: linear-gradient(180deg, #f0a040, #d88030) !important;
+  box-shadow:
+    0 0 8px rgba(200, 120, 40, 0.7),
+    0 0 16px rgba(200, 120, 40, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
 }

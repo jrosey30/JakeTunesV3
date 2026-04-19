@@ -3,12 +3,21 @@ import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import ContextMenu from '../ContextMenu'
 
-export default function AlbumArtPanel() {
+export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () => void }) {
   const { state } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
   const fetchedRef = useRef<Set<string>>(new Set())
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [djModeActive, setDjModeActive] = useState(false)
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      setDjModeActive((e as CustomEvent).detail.active)
+    }
+    window.addEventListener('dj-mode-state', handler)
+    return () => window.removeEventListener('dj-mode-state', handler)
+  }, [])
 
   const artist = state.nowPlaying?.artist || ''
   const album = state.nowPlaying?.album || ''
@@ -138,13 +147,7 @@ export default function AlbumArtPanel() {
         <button
           className="album-art-btn"
           title="New Playlist"
-          onClick={() => {
-            const name = window.prompt('New playlist name:')
-            if (!name || !name.trim()) return
-            const playlist = { id: `pl-${Date.now()}`, name: name.trim(), trackIds: [] as number[] }
-            libDispatch({ type: 'ADD_PLAYLIST', playlist })
-            libDispatch({ type: 'VIEW_PLAYLIST', id: playlist.id })
-          }}
+          onClick={() => onNewPlaylist?.()}
         ><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="7" y1="2" x2="7" y2="12" /><line x1="2" y1="7" x2="12" y2="7" /></svg></button>
         <button
           className="album-art-btn"
@@ -164,8 +167,8 @@ export default function AlbumArtPanel() {
           }}
         ><svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" strokeLinejoin="miter"><path d="M5 10V4l6-2v6" /><circle cx="3.5" cy="10" r="1.5" /><circle cx="9.5" cy="8" r="1.5" /></svg></button>
         <button
-          className="album-art-btn album-art-btn--dj"
-          title="Start DJ Mode"
+          className={`album-art-btn album-art-btn--dj ${djModeActive ? 'album-art-btn--dj-active' : ''}`}
+          title={djModeActive ? 'DJ Mode: On (click to stop)' : 'Start DJ Mode'}
           onClick={() => window.dispatchEvent(new CustomEvent('toggle-dj-mode'))}
         ><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 5v12" strokeWidth="1.8" /><path d="M10 17L6 19M10 17L14 19" /><path d="M8 10h4" /><path d="M9 13h2" /><path d="M10 7L7 17" strokeWidth="1" /><path d="M10 7L13 17" strokeWidth="1" /><path d="M7 4.5a4 4 0 016 0" strokeWidth="1.3" /><path d="M5 2.5a7 7 0 0110 0" strokeWidth="1.2" /><circle cx="10" cy="4.2" r="1" fill="currentColor" stroke="none" /></svg></button>
       </div>

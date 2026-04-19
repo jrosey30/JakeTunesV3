@@ -106,6 +106,8 @@ export default function SongsView() {
   }, [sorted, playTrack])
 
   const lastClickedIdx = useRef<number>(-1)
+  const selectedIdsRef = useRef(lib.selectedTrackIds)
+  selectedIdsRef.current = lib.selectedTrackIds
 
   // Reset anchor when search/sort changes the visible list
   useEffect(() => {
@@ -317,9 +319,9 @@ export default function SongsView() {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
       // Delete/Backspace = delete selected tracks
-      if ((e.key === 'Delete' || e.key === 'Backspace') && lib.selectedTrackIds.size > 0) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdsRef.current.size > 0) {
         e.preventDefault()
-        const ids = Array.from(lib.selectedTrackIds)
+        const ids = Array.from(selectedIdsRef.current)
         setDeleteConfirm({ ids, count: ids.length })
         return
       }

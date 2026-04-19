@@ -67,14 +67,22 @@ export default function SmartPlaylistView() {
   const playlistId = libState.activeSmartPlaylist
   const title = playlistId ? TITLES[playlistId] || playlistId : ''
 
-  // Music Man Picks state — persists for 24 hours via UI state
+  // Music Man Picks state — persists until midnight via UI state
+  // Resets at 12:00 AM each day. If the app was closed before midnight,
+  // picks regenerate on next launch after midnight has passed.
   const [picks, setPicks] = useState<PicksData | null>(() => {
     try {
       const raw = localStorage.getItem('musicman-picks')
       if (raw) {
         const saved = JSON.parse(raw) as PicksData
-        const savedTime = new Date(saved.date).getTime()
-        if (Date.now() - savedTime < 24 * 60 * 60 * 1000) return saved
+        const savedDate = new Date(saved.date)
+        const now = new Date()
+        // Same calendar day = keep picks. Different day = regenerate.
+        const sameDay =
+          savedDate.getFullYear() === now.getFullYear() &&
+          savedDate.getMonth() === now.getMonth() &&
+          savedDate.getDate() === now.getDate()
+        if (sameDay) return saved
       }
     } catch { /* ignore */ }
     return null

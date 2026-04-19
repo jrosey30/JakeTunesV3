@@ -150,7 +150,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setAutoDjMode(autoDj)
   }, [autoDj])
 
-
   // Click mic: one-shot DJ comment on current track. Click again to stop.
   const handleDjClick = useCallback(async () => {
     // If actively speaking or autoDj is lingering from a previous mic click, stop everything
@@ -347,6 +346,13 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const djRecentIds = useRef<number[]>([])
   const djCancelledRef = useRef(false)
 
+  // Broadcast DJ Mode state to sidebar button
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('dj-mode-state', {
+      detail: { active: djModeActive }
+    }))
+  }, [djModeActive])
+
   const startDjSet = useCallback(async () => {
     setDjModeLoading(true)
     setDjActive(true)
@@ -466,6 +472,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         djAudioRef.current.pause()
         djAudioRef.current = null
       }
+      setVolume(savedVolumeRef.current)
       setDjActive(false)
       setDjLoading(false)
       setDjText('')
@@ -587,7 +594,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         )}
       </div>
       </div>
-      <div className="toolbar-icons">
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}
@@ -599,7 +605,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       >
         <QueueIcon />
       </button>
-      </div>
       <SearchPill />
     </div>
   )

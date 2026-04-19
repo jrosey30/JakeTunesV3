@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
@@ -146,6 +146,22 @@ export default function Sidebar() {
   const [cdName, setCdName] = useState('Audio CD')
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null)
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false)
+  const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null)
+  const newPlaylistRef = useRef<HTMLInputElement>(null)
+  const renameRef = useRef<HTMLInputElement>(null)
+
+  const handleNewPlaylist = useCallback(() => {
+    setCreatingPlaylist(true)
+  }, [])
+
+  const handleNewPlaylistSubmit = useCallback((name: string) => {
+    setCreatingPlaylist(false)
+    if (!name.trim()) return
+    const playlist = { id: `pl-${Date.now()}`, name: name.trim(), trackIds: [] as number[] }
+    dispatch({ type: 'ADD_PLAYLIST', playlist })
+    dispatch({ type: 'VIEW_PLAYLIST', id: playlist.id })
+  }, [dispatch])
 
   const handlePlaylistContextMenu = useCallback((e: React.MouseEvent, id: string, name: string) => {
     e.preventDefault()
@@ -155,11 +171,15 @@ export default function Sidebar() {
 
   const handleRenamePlaylist = useCallback(() => {
     if (!plCtxMenu) return
-    const newName = window.prompt('Rename playlist:', plCtxMenu.playlistName)
-    if (!newName || !newName.trim()) return
-    dispatch({ type: 'RENAME_PLAYLIST', id: plCtxMenu.playlistId, name: newName.trim() })
+    setEditingPlaylistId(plCtxMenu.playlistId)
     setPlCtxMenu(null)
-  }, [plCtxMenu, dispatch])
+  }, [plCtxMenu])
+
+  const handleRenameSubmit = useCallback((id: string, name: string) => {
+    setEditingPlaylistId(null)
+    if (!name.trim()) return
+    dispatch({ type: 'RENAME_PLAYLIST', id, name: name.trim() })
+  }, [dispatch])
 
   const handleDeletePlaylist = useCallback(() => {
     if (!plCtxMenu) return
@@ -218,30 +238,6 @@ export default function Sidebar() {
           ))}
         </SidebarSection>
 
-        <SidebarSection title="PLAYLISTS">
-          {smartPlaylists.map((sp) => (
-            <SidebarItem
-              key={sp.id}
-              label={sp.label}
-              icon={sp.id === 'musicman-picks' ? <MusicManPicksIcon /> : <SmartPlaylistIcon />}
-              selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
-              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
-            />
-          ))}
-          {state.playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name)).map((pl) => (
-            <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
-              <SidebarItem
-                label={pl.name}
-                icon={<PlaylistIcon />}
-                selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
-                onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
-                droppable
-                onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
-              />
-            </div>
-          ))}
-        </SidebarSection>
-
         {(ipodMounted || cdMounted) && (
           <SidebarSection title="DEVICES">
             {ipodMounted && (
@@ -266,9 +262,66 @@ export default function Sidebar() {
             )}
           </SidebarSection>
         )}
+
+        <SidebarSection title="PLAYLISTS">
+          {smartPlaylists.map((sp) => (
+            <SidebarItem
+              key={sp.id}
+              label={sp.label}
+              icon={sp.id === 'musicman-picks' ? <MusicManPicksIcon /> : <SmartPlaylistIcon />}
+              selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
+              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
+            />
+          ))}
+          {state.playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name)).map((pl) => (
+            editingPlaylistId === pl.id ? (
+              <div key={pl.id} className="sidebar-item" style={{ paddingLeft: 22 }}>
+                <span className="sidebar-item-icon"><PlaylistIcon /></span>
+                <input
+                  ref={renameRef}
+                  className="sidebar-inline-input"
+                  defaultValue={pl.name}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRenameSubmit(pl.id, e.currentTarget.value)
+                    if (e.key === 'Escape') setEditingPlaylistId(null)
+                  }}
+                  onBlur={(e) => handleRenameSubmit(pl.id, e.currentTarget.value)}
+                />
+              </div>
+            ) : (
+              <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+                <SidebarItem
+                  label={pl.name}
+                  icon={<PlaylistIcon />}
+                  selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+                  onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  droppable
+                  onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                />
+              </div>
+            )
+          ))}
+          {creatingPlaylist && (
+            <div className="sidebar-item" style={{ paddingLeft: 22 }}>
+              <span className="sidebar-item-icon"><PlaylistIcon /></span>
+              <input
+                ref={newPlaylistRef}
+                className="sidebar-inline-input"
+                placeholder="Playlist name"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleNewPlaylistSubmit(e.currentTarget.value)
+                  if (e.key === 'Escape') setCreatingPlaylist(false)
+                }}
+                onBlur={(e) => handleNewPlaylistSubmit(e.currentTarget.value)}
+              />
+            </div>
+          )}
+        </SidebarSection>
       </div>
 
-      <AlbumArtPanel />
+      <AlbumArtPanel onNewPlaylist={handleNewPlaylist} />
 
       {plCtxMenu && (
         <ContextMenu

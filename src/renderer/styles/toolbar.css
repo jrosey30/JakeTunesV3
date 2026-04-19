@@ -63,12 +63,6 @@
   gap: 4px;
 }
 
-.toolbar-icons {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
 .transport-toggle {
   width: 34px;
   height: 34px;

@@ -9,7 +9,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --mac",
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win",
     "dist:dmg": "electron-vite build && electron-builder --mac dmg",
     "release": "electron-vite build && electron-builder --mac --publish always",
     "release:patch": "npm version patch && npm run release",
@@ -34,6 +36,25 @@
         "dmg",
         "zip"
       ]
+    },
+    "win": {
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "JakeTunes"
     },
     "dmg": {
       "title": "JakeTunes",
@@ -60,10 +81,6 @@
       {
         "from": "core",
         "to": "core"
-      },
-      {
-        "from": ".env",
-        "to": ".env"
       }
     ],
     "asar": true

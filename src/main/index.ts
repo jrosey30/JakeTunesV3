@@ -6,6 +6,22 @@ import { createHash } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
 import { autoUpdater } from 'electron-updater'
+import {
+  IS_MAC,
+  IS_WINDOWS,
+  PYTHON_CMD,
+  PYTHON_INSTALL_HINT,
+  listMountPoints,
+  volumeNameFromMount,
+  findIpodMount,
+  ejectVolume,
+  hasOpticalMedia,
+  ejectOpticalMedia,
+  audioHelperRelPath,
+  convertAudio,
+  extensionForFormat,
+  type AudioFormat,
+} from './platform'
 
 const isDev = !app.isPackaged
 
@@ -109,8 +125,12 @@ async function createWindow(): Promise<void> {
     y: saved?.y,
     minWidth: 900,
     minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 12 },
+    // `hiddenInset` + custom traffic-light position is macOS-only.
+    // On Windows the native title bar stays (for now — Phase 2 could add
+    // a custom-drawn title bar to match the iTunes look).
+    ...(IS_MAC
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 12, y: 12 } }
+      : {}),
     backgroundColor: '#d8d8d8',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -155,7 +175,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
             resizable: false,
             minimizable: false,
             maximizable: false,
-            titleBarStyle: 'hiddenInset',
+            ...(IS_MAC ? { titleBarStyle: 'hiddenInset' as const } : {}),
             backgroundColor: '#d8d8d8',
             webPreferences: { nodeIntegration: false, contextIsolation: true },
           })
@@ -332,27 +352,15 @@ async function searchWeb(query: string, album?: string): Promise<string> {
   return parts.join('\n')
 }
 
-// ── Auto-detect iPod by scanning /Volumes/ for iPod_Control ──
-let detectedIpodVolume: string | null = null
-
-async function findIpodVolume(): Promise<string | null> {
-  try {
-    const { readdir: readdirFS } = await import('fs/promises')
-    const volumes = await readdirFS('/Volumes')
-    for (const vol of volumes) {
-      try {
-        await stat(`/Volumes/${vol}/iPod_Control/iTunes/iTunesDB`)
-        return vol
-      } catch { /* not an iPod */ }
-    }
-  } catch { /* /Volumes not readable */ }
-  return null
-}
+// ── Auto-detect iPod (cross-platform: scans /Volumes/ on macOS, drive letters on Windows) ──
+let detectedIpodMount: string | null = null  // Full mount path: "/Volumes/JACOBROSENB" or "E:\\"
+let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "E:"
 
 ipcMain.handle('check-ipod-mounted', async () => {
   try {
-    detectedIpodVolume = await findIpodVolume()
-    if (detectedIpodVolume) {
+    detectedIpodMount = await findIpodMount()
+    detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
+    if (detectedIpodMount) {
       return { mounted: true, name: detectedIpodVolume }
     }
     return { mounted: false, name: null }
@@ -363,11 +371,9 @@ ipcMain.handle('check-ipod-mounted', async () => {
 
 ipcMain.handle('eject-ipod', async () => {
   try {
-    if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-    await execP('diskutil', ['eject', `/Volumes/${detectedIpodVolume}`])
+    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
+    await ejectVolume(detectedIpodMount)
+    detectedIpodMount = null
     detectedIpodVolume = null
     return { ok: true }
   } catch (err) {
@@ -377,14 +383,14 @@ ipcMain.handle('eject-ipod', async () => {
 
 // Read directly from iPod database (used for sync only)
 function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknown>>; playlists: Array<{ name: string; trackIds: number[] }> }> {
-  if (!detectedIpodVolume) return Promise.reject(new Error('No iPod detected'))
-  const ipodDbPath = `/Volumes/${detectedIpodVolume}/iPod_Control/iTunes/iTunesDB`
+  if (!detectedIpodMount) return Promise.reject(new Error('No iPod detected'))
+  const ipodDbPath = join(detectedIpodMount, 'iPod_Control', 'iTunes', 'iTunesDB')
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return new Promise((resolve, reject) => {
-    const py = spawn('python3', [scriptPath, '--json', ipodDbPath])
+    const py = spawn(PYTHON_CMD, [scriptPath, '--json', ipodDbPath])
     py.on('error', (err: Error) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        reject(new Error('Python 3 is not installed. Install it from python.org or run: xcode-select --install'))
+        reject(new Error(PYTHON_INSTALL_HINT))
       } else {
         reject(err)
       }
@@ -460,9 +466,10 @@ ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
 
 // ── Sync library TO iPod ──
 ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
-  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected', copied: 0 }
-  const IPOD_MOUNT = `/Volumes/${detectedIpodVolume}`
-  const LOCAL_MOUNT = MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
+  if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', copied: 0 }
+  const IPOD_MOUNT = detectedIpodMount
+  // Strip the trailing "iPod_Control/Music" segment whether it's / or \ delimited.
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
 
   // Check iPod is mounted
   try {
@@ -477,7 +484,10 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   for (const track of tracks) {
     const colonPath = String(track.path || '')
     if (!colonPath) continue
-    const relPath = colonPath.replace(/:/g, '/')
+    // iPod paths use colons as separators (":iPod_Control:Music:F01:XXXX.mp3").
+    // Convert to native path separator for the current OS.
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+    const relPath = colonPath.replace(/:/g, pathSep)
     const ipodFile = join(IPOD_MOUNT, relPath)
     const localFile = join(LOCAL_MOUNT, relPath)
     try {
@@ -485,7 +495,8 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
       // Already on iPod, skip
     } catch {
       try {
-        const dir = ipodFile.substring(0, ipodFile.lastIndexOf('/'))
+        // Use path.dirname() via join — works on both / and \ separators
+        const dir = ipodFile.substring(0, ipodFile.lastIndexOf(pathSep))
         await mkdir(dir, { recursive: true })
         await copyFile(localFile, ipodFile)
         copied++
@@ -497,7 +508,7 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   }
 
   // Backup existing iTunesDB
-  const ipodDb = join(IPOD_MOUNT, 'iPod_Control/iTunes/iTunesDB')
+  const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
   try {
     await copyFile(ipodDb, ipodDb + '.bak')
   } catch (err) {
@@ -508,10 +519,10 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return new Promise((resolve) => {
     const input = JSON.stringify({ tracks, playlists })
-    const py = spawn('python3', [scriptPath, '--write', ipodDb])
+    const py = spawn(PYTHON_CMD, [scriptPath, '--write', ipodDb])
     py.on('error', (err: Error) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        resolve({ ok: false, error: 'Python 3 is not installed. Install it from python.org or run: xcode-select --install', copied, copyErrors })
+        resolve({ ok: false, error: PYTHON_INSTALL_HINT, copied, copyErrors })
       } else {
         resolve({ ok: false, error: String(err), copied, copyErrors })
       }
@@ -609,18 +620,12 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) 
       let destPath: string
 
       if (needsConvert) {
-        // Convert to AAC .m4a using macOS built-in afconvert
+        // Convert to AAC .m4a (afconvert on macOS, ffmpeg on Windows).
         finalExt = '.m4a'
         fileName = `imported_${id}${finalExt}`
         destPath = join(destDir, fileName)
         try {
-          await execP('afconvert', [
-            srcPath, destPath,
-            '-f', 'm4af',    // M4A container
-            '-d', 'aac',     // AAC codec
-            '-b', '256000',  // 256kbps
-            '-s', '2',       // VBR quality
-          ])
+          await convertAudio(srcPath, destPath, 'aac-256')
         } catch (convertErr) {
           console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
           // Fall back to copying the original file
@@ -721,7 +726,7 @@ protocol.registerSchemesAsPrivileged([
 // ElevenLabs TTS
 ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean) => {
   try {
-    const voice = '7ypNKeQJEwG2Rw1tA8XG'
+    const voice = process.env.ELEVENLABS_VOICE_ID || 'JZBRao5Zg3hp0BQgJOEZ'
     const model = fast ? 'eleven_flash_v2_5' : 'eleven_v3'
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
@@ -1566,34 +1571,46 @@ ipcMain.handle('load-artwork-map', async () => {
 // ── CD Drive Detection & Import ──
 
 async function detectAudioCD(): Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }> {
-  const { execFile } = await import('child_process')
-  const { promisify } = await import('util')
-  const execP = promisify(execFile)
-
-  // Check drutil for disc presence
   try {
-    const { stdout } = await execP('drutil', ['status'])
-    if (!stdout.includes('Type:') || stdout.includes('No media')) {
-      return { hasCd: false }
+    // Ask the platform helper whether any optical drive has media.
+    const hasMedia = await hasOpticalMedia()
+    if (!hasMedia) return { hasCd: false }
+
+    // Now find the mount point that contains the audio CD tracks.
+    // macOS: CDs mount as AIFF files under /Volumes/DISC_NAME
+    // Windows: CDs appear as a drive letter with .cda placeholder files
+    const { readdir: readdirFS } = await import('fs/promises')
+    const mounts = await listMountPoints()
+
+    // Volumes to skip (the iPod and the system drive).
+    const skipMounts = new Set<string>()
+    if (detectedIpodMount) skipMounts.add(detectedIpodMount)
+    if (IS_MAC) {
+      skipMounts.add('/Volumes/Macintosh HD')
+      skipMounts.add('/Volumes/Macintosh HD - Data')
     }
 
-    // Find the mounted volume with AIFF files (audio CD)
-    const { readdir: readdirFS } = await import('fs/promises')
-    const volumes = await readdirFS('/Volumes')
-
-    for (const vol of volumes) {
-      if (vol === IPOD_VOLUME_NAME || vol === 'Macintosh HD' || vol === 'Macintosh HD - Data') continue
-      const volPath = `/Volumes/${vol}`
+    for (const mountPath of mounts) {
+      if (skipMounts.has(mountPath)) continue
       try {
-        const files = await readdirFS(volPath)
-        const aiffFiles = files.filter(f => f.toLowerCase().endsWith('.aiff') || f.toLowerCase().endsWith('.aif'))
-        if (aiffFiles.length >= 2) {
-          return { hasCd: true, volumeName: vol, volumePath: volPath, trackCount: aiffFiles.length }
+        const files = await readdirFS(mountPath)
+        // macOS exposes tracks as .aiff/.aif, Windows exposes them as .cda.
+        const audioFiles = files.filter(f => {
+          const lower = f.toLowerCase()
+          return lower.endsWith('.aiff') || lower.endsWith('.aif') || lower.endsWith('.cda')
+        })
+        if (audioFiles.length >= 2) {
+          return {
+            hasCd: true,
+            volumeName: volumeNameFromMount(mountPath),
+            volumePath: mountPath,
+            trackCount: audioFiles.length,
+          }
         }
       } catch { /* not readable */ }
     }
 
-    // Disc present but not mounted as audio CD volume
+    // Disc present but no track files visible (could be a data disc).
     return { hasCd: false }
   } catch {
     return { hasCd: false }
@@ -1705,21 +1722,13 @@ ipcMain.handle('rip-cd-tracks', async (_e,
 ) => {
   const imported: Array<Record<string, unknown>> = []
   let id = nextId
-  const { execFile } = await import('child_process')
-  const { promisify } = await import('util')
-  const execP = promisify(execFile)
 
-  // Determine afconvert args based on format
-  const fmt = format || 'aac-256'
-  const formatConfig: Record<string, { ext: string; args: string[] }> = {
-    'aac-128': { ext: '.m4a', args: ['-f', 'm4af', '-d', 'aac', '-b', '128000', '-s', '2'] },
-    'aac-256': { ext: '.m4a', args: ['-f', 'm4af', '-d', 'aac', '-b', '256000', '-s', '2'] },
-    'aac-320': { ext: '.m4a', args: ['-f', 'm4af', '-d', 'aac', '-b', '320000', '-s', '2'] },
-    'alac':    { ext: '.m4a', args: ['-f', 'm4af', '-d', 'alac'] },
-    'aiff':    { ext: '.aiff', args: [] }, // just copy
-    'wav':     { ext: '.wav', args: ['-f', 'WAVE', '-d', 'LEI16'] },
-  }
-  const cfg = formatConfig[fmt] || formatConfig['aac-256']
+  // Validate and default the format.
+  const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
+  const fmt: AudioFormat = validFormats.includes(format as AudioFormat)
+    ? (format as AudioFormat)
+    : 'aac-256'
+  const destExt = extensionForFormat(fmt)
 
   const cdBatchBaseTime = Date.now()
   let cdTrackIndex = 0
@@ -1729,20 +1738,11 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     const destDir = join(MUSIC_DIR, subDir)
     await mkdir(destDir, { recursive: true })
 
-    const fileName = `imported_${id}${cfg.ext}`
+    const fileName = `imported_${id}${destExt}`
     const destPath = join(destDir, fileName)
 
     try {
-      if (cfg.args.length === 0) {
-        // AIFF — just copy the source file directly
-        await copyFile(cdTrack.filePath, destPath)
-      } else {
-        // Convert using afconvert
-        await execP('afconvert', [
-          cdTrack.filePath, destPath,
-          ...cfg.args,
-        ], { timeout: 120000 })
-      }
+      await convertAudio(cdTrack.filePath, destPath, fmt)
 
       const fileStats = await stat(destPath)
       const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
@@ -1793,10 +1793,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
 
 ipcMain.handle('eject-cd', async () => {
   try {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-    await execP('drutil', ['eject'])
+    await ejectOpticalMedia()
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err) }
@@ -1805,13 +1802,24 @@ ipcMain.handle('eject-cd', async () => {
 
 ipcMain.handle('open-sound-settings', async () => {
   const { exec } = await import('child_process')
-  exec('open "x-apple.systempreferences:com.apple.Sound-Settings.extension?output"')
+  if (IS_MAC) {
+    exec('open "x-apple.systempreferences:com.apple.Sound-Settings.extension?output"')
+  } else if (IS_WINDOWS) {
+    // ms-settings:sound is the deep link to Windows 10/11 Sound settings.
+    exec('start ms-settings:sound')
+  }
 })
 
 ipcMain.handle('list-audio-devices', async () => {
+  const relPath = audioHelperRelPath()
+  if (!relPath) {
+    // No native helper on this platform — fall back to empty list so UI
+    // gracefully shows "default device" rather than erroring.
+    return { ok: true, devices: [] }
+  }
   const helperPath = join(
     app.isPackaged ? process.resourcesPath : app.getAppPath(),
-    'core/audio_helper'
+    relPath
   )
   try {
     const { execFile } = await import('child_process')
@@ -1826,9 +1834,13 @@ ipcMain.handle('list-audio-devices', async () => {
 })
 
 ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
+  const relPath = audioHelperRelPath()
+  if (!relPath) {
+    return { ok: false, error: 'Audio device selection is not supported on this platform yet.' }
+  }
   const helperPath = join(
     app.isPackaged ? process.resourcesPath : app.getAppPath(),
-    'core/audio_helper'
+    relPath
   )
   try {
     const { execFile } = await import('child_process')
