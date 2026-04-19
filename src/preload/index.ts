@@ -24,6 +24,12 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-scan-metadata', tracks),
   musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string }[]; error?: string }> =>
     ipcRenderer.invoke('musicman-recommendations', tracks),
+  restoreXmlPickFile: (): Promise<{ ok: boolean; path?: string; canceled?: boolean }> =>
+    ipcRenderer.invoke('restore-xml-pick-file'),
+  restoreXmlScan: (xmlPath: string): Promise<{ ok: boolean; data?: unknown; error?: string }> =>
+    ipcRenderer.invoke('restore-xml-scan', xmlPath),
+  restoreXmlApply: (xmlPath: string, approvedIds: number[]): Promise<{ ok: boolean; data?: unknown; error?: string }> =>
+    ipcRenderer.invoke('restore-xml-apply', xmlPath, approvedIds),
   loadMetadataOverrides: (): Promise<{ ok: boolean; overrides: Record<string, Record<string, string>> }> =>
     ipcRenderer.invoke('load-metadata-overrides'),
   saveMetadataOverride: (trackId: number, field: string, value: string): Promise<{ ok: boolean }> =>
