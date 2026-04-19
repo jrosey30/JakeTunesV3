@@ -114,8 +114,8 @@ declare global {
       restoreXmlApply: (xmlPath: string, approvedIds: number[]) => Promise<{ ok: boolean; data?: RestoreApplyResult; error?: string }>
       loadChatHistory: () => Promise<{ ok: boolean; conversations: ChatConversation[] }>
       saveChatHistory: (conversations: ChatConversation[]) => Promise<{ ok: boolean }>
-      loadMetadataOverrides: () => Promise<{ ok: boolean; overrides: Record<string, Record<string, string>> }>
-      saveMetadataOverride: (trackId: number, field: string, value: string) => Promise<{ ok: boolean }>
+      loadMetadataOverrides: () => Promise<{ ok: boolean; overrides: Record<string, unknown> }>
+      saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string) => Promise<{ ok: boolean }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
@@ -124,6 +124,7 @@ declare global {
       chooseArtworkFile: () => Promise<{ ok: boolean; path?: string }>
       loadArtworkMap: () => Promise<{ ok: boolean; map: Record<string, string> }>
       checkIpodMounted: () => Promise<{ mounted: boolean; name: string | null }>
+      getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
       importTracks: (filePaths: string[], nextId: number) => Promise<{ ok: boolean; tracks: Track[] }>

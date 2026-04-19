@@ -332,11 +332,19 @@ export default function MusicManView() {
     dispatch({ type: 'UPDATE_TRACKS', updates })
     setMetaFixed(prev => new Set([...prev, issueIdx]))
 
-    // Persist to disk
+    // Persist to disk — include a fingerprint so the override can be
+    // validated on future loads. Track IDs aren't stable across re-parses
+    // of the iTunesDB; without a fingerprint, an override for id=2963
+    // silently re-targets whatever track ends up at 2963 next time.
+    const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
     for (const id of allIds) {
-      await window.electronAPI.saveMetadataOverride(id, issue.field, issue.suggested)
+      const t = trackMap.get(id)
+      const fp = t
+        ? `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+        : ''
+      await window.electronAPI.saveMetadataOverride(id, issue.field, issue.suggested, fp)
     }
-  }, [metaIssues, dispatch])
+  }, [metaIssues, dispatch, libState.tracks])
 
   const restoreGroupedDiffs = useMemo(() => {
     if (!restoreScan) return []

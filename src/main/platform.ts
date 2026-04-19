@@ -188,17 +188,76 @@ export function extensionForFormat(fmt: AudioFormat): string {
 }
 
 /**
+ * Metadata that can be embedded into the output file at convert time. All
+ * fields are optional — only non-empty values are written.
+ */
+export interface AudioTags {
+  title?: string
+  artist?: string
+  album?: string
+  albumArtist?: string
+  genre?: string
+  year?: string | number
+  trackNumber?: number
+  trackCount?: number
+  discNumber?: number
+  discCount?: number
+  uuid?: string
+}
+
+/**
+ * Write tags into an audio file using Python + mutagen (already a runtime
+ * dependency). Runs after the encoder finishes. Best-effort: a failure
+ * here is logged but does not abort the rip — you'd rather have an
+ * untagged file than no file.
+ */
+async function embedTags(path: string, tags: AudioTags): Promise<void> {
+  const nonEmpty = Object.entries(tags).some(([, v]) => v !== undefined && v !== null && v !== '')
+  if (!nonEmpty) return
+  const { app } = await import('electron')
+  const { join } = await import('path')
+  const { spawn } = await import('child_process')
+  const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_writer.py')
+  await new Promise<void>((resolve) => {
+    const py = spawn(PYTHON_CMD, [script, path])
+    let stderr = ''
+    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    py.on('error', (err) => {
+      console.warn(`embedTags: could not launch tagger for ${path}: ${err}`)
+      resolve()
+    })
+    py.on('close', (code) => {
+      if (code !== 0) console.warn(`embedTags: exit ${code} for ${path}: ${stderr}`)
+      resolve()
+    })
+    py.stdin.write(JSON.stringify(tags))
+    py.stdin.end()
+  })
+}
+
+/**
  * Convert `src` to `dest` in the requested format. Uses afconvert on macOS
  * and ffmpeg on Windows. For the AIFF "format" we just copy the source
  * unchanged, since most CDs already rip as AIFF.
  *
+ * If `tags` is provided, write them into the output file after encoding
+ * so the file is self-identifying even if the library.json ever
+ * disappears. ffmpeg gets them via `-metadata`; afconvert doesn't support
+ * tagging, so we post-process with mutagen.
+ *
  * On Windows, throws a helpful error if ffmpeg isn't on PATH.
  */
-export async function convertAudio(src: string, dest: string, fmt: AudioFormat): Promise<void> {
+export async function convertAudio(
+  src: string,
+  dest: string,
+  fmt: AudioFormat,
+  tags?: AudioTags,
+): Promise<void> {
   if (fmt === 'aiff') {
     // AIFF is the native ripped format; no conversion needed.
     const { copyFile } = await import('fs/promises')
     await copyFile(src, dest)
+    if (tags) await embedTags(dest, tags)
     return
   }
 
@@ -213,6 +272,7 @@ export async function convertAudio(src: string, dest: string, fmt: AudioFormat):
       }
     })()
     await execP('afconvert', [src, dest, ...args], { timeout: 120000 })
+    if (tags) await embedTags(dest, tags)
     return
   }
 
@@ -237,4 +297,5 @@ export async function convertAudio(src: string, dest: string, fmt: AudioFormat):
     }
     throw err
   }
+  if (tags) await embedTags(dest, tags)
 }

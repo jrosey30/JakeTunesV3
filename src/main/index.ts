@@ -25,12 +25,17 @@ import {
 
 const isDev = !app.isPackaged
 
-// Load .env from multiple possible locations
+// Load .env from multiple possible locations.
+//
+// Order matters — dotenv uses `override: false`, so the FIRST path that
+// defines a variable wins. userData goes first so a user's personal
+// overrides (like a custom ELEVENLABS_VOICE_ID) aren't silently replaced
+// by whatever default .env happens to be bundled into the .app.
 const envPaths = [
+  join(app.getPath('userData'), '.env'),             // user overrides (highest priority)
   join(__dirname, '../../.env'),                    // dev mode
   join(app.getAppPath(), '.env'),                   // packaged root
-  join(app.getPath('userData'), '.env'),             // user data dir
-  join(app.isPackaged ? process.resourcesPath : app.getAppPath(), '.env'), // resources
+  join(app.isPackaged ? process.resourcesPath : app.getAppPath(), '.env'), // bundled defaults
 ]
 for (const p of envPaths) {
   config({ path: p, override: false })
@@ -356,6 +361,26 @@ async function searchWeb(query: string, album?: string): Promise<string> {
 let detectedIpodMount: string | null = null  // Full mount path: "/Volumes/JACOBROSENB" or "E:\\"
 let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "E:"
 
+// Report the iPod's actual storage capacity by statting the mounted
+// volume. Previously the renderer hardcoded 64GB, which misreports
+// modded iPods (SD card swaps, etc.) as the wrong size.
+ipcMain.handle('get-ipod-capacity', async () => {
+  try {
+    if (!detectedIpodMount) {
+      detectedIpodMount = await findIpodMount()
+      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
+    }
+    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
+    const { statfs } = await import('fs/promises')
+    const s = await statfs(detectedIpodMount)
+    const totalBytes = Number(s.blocks) * Number(s.bsize)
+    const freeBytes = Number(s.bavail) * Number(s.bsize)
+    return { ok: true, totalBytes, freeBytes, mount: detectedIpodMount }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
+})
+
 ipcMain.handle('check-ipod-mounted', async () => {
   try {
     detectedIpodMount = await findIpodMount()
@@ -381,9 +406,21 @@ ipcMain.handle('eject-ipod', async () => {
   }
 })
 
-// Read directly from iPod database (used for sync only)
-function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknown>>; playlists: Array<{ name: string; trackIds: number[] }> }> {
-  if (!detectedIpodMount) return Promise.reject(new Error('No iPod detected'))
+// Read directly from iPod database (used for sync only).
+// If the mount hasn't been detected yet (e.g. load-tracks fires before
+// the renderer calls check-ipod-mounted), probe for it here so we
+// don't spuriously return "no iPod" when the device is actually
+// plugged in. Prevents the "library went empty" footgun on cold start.
+async function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknown>>; playlists: Array<{ name: string; trackIds: number[] }> }> {
+  if (!detectedIpodMount) {
+    try {
+      detectedIpodMount = await findIpodMount()
+      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
+    } catch {
+      /* swallow — handled below */
+    }
+  }
+  if (!detectedIpodMount) throw new Error('No iPod detected')
   const ipodDbPath = join(detectedIpodMount, 'iPod_Control', 'iTunes', 'iTunesDB')
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return new Promise((resolve, reject) => {
@@ -419,13 +456,23 @@ ipcMain.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
 })
 
-// Load the JakeTunes master library (independent of iPod)
+// Load the JakeTunes master library (independent of iPod).
+//
+// Return shape includes `noDataSource: true` when we fall through to an
+// empty result (no local file AND no iPod available). The renderer uses
+// that flag to refuse auto-saving the empty state back to disk, so a
+// cold-start with the iPod not yet detected can't silently wipe the
+// library file.
 ipcMain.handle('load-tracks', async () => {
   // If a local library exists, use it (source of truth)
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const library = JSON.parse(raw)
-    return { tracks: library.tracks || [], playlists: library.playlists || [] }
+    return {
+      tracks: library.tracks || [],
+      playlists: library.playlists || [],
+      noDataSource: (library.tracks || []).length === 0,
+    }
   } catch {
     // No local library yet — first launch, seed from iPod
   }
@@ -434,16 +481,31 @@ ipcMain.handle('load-tracks', async () => {
   try {
     const ipodData = await readIpodDatabase()
     await writeFile(LIBRARY_PATH, JSON.stringify(ipodData, null, 2))
-    return ipodData
+    return { ...ipodData, noDataSource: false }
   } catch (err) {
     console.error('Failed to read iPod database:', err)
-    return { tracks: [], playlists: [] }
+    return { tracks: [], playlists: [], noDataSource: true }
   }
 })
 
-// Save the master library to disk
-ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[]) => {
+// Save the master library to disk.
+//
+// Guard against persisting an empty library on top of an existing one —
+// that's how the renderer could otherwise wipe the canonical file when
+// load-tracks happens to return []. If the caller really does want to
+// write an empty library (e.g., factory-reset), they can pass force=true.
+ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
   try {
+    if ((!tracks || (tracks as unknown[]).length === 0) && !force) {
+      // Check if there's already a non-empty library on disk; refuse to overwrite.
+      try {
+        const existing = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+        if ((existing.tracks || []).length > 0) {
+          console.warn('save-library: refusing to overwrite non-empty library with empty tracks')
+          return { ok: false, error: 'refused-empty-overwrite' }
+        }
+      } catch { /* no existing file — writing an empty one is fine */ }
+    }
     const library = { tracks, playlists: playlists || [] }
     await writeFile(LIBRARY_PATH, JSON.stringify(library, null, 2))
     return { ok: true }
@@ -619,13 +681,28 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) 
       let fileName: string
       let destPath: string
 
+      // Pull tags once, for both the track record AND to embed into the
+      // output file (so it stays self-identifying).
+      const embedTags = {
+        title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
+        artist: common.artist || '',
+        album: common.album || '',
+        albumArtist: common.albumartist || '',
+        genre: common.genre?.[0] || '',
+        year: common.year ? String(common.year) : '',
+        trackNumber: common.track?.no || 0,
+        trackCount: common.track?.of || 0,
+        discNumber: common.disk?.no || 0,
+        discCount: common.disk?.of || 0,
+      }
+
       if (needsConvert) {
         // Convert to AAC .m4a (afconvert on macOS, ffmpeg on Windows).
         finalExt = '.m4a'
         fileName = `imported_${id}${finalExt}`
         destPath = join(destDir, fileName)
         try {
-          await convertAudio(srcPath, destPath, 'aac-256')
+          await convertAudio(srcPath, destPath, 'aac-256', embedTags)
         } catch (convertErr) {
           console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
           // Fall back to copying the original file
@@ -1435,16 +1512,39 @@ ipcMain.handle('load-metadata-overrides', async () => {
   }
 })
 
-ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string) => {
+// Save a metadata override for a single track.
+//
+// Fingerprint: iPod track IDs are assigned by parse order, so any change
+// to the track set shifts IDs. An override stored by raw ID can silently
+// re-target the wrong track. `fingerprint` is a stable signature
+// ("title|artist|duration_ms") of the track AT THE TIME the override
+// was saved; the renderer skips applying overrides whose fingerprint
+// doesn't match the track currently sitting at that ID.
+//
+// Entry format on disk (v2):
+//   { "<trackId>": { "fp": "<fingerprint>", "fields": { "<field>": "<value>" } } }
+//
+// Legacy format (v1, no fingerprint):
+//   { "<trackId>": { "<field>": "<value>" } }
+// Legacy entries are kept on disk but the renderer ignores them (can't
+// validate), which is what we want after the wrong-overrides incident.
+ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
   const path = getOverridesPath()
-  let overrides: Record<string, Record<string, string>> = {}
+  let overrides: Record<string, unknown> = {}
   try {
     const data = await readFile(path, 'utf-8')
     overrides = JSON.parse(data)
   } catch {}
   const key = String(trackId)
-  if (!overrides[key]) overrides[key] = {}
-  overrides[key][field] = value
+  const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
+  const isV2 = existing && typeof existing === 'object' && 'fields' in existing
+  let entry: { fp: string; fields: Record<string, string> }
+  if (isV2 && existing!.fp && existing!.fp === fingerprint) {
+    entry = { fp: existing!.fp, fields: { ...(existing!.fields || {}), [field]: value } }
+  } else {
+    entry = { fp: fingerprint || '', fields: { [field]: value } }
+  }
+  overrides[key] = entry
   await mkdir(join(app.getPath('userData')), { recursive: true })
   await writeFile(path, JSON.stringify(overrides, null, 2), 'utf-8')
   return { ok: true }
@@ -1802,7 +1902,19 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     const destPath = join(destDir, fileName)
 
     try {
-      await convertAudio(cdTrack.filePath, destPath, fmt)
+      const yearStr = metadata.year ? String(parseInt(metadata.year, 10) || '') : ''
+      await convertAudio(cdTrack.filePath, destPath, fmt, {
+        title: cdTrack.title,
+        artist: metadata.artist,
+        album: metadata.album,
+        albumArtist: metadata.artist,
+        genre: metadata.genre,
+        year: yearStr,
+        trackNumber: cdTrack.number,
+        trackCount: cdTracks.length,
+        discNumber: 1,
+        discCount: 1,
+      })
 
       const fileStats = await stat(destPath)
       const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)

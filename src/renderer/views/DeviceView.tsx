@@ -3,9 +3,10 @@ import { useLibrary } from '../context/LibraryContext'
 import type { Playlist, Track } from '../types'
 import '../styles/device.css'
 
-// iPod Mini CF-modded capacity
-const IPOD_CAPACITY_GB = 64
-const IPOD_CAPACITY_BYTES = IPOD_CAPACITY_GB * 1024 * 1024 * 1024
+// Fallback capacity shown before the main process reports the real size.
+// This used to be hardcoded to 64GB, which misreports SD-card-modded iPods.
+// The actual size now comes from statfs() via get-ipod-capacity.
+const FALLBACK_CAPACITY_BYTES = 64 * 1024 * 1024 * 1024
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
@@ -107,9 +108,15 @@ export default function DeviceView() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
   const [ipodName, setIpodName] = useState('iPod')
+  const [ipodCapacityBytes, setIpodCapacityBytes] = useState<number>(FALLBACK_CAPACITY_BYTES)
 
   useEffect(() => {
     window.electronAPI.checkIpodMounted().then(r => { if (r.name) setIpodName(r.name) }).catch(() => {})
+    // Ask the main process for the real capacity of the mounted iPod
+    // (modded units can be anything — 64GB, 128GB, 256GB, etc.).
+    window.electronAPI.getIpodCapacity().then(r => {
+      if (r.ok && r.totalBytes && r.totalBytes > 0) setIpodCapacityBytes(r.totalBytes)
+    }).catch(() => {})
   }, [])
 
   const stats = useMemo(() => {
@@ -120,9 +127,9 @@ export default function DeviceView() {
     const albums = new Set(tracks.map(t => t.album).filter(Boolean))
     const genres = new Set(tracks.map(t => t.genre).filter(Boolean))
     const otherBytes = 500 * 1024 * 1024 // ~500MB for iPod OS/DB/artwork
-    const freeBytes = Math.max(0, IPOD_CAPACITY_BYTES - totalBytes - otherBytes)
-    const audioPercent = (totalBytes / IPOD_CAPACITY_BYTES) * 100
-    const otherPercent = (otherBytes / IPOD_CAPACITY_BYTES) * 100
+    const freeBytes = Math.max(0, ipodCapacityBytes - totalBytes - otherBytes)
+    const audioPercent = (totalBytes / ipodCapacityBytes) * 100
+    const otherPercent = (otherBytes / ipodCapacityBytes) * 100
     const freePercent = Math.max(0, 100 - audioPercent - otherPercent)
 
     return {
@@ -137,7 +144,7 @@ export default function DeviceView() {
       otherPercent,
       freePercent,
     }
-  }, [state.tracks])
+  }, [state.tracks, ipodCapacityBytes])
 
   return (
     <div className="device-view">
@@ -298,7 +305,7 @@ export default function DeviceView() {
       )}
 
       <div className="device-capacity-footer">
-        <span>{formatBytes(IPOD_CAPACITY_BYTES)} total capacity</span>
+        <span>{formatBytes(ipodCapacityBytes)} total capacity</span>
         <span>{formatBytes(stats.freeBytes)} available</span>
       </div>
     </div>

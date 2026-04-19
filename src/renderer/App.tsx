@@ -32,16 +32,38 @@ function AppInner() {
       const tracks = dbResult.tracks || []
       const ipodPlaylists = dbResult.playlists || []
 
-      // Apply saved metadata overrides
+      // Apply saved metadata overrides.
+      //
+      // v2 entries carry a fingerprint ("title|artist|duration_ms") that
+      // matches the track they were saved against. If the fingerprint no
+      // longer matches the track at that ID, skip it — IDs shift when
+      // the iTunesDB track set changes, and stale overrides were the
+      // root cause of the hybrid-row metadata bug.
+      //
+      // v1 entries (no fingerprint, fields at top level) have no way to
+      // be validated, so we ignore them rather than risk mis-applying.
+      let appliedCount = 0, skippedStale = 0, skippedLegacy = 0
       if (overridesResult.ok && overridesResult.overrides) {
-        const ov = overridesResult.overrides
+        const ov = overridesResult.overrides as Record<string, unknown>
         for (const t of tracks) {
-          const fixes = ov[String(t.id)]
-          if (fixes) {
-            for (const [field, value] of Object.entries(fixes)) {
-              (t as Record<string, unknown>)[field] = value
-            }
+          const entry = ov[String(t.id)] as { fp?: string; fields?: Record<string, string> } | undefined
+          if (!entry || typeof entry !== 'object') continue
+          if (!('fields' in entry) || !entry.fields) {
+            skippedLegacy++
+            continue
           }
+          const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+          if (entry.fp !== fp) {
+            skippedStale++
+            continue
+          }
+          for (const [field, value] of Object.entries(entry.fields)) {
+            (t as Record<string, unknown>)[field] = value
+          }
+          appliedCount++
+        }
+        if (skippedStale || skippedLegacy) {
+          console.warn(`metadata overrides: applied ${appliedCount}, skipped ${skippedStale} stale and ${skippedLegacy} legacy entries`)
         }
       }
       dispatch({ type: 'SET_TRACKS', tracks })

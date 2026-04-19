@@ -30,10 +30,10 @@ const electronAPI = {
     ipcRenderer.invoke('restore-xml-scan', xmlPath),
   restoreXmlApply: (xmlPath: string, approvedIds: number[]): Promise<{ ok: boolean; data?: unknown; error?: string }> =>
     ipcRenderer.invoke('restore-xml-apply', xmlPath, approvedIds),
-  loadMetadataOverrides: (): Promise<{ ok: boolean; overrides: Record<string, Record<string, string>> }> =>
+  loadMetadataOverrides: (): Promise<{ ok: boolean; overrides: Record<string, unknown> }> =>
     ipcRenderer.invoke('load-metadata-overrides'),
-  saveMetadataOverride: (trackId: number, field: string, value: string): Promise<{ ok: boolean }> =>
-    ipcRenderer.invoke('save-metadata-override', trackId, field, value),
+  saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('save-metadata-override', trackId, field, value, fingerprint),
   loadChatHistory: (): Promise<{ ok: boolean; conversations: unknown[] }> =>
     ipcRenderer.invoke('load-chat-history'),
   saveChatHistory: (conversations: unknown[]): Promise<{ ok: boolean }> =>
@@ -54,6 +54,8 @@ const electronAPI = {
     ipcRenderer.invoke('load-artwork-map'),
   checkIpodMounted: (): Promise<{ mounted: boolean; name: string | null }> =>
     ipcRenderer.invoke('check-ipod-mounted'),
+  getIpodCapacity: (): Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }> =>
+    ipcRenderer.invoke('get-ipod-capacity'),
   getMusicLibraryPath: (): Promise<string> =>
     ipcRenderer.invoke('get-music-library-path'),
   ejectIpod: (): Promise<{ ok: boolean; error?: string }> =>
