@@ -96,8 +96,33 @@ def _build_duration_index(xml_tracks):
     return by_dur
 
 
-def _match_one(ipod_track, by_dur):
-    """Return (xml_entry, method) or (None, None)."""
+def _build_name_index(xml_tracks):
+    """Map lowercased XML Name -> list of (entry, duration_ms) pairs.
+    Used as a fallback for tracks whose corrupt title carries the real song
+    name (e.g. '18 Hatikvah') but whose iPod duration is off by >2 ms."""
+    divisor = _detect_duration_unit_divisor(xml_tracks)
+    by_name = defaultdict(list)
+    for tr in xml_tracks:
+        name = (tr.get('Name') or '').strip().lower()
+        dur = tr.get('Total Time')
+        if name and dur:
+            by_name[name].append((tr, dur // divisor))
+    return by_name
+
+
+# Max drift (ms) allowed when falling back to title-based matching.
+# Typical drift seen in the wild is ~50 ms from encoder padding differences.
+TITLE_FALLBACK_DRIFT_MS = 500
+
+
+def _stripped_corrupt_title(title):
+    """If title looks like '03 Dancing Queen', return 'dancing queen'. Else ''."""
+    m = re.match(r'^\d{1,2}\s+(.+)$', title or '')
+    return m.group(1).strip().lower() if m else ''
+
+
+def _match_one(ipod_track, by_dur, by_name):
+    """Return (xml_entry, method) or (None, None|'ambiguous')."""
     dur = ipod_track.get('duration', 0)
     if not dur:
         return None, None
@@ -111,36 +136,55 @@ def _match_one(ipod_track, by_dur):
             hits = by_dur.get(dur + d, [])
             if hits:
                 break
-    if not hits:
-        return None, None
-    if len(hits) == 1:
+
+    title = ipod_track.get('title') or ''
+    stripped = _stripped_corrupt_title(title)
+
+    if hits and len(hits) == 1:
         return hits[0], 'duration'
 
-    ia = (ipod_track.get('artist') or '').strip().lower()
-    ial = (ipod_track.get('album') or '').strip().lower()
+    if hits:
+        ia = (ipod_track.get('artist') or '').strip().lower()
+        ial = (ipod_track.get('album') or '').strip().lower()
 
-    if ia:
-        by_artist = [h for h in hits if (h.get('Artist') or '').strip().lower() == ia]
-        if len(by_artist) == 1:
-            return by_artist[0], 'duration+artist'
-        if len(by_artist) > 1 and ial:
-            by_album = [h for h in by_artist if (h.get('Album') or '').strip().lower() == ial]
-            if len(by_album) == 1:
-                return by_album[0], 'duration+album'
+        if ia:
+            by_artist = [h for h in hits if (h.get('Artist') or '').strip().lower() == ia]
+            if len(by_artist) == 1:
+                return by_artist[0], 'duration+artist'
+            if len(by_artist) > 1 and ial:
+                by_album = [h for h in by_artist if (h.get('Album') or '').strip().lower() == ial]
+                if len(by_album) == 1:
+                    return by_album[0], 'duration+album'
 
-    # Corrupt titles carry a leading track number — use that to narrow
-    title = ipod_track.get('title') or ''
-    m = re.match(r'^(\d{1,2})\s', title)
-    if m:
-        try:
-            tn = int(m.group(1))
-            narrow = [h for h in hits if h.get('Track Number') == tn]
+        # Corrupt-title tells us the real song name — disambiguate by it
+        if stripped:
+            narrow = [h for h in hits if (h.get('Name') or '').strip().lower() == stripped]
             if len(narrow) == 1:
-                return narrow[0], 'duration+track#'
-        except ValueError:
-            pass
+                return narrow[0], 'duration+title'
 
-    return None, 'ambiguous'
+        # Corrupt titles also carry a leading track number
+        m = re.match(r'^(\d{1,2})\s', title)
+        if m:
+            try:
+                tn = int(m.group(1))
+                narrow = [h for h in hits if h.get('Track Number') == tn]
+                if len(narrow) == 1:
+                    return narrow[0], 'duration+track#'
+            except ValueError:
+                pass
+
+        return None, 'ambiguous'
+
+    # No duration match at all — last resort: match by embedded title with
+    # loose duration tolerance. Only triggers when the iPod title has a
+    # corrupt track-number prefix (meaning we actually know the real name).
+    if stripped:
+        candidates = by_name.get(stripped, [])
+        close = [(tr, cd) for (tr, cd) in candidates if abs(cd - dur) <= TITLE_FALLBACK_DRIFT_MS]
+        if len(close) == 1:
+            return close[0][0], 'title+loose-duration'
+
+    return None, None
 
 
 def _field_differs(old_v, new_v):
@@ -177,6 +221,7 @@ def scan(ipod_mount, xml_path):
         plist = plistlib.load(fh)
     xml_tracks = list(plist.get('Tracks', {}).values())
     by_dur = _build_duration_index(xml_tracks)
+    by_name = _build_name_index(xml_tracks)
 
     diffs = []
     unmatched = []
@@ -184,7 +229,7 @@ def scan(ipod_mount, xml_path):
     unchanged = 0
 
     for t in tracks:
-        xml_entry, method = _match_one(t, by_dur)
+        xml_entry, method = _match_one(t, by_dur, by_name)
         if xml_entry is None and method == 'ambiguous':
             ambiguous.append({
                 'id': t['id'],
@@ -260,6 +305,7 @@ def apply(ipod_mount, xml_path, approved_ids):
         plist = plistlib.load(fh)
     xml_tracks = list(plist.get('Tracks', {}).values())
     by_dur = _build_duration_index(xml_tracks)
+    by_name = _build_name_index(xml_tracks)
 
     approved = set(int(i) for i in approved_ids)
     restored = 0
@@ -268,7 +314,7 @@ def apply(ipod_mount, xml_path, approved_ids):
     for t in tracks:
         if t['id'] not in approved:
             continue
-        xml_entry, method = _match_one(t, by_dur)
+        xml_entry, method = _match_one(t, by_dur, by_name)
         if xml_entry is None:
             skipped_no_match += 1
             continue
