@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
-import { Track, MetadataIssue, ChatConversation } from '../types'
+import { Track, MetadataIssue, ChatConversation, RestoreScanResult, RestoreApplyResult, RestoreDiff } from '../types'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
 
@@ -108,6 +108,14 @@ export default function MusicManView() {
   const [metaIssues, setMetaIssues] = useState<MetadataIssue[]>([])
   const [metaFixed, setMetaFixed] = useState<Set<number>>(new Set())
   const [metaScanned, setMetaScanned] = useState(false)
+  const [restoreXmlPath, setRestoreXmlPath] = useState<string | null>(null)
+  const [restoreScan, setRestoreScan] = useState<RestoreScanResult | null>(null)
+  const [restoreScanning, setRestoreScanning] = useState(false)
+  const [restoreApplying, setRestoreApplying] = useState(false)
+  const [restoreApplied, setRestoreApplied] = useState<RestoreApplyResult | null>(null)
+  const [restoreApprovedIds, setRestoreApprovedIds] = useState<Set<number>>(new Set())
+  const [restoreExpandedGroups, setRestoreExpandedGroups] = useState<Set<string>>(new Set())
+  const [restoreError, setRestoreError] = useState<string | null>(null)
   const [artFetching, setArtFetching] = useState<Set<string>>(new Set())
   const [artProgress, setArtProgress] = useState<{ done: number; total: number } | null>(null)
   const [orgApplied, setOrgApplied] = useState<Set<string>>(new Set())
@@ -329,6 +337,124 @@ export default function MusicManView() {
       await window.electronAPI.saveMetadataOverride(id, issue.field, issue.suggested)
     }
   }, [metaIssues, dispatch])
+
+  const restoreGroupedDiffs = useMemo(() => {
+    if (!restoreScan) return []
+    const byGroup = new Map<string, { album: string; artist: string; diffs: RestoreDiff[] }>()
+    for (const d of restoreScan.diffs) {
+      const existing = byGroup.get(d.groupKey)
+      if (existing) {
+        existing.diffs.push(d)
+      } else {
+        byGroup.set(d.groupKey, { album: d.groupAlbum, artist: d.groupArtist, diffs: [d] })
+      }
+    }
+    return Array.from(byGroup.entries())
+      .map(([key, val]) => ({ key, ...val }))
+      .sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album))
+  }, [restoreScan])
+
+  const pickAndScanXml = useCallback(async () => {
+    if (restoreScanning) return
+    setRestoreError(null)
+    setRestoreApplied(null)
+    const picked = await window.electronAPI.restoreXmlPickFile()
+    if (!picked.ok || !picked.path) return
+    setRestoreXmlPath(picked.path)
+    setRestoreScanning(true)
+    setRestoreScan(null)
+    const result = await window.electronAPI.restoreXmlScan(picked.path)
+    setRestoreScanning(false)
+    if (!result.ok || !result.data) {
+      setRestoreError(result.error || 'Scan failed')
+      return
+    }
+    setRestoreScan(result.data)
+    // Default: everything approved
+    setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
+    setRestoreExpandedGroups(new Set())
+  }, [restoreScanning])
+
+  const rescanXml = useCallback(async () => {
+    if (!restoreXmlPath || restoreScanning) return
+    setRestoreError(null)
+    setRestoreApplied(null)
+    setRestoreScanning(true)
+    setRestoreScan(null)
+    const result = await window.electronAPI.restoreXmlScan(restoreXmlPath)
+    setRestoreScanning(false)
+    if (!result.ok || !result.data) {
+      setRestoreError(result.error || 'Scan failed')
+      return
+    }
+    setRestoreScan(result.data)
+    setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
+    setRestoreExpandedGroups(new Set())
+  }, [restoreXmlPath, restoreScanning])
+
+  const toggleRestoreTrack = useCallback((id: number) => {
+    setRestoreApprovedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const toggleRestoreGroup = useCallback((diffs: RestoreDiff[]) => {
+    setRestoreApprovedIds(prev => {
+      const ids = diffs.map(d => d.id)
+      const allApproved = ids.every(id => prev.has(id))
+      const next = new Set(prev)
+      if (allApproved) ids.forEach(id => next.delete(id))
+      else ids.forEach(id => next.add(id))
+      return next
+    })
+  }, [])
+
+  const toggleRestoreExpanded = useCallback((key: string) => {
+    setRestoreExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const approveAllRestore = useCallback(() => {
+    if (!restoreScan) return
+    setRestoreApprovedIds(new Set(restoreScan.diffs.map(d => d.id)))
+  }, [restoreScan])
+
+  const approveNoneRestore = useCallback(() => {
+    setRestoreApprovedIds(new Set())
+  }, [])
+
+  const applyRestore = useCallback(async () => {
+    if (!restoreXmlPath || !restoreScan || restoreApplying) return
+    if (restoreApprovedIds.size === 0) return
+    setRestoreApplying(true)
+    setRestoreError(null)
+    const result = await window.electronAPI.restoreXmlApply(
+      restoreXmlPath,
+      Array.from(restoreApprovedIds),
+    )
+    setRestoreApplying(false)
+    if (!result.ok || !result.data) {
+      setRestoreError(result.error || 'Apply failed')
+      return
+    }
+    setRestoreApplied(result.data)
+    // Reload library from iPod so the corrected metadata shows up
+    try {
+      const reloaded = await window.electronAPI.loadTracks()
+      if (reloaded?.tracks) {
+        dispatch({ type: 'SET_TRACKS', tracks: reloaded.tracks as Track[] })
+      }
+    } catch {
+      // Non-fatal; user can restart to see changes
+    }
+  }, [restoreXmlPath, restoreScan, restoreApprovedIds, restoreApplying, dispatch])
 
   // Album art helpers
   const uniqueAlbums = (() => {
@@ -1216,6 +1342,142 @@ export default function MusicManView() {
 
         {activeTab === 'Fix Metadata' && (
           <div className="musicman-metadata">
+            <div className="musicman-restore">
+              <div className="musicman-restore-header">
+                <h3>Restore from XML library</h3>
+                <p>Your iTunesDB got scrambled during the storage-mod re-sync. Point me at your iTunes Library XML export and I'll rebuild every mangled title/artist/album from it.</p>
+              </div>
+
+              {!restoreScan && !restoreScanning && !restoreApplied && (
+                <button className="musicman-chat-send" onClick={pickAndScanXml}>
+                  Choose XML & Scan
+                </button>
+              )}
+
+              {restoreScanning && (
+                <p className="musicman-typing">Matching your iPod against the XML...</p>
+              )}
+
+              {restoreError && (
+                <div className="musicman-restore-error">Error: {restoreError}</div>
+              )}
+
+              {restoreApplied && (
+                <div className="musicman-restore-applied">
+                  <p><strong>Done.</strong> {restoreApplied.tracksRestored} tracks restored, {restoreApplied.tracksWritten} written to iTunesDB.</p>
+                  <p className="musicman-restore-backup">Backup saved: <code>{restoreApplied.backup}</code></p>
+                  <button className="musicman-chat-send" onClick={rescanXml} style={{ marginTop: 12 }}>Scan Again</button>
+                </div>
+              )}
+
+              {restoreScan && !restoreApplied && (
+                <>
+                  <div className="musicman-restore-summary">
+                    <div className="musicman-restore-stats">
+                      <span><strong>{restoreScan.total}</strong> total</span>
+                      <span><strong>{restoreScan.changed}</strong> will change</span>
+                      <span><strong>{restoreScan.unchanged}</strong> already correct</span>
+                      {restoreScan.unmatched.length > 0 && <span className="musicman-restore-flagged"><strong>{restoreScan.unmatched.length}</strong> unmatched</span>}
+                      {restoreScan.ambiguous.length > 0 && <span className="musicman-restore-flagged"><strong>{restoreScan.ambiguous.length}</strong> ambiguous</span>}
+                    </div>
+                    <div className="musicman-restore-actions">
+                      <button className="musicman-metadata-rescan" onClick={approveAllRestore}>Approve all</button>
+                      <button className="musicman-metadata-rescan" onClick={approveNoneRestore}>Clear</button>
+                      <button className="musicman-metadata-rescan" onClick={rescanXml}>Rescan</button>
+                      <button
+                        className="musicman-chat-send"
+                        onClick={applyRestore}
+                        disabled={restoreApprovedIds.size === 0 || restoreApplying}
+                      >
+                        {restoreApplying ? 'Applying...' : `Apply ${restoreApprovedIds.size} changes`}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="musicman-restore-groups">
+                    {restoreGroupedDiffs.map(group => {
+                      const isExpanded = restoreExpandedGroups.has(group.key)
+                      const approvedCount = group.diffs.filter(d => restoreApprovedIds.has(d.id)).length
+                      const allApproved = approvedCount === group.diffs.length
+                      return (
+                        <div key={group.key} className="musicman-restore-group">
+                          <div className="musicman-restore-group-header">
+                            <input
+                              type="checkbox"
+                              checked={allApproved}
+                              ref={el => { if (el) el.indeterminate = approvedCount > 0 && !allApproved }}
+                              onChange={() => toggleRestoreGroup(group.diffs)}
+                            />
+                            <button
+                              className="musicman-restore-group-toggle"
+                              onClick={() => toggleRestoreExpanded(group.key)}
+                            >
+                              {isExpanded ? '▾' : '▸'} <strong>{group.artist}</strong> — {group.album}
+                              <span className="musicman-restore-group-count">
+                                {approvedCount}/{group.diffs.length} track{group.diffs.length !== 1 ? 's' : ''}
+                              </span>
+                            </button>
+                          </div>
+                          {isExpanded && (
+                            <div className="musicman-restore-tracks">
+                              {group.diffs.map(d => {
+                                const approved = restoreApprovedIds.has(d.id)
+                                return (
+                                  <label key={d.id} className={`musicman-restore-track ${approved ? '' : 'musicman-restore-track--skip'}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={approved}
+                                      onChange={() => toggleRestoreTrack(d.id)}
+                                    />
+                                    <div className="musicman-restore-track-body">
+                                      {d.changed.map(field => (
+                                        <div key={field} className="musicman-restore-diff-row">
+                                          <span className="musicman-restore-field">{field}</span>
+                                          <span className="musicman-restore-old">{String(d.old[field] || '(empty)')}</span>
+                                          <span className="musicman-restore-arrow">→</span>
+                                          <span className="musicman-restore-new">{String(d.new[field] || '(empty)')}</span>
+                                        </div>
+                                      ))}
+                                      <div className="musicman-restore-match">matched by {d.matchMethod}</div>
+                                    </div>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {(restoreScan.unmatched.length > 0 || restoreScan.ambiguous.length > 0) && (
+                    <div className="musicman-restore-flagged-section">
+                      <h4>Flagged tracks ({restoreScan.unmatched.length + restoreScan.ambiguous.length})</h4>
+                      <p className="musicman-restore-flagged-hint">No confident XML match for these. They'll be left alone.</p>
+                      <div className="musicman-restore-flagged-list">
+                        {restoreScan.ambiguous.map(t => (
+                          <div key={`amb-${t.id}`} className="musicman-restore-flagged-item">
+                            <span className="musicman-restore-flagged-tag">ambiguous</span>
+                            <span>{t.currentTitle || '(no title)'}</span>
+                            {t.currentArtist && <span className="musicman-restore-flagged-meta">— {t.currentArtist}</span>}
+                          </div>
+                        ))}
+                        {restoreScan.unmatched.map(t => (
+                          <div key={`un-${t.id}`} className="musicman-restore-flagged-item">
+                            <span className="musicman-restore-flagged-tag">unmatched</span>
+                            <span>{t.currentTitle || '(no title)'}</span>
+                            {t.currentArtist && <span className="musicman-restore-flagged-meta">— {t.currentArtist}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="musicman-restore-divider" />
+
             {!metaScanned && !metaScanning && (
               <div className="musicman-metadata-intro">
                 <p>Misspelled artist names? Wrong genres? "Track 01"? Let me fix your embarrassing metadata.</p>

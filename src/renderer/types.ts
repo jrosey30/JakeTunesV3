@@ -45,6 +45,52 @@ export interface MetadataIssue {
   suggested: string
   commentary: string
 }
+
+export interface RestoreDiff {
+  id: number
+  dbid: number
+  path: string
+  xmlPersistentId: string
+  xmlTrackId: number
+  matchMethod: 'duration' | 'duration+artist' | 'duration+album' | 'duration+track#'
+  old: Record<string, string | number>
+  new: Record<string, string | number>
+  changed: string[]
+  groupKey: string
+  groupAlbum: string
+  groupArtist: string
+}
+
+export interface RestoreUnmatched {
+  id: number
+  dbid: number
+  path: string
+  duration: number
+  currentTitle: string
+  currentArtist: string
+  currentAlbum: string
+}
+
+export interface RestoreScanResult {
+  ipodMount: string
+  xmlPath: string
+  total: number
+  changed: number
+  unchanged: number
+  unmatched: RestoreUnmatched[]
+  ambiguous: RestoreUnmatched[]
+  diffs: RestoreDiff[]
+}
+
+export interface RestoreApplyResult {
+  ok: boolean
+  backup?: string
+  tracksApproved?: number
+  tracksRestored?: number
+  tracksSkipped?: number
+  tracksWritten?: number
+  error?: string
+}
 export type RepeatMode = 'off' | 'all' | 'one'
 export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'dateAdded' | 'playCount' | 'rating'
 export type SortDirection = 'asc' | 'desc'
@@ -63,6 +109,9 @@ declare global {
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; issues?: MetadataIssue[]; error?: string }>
       musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string; artUrl?: string }[]; error?: string }>
+      restoreXmlPickFile: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
+      restoreXmlScan: (xmlPath: string) => Promise<{ ok: boolean; data?: RestoreScanResult; error?: string }>
+      restoreXmlApply: (xmlPath: string, approvedIds: number[]) => Promise<{ ok: boolean; data?: RestoreApplyResult; error?: string }>
       loadChatHistory: () => Promise<{ ok: boolean; conversations: ChatConversation[] }>
       saveChatHistory: (conversations: ChatConversation[]) => Promise<{ ok: boolean }>
       loadMetadataOverrides: () => Promise<{ ok: boolean; overrides: Record<string, Record<string, string>> }>

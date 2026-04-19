@@ -1361,6 +1361,66 @@ ${buildTasteProfile() ? `\nWhat you know about this listener from their history:
   }
 })
 
+// ── Restore iPod metadata from iTunes XML ──
+async function runPythonRestore(args: string[], stdinData?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/restore_from_xml.py')
+  return new Promise((resolve) => {
+    const py = spawn('python3', [scriptPath, ...args])
+    let stdout = ''
+    let stderr = ''
+    py.on('error', (err: Error) => {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        resolve({ ok: false, error: 'Python 3 is not installed.' })
+      } else {
+        resolve({ ok: false, error: String(err) })
+      }
+    })
+    py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    if (stdinData !== undefined) {
+      py.stdin.write(stdinData)
+      py.stdin.end()
+    }
+    py.on('close', (code: number) => {
+      if (code !== 0) {
+        resolve({ ok: false, error: `restore_from_xml.py exited with code ${code}: ${stderr}` })
+        return
+      }
+      try {
+        resolve({ ok: true, data: JSON.parse(stdout) })
+      } catch {
+        resolve({ ok: false, error: `Invalid JSON from restore_from_xml.py: ${stdout.slice(0, 200)}` })
+      }
+    })
+  })
+}
+
+ipcMain.handle('restore-xml-pick-file', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Choose your iTunes Library XML export',
+    properties: ['openFile'],
+    filters: [{ name: 'iTunes XML', extensions: ['xml'] }],
+    defaultPath: join(process.env.HOME || '', 'Desktop'),
+  })
+  if (result.canceled || result.filePaths.length === 0) {
+    return { ok: false, canceled: true }
+  }
+  return { ok: true, path: result.filePaths[0] }
+})
+
+ipcMain.handle('restore-xml-scan', async (_event, xmlPath: string) => {
+  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
+  const mount = `/Volumes/${detectedIpodVolume}`
+  return await runPythonRestore(['--scan', mount, xmlPath])
+})
+
+ipcMain.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds: number[]) => {
+  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
+  const mount = `/Volumes/${detectedIpodVolume}`
+  const payload = JSON.stringify({ approvedIds })
+  return await runPythonRestore(['--apply', mount, xmlPath], payload)
+})
+
 // Metadata overrides persistence
 function getOverridesPath(): string {
   return join(app.getPath('userData'), 'metadata-overrides.json')
