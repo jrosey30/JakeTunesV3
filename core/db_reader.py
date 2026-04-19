@@ -82,11 +82,21 @@ def parse_tracks(db_path=IPOD_PATH):
         # iPod internal unique track ID (offset 0x10) — used to resolve playlist references
         dbid = struct.unpack_from('<I', data, pos + 0x10)[0] if header_len >= 20 else 0
 
+        # Date added (offset 0x20, Mac classic epoch: seconds since 1904-01-01).
+        # Extract it natively so we don't depend on a matching entry existing
+        # in whatever iTunes XML happens to be on the Desktop.
+        date_added = ''
+        if header_len >= 36:
+            raw_mac = struct.unpack_from('<I', data, pos + 0x20)[0]
+            if 2_000_000_000 < raw_mac < 4_000_000_000:
+                unix_ts = raw_mac - MAC_EPOCH_OFFSET
+                date_added = time.strftime('%Y-%m-%d', time.localtime(unix_ts))
+
         track_info = {
             'id': track_id, 'dbid': dbid, 'year': year, 'duration': duration_ms,
             'trackNumber': track_num, 'trackCount': track_count,
             'discNumber': disc_num, 'discCount': disc_count,
-            'playCount': 0, 'dateAdded': '', 'fileSize': 0, 'rating': 0,
+            'playCount': 0, 'dateAdded': date_added, 'fileSize': 0, 'rating': 0,
         }
         child_pos = pos + header_len
         end_pos = pos + total_len
