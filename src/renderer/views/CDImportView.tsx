@@ -40,6 +40,26 @@ function formatDuration(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+// Module-level cache of the current CD's info + user's in-progress edits.
+// Survives view re-mounts so navigating away and coming back doesn't
+// re-fetch (and re-show "Reading CD..."). Invalidated when the CD's
+// volumePath changes (a different disc was inserted) or on eject.
+interface CdEditState {
+  checked: number[]
+  editArtist: string
+  editAlbum: string
+  editYear: string
+  editGenre: string
+  editTitles: Record<number, string>
+}
+let cachedCdInfo: CdInfo | null = null
+let cachedEdits: CdEditState | null = null
+
+export function clearCdImportCache() {
+  cachedCdInfo = null
+  cachedEdits = null
+}
+
 function CdIcon() {
   return (
     <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -81,9 +101,14 @@ function SpinnerIcon() {
 
 export default function CDImportView() {
   const { state: libState, dispatch } = useLibrary()
-  const [status, setStatus] = useState<ImportStatus>('loading')
-  const [cdInfo, setCdInfo] = useState<CdInfo | null>(null)
-  const [checked, setChecked] = useState<Set<number>>(new Set())
+  // Seed state from the module-level cache when available so navigating
+  // away and coming back to the CD view doesn't re-run the "Reading
+  // CD..." spinner and doesn't wipe edits.
+  const [status, setStatus] = useState<ImportStatus>(cachedCdInfo ? 'ready' : 'loading')
+  const [cdInfo, setCdInfo] = useState<CdInfo | null>(cachedCdInfo)
+  const [checked, setChecked] = useState<Set<number>>(
+    cachedEdits ? new Set(cachedEdits.checked) : new Set()
+  )
   const [error, setError] = useState('')
   const [rippedTracks, setRippedTracks] = useState<Set<number>>(new Set())
   const [currentTrack, setCurrentTrack] = useState<number | null>(null)
@@ -92,49 +117,100 @@ export default function CDImportView() {
   // Import settings
   const [importFormat, setImportFormat] = useState<ImportFormat>('aac-256')
 
-  // Editable metadata
-  const [editArtist, setEditArtist] = useState('')
-  const [editAlbum, setEditAlbum] = useState('')
-  const [editYear, setEditYear] = useState('')
-  const [editGenre, setEditGenre] = useState('')
-  const [editTitles, setEditTitles] = useState<Record<number, string>>({})
+  // Editable metadata — also seeded from cache
+  const [editArtist, setEditArtist] = useState(cachedEdits?.editArtist ?? '')
+  const [editAlbum, setEditAlbum] = useState(cachedEdits?.editAlbum ?? '')
+  const [editYear, setEditYear] = useState(cachedEdits?.editYear ?? '')
+  const [editGenre, setEditGenre] = useState(cachedEdits?.editGenre ?? '')
+  const [editTitles, setEditTitles] = useState<Record<number, string>>(cachedEdits?.editTitles ?? {})
 
   const loadedRef = useRef(false)
 
-  // Load CD info on mount
+  // Load CD info on mount.
+  //
+  // If we already have a cache for THIS CD (same volumePath), reuse it
+  // and skip the fetch. If there's no cache or the inserted disc has
+  // changed, fetch fresh. This kills the "shows 'Reading CD...' every
+  // time you visit the CD view" annoyance without removing the re-fetch
+  // behavior for genuinely new discs.
   useEffect(() => {
     if (loadedRef.current) return
     loadedRef.current = true
 
-    setStatus('loading')
-    window.electronAPI.getCdInfo().then(result => {
-      if (result.ok && result.tracks && result.tracks.length > 0) {
-        const info: CdInfo = {
-          volumeName: result.volumeName || 'Audio CD',
-          volumePath: result.volumePath || '',
-          artist: result.artist || '',
-          album: result.album || 'Audio CD',
-          year: result.year || '',
-          genre: result.genre || '',
-          tracks: result.tracks,
+    // If the cached CD matches what's currently mounted, no work to do.
+    if (cachedCdInfo) {
+      window.electronAPI.checkCdDrive().then(r => {
+        if (r.hasCd && r.volumePath === cachedCdInfo!.volumePath) {
+          // Still the same disc — keep using cached state.
+          return
         }
-        setCdInfo(info)
-        setEditArtist(info.artist)
-        setEditAlbum(info.album)
-        setEditYear(info.year)
-        setEditGenre(info.genre)
-        // All tracks checked by default
-        setChecked(new Set(info.tracks.map(t => t.number)))
-        setStatus('ready')
-      } else {
-        setError(result.error || 'Could not read CD')
+        // Different disc (or no disc) — clear cache and fall through to fetch.
+        clearCdImportCache()
+        setCdInfo(null)
+        setChecked(new Set())
+        setEditArtist(''); setEditAlbum(''); setEditYear(''); setEditGenre('')
+        setEditTitles({})
+        doFetchCdInfo()
+      }).catch(() => { doFetchCdInfo() })
+      return
+    }
+    doFetchCdInfo()
+
+    function doFetchCdInfo() {
+      setStatus('loading')
+      window.electronAPI.getCdInfo().then(result => {
+        if (result.ok && result.tracks && result.tracks.length > 0) {
+          const info: CdInfo = {
+            volumeName: result.volumeName || 'Audio CD',
+            volumePath: result.volumePath || '',
+            artist: result.artist || '',
+            album: result.album || 'Audio CD',
+            year: result.year || '',
+            genre: result.genre || '',
+            tracks: result.tracks,
+          }
+          setCdInfo(info)
+          cachedCdInfo = info
+          setEditArtist(info.artist)
+          setEditAlbum(info.album)
+          setEditYear(info.year)
+          setEditGenre(info.genre)
+          // All tracks checked by default
+          const defaultChecked = new Set(info.tracks.map(t => t.number))
+          setChecked(defaultChecked)
+          cachedEdits = {
+            checked: Array.from(defaultChecked),
+            editArtist: info.artist,
+            editAlbum: info.album,
+            editYear: info.year,
+            editGenre: info.genre,
+            editTitles: {},
+          }
+          setStatus('ready')
+        } else {
+          setError(result.error || 'Could not read CD')
+          setStatus('error')
+        }
+      }).catch(err => {
+        setError(String(err))
         setStatus('error')
-      }
-    }).catch(err => {
-      setError(String(err))
-      setStatus('error')
-    })
+      })
+    }
   }, [])
+
+  // Keep the module-level cache of user edits in sync so they survive
+  // view remounts. Only update the cache once we actually have cdInfo.
+  useEffect(() => {
+    if (!cdInfo) return
+    cachedEdits = {
+      checked: Array.from(checked),
+      editArtist,
+      editAlbum,
+      editYear,
+      editGenre,
+      editTitles,
+    }
+  }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles])
 
   // Listen for rip progress
   useEffect(() => {
@@ -211,6 +287,9 @@ export default function CDImportView() {
 
   const handleEject = useCallback(async () => {
     await window.electronAPI.ejectCd()
+    // Drop cached CD state — the disc is gone, the next visit to this
+    // view should read whatever (if anything) is in the drive.
+    clearCdImportCache()
     dispatch({ type: 'SET_VIEW', view: 'songs' })
   }, [dispatch])
 
