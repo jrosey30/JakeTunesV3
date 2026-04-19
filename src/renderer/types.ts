@@ -137,7 +137,7 @@ declare global {
       checkCdDrive: () => Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }>
       getCdInfo: () => Promise<{ ok: boolean; volumeName?: string; volumePath?: string; artist?: string; album?: string; year?: string; genre?: string; tracks?: { number: number; title: string; duration: number; filePath: string }[]; error?: string }>
       ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number, format?: string) => Promise<{ ok: boolean; tracks?: Track[]; error?: string }>
-      onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; error?: string }) => void) => () => void
+      onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: Track; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>

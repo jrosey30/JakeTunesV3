@@ -1837,17 +1837,24 @@ ipcMain.handle('get-cd-info', async () => {
       const toc = `1 ${durations.length} ${leadOut} ${offsets.join(' ')}`
 
       try {
-        const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits`
+        // Include release-groups + tags so we can fall back to the group's
+        // first-release date when a specific release has no date, and pull
+        // a genre from MusicBrainz release / release-group tags.
+        const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
         const res = await fetch(url, {
           headers: { 'User-Agent': 'JakeTunes/3.0.0 (jaketunes@example.com)' }
         })
         if (res.ok) {
+          type MBTag = { name: string; count?: number }
           const data = await res.json() as {
             releases?: Array<{
+              id: string
               title: string
               date?: string
               'artist-credit'?: Array<{ artist: { name: string } }>
               media?: Array<{ tracks?: Array<{ position: number; title: string }> }>
+              'release-group'?: { 'first-release-date'?: string; tags?: MBTag[] }
+              tags?: MBTag[]
             }>
           }
           const releases = data.releases || []
@@ -1860,7 +1867,23 @@ ipcMain.handle('get-cd-info', async () => {
           if (release) {
             artist = release['artist-credit']?.[0]?.artist?.name || ''
             album = release.title || album
-            year = release.date?.split('-')[0] || ''
+            // Prefer the specific release date; fall back to the
+            // release-group's first-release-date (better coverage for
+            // compilations / remasters whose release has no date).
+            year = release.date?.split('-')[0]
+              || release['release-group']?.['first-release-date']?.split('-')[0]
+              || ''
+
+            // Genre from top-tagged tag name. Release-level tags are
+            // usually more specific; fall back to release-group tags.
+            const pickTopTag = (tags?: MBTag[]): string => {
+              if (!tags || tags.length === 0) return ''
+              const sorted = [...tags].sort((a, b) => (b.count || 0) - (a.count || 0))
+              const name = sorted[0]?.name || ''
+              // Title-case it so "rock" → "Rock", "hip hop" → "Hip Hop"
+              return name ? name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : ''
+            }
+            genre = pickTopTag(release.tags) || pickTopTag(release['release-group']?.tags) || ''
 
             const mbTracks = (release.media || [])[0]?.tracks || []
             for (let i = 0; i < Math.min(tracks.length, mbTracks.length); i++) {
@@ -1941,12 +1964,15 @@ ipcMain.handle('rip-cd-tracks', async (_e,
         rating: 0,
       })
 
-      // Send per-track progress to renderer
+      // Send per-track progress to renderer, including the just-imported
+      // track record so the library can add it immediately instead of
+      // waiting for the whole batch to finish.
       mainWindow?.webContents.send('cd-rip-progress', {
         current: imported.length,
         total: cdTracks.length,
         trackNumber: cdTrack.number,
         trackTitle: cdTrack.title,
+        track: imported[imported.length - 1],
       })
 
       id++

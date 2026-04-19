@@ -222,6 +222,21 @@ function AppInner() {
     return () => window.removeEventListener('jaketunes-save-columns', handler)
   }, [])
 
+  // Global CD-rip progress listener. Lives at the App level so it survives
+  // when the user navigates away from the CD Import view mid-rip — the
+  // main process keeps ripping regardless, and tracks continue to appear
+  // in the library one by one as each finishes. ADD_IMPORTED_TRACKS
+  // dedupes by id, so the final batched return from ripCdTracks is a
+  // no-op if we've already streamed everything in here.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onCdRipProgress((progress) => {
+      if (progress.track) {
+        dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [progress.track as import('./types').Track] })
+      }
+    })
+    return cleanup
+  }, [dispatch])
+
   useEffect(() => {
     const cleanup = window.electronAPI.onMenuAction((action: string) => {
       switch (action) {

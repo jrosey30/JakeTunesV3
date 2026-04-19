@@ -79,8 +79,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-cd-info'),
   ripCdTracks: (tracks: { number: number; title: string; duration: number; filePath: string }[], metadata: { artist: string; album: string; year: string; genre: string }, nextId: number, format?: string): Promise<{ ok: boolean; tracks?: unknown[]; error?: string }> =>
     ipcRenderer.invoke('rip-cd-tracks', tracks, metadata, nextId, format),
-  onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; error?: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { current: number; total: number; trackNumber: number; trackTitle: string; error?: string }) => callback(progress)
+  onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: unknown; error?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: unknown; error?: string }) => callback(progress)
     ipcRenderer.on('cd-rip-progress', handler)
     return () => { ipcRenderer.removeListener('cd-rip-progress', handler) }
   },
