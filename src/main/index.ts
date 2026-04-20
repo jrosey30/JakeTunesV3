@@ -384,6 +384,12 @@ async function searchWeb(query: string, album?: string): Promise<string> {
 let detectedIpodMount: string | null = null  // Full mount path: "/Volumes/JACOBROSENB" or "E:\\"
 let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "E:"
 
+// Wired up by the ipod-audio protocol handler inside app.whenReady().
+// Call with a list of absolute source-file paths to kick off background
+// ALAC -> AAC transcodes into the play cache, so first playback of a
+// freshly-ripped lossless track doesn't stall on a 2-3s transcode.
+let prewarmAlacCache: (paths: string[]) => Promise<void> = async () => { /* not wired yet */ }
+
 // Report the iPod's actual storage capacity by statting the mounted
 // volume. Previously the renderer hardcoded 64GB, which misreports
 // modded iPods (SD card swaps, etc.) as the wrong size.
@@ -2053,6 +2059,18 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     }
   }
 
+  // If we ripped as ALAC, kick off background transcodes into the
+  // play cache so the user's first click on these tracks plays
+  // instantly instead of waiting 2-3 seconds for on-demand transcode.
+  if (fmt === 'alac') {
+    const paths = imported.map(t => {
+      const hfs = (t.path as string) || ''
+      const rel = hfs.replace(/^:/, '').replace(/:/g, '/')
+      return join(MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), rel)
+    }).filter(Boolean)
+    prewarmAlacCache(paths).catch(err => console.warn('pre-warm failed:', err))
+  }
+
   return { ok: true, tracks: imported }
 })
 
@@ -2162,20 +2180,33 @@ app.whenReady().then(async () => {
   // same source file into a single ffmpeg pass.
   const transcodeInFlight = new Map<string, Promise<string>>()
 
+  // Codec-detection cache. ffprobe is ~200-500ms per call; running it
+  // on every play — even for AAC files that don't need any transcode —
+  // made first-play latency user-visible. Keyed by source path with
+  // the mtime at the time we probed, so the entry is invalidated if
+  // the source file changes.
+  const codecCache = new Map<string, { mtime: number; codec: string }>()
+
   async function aacCachePath(src: string, srcMtime: number): Promise<string | null> {
-    // Probe codec (cheap; stream=codec_name only).
     const { execFile } = await import('child_process')
     const { promisify } = await import('util')
     const execP = promisify(execFile)
+
     let codec = ''
-    try {
-      const { stdout } = await execP('ffprobe', [
-        '-v', 'error', '-select_streams', 'a:0',
-        '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', src,
-      ], { timeout: 5000 })
-      codec = (stdout || '').trim().toLowerCase()
-    } catch {
-      return null  // ffprobe unavailable — fall through to raw file
+    const prev = codecCache.get(src)
+    if (prev && prev.mtime === srcMtime) {
+      codec = prev.codec
+    } else {
+      try {
+        const { stdout } = await execP('ffprobe', [
+          '-v', 'error', '-select_streams', 'a:0',
+          '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', src,
+        ], { timeout: 5000 })
+        codec = (stdout || '').trim().toLowerCase()
+        codecCache.set(src, { mtime: srcMtime, codec })
+      } catch {
+        return null  // ffprobe unavailable — fall through to raw file
+      }
     }
     if (codec !== 'alac') return null  // AAC and others play fine raw
 
@@ -2199,7 +2230,7 @@ app.whenReady().then(async () => {
           '-c:a', 'aac', '-b:a', '256k',
           '-map_metadata', '0',
           cached,
-        ], { timeout: 120000 })
+        ], { timeout: 300000 })
         return cached
       } finally {
         transcodeInFlight.delete(src)
@@ -2207,6 +2238,21 @@ app.whenReady().then(async () => {
     })()
     transcodeInFlight.set(src, p)
     return p
+  }
+
+  // Expose a module-visible pre-warm trigger so rip-cd-tracks (and the
+  // library-load path later, if we want) can kick off transcodes for
+  // newly-imported ALAC files before the user clicks play. Best-effort;
+  // failures log and skip.
+  prewarmAlacCache = async (paths: string[]) => {
+    for (const p of paths) {
+      try {
+        const s = await stat(p)
+        // Schedule but don't await — let transcodes run in the
+        // background, parallel to whatever the user is doing.
+        aacCachePath(p, s.mtimeMs).catch(() => {})
+      } catch { /* file missing — skip */ }
+    }
   }
 
   protocol.handle('ipod-audio', async (request) => {
