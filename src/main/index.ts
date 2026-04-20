@@ -2055,7 +2055,7 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
   }
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Load listener profile for Music Man
   loadListenerProfile()
   // Fetch Discogs collection for Music Man taste context
@@ -2084,9 +2084,86 @@ app.whenReady().then(() => {
     }
   })
 
+  // Cache of transcoded AAC copies of ALAC sources. Chromium can't decode
+  // ALAC, so when the renderer asks for one we detect it and hand back a
+  // cached AAC transcode instead. The source ALAC file is preserved
+  // untouched on disk (the user wants lossless for iPod sync).
+  //
+  // Cache key: first 16 hex chars of sha1(path). Cache entry is stale if
+  // source mtime > cache mtime. Cache lives in userData/play-cache/.
+  const PLAY_CACHE = join(app.getPath('userData'), 'play-cache')
+  await mkdir(PLAY_CACHE, { recursive: true }).catch(() => {})
+
+  // In-flight transcodes, to coalesce concurrent range requests for the
+  // same source file into a single ffmpeg pass.
+  const transcodeInFlight = new Map<string, Promise<string>>()
+
+  async function aacCachePath(src: string, srcMtime: number): Promise<string | null> {
+    // Probe codec (cheap; stream=codec_name only).
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const execP = promisify(execFile)
+    let codec = ''
+    try {
+      const { stdout } = await execP('ffprobe', [
+        '-v', 'error', '-select_streams', 'a:0',
+        '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', src,
+      ], { timeout: 5000 })
+      codec = (stdout || '').trim().toLowerCase()
+    } catch {
+      return null  // ffprobe unavailable — fall through to raw file
+    }
+    if (codec !== 'alac') return null  // AAC and others play fine raw
+
+    const hash = createHash('sha1').update(src).digest('hex').slice(0, 16)
+    const cached = join(PLAY_CACHE, `${hash}.m4a`)
+    try {
+      const cStat = await stat(cached)
+      if (cStat.mtimeMs >= srcMtime) return cached  // fresh
+    } catch { /* not cached yet */ }
+
+    // Need to transcode. Dedupe concurrent requests.
+    const existing = transcodeInFlight.get(src)
+    if (existing) return existing
+
+    const p = (async () => {
+      try {
+        // 256kbps AAC in .m4a — good balance of size and fidelity for playback.
+        // -map_metadata 0 preserves tags; -vn drops any cover-art video stream.
+        await execP('ffmpeg', [
+          '-y', '-i', src, '-vn',
+          '-c:a', 'aac', '-b:a', '256k',
+          '-map_metadata', '0',
+          cached,
+        ], { timeout: 120000 })
+        return cached
+      } finally {
+        transcodeInFlight.delete(src)
+      }
+    })()
+    transcodeInFlight.set(src, p)
+    return p
+  }
+
   protocol.handle('ipod-audio', async (request) => {
-    const filePath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
-    const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+    const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
+    let filePath = rawPath
+    let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+    try {
+      // If the source is ALAC, swap in a cached AAC transcode. Silent
+      // fallthrough to the raw file if ffmpeg fails — playback may still
+      // work for codecs Chromium does support.
+      if (ext === '.m4a' || ext === '.alac' || ext === '.mp4') {
+        const srcStat = await stat(rawPath).catch(() => null)
+        if (srcStat) {
+          const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+          if (cached) {
+            filePath = cached
+            ext = '.m4a'
+          }
+        }
+      }
+    } catch { /* fall through */ }
     const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
     try {
       const fileStat = await stat(filePath)
