@@ -16,7 +16,7 @@ import './styles/sidebar.css'
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { togglePlayPause, nextTrack, prevTrack, setVolume } = useAudio()
+  const { togglePlayPause, nextTrack, prevTrack, setVolume, stopPlayback } = useAudio()
   const { state: pbState } = usePlayback()
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
@@ -221,6 +221,18 @@ function AppInner() {
     window.addEventListener('jaketunes-save-columns', handler)
     return () => window.removeEventListener('jaketunes-save-columns', handler)
   }, [])
+
+  // If the track that's currently playing gets deleted from the library,
+  // stop playback. The DELETE_TRACKS reducer only removes the track from
+  // state.tracks — it doesn't touch PlaybackContext, and the underlying
+  // Howl keeps streaming audio from the now-ghost source. This effect
+  // watches for the disappearance and hard-stops (unloads) the Howl.
+  useEffect(() => {
+    const playingId = pbState.nowPlaying?.id
+    if (playingId == null) return
+    const stillExists = libState.tracks.some(t => t.id === playingId)
+    if (!stillExists) stopPlayback()
+  }, [libState.tracks, pbState.nowPlaying, stopPlayback])
 
   // Global CD-rip progress listener. Lives at the App level so it survives
   // when the user navigates away from the CD Import view mid-rip — the

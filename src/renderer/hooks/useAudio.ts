@@ -245,5 +245,20 @@ export function useAudio() {
     if (sharedHowl) sharedHowl.volume(state.volume)
   }, [state.volume])
 
-  return { playTrack, togglePlayPause, nextTrack, prevTrack, seek, setVolume }
+  // Hard stop — unloads the audio source AND clears playback state.
+  // Plain dispatch({type:'STOP'}) only clears state; the Howl keeps
+  // streaming audio, which is why deleting the currently-playing
+  // track left music playing from a ghost source.
+  const stopPlayback = useCallback(() => {
+    isPaused = true
+    cancelAnimationFrame(sharedRaf)
+    if (sharedHowl) {
+      try { sharedHowl.stop() } catch { /* ignore */ }
+      try { sharedHowl.unload() } catch { /* ignore */ }
+      sharedHowl = null
+    }
+    dispatchRef.current({ type: 'STOP' })
+  }, [])
+
+  return { playTrack, togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback }
 }
