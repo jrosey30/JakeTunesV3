@@ -190,10 +190,22 @@ export default function DeviceView() {
   }, [state.tracks, ipodCapacityBytes])
 
   const handleSync = async () => {
+    const activity = await import('../activity')
+
+    // Guardrail: sync with no iPod mounted used to silently return an
+    // error and leave the user wondering if anything happened at all.
+    // Check up front and surface a clear error (and keep it in the
+    // pill for a few seconds) instead of silently bailing.
+    const mount = await window.electronAPI.checkIpodMounted()
+    if (!mount?.mounted) {
+      setSyncStatus({ state: 'error', message: 'No iPod detected — plug it in and try again.' })
+      activity.setSync({ active: true, step: 'No iPod detected' })
+      setTimeout(() => activity.setSync(null), 4000)
+      return
+    }
+
     setSyncing(true)
     setSyncStatus({ state: 'syncing', step: 'Preparing playlists...' })
-    // Mirror into global activity store so the LCD pill surfaces sync state.
-    const activity = await import('../activity')
     activity.setSync({ active: true, step: 'Preparing playlists...' })
     try {
       const syncPlaylists = refreshSmartPlaylists(state.tracks, state.playlists)
@@ -201,8 +213,10 @@ export default function DeviceView() {
       activity.setSync({ active: true, step: 'Copying new tracks to iPod...' })
       const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists)
       if (!result.ok) {
-        setSyncStatus({ state: 'error', message: result.error || 'Unknown error' })
-        activity.setSync(null)
+        const msg = result.error || 'Unknown error'
+        setSyncStatus({ state: 'error', message: msg })
+        activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+        setTimeout(() => activity.setSync(null), 4000)
         setSyncing(false)
         return
       }
@@ -214,12 +228,16 @@ export default function DeviceView() {
         total: result.totalTracks || state.tracks.length,
         time: timeStr,
       })
+      activity.setSync({ active: true, step: `Sync complete — ${result.copied || 0} new tracks` })
+      setTimeout(() => activity.setSync(null), 4000)
     } catch (err) {
       console.error('Sync failed:', err)
-      setSyncStatus({ state: 'error', message: String(err) })
+      const msg = String(err)
+      setSyncStatus({ state: 'error', message: msg })
+      activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+      setTimeout(() => activity.setSync(null), 4000)
     }
     setSyncing(false)
-    activity.setSync(null)
   }
 
   return (
