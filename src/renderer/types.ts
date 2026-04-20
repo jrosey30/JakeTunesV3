@@ -131,6 +131,7 @@ declare global {
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
       syncToIpod: (tracks: Track[], playlists: Playlist[]) => Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string }>
+      onSyncProgress: (callback: (progress: { phase: 'copy' | 'db'; current: number; total: number; title: string }) => void) => () => void
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
       // CD drive

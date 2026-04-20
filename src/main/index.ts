@@ -575,15 +575,19 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     return { ok: false, error: 'iPod is not mounted', copied: 0 }
   }
 
-  // Copy audio files that don't exist on the iPod yet
+  // Copy audio files that don't exist on the iPod yet.
+  //
+  // Pass 1: figure out which tracks need copying (so we know the
+  // denominator for progress reporting). Pass 2: copy and emit a
+  // sync-progress event per file so the renderer can show a real bar
+  // instead of a perpetually-indeterminate pulse.
   let copied = 0
   let copyErrors = 0
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  const toCopy: Array<{ local: string; ipod: string; title: string }> = []
   for (const track of tracks) {
     const colonPath = String(track.path || '')
     if (!colonPath) continue
-    // iPod paths use colons as separators (":iPod_Control:Music:F01:XXXX.mp3").
-    // Convert to native path separator for the current OS.
-    const pathSep = IS_WINDOWS ? '\\' : '/'
     const relPath = colonPath.replace(/:/g, pathSep)
     const ipodFile = join(IPOD_MOUNT, relPath)
     const localFile = join(LOCAL_MOUNT, relPath)
@@ -591,18 +595,37 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
       await stat(ipodFile)
       // Already on iPod, skip
     } catch {
-      try {
-        // Use path.dirname() via join — works on both / and \ separators
-        const dir = ipodFile.substring(0, ipodFile.lastIndexOf(pathSep))
-        await mkdir(dir, { recursive: true })
-        await copyFile(localFile, ipodFile)
-        copied++
-      } catch (err) {
-        console.error(`Copy failed: ${localFile} → ${ipodFile}:`, err)
-        copyErrors++
-      }
+      toCopy.push({
+        local: localFile,
+        ipod: ipodFile,
+        title: String(track.title || colonPath.split(':').pop() || ''),
+      })
     }
   }
+
+  const totalToCopy = toCopy.length
+  // Kick off the progress so the renderer can seed its bar even
+  // when nothing needs copying (still-will-write-DB phase coming).
+  mainWindow?.webContents.send('sync-progress', {
+    phase: 'copy', current: 0, total: totalToCopy, title: '',
+  })
+  for (const { local, ipod, title } of toCopy) {
+    try {
+      const dir = ipod.substring(0, ipod.lastIndexOf(pathSep))
+      await mkdir(dir, { recursive: true })
+      await copyFile(local, ipod)
+      copied++
+    } catch (err) {
+      console.error(`Copy failed: ${local} → ${ipod}:`, err)
+      copyErrors++
+    }
+    mainWindow?.webContents.send('sync-progress', {
+      phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+    })
+  }
+  mainWindow?.webContents.send('sync-progress', {
+    phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
+  })
 
   // Backup existing iTunesDB
   const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
@@ -635,6 +658,9 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     py.on('close', (code: number) => {
       console.log('sync-to-ipod stderr:', stderr)
       if (code === 0) {
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
+        })
         resolve({ ok: true, copied, copyErrors, totalTracks: tracks.length })
       } else {
         resolve({ ok: false, error: `DB write failed (code ${code}): ${stderr}`, copied, copyErrors })

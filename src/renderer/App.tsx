@@ -252,6 +252,35 @@ function AppInner() {
   const ripErrorsRef = useRef(0)
   const ripHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Global sync-progress listener. DeviceView's handleSync seeds an
+  // initial "Preparing..." state into the activity store, but the
+  // per-file + db-write progress during an active sync comes from the
+  // main process as 'sync-progress' events. Refine the store's `step`
+  // text to show real numbers ("Copying 12/30 to iPod — <title>")
+  // instead of a perpetually indeterminate pulse.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onSyncProgress((progress) => {
+      import('./activity').then(a => {
+        if (progress.phase === 'copy') {
+          a.setSync({
+            active: true,
+            step: progress.total > 0
+              ? `Copying ${progress.current}/${progress.total} to iPod${progress.title ? ' — ' + progress.title : ''}`
+              : 'Copying to iPod...',
+          })
+        } else if (progress.phase === 'db') {
+          a.setSync({
+            active: true,
+            step: progress.current < progress.total
+              ? 'Writing iTunesDB...'
+              : 'iTunesDB written',
+          })
+        }
+      }).catch(() => {})
+    })
+    return cleanup
+  }, [])
+
   // Global CD-rip progress listener. Lives at the App level so it survives
   // when the user navigates away from the CD Import view mid-rip — the
   // main process keeps ripping regardless, and tracks continue to appear
