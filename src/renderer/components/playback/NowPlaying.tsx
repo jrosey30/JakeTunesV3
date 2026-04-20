@@ -1,7 +1,9 @@
-import { useCallback, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { subscribe, getSnapshot, getRip, getSync } from '../../activity'
+
+type PillMode = 'playing' | 'rip' | 'sync'
 
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
@@ -38,18 +40,58 @@ export default function NowPlaying() {
   const track = state.nowPlaying
 
   // Subscribe to the global activity store so this pill can surface
-  // background work (CD rip / iPod sync) when nothing is playing —
-  // matches iTunes 7 behavior where the LCD area showed "Importing"
-  // and "Syncing" messages.
+  // background work (CD rip / iPod sync) in addition to the currently
+  // playing track — matches iTunes 7 behavior where a tiny arrow
+  // button let the user cycle the LCD between now-playing and
+  // import/sync status when multiple things are happening.
   useSyncExternalStore(subscribe, getSnapshot)
   const rip = getRip()
   const syn = getSync()
-  const ripActive = rip?.active
-  const syncActive = syn?.active
+  const ripActive = !!rip?.active
+  const syncActive = !!syn?.active
+
+  // Which modes have anything to show right now?
+  const available: PillMode[] = []
+  if (track) available.push('playing')
+  if (ripActive) available.push('rip')
+  if (syncActive) available.push('sync')
+
+  const [mode, setMode] = useState<PillMode>('playing')
+
+  // Whenever the set of available modes changes, make sure the
+  // selected mode is still one of them. Default to the last item,
+  // which means: if a sync/rip starts up, we switch to it
+  // automatically (user can still cycle back to the track).
+  useEffect(() => {
+    if (available.length === 0) return
+    if (!available.includes(mode)) {
+      setMode(available[available.length - 1])
+    }
+  }, [available.join('|'), mode])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cycleMode = useCallback(() => {
+    if (available.length <= 1) return
+    const idx = available.indexOf(mode)
+    const nextIdx = (idx + 1) % available.length
+    setMode(available[nextIdx])
+  }, [mode, available])
+
+  const showCycle = available.length > 1
+  // When nothing is playing and nothing's syncing/ripping, pill is
+  // empty (matches idle iTunes LCD).
+  const effectiveMode: PillMode | null = available.length === 0 ? null :
+    (available.includes(mode) ? mode : available[available.length - 1])
 
   return (
     <div className="now-playing-pill">
-      {track ? (
+      {showCycle && (
+        <button className="np-cycle-btn" onClick={cycleMode} title="Toggle display">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
+            <path d="M5 1 L8 4 L2 4 Z M5 11 L2 8 L8 8 Z" fill="#5a5540" />
+          </svg>
+        </button>
+      )}
+      {effectiveMode === 'playing' && track ? (
         <>
           <div className="now-playing-info">
             <span className="now-playing-title">{track.title}</span>
@@ -67,7 +109,7 @@ export default function NowPlaying() {
             <span className="scrubber-time">-{formatTime(state.duration - state.position)}</span>
           </div>
         </>
-      ) : syncActive && syn ? (
+      ) : effectiveMode === 'sync' && syn ? (
         <>
           <div className="now-playing-info now-playing-info--activity">
             <span className="now-playing-title">Syncing iPod</span>
@@ -80,7 +122,7 @@ export default function NowPlaying() {
             </div>
           </div>
         </>
-      ) : ripActive && rip ? (
+      ) : effectiveMode === 'rip' && rip ? (
         <>
           <div className="now-playing-info now-playing-info--activity">
             <span className="now-playing-title">Importing {rip.current} of {rip.total}</span>

@@ -124,6 +124,27 @@
 
 .now-playing-empty { height: 100%; }
 
+/* Cycle button inside the LCD pill — toggles between Now Playing
+   and Import/Sync status when multiple activities are active. */
+.np-cycle-btn {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0.65;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.np-cycle-btn:hover { opacity: 1; }
+.now-playing-pill { position: relative; }
+
 /* ── Activity state in the LCD pill (CD rip / iPod sync) ── */
 .now-playing-info--activity {
   color: #4a3a18;
