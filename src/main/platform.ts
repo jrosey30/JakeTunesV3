@@ -91,6 +91,39 @@ export async function findIpodMount(): Promise<string | null> {
   for (const m of mounts) {
     if (await isIpodMount(m)) return m
   }
+
+  // macOS-only fallback: the iPod might be physically connected but
+  // unmounted (e.g. previous sync triggered a safety-eject, or the
+  // device was reset). `diskutil list -plist external` will still
+  // show it as a physical disk. If any external HFS partition is
+  // found that isn't currently mounted, try to mount it and see if
+  // it turns out to be an iPod.
+  if (IS_MAC) {
+    try {
+      const { stdout } = await execP('diskutil', ['list', '-plist', 'external'])
+      // Cheap regex parse: look for disk identifiers followed by HFS
+      // partitions. We don't need a full plist parser for this.
+      const matches = stdout.matchAll(/<key>DeviceIdentifier<\/key>\s*<string>(disk\d+s\d+)<\/string>[\s\S]*?<key>Content<\/key>\s*<string>Apple_HFS<\/string>/g)
+      for (const m of matches) {
+        const id = m[1]
+        // Skip partitions that are already mounted.
+        if (mounts.some(mp => mp.includes(id))) continue
+        try {
+          const { stdout: mountOut } = await execP('diskutil', ['mount', id], { timeout: 15000 })
+          const mm = mountOut.match(/on (\/Volumes\/[^\s]+)/)
+          const mountedAt = mm ? mm[1] : null
+          if (mountedAt && await isIpodMount(mountedAt)) {
+            return mountedAt
+          }
+        } catch {
+          /* not mountable or not an iPod — skip */
+        }
+      }
+    } catch {
+      /* diskutil not available or query failed — give up */
+    }
+  }
+
   return null
 }
 
