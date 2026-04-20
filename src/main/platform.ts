@@ -271,7 +271,11 @@ export async function convertAudio(
         case 'wav':     return ['-f', 'WAVE', '-d', 'LEI16']
       }
     })()
-    await execP('afconvert', [src, dest, ...args], { timeout: 120000 })
+    // 5 min timeout — long tracks + slow CD reads can legitimately
+    // take 2-3 min; the old 120s limit was killing ~8-minute songs
+    // partway through and silently skipping them (e.g. the James
+    // Brown 'Get It Hot' rip that jumped from 1→3).
+    await execP('afconvert', [src, dest, ...args], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
     if (tags) await embedTags(dest, tags)
     return
   }
@@ -287,7 +291,7 @@ export async function convertAudio(
     }
   })()
   try {
-    await execP('ffmpeg', args, { timeout: 120000 })
+    await execP('ffmpeg', args, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('ENOENT')) {

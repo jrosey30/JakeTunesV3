@@ -248,6 +248,18 @@ function AppInner() {
     if (!stillExists) stopPlayback()
   }, [libState.tracks, pbState.nowPlaying, stopPlayback])
 
+  // Global rip-progress state for the persistent banner. Lives here
+  // (rather than in CDImportView) so the banner stays visible even
+  // when the user navigates away from the CD Import page mid-rip.
+  const [ripBanner, setRipBanner] = useState<{
+    active: boolean
+    current: number
+    total: number
+    title: string
+    errors: number
+  } | null>(null)
+  const ripHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Global CD-rip progress listener. Lives at the App level so it survives
   // when the user navigates away from the CD Import view mid-rip — the
   // main process keeps ripping regardless, and tracks continue to appear
@@ -264,6 +276,24 @@ function AppInner() {
         dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [progress.track as import('./types').Track] })
       }
       import('./views/CDImportView').then(m => m.noteCdRipProgress(progress)).catch(() => {})
+      // Update the persistent banner.
+      setRipBanner(prev => {
+        const prevErrors = prev?.errors ?? 0
+        const next = {
+          active: progress.current < progress.total,
+          current: progress.current,
+          total: progress.total,
+          title: progress.trackTitle || '',
+          errors: prevErrors + (progress.error ? 1 : 0),
+        }
+        // If the rip just finished, keep the banner visible for a few
+        // seconds so the user sees the final "done" state, then hide.
+        if (!next.active) {
+          if (ripHideTimerRef.current) clearTimeout(ripHideTimerRef.current)
+          ripHideTimerRef.current = setTimeout(() => setRipBanner(null), 6000)
+        }
+        return next
+      })
     })
     return cleanup
   }, [dispatch])
@@ -423,6 +453,27 @@ function AppInner() {
         <div className="sidebar-resize-handle" onMouseDown={handleSidebarDrag} />
       </div>
       <div className="content-area" style={{ position: 'relative' }}>
+        {ripBanner && (
+          <div className={`rip-banner ${ripBanner.active ? 'rip-banner--active' : 'rip-banner--done'}`}>
+            {ripBanner.active ? (
+              <>
+                <div className="rip-banner-bar">
+                  <div className="rip-banner-bar-fill" style={{ width: `${(ripBanner.current / Math.max(1, ripBanner.total)) * 100}%` }} />
+                </div>
+                <div className="rip-banner-text">
+                  Importing CD — <strong>{ripBanner.current}/{ripBanner.total}</strong>
+                  {ripBanner.title ? <> — {ripBanner.title}</> : null}
+                  {ripBanner.errors > 0 ? <span className="rip-banner-errors"> ({ripBanner.errors} skipped)</span> : null}
+                </div>
+              </>
+            ) : (
+              <div className="rip-banner-text">
+                ✓ Import complete — {ripBanner.current}/{ripBanner.total} songs
+                {ripBanner.errors > 0 ? <span className="rip-banner-errors"> ({ripBanner.errors} skipped)</span> : null}
+              </div>
+            )}
+          </div>
+        )}
         <MainContent />
         {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
       </div>
