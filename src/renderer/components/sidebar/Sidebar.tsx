@@ -188,8 +188,27 @@ export default function Sidebar() {
   }, [plCtxMenu])
 
   useEffect(() => {
+    // Counts consecutive polls where the iPod check came back "not
+    // mounted". We only flip ipodMounted -> false after two in a row
+    // so a transient stat() miss during heavy CD activity doesn't
+    // kick the user off the Device page (which reads as "the iPod
+    // auto-ejected").
+    let ipodMissStreak = 0
     const check = () => {
-      window.electronAPI.checkIpodMounted().then(r => { setIpodMounted(r.mounted); if (r.name) setIpodName(r.name) }).catch(() => {})
+      window.electronAPI.checkIpodMounted().then(r => {
+        if (r.mounted) {
+          ipodMissStreak = 0
+          setIpodMounted(true)
+          if (r.name) setIpodName(r.name)
+        } else {
+          ipodMissStreak += 1
+          if (ipodMissStreak >= 2) setIpodMounted(false)
+        }
+      }).catch(() => {
+        // Treat IPC error same as a miss, with the same debouncing.
+        ipodMissStreak += 1
+        if (ipodMissStreak >= 2) setIpodMounted(false)
+      })
       window.electronAPI.checkCdDrive().then(r => {
         setCdMounted(r.hasCd)
         if (r.volumeName) setCdName(r.volumeName)
@@ -197,14 +216,16 @@ export default function Sidebar() {
     }
     check()
     const interval = setInterval(check, 5000)
-    // Listen for eject events so sidebar updates immediately
-    const onEject = () => setTimeout(check, 500)
-    window.addEventListener('jaketunes-ipod-ejected', onEject)
-    window.addEventListener('jaketunes-cd-ejected', onEject)
+    // Listen for eject events so sidebar updates immediately. Explicit
+    // eject resets the miss streak and forces an unmounted state.
+    const onIpodEject = () => { ipodMissStreak = 2; setTimeout(check, 500) }
+    const onCdEject = () => setTimeout(check, 500)
+    window.addEventListener('jaketunes-ipod-ejected', onIpodEject)
+    window.addEventListener('jaketunes-cd-ejected', onCdEject)
     return () => {
       clearInterval(interval)
-      window.removeEventListener('jaketunes-ipod-ejected', onEject)
-      window.removeEventListener('jaketunes-cd-ejected', onEject)
+      window.removeEventListener('jaketunes-ipod-ejected', onIpodEject)
+      window.removeEventListener('jaketunes-cd-ejected', onCdEject)
     }
   }, [])
 
