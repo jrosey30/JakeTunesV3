@@ -1930,7 +1930,38 @@ ipcMain.handle('rip-cd-tracks', async (_e,
   format?: string
 ) => {
   const imported: Array<Record<string, unknown>> = []
+
+  // The renderer passes `nextId = max(library.id) + 1`, but library IDs
+  // get reassigned on full reloads (e.g. after a library.json rebuild),
+  // so there can be existing `imported_XXXX.m4a` files on disk with
+  // higher numbers than anything in the library. Writing with the raw
+  // nextId silently overwrites those files AND collides with their
+  // lingering library entries.
+  //
+  // Scan the music dir for the highest existing imported_XXXX number,
+  // then start AFTER it. Cheap: ~50 subdirs, bounded entries per subdir.
   let id = nextId
+  try {
+    const { readdir } = await import('fs/promises')
+    let maxFileNum = nextId - 1
+    for (let i = 0; i < 50; i++) {
+      const subDir = join(MUSIC_DIR, `F${String(i).padStart(2, '0')}`)
+      const entries = await readdir(subDir).catch(() => [] as string[])
+      for (const f of entries) {
+        const m = f.match(/^imported_(\d+)\./)
+        if (m) {
+          const n = parseInt(m[1], 10)
+          if (n > maxFileNum) maxFileNum = n
+        }
+      }
+    }
+    if (maxFileNum >= id) {
+      console.warn(`rip-cd-tracks: nextId ${id} collides with existing file imported_${maxFileNum}.m4a; bumping to ${maxFileNum + 1}`)
+      id = maxFileNum + 1
+    }
+  } catch (err) {
+    console.warn('rip-cd-tracks: failed to scan for existing imports:', err)
+  }
 
   // Validate and default the format.
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
@@ -1947,7 +1978,17 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     const destDir = join(MUSIC_DIR, subDir)
     await mkdir(destDir, { recursive: true })
 
-    const fileName = `imported_${id}${destExt}`
+    // Final belt-and-suspenders: don't clobber an existing file even if
+    // the scan above missed something.
+    let fileName = `imported_${id}${destExt}`
+    while (true) {
+      const candidate = join(destDir, fileName)
+      const exists = await stat(candidate).then(() => true).catch(() => false)
+      if (!exists) break
+      console.warn(`rip-cd-tracks: ${fileName} already exists; advancing`)
+      id++
+      fileName = `imported_${id}${destExt}`
+    }
     const destPath = join(destDir, fileName)
 
     try {
