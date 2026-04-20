@@ -240,11 +240,16 @@ function AppInner() {
   // in the library one by one as each finishes. ADD_IMPORTED_TRACKS
   // dedupes by id, so the final batched return from ripCdTracks is a
   // no-op if we've already streamed everything in here.
+  //
+  // Also mirrors progress into CDImportView's module-level cache so
+  // revisiting the CD Import view mid-rip shows live progress instead
+  // of a frozen snapshot.
   useEffect(() => {
     const cleanup = window.electronAPI.onCdRipProgress((progress) => {
       if (progress.track) {
         dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [progress.track as import('./types').Track] })
       }
+      import('./views/CDImportView').then(m => m.noteCdRipProgress(progress)).catch(() => {})
     })
     return cleanup
   }, [dispatch])

@@ -55,9 +55,44 @@ interface CdEditState {
 let cachedCdInfo: CdInfo | null = null
 let cachedEdits: CdEditState | null = null
 
+// Rip-progress cache. Lives at the module level so navigating away from
+// the CD Import view and coming back mid-rip doesn't hide the progress
+// (and the view doesn't show the pre-rip "Import CD" button as if
+// nothing were happening). Updated by both the App-level and the
+// view-level onCdRipProgress listeners.
+interface RipProgressCache {
+  status: ImportStatus
+  total: number                  // how many tracks are being ripped
+  importCount: number            // how many have finished
+  currentTrack: number | null    // track number currently ripping
+  rippedTracks: number[]         // track numbers that finished (non-error)
+}
+let cachedRipProgress: RipProgressCache = {
+  status: 'idle', total: 0, importCount: 0, currentTrack: null, rippedTracks: [],
+}
+
 export function clearCdImportCache() {
   cachedCdInfo = null
   cachedEdits = null
+  cachedRipProgress = { status: 'idle', total: 0, importCount: 0, currentTrack: null, rippedTracks: [] }
+}
+
+/**
+ * Update the module-level rip-progress cache from an external listener
+ * (the App-level onCdRipProgress listener). Keeps the cache fresh even
+ * when CDImportView is unmounted, so coming back shows real progress.
+ */
+export function noteCdRipProgress(progress: { trackNumber: number; current: number; error?: string }) {
+  cachedRipProgress.currentTrack = progress.trackNumber
+  cachedRipProgress.importCount = progress.current
+  if (!progress.error && !cachedRipProgress.rippedTracks.includes(progress.trackNumber)) {
+    cachedRipProgress.rippedTracks = [...cachedRipProgress.rippedTracks, progress.trackNumber]
+  }
+  // First event after a rip starts: if caller didn't already mark
+  // status='importing', infer it now.
+  if (cachedRipProgress.status !== 'importing') {
+    cachedRipProgress.status = 'importing'
+  }
 }
 
 function CdIcon() {
@@ -103,16 +138,19 @@ export default function CDImportView() {
   const { state: libState, dispatch } = useLibrary()
   // Seed state from the module-level cache when available so navigating
   // away and coming back to the CD view doesn't re-run the "Reading
-  // CD..." spinner and doesn't wipe edits.
-  const [status, setStatus] = useState<ImportStatus>(cachedCdInfo ? 'ready' : 'loading')
+  // CD..." spinner and doesn't wipe edits or rip progress.
+  const ripActive = cachedRipProgress.status === 'importing'
+  const [status, setStatus] = useState<ImportStatus>(
+    ripActive ? 'importing' : (cachedCdInfo ? 'ready' : 'loading')
+  )
   const [cdInfo, setCdInfo] = useState<CdInfo | null>(cachedCdInfo)
   const [checked, setChecked] = useState<Set<number>>(
     cachedEdits ? new Set(cachedEdits.checked) : new Set()
   )
   const [error, setError] = useState('')
-  const [rippedTracks, setRippedTracks] = useState<Set<number>>(new Set())
-  const [currentTrack, setCurrentTrack] = useState<number | null>(null)
-  const [importCount, setImportCount] = useState(0)
+  const [rippedTracks, setRippedTracks] = useState<Set<number>>(new Set(cachedRipProgress.rippedTracks))
+  const [currentTrack, setCurrentTrack] = useState<number | null>(cachedRipProgress.currentTrack)
+  const [importCount, setImportCount] = useState(cachedRipProgress.importCount)
 
   // Import settings
   const [importFormat, setImportFormat] = useState<ImportFormat>('aac-256')
@@ -212,14 +250,23 @@ export default function CDImportView() {
     }
   }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles])
 
-  // Listen for rip progress
+  // Listen for rip progress. Also mirror progress into the module-level
+  // cache so that remounting this view during an active rip (user
+  // navigated away and came back) shows the live progress instead of
+  // the pre-rip "Import CD" button.
   useEffect(() => {
     const cleanup = window.electronAPI.onCdRipProgress((progress) => {
       setCurrentTrack(progress.trackNumber)
-      if (!progress.error) {
-        setRippedTracks(prev => new Set([...prev, progress.trackNumber]))
-      }
       setImportCount(progress.current)
+      cachedRipProgress.currentTrack = progress.trackNumber
+      cachedRipProgress.importCount = progress.current
+      if (!progress.error) {
+        setRippedTracks(prev => {
+          const next = new Set([...prev, progress.trackNumber])
+          cachedRipProgress.rippedTracks = Array.from(next)
+          return next
+        })
+      }
     })
     return cleanup
   }, [])
@@ -253,6 +300,15 @@ export default function CDImportView() {
     setRippedTracks(new Set())
     setCurrentTrack(null)
     setImportCount(0)
+    // Mirror into module-level cache so view remounts mid-rip still
+    // show live progress.
+    cachedRipProgress = {
+      status: 'importing',
+      total: checked.size,
+      importCount: 0,
+      currentTrack: null,
+      rippedTracks: [],
+    }
 
     const tracksToRip = cdInfo.tracks
       .filter(t => checked.has(t.number))
@@ -275,13 +331,16 @@ export default function CDImportView() {
         const newTracks = result.tracks as Track[]
         dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: newTracks })
         setStatus('done')
+        cachedRipProgress.status = 'done'
       } else {
         setError(result.error || 'Import failed')
         setStatus('error')
+        cachedRipProgress.status = 'error'
       }
     } catch (err) {
       setError(String(err))
       setStatus('error')
+      cachedRipProgress.status = 'error'
     }
   }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles, importFormat, libState.tracks, dispatch])
 
