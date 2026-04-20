@@ -58,14 +58,31 @@ export default function NowPlaying() {
 
   const [mode, setMode] = useState<PillMode>('playing')
 
-  // Whenever the set of available modes changes, make sure the
-  // selected mode is still one of them. Default to the last item,
-  // which means: if a sync/rip starts up, we switch to it
-  // automatically (user can still cycle back to the track).
+  // Auto-follow rule: when a rip or sync STARTS, switch the pill to
+  // show it (that's always the most interesting thing to surface).
+  // When it ends, fall back to whatever's still active with the same
+  // priority (sync > rip > playing). User cycle override still works
+  // in between — clicking the arrow locks the pill to their chosen
+  // mode until the mode disappears from `available`.
+  const prevRipRef = useRef(ripActive)
+  const prevSyncRef = useRef(syncActive)
+  useEffect(() => {
+    if (syncActive && !prevSyncRef.current) setMode('sync')
+    else if (ripActive && !prevRipRef.current) setMode('rip')
+    prevRipRef.current = ripActive
+    prevSyncRef.current = syncActive
+  }, [ripActive, syncActive])
+
+  // Also: if the current mode disappears from the available set
+  // (e.g. sync ended and nothing else is selected), fall through to
+  // the best remaining option.
   useEffect(() => {
     if (available.length === 0) return
     if (!available.includes(mode)) {
-      setMode(available[available.length - 1])
+      // Priority: sync > rip > playing
+      const priority: PillMode[] = ['sync', 'rip', 'playing']
+      const next = priority.find(m => available.includes(m)) || available[0]
+      setMode(next)
     }
   }, [available.join('|'), mode])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -80,7 +97,7 @@ export default function NowPlaying() {
   // When nothing is playing and nothing's syncing/ripping, pill is
   // empty (matches idle iTunes LCD).
   const effectiveMode: PillMode | null = available.length === 0 ? null :
-    (available.includes(mode) ? mode : available[available.length - 1])
+    (available.includes(mode) ? mode : 'playing')
 
   return (
     <div className="now-playing-pill">
