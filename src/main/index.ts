@@ -390,6 +390,12 @@ let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "
 // freshly-ripped lossless track doesn't stall on a 2-3s transcode.
 let prewarmAlacCache: (paths: string[]) => Promise<void> = async () => { /* not wired yet */ }
 
+// Register a known codec for a file we just wrote, so the play handler
+// can skip the ~300ms ffprobe round-trip on first play. Known codecs
+// bypass ffprobe entirely on the next access. Wired up alongside
+// prewarmAlacCache when the audio protocol handler initialises.
+let registerKnownCodec: (path: string, mtime: number, codec: string) => void = () => {}
+
 // Report the iPod's actual storage capacity by statting the mounted
 // volume. Previously the renderer hardcoded 64GB, which misreports
 // modded iPods (SD card swaps, etc.) as the wrong size.
@@ -2075,16 +2081,33 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     }
   }
 
+  // Resolve the just-imported tracks' on-disk paths once — used for
+  // both pre-warming ALAC transcodes and for pre-registering their
+  // codec with the play handler so first-play doesn't have to ffprobe.
+  const localMount = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const importedAbsPaths = imported.map(t => {
+    const hfs = (t.path as string) || ''
+    const rel = hfs.replace(/^:/, '').replace(/:/g, '/')
+    return join(localMount, rel)
+  }).filter(Boolean)
+
+  // Pre-register codec (we know it — we just wrote it).
+  // 'alac' for lossless rips, 'aac' for AAC 128/256/320.
+  const knownCodec = fmt === 'alac' ? 'alac' : fmt.startsWith('aac-') ? 'aac' : ''
+  if (knownCodec) {
+    for (const p of importedAbsPaths) {
+      try {
+        const s = await stat(p)
+        registerKnownCodec(p, s.mtimeMs, knownCodec)
+      } catch { /* file missing — skip */ }
+    }
+  }
+
   // If we ripped as ALAC, kick off background transcodes into the
   // play cache so the user's first click on these tracks plays
   // instantly instead of waiting 2-3 seconds for on-demand transcode.
   if (fmt === 'alac') {
-    const paths = imported.map(t => {
-      const hfs = (t.path as string) || ''
-      const rel = hfs.replace(/^:/, '').replace(/:/g, '/')
-      return join(MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), rel)
-    }).filter(Boolean)
-    prewarmAlacCache(paths).catch(err => console.warn('pre-warm failed:', err))
+    prewarmAlacCache(importedAbsPaths).catch(err => console.warn('pre-warm failed:', err))
   }
 
   return { ok: true, tracks: imported }
@@ -2269,6 +2292,13 @@ app.whenReady().then(async () => {
         aacCachePath(p, s.mtimeMs).catch(() => {})
       } catch { /* file missing — skip */ }
     }
+  }
+
+  // Populate the codec cache with a codec we already know (from a rip
+  // we just wrote). Eliminates the ~300ms ffprobe delay that shows up
+  // on a track's first play even for AAC files.
+  registerKnownCodec = (path, mtime, codec) => {
+    codecCache.set(path, { mtime, codec })
   }
 
   protocol.handle('ipod-audio', async (request) => {

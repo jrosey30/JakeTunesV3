@@ -276,7 +276,8 @@ function AppInner() {
         dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [progress.track as import('./types').Track] })
       }
       import('./views/CDImportView').then(m => m.noteCdRipProgress(progress)).catch(() => {})
-      // Update the persistent banner.
+      // Update the persistent banner + the global activity store (so
+      // the LCD pill in the toolbar surfaces progress too).
       setRipBanner(prev => {
         const prevErrors = prev?.errors ?? 0
         const next = {
@@ -286,11 +287,21 @@ function AppInner() {
           title: progress.trackTitle || '',
           errors: prevErrors + (progress.error ? 1 : 0),
         }
+        import('./activity').then(a => a.setRip({
+          active: next.active,
+          current: next.current,
+          total: next.total,
+          trackTitle: next.title,
+          errors: next.errors,
+        })).catch(() => {})
         // If the rip just finished, keep the banner visible for a few
         // seconds so the user sees the final "done" state, then hide.
         if (!next.active) {
           if (ripHideTimerRef.current) clearTimeout(ripHideTimerRef.current)
-          ripHideTimerRef.current = setTimeout(() => setRipBanner(null), 6000)
+          ripHideTimerRef.current = setTimeout(() => {
+            setRipBanner(null)
+            import('./activity').then(a => a.setRip(null)).catch(() => {})
+          }, 6000)
         }
         return next
       })

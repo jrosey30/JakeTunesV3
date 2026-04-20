@@ -1,6 +1,7 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
+import { subscribe, getSnapshot, getRip, getSync } from '../../activity'
 
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
@@ -36,6 +37,16 @@ export default function NowPlaying() {
   const progress = state.duration > 0 ? (state.position / state.duration) * 100 : 0
   const track = state.nowPlaying
 
+  // Subscribe to the global activity store so this pill can surface
+  // background work (CD rip / iPod sync) when nothing is playing —
+  // matches iTunes 7 behavior where the LCD area showed "Importing"
+  // and "Syncing" messages.
+  useSyncExternalStore(subscribe, getSnapshot)
+  const rip = getRip()
+  const syn = getSync()
+  const ripActive = rip?.active
+  const syncActive = syn?.active
+
   return (
     <div className="now-playing-pill">
       {track ? (
@@ -54,6 +65,33 @@ export default function NowPlaying() {
               <div className="scrubber-knob" style={{ left: `${progress}%` }} />
             </div>
             <span className="scrubber-time">-{formatTime(state.duration - state.position)}</span>
+          </div>
+        </>
+      ) : syncActive && syn ? (
+        <>
+          <div className="now-playing-info now-playing-info--activity">
+            <span className="now-playing-title">Syncing iPod</span>
+            <span className="now-playing-sep"> — </span>
+            <span className="now-playing-artist">{syn.step}</span>
+          </div>
+          <div className="scrubber-row">
+            <div className="activity-bar">
+              <div className="activity-bar-fill activity-bar-fill--indeterminate" />
+            </div>
+          </div>
+        </>
+      ) : ripActive && rip ? (
+        <>
+          <div className="now-playing-info now-playing-info--activity">
+            <span className="now-playing-title">Importing {rip.current} of {rip.total}</span>
+            {rip.trackTitle && <><span className="now-playing-sep"> — </span>
+            <span className="now-playing-artist">{rip.trackTitle}</span></>}
+            {rip.errors > 0 && <span className="now-playing-error"> ({rip.errors} skipped)</span>}
+          </div>
+          <div className="scrubber-row">
+            <div className="activity-bar">
+              <div className="activity-bar-fill" style={{ width: `${(rip.current / Math.max(1, rip.total)) * 100}%` }} />
+            </div>
           </div>
         </>
       ) : (

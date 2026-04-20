@@ -124,6 +124,40 @@
 
 .now-playing-empty { height: 100%; }
 
+/* ── Activity state in the LCD pill (CD rip / iPod sync) ── */
+.now-playing-info--activity {
+  color: #4a3a18;
+  font-style: italic;
+}
+.now-playing-error {
+  color: #a03030;
+  font-weight: 600;
+  font-style: normal;
+  margin-left: 6px;
+}
+.activity-bar {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  background: rgba(100, 80, 50, 0.18);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.activity-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #b08030, #d0a050);
+  border-radius: 2px;
+  transition: width 0.25s ease;
+}
+.activity-bar-fill--indeterminate {
+  width: 30%;
+  animation: activity-bar-pulse 1.2s ease-in-out infinite;
+}
+@keyframes activity-bar-pulse {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
 .scrubber-row {
   display: flex;
   align-items: center;

@@ -192,12 +192,17 @@ export default function DeviceView() {
   const handleSync = async () => {
     setSyncing(true)
     setSyncStatus({ state: 'syncing', step: 'Preparing playlists...' })
+    // Mirror into global activity store so the LCD pill surfaces sync state.
+    const activity = await import('../activity')
+    activity.setSync({ active: true, step: 'Preparing playlists...' })
     try {
       const syncPlaylists = refreshSmartPlaylists(state.tracks, state.playlists)
       setSyncStatus({ state: 'syncing', step: 'Copying new tracks to iPod...' })
+      activity.setSync({ active: true, step: 'Copying new tracks to iPod...' })
       const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists)
       if (!result.ok) {
         setSyncStatus({ state: 'error', message: result.error || 'Unknown error' })
+        activity.setSync(null)
         setSyncing(false)
         return
       }
@@ -214,6 +219,7 @@ export default function DeviceView() {
       setSyncStatus({ state: 'error', message: String(err) })
     }
     setSyncing(false)
+    activity.setSync(null)
   }
 
   return (
