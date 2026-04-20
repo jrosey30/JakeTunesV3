@@ -127,7 +127,7 @@ declare global {
       getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
-      importTracks: (filePaths: string[], nextId: number) => Promise<{ ok: boolean; tracks: Track[] }>
+      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[] }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
       syncToIpod: (tracks: Track[], playlists: Playlist[]) => Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string }>

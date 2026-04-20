@@ -396,7 +396,14 @@ function AppInner() {
     setImporting(true)
     const nextId = nextIdRef.current
     try {
-      const result = await window.electronAPI.importTracks(droppedPaths, nextId)
+      // Pull the user's currently-selected import format out of ui-state
+      // so a dragged file respects "ALAC" vs "AAC 256" etc. — matches
+      // what the CD Import dropdown is set to.
+      const ui = await window.electronAPI.loadUiState().catch(() => ({ ok: false, state: null }))
+      const importFormat = (ui.ok && ui.state && typeof (ui.state as Record<string, unknown>).importFormat === 'string')
+        ? (ui.state as Record<string, unknown>).importFormat as string
+        : undefined
+      const result = await window.electronAPI.importTracks(droppedPaths, nextId, importFormat)
       if (result.ok && result.tracks.length > 0) {
         const newTracks = result.tracks as Track[]
         // Advance the counter past all imported IDs to prevent collisions

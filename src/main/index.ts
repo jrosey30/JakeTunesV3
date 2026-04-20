@@ -670,11 +670,21 @@ async function resolveAudioPaths(paths: string[]): Promise<string[]> {
   return results
 }
 
-ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) => {
+ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
   // Resolve folders into individual audio files
   const resolvedPaths = await resolveAudioPaths(filePaths)
   const imported: Array<Record<string, unknown>> = []
   let id = nextId
+
+  // Honor the user's current import format preference (aac-256 / alac / wav / etc).
+  // Without this, dragging a CD track or other lossless source into the app
+  // would silently convert to AAC 256 regardless of what the user picked
+  // for CD imports — the exact complaint: "i told it to import as lossless
+  // and it auto went back to AAC 256".
+  const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
+  const chosenFmt: AudioFormat = validFormats.includes(preferredFormat as AudioFormat)
+    ? (preferredFormat as AudioFormat)
+    : 'aac-256'
 
   // Dynamic import for ESM module
   const mm = await import('music-metadata')
@@ -725,13 +735,19 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number) 
         discCount: common.disk?.of || 0,
       }
 
-      if (needsConvert) {
-        // Convert to AAC .m4a (afconvert on macOS, ffmpeg on Windows).
-        finalExt = '.m4a'
+      // If the source is already a Chromium-playable format (AAC .m4a,
+      // .mp3) and the user didn't explicitly request a re-encode, we
+      // can just copy. Otherwise honor the user's chosen format.
+      const sourcePlayable = ext === '.m4a' || ext === '.mp3' || ext === '.aac'
+      const userRequestedReencode = preferredFormat != null && preferredFormat !== 'aac-256'
+      const doConvert = needsConvert || userRequestedReencode || !sourcePlayable
+
+      if (doConvert) {
+        finalExt = extensionForFormat(chosenFmt)
         fileName = `imported_${id}${finalExt}`
         destPath = join(destDir, fileName)
         try {
-          await convertAudio(srcPath, destPath, 'aac-256', embedTags)
+          await convertAudio(srcPath, destPath, chosenFmt, embedTags)
         } catch (convertErr) {
           console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
           // Fall back to copying the original file

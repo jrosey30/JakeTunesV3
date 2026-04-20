@@ -60,8 +60,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-music-library-path'),
   ejectIpod: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-ipod'),
-  importTracks: (filePaths: string[], nextId: number): Promise<{ ok: boolean; tracks: unknown[] }> =>
-    ipcRenderer.invoke('import-tracks', filePaths, nextId),
+  importTracks: (filePaths: string[], nextId: number, format?: string): Promise<{ ok: boolean; tracks: unknown[] }> =>
+    ipcRenderer.invoke('import-tracks', filePaths, nextId, format),
   saveLibrary: (tracks: unknown[], playlists?: unknown[]): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-library', tracks, playlists),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>
