@@ -220,6 +220,17 @@ export default function DeviceView() {
         setSyncing(false)
         return
       }
+      // Apply smart-sync path rewrites: when main detected that a
+      // track's audio already lived on the iPod under a different
+      // F-dir, it updated the in-flight tracks array for the DB
+      // write. Mirror those rewrites into library.json so the
+      // renderer stays consistent with what's now on the device.
+      if (result.pathRewrites && result.pathRewrites.length > 0) {
+        dispatch({
+          type: 'UPDATE_TRACKS',
+          updates: result.pathRewrites.map(r => ({ id: r.id, field: 'path', value: r.newPath })),
+        })
+      }
       const now = new Date()
       const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       setSyncStatus({

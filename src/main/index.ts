@@ -581,26 +581,68 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   // denominator for progress reporting). Pass 2: copy and emit a
   // sync-progress event per file so the renderer can show a real bar
   // instead of a perpetually-indeterminate pulse.
+  //
+  // Smart-match before copying: tonight's restore/XML-rebuild shifted
+  // library.json paths, so a track whose path says F48/NTJL.m4a may
+  // actually already exist at F12/NTJL.m4a on the iPod. Without this,
+  // sync blindly copies hundreds of files that are already present
+  // under different subdir numbers, wasting ~10 GB over the course of
+  // a single session. Build an index of every audio filename currently
+  // on the iPod so we can detect this and rewrite the library track's
+  // path instead of re-copying.
   let copied = 0
   let copyErrors = 0
   const pathSep = IS_WINDOWS ? '\\' : '/'
+  const basenameToIpodPath = new Map<string, string>()
+  try {
+    const { readdir: rd } = await import('fs/promises')
+    for (let i = 0; i < 50; i++) {
+      const sub = join(IPOD_MOUNT, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
+      const entries = await rd(sub).catch(() => [] as string[])
+      for (const fn of entries) {
+        if (!basenameToIpodPath.has(fn)) {
+          basenameToIpodPath.set(fn, join(sub, fn))
+        }
+      }
+    }
+  } catch { /* best-effort */ }
+
   const toCopy: Array<{ local: string; ipod: string; title: string }> = []
+  const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
   for (const track of tracks) {
     const colonPath = String(track.path || '')
     if (!colonPath) continue
     const relPath = colonPath.replace(/:/g, pathSep)
     const ipodFile = join(IPOD_MOUNT, relPath)
     const localFile = join(LOCAL_MOUNT, relPath)
+    const baseName = colonPath.split(':').pop() || ''
+
+    let exists = false
     try {
       await stat(ipodFile)
-      // Already on iPod, skip
-    } catch {
-      toCopy.push({
-        local: localFile,
-        ipod: ipodFile,
-        title: String(track.title || colonPath.split(':').pop() || ''),
+      exists = true
+    } catch { /* not at expected path */ }
+
+    if (exists) continue
+
+    // Maybe the audio is already on the iPod under a different F-dir.
+    const altIpodPath = baseName ? basenameToIpodPath.get(baseName) : undefined
+    if (altIpodPath && altIpodPath !== ipodFile) {
+      const altRel = altIpodPath.slice(IPOD_MOUNT.length + 1)
+      const altColonPath = ':' + altRel.split(pathSep).join(':')
+      pathRewrites.push({
+        id: track.id as number,
+        oldPath: colonPath,
+        newPath: altColonPath,
       })
+      continue
     }
+
+    toCopy.push({
+      local: localFile,
+      ipod: ipodFile,
+      title: String(track.title || baseName),
+    })
   }
 
   const totalToCopy = toCopy.length
@@ -626,6 +668,18 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   mainWindow?.webContents.send('sync-progress', {
     phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
   })
+
+  // Apply smart-match path rewrites to the in-flight tracks array so
+  // the Python DB writer (which reads this JSON) gets the correct
+  // (already-on-iPod) paths, not the stale ones from library.json.
+  if (pathRewrites.length) {
+    const rewriteMap = new Map(pathRewrites.map(r => [r.id, r.newPath]))
+    for (const t of tracks) {
+      const nv = rewriteMap.get(t.id as number)
+      if (nv) t.path = nv
+    }
+    console.log(`sync-to-ipod: smart-match rewrote ${pathRewrites.length} track paths (saved that many redundant copies)`)
+  }
 
   // Backup existing iTunesDB
   const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
@@ -661,7 +715,14 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
         mainWindow?.webContents.send('sync-progress', {
           phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
         })
-        resolve({ ok: true, copied, copyErrors, totalTracks: tracks.length })
+        resolve({
+          ok: true,
+          copied, copyErrors,
+          totalTracks: tracks.length,
+          // Return the path rewrites so the renderer can update
+          // library.json to match what actually ended up on the iPod.
+          pathRewrites: pathRewrites.map(r => ({ id: r.id, newPath: r.newPath })),
+        })
       } else {
         resolve({ ok: false, error: `DB write failed (code ${code}): ${stderr}`, copied, copyErrors })
       }

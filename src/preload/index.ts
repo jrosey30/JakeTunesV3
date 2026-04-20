@@ -66,7 +66,7 @@ const electronAPI = {
     ipcRenderer.invoke('save-library', tracks, playlists),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>
     ipcRenderer.invoke('sync-ipod', existingIds),
-  syncToIpod: (tracks: unknown[], playlists: unknown[]): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string }> =>
+  syncToIpod: (tracks: unknown[], playlists: unknown[]): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
     ipcRenderer.invoke('sync-to-ipod', tracks, playlists),
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'db'; current: number; total: number; title: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'db'; current: number; total: number; title: string }) => callback(progress)
