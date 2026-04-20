@@ -25,6 +25,29 @@ import {
 
 const isDev = !app.isPackaged
 
+// macOS GUI apps launched from Finder inherit only the system PATH
+// (/usr/bin:/bin:/usr/sbin:/sbin), NOT the user's shell PATH. Tools
+// installed via Homebrew (ffmpeg, ffprobe, python3 on some setups) live
+// in /opt/homebrew/bin or /usr/local/bin and become invisible to
+// spawn/execFile calls. Prepend the common locations so native
+// subprocess invocations just work.
+if (process.platform === 'darwin') {
+  const extras = [
+    '/opt/homebrew/bin', '/opt/homebrew/sbin',  // Apple Silicon homebrew
+    '/usr/local/bin', '/usr/local/sbin',         // Intel / older homebrew
+  ]
+  const current = (process.env.PATH || '').split(':').filter(Boolean)
+  const seen = new Set(current)
+  const merged = [...current]
+  for (const p of extras) {
+    if (!seen.has(p)) {
+      merged.unshift(p)
+      seen.add(p)
+    }
+  }
+  process.env.PATH = merged.join(':')
+}
+
 // Load .env from multiple possible locations.
 //
 // Order matters — dotenv uses `override: false`, so the FIRST path that
