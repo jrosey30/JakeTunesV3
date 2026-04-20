@@ -146,145 +146,89 @@ export default function DeviceView() {
     }
   }, [state.tracks, ipodCapacityBytes])
 
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncStatus({ state: 'syncing', step: 'Preparing playlists...' })
+    try {
+      const syncPlaylists = refreshSmartPlaylists(state.tracks, state.playlists)
+      setSyncStatus({ state: 'syncing', step: 'Copying new tracks to iPod...' })
+      const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists)
+      if (!result.ok) {
+        setSyncStatus({ state: 'error', message: result.error || 'Unknown error' })
+        setSyncing(false)
+        return
+      }
+      const now = new Date()
+      const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      setSyncStatus({
+        state: 'done',
+        copied: result.copied || 0,
+        total: result.totalTracks || state.tracks.length,
+        time: timeStr,
+      })
+    } catch (err) {
+      console.error('Sync failed:', err)
+      setSyncStatus({ state: 'error', message: String(err) })
+    }
+    setSyncing(false)
+  }
+
   return (
-    <div className="device-view">
-      <div className="device-header">
-        <div className="device-icon">
-          <IpodLargeIcon />
-        </div>
-        <div className="device-header-info">
-          <h1 className="device-name">{ipodName}</h1>
-          <div className="device-model">iPod</div>
-        </div>
-      </div>
-
-      <div className="device-section">
-        <h3 className="device-section-title">Summary</h3>
-        <div className="device-stats-grid">
-          <div className="device-stat">
-            <span className="device-stat-value">{stats.trackCount.toLocaleString()}</span>
-            <span className="device-stat-label">Songs</span>
+    <div className="device-view device-view--itunes">
+      {/* ── Top info block: iPod image left, info grid right, update block far right ── */}
+      <div className="device-itunes-top">
+        <div className="device-itunes-icon"><IpodLargeIcon /></div>
+        <div className="device-itunes-info">
+          <h1 className="device-itunes-name">{ipodName || 'iPod'}</h1>
+          <div className="device-itunes-info-line">
+            <span className="device-itunes-label">Capacity:</span>
+            <span className="device-itunes-value">{formatBytes(ipodCapacityBytes)}</span>
           </div>
-          <div className="device-stat">
-            <span className="device-stat-value">{stats.artistCount.toLocaleString()}</span>
-            <span className="device-stat-label">Artists</span>
+          <div className="device-itunes-info-line">
+            <span className="device-itunes-label">Songs:</span>
+            <span className="device-itunes-value">{stats.trackCount.toLocaleString()}</span>
           </div>
-          <div className="device-stat">
-            <span className="device-stat-value">{stats.albumCount.toLocaleString()}</span>
-            <span className="device-stat-label">Albums</span>
+          <div className="device-itunes-info-line">
+            <span className="device-itunes-label">Software Version:</span>
+            <span className="device-itunes-value">JakeTunes 3.0.0</span>
           </div>
-          <div className="device-stat">
-            <span className="device-stat-value">{stats.genreCount}</span>
-            <span className="device-stat-label">Genres</span>
-          </div>
-          <div className="device-stat">
-            <span className="device-stat-value">{formatDurationLong(stats.totalMs)}</span>
-            <span className="device-stat-label">Total Time</span>
-          </div>
-          <div className="device-stat">
-            <span className="device-stat-value">{formatBytes(stats.totalBytes)}</span>
-            <span className="device-stat-label">Audio</span>
+          <div className="device-itunes-info-line">
+            <span className="device-itunes-label">Format:</span>
+            <span className="device-itunes-value">Mac OS Extended (Journaled)</span>
           </div>
         </div>
       </div>
 
-      <div className="device-section">
-        <h3 className="device-section-title">Capacity</h3>
-        <div className="device-capacity-bar">
-          <div
-            className="device-capacity-segment device-capacity-audio"
-            style={{ width: `${stats.audioPercent}%` }}
-            title={`Audio: ${formatBytes(stats.totalBytes)}`}
-          />
-          <div
-            className="device-capacity-segment device-capacity-other"
-            style={{ width: `${stats.otherPercent}%` }}
-            title="Other (iPod OS, database, artwork)"
-          />
-          <div
-            className="device-capacity-segment device-capacity-free"
-            style={{ width: `${stats.freePercent}%` }}
-            title={`Free: ${formatBytes(stats.freeBytes)}`}
-          />
-        </div>
-        <div className="device-capacity-legend">
-          <div className="device-legend-item">
-            <span className="device-legend-swatch device-legend-audio" />
-            <span>Audio ({formatBytes(stats.totalBytes)})</span>
-          </div>
-          <div className="device-legend-item">
-            <span className="device-legend-swatch device-legend-other" />
-            <span>Other (500 MB)</span>
-          </div>
-          <div className="device-legend-item">
-            <span className="device-legend-swatch device-legend-free" />
-            <span>Free ({formatBytes(stats.freeBytes)})</span>
-          </div>
-        </div>
-      </div>
+      <div className="device-itunes-divider" />
 
-      <div className="device-section">
-        <h3 className="device-section-title">Options</h3>
-        <div className="device-options">
-          <label className="device-option">
-            <input type="checkbox" checked disabled />
+      {/* ── Options ── */}
+      <div className="device-itunes-section">
+        <h2 className="device-itunes-section-title">Options</h2>
+        <div className="device-itunes-options">
+          <label className="device-itunes-option">
+            <input type="checkbox" disabled />
+            <span>Open JakeTunes when this iPod is connected</span>
+          </label>
+          <label className="device-itunes-option">
+            <input type="checkbox" disabled />
+            <span>Sync only checked songs</span>
+          </label>
+          <label className="device-itunes-option">
+            <input type="checkbox" disabled />
+            <span>Convert higher bit rate songs to <select disabled className="device-itunes-select"><option>128 kbps</option><option>192 kbps</option><option>256 kbps</option></select> AAC</span>
+          </label>
+          <label className="device-itunes-option">
+            <input type="checkbox" checked readOnly />
             <span>Manually manage music</span>
           </label>
-          <label className="device-option">
-            <input type="checkbox" checked disabled />
+          <label className="device-itunes-option">
+            <input type="checkbox" checked readOnly />
             <span>Enable disk use</span>
           </label>
         </div>
       </div>
 
-      <div className="device-actions">
-        <button
-          className="device-eject-btn"
-          onClick={async () => {
-            await window.electronAPI.ejectIpod()
-            window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
-          }}
-        >
-          Eject
-        </button>
-        <button
-          className="device-sync-btn"
-          disabled={syncing}
-          onClick={async () => {
-            setSyncing(true)
-            setSyncStatus({ state: 'syncing', step: 'Preparing playlists...' })
-            try {
-              // Regenerate smart playlists with fresh data before syncing
-              const syncPlaylists = refreshSmartPlaylists(state.tracks, state.playlists)
-
-              setSyncStatus({ state: 'syncing', step: 'Copying new tracks to iPod...' })
-              const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists)
-
-              if (!result.ok) {
-                setSyncStatus({ state: 'error', message: result.error || 'Unknown error' })
-                setSyncing(false)
-                return
-              }
-
-              const now = new Date()
-              const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-              setSyncStatus({
-                state: 'done',
-                copied: result.copied || 0,
-                total: result.totalTracks || state.tracks.length,
-                time: timeStr,
-              })
-            } catch (err) {
-              console.error('Sync failed:', err)
-              setSyncStatus({ state: 'error', message: String(err) })
-            }
-            setSyncing(false)
-          }}
-        >
-          {syncing ? 'Syncing...' : 'Sync'}
-        </button>
-      </div>
-
+      {/* ── Sync status (floats above the capacity bar when active) ── */}
       {syncStatus.state !== 'idle' && (
         <div className={`device-sync-status device-sync-status--${syncStatus.state}`}>
           {syncStatus.state === 'syncing' && (
@@ -304,9 +248,49 @@ export default function DeviceView() {
         </div>
       )}
 
-      <div className="device-capacity-footer">
-        <span>{formatBytes(ipodCapacityBytes)} total capacity</span>
-        <span>{formatBytes(stats.freeBytes)} available</span>
+      {/* ── Bottom: capacity bar + action buttons (iTunes-style footer) ── */}
+      <div className="device-itunes-footer">
+        <div className="device-itunes-capacity">
+          <div className="device-itunes-capacity-bar">
+            <div className="device-itunes-capacity-seg device-itunes-capacity-audio"
+              style={{ width: `${stats.audioPercent}%` }}
+              title={`Audio: ${formatBytes(stats.totalBytes)}`} />
+            <div className="device-itunes-capacity-seg device-itunes-capacity-other"
+              style={{ width: `${stats.otherPercent}%` }}
+              title="Other (iPod OS, database, artwork)" />
+            <div className="device-itunes-capacity-seg device-itunes-capacity-free"
+              style={{ width: `${stats.freePercent}%` }}
+              title={`Free: ${formatBytes(stats.freeBytes)}`} />
+          </div>
+          <div className="device-itunes-capacity-labels">
+            <span className="device-itunes-capacity-label">
+              <span className="device-itunes-capacity-swatch device-itunes-capacity-audio" />
+              Audio&nbsp;<strong>{formatBytes(stats.totalBytes)}</strong>
+            </span>
+            <span className="device-itunes-capacity-label">
+              <span className="device-itunes-capacity-swatch device-itunes-capacity-other" />
+              Other&nbsp;<strong>500 MB</strong>
+            </span>
+            <span className="device-itunes-capacity-label">
+              <span className="device-itunes-capacity-swatch device-itunes-capacity-free" />
+              Free&nbsp;<strong>{formatBytes(stats.freeBytes)}</strong>
+            </span>
+          </div>
+        </div>
+        <div className="device-itunes-actions">
+          <button
+            className="device-itunes-btn device-itunes-btn--eject"
+            onClick={async () => {
+              await window.electronAPI.ejectIpod()
+              window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
+            }}
+          >Eject</button>
+          <button
+            className="device-itunes-btn device-itunes-btn--sync"
+            disabled={syncing}
+            onClick={handleSync}
+          >{syncing ? 'Syncing…' : 'Sync'}</button>
+        </div>
       </div>
     </div>
   )
