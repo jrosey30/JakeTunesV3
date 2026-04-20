@@ -54,6 +54,10 @@ interface CdEditState {
 }
 let cachedCdInfo: CdInfo | null = null
 let cachedEdits: CdEditState | null = null
+// Preferred import format — seeded from ui-state.json on first render of
+// CDImportView, then mirrored back out whenever the user changes it.
+// Survives both view remounts AND app relaunches.
+let cachedImportFormat: ImportFormat | null = null
 
 // Rip-progress cache. Lives at the module level so navigating away from
 // the CD Import view and coming back mid-rip doesn't hide the progress
@@ -152,8 +156,12 @@ export default function CDImportView() {
   const [currentTrack, setCurrentTrack] = useState<number | null>(cachedRipProgress.currentTrack)
   const [importCount, setImportCount] = useState(cachedRipProgress.importCount)
 
-  // Import settings
-  const [importFormat, setImportFormat] = useState<ImportFormat>('aac-256')
+  // Import settings — seed from module cache so it survives view
+  // remounts. A follow-up effect below also pulls from ui-state.json
+  // on first mount to survive app relaunches, and mirrors changes
+  // back out to both the module cache and ui-state.
+  const [importFormat, setImportFormat] = useState<ImportFormat>(cachedImportFormat ?? 'aac-256')
+  const importFormatLoaded = useRef(false)
 
   // Editable metadata — also seeded from cache
   const [editArtist, setEditArtist] = useState(cachedEdits?.editArtist ?? '')
@@ -249,6 +257,33 @@ export default function CDImportView() {
       editTitles,
     }
   }, [cdInfo, checked, editArtist, editAlbum, editYear, editGenre, editTitles])
+
+  // Load the persisted import format from ui-state.json exactly once
+  // on first mount, then mirror any user change back out. After the
+  // initial load, the module-level cachedImportFormat is the source
+  // of truth for subsequent remounts in the same session.
+  useEffect(() => {
+    if (importFormatLoaded.current) return
+    importFormatLoaded.current = true
+    if (cachedImportFormat) return  // already seeded from a previous visit
+    window.electronAPI.loadUiState().then(r => {
+      if (!r.ok || !r.state) return
+      const f = (r.state as Record<string, unknown>).importFormat
+      if (typeof f === 'string' && ['aac-256', 'aac-128', 'aac-320', 'alac', 'aiff', 'wav'].includes(f)) {
+        cachedImportFormat = f as ImportFormat
+        setImportFormat(f as ImportFormat)
+      }
+    }).catch(() => {})
+  }, [])
+
+  // Persist the user's format choice whenever it changes.
+  useEffect(() => {
+    cachedImportFormat = importFormat
+    window.electronAPI.loadUiState().then(r => {
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, importFormat })
+    }).catch(() => {})
+  }, [importFormat])
 
   // Listen for rip progress. Also mirror progress into the module-level
   // cache so that remounting this view during an active rip (user
