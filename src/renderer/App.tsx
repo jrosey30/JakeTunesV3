@@ -68,20 +68,29 @@ function AppInner() {
       }
       dispatch({ type: 'SET_TRACKS', tracks })
 
-      // Merge iPod playlists with user-saved playlists (only on first load)
+      // Merge iPod playlists with user-saved playlists (only on first load).
+      // Respect tombstones: if the user explicitly deleted an iPod-sourced
+      // playlist in a previous session, don't re-add it from the iPod DB
+      // on the next mount/load.
       const savedPlaylists: import('./types').Playlist[] =
         (playlistsResult.ok && playlistsResult.playlists) ? playlistsResult.playlists : []
+      const tombstones = new Set<string>(
+        Array.isArray(uiResult?.state?.deletedIpodPlaylistNames)
+          ? uiResult.state.deletedIpodPlaylistNames as string[]
+          : []
+      )
+      dispatch({ type: 'LOAD_DELETED_IPOD_PLAYLISTS', names: Array.from(tombstones) })
       if (ipodPlaylists.length > 0) {
         const savedNames = new Set(savedPlaylists.map(p => p.name))
         const merged = [...savedPlaylists]
         for (const ip of ipodPlaylists) {
-          if (!savedNames.has(ip.name)) {
-            merged.push({
-              id: `ipod-${ip.name.toLowerCase().replace(/\s+/g, '-')}`,
-              name: ip.name,
-              trackIds: ip.trackIds,
-            })
-          }
+          if (savedNames.has(ip.name)) continue
+          if (tombstones.has(ip.name)) continue  // user explicitly deleted this one
+          merged.push({
+            id: `ipod-${ip.name.toLowerCase().replace(/\s+/g, '-')}`,
+            name: ip.name,
+            trackIds: ip.trackIds,
+          })
         }
         dispatch({ type: 'LOAD_PLAYLISTS', playlists: merged })
       } else {
@@ -190,23 +199,28 @@ function AppInner() {
     }, 1000)
   }, [libState.tracks, libState.playlists])
 
-  // Save UI state on changes (debounced)
+  // Save UI state on changes (debounced). Merges into the existing
+  // ui-state file instead of overwriting it, because SongsView writes
+  // colWidthMap/hiddenCols separately via the save-columns event.
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!uiReady) return
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
-    saveTimeoutRef.current = setTimeout(() => {
+    saveTimeoutRef.current = setTimeout(async () => {
+      const existing = await window.electronAPI.loadUiState().then(r => (r.ok && r.state) ? r.state : {}).catch(() => ({}))
       const uiState: Record<string, unknown> = {
+        ...existing,
         sidebarWidth,
         currentView: libState.currentView,
         activePlaylistId: libState.activePlaylistId,
         activeSmartPlaylist: libState.activeSmartPlaylist,
         sortColumn: libState.sortColumn,
         sortDirection: libState.sortDirection,
+        deletedIpodPlaylistNames: Array.from(libState.deletedIpodPlaylistNames),
       }
       window.electronAPI.saveUiState(uiState)
     }, 500)
-  }, [uiReady, sidebarWidth, libState.currentView, libState.activePlaylistId, libState.activeSmartPlaylist, libState.sortColumn, libState.sortDirection])
+  }, [uiReady, sidebarWidth, libState.currentView, libState.activePlaylistId, libState.activeSmartPlaylist, libState.sortColumn, libState.sortDirection, libState.deletedIpodPlaylistNames])
 
   // Expose saveUiState for SongsView to piggyback column state
   useEffect(() => {

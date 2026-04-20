@@ -12,6 +12,10 @@ interface LibraryState {
   sortDirection: SortDirection
   selectedTrackIds: Set<number>
   artworkMap: Record<string, string>
+  // Names of iPod-sourced playlists the user has explicitly deleted.
+  // Persisted across sessions so they don't re-appear every time the
+  // iPod mounts and the App-level merge re-adds them from iPod DB.
+  deletedIpodPlaylistNames: Set<string>
 }
 
 type LibraryAction =
@@ -26,6 +30,7 @@ type LibraryAction =
   | { type: 'SELECT_NONE' }
   | { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string }[] }
   | { type: 'LOAD_PLAYLISTS'; playlists: Playlist[] }
+  | { type: 'LOAD_DELETED_IPOD_PLAYLISTS'; names: string[] }
   | { type: 'ADD_PLAYLIST'; playlist: Playlist }
   | { type: 'REMOVE_PLAYLIST'; id: string }
   | { type: 'RENAME_PLAYLIST'; id: string; name: string }
@@ -50,7 +55,8 @@ const initialState: LibraryState = {
   sortColumn: 'dateAdded',
   sortDirection: 'desc',
   selectedTrackIds: new Set(),
-  artworkMap: {}
+  artworkMap: {},
+  deletedIpodPlaylistNames: new Set(),
 }
 
 function libraryReducer(state: LibraryState, action: LibraryAction): LibraryState {
@@ -108,18 +114,29 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
     }
     case 'LOAD_PLAYLISTS':
       return { ...state, playlists: action.playlists }
+    case 'LOAD_DELETED_IPOD_PLAYLISTS':
+      return { ...state, deletedIpodPlaylistNames: new Set(action.names) }
     case 'ADD_PLAYLIST': {
       const exists = state.playlists.some(p => p.id === action.playlist.id)
       if (exists) return state
       return { ...state, playlists: [...state.playlists, action.playlist] }
     }
-    case 'REMOVE_PLAYLIST':
+    case 'REMOVE_PLAYLIST': {
+      const removed = state.playlists.find(p => p.id === action.id)
+      // If this was an iPod-sourced playlist, tombstone its name so the
+      // App-level merge on the next mount/load doesn't re-add it from
+      // the iPod's iTunesDB.
+      const nextTombstones = (removed && action.id.startsWith('ipod-'))
+        ? new Set([...state.deletedIpodPlaylistNames, removed.name])
+        : state.deletedIpodPlaylistNames
       return {
         ...state,
         playlists: state.playlists.filter(p => p.id !== action.id),
         activePlaylistId: state.activePlaylistId === action.id ? null : state.activePlaylistId,
         currentView: state.activePlaylistId === action.id ? 'songs' : state.currentView,
+        deletedIpodPlaylistNames: nextTombstones,
       }
+    }
     case 'RENAME_PLAYLIST':
       return {
         ...state,

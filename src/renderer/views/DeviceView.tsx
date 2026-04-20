@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import type { Playlist, Track } from '../types'
 import '../styles/device.css'
@@ -110,6 +110,18 @@ export default function DeviceView() {
   const [ipodName, setIpodName] = useState('iPod')
   const [ipodCapacityBytes, setIpodCapacityBytes] = useState<number>(FALLBACK_CAPACITY_BYTES)
 
+  // iTunes-style device options. Stored in ui-state.json so they persist
+  // across launches. Behavior for each option is implemented as the
+  // corresponding feature lands; for now they at least remember the
+  // user's preference.
+  const [optOpenOnConnect, setOptOpenOnConnect] = useState(false)
+  const [optSyncOnlyChecked, setOptSyncOnlyChecked] = useState(false)
+  const [optConvertBitrate, setOptConvertBitrate] = useState(false)
+  const [optConvertBitrateTarget, setOptConvertBitrateTarget] = useState<'128' | '192' | '256'>('128')
+  const [optManualManage, setOptManualManage] = useState(true)
+  const [optDiskUse, setOptDiskUse] = useState(true)
+  const optsLoaded = useRef(false)
+
   useEffect(() => {
     window.electronAPI.checkIpodMounted().then(r => { if (r.name) setIpodName(r.name) }).catch(() => {})
     // Ask the main process for the real capacity of the mounted iPod
@@ -117,7 +129,38 @@ export default function DeviceView() {
     window.electronAPI.getIpodCapacity().then(r => {
       if (r.ok && r.totalBytes && r.totalBytes > 0) setIpodCapacityBytes(r.totalBytes)
     }).catch(() => {})
+    // Load persisted device options out of ui-state.
+    window.electronAPI.loadUiState().then(r => {
+      if (!r.ok || !r.state) { optsLoaded.current = true; return }
+      const s = r.state as Record<string, unknown>
+      if (typeof s.optOpenOnConnect === 'boolean') setOptOpenOnConnect(s.optOpenOnConnect)
+      if (typeof s.optSyncOnlyChecked === 'boolean') setOptSyncOnlyChecked(s.optSyncOnlyChecked)
+      if (typeof s.optConvertBitrate === 'boolean') setOptConvertBitrate(s.optConvertBitrate)
+      if (s.optConvertBitrateTarget === '128' || s.optConvertBitrateTarget === '192' || s.optConvertBitrateTarget === '256') {
+        setOptConvertBitrateTarget(s.optConvertBitrateTarget)
+      }
+      if (typeof s.optManualManage === 'boolean') setOptManualManage(s.optManualManage)
+      if (typeof s.optDiskUse === 'boolean') setOptDiskUse(s.optDiskUse)
+      optsLoaded.current = true
+    }).catch(() => { optsLoaded.current = true })
   }, [])
+
+  // Persist device options on change — merged into ui-state, not overwriting.
+  useEffect(() => {
+    if (!optsLoaded.current) return
+    window.electronAPI.loadUiState().then(r => {
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({
+        ...existing,
+        optOpenOnConnect,
+        optSyncOnlyChecked,
+        optConvertBitrate,
+        optConvertBitrateTarget,
+        optManualManage,
+        optDiskUse,
+      })
+    }).catch(() => {})
+  }, [optOpenOnConnect, optSyncOnlyChecked, optConvertBitrate, optConvertBitrateTarget, optManualManage, optDiskUse])
 
   const stats = useMemo(() => {
     const tracks = state.tracks
@@ -206,23 +249,48 @@ export default function DeviceView() {
         <h2 className="device-itunes-section-title">Options</h2>
         <div className="device-itunes-options">
           <label className="device-itunes-option">
-            <input type="checkbox" disabled />
+            <input
+              type="checkbox"
+              checked={optOpenOnConnect}
+              onChange={e => setOptOpenOnConnect(e.target.checked)}
+            />
             <span>Open JakeTunes when this iPod is connected</span>
           </label>
           <label className="device-itunes-option">
-            <input type="checkbox" disabled />
+            <input
+              type="checkbox"
+              checked={optSyncOnlyChecked}
+              onChange={e => setOptSyncOnlyChecked(e.target.checked)}
+            />
             <span>Sync only checked songs</span>
           </label>
           <label className="device-itunes-option">
-            <input type="checkbox" disabled />
-            <span>Convert higher bit rate songs to <select disabled className="device-itunes-select"><option>128 kbps</option><option>192 kbps</option><option>256 kbps</option></select> AAC</span>
+            <input
+              type="checkbox"
+              checked={optConvertBitrate}
+              onChange={e => setOptConvertBitrate(e.target.checked)}
+            />
+            <span>Convert higher bit rate songs to <select
+              className="device-itunes-select"
+              value={optConvertBitrateTarget}
+              disabled={!optConvertBitrate}
+              onChange={e => setOptConvertBitrateTarget(e.target.value as '128' | '192' | '256')}
+            ><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option></select> AAC</span>
           </label>
           <label className="device-itunes-option">
-            <input type="checkbox" checked readOnly />
+            <input
+              type="checkbox"
+              checked={optManualManage}
+              onChange={e => setOptManualManage(e.target.checked)}
+            />
             <span>Manually manage music</span>
           </label>
           <label className="device-itunes-option">
-            <input type="checkbox" checked readOnly />
+            <input
+              type="checkbox"
+              checked={optDiskUse}
+              onChange={e => setOptDiskUse(e.target.checked)}
+            />
             <span>Enable disk use</span>
           </label>
         </div>
