@@ -485,7 +485,7 @@ export default function CDImportView() {
                 className="cd-format-select"
                 value={importFormat}
                 onChange={(e) => setImportFormat(e.target.value as ImportFormat)}
-                disabled={isImporting || isDone}
+                disabled={isImporting}
               >
                 {Object.entries(FORMAT_LABELS).map(([key, label]) => (
                   <option key={key} value={key}>{label}</option>
@@ -498,22 +498,19 @@ export default function CDImportView() {
           </div>
         </div>
         <div className="cd-header-actions">
-          {isDone ? (
-            <div className="cd-done-badge">Import Complete</div>
-          ) : (
-            <>
-              <button className="cd-btn cd-btn--eject" onClick={handleEject} disabled={isImporting}>
-                Eject
-              </button>
-              <button
-                className="cd-btn cd-btn--import"
-                onClick={handleImport}
-                disabled={isImporting || checked.size === 0}
-              >
-                {isImporting ? `Importing ${importCount}/${checked.size}...` : 'Import CD'}
-              </button>
-            </>
-          )}
+          {isDone && <div className="cd-done-badge">Import Complete</div>}
+          <button className="cd-btn cd-btn--eject" onClick={handleEject} disabled={isImporting}>
+            Eject
+          </button>
+          <button
+            className="cd-btn cd-btn--import"
+            onClick={handleImport}
+            disabled={isImporting || checked.size === 0}
+          >
+            {isImporting
+              ? `Importing ${importCount}/${checked.size}...`
+              : (isDone ? 'Import Again' : 'Import CD')}
+          </button>
         </div>
       </div>
 
@@ -532,7 +529,7 @@ export default function CDImportView() {
             type="checkbox"
             checked={allChecked}
             onChange={toggleAll}
-            disabled={isImporting || isDone}
+            disabled={isImporting}
           />
         </span>
         <span className="cd-col cd-col--num">#</span>
@@ -558,7 +555,7 @@ export default function CDImportView() {
                   type="checkbox"
                   checked={isChecked}
                   onChange={() => toggleTrack(track.number)}
-                  disabled={isImporting || isDone}
+                  disabled={isImporting}
                 />
               </span>
               <span className="cd-track-num">{track.number}</span>
