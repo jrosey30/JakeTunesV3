@@ -242,6 +242,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
     submenu: [
       { label: 'New Playlist', accelerator: 'CmdOrCtrl+N' },
       { label: 'Import...', accelerator: 'CmdOrCtrl+O' },
+      { label: 'Import and Convert...', accelerator: 'Shift+CmdOrCtrl+O', click: () => sendMenuAction('open-import-convert') },
       { type: 'separator' },
       { label: 'Get Info', accelerator: 'CmdOrCtrl+I', click: () => sendMenuAction('get-info') },
       { type: 'separator' },
@@ -1630,6 +1631,23 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
     })
   })
 }
+
+// Pick audio files/folders for the File > Import and Convert flow.
+// Returns absolute paths; mirrors the drag-drop entry point so
+// import-tracks can consume either indistinguishably.
+ipcMain.handle('import-pick-files', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Import and Convert',
+    properties: ['openFile', 'openDirectory', 'multiSelections', 'treatPackageAsDirectory'],
+    filters: [
+      { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'flac', 'alac', 'wav', 'aiff', 'aif', 'ogg'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    defaultPath: process.env.HOME || undefined,
+  })
+  if (result.canceled) return { ok: false, canceled: true }
+  return { ok: true, paths: result.filePaths }
+})
 
 ipcMain.handle('restore-xml-pick-file', async () => {
   const result = await dialog.showOpenDialog({

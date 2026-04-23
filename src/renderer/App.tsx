@@ -7,6 +7,7 @@ import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
 import QueuePanel from './components/playback/QueuePanel'
+import ImportConvertModal from './components/ImportConvertModal'
 import StatusBar from './components/chrome/StatusBar'
 import './styles/variables.css'
 import './styles/reset.css'
@@ -20,6 +21,7 @@ function AppInner() {
   const { state: pbState } = usePlayback()
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
+  const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [uiReady, setUiReady] = useState(false)
 
   useEffect(() => {
@@ -358,6 +360,7 @@ function AppInner() {
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
+        case 'open-import-convert': setImportConvertOpen(true); break
       }
     })
     return cleanup
@@ -508,6 +511,7 @@ function AppInner() {
       <div className="content-area" style={{ position: 'relative' }}>
         <MainContent />
         {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
+        {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
       </div>
       <div className="statusbar-area">
         <StatusBar />
