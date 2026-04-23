@@ -252,6 +252,31 @@ function AppInner() {
   const ripErrorsRef = useRef(0)
   const ripHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Global file-import progress listener. When the user drops
+  // FLAC/WAV/folder contents onto the app, main emits per-file
+  // progress events; mirror them into the activity store so the
+  // LCD pill shows 'Importing N/M' just like a CD rip.
+  const importHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const cleanup = window.electronAPI.onImportProgress((progress) => {
+      import('./activity').then(a => {
+        const active = progress.current < progress.total
+        a.setRip({
+          active,
+          current: progress.current,
+          total: progress.total,
+          trackTitle: progress.title || '',
+          errors: 0,
+        })
+        if (!active) {
+          if (importHideTimerRef.current) clearTimeout(importHideTimerRef.current)
+          importHideTimerRef.current = setTimeout(() => a.setRip(null), 4000)
+        }
+      }).catch(() => {})
+    })
+    return cleanup
+  }, [])
+
   // Global sync-progress listener. DeviceView's handleSync seeds an
   // initial "Preparing..." state into the activity store, but the
   // per-file + db-write progress during an active sync comes from the

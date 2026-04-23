@@ -66,16 +66,28 @@ export function useAudio() {
     cancelAnimationFrame(sharedRaf)
 
     const { url, format } = ipodPathToAudioURL(track.path || '')
+    // Guard against the Howler 'end' event firing twice for the same
+    // playback, which would cause the same track to auto-play again
+    // even with repeat off. Also belt-and-suspenders loop:false so no
+    // underlying <audio> element ever auto-loops.
+    let ended = false
     const howl = new Howl({
       src: [url],
       format: [format],
       html5: true,
+      loop: false,
       volume: stateRef.current.volume,
       onplay: () => {
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         sharedRaf = requestAnimationFrame(updatePosition)
       },
       onend: () => {
+        if (ended) return
+        ended = true
+        // If this Howl is no longer the owner (user skipped to a new
+        // track, the Howl got unloaded, etc.), its end event is a
+        // leftover — don't run the next-track logic.
+        if (sharedHowl !== howl) return
         cancelAnimationFrame(sharedRaf)
 
         // Increment play count (look up latest count from tracks ref)

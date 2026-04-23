@@ -36,6 +36,7 @@ export default function ArtistsView() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; tracks: Track[]; idx: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
+  const [search, setSearch] = useState('')
 
   const artists = useMemo((): ArtistGroup[] => {
     const map = new Map<string, Track[]>()
@@ -60,6 +61,18 @@ export default function ArtistsView() {
         }
       })
   }, [lib.tracks])
+
+  // Page-local search. Matches artist name, album name, or track title.
+  const filteredArtists = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return artists
+    return artists.filter(a => {
+      if (a.name.toLowerCase().includes(q)) return true
+      if (a.albums.some(al => al.name.toLowerCase().includes(q))) return true
+      if (a.tracks.some(t => (t.title || '').toLowerCase().includes(q))) return true
+      return false
+    })
+  }, [artists, search])
 
   const toggleArtist = useCallback((name: string) => {
     setExpanded(prev => {
@@ -157,7 +170,21 @@ export default function ArtistsView() {
 
   return (
     <div className="artists-view">
-      {artists.map((artist) => (
+      <div className="view-search-bar">
+        <input
+          className="view-search-input"
+          type="search"
+          placeholder={`Search ${artists.length} artists...`}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        {search && (
+          <span className="view-search-count">
+            {filteredArtists.length} match{filteredArtists.length !== 1 ? 'es' : ''}
+          </span>
+        )}
+      </div>
+      {filteredArtists.map((artist) => (
         <div key={artist.name} className="artist-group">
           <div className="artist-row" onClick={() => toggleArtist(artist.name)}>
             <div className="artist-avatar" style={{ background: hashColor(artist.name) }}>

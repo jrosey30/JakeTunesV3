@@ -22,6 +22,7 @@ export default function AlbumsView() {
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const [selected, setSelected] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; tracks: Track[]; idx: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
@@ -67,6 +68,22 @@ export default function AlbumsView() {
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [lib.tracks])
+
+  // Apply the page-local search filter on top of the computed albums.
+  // Matches album name, artist, or any track title — so typing a song
+  // title finds the album it lives on even if you don't remember the
+  // album name.
+  const filteredAlbums = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return albums
+    return albums.filter(a => {
+      if (a.name.toLowerCase().includes(q)) return true
+      if (a.artist.toLowerCase().includes(q)) return true
+      if (a.artists.some(art => art.toLowerCase().includes(q))) return true
+      if (a.tracks.some(t => (t.title || '').toLowerCase().includes(q))) return true
+      return false
+    })
+  }, [albums, search])
 
   // Helper: find artwork hash trying all artist variants for an album
   const findArtHash = (album: Album): string | undefined => {
@@ -223,18 +240,32 @@ export default function AlbumsView() {
 
   // Find the selected album's index
   const selectedIdx = selected
-    ? albums.findIndex(a => `${a.artist.toLowerCase().trim()}|||${a.name.toLowerCase().trim()}` === selected)
+    ? filteredAlbums.findIndex(a => `${a.artist.toLowerCase().trim()}|||${a.name.toLowerCase().trim()}` === selected)
     : -1
   // The detail should appear after the last album in the selected album's row
   const detailAfterIdx = selectedIdx >= 0
-    ? Math.min(Math.floor(selectedIdx / colsPerRow) * colsPerRow + colsPerRow - 1, albums.length - 1)
+    ? Math.min(Math.floor(selectedIdx / colsPerRow) * colsPerRow + colsPerRow - 1, filteredAlbums.length - 1)
     : -1
-  const selectedAlbum = selectedIdx >= 0 ? albums[selectedIdx] : null
+  const selectedAlbum = selectedIdx >= 0 ? filteredAlbums[selectedIdx] : null
 
   return (
     <div className="albums-view">
+      <div className="view-search-bar">
+        <input
+          className="view-search-input"
+          type="search"
+          placeholder={`Search ${albums.length} albums...`}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        {search && (
+          <span className="view-search-count">
+            {filteredAlbums.length} match{filteredAlbums.length !== 1 ? 'es' : ''}
+          </span>
+        )}
+      </div>
       <div className="albums-grid" ref={gridRef}>
-        {albums.map((album, albumIdx) => {
+        {filteredAlbums.map((album, albumIdx) => {
           const key = `${album.artist.toLowerCase().trim()}|||${album.name.toLowerCase().trim()}`
           const artHash = findArtHash(album)
           const isSelected = selected === key

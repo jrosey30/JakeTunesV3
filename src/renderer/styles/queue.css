@@ -47,6 +47,8 @@
 
 .queue-shuffle:hover:not(:disabled) { color: #333; background: rgba(0,0,0,0.06); }
 .queue-shuffle:disabled { opacity: 0.3; cursor: default; }
+.queue-shuffle--active { color: #4a90d9; background: rgba(74,144,217,0.12); }
+.queue-shuffle--active:hover { color: #2a70b9; background: rgba(74,144,217,0.2); }
 
 .queue-clear {
   font-size: 10px;

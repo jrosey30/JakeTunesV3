@@ -782,6 +782,13 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   // Dynamic import for ESM module
   const mm = await import('music-metadata')
 
+  // Emit an initial progress event so the LCD pill can light up even
+  // before the first track finishes. Lets the user know their drop
+  // was received and how big the batch is.
+  mainWindow?.webContents.send('import-progress', {
+    current: 0, total: resolvedPaths.length, title: '',
+  })
+
   const batchBaseTime = Date.now()
   let trackIndex = 0
 
@@ -882,8 +889,19 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
       imported.push(track)
       id++
       trackIndex++
+      mainWindow?.webContents.send('import-progress', {
+        current: imported.length,
+        total: resolvedPaths.length,
+        title: track.title as string,
+      })
     } catch (err) {
       console.error(`Failed to import ${srcPath}:`, err)
+      mainWindow?.webContents.send('import-progress', {
+        current: imported.length,
+        total: resolvedPaths.length,
+        title: srcPath.substring(srcPath.lastIndexOf('/') + 1),
+        error: String(err),
+      })
     }
   }
 

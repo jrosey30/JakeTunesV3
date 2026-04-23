@@ -68,10 +68,9 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
       <div className="queue-header">
         <span className="queue-title">Up Next</span>
         <button
-          className="queue-shuffle"
-          title="Shuffle Up Next"
-          onClick={() => dispatch({ type: 'SHUFFLE_QUEUE' })}
-          disabled={upcoming.length < 2}
+          className={`queue-shuffle ${state.shuffle ? 'queue-shuffle--active' : ''}`}
+          title={state.shuffle ? 'Shuffle is ON — click to turn off' : 'Shuffle is OFF — click to turn on'}
+          onClick={() => dispatch({ type: 'TOGGLE_SHUFFLE' })}
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
             <path d="M1 4h3l3 8h3" />

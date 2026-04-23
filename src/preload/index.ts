@@ -89,6 +89,11 @@ const electronAPI = {
     ipcRenderer.on('cd-rip-progress', handler)
     return () => { ipcRenderer.removeListener('cd-rip-progress', handler) }
   },
+  onImportProgress: (callback: (progress: { current: number; total: number; title: string; error?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { current: number; total: number; title: string; error?: string }) => callback(progress)
+    ipcRenderer.on('import-progress', handler)
+    return () => { ipcRenderer.removeListener('import-progress', handler) }
+  },
   ejectCd: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-cd'),
   openSoundSettings: (): Promise<void> =>
