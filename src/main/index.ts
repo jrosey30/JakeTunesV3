@@ -1241,8 +1241,10 @@ function buildTasteProfile(): string {
     lines.push(`Listener since ${p.firstSeen}. ${p.totalPlays} plays, ${p.totalSkips} skips.`)
   }
 
-  // Top artists by plays
-  const topArtists = Object.entries(p.artistPlays).sort((a, b) => b[1] - a[1]).slice(0, 20)
+  // Top artists by plays. Cap at 10 so the #1 slot doesn't dominate
+  // everything the model sees.
+  const topArtists = Object.entries(p.artistPlays).sort((a, b) => b[1] - a[1]).slice(0, 10)
+  const topArtistSet = new Set(topArtists.map(([a]) => a))
   if (topArtists.length > 0) {
     lines.push(`Most played artists: ${topArtists.map(([a, n]) => `${a} (${n})`).join(', ')}`)
   }
@@ -1253,10 +1255,21 @@ function buildTasteProfile(): string {
     lines.push(`Frequently skipped artists: ${skippedArtists.map(([a, n]) => `${a} (${n} skips)`).join(', ')}`)
   }
 
-  // Top albums
-  const topAlbums = Object.entries(p.albumPlays).sort((a, b) => b[1] - a[1]).slice(0, 15)
-  if (topAlbums.length > 0) {
-    lines.push(`Most played albums: ${topAlbums.map(([a, n]) => `${a} (${n})`).join(', ')}`)
+  // Top albums — dedup to one-per-artist so a single obsession doesn't
+  // take over multiple slots (e.g. James Brown appearing as top artist
+  // AND three of their albums being in the top-albums list).
+  const seenArtist = new Set<string>()
+  const topAlbumsUnique: Array<[string, number]> = []
+  for (const [album, n] of Object.entries(p.albumPlays).sort((a, b) => b[1] - a[1])) {
+    const parts = album.split(' — ')
+    const artist = parts[0] || ''
+    if (seenArtist.has(artist)) continue
+    seenArtist.add(artist)
+    topAlbumsUnique.push([album, n])
+    if (topAlbumsUnique.length >= 10) break
+  }
+  if (topAlbumsUnique.length > 0) {
+    lines.push(`Most played albums (one per artist): ${topAlbumsUnique.map(([a, n]) => `${a} (${n})`).join(', ')}`)
   }
 
   // Genre breakdown
@@ -1265,16 +1278,27 @@ function buildTasteProfile(): string {
     lines.push(`Genre breakdown: ${topGenres.map(([g, n]) => `${g} (${n})`).join(', ')}`)
   }
 
-  // Highly rated tracks
-  if (p.topRated.length > 0) {
-    const faves = p.topRated.slice(0, 10).map(t => `"${t.title}" by ${t.artist} (${t.rating}★)`).join(', ')
-    lines.push(`Favorites (rated highly): ${faves}`)
+  // Highly rated tracks — exclude artists already in top-played so the
+  // profile surfaces variety rather than doubling up on favorites.
+  const raredFiltered = p.topRated.filter(t => !topArtistSet.has(t.artist))
+  if (raredFiltered.length > 0) {
+    const faves = raredFiltered.slice(0, 8).map(t => `"${t.title}" by ${t.artist} (${t.rating}★)`).join(', ')
+    lines.push(`Also-liked (rated highly, outside top-played): ${faves}`)
   }
 
-  // Recent listening (last ~10)
+  // Recent listening — dedup to unique artists so a James-Brown-for-an-hour
+  // session doesn't make recent-plays look like "only this one artist".
   if (p.recentPlays.length > 0) {
-    const recent = p.recentPlays.slice(0, 10).map(t => `"${t.title}" by ${t.artist}`).join(', ')
-    lines.push(`Recent plays: ${recent}`)
+    const seenRecent = new Set<string>()
+    const recentUnique: typeof p.recentPlays = []
+    for (const t of p.recentPlays) {
+      if (seenRecent.has(t.artist)) continue
+      seenRecent.add(t.artist)
+      recentUnique.push(t)
+      if (recentUnique.length >= 8) break
+    }
+    const recent = recentUnique.map(t => `"${t.title}" by ${t.artist}`).join(', ')
+    lines.push(`Recent plays (unique artists): ${recent}`)
   }
 
   // Music Man's own accumulated observations
@@ -1359,7 +1383,9 @@ CRITICAL — DO NOT MAKE UP FACTS:
 - When background info (Wikipedia / MusicBrainz web search results) is provided, treat it as ground truth. If it doesn't cover the thing asked about, say so in character ("I'm drawing a blank on this specific cut") — don't fabricate a plausible-sounding story.
 - When unsure, pivot to the broader band/album context you DO know, or comment on the sound, or grudgingly admit it. All better than a made-up story.
 
-CONSISTENCY: Your opinions and stated facts must be consistent across every interaction. If you told the user something earlier (see "Recently you said" below), don't contradict it. You have one identity and one memory.`
+CONSISTENCY: Your opinions and stated facts must be consistent across every interaction. If you told the user something earlier (see "Recently you said" below), don't contradict it. You have one identity and one memory.
+
+DON'T FIXATE: The taste profile below lists the user's top artists, but you don't need to reference the #1 artist in every response. Vary what you bring up. Pull from DIFFERENT corners of their library each time — a deep cut one message, a recent play the next, an observation about a whole genre the next. If you've already name-dropped a specific artist in a recent message (see "Recently you said"), pick someone else this time. Over-referencing one artist reads as shallow.`
 
 interface MusicManUtterance { mode: string; text: string; at: number }
 let recentMusicManUtterances: MusicManUtterance[] = []
