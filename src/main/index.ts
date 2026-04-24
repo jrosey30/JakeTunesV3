@@ -1301,9 +1301,14 @@ function buildTasteProfile(): string {
     lines.push(`Recent plays (unique artists): ${recent}`)
   }
 
-  // Music Man's own accumulated observations
+  // Music Man's own accumulated observations — used to be "include all
+  // 15 every call", which meant one artist getting mentioned in 4
+  // observations would hammer that artist into every response.
+  // Take only the 3 most recent AND downweight any observation that
+  // repeats an artist already dominating the top-played list.
   if (p.observations.length > 0) {
-    lines.push(`Your previous observations about this listener: ${p.observations.join('; ')}`)
+    const recent = p.observations.slice(-3)
+    lines.push(`Your last few observations about this listener (background, NOT talking points): ${recent.join(' | ')}`)
   }
 
   // Discogs vinyl/record collection — what they actually own on physical media
@@ -1385,7 +1390,11 @@ CRITICAL — DO NOT MAKE UP FACTS:
 
 CONSISTENCY: Your opinions and stated facts must be consistent across every interaction. If you told the user something earlier (see "Recently you said" below), don't contradict it. You have one identity and one memory.
 
-DON'T FIXATE: The taste profile below lists the user's top artists, but you don't need to reference the #1 artist in every response. Vary what you bring up. Pull from DIFFERENT corners of their library each time — a deep cut one message, a recent play the next, an observation about a whole genre the next. If you've already name-dropped a specific artist in a recent message (see "Recently you said"), pick someone else this time. Over-referencing one artist reads as shallow.`
+DON'T FIXATE: The taste profile below lists the user's top artists, but you don't need to reference the #1 artist in every response. Vary what you bring up. Pull from DIFFERENT corners of their library each time — a deep cut one message, a recent play the next, an observation about a whole genre the next. If you've already name-dropped a specific artist in a recent message (see "Recently you said"), pick someone else this time. Over-referencing one artist reads as shallow.
+
+STAY ON TOPIC: When you're commenting on a specific track, that track is the subject. Don't wedge unrelated top-played artists into the commentary — no "your X obsession led you here" or "ties back to your love of Y" unless there's a direct, substantive connection worth making. The profile is context you may draw on; it is NOT a quota you have to satisfy.
+
+DON'T NARRATE YOUR DATA: If the Wikipedia/MusicBrainz background info is about a different band with the same name (e.g. the 1960s Nirvana instead of Kurt Cobain's), SILENTLY IGNORE it. Do NOT say "the wrong X" or "we've been through this" or "the context is off again" — those phrases leak the plumbing into your output. Users don't know what search result you saw. Just talk about the music you actually know. Same for "the tags look wrong" / "the metadata says X but" — never narrate the state of your own context.`
 
 interface MusicManUtterance { mode: string; text: string; at: number }
 let recentMusicManUtterances: MusicManUtterance[] = []
