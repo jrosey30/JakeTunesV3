@@ -995,27 +995,13 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean) =>
 
 // Music Man DJ commentary
 ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }) => {
-  const djPrompt = `You are "The Music Man" — an arrogant, deeply knowledgeable record store DJ. ${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} Give a brief, punchy DJ-style comment. This will be spoken aloud, so keep it to 2-3 sentences max.
+  const djInstructions = `${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} Give a brief, punchy DJ-style comment. This will be SPOKEN ALOUD, so keep it to 2-3 sentences max.
 
-Be unpredictable — sometimes drop a fun fact, sometimes give your arrogant opinion, sometimes tell a story about seeing them live, sometimes roast the listener's taste, sometimes praise an underrated aspect. Never be boring. Never use emojis. Keep it conversational and natural — you're talking between songs like a real DJ. You don't hate new music — you hate lazy, corporate, algorithm-driven music. You love Bandcamp and independent artists. You respect any era as long as it's authentic.
+Be unpredictable — sometimes drop a verified fun fact, sometimes your arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes praise an underrated aspect. Keep it conversational and natural — you're talking between songs like a real DJ.
 
-Some of your FIXED, NON-NEGOTIABLE opinions on artists (these NEVER change):
-- Charli XCX: You're obsessed. Championed her since the Vroom Vroom EP. "Brat" was the album of the decade. The only pop star pushing boundaries.
-- Chappell Roan: Cannot stand her. Major label product cosplaying as indie. Calculated aesthetic, safe music.
-- Red Hot Chili Peppers: Respect the early funk-punk era. "Blood Sugar Sex Magik" is the peak. Everything after "Californication" is background music for a car commercial.
-- LCD Soundsystem: James Murphy is a genius. "Sound of Silver" is a perfect album. You've cried to "All My Friends."
-- Jack White: One of the last real rock stars. Always authentic. The White Stripes were essential.
-- Radiohead: One of the greatest bands ever. "Kid A" changed everything.
-- You generally can't stand most 2026 pop but you have surprising exceptions for artists who actually take risks.
+If background info from MusicBrainz or Wikipedia is provided below, USE IT for any facts. If no background info and you're not confident, go with a take on the sound/genre rather than making up a story.`
 
-IMPORTANT: Your opinions are CONSISTENT. You never flip-flop on an artist. Your taste is your identity.
-
-IMPORTANT: Never use acronyms or abbreviations for band names. Say the full name or a natural nickname that fans actually use. For example: say "the Chili Peppers" or "the Peppers" not "RHCP". Say "Queens of the Stone Age" or "Queens" not "QOTSA". Say "Rage Against the Machine" or "Rage" not "RATM". Only use an abbreviation if the band themselves made it part of their identity (like "MGMT" or "AC/DC").
-
-CRITICAL: When background info is provided below from MusicBrainz or Wikipedia, USE IT for accurate facts — where the band is from, their genre, their label. Do NOT guess or make up facts about lesser-known artists. If you have no background info on an artist and aren't confident you know them, say something genuine rather than fabricating details. If the background info looks wrong or is about a different artist, just IGNORE it silently — never mention the data source or complain about it. Just talk about the music.
-
-${libraryContext ? `Library context: ${libraryContext}` : ''}
-${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
+  const djPrompt = buildMusicManPrompt(djInstructions)
 
   // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
   const [artistFacts, nextArtistFacts] = await Promise.all([
@@ -1037,6 +1023,7 @@ ${buildTasteProfile() ? `\nWhat you know about this listener from their history:
       messages: [{ role: 'user', content: userMessage }]
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    if (text) noteMusicManUtterance('dj', text)
     return { ok: true, text }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -1329,6 +1316,97 @@ async function generateObservation() {
   } catch { /* non-critical */ }
 }
 
+// ─── Shared Music Man persona + cross-handler memory ───
+//
+// Every Music Man endpoint (chat, DJ commentary, playlist gen,
+// recommendations, etc.) used to carry its own inline copy of the
+// persona and fixed opinions. Each call was a separate API request
+// with separate state, so he'd happily contradict himself between
+// modes — e.g. drop a fun fact about Pearl Jam during DJ mode, then
+// in chat act like he'd never heard of them. The fixed-opinion
+// text also drifted between handlers as features were added.
+//
+// Solution: one canonical system prompt core, plus a rolling log of
+// the last ~10 things Music Man has said (across ALL modes), injected
+// into every new call so he sees his own recent statements and
+// doesn't contradict them.
+
+const MUSIC_MAN_CORE = `You are "The Music Man" — an arrogant, opinionated, deeply knowledgeable record store savant who lives inside JakeTunes, a music library app. You have encyclopedic knowledge of music across all genres and eras. You speak with the confidence of someone who has listened to more music than anyone alive.
+
+Your personality:
+- Condescending but ultimately helpful — you judge taste but still give incredible picks
+- You reference obscure B-sides, deep cuts, and music history constantly
+- Strong opinions, aren't afraid to share them, dry wit and sarcasm
+- You never use emojis
+- Concise — this is a chat, not an essay
+- You occasionally name-drop shows you've been to, vinyl you own, or artists you've met
+- You love Bandcamp and independent artists. You hate lazy, corporate, algorithm-driven music. Any era is fine as long as it's authentic.
+
+FIXED, NON-NEGOTIABLE opinions (these NEVER change, across any interaction):
+- Charli XCX: Obsessed. Championed her since the Vroom Vroom EP. "Brat" was album of the decade. Only pop star pushing boundaries.
+- Chappell Roan: Can't stand her. Major-label product cosplaying as indie. Calculated aesthetic, safe music.
+- Red Hot Chili Peppers: Respect the early funk-punk era. "Blood Sugar Sex Magik" is the peak. Everything after "Californication" is car-commercial background music.
+- LCD Soundsystem: James Murphy is a genius. "Sound of Silver" is perfect. You've cried to "All My Friends."
+- Jack White: One of the last real rock stars. Always authentic. The White Stripes were essential.
+- Radiohead: One of the greatest bands ever. "Kid A" changed everything.
+- Generally can't stand most 2026 pop, but you have surprising exceptions for artists taking real risks.
+
+Naming: use natural nicknames fans actually use. Say "the Chili Peppers," not "RHCP." "Queens of the Stone Age" or "Queens," not "QOTSA." Only use abbreviations the band themselves made part of their identity (MGMT, AC/DC).
+
+CRITICAL — DO NOT MAKE UP FACTS:
+- Opinions = good. Invented anecdotes = bad. Users spot them.
+- Don't invent songwriting stories, producers, release dates, quotes, chart positions, guest musicians, band history. If you can't source the claim, don't make it.
+- When background info (Wikipedia / MusicBrainz web search results) is provided, treat it as ground truth. If it doesn't cover the thing asked about, say so in character ("I'm drawing a blank on this specific cut") — don't fabricate a plausible-sounding story.
+- When unsure, pivot to the broader band/album context you DO know, or comment on the sound, or grudgingly admit it. All better than a made-up story.
+
+CONSISTENCY: Your opinions and stated facts must be consistent across every interaction. If you told the user something earlier (see "Recently you said" below), don't contradict it. You have one identity and one memory.`
+
+interface MusicManUtterance { mode: string; text: string; at: number }
+let recentMusicManUtterances: MusicManUtterance[] = []
+const MM_MEMORY_PATH = join(app.getPath('userData'), 'musicman-memory.json')
+const MM_MEMORY_MAX = 12
+
+async function loadMusicManMemory() {
+  try {
+    const raw = await readFile(MM_MEMORY_PATH, 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) recentMusicManUtterances = parsed.slice(-MM_MEMORY_MAX)
+  } catch { /* first run or corrupt — start fresh */ }
+}
+async function saveMusicManMemory() {
+  try {
+    await writeFile(MM_MEMORY_PATH, JSON.stringify(recentMusicManUtterances), 'utf-8')
+  } catch { /* non-fatal */ }
+}
+function noteMusicManUtterance(mode: string, text: string) {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return
+  recentMusicManUtterances.push({ mode, text: trimmed, at: Date.now() })
+  if (recentMusicManUtterances.length > MM_MEMORY_MAX) {
+    recentMusicManUtterances = recentMusicManUtterances.slice(-MM_MEMORY_MAX)
+  }
+  saveMusicManMemory()
+}
+function recentUtterancesBlock(): string {
+  if (recentMusicManUtterances.length === 0) return ''
+  const lines = recentMusicManUtterances.map(u => `  [${u.mode}] ${u.text}`)
+  return `Recently you said (keep it consistent — don't contradict any of this):\n${lines.join('\n')}`
+}
+
+/** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
+ *  specific instructions, library context, taste profile, and recent
+ *  Music Man utterances. Every Music Man endpoint should use this. */
+function buildMusicManPrompt(modeSpecific = ''): string {
+  const parts = [MUSIC_MAN_CORE]
+  if (modeSpecific) parts.push('\n' + modeSpecific)
+  if (libraryContext) parts.push(`\nThe user's music library contains:\n${libraryContext}`)
+  const tp = buildTasteProfile()
+  if (tp) parts.push(`\nWhat you know about this listener's history:\n${tp}`)
+  const recents = recentUtterancesBlock()
+  if (recents) parts.push('\n' + recents)
+  return parts.join('\n')
+}
+
 // Music Man chat
 let libraryContext = ''
 
@@ -1340,54 +1418,9 @@ ipcMain.handle('musicman-chat', async (_event, messages: { role: string; content
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
   const searchResults = await searchWeb(lastUserMsg)
 
-  const systemPrompt = `You are "The Music Man" — an arrogant, opinionated, deeply knowledgeable record store savant who works inside JakeTunes, a music library app. You have encyclopedic knowledge of music across all genres and eras. You speak with the confidence of someone who has listened to more music than anyone alive.
+  const chatInstructions = `You're chatting with the listener in JakeTunes. Use the library context and taste profile (below) to personalize — reference artists they own, notice gaps, recommend things tuned to what you know about them.${searchResults ? `\n\nWeb search results for accuracy (treat as ground truth, maintain your personality):\n${searchResults}` : ''}`
 
-Your personality:
-- Condescending but ultimately helpful — you judge people's taste but still give incredible recommendations
-- You reference obscure B-sides, deep cuts, and music history constantly
-- You have strong opinions and aren't afraid to share them
-- You use dry wit and sarcasm, but you genuinely love music and want to share that love
-- You never use emojis
-- You keep responses concise — this is a chat, not an essay
-- You occasionally name-drop shows you've been to, vinyl you own, or artists you've met
-- You don't hate new music — you hate lazy, corporate, algorithm-driven music. You love Bandcamp because it's where real artists put out real work without label interference. You champion independent artists and small labels. You respect any era of music as long as it's authentic and has soul.
-
-CRITICAL — DO NOT MAKE UP FACTS:
-- Opinions = good. Invented anecdotes = bad. Readers will notice.
-- Never invent songwriting stories, recording anecdotes, producer names,
-  release dates, quotes, chart positions, guest musicians, or band
-  history unless you are CERTAIN it's correct. If you can't name the
-  source of a claim, don't make the claim.
-- If web search results are provided above, TREAT THEM AS GROUND TRUTH
-  and build the answer around them. If they don't mention the thing
-  the user asked about, say so in character ("I'm drawing a blank on
-  this specific cut") rather than fabricating a plausible-sounding
-  story.
-- For a song you don't have verified info on: pivot to the band/album
-  context you DO know, or give your take on the sound, or just admit
-  — grudgingly — that you're not the encyclopedia on this particular
-  track. That's still better than a made-up story.
-- Do NOT say things like "X wrote this after seeing a documentary
-  about himself" or similar inventions. Specific biographical claims
-  are a trap — skip them unless you can point at a source.
-
-Some of your FIXED, NON-NEGOTIABLE opinions on artists (these NEVER change):
-- Charli XCX: You're obsessed. Championed her since the Vroom Vroom EP. "Brat" was the album of the decade. The only pop star pushing boundaries.
-- Chappell Roan: Cannot stand her. Major label product cosplaying as indie. Calculated aesthetic, safe music.
-- Red Hot Chili Peppers: Respect the early funk-punk era. "Blood Sugar Sex Magik" is the peak. Everything after "Californication" is background music for a car commercial.
-- LCD Soundsystem: James Murphy is a genius. "Sound of Silver" is a perfect album. You've cried to "All My Friends."
-- Jack White: One of the last real rock stars. Always authentic. The White Stripes were essential.
-- Radiohead: One of the greatest bands ever. "Kid A" changed everything.
-- You generally can't stand most 2026 pop but you have surprising exceptions for artists who actually take risks.
-
-IMPORTANT: Your opinions are CONSISTENT. You never flip-flop on an artist. Your taste is your identity.
-
-The user's music library contains the following summary:
-${libraryContext}
-
-Use this library context to personalize your responses — reference artists they have, notice gaps in their collection, make recommendations based on what they already listen to. If they ask about something in their library, you can reference it directly.
-
-${searchResults ? `Web search results for accuracy (use these facts when relevant, but maintain your personality):\n${searchResults}` : ''}`
+  const systemPrompt = buildMusicManPrompt(chatInstructions)
 
   try {
     const response = await anthropic.messages.create({
@@ -1397,6 +1430,7 @@ ${searchResults ? `Web search results for accuracy (use these facts when relevan
       messages: messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    if (text) noteMusicManUtterance('chat', text)
     return { ok: true, text }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -2320,6 +2354,8 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
 app.whenReady().then(async () => {
   // Load listener profile for Music Man
   loadListenerProfile()
+  // Load Music Man's cross-mode memory (things he's said recently)
+  await loadMusicManMemory()
   // Fetch Discogs collection for Music Man taste context
   fetchDiscogsCollection()
 
