@@ -1571,8 +1571,41 @@ Their top genres: ${topGenres}`
     const jsonMatch = text.match(/\[[\s\S]*\]/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]) as { title: string; artist: string; year?: number; genre: string; source: string; why: string; artUrl?: string }[]
+
+      // Deterministic post-filter: the prompt asks the model to skip
+      // albums the user already has, but it regularly fails at this
+      // and then backpedals in the commentary ("You already have X —
+      // scratch that, moving on"). Drop those. Rebuild the owned-set
+      // with normalized keys so "The Beatles — Abbey Road" matches
+      // "the beatles - abbey road", case/punct variations and all.
+      const norm = (s: string) => (s || '')
+        .toLowerCase()
+        .replace(/\bthe\b/g, '')
+        .replace(/[^\w]/g, '')
+        .trim()
+      const ownedArtistAlbum = new Set<string>()
+      const ownedArtist = new Set<string>()
+      for (const t of tracks) {
+        if (t.artist) ownedArtist.add(norm(t.artist))
+        if (t.artist && t.album) ownedArtistAlbum.add(`${norm(t.artist)}|${norm(t.album)}`)
+      }
+      const cleaned = parsed.filter(rec => {
+        const key = `${norm(rec.artist)}|${norm(rec.title)}`
+        return !ownedArtistAlbum.has(key)
+      })
+      // Strip any leftover self-correction phrases from commentary —
+      // belt-and-suspenders in case the model still slips it in.
+      for (const rec of cleaned) {
+        if (!rec.why) continue
+        rec.why = rec.why
+          .replace(/^(you already (have|own)[^.]*\.\s*)+/i, '')
+          .replace(/\s*(—|--)\s*(scratch that|wait|no|my mistake|moving on)[^.]*\./gi, '.')
+          .replace(/\s*\(wait[^)]*\)\s*/gi, ' ')
+          .trim()
+      }
+
       // Fetch album art from Deezer for each recommendation (parallel, best-effort)
-      await Promise.all(parsed.map(async (rec) => {
+      await Promise.all(cleaned.map(async (rec) => {
         try {
           const aLo = rec.artist.toLowerCase().trim()
           const tLo = rec.title.toLowerCase().trim()
@@ -1580,7 +1613,7 @@ Their top genres: ${topGenres}`
           if (url) rec.artUrl = url
         } catch { /* ignore art fetch failures */ }
       }))
-      return { ok: true, recommendations: parsed }
+      return { ok: true, recommendations: cleaned }
     }
     return { ok: false, error: 'Could not parse recommendations' }
   } catch (err: unknown) {
