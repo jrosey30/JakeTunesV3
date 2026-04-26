@@ -3,8 +3,16 @@ Audio analysis for a single track — BPM, musical key, Camelot wheel
 position. Used by JakeTunes 4.0 §2.4 to enrich the library with the
 metadata needed for DJ-grade transitions and harmonic playlists.
 
-BPM via `aubio` (fast, accurate-enough for most material).
-Key via `librosa` (chromagram → Krumhansl-Schmuckler key estimation).
+Both BPM and key come from `librosa`. Originally the scope picked aubio
+for BPM, but aubio's pip release has not been updated since 2019 and
+fails to compile against modern numpy (npy_intp ↔ long pointer-type
+mismatch on Python 3.14 / numpy 2.x). librosa.beat.beat_track produces
+comparable BPM estimates on most material with one fewer dependency
+and no C-extension build to fail.
+
+BPM via `librosa.beat.beat_track` (onset envelope → dynamic programming
+beat tracker; also returns the beat frame indices but we only use tempo).
+Key via `librosa.feature.chroma_cqt` mean → Krumhansl-Schmuckler.
 Camelot via deterministic lookup from (key, mode).
 
 Usage:
@@ -67,37 +75,49 @@ KS_MINOR = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.
 
 
 def estimate_bpm(path: str) -> float:
-    """BPM via aubio's onset/tempo detector. Returns 0.0 on failure."""
+    """BPM via librosa.beat.beat_track with an octave-clamp post-process.
+    Returns 0.0 on failure.
+
+    Octave error is librosa's most common BPM failure mode — the bare
+    beat tracker often locks onto the half- or double-tempo harmonic.
+    Tried using a lognormal prior with librosa.feature.tempo first, but
+    that swap-changed the picked candidate too aggressively (correctly
+    tracked 123 BPM songs got demoted to 60 because the prior reweighted
+    the tempogram peaks rather than nudging the raw answer).
+
+    The clamp is dumber but lower variance: keep the raw answer, and if
+    it falls outside the [70, 160] band where the vast majority of music
+    lives, shift it by an octave to land inside. The cost is misclassifying
+    genuinely fast (drum & bass at 174 → halved to 87) or genuinely slow
+    (downtempo at 60 → doubled to 120) tracks. For a personal library
+    that's mostly rock/indie/electronic/pop, that trade is fine. Refine
+    later if a category of fast/slow material starts mattering.
+    """
+    warnings.filterwarnings("ignore")
     try:
-        from aubio import source, tempo
+        import librosa
+        import numpy as np
     except ImportError as exc:
-        raise RuntimeError(f"aubio not installed: {exc}") from exc
+        raise RuntimeError(f"librosa not installed: {exc}") from exc
 
-    win_s = 1024
-    hop_s = 512
-    src = source(path, 0, hop_s)  # samplerate=0 → use file's native rate
-    samplerate = src.samplerate
-    o = tempo("default", win_s, hop_s, samplerate)
-
-    beats: list[float] = []
-    total_frames = 0
-    while True:
-        samples, read = src()
-        if o(samples):
-            beats.append(o.get_last_s())
-        total_frames += read
-        if read < hop_s:
-            break
-
-    if len(beats) < 2:
+    # 22.05 kHz mono is fine for tempo — beat tracking doesn't need full
+    # bandwidth and the load is much faster.
+    y, sr = librosa.load(path, mono=True, sr=22050)
+    if y.size == 0:
         return 0.0
 
-    # Median inter-beat interval is more robust to outliers than mean.
-    intervals = sorted(beats[i + 1] - beats[i] for i in range(len(beats) - 1))
-    median_interval = intervals[len(intervals) // 2]
-    if median_interval <= 0:
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    bpm = float(np.asarray(tempo).flatten()[0])
+    if bpm <= 0:
         return 0.0
-    return round(60.0 / median_interval, 1)
+
+    # Octave clamp into [70, 160]. Loop in case the raw answer is way
+    # off (e.g. 320 BPM raw, halved twice → 80).
+    while bpm > 160 and bpm > 0:
+        bpm /= 2
+    while bpm < 70 and bpm > 0:
+        bpm *= 2
+    return round(bpm, 1)
 
 
 def estimate_key(path: str) -> tuple[str, str]:

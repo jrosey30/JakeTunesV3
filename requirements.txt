@@ -10,7 +10,10 @@
 mutagen
 
 # Audio analysis (4.0 §2.4 — BPM, key, Camelot wheel for DJ-grade
-# transitions and harmonic playlists). aubio handles tempo detection;
-# librosa handles key estimation via chromagram + Krumhansl-Schmuckler.
-aubio
+# transitions and harmonic playlists). librosa handles both: tempo via
+# beat_track, key via chroma_cqt + Krumhansl-Schmuckler.
+#
+# (aubio was originally specced for BPM but its source last shipped in
+# 2019 and fails to compile against modern numpy on Python 3.14+.
+# librosa-only is the simpler architecture regardless.)
 librosa
