@@ -329,6 +329,34 @@ export default function SongsView() {
     }
   }, [containerRef])
 
+  // Auto-follow now-playing (4.0). When the playing track changes (e.g.
+  // shuffle moves to next song) and the user has been idle for >5s,
+  // scroll the new now-playing row into view. Programmatic scrolls
+  // are gated by isAutoScrollAtRef so they don't register as user
+  // activity in the wrapped onScroll handler.
+  const lastUserActivityAtRef = useRef<number>(0)
+  const isAutoScrollAtRef = useRef<number>(0)
+  const FOLLOW_IDLE_MS = 5000
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    onScroll(e)
+    // Skip activity update if this scroll was triggered by our own
+    // auto-follow (within 200ms of the programmatic scrollTop write).
+    if (Date.now() - isAutoScrollAtRef.current > 200) {
+      lastUserActivityAtRef.current = Date.now()
+    }
+  }, [onScroll])
+
+  useEffect(() => {
+    if (lib.currentView !== 'songs') return
+    if (!pb.nowPlaying) return
+    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
+    const idx = sorted.findIndex(t => t.id === pb.nowPlaying!.id)
+    if (idx < 0) return
+    isAutoScrollAtRef.current = Date.now()
+    scrollToIdx(idx)
+  }, [pb.nowPlaying?.id, lib.currentView, sorted, scrollToIdx])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip keyboard nav when Get Info modal is open
@@ -503,7 +531,7 @@ export default function SongsView() {
           </div>
         ))}
       </div>
-      <div className="songs-body" ref={containerRef} onScroll={onScroll}>
+      <div className="songs-body" ref={containerRef} onScroll={handleScroll}>
         <div style={{ height: totalHeight, position: 'relative' }}>
           <div style={{ position: 'absolute', top: offsetY, left: 0, right: 0 }}>
             {sorted.slice(startIndex, endIndex).map((track, i) => {
