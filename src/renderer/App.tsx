@@ -10,9 +10,12 @@ import QueuePanel from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
+import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
+import { setCrossfadeSettings } from './hooks/useAudio'
+import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import './styles/variables.css'
 import './styles/reset.css'
 import './styles/app.css'
@@ -28,7 +31,25 @@ function AppInner() {
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [uiReady, setUiReady] = useState(false)
+
+  // Load persisted settings once on mount and push to the audio layer.
+  useEffect(() => {
+    window.electronAPI.loadAppSettings().then(r => {
+      const merged: AppSettings = {
+        ...DEFAULT_APP_SETTINGS,
+        ...((r.settings || {}) as Partial<AppSettings>),
+        crossfade: {
+          ...DEFAULT_APP_SETTINGS.crossfade,
+          ...(((r.settings || {}) as Partial<AppSettings>).crossfade || {}),
+        },
+      }
+      setAppSettings(merged)
+      setCrossfadeSettings(merged.crossfade)
+    })
+  }, [])
 
   useEffect(() => {
     Promise.all([
@@ -383,6 +404,7 @@ function AppInner() {
         case 'open-import-convert': setImportConvertOpen(true); break
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
+        case 'open-preferences':    setSettingsOpen(true); break
       }
     })
     // Main process watches library.json on disk and fires this when
@@ -565,6 +587,17 @@ function AppInner() {
         {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
+        {settingsOpen && (
+          <SettingsModal
+            initial={appSettings}
+            onClose={() => setSettingsOpen(false)}
+            onSaved={(next) => {
+              setAppSettings(next)
+              setCrossfadeSettings(next.crossfade)
+              setSettingsOpen(false)
+            }}
+          />
+        )}
         {showDuplicatesOpen && (
           <ShowDuplicatesModal
             tracks={libState.tracks}

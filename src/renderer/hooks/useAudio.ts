@@ -33,6 +33,27 @@ export function setAutoDjMode(on: boolean) {
 }
 export function getAutoDjMode() { return autoDjMode }
 
+// ── Crossfade (4.0 §6.7) ──
+// During an active crossfade the OUTGOING howl plays alongside the new
+// `sharedHowl`. Volumes are interpolated in updatePosition each rAF
+// tick. When the fade completes (or any user action disrupts it),
+// outgoingHowl is unloaded.
+let crossfadeSettings = { enabled: false, seconds: 6 }
+let outgoingHowl: Howl | null = null
+let crossfading = false
+let crossfadeStartedAtMs = 0
+export function setCrossfadeSettings(s: { enabled: boolean; seconds: number }) {
+  crossfadeSettings = { enabled: !!s.enabled, seconds: Math.max(1, Math.min(12, s.seconds || 6)) }
+}
+function cleanupCrossfadeAudio() {
+  if (outgoingHowl) {
+    try { outgoingHowl.stop() } catch { /* ignore */ }
+    try { outgoingHowl.unload() } catch { /* ignore */ }
+    outgoingHowl = null
+  }
+  crossfading = false
+}
+
 
 export function useAudio() {
   const { state, dispatch } = usePlayback()
@@ -46,6 +67,10 @@ export function useAudio() {
   const tracksRef = useRef(libState.tracks)
   tracksRef.current = libState.tracks
 
+  // Held by ref so updatePosition can call it without making
+  // updatePosition reference loadAndPlay (which references updatePosition).
+  const startCrossfadeRef = useRef<((track: Track, queue: Track[], queueIndex: number) => void) | null>(null)
+
   const updatePosition = useCallback(() => {
     if (isPaused || !sharedHowl || !sharedHowl.playing()) return
     const pos = sharedHowl.seek() as number
@@ -54,14 +79,79 @@ export function useAudio() {
     if (dur > 0) {
       dispatchRef.current({ type: 'SET_DURATION', duration: dur })
     }
+
+    // Crossfade volume animation. Runs alongside normal position updates.
+    if (crossfading && outgoingHowl && sharedHowl) {
+      const fadeMs = crossfadeSettings.seconds * 1000
+      const elapsedMs = Date.now() - crossfadeStartedAtMs
+      const progress = Math.max(0, Math.min(1, elapsedMs / fadeMs))
+      const targetVol = stateRef.current.volume
+      try { outgoingHowl.volume(targetVol * (1 - progress)) } catch { /* ignore */ }
+      try { sharedHowl.volume(targetVol * progress) } catch { /* ignore */ }
+      if (progress >= 1) {
+        cleanupCrossfadeAudio()
+      }
+    }
+
+    // Crossfade trigger: when the current track has crossfadeSeconds left,
+    // pre-load the next track and begin the fade. Bypassed when DJ Mode
+    // is active (DJ Mode runs its own transitions), when repeat=one, or
+    // when there is no next track. Tracks shorter than the fade duration
+    // get a no-fade natural end.
+    if (
+      crossfadeSettings.enabled &&
+      !crossfading &&
+      !autoDjMode &&
+      sharedHowl &&
+      dur > crossfadeSettings.seconds + 1
+    ) {
+      const remaining = dur - pos
+      if (remaining > 0 && remaining <= crossfadeSettings.seconds) {
+        const s = stateRef.current
+        if (s.repeat !== 'one' && s.queue.length > 0) {
+          let nextIdx: number
+          if (s.shuffle) {
+            nextIdx = Math.floor(Math.random() * s.queue.length)
+            if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+              nextIdx = (nextIdx + 1) % s.queue.length
+            }
+          } else {
+            nextIdx = s.queueIndex + 1
+            if (nextIdx >= s.queue.length) {
+              nextIdx = s.repeat === 'all' ? 0 : -1
+            }
+          }
+          if (nextIdx >= 0) {
+            const nextTrack = s.queue[nextIdx]
+            if (nextTrack) {
+              dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
+              startCrossfadeRef.current?.(nextTrack, s.queue, nextIdx)
+            }
+          }
+        }
+      }
+    }
+
     sharedRaf = requestAnimationFrame(updatePosition)
   }, [])
 
-  const loadAndPlay = useCallback((track: Track, queue: Track[], queueIndex: number) => {
+  const loadAndPlay = useCallback((track: Track, queue: Track[], queueIndex: number, asCrossfade: boolean = false) => {
     isPaused = false
-    if (sharedHowl) {
-      sharedHowl.unload()
-      sharedHowl = null
+    if (asCrossfade && sharedHowl) {
+      // Hand off the current Howl to outgoing for the fade. Don't unload
+      // it yet — updatePosition will fade it to silence then clean up.
+      // Any prior outgoing (rare — only if a previous crossfade hadn't
+      // finished) is silenced cleanly first.
+      cleanupCrossfadeAudio()
+      outgoingHowl = sharedHowl
+      crossfading = true
+      crossfadeStartedAtMs = Date.now()
+    } else {
+      cleanupCrossfadeAudio()
+      if (sharedHowl) {
+        sharedHowl.unload()
+        sharedHowl = null
+      }
     }
     cancelAnimationFrame(sharedRaf)
 
@@ -71,12 +161,13 @@ export function useAudio() {
     // even with repeat off. Also belt-and-suspenders loop:false so no
     // underlying <audio> element ever auto-loops.
     let ended = false
+    const startVolume = asCrossfade ? 0 : stateRef.current.volume
     const howl = new Howl({
       src: [url],
       format: [format],
       html5: true,
       loop: false,
-      volume: stateRef.current.volume,
+      volume: startVolume,
       onplay: () => {
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         sharedRaf = requestAnimationFrame(updatePosition)
@@ -166,6 +257,14 @@ export function useAudio() {
     sharedHowl = howl
     howl.play()
   }, [updatePosition])
+
+  // Bind the crossfade-start callable to the ref so updatePosition can
+  // reach it without forming a circular useCallback dep cycle.
+  useEffect(() => {
+    startCrossfadeRef.current = (track, queue, queueIndex) => {
+      loadAndPlay(track, queue, queueIndex, true)
+    }
+  }, [loadAndPlay])
 
   const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => {
     if (autoDjMode && !djTransition) {
@@ -279,6 +378,7 @@ export function useAudio() {
   const stopPlayback = useCallback(() => {
     isPaused = true
     cancelAnimationFrame(sharedRaf)
+    cleanupCrossfadeAudio()
     if (sharedHowl) {
       try { sharedHowl.stop() } catch { /* ignore */ }
       try { sharedHowl.unload() } catch { /* ignore */ }

@@ -409,6 +409,33 @@ ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => 
   }
 })
 
+// User-preference settings (4.0 §6.7). Distinct from ui-state.json which
+// tracks transient UI position (sidebar width, current view, etc.). This
+// file holds preferences that persist across app upgrades and that the
+// user explicitly sets via the Settings modal — currently just crossfade.
+function appSettingsPath(): string {
+  return join(app.getPath('userData'), 'app-settings.json')
+}
+
+ipcMain.handle('load-app-settings', async () => {
+  try {
+    const data = await readFile(appSettingsPath(), 'utf-8')
+    return { ok: true, settings: JSON.parse(data) }
+  } catch {
+    return { ok: true, settings: null }   // missing file is fine — renderer applies defaults
+  }
+})
+
+ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>) => {
+  try {
+    await mkdir(app.getPath('userData'), { recursive: true })
+    await writeFile(appSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
 async function createWindow(): Promise<void> {
   const saved = await loadWindowState()
 
@@ -499,6 +526,8 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 </html>`)}`)
         },
       },
+      { type: 'separator' },
+      { label: 'Preferences…', accelerator: 'CmdOrCtrl+,', click: () => sendMenuAction('open-preferences') },
       { type: 'separator' },
       { label: 'Quit JakeTunes', accelerator: 'CmdOrCtrl+Q', role: 'quit' }
     ]

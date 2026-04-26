@@ -158,6 +158,21 @@ export interface RestoreApplyResult {
   tracksWritten?: number
   error?: string
 }
+// User preferences (4.0 §6.7). Persisted to userData/app-settings.json
+// via electronAPI.loadAppSettings / saveAppSettings. New fields added
+// here should also be reflected in DEFAULT_APP_SETTINGS so renderer
+// fallback is total.
+export interface AppSettings {
+  crossfade: {
+    enabled: boolean
+    seconds: number   // 1..12, iTunes-default 6
+  }
+}
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  crossfade: { enabled: false, seconds: 6 },
+}
+
 export type RepeatMode = 'off' | 'all' | 'one'
 export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'dateAdded' | 'playCount' | 'rating'
 export type SortDirection = 'asc' | 'desc'
@@ -195,6 +210,8 @@ declare global {
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
+      loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
+      saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       removeArtwork: (artist: string, album: string) => Promise<{ ok: boolean; key?: string; error?: string }>
