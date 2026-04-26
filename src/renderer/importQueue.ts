@@ -256,6 +256,13 @@ async function runWorker(): Promise<void> {
 
       if (res.ok && res.track) {
         const track = res.track as Track
+        // The main side may have bumped the id past `id` if the slot
+        // was already on disk (Apr 26 78-collision bug — see
+        // findFreeImportedId in main/index.ts). Advance our counter
+        // so the next worker iteration doesn't re-pick a now-taken id.
+        if (typeof track.id === 'number' && track.id >= nextLibraryId) {
+          nextLibraryId = track.id + 1
+        }
         state = {
           ...state,
           items: state.items.map(i =>

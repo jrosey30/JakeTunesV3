@@ -5,6 +5,7 @@ import os
 import random
 import time
 import plistlib
+import hashlib
 
 MAC_EPOCH_OFFSET = 2082844800  # seconds between 1904-01-01 and 1970-01-01
 
@@ -399,11 +400,49 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     template_header: either the track's own header (existing track) or a generic template (new track).
     extra_mhods:     raw bytes of mhod types NOT in REBUILT_MHOD_TYPES, to preserve from existing DB.
     is_new:          True if this track is not in the existing DB (needs codec/timestamp init).
+
+    ⚠️ TWIN: This function carries TWO load-bearing offsets that the iPod
+    firmware uses as silent track-filter inputs. Both have caused
+    user-visible "Music > Songs" undercounts before:
+      • 0x64  — mediaKind classifier (must be 1; see comment at the
+                struct.pack_into('<I', hdr, 0x64, 1) line below).
+                Postmortem: docs/postmortems/2026-04-26-ipod-songcount-counter.md
+      • 0x6C  — 64-bit persistent dbid (must be UNIQUE per track; see
+                the persistent-dbid block below).
+                Diagnosis: 2026-04-26 — every track was inheriting the
+                first existing mhit's persistent ID via template_header,
+                causing the firmware browse cache to dedupe ~140 tracks
+                into duplicates.
+    If you find a NEW field that turns out to be a silent firmware
+    filter, add it to this list so the next editor knows to check it.
     """
     hdr = bytearray(template_header)
 
     struct.pack_into('<I', hdr, 0x10, dbid)
     struct.pack_into('<I', hdr, 0x14, 1)  # visible
+
+    # Persistent 64-bit dbid (offset 0x6C) + backup (offset 0x94).
+    #
+    # NOT the same as the 32-bit unique_id at 0x10. The iPod firmware's
+    # browse cache de-duplicates by this 64-bit value when building
+    # internal indexes (Songs view, Artist > Album drill-downs). Pre-fix,
+    # build_mhit_record copied the template's bytes wholesale and never
+    # overwrote 0x6C/0x94, so every newly-built mhit inherited the FIRST
+    # existing mhit's persistent ID (4556 tracks all sharing the value
+    # 0x4310e86a00000000). The hardware then collapsed near-duplicates
+    # and "Music > Songs" undercounted by ~140.
+    #
+    # Derive deterministically from (audioFingerprint | path) so re-syncs
+    # are idempotent: same content → same persistent ID → the iPod treats
+    # it as the same track across syncs, preserving its own play counts /
+    # last-played state. High bit set to match iTunes' convention (real
+    # iTunes persistent IDs always have MSB=1).
+    pdbid_seed = (str(track.get('audioFingerprint') or '') + '|' +
+                  str(track.get('path') or '')).encode('utf-8')
+    pdbid = int.from_bytes(hashlib.sha1(pdbid_seed).digest()[:8], 'little')
+    pdbid |= 0x8000000000000000
+    struct.pack_into('<Q', hdr, 0x6C, pdbid)
+    struct.pack_into('<Q', hdr, 0x94, pdbid)
 
     # File size — only overwrite if we have a value (don't zero-out existing header data)
     fs = _safe_int(track.get('fileSize', 0))
