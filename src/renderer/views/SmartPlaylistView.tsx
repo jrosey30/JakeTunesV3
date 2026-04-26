@@ -300,6 +300,27 @@ export default function SmartPlaylistView() {
   // Reset saved state when picks change
   useEffect(() => { setPicksSaved(false) }, [picks])
 
+  // Auto-follow now-playing on track change (4.0). Skipped if user
+  // scrolled in last 5s.
+  useEffect(() => {
+    if (libState.currentView !== 'smart-playlist') return
+    if (!pbState.nowPlaying) return
+    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
+    const idx = sortedTracks.findIndex(t => t.id === pbState.nowPlaying!.id)
+    if (idx < 0) return
+    const el = songsBodyRef.current
+    if (!el) return
+    const rowH = 19
+    const rowTop = idx * rowH
+    const rowBottom = rowTop + rowH
+    const scrollTop = el.scrollTop
+    const viewH = el.clientHeight
+    if (rowTop < scrollTop || rowBottom > scrollTop + viewH) {
+      isAutoScrollAtRef.current = Date.now()
+      el.scrollTop = rowTop < scrollTop ? rowTop : rowBottom - viewH
+    }
+  }, [pbState.nowPlaying?.id, libState.currentView, sortedTracks])
+
   const speakCommentary = useCallback(async () => {
     if (!picks?.commentary) return
     if (speaking && audioRef.current) {
@@ -351,6 +372,21 @@ export default function SmartPlaylistView() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const lastClickedIdx = useRef<number>(-1)
+
+  // Auto-follow now-playing (4.0). Mirrors the SongsView pattern:
+  // when the playing track changes and the user has been idle for >5s,
+  // scroll the now-playing row into view. Programmatic scrolls don't
+  // count as user activity (200ms grace window after our scrollTop write).
+  const songsBodyRef = useRef<HTMLDivElement | null>(null)
+  const lastUserActivityAtRef = useRef<number>(0)
+  const isAutoScrollAtRef = useRef<number>(0)
+  const FOLLOW_IDLE_MS = 5000
+
+  const handleScroll = useCallback(() => {
+    if (Date.now() - isAutoScrollAtRef.current > 200) {
+      lastUserActivityAtRef.current = Date.now()
+    }
+  }, [])
 
   // Reset anchor when search/sort changes the visible list
   useEffect(() => {
@@ -567,7 +603,7 @@ export default function SmartPlaylistView() {
           </div>
         ))}
       </div>
-      <div className="songs-body">
+      <div className="songs-body" ref={songsBodyRef} onScroll={handleScroll}>
         {sortedTracks.map((track, i) => {
           const isPlaying = pbState.nowPlaying?.id === track.id
           const isSelected = selectedIds.has(track.id)

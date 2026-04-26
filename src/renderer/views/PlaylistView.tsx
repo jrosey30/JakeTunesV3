@@ -64,6 +64,18 @@ export default function PlaylistView() {
   const lastClickedIdx = useRef<number>(-1)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
+  // Auto-follow now-playing (4.0). Mirror of SongsView pattern; suppressed
+  // when user has scrolled in the last 5s.
+  const songsBodyRef = useRef<HTMLDivElement | null>(null)
+  const lastUserActivityAtRef = useRef<number>(0)
+  const isAutoScrollAtRef = useRef<number>(0)
+  const FOLLOW_IDLE_MS = 5000
+  const handleScroll = useCallback(() => {
+    if (Date.now() - isAutoScrollAtRef.current > 200) {
+      lastUserActivityAtRef.current = Date.now()
+    }
+  }, [])
+
   const playlist = state.playlists.find(p => p.id === state.activePlaylistId)
 
   // Local sort state — restored from module-level map so it survives navigation
@@ -285,6 +297,26 @@ export default function PlaylistView() {
     return () => window.removeEventListener('jaketunes-get-info', handler)
   }, [state.currentView, selectedIds, sortedTracks])
 
+  // Auto-follow now-playing on track change (4.0).
+  useEffect(() => {
+    if (state.currentView !== 'playlist') return
+    if (!pb.nowPlaying) return
+    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
+    const idx = sortedTracks.findIndex(t => t.id === pb.nowPlaying!.id)
+    if (idx < 0) return
+    const el = songsBodyRef.current
+    if (!el) return
+    const rowH = 19
+    const rowTop = idx * rowH
+    const rowBottom = rowTop + rowH
+    const scrollTop = el.scrollTop
+    const viewH = el.clientHeight
+    if (rowTop < scrollTop || rowBottom > scrollTop + viewH) {
+      isAutoScrollAtRef.current = Date.now()
+      el.scrollTop = rowTop < scrollTop ? rowTop : rowBottom - viewH
+    }
+  }, [pb.nowPlaying?.id, state.currentView, sortedTracks])
+
   if (!playlist) {
     return <div style={{ padding: 24, color: '#999' }}>Playlist not found.</div>
   }
@@ -501,7 +533,7 @@ export default function PlaylistView() {
             </div>
           ))}
         </div>
-        <div className="songs-body">
+        <div className="songs-body" ref={songsBodyRef} onScroll={handleScroll}>
           {sortedTracks.map((track, i) => {
             const isPlaying = pb.nowPlaying?.id === track.id
             const isSelected = selectedIds.has(track.id)
