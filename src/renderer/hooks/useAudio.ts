@@ -189,8 +189,8 @@ export function useAudio() {
     const s = stateRef.current
     if (s.queue.length === 0) return
     // Record skip if current song was playing and less than 80% complete
-    if (s.currentTrack && s.duration > 0 && (s.position / s.duration) < 0.8) {
-      window.electronAPI.recordSkip?.({ title: s.currentTrack.title, artist: s.currentTrack.artist })
+    if (s.nowPlaying && s.duration > 0 && (s.position / s.duration) < 0.8) {
+      window.electronAPI.recordSkip?.({ title: s.nowPlaying.title, artist: s.nowPlaying.artist })
     }
     let nextIdx: number
     if (s.shuffle) {

@@ -65,8 +65,14 @@ function AppInner() {
             skippedStale++
             continue
           }
+          // The override payload is intentionally schema-loose — Cynthia
+          // and the user can edit any of Track's stringy fields and
+          // we replay them by name. Track is a closed interface so we
+          // route through `unknown` to satisfy tsc; field names are
+          // validated by Cynthia's emitter, not here.
+          const tr = t as unknown as Record<string, unknown>
           for (const [field, value] of Object.entries(entry.fields)) {
-            (t as Record<string, unknown>)[field] = value
+            tr[field] = value
           }
           appliedCount++
         }

@@ -4114,7 +4114,12 @@ app.whenReady().then(async () => {
     const filePath = join(getArtworkDir(), `${hash}.jpg`)
     try {
       const data = await readFile(filePath)
-      return new Response(data, {
+      // Buffer<ArrayBufferLike> doesn't satisfy BodyInit's stricter
+      // ArrayBuffer constraint under the latest @types/node — slice into
+      // a fresh ArrayBuffer so the body is unambiguously sized memory
+      // backed by a real ArrayBuffer.
+      const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
+      return new Response(body, {
         headers: {
           'Content-Type': 'image/jpeg',
           'Cache-Control': 'no-store, no-cache, must-revalidate',

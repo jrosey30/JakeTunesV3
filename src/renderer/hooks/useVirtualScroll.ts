@@ -5,7 +5,11 @@ interface VirtualScrollResult {
   endIndex: number
   totalHeight: number
   offsetY: number
-  containerRef: React.RefObject<HTMLDivElement | null>
+  // MutableRefObject (not RefObject) so callers can assign the ref to
+  // a JSX prop. React 18 narrowed RefObject<T> to require non-null T,
+  // which clashes with our nullable initial value. MutableRefObject
+  // keeps the nullable T and is still assignable to React's `ref` prop.
+  containerRef: React.MutableRefObject<HTMLDivElement | null>
   onScroll: () => void
 }
 

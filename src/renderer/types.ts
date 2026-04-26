@@ -210,6 +210,13 @@ declare global {
       onImportProgress: (callback: (progress: { current: number; total: number; title: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
+      // Music Man taste-learning telemetry. The main process records these
+      // into the listener profile; renderer fires-and-forgets, so the
+      // bridge functions are optional from the renderer's POV (preload
+      // may not have wired them in older builds — we soft-call with `?.`).
+      recordPlay?: (track: { title: string; artist: string; album: string; genre: string }) => Promise<{ ok: boolean }>
+      recordSkip?: (track: { title: string; artist: string }) => Promise<{ ok: boolean }>
+      recordRating?: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>

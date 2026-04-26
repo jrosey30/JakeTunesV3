@@ -314,8 +314,13 @@ export default function SmartPlaylistView() {
     if (tts.ok && tts.audio) {
       window.dispatchEvent(new Event('musicman-speaking-start'))
       await new Promise<void>(resolve => {
-        window.addEventListener('musicman-fade-ready', resolve, { once: true })
-        setTimeout(resolve, 2000)
+        // The fade handler over in Toolbar fires `musicman-fade-ready`
+        // once the volume duck is in place; we then start playback. Wrap
+        // the resolver in an EventListener-shaped function so the DOM
+        // typings accept it (resolve takes `value`, listeners take `Event`).
+        const listener: EventListener = () => resolve()
+        window.addEventListener('musicman-fade-ready', listener, { once: true })
+        setTimeout(() => resolve(), 2000)
       })
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
       audioRef.current = audio
