@@ -164,6 +164,13 @@ export interface RestoreApplyResult {
 // fallback is total.
 export type ImportFormatChoice = 'aac-128' | 'aac-256' | 'aac-320' | 'alac' | 'aiff' | 'wav'
 
+// EQ (4.0 §6.5). Type lives in audio/eq.ts but is re-exported here so
+// it's reachable through the same single types module the rest of the
+// app already imports from. `import type` keeps types.ts free of a
+// runtime dep on howler.
+import type { EqSettings } from './audio/eq'
+export type { EqSettings } from './audio/eq'
+
 export interface AppSettings {
   crossfade: {
     enabled: boolean
@@ -180,13 +187,24 @@ export interface AppSettings {
     musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
     claudeDailyCeiling: number      // mirrored to claude-stats.json on save
   }
+  eq: EqSettings   // 10-band parametric EQ (4.0 §6.5)
 }
 
+// EQ default is duplicated from audio/eq.ts::DEFAULT_EQ rather than
+// imported as a value, to avoid pulling howler into types.ts. The two
+// must stay in sync — App.tsx merges by field anyway, so the source of
+// truth at runtime is whichever is more permissive (the eq module).
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
   library: { defaultImportFormat: 'aac-256' },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
   ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200 },
+  eq: {
+    enabled: false,
+    preamp: 0,
+    bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    preset: 'Flat',
+  },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'

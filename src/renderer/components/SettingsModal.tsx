@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
+import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import '../styles/import-convert.css'
 
 /**
@@ -20,8 +21,14 @@ interface Props {
   onSaved: (next: AppSettings) => void
 }
 
-type Tab = 'Playback' | 'Library' | 'Sync' | 'AI'
-const TABS: Tab[] = ['Playback', 'Library', 'Sync', 'AI']
+type Tab = 'Playback' | 'EQ' | 'Library' | 'Sync' | 'AI'
+const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'AI']
+
+// Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
+// 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
+function bandLabel(hz: number): string {
+  return hz >= 1000 ? `${hz / 1000}k` : String(hz)
+}
 
 const FORMAT_OPTIONS: { value: ImportFormatChoice; label: string }[] = [
   { value: 'aac-128', label: 'AAC 128 kbps (small)' },
@@ -129,6 +136,134 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <p className="imp-help" style={{ marginTop: 16 }}>
                 Gapless playback (preload + instant start) is always on; no setting needed.
               </p>
+            </>
+          )}
+
+          {tab === 'EQ' && (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.eq.enabled}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    eq: { ...draft.eq, enabled: e.target.checked },
+                  })}
+                />
+                <span>Equalizer enabled</span>
+              </label>
+
+              <div style={{ opacity: draft.eq.enabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#3a3a3a', marginBottom: 4 }}>
+                  Preset
+                </label>
+                <select
+                  value={draft.eq.preset in EQ_PRESETS ? draft.eq.preset : 'Custom'}
+                  disabled={!draft.eq.enabled}
+                  onChange={(e) => {
+                    const name = e.target.value
+                    if (name === 'Custom') {
+                      setDraft({ ...draft, eq: { ...draft.eq, preset: 'Custom' } })
+                      return
+                    }
+                    const p = EQ_PRESETS[name]
+                    if (!p) return
+                    setDraft({
+                      ...draft,
+                      eq: {
+                        ...draft.eq,
+                        preset: name,
+                        preamp: p.preamp,
+                        bands: [...p.bands],
+                      },
+                    })
+                  }}
+                  style={{ width: '100%', padding: 6, fontSize: 13, marginBottom: 16 }}
+                >
+                  {Object.keys(EQ_PRESETS).map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                  <option value="Custom">Custom</option>
+                </select>
+
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 180, paddingBottom: 4, borderBottom: '1px solid #d0d0d0' }}>
+                  {/* Preamp */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+                    <span style={{ fontSize: 10, color: '#555', minHeight: 12 }}>
+                      {draft.eq.preamp > 0 ? `+${draft.eq.preamp}` : draft.eq.preamp} dB
+                    </span>
+                    <input
+                      type="range"
+                      min={-12}
+                      max={12}
+                      step={1}
+                      value={draft.eq.preamp}
+                      disabled={!draft.eq.enabled}
+                      onChange={(e) => setDraft({
+                        ...draft,
+                        eq: { ...draft.eq, preamp: Number(e.target.value), preset: 'Custom' },
+                      })}
+                      style={{
+                        writingMode: 'vertical-lr',
+                        WebkitAppearance: 'slider-vertical',
+                        appearance: 'slider-vertical',
+                        width: 22,
+                        height: 130,
+                        margin: 0,
+                      } as unknown as React.CSSProperties}
+                    />
+                    <span style={{ fontSize: 9, color: '#777', marginTop: 2, fontWeight: 600 }}>Preamp</span>
+                  </div>
+
+                  {/* Divider */}
+                  <div style={{ width: 1, height: 130, background: '#d0d0d0', alignSelf: 'center' }} />
+
+                  {/* 10 bands */}
+                  {EQ_BAND_FREQUENCIES.map((hz, i) => {
+                    const value = draft.eq.bands[i] ?? 0
+                    return (
+                      <div key={hz} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+                        <span style={{ fontSize: 10, color: '#555', minHeight: 12 }}>
+                          {value > 0 ? `+${value}` : value}
+                        </span>
+                        <input
+                          type="range"
+                          min={-12}
+                          max={12}
+                          step={1}
+                          value={value}
+                          disabled={!draft.eq.enabled}
+                          onChange={(e) => {
+                            const next = [...draft.eq.bands]
+                            next[i] = Number(e.target.value)
+                            setDraft({
+                              ...draft,
+                              eq: { ...draft.eq, bands: next, preset: 'Custom' },
+                            })
+                          }}
+                          style={{
+                            writingMode: 'vertical-lr',
+                            WebkitAppearance: 'slider-vertical',
+                            appearance: 'slider-vertical',
+                            width: 22,
+                            height: 130,
+                            margin: 0,
+                          } as unknown as React.CSSProperties}
+                        />
+                        <span style={{ fontSize: 9, color: '#777', marginTop: 2 }}>{bandLabel(hz)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <p className="imp-help" style={{ marginTop: 14 }}>
+                  Range −12 dB to +12 dB. Toggling EQ on or off mid-track applies to the next song;
+                  preset and slider changes apply immediately.
+                </p>
+                <p className="imp-help" style={{ marginTop: 4, fontSize: 10, color: '#888' }}>
+                  Bands: 31, 62, 125, 250, 500 Hz · 1k, 2k, 4k, 8k, 16k Hz
+                </p>
+              </div>
             </>
           )}
 

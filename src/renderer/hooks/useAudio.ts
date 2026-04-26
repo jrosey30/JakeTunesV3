@@ -3,6 +3,7 @@ import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
+import { attachHowlToEq } from '../audio/eq'
 
 // Resolved at runtime from main process via IPC — set by init call
 let IPOD_MOUNT = ''
@@ -38,10 +39,23 @@ export function getAutoDjMode() { return autoDjMode }
 // `sharedHowl`. Volumes are interpolated in updatePosition each rAF
 // tick. When the fade completes (or any user action disrupts it),
 // outgoingHowl is unloaded.
+//
+// The PLAY_TRACK dispatch for the incoming track is DEFERRED until the
+// fade actually completes. We hold onto the pending track/queue/index
+// in module state and dispatch them when progress hits 1.0. This
+// matches iTunes' behavior: during the overlap window the user keeps
+// seeing the old track's progress bar advance through its tail, then
+// the UI snaps to the new track once the fade is done. Without this
+// deferral, PLAY_TRACK fires immediately at trigger time — which
+// resets position/duration to 0 and freezes the bar at "remaining N
+// seconds" until the new Howl finishes loading.
 let crossfadeSettings = { enabled: false, seconds: 6 }
 let outgoingHowl: Howl | null = null
 let crossfading = false
 let crossfadeStartedAtMs = 0
+let crossfadePendingTrack: Track | null = null
+let crossfadePendingQueue: Track[] | null = null
+let crossfadePendingIdx = -1
 export function setCrossfadeSettings(s: { enabled: boolean; seconds: number }) {
   crossfadeSettings = { enabled: !!s.enabled, seconds: Math.max(1, Math.min(12, s.seconds || 6)) }
 }
@@ -52,6 +66,9 @@ function cleanupCrossfadeAudio() {
     outgoingHowl = null
   }
   crossfading = false
+  crossfadePendingTrack = null
+  crossfadePendingQueue = null
+  crossfadePendingIdx = -1
 }
 
 // ── Gapless playback (4.0) ──
@@ -59,10 +76,31 @@ function cleanupCrossfadeAudio() {
 // current track, then promotes it on natural end so there's no decode
 // latency at the seam. Decoupled from crossfade — when crossfade is
 // enabled, crossfade takes priority and we skip the gapless preload.
+//
+// The preload Howl uses Web Audio mode (html5: false) — Howler decodes
+// the file into memory at preload time and plays via AudioBufferSource.
+// play() is then effectively sample-accurate, which is what makes the
+// transition truly gapless. The streaming (html5: true) path that the
+// rest of playback uses can't do this: play() on a fresh HTMLAudio
+// element carries 50–300ms of startup latency which is exactly the gap
+// users hear at the seam. The cost is memory — ~30-50MB per decoded
+// song, held only during the preload window.
+//
+// EQ note: the EQ chain hooks via MediaElementAudioSourceNode, which
+// only exists for html5: true Howls. After a gapless transition the
+// new sharedHowl is html5: false and bypasses EQ until the user picks
+// a different track. EQ is off by default; the trade-off is acceptable.
+//
+// We still PRE-WARM with play() at volume 0 a beat before the seam.
+// Even Web Audio's first play() has microsecond-scale setup; the
+// pre-warm makes that vanish under the current track's tail. Lead time
+// is small (50ms) since Web Audio doesn't need much head start.
 let gaplessNextHowl: Howl | null = null
 let gaplessNextTrack: Track | null = null
 let gaplessNextQueue: Track[] | null = null
 let gaplessNextIdx = -1
+let gaplessNextPrewarmed = false
+const GAPLESS_PREWARM_LEAD_MS = 50
 function cleanupGaplessPreload() {
   if (gaplessNextHowl) {
     try { gaplessNextHowl.stop() } catch { /* ignore */ }
@@ -72,6 +110,7 @@ function cleanupGaplessPreload() {
   gaplessNextTrack = null
   gaplessNextQueue = null
   gaplessNextIdx = -1
+  gaplessNextPrewarmed = false
 }
 
 
@@ -94,134 +133,220 @@ export function useAudio() {
   const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
-    if (isPaused || !sharedHowl || !sharedHowl.playing()) return
-    const pos = sharedHowl.seek() as number
-    dispatchRef.current({ type: 'SET_POSITION', position: pos })
-    const dur = sharedHowl.duration()
-    if (dur > 0) {
-      dispatchRef.current({ type: 'SET_DURATION', duration: dur })
-    }
+    if (isPaused) return
 
-    // Crossfade volume animation. Runs alongside normal position updates.
-    if (crossfading && outgoingHowl && sharedHowl) {
+    // Crossfade volume animation. Runs every tick the fade is active —
+    // even before the new sharedHowl has finished loading. Without this
+    // de-coupling from sharedHowl.playing(), the volume curve only
+    // started animating after the new Howl's onplay fired, by which
+    // time the user heard the old track at full volume against a muted
+    // new track (no overlap).
+    if (crossfading && outgoingHowl) {
       const fadeMs = crossfadeSettings.seconds * 1000
       const elapsedMs = Date.now() - crossfadeStartedAtMs
       const progress = Math.max(0, Math.min(1, elapsedMs / fadeMs))
       const targetVol = stateRef.current.volume
       try { outgoingHowl.volume(targetVol * (1 - progress)) } catch { /* ignore */ }
-      try { sharedHowl.volume(targetVol * progress) } catch { /* ignore */ }
+      if (sharedHowl) {
+        try { sharedHowl.volume(targetVol * progress) } catch { /* ignore */ }
+      }
       if (progress >= 1) {
-        cleanupCrossfadeAudio()
+        // Fade complete — promote the new track to nowPlaying. We
+        // deferred this dispatch from the trigger code so the user saw
+        // the old track's progress bar advance smoothly through the
+        // overlap window. Order matters: PLAY_TRACK resets position/
+        // duration to 0, so we follow it with SET_POSITION /
+        // SET_DURATION reading from the new sharedHowl to avoid a
+        // single-frame "0:00 / 0:00" flicker.
+        const pendingTrack = crossfadePendingTrack
+        const pendingQueue = crossfadePendingQueue
+        const pendingIdx = crossfadePendingIdx
+        cleanupCrossfadeAudio()  // clears outgoing + pending state
+        if (pendingTrack && pendingQueue) {
+          dispatchRef.current({
+            type: 'PLAY_TRACK',
+            track: pendingTrack,
+            queue: pendingQueue,
+            queueIndex: pendingIdx,
+          })
+          if (sharedHowl && sharedHowl.playing()) {
+            const newDur = sharedHowl.duration()
+            const newPos = sharedHowl.seek() as number
+            if (newDur > 0) dispatchRef.current({ type: 'SET_DURATION', duration: newDur })
+            dispatchRef.current({ type: 'SET_POSITION', position: newPos })
+          }
+        }
       }
     }
 
-    // Gapless preload: in the last ~3 seconds of the current track,
-    // create a Howl for the next track. The audio file decode happens
-    // during the current track's tail, so when the natural end fires
-    // we can promote the preloaded Howl with near-zero latency.
-    // Skipped when crossfade is active (crossfade does its own preload
-    // with fade), DJ Mode is on, repeat=one, or no next track exists.
-    if (
-      !crossfadeSettings.enabled &&
-      !crossfading &&
-      !autoDjMode &&
-      sharedHowl &&
-      !gaplessNextHowl &&
-      dur > 4
-    ) {
-      const remaining = dur - pos
-      if (remaining > 0 && remaining <= 3) {
-        const s = stateRef.current
-        if (s.repeat !== 'one' && s.queue.length > 0) {
-          let nextIdx: number
-          if (s.shuffle) {
-            nextIdx = Math.floor(Math.random() * s.queue.length)
-            if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-              nextIdx = (nextIdx + 1) % s.queue.length
+    // Position bar source. Prefer sharedHowl once it's actively
+    // playing. While the new Howl is still loading at the start of a
+    // crossfade, fall back to the OUTGOING howl — the user is still
+    // hearing it, so the bar should keep advancing through its tail.
+    const positionHowl =
+      (sharedHowl && sharedHowl.playing()) ? sharedHowl :
+      (outgoingHowl && outgoingHowl.playing()) ? outgoingHowl :
+      null
+    if (positionHowl) {
+      const pos = positionHowl.seek() as number
+      dispatchRef.current({ type: 'SET_POSITION', position: pos })
+      const dur = positionHowl.duration()
+      if (dur > 0) {
+        dispatchRef.current({ type: 'SET_DURATION', duration: dur })
+      }
+    }
+
+    // Gapless preload + crossfade trigger only run when sharedHowl is
+    // the active output (not during a crossfade tail, where sharedHowl
+    // is the incoming track and its position is irrelevant for these
+    // checks).
+    if (sharedHowl && sharedHowl.playing() && !crossfading) {
+      const pos = sharedHowl.seek() as number
+      const dur = sharedHowl.duration()
+
+      // Gapless preload: in the last ~3 seconds of the current track,
+      // create a Howl for the next track. The audio file decode happens
+      // during the current track's tail, so when the natural end fires
+      // we can promote the preloaded Howl with near-zero latency.
+      // Skipped when crossfade is enabled (crossfade does its own
+      // overlap), DJ Mode is on, repeat=one, or no next track exists.
+      if (
+        !crossfadeSettings.enabled &&
+        !autoDjMode &&
+        !gaplessNextHowl &&
+        dur > 4
+      ) {
+        const remaining = dur - pos
+        if (remaining > 0 && remaining <= 3) {
+          const s = stateRef.current
+          if (s.repeat !== 'one' && s.queue.length > 0) {
+            let nextIdx: number
+            if (s.shuffle) {
+              nextIdx = Math.floor(Math.random() * s.queue.length)
+              if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+                nextIdx = (nextIdx + 1) % s.queue.length
+              }
+            } else {
+              nextIdx = s.queueIndex + 1
+              if (nextIdx >= s.queue.length) {
+                nextIdx = s.repeat === 'all' ? 0 : -1
+              }
             }
-          } else {
-            nextIdx = s.queueIndex + 1
-            if (nextIdx >= s.queue.length) {
-              nextIdx = s.repeat === 'all' ? 0 : -1
+            if (nextIdx >= 0) {
+              const nextTrack = s.queue[nextIdx]
+              if (nextTrack) {
+                const { url: nextUrl, format: nextFormat } = ipodPathToAudioURL(nextTrack.path || '')
+                const preload = new Howl({
+                  src: [nextUrl],
+                  format: [nextFormat],
+                  html5: false,    // Web Audio: decoded buffer, sample-accurate play()
+                  loop: false,
+                  volume: 0,
+                  preload: true,
+                  autoplay: false,
+                  onloaderror: () => { /* swallow — we'll fall back to normal advance */ },
+                })
+                gaplessNextHowl = preload
+                gaplessNextTrack = nextTrack
+                gaplessNextQueue = s.queue
+                gaplessNextIdx = nextIdx
+                gaplessNextPrewarmed = false
+              }
             }
           }
-          if (nextIdx >= 0) {
-            const nextTrack = s.queue[nextIdx]
-            if (nextTrack) {
-              const { url: nextUrl, format: nextFormat } = ipodPathToAudioURL(nextTrack.path || '')
-              const preload = new Howl({
-                src: [nextUrl],
-                format: [nextFormat],
-                html5: true,
-                loop: false,
-                volume: 0,
-                preload: true,
-                autoplay: false,
-                onloaderror: () => { /* swallow — we'll fall back to normal advance */ },
-              })
-              gaplessNextHowl = preload
-              gaplessNextTrack = nextTrack
-              gaplessNextQueue = s.queue
-              gaplessNextIdx = nextIdx
+        }
+      }
+
+      // Gapless pre-warm: ~150ms before the current track ends, kick
+      // the preload Howl into actual playback at volume 0. Without this,
+      // play() is first called inside onend — and that play() carries
+      // 50–200ms of HTMLAudio startup latency, which is the audible gap.
+      // Pre-warming lets that latency happen DURING the current track's
+      // tail, so promotion at onend is a near-instant volume change.
+      if (
+        gaplessNextHowl &&
+        !gaplessNextPrewarmed &&
+        !crossfadeSettings.enabled
+      ) {
+        const remaining = dur - pos
+        if (remaining > 0 && remaining * 1000 <= GAPLESS_PREWARM_LEAD_MS) {
+          try { gaplessNextHowl.volume(0) } catch { /* ignore */ }
+          try { gaplessNextHowl.play() } catch { /* ignore */ }
+          gaplessNextPrewarmed = true
+        }
+      }
+
+      // Crossfade trigger: when the current track has crossfadeSeconds
+      // left, kick off the fade. PLAY_TRACK is intentionally NOT
+      // dispatched here — it's deferred to the fade-complete branch
+      // above, so the user keeps seeing the old track during overlap.
+      if (
+        crossfadeSettings.enabled &&
+        !autoDjMode &&
+        dur > crossfadeSettings.seconds + 1
+      ) {
+        const remaining = dur - pos
+        if (remaining > 0 && remaining <= crossfadeSettings.seconds) {
+          const s = stateRef.current
+          if (s.repeat !== 'one' && s.queue.length > 0) {
+            let nextIdx: number
+            if (s.shuffle) {
+              nextIdx = Math.floor(Math.random() * s.queue.length)
+              if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+                nextIdx = (nextIdx + 1) % s.queue.length
+              }
+            } else {
+              nextIdx = s.queueIndex + 1
+              if (nextIdx >= s.queue.length) {
+                nextIdx = s.repeat === 'all' ? 0 : -1
+              }
+            }
+            if (nextIdx >= 0) {
+              const nextTrack = s.queue[nextIdx]
+              if (nextTrack) {
+                startCrossfadeRef.current?.(nextTrack, s.queue, nextIdx)
+              }
             }
           }
         }
       }
     }
 
-    // Crossfade trigger: when the current track has crossfadeSeconds left,
-    // pre-load the next track and begin the fade. Bypassed when DJ Mode
-    // is active (DJ Mode runs its own transitions), when repeat=one, or
-    // when there is no next track. Tracks shorter than the fade duration
-    // get a no-fade natural end.
-    if (
-      crossfadeSettings.enabled &&
-      !crossfading &&
-      !autoDjMode &&
-      sharedHowl &&
-      dur > crossfadeSettings.seconds + 1
-    ) {
-      const remaining = dur - pos
-      if (remaining > 0 && remaining <= crossfadeSettings.seconds) {
-        const s = stateRef.current
-        if (s.repeat !== 'one' && s.queue.length > 0) {
-          let nextIdx: number
-          if (s.shuffle) {
-            nextIdx = Math.floor(Math.random() * s.queue.length)
-            if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-              nextIdx = (nextIdx + 1) % s.queue.length
-            }
-          } else {
-            nextIdx = s.queueIndex + 1
-            if (nextIdx >= s.queue.length) {
-              nextIdx = s.repeat === 'all' ? 0 : -1
-            }
-          }
-          if (nextIdx >= 0) {
-            const nextTrack = s.queue[nextIdx]
-            if (nextTrack) {
-              dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
-              startCrossfadeRef.current?.(nextTrack, s.queue, nextIdx)
-            }
-          }
-        }
-      }
+    // Reschedule rAF as long as something is producing audio OR a fade
+    // is mid-flight (volume animation needs to run until completion
+    // even when the new sharedHowl hasn't started playing yet).
+    const stillActive =
+      (sharedHowl && (sharedHowl.playing() || crossfading)) ||
+      (outgoingHowl && outgoingHowl.playing())
+    if (stillActive) {
+      sharedRaf = requestAnimationFrame(updatePosition)
     }
-
-    sharedRaf = requestAnimationFrame(updatePosition)
   }, [])
 
   const loadAndPlay = useCallback((track: Track, queue: Track[], queueIndex: number, asCrossfade: boolean = false) => {
     isPaused = false
     if (asCrossfade && sharedHowl) {
       // Hand off the current Howl to outgoing for the fade. Don't unload
-      // it yet — updatePosition will fade it to silence then clean up.
+      // it yet — updatePosition fades it to silence then cleans up.
       // Any prior outgoing (rare — only if a previous crossfade hadn't
       // finished) is silenced cleanly first.
+      //
+      // The PLAY_TRACK dispatch is intentionally deferred until fade
+      // completion (handled in updatePosition). We stash the target
+      // track/queue/idx here so updatePosition can dispatch them when
+      // progress hits 1.0.
+      //
+      // Don't cancelAnimationFrame here — the rAF loop is what runs the
+      // volume animation, so it has to keep ticking through the fade.
+      // The non-crossfade branch below still cancels because that path
+      // unloads the old Howl entirely.
       cleanupCrossfadeAudio()
       outgoingHowl = sharedHowl
       crossfading = true
       crossfadeStartedAtMs = Date.now()
+      crossfadePendingTrack = track
+      crossfadePendingQueue = queue
+      crossfadePendingIdx = queueIndex
     } else {
       cleanupCrossfadeAudio()
       cleanupGaplessPreload()
@@ -229,8 +354,8 @@ export function useAudio() {
         sharedHowl.unload()
         sharedHowl = null
       }
+      cancelAnimationFrame(sharedRaf)
     }
-    cancelAnimationFrame(sharedRaf)
 
     const { url, format } = ipodPathToAudioURL(track.path || '')
     // Guard against the Howler 'end' event firing twice for the same
@@ -246,6 +371,19 @@ export function useAudio() {
       loop: false,
       volume: startVolume,
       onplay: () => {
+        // EQ tap: bind the underlying HTMLAudioElement to the Web Audio
+        // chain. Idempotent + a no-op when EQ is disabled. Done in onplay
+        // (not after construction) because Howler's _sounds[0]._node
+        // isn't populated until the element starts decoding.
+        attachHowlToEq(howl)
+        if (asCrossfade) {
+          // The rAF loop is already running; updatePosition will pick
+          // up this Howl on its next tick. Don't dispatch SET_DURATION
+          // either — the deferred PLAY_TRACK at fade-completion will
+          // dispatch it together with SET_POSITION to keep the bar
+          // continuous.
+          return
+        }
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         sharedRaf = requestAnimationFrame(updatePosition)
       },
@@ -346,27 +484,50 @@ export function useAudio() {
         const nt = gaplessNextTrack
         const nq = gaplessNextQueue || s.queue
         const ni = gaplessNextIdx >= 0 ? gaplessNextIdx : nextIdx
+        const wasPrewarmed = gaplessNextPrewarmed
         // Detach gapless state — we're handing off
         gaplessNextHowl = null
         gaplessNextTrack = null
         gaplessNextQueue = null
         gaplessNextIdx = -1
+        gaplessNextPrewarmed = false
         // Wire up the preloaded Howl's lifecycle (it was created without
         // these handlers in the preload step).
         const nextEndedHolder = { v: false }
-        next.once('play', () => {
-          dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
-          sharedRaf = requestAnimationFrame(updatePosition)
-        })
         next.once('end', () => {
           runNaturalEndRef.current?.(nt, next, nextEndedHolder)
         })
         // Unload the just-finished Howl, promote the preload to shared.
         try { howl.unload() } catch { /* ignore */ }
         sharedHowl = next
-        next.volume(s.volume)
-        next.play()
-        dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+        if (wasPrewarmed) {
+          // The preload was already started silently in the last
+          // ~150ms of the previous track. Just bump the volume — it's
+          // already producing audio. No play() call (which would fail
+          // anyway since Howler considers the howl already playing).
+          // 'play' didn't fire on the SoundManager listener path, so
+          // dispatch SET_DURATION + EQ binding manually here.
+          try { next.volume(s.volume) } catch { /* ignore */ }
+          attachHowlToEq(next)
+          dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+          // Re-anchor the position bar — the deferred SET_POSITION will
+          // reach the correct value on the next rAF tick (already
+          // running from the prior track).
+          if (!sharedRaf) sharedRaf = requestAnimationFrame(updatePosition)
+        } else {
+          // Pre-warm didn't fire (very short track, or rAF hadn't ticked
+          // inside the last 150ms). Fall back to standard promote: wire
+          // a play handler then call play() ourselves.
+          next.once('play', () => {
+            dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
+            attachHowlToEq(next)
+            sharedRaf = requestAnimationFrame(updatePosition)
+          })
+          next.volume(s.volume)
+          next.play()
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+        }
         return
       }
 

@@ -15,6 +15,7 @@ import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
 import { setCrossfadeSettings } from './hooks/useAudio'
+import { setEqSettings } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import './styles/variables.css'
 import './styles/reset.css'
@@ -46,9 +47,11 @@ function AppInner() {
         library:   { ...DEFAULT_APP_SETTINGS.library,   ...(raw.library || {}) },
         sync:      { ...DEFAULT_APP_SETTINGS.sync,      ...(raw.sync || {}) },
         ai:        { ...DEFAULT_APP_SETTINGS.ai,        ...(raw.ai || {}) },
+        eq:        { ...DEFAULT_APP_SETTINGS.eq,        ...(raw.eq || {}) },
       }
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
+      setEqSettings(merged.eq)
     })
   }, [])
 
@@ -617,6 +620,7 @@ function AppInner() {
             onSaved={(next) => {
               setAppSettings(next)
               setCrossfadeSettings(next.crossfade)
+              setEqSettings(next.eq)
               setSettingsOpen(false)
             }}
           />
