@@ -30,6 +30,31 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      - name: Define retry helper
+        shell: bash
+        run: |
+          cat > /tmp/ci-retry.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          max_attempts="${MAX_ATTEMPTS:-3}"
+          base_delay="${BASE_DELAY_SECONDS:-2}"
+          attempt=1
+          while true; do
+            if "$@"; then
+              exit 0
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Command failed after ${attempt} attempts: $*" >&2
+              exit 1
+            fi
+            sleep_seconds=$((base_delay * attempt))
+            echo "Attempt ${attempt}/${max_attempts} failed. Retrying in ${sleep_seconds}s: $*" >&2
+            sleep "$sleep_seconds"
+            attempt=$((attempt + 1))
+          done
+          EOF
+          chmod +x /tmp/ci-retry.sh
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -48,7 +73,7 @@ jobs:
         # `npm ci` is strict — uses package-lock exactly. If lockfile
         # drifts from package.json this fails loudly, which is what we
         # want (silent drift is how "works on my machine" bugs ship).
-        run: npm ci
+        run: /tmp/ci-retry.sh npm ci
 
       - name: Build (electron-vite)
         # PRIMARY GATE. Catches: missing imports, broken JSX, undefined
@@ -56,7 +81,7 @@ jobs:
         # (no DMG) — just confirms the source compiles into the out/
         # bundle. If this fails, the app won't run on Jake's laptop
         # either; that's the bug we want to catch.
-        run: npm run build
+        run: /tmp/ci-retry.sh npm run build
 
       - name: TypeScript type-check (informational)
         # SOFT GATE — continue-on-error is true. Reports type errors
