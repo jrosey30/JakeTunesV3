@@ -1,0 +1,16 @@
+# Python dependencies for JakeTunes V3.
+# Install with: pip install -r requirements.txt
+#
+# These power the helper scripts in core/ that the Electron main process
+# invokes via spawn(PYTHON_CMD, ...).
+
+# Audio file tag I/O (used by tag_reader.py, tag_writer.py, reembed_tags.py,
+# alac_compat_fix.py, dedupe_compilation_years.py — basically every script
+# that touches embedded metadata).
+mutagen
+
+# Audio analysis (4.0 §2.4 — BPM, key, Camelot wheel for DJ-grade
+# transitions and harmonic playlists). aubio handles tempo detection;
+# librosa handles key estimation via chromagram + Krumhansl-Schmuckler.
+aubio
+librosa

@@ -59,6 +59,7 @@ function AppInner() {
         'playCount', 'rating', 'duration', 'fileSize',
         'year', 'trackNumber', 'trackCount', 'discNumber', 'discCount',
         'lastPlayedAt', 'skipCount',
+        'bpm', 'audioAnalysisAt',
       ])
       let appliedCount = 0, skippedStale = 0, skippedLegacy = 0
       if (overridesResult.ok && overridesResult.overrides) {
@@ -463,12 +464,31 @@ function AppInner() {
   // per-item visibility + retry on every failure.
   const [dropActive, setDropActive] = useState(false)
 
-  // Keep the queue's nextId in sync with the library's max track id
-  // so each import gets a fresh, non-colliding library id.
+  // Keep the queue's nextId in sync with the library so each import
+  // gets a fresh, non-colliding library id.
+  //
+  // We seed from the MAX of two sources, not just `max(track.id)`:
+  //
+  //   (1) max library id — the obvious one
+  //   (2) max imported_NNNN seen in any track's `path` field
+  //
+  // (2) matters because Import N to Library can pull tracks back from
+  // the iPod whose paths were generated in a prior epoch (when the
+  // library had different state). Those paths can carry imported_NNNN
+  // numbers higher than any current library.id. Without including (2),
+  // a fresh drag-drop import gets a library-id whose path slot is
+  // already taken on disk — the file gets overwritten and the library
+  // ends up with two entries pointing at the same path. (Apr 26
+  // 78-collision postmortem; the import-track main handler now also
+  // has a defensive `findFreeImportedId` second line of defense.)
   useEffect(() => {
     if (libState.tracks.length > 0) {
       const maxId = Math.max(0, ...libState.tracks.map(t => t.id))
-      setNextLibraryId(maxId + 1)
+      const maxPathNum = Math.max(0, ...libState.tracks.map(t => {
+        const m = (t.path || '').match(/imported_(\d+)/)
+        return m ? parseInt(m[1], 10) : 0
+      }))
+      setNextLibraryId(Math.max(maxId, maxPathNum) + 1)
     }
   }, [libState.tracks])
 

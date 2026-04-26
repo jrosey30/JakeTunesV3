@@ -81,6 +81,8 @@ const electronAPI = {
     ipcRenderer.invoke('save-playlists', playlists),
   getClaudeStats: (): Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }> =>
     ipcRenderer.invoke('get-claude-stats'),
+  analyzeTrack: (trackId: number, absPath: string, fingerprint: string): Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }> =>
+    ipcRenderer.invoke('analyze-track', trackId, absPath, fingerprint),
   fetchAlbumArt: (artist: string, album: string, force?: boolean): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>
     ipcRenderer.invoke('fetch-album-art', artist, album, force),
   setCustomArtwork: (artist: string, album: string, imagePath: string): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>

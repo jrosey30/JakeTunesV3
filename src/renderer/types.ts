@@ -33,6 +33,18 @@ export interface Track {
   // Count of times the user skipped this track within the first 30s.
   // Distinct from listenerProfile.artistSkips (artist-aggregate, 80% gate).
   skipCount?: number
+  // Audio analysis enrichment (4.0 §2.4). Computed once per track via
+  // core/audio_analysis.py (aubio + librosa). Not surfaced in any UI in
+  // Phase 0 — consumed by Music Man v2, Auto-DJ, and (stretch) smart
+  // playlists. Stored as overrides; analyze-once, persist forever.
+  bpm?: number                                 // beats per minute, ~±1 BPM accuracy
+  keyRoot?: string                             // pitch class: C, C#, D, ..., B
+  keyMode?: 'major' | 'minor'                  // tonality
+  camelotKey?: string                          // Camelot wheel position: "1A"-"12B"
+  // Epoch ms of the last analysis attempt. Set on success AND failure so
+  // we don't re-analyze every session. Re-tried after audioAnalysisRetryAfter
+  // (see consumer) when audio_analysis.py rolls forward.
+  audioAnalysisAt?: number
 }
 
 export interface Playlist {
@@ -182,6 +194,7 @@ declare global {
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
+      analyzeTrack: (trackId: number, absPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       removeArtwork: (artist: string, album: string) => Promise<{ ok: boolean; key?: string; error?: string }>

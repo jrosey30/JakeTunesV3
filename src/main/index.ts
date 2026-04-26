@@ -207,6 +207,145 @@ async function claudeCall(
   }
 }
 
+// ── Audio analysis queue (4.0 §2.4a) ──
+//
+// Per-track BPM, musical key, mode, and Camelot wheel position. Computed
+// by core/audio_analysis.py (aubio + librosa) one-shot per track and
+// persisted via metadata-overrides.json. This is the data source for
+// future DJ-grade transitions (Music Man v2), harmonically-compatible
+// playlists, and BPM-bounded smart playlists.
+//
+// Background-only — never blocks an import or any user-visible action.
+// Failures are recorded with an audioAnalysisAt sentinel so we don't
+// retry every session; consumers can choose to ignore stale results.
+//
+// Worker is single-threaded by design: librosa pulls in numpy/scipy
+// which can pin all cores via BLAS. One track at a time = predictable
+// load on the user's machine.
+
+interface AudioAnalysisResult {
+  ok: boolean
+  bpm?: number
+  keyRoot?: string
+  keyMode?: 'major' | 'minor' | ''
+  camelotKey?: string
+  error?: string
+}
+
+interface AudioAnalysisJob {
+  trackId: number
+  path: string         // absolute filesystem path (already resolved from iPod colon-format)
+  fingerprint: string  // metadata fingerprint used by the override v2 entry format
+}
+
+const audioAnalysisQueue: AudioAnalysisJob[] = []
+let audioAnalysisRunning = false
+
+function getAudioAnalysisScriptPath(): string {
+  return join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/audio_analysis.py')
+}
+
+function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
+  return new Promise((resolve) => {
+    const scriptPath = getAudioAnalysisScriptPath()
+    const py = spawn(PYTHON_CMD, [scriptPath, absPath])
+    let stdout = ''
+    let stderr = ''
+    py.stdout.on('data', (chunk) => { stdout += String(chunk) })
+    py.stderr.on('data', (chunk) => { stderr += String(chunk) })
+    py.on('error', (err) => {
+      resolve({ ok: false, error: `spawn failed: ${err.message}` })
+    })
+    py.on('close', () => {
+      const trimmed = stdout.trim()
+      if (!trimmed) {
+        resolve({ ok: false, error: stderr.trim().split('\n').pop() || 'no output from audio_analysis.py' })
+        return
+      }
+      try {
+        resolve(JSON.parse(trimmed) as AudioAnalysisResult)
+      } catch (parseErr) {
+        resolve({ ok: false, error: `JSON parse failed: ${parseErr instanceof Error ? parseErr.message : parseErr}` })
+      }
+    })
+  })
+}
+
+// Write multiple override fields in a single file write. Mirrors the
+// existing save-metadata-override IPC handler (~line 3639) but takes a
+// fields-map so the analysis worker doesn't trigger N separate writes.
+async function persistOverrideFields(
+  trackId: number,
+  fields: Record<string, string>,
+  fingerprint: string,
+): Promise<void> {
+  const overridesPath = join(app.getPath('userData'), 'metadata-overrides.json')
+  let overrides: Record<string, unknown> = {}
+  try {
+    const data = await readFile(overridesPath, 'utf-8')
+    overrides = JSON.parse(data)
+  } catch { /* file may not exist yet */ }
+
+  const key = String(trackId)
+  const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
+  const isV2 = existing && typeof existing === 'object' && 'fields' in existing
+  let entry: { fp: string; fields: Record<string, string> }
+  if (isV2 && existing!.fp && existing!.fp === fingerprint) {
+    entry = { fp: existing!.fp, fields: { ...(existing!.fields || {}), ...fields } }
+  } else {
+    entry = { fp: fingerprint || '', fields: { ...fields } }
+  }
+  overrides[key] = entry
+  await mkdir(app.getPath('userData'), { recursive: true })
+  await writeFile(overridesPath, JSON.stringify(overrides, null, 2), 'utf-8')
+}
+
+async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
+  const result = await runAudioAnalysisScript(job.path)
+  const fields: Record<string, string> = {
+    audioAnalysisAt: String(Date.now()),
+  }
+  if (result.ok) {
+    if (typeof result.bpm === 'number' && result.bpm > 0) fields.bpm = String(result.bpm)
+    if (result.keyRoot) fields.keyRoot = result.keyRoot
+    if (result.keyMode) fields.keyMode = result.keyMode
+    if (result.camelotKey) fields.camelotKey = result.camelotKey
+    console.log(`[audio-analysis] ${job.trackId}: bpm=${result.bpm ?? '—'} key=${result.keyRoot || '—'}${result.keyMode ? ' ' + result.keyMode : ''} camelot=${result.camelotKey || '—'}`)
+  } else {
+    console.warn(`[audio-analysis] ${job.trackId} failed: ${result.error || 'unknown error'}`)
+  }
+  try {
+    await persistOverrideFields(job.trackId, fields, job.fingerprint)
+  } catch (err) {
+    console.warn(`[audio-analysis] persist failed for ${job.trackId}:`, err instanceof Error ? err.message : err)
+  }
+}
+
+async function audioAnalysisWorker(): Promise<void> {
+  if (audioAnalysisRunning) return
+  audioAnalysisRunning = true
+  try {
+    while (audioAnalysisQueue.length > 0) {
+      const job = audioAnalysisQueue.shift()!
+      try {
+        await processAudioAnalysisJob(job)
+      } catch (err) {
+        console.warn(`[audio-analysis] job error for ${job.trackId}:`, err instanceof Error ? err.message : err)
+      }
+    }
+  } finally {
+    audioAnalysisRunning = false
+  }
+}
+
+function enqueueAudioAnalysis(job: AudioAnalysisJob): void {
+  // De-dupe: same trackId already pending? Skip.
+  if (audioAnalysisQueue.some(j => j.trackId === job.trackId)) return
+  audioAnalysisQueue.push(job)
+  // Fire and forget — the worker re-checks queue length each iteration.
+  void audioAnalysisWorker()
+}
+
 let mainWindow: BrowserWindow | null = null
 
 function sendMenuAction(action: string) {
@@ -1853,6 +1992,44 @@ interface SingleImportResult {
   error?: string
 }
 
+/**
+ * Returns the lowest `imported_NNNN` slot ≥ `startId` whose file path
+ * is free in MUSIC_DIR (no file exists at any common audio extension).
+ *
+ * Why this exists — the 78-collision bug (Apr 26 postmortem):
+ * The renderer-side counter (importQueue.ts + App.tsx useEffect) seeds
+ * itself from `max(library.id)`. But library entries that came in via
+ * the "Import N to Library" drift-banner button can have paths whose
+ * `imported_NNNN` > `library.id`, because the iPod's iTunesDB stores
+ * track id and file path independently — id was assigned by the
+ * library at original import, path was generated by JakeTunes when
+ * the track first synced to the iPod, and the two epochs can drift.
+ * Without this guard, the next fresh drag-drop import gets a
+ * library-id whose path slot is already occupied — the file gets
+ * silently overwritten and the library ends up with two entries
+ * pointing at the same path. The new sync preflight catches it (good)
+ * but only after the local file has already been overwritten (bad).
+ *
+ * ⚠️ TWIN: same defensive scan-then-loop pattern used by
+ * `rip-cd-tracks` ipcMain.handle below (it predates this helper and
+ * had the fix locally; we extracted it here so `import-track` and
+ * the CD ripper share one source of truth).
+ */
+async function findFreeImportedId(startId: number): Promise<number> {
+  const exts = ['.m4a', '.mp3', '.aac', '.flac', '.alac', '.wav', '.aif', '.aiff']
+  let id = startId
+  while (true) {
+    const subDir = join(MUSIC_DIR, `F${String(id % 50).padStart(2, '0')}`)
+    let collide = false
+    for (const e of exts) {
+      const exists = await stat(join(subDir, `imported_${id}${e}`)).then(() => true).catch(() => false)
+      if (exists) { collide = true; break }
+    }
+    if (!collide) return id
+    id++
+  }
+}
+
 async function importOneFile(
   srcPath: string,
   id: number,
@@ -1880,6 +2057,19 @@ async function importOneFile(
           matchedArtist: String(common.artist || ''),
         },
       }
+    }
+
+    // Path-collision guard: the renderer counter may have given us an id
+    // whose `imported_${id}.<ext>` slot is already on disk (Apr 26 78-
+    // collision bug — see findFreeImportedId comment). Bump past it
+    // before computing the destination so we never overwrite a file
+    // that another library entry is pointing at. The returned track's
+    // `id` will reflect the bumped value; the renderer queue advances
+    // its counter accordingly.
+    const requestedId = id
+    id = await findFreeImportedId(id)
+    if (id !== requestedId) {
+      console.warn(`import-track: id ${requestedId} collides with existing file imported_${requestedId}.*; bumped to ${id}`)
     }
 
     const subDir = `F${String(id % 50).padStart(2, '0')}`
@@ -2013,7 +2203,50 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
     }
   }
 
+  // Enqueue background audio analysis (4.0 §2.4a). Non-blocking — the
+  // import response is sent before analysis starts. Failures don't fail
+  // the import; the worker logs and writes the audioAnalysisAt sentinel
+  // so we don't retry every session.
+  if (r.ok && r.track) {
+    const t = r.track
+    const colon = String(t.path || '')
+    const trackId = Number(t.id) || 0
+    if (colon && trackId > 0) {
+      const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+      const pathSep = IS_WINDOWS ? '\\' : '/'
+      const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+      const title = String(t.title || '').toLowerCase().trim()
+      const artist = String(t.artist || '').toLowerCase().trim()
+      const duration = Number(t.duration) || 0
+      const fp = `${title}|${artist}|${duration}`
+      enqueueAudioAnalysis({ trackId, path: abs, fingerprint: fp })
+    }
+  }
+
   return r
+})
+
+// One-shot audio analysis for a single track. Used by §2.4b's backfill
+// scan UI (renderer drives the loop) and for any future on-demand
+// re-analysis. Does NOT enqueue — runs the script inline and persists.
+// For new imports, prefer the enqueue path which de-dupes and serializes.
+ipcMain.handle('analyze-track', async (_e, trackId: number, absPath: string, fingerprint: string) => {
+  const result = await runAudioAnalysisScript(absPath)
+  const fields: Record<string, string> = {
+    audioAnalysisAt: String(Date.now()),
+  }
+  if (result.ok) {
+    if (typeof result.bpm === 'number' && result.bpm > 0) fields.bpm = String(result.bpm)
+    if (result.keyRoot) fields.keyRoot = result.keyRoot
+    if (result.keyMode) fields.keyMode = result.keyMode
+    if (result.camelotKey) fields.camelotKey = result.camelotKey
+  }
+  try {
+    await persistOverrideFields(trackId, fields, fingerprint)
+  } catch (err) {
+    return { ok: false, error: `persist failed: ${err instanceof Error ? err.message : err}` }
+  }
+  return result
 })
 
 // Resolve folders + filter to audio extensions for the renderer queue.
@@ -2064,6 +2297,24 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
         duration: r.track.duration,
       })
       if (fp) sessionImportedFingerprints.add(fp)
+
+      // Enqueue audio analysis (4.0 §2.4a). Mirrors import-track's
+      // enqueue. Single-threaded worker means a 100-file batch trickles
+      // through one analysis at a time without pinning the user's CPU.
+      const t = r.track
+      const colon = String(t.path || '')
+      const trackId = Number(t.id) || 0
+      if (colon && trackId > 0) {
+        const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+        const pathSep = IS_WINDOWS ? '\\' : '/'
+        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+        const title = String(t.title || '').toLowerCase().trim()
+        const artist = String(t.artist || '').toLowerCase().trim()
+        const duration = Number(t.duration) || 0
+        const analysisFp = `${title}|${artist}|${duration}`
+        enqueueAudioAnalysis({ trackId, path: abs, fingerprint: analysisFp })
+      }
+
       id++
       trackIndex++
       mainWindow?.webContents.send('import-progress', {
@@ -4057,36 +4308,18 @@ ipcMain.handle('rip-cd-tracks', async (_e,
 ) => {
   const imported: Array<Record<string, unknown>> = []
 
-  // The renderer passes `nextId = max(library.id) + 1`, but library IDs
-  // get reassigned on full reloads (e.g. after a library.json rebuild),
-  // so there can be existing `imported_XXXX.m4a` files on disk with
-  // higher numbers than anything in the library. Writing with the raw
-  // nextId silently overwrites those files AND collides with their
-  // lingering library entries.
+  // The renderer passes `nextId = max(library.id, max-imported-NNNN-in-paths)
+  // + 1` (App.tsx useEffect, fixed Apr 26). The on-disk scan below is the
+  // belt-and-suspenders second line of defense: if disk has orphan files
+  // from a prior session that never made it into library.json, or any
+  // other source of drift, `findFreeImportedId` walks forward until it
+  // finds a free slot.
   //
-  // Scan the music dir for the highest existing imported_XXXX number,
-  // then start AFTER it. Cheap: ~50 subdirs, bounded entries per subdir.
-  let id = nextId
-  try {
-    const { readdir } = await import('fs/promises')
-    let maxFileNum = nextId - 1
-    for (let i = 0; i < 50; i++) {
-      const subDir = join(MUSIC_DIR, `F${String(i).padStart(2, '0')}`)
-      const entries = await readdir(subDir).catch(() => [] as string[])
-      for (const f of entries) {
-        const m = f.match(/^imported_(\d+)\./)
-        if (m) {
-          const n = parseInt(m[1], 10)
-          if (n > maxFileNum) maxFileNum = n
-        }
-      }
-    }
-    if (maxFileNum >= id) {
-      console.warn(`rip-cd-tracks: nextId ${id} collides with existing file imported_${maxFileNum}.m4a; bumping to ${maxFileNum + 1}`)
-      id = maxFileNum + 1
-    }
-  } catch (err) {
-    console.warn('rip-cd-tracks: failed to scan for existing imports:', err)
+  // ⚠️ TWIN: same helper is used by `import-track`'s `importOneFile`.
+  // Centralizes the scan so we don't ship two versions that drift apart.
+  let id = await findFreeImportedId(nextId)
+  if (id !== nextId) {
+    console.warn(`rip-cd-tracks: nextId ${nextId} collides with existing file imported_${nextId}.*; bumped to ${id}`)
   }
 
   // Validate and default the format.
@@ -4100,21 +4333,15 @@ ipcMain.handle('rip-cd-tracks', async (_e,
   let cdTrackIndex = 0
 
   for (const cdTrack of cdTracks) {
+    // Re-check before each track in case the previous iteration's id
+    // has now been written and we're about to land on a slot a parallel
+    // process took. Cheap (single stat per ext when no collision).
+    id = await findFreeImportedId(id)
     const subDir = `F${String(id % 50).padStart(2, '0')}`
     const destDir = join(MUSIC_DIR, subDir)
     await mkdir(destDir, { recursive: true })
 
-    // Final belt-and-suspenders: don't clobber an existing file even if
-    // the scan above missed something.
-    let fileName = `imported_${id}${destExt}`
-    while (true) {
-      const candidate = join(destDir, fileName)
-      const exists = await stat(candidate).then(() => true).catch(() => false)
-      if (!exists) break
-      console.warn(`rip-cd-tracks: ${fileName} already exists; advancing`)
-      id++
-      fileName = `imported_${id}${destExt}`
-    }
+    const fileName = `imported_${id}${destExt}`
     const destPath = join(destDir, fileName)
 
     try {

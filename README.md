@@ -32,7 +32,11 @@ A pixel-perfect iTunes 7 replica for macOS, built with Electron + React + TypeSc
 2. **Install dependencies:**
    ```bash
    npm install
+   pip install -r requirements.txt
    ```
+   The `pip install` step is required: the helper scripts in `core/` (tag
+   reading, audio analysis for BPM and key, etc.) need `mutagen`, `aubio`,
+   and `librosa`. Use `pip3` if `pip` isn't aliased on your system.
 
 3. **Create your `.env` file:**
    ```bash
