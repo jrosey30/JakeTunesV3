@@ -865,6 +865,73 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     type2_section = wrap_mhsd(2, pl_data)
     type3_section = wrap_mhsd(3, pl_data)
 
+    # ── Build mhsd type 4 (album list) from current library data ──
+    #
+    # Prior versions of write_itunesdb copied mhsd type 4 verbatim from the
+    # existing template, which meant the iPod's "Music > Artists/Albums"
+    # views never picked up newly-imported albums until the album list was
+    # rebuilt by some other tool. The 2026-04-26 investigation traced
+    # missing artists (Hannah Jadagu et al.) on the iPod to this exact
+    # gap — current library had ~787 albums but the on-iPod mhia list
+    # was frozen at 211.
+    #
+    # Each mhia record is 0x58 bytes of header + 0..3 child mhods. The
+    # mhia mhod types are 200=album, 201=artist, 202=albumArtist (NOT
+    # the same as track-mhod types 1/2/3/4/5 — different namespace).
+    seen_albums = set()
+    album_tuples = []
+    for t in tracks:
+        artist_str = (t.get('artist', '') or '').strip()
+        albumartist_str = (t.get('albumArtist', '') or t.get('artist', '') or '').strip()
+        album_str = (t.get('album', '') or '').strip()
+        if not album_str:
+            continue
+        key = (albumartist_str.lower(), album_str.lower())
+        if key in seen_albums:
+            continue
+        seen_albums.add(key)
+        album_tuples.append((artist_str, albumartist_str, album_str))
+
+    def build_album_mhod(mhod_type, s):
+        sb = s.encode('utf-16-le')
+        rec = bytearray(0x28)
+        struct.pack_into('<4s', rec, 0x00, b'mhod')
+        struct.pack_into('<I', rec, 0x04, 0x18)
+        struct.pack_into('<I', rec, 0x08, 0x28 + len(sb))
+        struct.pack_into('<I', rec, 0x0C, mhod_type)
+        struct.pack_into('<I', rec, 0x18, 0x00000001)
+        struct.pack_into('<I', rec, 0x1C, len(sb))
+        struct.pack_into('<I', rec, 0x20, 0x00000001)
+        return bytes(rec) + sb
+
+    def build_mhia(album_id, artist, album_artist, album):
+        children = b''
+        n = 0
+        if album:
+            children += build_album_mhod(200, album); n += 1
+        if artist:
+            children += build_album_mhod(201, artist); n += 1
+        if album_artist:
+            children += build_album_mhod(202, album_artist); n += 1
+        hdr = bytearray(0x58)
+        struct.pack_into('<4s', hdr, 0x00, b'mhia')
+        struct.pack_into('<I', hdr, 0x04, 0x58)
+        struct.pack_into('<I', hdr, 0x08, 0x58 + len(children))
+        struct.pack_into('<I', hdr, 0x0C, n)
+        struct.pack_into('<I', hdr, 0x10, album_id)
+        return bytes(hdr) + children
+
+    mhia_blocks = b''
+    for i, (a, aa, al) in enumerate(album_tuples, start=1):
+        mhia_blocks += build_mhia(0x100000 + i, a, aa, al)
+
+    mhla = bytearray(92)
+    struct.pack_into('<4s', mhla, 0, b'mhla')
+    struct.pack_into('<I', mhla, 4, 92)
+    struct.pack_into('<I', mhla, 8, len(album_tuples))
+    type4_section = wrap_mhsd(4, bytes(mhla) + mhia_blocks)
+    print(f"Built mhsd type 4 with {len(album_tuples)} albums", file=sys.stderr)
+
     # ── Assemble final database ──
     body = bytearray()
     for sec in sections:
@@ -874,6 +941,8 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
             body += type2_section
         elif sec['type'] == 3:
             body += type3_section
+        elif sec['type'] == 4:
+            body += type4_section
         else:
             body += existing[sec['start']:sec['start'] + sec['total']]
 
