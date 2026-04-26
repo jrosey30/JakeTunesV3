@@ -25,6 +25,10 @@ import {
 
 const isDev = !app.isPackaged
 
+if (isDev) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222')
+}
+
 // macOS GUI apps launched from Finder inherit only the system PATH
 // (/usr/bin:/bin:/usr/sbin:/sbin), NOT the user's shell PATH. Tools
 // installed via Homebrew (ffmpeg, ffprobe, python3 on some setups) live
@@ -4114,7 +4118,7 @@ app.whenReady().then(async () => {
     const filePath = join(getArtworkDir(), `${hash}.jpg`)
     try {
       const data = await readFile(filePath)
-      return new Response(data, {
+      return new Response(data as unknown as BodyInit, {
         headers: {
           'Content-Type': 'image/jpeg',
           'Cache-Control': 'no-store, no-cache, must-revalidate',
