@@ -1,0 +1,53 @@
+{
+  // F5 to debug. Two configurations:
+  //
+  //  1. "Debug Main Process" — runs the Electron main process under
+  //     the Node debugger. Set breakpoints in src/main/index.ts or
+  //     src/main/platform.ts and they'll hit when the relevant IPC
+  //     fires. Way better than scattering console.log() everywhere.
+  //
+  //  2. "Debug Renderer" — attaches to the renderer process via Chrome
+  //     DevTools protocol. Set breakpoints in src/renderer/**/*.tsx
+  //     and they'll hit on user interactions. Requires the main process
+  //     to already be running (use config #1 first, then this one).
+  //
+  // The "Debug All" compound at the bottom launches both at once —
+  // most common workflow.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Main Process",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron-vite",
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron-vite.cmd"
+      },
+      "runtimeArgs": ["--sourcemap"],
+      "args": ["dev"],
+      "console": "integratedTerminal",
+      "outputCapture": "std"
+    },
+    {
+      "name": "Debug Renderer",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}/src/renderer",
+      "timeout": 30000,
+      "presentation": {
+        "hidden": false,
+        "group": "",
+        "order": 2
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug All (Main + Renderer)",
+      "configurations": ["Debug Main Process", "Debug Renderer"],
+      "stopAll": true
+    }
+  ]
+}

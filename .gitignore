@@ -27,7 +27,11 @@ __pycache__/
 *.pyo
 
 # Editor / IDE
-.vscode/
+# .vscode/ is intentionally tracked — extensions.json, settings.json,
+# and launch.json carry shared workspace config that should follow
+# the repo (so future-Jake on a new laptop gets the same setup).
+# Per-user VSCode state (history, cache, etc.) doesn't live in
+# .vscode/ so this is safe to track wholesale.
 .idea/
 *.swp
 

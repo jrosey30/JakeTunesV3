@@ -1,0 +1,59 @@
+{
+  // ── Editor basics ──
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.rulers": [100],
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.eol": "\n",
+
+  // ── TypeScript ──
+  // Use the project's own TypeScript compiler (the one in node_modules)
+  // rather than whatever VSCode ships with. This guarantees the editor's
+  // type-checking matches what `npm run build` and CI use.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+
+  // ── Format on save (currently disabled) ──
+  // Turn this on the day we add Prettier:
+  //   1. npm install --save-dev prettier
+  //   2. Add a .prettierrc file
+  //   3. Set "editor.formatOnSave": true and uncomment the per-language blocks below
+  "editor.formatOnSave": false,
+  // "[typescript]":      { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  // "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  // "[javascript]":      { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  // "[json]":            { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  // "[jsonc]":           { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+
+  // ── Hide build artifacts from the file explorer ──
+  // Stops the file tree from filling up with `out/`, `release/`, and
+  // Python bytecode caches. They still exist on disk; just not visible.
+  "files.exclude": {
+    "**/out": true,
+    "**/release": true,
+    "**/.DS_Store": true,
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/*.tsbuildinfo": true
+  },
+  // ── Skip those same paths when running Cmd+Shift+F (search across files) ──
+  "search.exclude": {
+    "**/out": true,
+    "**/release": true,
+    "**/node_modules": true,
+    "**/__pycache__": true,
+    "**/*.tsbuildinfo": true,
+    "**/package-lock.json": true
+  },
+
+  // ── Git ──
+  // Auto-fetch every 3 minutes so the source control panel always
+  // shows fresh remote state without you having to hit the refresh button.
+  "git.autofetch": true,
+  "git.confirmSync": false,
+
+  // ── Python (for core/ scripts) ──
+  "python.analysis.typeCheckingMode": "basic"
+}
