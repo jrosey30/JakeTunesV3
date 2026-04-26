@@ -2230,7 +2230,14 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
 // scan UI (renderer drives the loop) and for any future on-demand
 // re-analysis. Does NOT enqueue — runs the script inline and persists.
 // For new imports, prefer the enqueue path which de-dupes and serializes.
-ipcMain.handle('analyze-track', async (_e, trackId: number, absPath: string, fingerprint: string) => {
+//
+// Takes the track's colon-format path (the on-disk format used in
+// library.json); main resolves to an absolute path because renderer
+// doesn't know LOCAL_MOUNT.
+ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, fingerprint: string) => {
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  const absPath = join(LOCAL_MOUNT, colonPath.replace(/:/g, pathSep))
   const result = await runAudioAnalysisScript(absPath)
   const fields: Record<string, string> = {
     audioAnalysisAt: String(Date.now()),

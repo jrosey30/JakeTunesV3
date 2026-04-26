@@ -122,6 +122,13 @@ export default function MusicManView() {
   const [recs, setRecs] = useState<Recommendation[]>([])
   const [recsLoading, setRecsLoading] = useState(false)
   const [recsLoaded, setRecsLoaded] = useState(false)
+  // Audio analysis backfill (4.0 §2.4b). Renderer drives the loop; per-track
+  // results persist via main's analyze-track IPC. Cancel uses a ref so the
+  // running loop can check it between tracks without state-closure issues.
+  const [analysisRunning, setAnalysisRunning] = useState(false)
+  const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number; trackTitle: string } | null>(null)
+  const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
+  const analysisCancelRef = useRef(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -318,6 +325,79 @@ export default function MusicManView() {
     setMetaScanning(false)
     setMetaScanned(true)
   }, [metaScanning, libState.tracks])
+
+  // Audio analysis backfill (4.0 §2.4b). Resume-on-restart is automatic:
+  // the filter excludes tracks that already have audioAnalysisAt, so a
+  // cancel + restart picks up where the previous run left off. Each
+  // analyze-track IPC call persists immediately, so a crash mid-loop
+  // doesn't lose work.
+  const runAudioAnalysisBackfill = useCallback(async () => {
+    if (analysisRunning) return
+    const tracksToAnalyze = libState.tracks.filter(t => !t.audioAnalysisAt && t.path)
+    if (tracksToAnalyze.length === 0) {
+      setAnalysisStatus('All tracks already analyzed.')
+      setTimeout(() => setAnalysisStatus(null), 4000)
+      return
+    }
+    analysisCancelRef.current = false
+    setAnalysisRunning(true)
+    setAnalysisStatus(null)
+    setAnalysisProgress({ current: 0, total: tracksToAnalyze.length, trackTitle: '' })
+
+    let okCount = 0
+    let failCount = 0
+    for (let i = 0; i < tracksToAnalyze.length; i++) {
+      if (analysisCancelRef.current) break
+      const t = tracksToAnalyze[i]
+      setAnalysisProgress({ current: i + 1, total: tracksToAnalyze.length, trackTitle: t.title || t.path })
+      const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+      try {
+        const result = await window.electronAPI.analyzeTrack(t.id, t.path, fp)
+        // Update in-memory state so a re-run within the same session
+        // doesn't re-analyze and the UI counter stays accurate.
+        const updates: Array<{ id: number; field: string; value: string }> = [
+          { id: t.id, field: 'audioAnalysisAt', value: String(Date.now()) },
+        ]
+        if (result.ok) {
+          if (typeof result.bpm === 'number' && result.bpm > 0) updates.push({ id: t.id, field: 'bpm', value: String(result.bpm) })
+          if (result.keyRoot) updates.push({ id: t.id, field: 'keyRoot', value: result.keyRoot })
+          if (result.keyMode) updates.push({ id: t.id, field: 'keyMode', value: result.keyMode })
+          if (result.camelotKey) updates.push({ id: t.id, field: 'camelotKey', value: result.camelotKey })
+          okCount++
+        } else {
+          failCount++
+        }
+        dispatch({ type: 'UPDATE_TRACKS', updates })
+      } catch (err) {
+        failCount++
+        console.warn('[audio-analysis backfill] track', t.id, 'failed:', err)
+      }
+    }
+
+    const cancelled = analysisCancelRef.current
+    setAnalysisRunning(false)
+    setAnalysisProgress(null)
+    setAnalysisStatus(`Done. ${okCount} succeeded, ${failCount} failed${cancelled ? ' (cancelled)' : ''}.`)
+    setTimeout(() => setAnalysisStatus(null), 8000)
+  }, [analysisRunning, libState.tracks, dispatch])
+
+  const cancelAudioAnalysisBackfill = useCallback(() => {
+    analysisCancelRef.current = true
+  }, [])
+
+  // Tracks-needing-analysis count for the Organize Library section header.
+  // Recomputes when libState.tracks changes (i.e., per-track during a
+  // running backfill since dispatch updates them).
+  const audioAnalysisCounts = useMemo(() => {
+    let analyzed = 0
+    let total = 0
+    for (const t of libState.tracks) {
+      if (!t.path) continue
+      total++
+      if (t.audioAnalysisAt) analyzed++
+    }
+    return { analyzed, total, remaining: total - analyzed }
+  }, [libState.tracks])
 
   const applyFix = useCallback(async (issueIdx: number) => {
     const issue = metaIssues[issueIdx]
@@ -1048,6 +1128,55 @@ export default function MusicManView() {
                 <div className="musicman-org-stat-num">{libraryAnalysis.totalGenres}</div>
                 <div className="musicman-org-stat-label">Genres</div>
               </div>
+            </div>
+
+            {/* Audio Analysis (4.0 §2.4b) */}
+            <div className="musicman-org-section">
+              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('audio-analysis')}>
+                <span>
+                  Audio Analysis (BPM + Key) — {audioAnalysisCounts.analyzed.toLocaleString()} / {audioAnalysisCounts.total.toLocaleString()} analyzed
+                </span>
+                <span className="musicman-org-toggle">{orgExpanded.has('audio-analysis') ? '−' : '+'}</span>
+              </div>
+              {orgExpanded.has('audio-analysis') && (
+                <div style={{ padding: '12px 16px' }}>
+                  <p className="musicman-org-hint" style={{ marginTop: 0 }}>
+                    Detect each track's BPM, musical key, and Camelot wheel position locally via aubio + librosa.
+                    Background-only data — feeds Music Man's DJ recommendations and (eventually) harmonically-compatible smart playlists.
+                    Each track takes a few seconds. Cancel anytime; resume-on-restart picks up where you left off.
+                  </p>
+
+                  {analysisRunning && analysisProgress ? (
+                    <>
+                      <div style={{ marginTop: 12, fontSize: 13, color: '#a89878' }}>
+                        Analyzing {analysisProgress.current} of {analysisProgress.total}: <strong>{analysisProgress.trackTitle || '…'}</strong>
+                      </div>
+                      <div className="musicman-org-bar-track" style={{ marginTop: 8 }}>
+                        <div className="musicman-org-bar-fill" style={{ width: `${(analysisProgress.current / Math.max(analysisProgress.total, 1)) * 100}%` }} />
+                      </div>
+                      <button className="musicman-org-action-btn" onClick={cancelAudioAnalysisBackfill} style={{ marginTop: 12 }}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="musicman-org-action-btn"
+                        onClick={runAudioAnalysisBackfill}
+                        disabled={audioAnalysisCounts.remaining === 0}
+                        style={{ marginTop: 12 }}
+                      >
+                        {audioAnalysisCounts.remaining === 0
+                          ? 'All tracks analyzed'
+                          : `Analyze ${audioAnalysisCounts.remaining.toLocaleString()} remaining track${audioAnalysisCounts.remaining === 1 ? '' : 's'}`}
+                      </button>
+                      {analysisStatus && (
+                        <div style={{ marginTop: 10, fontSize: 13, color: '#a89878' }}>{analysisStatus}</div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Decades */}
