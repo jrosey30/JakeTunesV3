@@ -1,0 +1,70 @@
+# Sanity check that runs on every push and PR.
+#
+# Goal: catch the "I shipped before verifying" failure mode the
+# postmortems keep flagging (docs/postmortems/2026-04-25-verify-repair-cascade.md
+# Root Cause #4). If any of these steps fail, the commit gets a red ❌
+# on github.com — visible BEFORE we waste time on a DMG rebuild + reinstall.
+#
+# What we deliberately don't do here:
+#   - Full electron-builder DMG build (slow; only matters at release time)
+#   - Branch protection / required-PR enforcement (solo dev — skip the
+#     bureaucracy until there's a second contributor)
+#   - Real unit tests (separate project — see CLAUDE.md rule F, the
+#     normalize() Pt./Part regression test is the right starting point
+#     when test infra lands)
+
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    # macOS runner because Electron has native modules (better-sqlite3,
+    # node-mac-permissions, etc.) that don't cross-compile cleanly from
+    # Linux. Costs more Actions minutes but matches the dev environment
+    # exactly — what passes here is what runs on Jake's laptop.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        # `npm ci` is strict — uses package-lock exactly. If lockfile
+        # drifts from package.json this fails loudly, which is what we
+        # want (silent drift is how "works on my machine" bugs ship).
+        run: npm ci
+
+      - name: TypeScript type-check
+        # `tsc -b` walks the project references in tsconfig.json
+        # (tsconfig.web.json + tsconfig.node.json) and reports any type
+        # errors across renderer + main. --noEmit because we don't want
+        # the build artifact, just the verdict.
+        run: npx tsc -b --noEmit
+
+      - name: Build (electron-vite)
+        # Catches: missing imports, broken JSX, undefined exports, vite
+        # config issues. Doesn't run electron-builder (no DMG) — just
+        # confirms the source compiles into the out/ bundle.
+        run: npm run build
+
+      - name: Python syntax check
+        # py_compile catches typos in the maintenance scripts. They run
+        # standalone (CLI invocation) so a syntax error wouldn't
+        # surface until the user tried to invoke the script.
+        run: python -m py_compile core/*.py
