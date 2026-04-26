@@ -477,7 +477,13 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      webSecurity: false
+      webSecurity: false,
+      // Don't throttle the renderer when JakeTunes loses focus or the
+      // window is hidden. Without this, Chromium's tab-throttling caps
+      // JS execution at ~once/second when backgrounded, which crawls
+      // the §2.4 audio-analysis backfill loop and any other long-running
+      // sequential renderer work to a halt.
+      backgroundThrottling: false,
     }
   })
 
