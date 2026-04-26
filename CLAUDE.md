@@ -72,6 +72,59 @@ is a spec.
 
 ---
 
+## Code Hygiene — Twins, Destructive Ops, Sweep Before Ship
+
+These rules exist because they have already been violated in costly ways.
+See `docs/postmortems/2026-04-25-verify-repair-cascade.md` for what
+happens when they aren't followed.
+
+**Twin/sibling discovery is mandatory before declaring a fix done.**
+When fixing any function named `normalize`, `compare`, `match`,
+`canonicalize`, `dedupe`, `serialize`, `parse` — or any function whose
+behavior is shared across language boundaries (Python ↔ TypeScript) —
+grep the whole tree for implementations of the same name *before*
+running any build:
+
+```bash
+grep -rn "function <name>\|const <name>\|^def <name>" src/ core/
+```
+
+If a twin exists, fix it in the same commit. Shipping one side of a
+twin pair is the most expensive failure mode this codebase has seen.
+
+**Twin functions must declare each other in code.** Any function with
+a twin in another language carries a `⚠️ TWIN: <path>` comment on both
+sides, naming the file and reason. The first thing the next editor
+sees is the link to the other implementation.
+
+**Destructive operations may not gate on text comparison.** Deletion,
+overwriting, sync abort, or any other irreversible/blocking operation
+must gate on **identity** — binary fingerprint (`audioFingerprint`),
+content hash, stable ID, exact path. Not on whether two strings
+happen to normalize equal. If text comparison is the only signal
+available, the operation requires explicit per-item user confirmation.
+The verify-and-repair feature violated this rule and deleted user
+tracks because "Pt." didn't equal "Part."
+
+**Removing a feature requires a problem-space audit.** Before deleting
+an IPC handler, menu entry, or feature module, list the sub-problems
+that feature was solving and confirm each one is either still covered,
+explicitly out of scope (with user sign-off), or replaced in the same
+change. Don't orphan a sub-problem the user will hit five minutes
+later.
+
+**Sweep before ship.** Before `npx electron-builder`:
+- Grep for related code paths (named twins, shared regex constants,
+  shared comparators).
+- Re-read the edited file end-to-end.
+- Check that any new field on a `Track`, IPC type, or reducer action
+  is consumed everywhere it needs to be.
+
+The cycle is **edit → grep → reread → build → install**. Skipping
+the middle two makes the user the test suite.
+
+---
+
 ## Do Not Touch (without explicit permission)
 
 These are working correctly. Do not change them unless a brief explicitly
