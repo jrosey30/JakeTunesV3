@@ -84,6 +84,124 @@ if (!process.env.ANTHROPIC_API_KEY || !process.env.DISCOGS_API_TOKEN || !process
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' })
 
+// ── Claude API rate-limit, cost ceiling, and graceful-fallback layer (4.0 §2.3) ──
+//
+// All anthropic.messages.create calls go through claudeCall(). It:
+//   1. Bumps in-memory session counter and persisted day counter.
+//   2. Resets the day counter when the local date rolls over.
+//   3. Aborts (no API call) when callsToday >= dailyCeiling.
+//   4. On API success, caches the response keyed by callKey for fallback use.
+//   5. On API failure OR ceiling-hit, returns the cached fallback if available;
+//      else throws so the caller can construct its own error response.
+//
+// User-tunable: edit `claude-stats.json` in userData and restart. Default
+// ceiling of 200/day = roughly 10x typical session usage based on the §2.3
+// audit (10–20 calls/active session).
+//
+// Fallback responses are stored as the raw MessageReply object — callers parse
+// them identically to a fresh response, so swapping a stale cache for a new
+// reply is transparent at the call site.
+
+type ClaudeMessageReply = Awaited<ReturnType<typeof anthropic.messages.create>>
+
+interface ClaudeStats {
+  dailyCeiling: number
+  lastResetDate: string  // YYYY-MM-DD local
+  callsToday: number
+  lastResponses: Record<string, { reply: ClaudeMessageReply; ts: number }>
+}
+
+const CLAUDE_STATS_DEFAULT: ClaudeStats = {
+  dailyCeiling: 200,
+  lastResetDate: '',
+  callsToday: 0,
+  lastResponses: {},
+}
+
+function claudeStatsPath(): string {
+  return join(app.getPath('userData'), 'claude-stats.json')
+}
+
+function todayLocal(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+let claudeStats: ClaudeStats = { ...CLAUDE_STATS_DEFAULT }
+let claudeStatsLoaded = false
+let sessionCallCount = 0
+
+async function loadClaudeStats(): Promise<void> {
+  if (claudeStatsLoaded) return
+  try {
+    const raw = await readFile(claudeStatsPath(), 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<ClaudeStats>
+    claudeStats = {
+      dailyCeiling: typeof parsed.dailyCeiling === 'number' ? parsed.dailyCeiling : CLAUDE_STATS_DEFAULT.dailyCeiling,
+      lastResetDate: typeof parsed.lastResetDate === 'string' ? parsed.lastResetDate : '',
+      callsToday: typeof parsed.callsToday === 'number' ? parsed.callsToday : 0,
+      lastResponses: (parsed.lastResponses && typeof parsed.lastResponses === 'object') ? parsed.lastResponses : {},
+    }
+  } catch {
+    claudeStats = { ...CLAUDE_STATS_DEFAULT }
+  }
+  claudeStatsLoaded = true
+}
+
+async function saveClaudeStats(): Promise<void> {
+  try {
+    await mkdir(app.getPath('userData'), { recursive: true })
+    await writeFile(claudeStatsPath(), JSON.stringify(claudeStats, null, 2), 'utf-8')
+  } catch (err) {
+    console.warn('[claude] failed to persist stats:', err)
+  }
+}
+
+function rolloverIfNewDay(): void {
+  const today = todayLocal()
+  if (claudeStats.lastResetDate !== today) {
+    claudeStats.lastResetDate = today
+    claudeStats.callsToday = 0
+  }
+}
+
+async function claudeCall(
+  callKey: string,
+  params: Parameters<typeof anthropic.messages.create>[0]
+): Promise<ClaudeMessageReply> {
+  await loadClaudeStats()
+  rolloverIfNewDay()
+
+  if (claudeStats.callsToday >= claudeStats.dailyCeiling) {
+    const cached = claudeStats.lastResponses[callKey]?.reply
+    console.warn(`[claude] daily ceiling ${claudeStats.dailyCeiling} reached for "${callKey}" — ${cached ? 'returning cached fallback' : 'no cache available'}`)
+    if (cached) return cached
+    throw new Error(`Claude daily ceiling reached (${claudeStats.dailyCeiling}). No cached fallback for "${callKey}".`)
+  }
+
+  sessionCallCount++
+  claudeStats.callsToday++
+  console.log(`[claude] ${callKey} — session=${sessionCallCount} today=${claudeStats.callsToday}/${claudeStats.dailyCeiling}`)
+
+  try {
+    const reply = await anthropic.messages.create(params)
+    claudeStats.lastResponses[callKey] = { reply: reply as ClaudeMessageReply, ts: Date.now() }
+    void saveClaudeStats()
+    return reply as ClaudeMessageReply
+  } catch (err) {
+    void saveClaudeStats()
+    const cached = claudeStats.lastResponses[callKey]?.reply
+    if (cached) {
+      console.warn(`[claude] "${callKey}" API error, returning cached fallback:`, err instanceof Error ? err.message : err)
+      return cached
+    }
+    throw err
+  }
+}
+
 let mainWindow: BrowserWindow | null = null
 
 function sendMenuAction(action: string) {
@@ -2075,7 +2193,7 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
   if (nextArtistFacts && nextTrack) userMessage += `\nBackground on ${nextTrack.artist}: ${nextArtistFacts}`
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-dj', {
       model: 'claude-sonnet-4-6',
       max_tokens: 200,
       system: djPrompt,
@@ -2110,7 +2228,7 @@ Rules:
   const systemPrompt = buildMusicManPrompt(djSetInstructions)
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-dj-set', {
       model: 'claude-sonnet-4-6',
       max_tokens: 512,
       system: systemPrompt,
@@ -2384,7 +2502,7 @@ async function generateObservation() {
 
   const tasteCtx = buildTasteProfile()
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('listener-obs', {
       model: 'claude-sonnet-4-6',
       max_tokens: 200,
       system: `You are analyzing a music listener's habits. Based on the data below, write 1-2 SHORT, specific observations about their taste that a DJ would find useful. Be concrete — don't say "they like rock", say "they keep coming back to post-punk revival bands" or "they listen to Radiohead more than anything but skip the later albums." If you've already made similar observations, note what's CHANGED or NEW. Return ONLY the observations, no preamble.`,
@@ -2861,7 +2979,7 @@ Investigate. Use your tools as needed. Then return your JSON report.`
   const MAX_TOOL_ROUNDS = 8
 
   try {
-    response = await anthropic.messages.create({
+    response = await claudeCall('cynthia-investigate-init', {
       model: 'claude-sonnet-4-6',
       max_tokens: 8192,
       system: systemPrompt,
@@ -2881,7 +2999,7 @@ Investigate. Use your tools as needed. Then return your JSON report.`
       }
       if (toolResults.length === 0) break
       messages.push({ role: 'user', content: toolResults })
-      response = await anthropic.messages.create({
+      response = await claudeCall('cynthia-investigate-tool', {
         model: 'claude-sonnet-4-6',
         max_tokens: 8192,
         system: systemPrompt,
@@ -3020,7 +3138,7 @@ ${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)
   let investigation: Awaited<ReturnType<typeof runCynthiaInvestigation>> | null = null
 
   try {
-    let response = await anthropic.messages.create({
+    let response = await claudeCall('cynthia-chat-init', {
       model: 'claude-haiku-4-5',
       max_tokens: 512,
       system: systemPrompt,
@@ -3047,7 +3165,7 @@ ${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)
       }
       if (toolResults.length === 0) break
       apiMessages.push({ role: 'user', content: toolResults })
-      response = await anthropic.messages.create({
+      response = await claudeCall('cynthia-chat-tool', {
         model: 'claude-haiku-4-5',
         max_tokens: 512,
         system: systemPrompt,
@@ -3091,16 +3209,39 @@ ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale
 
 /** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
  *  specific instructions, library context, taste profile, and recent
- *  Music Man utterances. Every Music Man endpoint should use this. */
-function buildMusicManPrompt(modeSpecific = ''): string {
-  const parts = [MUSIC_MAN_CORE]
-  if (modeSpecific) parts.push('\n' + modeSpecific)
-  if (libraryContext) parts.push(`\nThe user's music library contains:\n${libraryContext}`)
+ *  Music Man utterances. Every Music Man endpoint should use this.
+ *
+ *  Returns structured TextBlockParam[] (rather than a single string) so
+ *  the stable prefix — MUSIC_MAN_CORE + library context — can be marked
+ *  for prompt caching (4.0 §2.3). The library context is identical for
+ *  every Music Man call within a session, so caching it saves ~all of
+ *  the system-prompt tokens on repeat calls. The dynamic suffix (mode
+ *  instructions, taste profile, recent utterances) changes per call and
+ *  is left uncached.
+ *
+ *  If the cacheable prefix is below Anthropic's minimum cache size (1024
+ *  tokens for Sonnet), the cache_control marker is silently ignored by
+ *  the API — no benefit, but no error either.
+ */
+function buildMusicManPrompt(modeSpecific = ''): Anthropic.Messages.TextBlockParam[] {
+  const stableParts = [MUSIC_MAN_CORE]
+  if (libraryContext) stableParts.push(`The user's music library contains:\n${libraryContext}`)
+  const stableText = stableParts.join('\n\n')
+
+  const dynamicParts: string[] = []
+  if (modeSpecific) dynamicParts.push(modeSpecific)
   const tp = buildTasteProfile()
-  if (tp) parts.push(`\nWhat you know about this listener's history:\n${tp}`)
+  if (tp) dynamicParts.push(`What you know about this listener's history:\n${tp}`)
   const recents = recentUtterancesBlock()
-  if (recents) parts.push('\n' + recents)
-  return parts.join('\n')
+  if (recents) dynamicParts.push(recents)
+
+  const blocks: Anthropic.Messages.TextBlockParam[] = [
+    { type: 'text', text: stableText, cache_control: { type: 'ephemeral' } },
+  ]
+  if (dynamicParts.length > 0) {
+    blocks.push({ type: 'text', text: dynamicParts.join('\n\n') })
+  }
+  return blocks
 }
 
 // Music Man chat
@@ -3119,7 +3260,7 @@ ipcMain.handle('musicman-chat', async (_event, messages: { role: string; content
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-chat', {
       model: 'claude-sonnet-4-6',
       max_tokens: 512,
       system: systemPrompt,
@@ -3153,7 +3294,7 @@ Rules:
   const systemPrompt = buildMusicManPrompt(playlistInstructions)
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-playlist', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
@@ -3200,7 +3341,7 @@ Rules:
   const systemPrompt = buildMusicManPrompt(picksInstructions)
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-picks', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
@@ -3254,7 +3395,7 @@ Their top genres: ${topGenres}`
   const systemPrompt = buildMusicManPrompt(recsInstructions)
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-recs', {
       model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       system: systemPrompt,
@@ -3268,24 +3409,62 @@ Their top genres: ${topGenres}`
       // Deterministic post-filter: the prompt asks the model to skip
       // albums the user already has, but it regularly fails at this
       // and then backpedals in the commentary ("You already have X —
-      // scratch that, moving on"). Drop those. Rebuild the owned-set
-      // with normalized keys so "The Beatles — Abbey Road" matches
-      // "the beatles - abbey road", case/punct variations and all.
-      const norm = (s: string) => (s || '')
-        .toLowerCase()
-        .replace(/\bthe\b/g, '')
-        .replace(/[^\w]/g, '')
-        .trim()
+      // scratch that, moving on"). Drop those.
+      //
+      // Identity-based dedup is the long-term goal (4.0 §2.2) but
+      // requires MBID storage on Track which doesn't exist yet —
+      // tracked as a follow-up. For now this is a smarter text matcher
+      // that handles the failure modes the previous aggressive-strip
+      // version missed:
+      //   - parenthetical suffixes: "(Deluxe)", "[Remastered]", "(Live)"
+      //   - abbreviation expansion: "Pt." ↔ "Part", "Vol." ↔ "Volume"
+      //   - ampersand/and: "Simon & Garfunkel" ↔ "Simon and Garfunkel"
+      //   - diacritics: "Beyoncé" ↔ "Beyonce"
+      //   - articles: "The Beatles" ↔ "Beatles"
+      //   - case + whitespace
+      // It is NOT used for any destructive operation (deletion, sync
+      // abort, overwriting). Filtering recommendations is non-destructive
+      // — false positives just mean a rec is hidden, never that data
+      // is lost. See CLAUDE.md "destructive operations may not gate on
+      // text comparison" for context.
+      //
+      // ⚠️ Intentionally NOT shared with the file-identity normalize at
+      // ~line 968 (twin-paired with core/repair_mismatches.py). That one
+      // is for sync-time identity matching and any change must be
+      // mirrored in Python. This one is local, non-destructive, and free
+      // to evolve. Do not consolidate.
+      const normForOwnership = (s: string): string => {
+        if (!s) return ''
+        return s
+          .normalize('NFKD').replace(/[̀-ͯ]/g, '')      // strip diacritics
+          .toLowerCase()
+          .replace(/\s*[\(\[][^\)\]]*[\)\]]\s*/g, ' ')            // drop ( ... ) and [ ... ]
+          .replace(/\bpts?\b\.?/g, m => m.startsWith('pts') ? 'parts' : 'part')
+          .replace(/\bvols?\b\.?/g, m => m.startsWith('vols') ? 'volumes' : 'volume')
+          .replace(/\bno\.?\s*(\d)/g, 'number $1')                // "No. 1" → "number 1"
+          .replace(/&/g, ' and ')
+          .replace(/\bthe\b/g, ' ')
+          .replace(/[^a-z0-9\s]/g, ' ')                           // strip remaining punct (no mid-word merging)
+          .split(/\s+/).filter(Boolean).join(' ')
+      }
       const ownedArtistAlbum = new Set<string>()
       const ownedArtist = new Set<string>()
       for (const t of tracks) {
-        if (t.artist) ownedArtist.add(norm(t.artist))
-        if (t.artist && t.album) ownedArtistAlbum.add(`${norm(t.artist)}|${norm(t.album)}`)
+        if (t.artist) ownedArtist.add(normForOwnership(t.artist))
+        if (t.artist && t.album) ownedArtistAlbum.add(`${normForOwnership(t.artist)}|${normForOwnership(t.album)}`)
       }
+      let droppedAsOwned = 0
       const cleaned = parsed.filter(rec => {
-        const key = `${norm(rec.artist)}|${norm(rec.title)}`
-        return !ownedArtistAlbum.has(key)
+        const key = `${normForOwnership(rec.artist)}|${normForOwnership(rec.title)}`
+        if (ownedArtistAlbum.has(key)) {
+          droppedAsOwned++
+          return false
+        }
+        return true
       })
+      if (droppedAsOwned > 0) {
+        console.log(`[recs] filtered ${droppedAsOwned} recommendation(s) the user already owns`)
+      }
       // Strip any leftover self-correction phrases from commentary —
       // belt-and-suspenders in case the model still slips it in.
       for (const rec of cleaned) {
@@ -3354,7 +3533,7 @@ Rules:
   const systemPrompt = buildMusicManPrompt(scanInstructions)
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await claudeCall('musicman-scan-metadata', {
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
       system: systemPrompt,
@@ -3540,6 +3719,22 @@ ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
   await mkdir(join(app.getPath('userData')), { recursive: true })
   await writeFile(getPlaylistsPath(), JSON.stringify(playlists, null, 2), 'utf-8')
   return { ok: true }
+})
+
+// Claude API stats — exposed for dev/diagnostic surfaces. Renderer can poll
+// or display this in a hidden corner during development. lastResponses is
+// excluded from the wire format (large payloads, not useful in UI).
+ipcMain.handle('get-claude-stats', async () => {
+  await loadClaudeStats()
+  rolloverIfNewDay()
+  return {
+    ok: true,
+    sessionCallCount,
+    callsToday: claudeStats.callsToday,
+    dailyCeiling: claudeStats.dailyCeiling,
+    lastResetDate: claudeStats.lastResetDate,
+    cachedKeys: Object.keys(claudeStats.lastResponses),
+  }
 })
 
 // Deezer album art search (shared by artwork fetcher and recommendations)

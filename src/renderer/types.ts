@@ -24,6 +24,15 @@ export interface Track {
   // any known mount AND no other file with the same fingerprint can be
   // found. Recoverable by re-import; the entry is never deleted.
   audioMissing?: boolean
+  // Background-only signals (4.0). Not surfaced in any UI. Persisted via
+  // metadata-overrides.json so they survive across sessions. Consumed by
+  // recommendation flows in main/index.ts.
+  // Epoch ms of the most recent natural completion (onend). Skip-ended
+  // plays do not update this.
+  lastPlayedAt?: number
+  // Count of times the user skipped this track within the first 30s.
+  // Distinct from listenerProfile.artistSkips (artist-aggregate, 80% gate).
+  skipCount?: number
 }
 
 export interface Playlist {
@@ -172,6 +181,7 @@ declare global {
       saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string) => Promise<{ ok: boolean }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
+      getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       removeArtwork: (artist: string, album: string) => Promise<{ ok: boolean; key?: string; error?: string }>

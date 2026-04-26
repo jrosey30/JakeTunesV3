@@ -98,6 +98,11 @@ export function useAudio() {
           updates: [{ id: track.id, field: 'playCount', value: String(newCount) }],
         })
         window.electronAPI.saveMetadataOverride(track.id, 'playCount', String(newCount))
+        // 4.0 background signal: epoch ms of natural completion. Skip-ended
+        // plays do not touch this. Fingerprint-bound so the override survives
+        // restart (App.tsx applies on load with numeric coercion).
+        const playedFp = `${(track.title || '').toLowerCase().trim()}|${(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
+        window.electronAPI.saveMetadataOverride(track.id, 'lastPlayedAt', String(Date.now()), playedFp)
         // Record play for Music Man taste learning
         window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
 
@@ -189,8 +194,18 @@ export function useAudio() {
     const s = stateRef.current
     if (s.queue.length === 0) return
     // Record skip if current song was playing and less than 80% complete
+    // (artist-aggregate stats — feeds listener-profile.json for Music Man taste).
     if (s.currentTrack && s.duration > 0 && (s.position / s.duration) < 0.8) {
       window.electronAPI.recordSkip?.({ title: s.currentTrack.title, artist: s.currentTrack.artist })
+    }
+    // 4.0 background signal: per-track skipCount on sub-30s bail. Stronger
+    // negative signal than the 80% gate; feeds recommendation filtering.
+    if (s.currentTrack && s.position < 30) {
+      const ct = s.currentTrack
+      const latest = tracksRef.current.find(tr => tr.id === ct.id)
+      const newCount = (Number(latest?.skipCount ?? ct.skipCount) || 0) + 1
+      const skipFp = `${(ct.title || '').toLowerCase().trim()}|${(ct.artist || '').toLowerCase().trim()}|${ct.duration || 0}`
+      window.electronAPI.saveMetadataOverride(ct.id, 'skipCount', String(newCount), skipFp)
     }
     let nextIdx: number
     if (s.shuffle) {

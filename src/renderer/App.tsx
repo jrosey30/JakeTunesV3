@@ -50,6 +50,16 @@ function AppInner() {
       //
       // v1 entries (no fingerprint, fields at top level) have no way to
       // be validated, so we ignore them rather than risk mis-applying.
+      // Numeric override fields are persisted as strings (saveMetadataOverride
+      // signature is value: string), but the Track interface declares them as
+      // numbers. Coerce on apply so consumers don't have to wrap every read in
+      // Number(). Existing JS coercion masked this for playCount/rating;
+      // 4.0's lastPlayedAt/skipCount need correct types for arithmetic.
+      const NUMERIC_OVERRIDE_FIELDS = new Set([
+        'playCount', 'rating', 'duration', 'fileSize',
+        'year', 'trackNumber', 'trackCount', 'discNumber', 'discCount',
+        'lastPlayedAt', 'skipCount',
+      ])
       let appliedCount = 0, skippedStale = 0, skippedLegacy = 0
       if (overridesResult.ok && overridesResult.overrides) {
         const ov = overridesResult.overrides as Record<string, unknown>
@@ -66,7 +76,10 @@ function AppInner() {
             continue
           }
           for (const [field, value] of Object.entries(entry.fields)) {
-            (t as Record<string, unknown>)[field] = value
+            const coerced = NUMERIC_OVERRIDE_FIELDS.has(field) && typeof value === 'string'
+              ? (Number(value) || 0)
+              : value
+            ;(t as Record<string, unknown>)[field] = coerced
           }
           appliedCount++
         }
