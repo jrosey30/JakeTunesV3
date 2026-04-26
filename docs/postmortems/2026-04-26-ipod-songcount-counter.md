@@ -1,4 +1,40 @@
-# 2026-04-26 — iPod display lies in two ways; database is fine
+# 2026-04-26 — iPod display lies in two ways; database is fine — UPDATE: real bug found
+
+**UPDATE 2026-04-26 (later same day):** the conclusion below — that this
+was purely a firmware display quirk — was wrong. After the user
+confirmed the iPod's "About → Songs" page itself read 4396 (not just
+the playback "1 of N" counter), and that the empty Recently Added
+persisted across hard restart, deeper investigation found a real bug:
+**JakeTunes was writing disc number to mhit offset 0x64, which the
+iPod firmware treats as a mediaKind-style classifier**. Tracks with
+discNumber=2 (i.e. disc-2 of multi-disc albums) were getting tagged
+as audiobook-or-similar and silently filtered out of "Music > Songs"
+and the Recently Added playlist on the device.
+
+Fix: `core/db_reader.py` `build_mhit_record` now writes `0x64 = 1`
+unconditionally (the firmware's "music" sentinel). The 150 missing
+tracks in the user's library were precisely the disc-2 tracks
+(verified: bimodal scan at 0x64 found 150 tracks with value 2;
+`4546 - 150 = 4396` matched exactly).
+
+The earlier symptoms #1 (counter quirk on short/long tracks) and #2
+(stale runtime cache for newly-added tracks) were red herrings during
+this investigation — the actual cause was the 0x64 mediaKind misuse,
+which wasn't found until the bimodal scan was re-run looking for
+~150-track minority clusters specifically.
+
+Symptom #3 (Recently Added empty) was also a casualty of the same
+bug: `Recently Added` was populated in the iTunesDB on disk with
+all 100 entries including today's adds, but the iPod's evaluation
+of the playlist contents apparently honors the same mediaKind
+filter, so disc-2 tracks didn't surface.
+
+The text below is the ORIGINAL writeup, kept for historical context
+showing what was ruled out and how. Conclusions there are wrong;
+the fix is in the commit referencing this postmortem.
+
+---
+
 
 **Severity:** P3 (cosmetic firmware behavior, not a JakeTunes bug)
 **Time spent diagnosing:** most of a day before this writeup

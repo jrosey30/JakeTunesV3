@@ -68,16 +68,23 @@ def parse_tracks(db_path=IPOD_PATH):
             if 0 < raw_tc <= 9999:
                 track_count = raw_tc
 
-        # Disc number and count (offsets 0x64, 0x68)
+        # Disc number and count.
+        #
+        # ⚠️ 2026-04-26 investigation (see docs/postmortems/) found that
+        # 0x64 is NOT disc_num — the iPod firmware treats it as a
+        # mediaKind classifier where value 2/3/4 silently drops the
+        # track from "Music > Songs". Build_mhit_record now writes
+        # 0x64 = 1 unconditionally; reading anything from 0x64 here
+        # would just echo back 1 for every track and mislead the UI.
+        #
+        # The correct offset for iPod-side disc info is unknown. Until
+        # we identify it, return 0 so the UI shows "no disc info" rather
+        # than fake "Disc 1 of N" data. Disc info on freshly imported
+        # tracks still flows from music-metadata file tags into
+        # library.json on import; what we lose is round-tripping disc
+        # info through the iPod's iTunesDB.
         disc_num = 0
         disc_count = 0
-        if header_len >= 108:
-            raw_dn = struct.unpack_from('<I', data, pos + 0x64)[0]
-            raw_dc = struct.unpack_from('<I', data, pos + 0x68)[0]
-            if 0 < raw_dn <= 99:
-                disc_num = raw_dn
-            if 0 < raw_dc <= 99:
-                disc_count = raw_dc
 
         # iPod internal unique track ID (offset 0x10) — used to resolve playlist references
         dbid = struct.unpack_from('<I', data, pos + 0x10)[0] if header_len >= 20 else 0
@@ -416,15 +423,33 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     struct.pack_into('<I', hdr, 0x34, y if 1900 <= y <= 2030 else 0)
     # Play count
     struct.pack_into('<I', hdr, 0x50, _safe_int(track.get('playCount', 0)))
-    # Disc number / count — mirror parse_tracks offsets (0x64 / 0x68).
-    # Only overwrite when a value is provided, so tracks without disc
-    # metadata keep whatever the template had.
-    dn = _safe_int(track.get('discNumber', 0))
-    dc = _safe_int(track.get('discCount', 0))
-    if 0 < dn <= 99:
-        struct.pack_into('<I', hdr, 0x64, dn)
-    if 0 < dc <= 99:
-        struct.pack_into('<I', hdr, 0x68, dc)
+    # Force 0x64 = 1 (the iPod firmware's "music" mediaKind value).
+    #
+    # ⚠️ Previous versions of this code wrote `discNumber` to 0x64 and
+    # `discCount` to 0x68, treating them as disc fields. The 2026-04-26
+    # investigation (see docs/postmortems/2026-04-26-ipod-songcount-counter.md)
+    # proved this is the WRONG offset: the iPod Classic firmware reads
+    # 0x64 as a mediaKind-like classifier and silently drops tracks
+    # whose 0x64 != 1 from "Music > Songs". For a single-disc library
+    # the bug is invisible (every track gets discNumber=1, which by
+    # coincidence equals the "music" sentinel). For multi-disc albums
+    # the disc-2/3/4 tracks get classified as audiobook/podcast/etc.
+    # and silently filtered. The user's library lost 150 of 4546 tracks
+    # through this path.
+    #
+    # Setting 0x64 = 1 unconditionally restores all tracks to "music"
+    # and is the immediate fix. Disc number/total info is preserved
+    # in JakeTunes' library.json (and the renderer's Track interface)
+    # so playlists and Get Info still know which disc a track is on;
+    # only the iPod's per-track "Disc 1 of N" display is sacrificed
+    # until we identify the correct iTunesDB offset for disc info.
+    #
+    # 0x68 is left untouched here — for new tracks it gets overwritten
+    # to a Mac timestamp a few lines below (also probably wrong, but
+    # not part of the filter we just diagnosed). A separate brief is
+    # warranted to find the actual disc-info offsets and restore that
+    # display.
+    struct.pack_into('<I', hdr, 0x64, 1)
 
     # For new tracks: set filetype marker and timestamps (template has wrong values)
     path = str(track.get('path', ''))
