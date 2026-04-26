@@ -16,6 +16,14 @@ export interface Track {
   discCount: number | string
   fileSize: number
   rating: number
+  // Identity-based per-file fingerprint set at import time. Used by the
+  // silent post-sync verifier (main/index.ts::verifyAndHealTracks) to
+  // detect cross-linked paths without text matching.
+  audioFingerprint?: string
+  // Set by the verifier when the track's path resolves to nothing on
+  // any known mount AND no other file with the same fingerprint can be
+  // found. Recoverable by re-import; the entry is never deleted.
+  audioMissing?: boolean
 }
 
 export interface Playlist {
@@ -44,6 +52,44 @@ export interface MetadataIssue {
   altCurrent?: string
   suggested: string
   commentary: string
+}
+
+// Cynthia's report on a single right-click investigation. fixes[] are
+// proposed metadata edits the user approves before they hit the library;
+// missingTracks[] are tracks Cynthia confirmed should be on the album
+// but aren't in the user's files (the user has to source those manually).
+export interface CynthiaFix {
+  trackId: number
+  field: string
+  oldValue: unknown
+  newValue: unknown
+  reason: string
+}
+export interface CynthiaMissingTrack {
+  trackNumber: number
+  discNumber?: number
+  title: string
+  duration: number | null
+  reason: string
+}
+export interface CynthiaScope {
+  type: 'tracks' | 'album' | 'artist' | 'playlist'
+  label: string
+  tracks: Array<{
+    id: number; title: string; artist: string; album: string; albumArtist: string
+    trackNumber: number | string; trackCount: number | string
+    discNumber: number | string; discCount: number | string
+    year: number | string; genre: string; duration: number
+  }>
+}
+export interface CynthiaResult {
+  ok: boolean
+  summary?: string
+  fixes?: CynthiaFix[]
+  missingTracks?: CynthiaMissingTrack[]
+  rationale?: string
+  error?: string
+  text?: string
 }
 
 export interface RestoreDiff {
@@ -109,6 +155,14 @@ declare global {
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; issues?: MetadataIssue[]; error?: string }>
       musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string; artUrl?: string }[]; error?: string }>
+      cynthiaInvestigate: (input: { userPrompt: string; scope: CynthiaScope }) => Promise<CynthiaResult>
+      cynthiaChat: (input: { scope: CynthiaScope; messages: { role: 'user' | 'assistant'; content: string }[] }) => Promise<{
+        ok: boolean
+        text?: string
+        investigation?: { summary: string; fixes: CynthiaFix[]; missingTracks: CynthiaMissingTrack[]; rationale: string } | null
+        error?: string
+      }>
+      cynthiaReportToMusicMan: (payload: { rationale: string; summary?: string }) => Promise<{ ok: boolean; error?: string }>
       restoreXmlPickFile: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
       restoreXmlScan: (xmlPath: string) => Promise<{ ok: boolean; data?: RestoreScanResult; error?: string }>
       restoreXmlApply: (xmlPath: string, approvedIds: number[]) => Promise<{ ok: boolean; data?: RestoreApplyResult; error?: string }>
@@ -127,11 +181,24 @@ declare global {
       getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
-      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[] }>
+      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }>
+      importTrack: (srcPath: string, id: number, format?: string) => Promise<{ ok: boolean; track?: Track; dupe?: { src: string; matchedTitle: string; matchedArtist: string }; error?: string }>
+      importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
-      syncToIpod: (tracks: Track[], playlists: Playlist[]) => Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; pathRewrites?: Array<{ id: number; newPath: string }> }>
+      syncToIpod: (tracks: Track[], playlists: Playlist[]) => Promise<{
+        ok: boolean
+        copied?: number
+        copyErrors?: number
+        totalTracks?: number
+        error?: string
+        pathRewrites?: Array<{ id: number; newPath: string }>
+        // Updates from the silent post-sync identity verifier. Renderer
+        // applies these as UPDATE_TRACKS so library.json reflects the
+        // verified state and the UI can show audioMissing flags.
+        verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
+      }>
       onSyncProgress: (callback: (progress: { phase: 'copy' | 'db'; current: number; total: number; title: string }) => void) => () => void
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
@@ -145,6 +212,11 @@ declare global {
       openSoundSettings: () => Promise<void>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
+      alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>
+      alacCompatFix: () => Promise<{ ok: boolean; error?: string; summary?: string }>
+      onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
+      getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
+      onLibraryExternalChange: (callback: () => void) => () => void
     }
   }
 }

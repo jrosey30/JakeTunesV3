@@ -28,7 +28,7 @@ type LibraryAction =
   | { type: 'SELECT_RANGE'; ids: number[] }
   | { type: 'SELECT_ALL' }
   | { type: 'SELECT_NONE' }
-  | { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string }[] }
+  | { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string | boolean }[] }
   | { type: 'LOAD_PLAYLISTS'; playlists: Playlist[] }
   | { type: 'LOAD_DELETED_IPOD_PLAYLISTS'; names: string[] }
   | { type: 'ADD_PLAYLIST'; playlist: Playlist }
@@ -93,8 +93,13 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
     case 'SELECT_NONE':
       return { ...state, selectedTrackIds: new Set() }
     case 'UPDATE_TRACKS': {
+      // Field-type buckets so callers (Cynthia, post-sync verifier, smart-sync
+      // path rewrites, etc.) can fire UPDATE_TRACKS with the natural value
+      // type and the reducer coerces. audioMissing is the only boolean today;
+      // everything else is either a numeric metadata field or a string.
       const NUMERIC_FIELDS = new Set(['year', 'trackNumber', 'trackCount', 'discNumber', 'discCount', 'playCount', 'rating', 'duration', 'fileSize'])
-      const updateMap = new Map<number, { field: string; value: string }[]>()
+      const BOOLEAN_FIELDS = new Set(['audioMissing'])
+      const updateMap = new Map<number, { field: string; value: string | boolean }[]>()
       for (const u of action.updates) {
         const list = updateMap.get(u.id) || []
         list.push(u)
@@ -105,7 +110,14 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
         if (!ups) return t
         const updated = { ...t }
         for (const u of ups) {
-          const val = NUMERIC_FIELDS.has(u.field) ? (Number(u.value) || 0) : u.value;
+          let val: unknown
+          if (BOOLEAN_FIELDS.has(u.field)) {
+            val = typeof u.value === 'boolean' ? u.value : u.value === 'true'
+          } else if (NUMERIC_FIELDS.has(u.field)) {
+            val = Number(u.value) || 0
+          } else {
+            val = u.value
+          }
           (updated as Record<string, unknown>)[u.field] = val
         }
         return updated as Track

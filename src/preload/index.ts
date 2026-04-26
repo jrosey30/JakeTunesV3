@@ -24,6 +24,43 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-scan-metadata', tracks),
   musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string }[]; error?: string }> =>
     ipcRenderer.invoke('musicman-recommendations', tracks),
+  // ── Cynthia (digital file archivist sub-agent) ──
+  cynthiaInvestigate: (input: {
+    userPrompt: string
+    scope: {
+      type: 'tracks' | 'album' | 'artist' | 'playlist'
+      label: string
+      tracks: Array<{ id: number; title: string; artist: string; album: string; albumArtist: string; trackNumber: number | string; trackCount: number | string; discNumber: number | string; discCount: number | string; year: number | string; genre: string; duration: number }>
+    }
+  }): Promise<{
+    ok: boolean
+    summary?: string
+    fixes?: Array<{ trackId: number; field: string; oldValue: unknown; newValue: unknown; reason: string }>
+    missingTracks?: Array<{ trackNumber: number; discNumber?: number; title: string; duration: number | null; reason: string }>
+    rationale?: string
+    error?: string
+    text?: string
+  }> => ipcRenderer.invoke('cynthia-investigate', input),
+  cynthiaChat: (input: {
+    scope: {
+      type: 'tracks' | 'album' | 'artist' | 'playlist'
+      label: string
+      tracks: Array<{ id: number; title: string; artist: string; album: string; albumArtist: string; trackNumber: number | string; trackCount: number | string; discNumber: number | string; discCount: number | string; year: number | string; genre: string; duration: number }>
+    }
+    messages: { role: 'user' | 'assistant'; content: string }[]
+  }): Promise<{
+    ok: boolean
+    text?: string
+    investigation?: {
+      summary: string
+      fixes: Array<{ trackId: number; field: string; oldValue: unknown; newValue: unknown; reason: string }>
+      missingTracks: Array<{ trackNumber: number; discNumber?: number; title: string; duration: number | null; reason: string }>
+      rationale: string
+    } | null
+    error?: string
+  }> => ipcRenderer.invoke('cynthia-chat', input),
+  cynthiaReportToMusicMan: (payload: { rationale: string; summary?: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('cynthia-report-to-musicman', payload),
   restoreXmlPickFile: (): Promise<{ ok: boolean; path?: string; canceled?: boolean }> =>
     ipcRenderer.invoke('restore-xml-pick-file'),
   restoreXmlScan: (xmlPath: string): Promise<{ ok: boolean; data?: unknown; error?: string }> =>
@@ -60,8 +97,21 @@ const electronAPI = {
     ipcRenderer.invoke('get-music-library-path'),
   ejectIpod: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-ipod'),
-  importTracks: (filePaths: string[], nextId: number, format?: string): Promise<{ ok: boolean; tracks: unknown[] }> =>
+  importTracks: (filePaths: string[], nextId: number, format?: string): Promise<{ ok: boolean; tracks: unknown[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> =>
     ipcRenderer.invoke('import-tracks', filePaths, nextId, format),
+  // Single-file import for the renderer-side queue. Failures are
+  // returned (not thrown) so the queue can mark and retry per item.
+  importTrack: (srcPath: string, id: number, format?: string): Promise<{
+    ok: boolean
+    track?: unknown
+    dupe?: { src: string; matchedTitle: string; matchedArtist: string }
+    error?: string
+  }> =>
+    ipcRenderer.invoke('import-track', srcPath, id, format),
+  // Resolve folders + glob filtering on the main side; renderer only
+  // ever sees individual audio file paths in the queue.
+  importResolvePaths: (paths: string[]): Promise<{ ok: boolean; paths?: string[]; error?: string }> =>
+    ipcRenderer.invoke('import-resolve-paths', paths),
   importPickFiles: (): Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }> =>
     ipcRenderer.invoke('import-pick-files'),
   saveLibrary: (tracks: unknown[], playlists?: unknown[]): Promise<{ ok: boolean }> =>
@@ -110,6 +160,29 @@ const electronAPI = {
     ipcRenderer.invoke('list-audio-devices'),
   setAudioDevice: (deviceId: number): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('set-audio-device', deviceId),
+  // iPod Classic ALAC compatibility (File → Library → Fix iPod Compatibility…)
+  alacCompatScan: (): Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }> =>
+    ipcRenderer.invoke('alac-compat-scan'),
+  alacCompatFix: (): Promise<{ ok: boolean; error?: string; summary?: string }> =>
+    ipcRenderer.invoke('alac-compat-fix'),
+  onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: { current: number; total: number; file: string }) => callback(p)
+    ipcRenderer.on('alac-compat-progress', handler)
+    return () => { ipcRenderer.removeListener('alac-compat-progress', handler) }
+  },
+  // Read the iPod's actual iTunesDB so the UI can show the real
+  // device state (the "On This iPod" view from classic iTunes).
+  getIpodDbTracks: (): Promise<{ ok: boolean; tracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }> =>
+    ipcRenderer.invoke('get-ipod-db-tracks'),
+  // Fires when library.json is modified on disk by something other than
+  // the running app (e.g. a core/ Python maintenance script). The
+  // renderer responds by calling loadTracks() and dispatching the fresh
+  // state — preventing the "app overwrote the repair" class of bug.
+  onLibraryExternalChange: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('library-external-change', handler)
+    return () => { ipcRenderer.removeListener('library-external-change', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

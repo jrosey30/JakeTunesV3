@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import type { Playlist, Track } from '../types'
+import IpodLibraryModal from '../components/IpodLibraryModal'
 import '../styles/device.css'
 
 // Fallback capacity shown before the main process reports the real size.
@@ -109,6 +110,7 @@ export default function DeviceView() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
   const [ipodName, setIpodName] = useState('iPod')
   const [ipodCapacityBytes, setIpodCapacityBytes] = useState<number>(FALLBACK_CAPACITY_BYTES)
+  const [showIpodLibrary, setShowIpodLibrary] = useState(false)
 
   // iTunes-style device options. Stored in ui-state.json so they persist
   // across launches. Behavior for each option is implemented as the
@@ -122,8 +124,36 @@ export default function DeviceView() {
   const [optDiskUse, setOptDiskUse] = useState(true)
   const optsLoaded = useRef(false)
 
+  // ── Live sync-state probe ──
+  // Reads the iPod's iTunesDB track count and compares to the library
+  // count. Drives a banner that tells the user at a glance whether
+  // their iPod matches their library or is N tracks behind. Refreshes
+  // when the user lands on this view, after every sync, and when an
+  // iPod connects/ejects. Without this the user has to do the math
+  // themselves between the "Songs" line on this page and the library
+  // counter — which is exactly what triggered the "i genuinely have
+  // no idea if my ipod is in sync" frustration.
+  const [ipodTrackCount, setIpodTrackCount] = useState<number | null>(null)
+  const [ipodMounted, setIpodMounted] = useState<boolean>(false)
+  const refreshSyncState = useCallback(() => {
+    window.electronAPI.checkIpodMounted().then(r => {
+      setIpodMounted(!!r.mounted)
+      if (r.mounted) {
+        window.electronAPI.getIpodDbTracks().then(d => {
+          if (d.ok) setIpodTrackCount(d.total)
+          else setIpodTrackCount(null)
+        }).catch(() => setIpodTrackCount(null))
+      } else {
+        setIpodTrackCount(null)
+      }
+    }).catch(() => {})
+  }, [])
+
   useEffect(() => {
-    window.electronAPI.checkIpodMounted().then(r => { if (r.name) setIpodName(r.name) }).catch(() => {})
+    window.electronAPI.checkIpodMounted().then(r => {
+      if (r.name) setIpodName(r.name)
+      setIpodMounted(!!r.mounted)
+    }).catch(() => {})
     // Ask the main process for the real capacity of the mounted iPod
     // (modded units can be anything — 64GB, 128GB, 256GB, etc.).
     window.electronAPI.getIpodCapacity().then(r => {
@@ -143,7 +173,11 @@ export default function DeviceView() {
       if (typeof s.optDiskUse === 'boolean') setOptDiskUse(s.optDiskUse)
       optsLoaded.current = true
     }).catch(() => { optsLoaded.current = true })
-  }, [])
+    refreshSyncState()
+    const onEjected = () => { refreshSyncState() }
+    window.addEventListener('jaketunes-ipod-ejected', onEjected)
+    return () => window.removeEventListener('jaketunes-ipod-ejected', onEjected)
+  }, [refreshSyncState])
 
   // Persist device options on change — merged into ui-state, not overwriting.
   useEffect(() => {
@@ -231,6 +265,25 @@ export default function DeviceView() {
           updates: result.pathRewrites.map(r => ({ id: r.id, field: 'path', value: r.newPath })),
         })
       }
+      // Apply silent post-sync identity-verifier updates: backfilled
+      // audioFingerprints for older tracks that never got one,
+      // path heals when a track's audio moved to a different F-dir,
+      // and audioMissing flags when a track's file genuinely can't
+      // be located on any known mount. The verifier never deletes —
+      // worst case we just set audioMissing=true so the UI dims the
+      // row. This is the identity-based replacement for the old
+      // text-matching verify-and-repair flow that nuked Pink Floyd's
+      // "Another Brick in the Wall, Pt. 1" because "Pt." didn't
+      // match "Part" in its normalize().
+      if (result.verificationUpdates && result.verificationUpdates.length > 0) {
+        const updates: { id: number; field: string; value: string | boolean }[] = []
+        for (const u of result.verificationUpdates) {
+          if (u.path) updates.push({ id: u.id, field: 'path', value: u.path })
+          if (u.audioFingerprint) updates.push({ id: u.id, field: 'audioFingerprint', value: u.audioFingerprint })
+          if (u.audioMissing !== undefined) updates.push({ id: u.id, field: 'audioMissing', value: u.audioMissing })
+        }
+        if (updates.length > 0) dispatch({ type: 'UPDATE_TRACKS', updates })
+      }
       const now = new Date()
       const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       setSyncStatus({
@@ -241,6 +294,8 @@ export default function DeviceView() {
       })
       activity.setSync({ active: true, step: `Sync complete — ${result.copied || 0} new tracks` })
       setTimeout(() => activity.setSync(null), 4000)
+      // Re-probe iPod track count so the in-sync badge updates.
+      refreshSyncState()
     } catch (err) {
       console.error('Sync failed:', err)
       const msg = String(err)
@@ -331,6 +386,34 @@ export default function DeviceView() {
         </div>
       </div>
 
+      {/* ── Always-visible sync-state badge ──
+            Pulls the iTunesDB track count from the mounted iPod and
+            compares it against the library count. Tells the user at
+            a glance whether they need to hit Sync or not — no more
+            doing the math themselves between two different counters. */}
+      <div className="device-sync-badge">
+        {!ipodMounted && (
+          <span className="device-sync-badge-pill device-sync-badge-pill--warn">
+            ◌ iPod not connected
+          </span>
+        )}
+        {ipodMounted && ipodTrackCount === null && (
+          <span className="device-sync-badge-pill device-sync-badge-pill--idle">
+            … reading iPod
+          </span>
+        )}
+        {ipodMounted && ipodTrackCount !== null && ipodTrackCount === stats.trackCount && (
+          <span className="device-sync-badge-pill device-sync-badge-pill--good">
+            ✓ In sync — {stats.trackCount.toLocaleString()} songs match
+          </span>
+        )}
+        {ipodMounted && ipodTrackCount !== null && ipodTrackCount !== stats.trackCount && (
+          <span className="device-sync-badge-pill device-sync-badge-pill--diff">
+            ⚠ Out of sync — Library: {stats.trackCount.toLocaleString()} · iPod: {ipodTrackCount.toLocaleString()} · Click Sync to update
+          </span>
+        )}
+      </div>
+
       {/* ── Sync status (floats above the capacity bar when active) ── */}
       {syncStatus.state !== 'idle' && (
         <div className={`device-sync-status device-sync-status--${syncStatus.state}`}>
@@ -382,6 +465,11 @@ export default function DeviceView() {
         </div>
         <div className="device-itunes-actions">
           <button
+            className="device-itunes-btn"
+            onClick={() => setShowIpodLibrary(true)}
+            title="See exactly what tracks and playlists are on the iPod right now"
+          >On This iPod…</button>
+          <button
             className="device-itunes-btn device-itunes-btn--eject"
             onClick={async () => {
               await window.electronAPI.ejectIpod()
@@ -395,6 +483,7 @@ export default function DeviceView() {
           >{syncing ? 'Syncing…' : 'Sync'}</button>
         </div>
       </div>
+      {showIpodLibrary && <IpodLibraryModal onClose={() => setShowIpodLibrary(false)} />}
     </div>
   )
 }

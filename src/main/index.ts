@@ -542,13 +542,106 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
         }
       } catch { /* no existing file — writing an empty one is fine */ }
     }
+
+    // ── Detect deleted paths so we can clean up disk + iPod ──
+    // Compare the previous library.json on disk to the new track list.
+    // Any path that disappeared = a deletion to commit. This catches
+    // every removal mechanism (right-click delete, playlist removal,
+    // batch delete, Verify & Repair drop, etc.) without each call
+    // site having to remember to push to the iPod.
+    let deletedPaths: string[] = []
+    try {
+      const prevRaw = await readFile(LIBRARY_PATH, 'utf-8')
+      const prev = JSON.parse(prevRaw) as { tracks?: Array<{ path?: string }> }
+      const prevPaths = new Set((prev.tracks || []).map(t => t.path).filter(Boolean) as string[])
+      const newPaths = new Set((tracks as Array<{ path?: string }>).map(t => t.path).filter(Boolean) as string[])
+      for (const p of prevPaths) if (!newPaths.has(p)) deletedPaths.push(p)
+    } catch { /* first save, no diff */ }
+
+    // ── Atomic write: tmp file → rename ──
+    // Without this, any other process reading library.json
+    // simultaneously (e.g. the file-watcher-triggered reload, a
+    // Python script, or this same app's load-tracks fallback) could
+    // observe a half-written file, fail JSON.parse, and take the
+    // "fallback to iPod DB" path in load-tracks — which OVERWRITES
+    // library.json with iTunesDB content, losing any pending
+    // renderer-side edits. A rename() is atomic at the filesystem
+    // level: observers see either the old full file or the new full
+    // file, never a mid-write slice.
     const library = { tracks, playlists: playlists || [] }
-    await writeFile(LIBRARY_PATH, JSON.stringify(library, null, 2))
-    return { ok: true }
+    const tmp = LIBRARY_PATH + '.partial.json'
+    await writeFile(tmp, JSON.stringify(library, null, 2))
+    const { rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
+    await renameFS(tmp, LIBRARY_PATH)
+    try {
+      const s = await stat(LIBRARY_PATH)
+      lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
+    } catch { /* non-fatal */ }
+
+    // Disk now reflects the current library — the session-level
+    // fingerprint set existed only to bridge the gap between an
+    // import succeeding and save-library flushing. Clear it so a
+    // user-initiated delete + re-import of the same source file
+    // doesn't get falsely flagged as a duplicate.
+    sessionImportedFingerprints.clear()
+
+    // ── Commit deletions ──
+    // Delete the audio file from the local mirror immediately so the
+    // disk doesn't grow ghost orphans. Schedule a debounced iTunesDB
+    // rebuild to push the deletion to the iPod (if mounted) without
+    // hammering it on every individual delete in a batch.
+    if (deletedPaths.length > 0) {
+      const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+      const pathSep = IS_WINDOWS ? '\\' : '/'
+      for (const colon of deletedPaths) {
+        const rel = colon.replace(/:/g, pathSep)
+        try { await unlinkFS(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
+      }
+      scheduleDbRebuild(deletedPaths)
+    }
+    return { ok: true, deletedPaths: deletedPaths.length }
   } catch (err) {
     return { ok: false, error: String(err) }
   }
 })
+
+// ── Watch library.json for EXTERNAL modifications ──
+// If our Python maintenance scripts (repair_mismatches.py, etc.) or any
+// other process edits library.json while the app is running, the app's
+// in-memory state silently diverges from disk. The next save-library
+// then writes the stale in-memory state back, wiping the external
+// edits. That's how fixes kept "disappearing" earlier tonight.
+//
+// Solution: watch the file. When mtime changes AND it wasn't us who
+// wrote it, tell the renderer to reload. The renderer calls load-tracks
+// which reads the fresh disk state into memory.
+import { watch as fsWatch } from 'fs'
+let libraryWatcherStarted = false
+function startLibraryWatcher() {
+  if (libraryWatcherStarted) return
+  libraryWatcherStarted = true
+  try {
+    fsWatch(LIBRARY_PATH, async () => {
+      try {
+        const s = await stat(LIBRARY_PATH)
+        const mt = Math.round(s.mtimeMs)
+        // Skip any fsWatch event that landed within a 2-second window
+        // of our own save-library finishing. Atomic-rename writes can
+        // fire watch events with slight mtime drift (up to hundreds of
+        // ms on some filesystems), and the renderer's debounced save
+        // loop can chain several saves inside a second — a too-tight
+        // tolerance here caused a feedback loop where the save-reload-
+        // save chain spawned cascading db_reader.py processes.
+        if (Math.abs(mt - lastSelfWriteMtimeMs) < 2000) return
+        console.log(`[watch] library.json changed externally (mtime ${mt}, self ${lastSelfWriteMtimeMs}) — asking renderer to reload`)
+        mainWindow?.webContents.send('library-external-change')
+      } catch { /* file briefly missing during atomic replace — ignore */ }
+    })
+    console.log('[watch] library.json watcher active')
+  } catch (err) {
+    console.warn('[watch] could not start library.json watcher:', err)
+  }
+}
 
 // Sync: read iPod DB and return NEW tracks/playlists not already in the library
 ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
@@ -556,13 +649,56 @@ ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
     const ipodData = await readIpodDatabase()
     const knownIds = new Set(existingIds)
     const newTracks = ipodData.tracks.filter(t => !knownIds.has(t.id as number))
+    // Backfill audioFingerprint for the incoming tracks so the
+    // post-sync verifier on subsequent flows has something to compare
+    // against. Only computes for files that exist; missing files are
+    // left alone (the verifier will flag them on next sync if the user
+    // actually wants those tracks).
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const mounts = [detectedIpodMount, LOCAL_MOUNT].filter((m): m is string => !!m)
+    for (const t of newTracks) {
+      if (typeof t.audioFingerprint === 'string' && t.audioFingerprint) continue
+      const colon = String(t.path || '')
+      if (!colon) continue
+      const abs = await resolveTrackAbsPath(colon, mounts)
+      if (!abs) continue
+      const fp = await computeAudioFingerprint(abs, Number(t.duration || 0))
+      if (fp) t.audioFingerprint = fp
+    }
     return { ok: true, newTracks, playlists: ipodData.playlists, totalIpod: ipodData.tracks.length }
   } catch (err) {
     return { ok: false, error: String(err), newTracks: [], playlists: [], totalIpod: 0 }
   }
 })
 
+// Read the iPod's actual iTunesDB and return the full track + playlist
+// set. This is what iTunes used to call "On This iPod" — it's what the
+// device itself reports as present, independent of the app's local
+// library.json. Handy for reconciling "library says X / iPod says Y"
+// discrepancies.
+ipcMain.handle('get-ipod-db-tracks', async () => {
+  try {
+    const ipodData = await readIpodDatabase()
+    return { ok: true, tracks: ipodData.tracks, playlists: ipodData.playlists, total: ipodData.tracks.length }
+  } catch (err) {
+    return { ok: false, error: String(err), tracks: [], playlists: [], total: 0 }
+  }
+})
+
 // ── Sync library TO iPod ──
+//
+// Content-safety invariant: this handler will REFUSE to commit the
+// iTunesDB if any library entry's path points at audio whose embedded
+// tags disagree with what the library claims the track is.
+//
+// That used to happen when filename-only smart-matching linked a
+// library entry to the wrong file (e.g. a Beatles entry ended up
+// playing Pink Floyd because both files had the same basename
+// "imported_3713.m4a"). The smart-match step in this handler now
+// tag-verifies, AND the preflight below verifies every remaining
+// track's existing path too, so even a library.json that got
+// corrupted by some OTHER flow can't write incorrect paths into the
+// iPod database.
 ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
   if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', copied: 0 }
   const IPOD_MOUNT = detectedIpodMount
@@ -576,6 +712,38 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     return { ok: false, error: 'iPod is not mounted', copied: 0 }
   }
 
+  // ──────────────── PRE-SYNC SAFETY: LIBRARY DEDUP CHECK ────────────────
+  // If two library entries point at the same audio file (same colon
+  // path), they're unambiguously duplicates: both will emit separate
+  // mhit records into iTunesDB, which the iPod collapses in the
+  // "songs" count but keeps as ghost rows. That's how you end up with
+  // "library 4395 / iPod 4389" drift. Refuse to sync until the library
+  // is clean and tell the user which entries collide so they can pick
+  // one to delete in Get Info.
+  {
+    const pathCounts = new Map<string, number>()
+    for (const t of tracks) {
+      const p = String(t.path || '')
+      if (!p) continue
+      pathCounts.set(p, (pathCounts.get(p) || 0) + 1)
+    }
+    const dupes: Array<{ path: string; n: number; titles: string[] }> = []
+    for (const [p, n] of pathCounts) {
+      if (n > 1) {
+        const titles = tracks
+          .filter(t => t.path === p)
+          .map(t => `"${t.title}" / ${t.artist}`)
+        dupes.push({ path: p, n, titles })
+      }
+    }
+    if (dupes.length > 0) {
+      const sample = dupes.slice(0, 3).map(d => `  • ${d.path}\n    → ${d.titles.join(' + ')}`).join('\n')
+      const msg = `Sync aborted: ${dupes.length} file${dupes.length === 1 ? '' : 's'} ${dupes.length === 1 ? 'has' : 'have'} multiple library entries pointing at ${dupes.length === 1 ? 'it' : 'them'}. Delete the duplicate library entries and sync again.\n\nExamples:\n${sample}${dupes.length > 3 ? `\n  …and ${dupes.length - 3} more` : ''}`
+      console.error('sync-to-ipod: pre-sync dedup check failed:\n' + msg)
+      return { ok: false, error: msg, copied: 0, duplicatePaths: dupes.length }
+    }
+  }
+
   // Copy audio files that don't exist on the iPod yet.
   //
   // Pass 1: figure out which tracks need copying (so we know the
@@ -583,14 +751,19 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   // sync-progress event per file so the renderer can show a real bar
   // instead of a perpetually-indeterminate pulse.
   //
-  // Smart-match before copying: tonight's restore/XML-rebuild shifted
-  // library.json paths, so a track whose path says F48/NTJL.m4a may
-  // actually already exist at F12/NTJL.m4a on the iPod. Without this,
-  // sync blindly copies hundreds of files that are already present
-  // under different subdir numbers, wasting ~10 GB over the course of
-  // a single session. Build an index of every audio filename currently
-  // on the iPod so we can detect this and rewrite the library track's
-  // path instead of re-copying.
+  // Smart-match before copying: library.json paths can drift (a track
+  // whose path says F48/NTJL.m4a may already exist at F12/NTJL.m4a).
+  // Without smart-match, sync blindly copies hundreds of already-
+  // present files. But the old filename-only match was dangerous — it
+  // would accept any file that shared a basename, so a re-imported
+  // track at "imported_3767.m4a" got silently linked to a DIFFERENT
+  // song that happened to own the same filename slot. That's how
+  // Beatles tracks ended up playing Pink Floyd.
+  //
+  // New rule: we only accept a smart-match rewrite if the candidate
+  // file's EMBEDDED TAGS (title + artist) actually agree with the
+  // library entry's metadata. If tags disagree or are missing, we
+  // fall back to copying the real file.
   let copied = 0
   let copyErrors = 0
   const pathSep = IS_WINDOWS ? '\\' : '/'
@@ -608,8 +781,45 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     }
   } catch { /* best-effort */ }
 
-  const toCopy: Array<{ local: string; ipod: string; title: string }> = []
-  const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  // ⚠️ TWIN: this is a JS port of core/repair_mismatches.py::normalize.
+  // They MUST stay in lockstep. If you change this function (new rule,
+  // new regex), update the Python twin in the SAME commit. We learned
+  // this the hard way — fixed the Python side for "Pt. 1" vs "Part 1"
+  // and forgot this one, so sync still aborted with a false-positive
+  // mismatch banner on Pink Floyd. Don't repeat that.
+  //
+  // Special-case "Pt./Pt/Part" + (digit | roman) → "part <digit>" so
+  // library "Another Brick in the Wall, Part 1" and file tags
+  // "Another Brick In The Wall, Pt. 1" normalize to the same string.
+  const ROMAN_NUMERALS: Record<string, number> = {
+    i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10,
+  }
+  const normalize = (s: unknown): string => {
+    let str = String(s || '')
+    str = str.replace(/^\s*\d{1,2}\s*[-._]\s*/, '')                   // "01 - Title" → "Title"
+    str = str.replace(/\s*\b(feat(?:uring)?|ft)\b\.?[^)]*/ig, '')     // drop "feat. X"
+    str = str.replace(/\bp(?:ar)?t\.?\s+([ivx]+|\d+)\b/gi, (m: string, suf: string) => {
+      const k = suf.toLowerCase()
+      if (/^\d+$/.test(k)) return `part ${k}`
+      const n = ROMAN_NUMERALS[k]
+      return n != null ? `part ${n}` : m
+    })
+    str = str.replace(/[()[\]{}"',.\-!?:;#/\\]+/g, ' ')                // strip punct
+    return str.replace(/\s+/g, ' ').trim().toLowerCase()
+  }
+
+  // First pass: determine candidate rewrites. Anything that resolves
+  // to a basename match on the iPod is a candidate — we'll verify tags
+  // on the batch in one Python call below.
+  type Candidate = {
+    track: Record<string, unknown>
+    colonPath: string
+    ipodFile: string
+    localFile: string
+    baseName: string
+    altIpodPath?: string    // candidate for smart-match rewrite
+  }
+  const candidates: Candidate[] = []
   for (const track of tracks) {
     const colonPath = String(track.path || '')
     if (!colonPath) continue
@@ -618,32 +828,113 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     const localFile = join(LOCAL_MOUNT, relPath)
     const baseName = colonPath.split(':').pop() || ''
 
+    // Does the iPod already have this file? If yes, only skip the
+    // copy if the on-disk local file hasn't changed. We compare size —
+    // a re-encode (like the 2-step ALAC fix) produces a file with a
+    // different byte count, and we want THAT version to land on the
+    // iPod instead of the stale one. Without this, sync would see the
+    // iPod still has "something" at the path and refuse to overwrite,
+    // so fixes made locally never reach the device.
     let exists = false
+    let ipodSize = 0
     try {
-      await stat(ipodFile)
+      const s = await stat(ipodFile)
       exists = true
+      ipodSize = s.size
     } catch { /* not at expected path */ }
+    if (exists) {
+      try {
+        const ls = await stat(localFile)
+        if (ls.size === ipodSize) {
+          continue   // byte-identical, nothing to do
+        }
+        // Size differs → local was re-encoded/updated, queue a re-copy.
+        // (We fall through to push this into toCopy below — the copy
+        // step overwrites the iPod file when dest already exists.)
+      } catch {
+        // Local file missing but iPod has one — keep iPod's copy,
+        // nothing we can do anyway.
+        continue
+      }
+    }
 
-    if (exists) continue
-
-    // Maybe the audio is already on the iPod under a different F-dir.
     const altIpodPath = baseName ? basenameToIpodPath.get(baseName) : undefined
-    if (altIpodPath && altIpodPath !== ipodFile) {
-      const altRel = altIpodPath.slice(IPOD_MOUNT.length + 1)
-      const altColonPath = ':' + altRel.split(pathSep).join(':')
-      pathRewrites.push({
-        id: track.id as number,
-        oldPath: colonPath,
-        newPath: altColonPath,
+    candidates.push({
+      track, colonPath, ipodFile, localFile, baseName,
+      altIpodPath: altIpodPath && altIpodPath !== ipodFile ? altIpodPath : undefined,
+    })
+  }
+
+  // Second pass: if we have any alt-path candidates, batch-verify
+  // their embedded tags against the library metadata via tag_reader.
+  const rewriteCandidatePaths = candidates.map(c => c.altIpodPath).filter((p): p is string => !!p)
+  const tagsByPath = new Map<string, { title: string; artist: string; ok: boolean }>()
+  if (rewriteCandidatePaths.length > 0) {
+    try {
+      const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
+      const read = await new Promise<string>((resolve, reject) => {
+        const py = spawn(PYTHON_CMD, [tagReaderScript])
+        let stdout = ''
+        let stderr = ''
+        py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+        py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+        py.on('error', reject)
+        py.on('close', (code: number) => {
+          if (code === 0) resolve(stdout)
+          else reject(new Error(`tag_reader exit ${code}: ${stderr}`))
+        })
+        py.stdin.write(JSON.stringify(rewriteCandidatePaths))
+        py.stdin.end()
       })
-      continue
+      const arr = JSON.parse(read) as Array<{ path: string; title?: string; artist?: string; ok?: boolean }>
+      for (const t of arr) {
+        tagsByPath.set(t.path, { title: t.title || '', artist: t.artist || '', ok: !!t.ok })
+      }
+    } catch (err) {
+      console.warn('sync-to-ipod: tag verification failed, will fall back to copy:', err)
+      // tagsByPath stays empty → no smart-match rewrites will be accepted.
+    }
+  }
+
+  const toCopy: Array<{ local: string; ipod: string; title: string }> = []
+  const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  let rewritesVetoed = 0
+  for (const c of candidates) {
+    if (c.altIpodPath) {
+      const t = tagsByPath.get(c.altIpodPath)
+      const libTitle  = normalize(c.track.title)
+      const libArtist = normalize(c.track.artist)
+      const fileTitle  = t ? normalize(t.title)  : ''
+      const fileArtist = t ? normalize(t.artist) : ''
+
+      // Accept the rewrite only if the file's tags (or at least one of
+      // them) actually identify this as the same song. This is the
+      // permanent fix for the Beatles/Pink Floyd cross-linking bug.
+      const titleOk  = libTitle  && fileTitle  && (libTitle  === fileTitle  || libTitle.includes(fileTitle)  || fileTitle.includes(libTitle))
+      const artistOk = libArtist && fileArtist && (libArtist === fileArtist || libArtist.includes(fileArtist) || fileArtist.includes(libArtist))
+
+      if (titleOk && artistOk) {
+        const altRel = c.altIpodPath.slice(IPOD_MOUNT.length + 1)
+        const altColonPath = ':' + altRel.split(pathSep).join(':')
+        pathRewrites.push({
+          id: c.track.id as number,
+          oldPath: c.colonPath,
+          newPath: altColonPath,
+        })
+        continue
+      }
+      // Tags didn't match — don't silently re-link. Copy the real file.
+      rewritesVetoed += 1
     }
 
     toCopy.push({
-      local: localFile,
-      ipod: ipodFile,
-      title: String(track.title || baseName),
+      local: c.localFile,
+      ipod: c.ipodFile,
+      title: String(c.track.title || c.baseName),
     })
+  }
+  if (rewritesVetoed > 0) {
+    console.log(`sync-to-ipod: vetoed ${rewritesVetoed} filename-only smart-matches (tags disagreed with library)`)
   }
 
   const totalToCopy = toCopy.length
@@ -682,6 +973,111 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     console.log(`sync-to-ipod: smart-match rewrote ${pathRewrites.length} track paths (saved that many redundant copies)`)
   }
 
+  // ──────────────────────── PREFLIGHT CONTENT-SAFETY CHECK ────────────────────────
+  // Belt-and-suspenders: before committing anything to iTunesDB, tag-
+  // verify every track against the file its library path points at.
+  // This catches the case where library.json itself got corrupted by
+  // some other flow (an older bug, a restore, a crash mid-write), not
+  // just the smart-match case we already verified above.
+  //
+  // Any mismatch aborts the sync with a list of the offending entries
+  // so the user can resolve them in Get Info before retrying. (The
+  // post-sync fingerprint verifier below is the silent self-heal path;
+  // this preflight is the loud "we will not write a known-bad state to
+  // your iPod" check.)
+  try {
+    const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
+    const preflightPaths: string[] = []
+    const preflightOwners: Array<Record<string, unknown>> = []
+    for (const t of tracks) {
+      const colonPath = String(t.path || '')
+      if (!colonPath) continue
+      const relPath = colonPath.replace(/:/g, pathSep)
+      const abs = join(IPOD_MOUNT, relPath)
+      preflightPaths.push(abs)
+      preflightOwners.push(t)
+    }
+
+    // Chunk the Python invocation so ~4,000-path payloads don't blow
+    // the argv/stdin buffer.
+    const CHUNK = 800
+    const mismatches: Array<{ id: number; title: string; artist: string; fileTitle: string; fileArtist: string; path: string }> = []
+    for (let i = 0; i < preflightPaths.length; i += CHUNK) {
+      const batch = preflightPaths.slice(i, i + CHUNK)
+      const tagsArr = await new Promise<Array<{ path: string; title?: string; artist?: string; ok?: boolean }>>((resolve, reject) => {
+        const py = spawn(PYTHON_CMD, [tagReaderScript])
+        let out = ''; let err = ''
+        py.stdout.on('data', (d: Buffer) => { out += d.toString() })
+        py.stderr.on('data', (d: Buffer) => { err += d.toString() })
+        py.on('error', reject)
+        py.on('close', (code) => { code === 0 ? resolve(JSON.parse(out)) : reject(new Error(err)) })
+        py.stdin.write(JSON.stringify(batch))
+        py.stdin.end()
+      })
+      for (let j = 0; j < batch.length; j++) {
+        const track = preflightOwners[i + j]
+        const file = tagsArr[j]
+        if (!file || !file.ok) continue
+        const ft = normalize(file.title)
+        const fa = normalize(file.artist)
+        const lt = normalize(track.title)
+        const la = normalize(track.artist)
+        // Only flag when the FILE has tags AND they disagree. Tagless
+        // files stay allowed (can't assert either way; most of our iPod
+        // content is tagless from the XML-rebuild era).
+        if ((ft || fa) && lt) {
+          const titleDisagrees  = ft && !(lt === ft || lt.includes(ft) || ft.includes(lt))
+          const artistDisagrees = fa && la && !(la === fa || la.includes(fa) || fa.includes(la))
+          // Two separate signals: title disagreement alone is enough
+          // evidence (artist-only is noisy because of collabs and
+          // compilation tagging).
+          if (titleDisagrees) {
+            // Identity-based escape hatch: if the track has a stored
+            // audioFingerprint AND the file's current fingerprint
+            // matches it, the file IS the right file by binary content.
+            // Trust the fingerprint over noisy text comparison. This
+            // catches harmless variations we can't pre-enumerate
+            // (Pt./Part is the one that bit us; the next one will be
+            // some smart-quote, title-case, or feat./with thing). We
+            // only do this on flagged tracks, so the SHA cost is
+            // negligible (typically 0-5 tracks per sync).
+            const storedFp = typeof track.audioFingerprint === 'string' ? track.audioFingerprint : ''
+            if (storedFp) {
+              const absForFp = preflightPaths[i + j]
+              const liveFp = await computeAudioFingerprint(absForFp, Number(track.duration || 0))
+              if (liveFp && liveFp === storedFp) {
+                // Same file we imported — text drift is cosmetic, not a path mix-up.
+                void artistDisagrees // intentionally unused; identity wins
+                continue
+              }
+            }
+            mismatches.push({
+              id: track.id as number,
+              title: String(track.title || ''),
+              artist: String(track.artist || ''),
+              fileTitle: file.title || '',
+              fileArtist: file.artist || '',
+              path: String(track.path || ''),
+            })
+          }
+        }
+      }
+    }
+
+    if (mismatches.length > 0) {
+      const sample = mismatches.slice(0, 5).map(m => `  • "${m.title}" / ${m.artist} → file is "${m.fileTitle}" / ${m.fileArtist}`).join('\n')
+      const msg = `Sync aborted: ${mismatches.length} library entr${mismatches.length === 1 ? 'y points' : 'ies point'} at the wrong audio file.\n\nOpen each track's Get Info to fix the path, or delete the bad entry and re-import the source file. Then sync again.\n\nExamples:\n${sample}${mismatches.length > 5 ? `\n  …and ${mismatches.length - 5} more` : ''}`
+      console.error('sync-to-ipod: content-safety preflight failed:\n' + msg)
+      return { ok: false, error: msg, copied, copyErrors, mismatches: mismatches.length }
+    }
+    console.log(`sync-to-ipod: preflight OK, ${preflightPaths.length} tracks verified`)
+  } catch (err) {
+    console.warn('sync-to-ipod: preflight verification crashed; proceeding without it:', err)
+    // Don't block sync on a tooling error — users rely on sync even when
+    // Python subprocesses misbehave. The smart-match verifier above
+    // already caught the common case.
+  }
+
   // Backup existing iTunesDB
   const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
   try {
@@ -692,7 +1088,7 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
 
   // Rebuild iTunesDB using Python
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
-  return new Promise((resolve) => {
+  return await new Promise((resolve) => {
     const input = JSON.stringify({ tracks, playlists })
     const py = spawn(PYTHON_CMD, [scriptPath, '--write', ipodDb])
     py.on('error', (err: Error) => {
@@ -710,12 +1106,62 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
 
-    py.on('close', (code: number) => {
+    py.on('close', async (code: number) => {
       console.log('sync-to-ipod stderr:', stderr)
       if (code === 0) {
         mainWindow?.webContents.send('sync-progress', {
           phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
         })
+
+        // ──────────── POST-SYNC FINGERPRINT VERIFIER ────────────
+        // Quietly verify that the tracks whose paths just changed in
+        // this sync still resolve to the audio they're supposed to,
+        // and backfill audioFingerprint for any track that doesn't
+        // have one yet. Identity-based check (sha1 of first 256KB +
+        // duration), no text matching, never deletes — the only
+        // outputs are: (a) backfill a fingerprint, (b) silently
+        // rewrite a path if the right audio is found elsewhere on the
+        // iPod, or (c) flag audioMissing for the UI. Restricted to
+        // the tracks we just touched so it stays cheap (a typical
+        // sync rewrites <100 paths and copies <100 files).
+        const verifyIds = new Set<number>()
+        for (const r of pathRewrites) verifyIds.add(r.id)
+        // Find the IDs of newly-copied tracks too. We re-derive them
+        // from the tracks array by colon path — toCopy didn't carry
+        // ids. (toCopy items are in 1:1 order with the candidates
+        // pushed earlier, but reconstructing that mapping is more
+        // fragile than just scanning here.)
+        const ipodColonsCopied = new Set(toCopy.map(c => {
+          // ipod path back to colon form
+          const rel = c.ipod.slice(IPOD_MOUNT.length + 1)
+          return ':' + rel.split(pathSep).join(':')
+        }))
+        for (const t of tracks) {
+          if (ipodColonsCopied.has(String(t.path || ''))) verifyIds.add(t.id as number)
+        }
+        let verificationUpdates: VerifyTrackUpdate[] = []
+        if (verifyIds.size > 0) {
+          const inputs: VerifyTrackInput[] = tracks
+            .filter(t => verifyIds.has(t.id as number))
+            .map(t => ({
+              id: t.id as number,
+              path: String(t.path || ''),
+              duration: Number(t.duration || 0),
+              audioFingerprint: typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined,
+            }))
+          try {
+            verificationUpdates = await verifyAndHealTracks(inputs, [IPOD_MOUNT, LOCAL_MOUNT])
+            const healedPaths = verificationUpdates.filter(u => u.path).length
+            const backfilled = verificationUpdates.filter(u => u.audioFingerprint).length
+            const flagged = verificationUpdates.filter(u => u.audioMissing).length
+            if (healedPaths || backfilled || flagged) {
+              console.log(`sync-to-ipod: post-sync verifier — ${healedPaths} path heal${healedPaths === 1 ? '' : 's'}, ${backfilled} fingerprint backfill${backfilled === 1 ? '' : 's'}, ${flagged} flagged audioMissing`)
+            }
+          } catch (verr) {
+            console.warn('sync-to-ipod: post-sync verifier crashed (non-fatal):', verr)
+          }
+        }
+
         resolve({
           ok: true,
           copied, copyErrors,
@@ -723,6 +1169,11 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
           // Return the path rewrites so the renderer can update
           // library.json to match what actually ended up on the iPod.
           pathRewrites: pathRewrites.map(r => ({ id: r.id, newPath: r.newPath })),
+          // Fingerprint backfills, silent path heals, and audioMissing
+          // flags from the post-sync verifier. Renderer applies these
+          // as UPDATE_TRACKS so library.json reflects the verified
+          // state on the next save.
+          verificationUpdates,
         })
       } else {
         resolve({ ok: false, error: `DB write failed (code ${code}): ${stderr}`, copied, copyErrors })
@@ -754,38 +1205,475 @@ async function resolveAudioPaths(paths: string[]): Promise<string[]> {
         const entries = await readdirFS(p, { withFileTypes: true })
         const childPaths = entries.map(e => join(p, e.name))
         const nested = await resolveAudioPaths(childPaths)
-        results.push(...nested)
+        for (const n of nested) {
+          if (!seen.has(n)) { seen.add(n); results.push(n) }
+        }
       } else {
         const ext = p.substring(p.lastIndexOf('.')).toLowerCase()
-        if (AUDIO_EXTS.has(ext)) results.push(p)
+        if (AUDIO_EXTS.has(ext) && !seen.has(p)) {
+          seen.add(p); results.push(p)
+        }
       }
     } catch { /* skip inaccessible */ }
   }
   return results
 }
 
+// ── Per-file import primitive ──
+// Pulled out of the batch loop so the renderer-side queue can call it
+// for ONE file at a time. That keeps each IPC short, makes failures
+// retryable per-item, and prevents one slow conversion from blocking
+// the whole drop. The batch handler below now just walks the list and
+// calls this for each entry.
+const _normFingerprint = (s: unknown): string => String(s || '')
+  .replace(/^\s*\d{1,2}\s*[-._]\s*/, '')
+  .replace(/\s*\b(feat(?:uring)?|ft)\b\.?[^)]*/ig, '')
+  .replace(/[()[\]{}"',.\-!?:;#/\\]+/g, ' ')
+  .replace(/\s+/g, ' ').trim().toLowerCase()
+
+// Why this set exists:
+// `save-library` on the renderer side is debounced ~1s, so during a
+// rapid multi-file drop every `import-track` call sees a stale
+// library.json on disk that does NOT yet contain the track we just
+// imported on the previous call. Without this set, dropping the same
+// audio file twice (same drag, two drags, or a folder containing
+// duplicates) sneaks both copies into the library — the user sees
+// "the same song twice" and the playback queue auto-advances from
+// one copy to the other, looking like the track is repeating itself.
+// We seed loadDupeFingerprintsFromLibrary() with this set, add to it
+// on every successful import, and clear it whenever save-library
+// flushes to disk (after which the on-disk library.json is the
+// truth and the in-memory set is no longer needed).
+const sessionImportedFingerprints = new Set<string>()
+
+function fingerprintTrack(t: { title?: unknown; artist?: unknown; duration?: unknown }): string | null {
+  const title  = _normFingerprint(t.title)
+  const artist = _normFingerprint(t.artist)
+  const dur    = Math.round(Number(t.duration || 0) / 1000)
+  if (!title || !artist || dur <= 0) return null
+  return `${title}|${artist}|${dur}`
+}
+
+async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
+  // Seed with the session set so back-to-back imports during a
+  // single drop catch each other before save-library flushes.
+  const set = new Set<string>(sessionImportedFingerprints)
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8')
+    const libData = JSON.parse(raw) as { tracks?: Array<Record<string, unknown>> }
+    for (const t of libData.tracks || []) {
+      const fp = fingerprintTrack({ title: t.title, artist: t.artist, duration: t.duration })
+      if (fp) set.add(fp)
+    }
+  } catch { /* new library, no dupes possible */ }
+  return set
+}
+
+// ── Audio content fingerprint ──
+//
+// Identity-based replacement for the old text-matching verify pass. We
+// hash the first 256KB of the audio file plus the duration. That window
+// covers all audio container metadata atoms and well into the actual
+// audio stream, so two different songs cannot collide. Stored once per
+// track at import time as `audioFingerprint`. Re-computed on demand
+// during the silent post-sync verifier.
+//
+// Format: "sha1:<hex16>|<duration_ms>". Duration is included so a
+// re-encode that produced byte-different but-same-song output (very
+// rare in practice) still has a chance of matching by partial.
+async function computeAudioFingerprint(absPath: string, durationMs: number): Promise<string | null> {
+  try {
+    const fh = await open(absPath, 'r')
+    try {
+      const buf = Buffer.alloc(256 * 1024)
+      const { bytesRead } = await fh.read(buf, 0, buf.length, 0)
+      if (bytesRead <= 0) return null
+      const hash = createHash('sha1').update(buf.subarray(0, bytesRead)).digest('hex').slice(0, 16)
+      return `sha1:${hash}|${Math.round(Number(durationMs) || 0)}`
+    } finally {
+      await fh.close().catch(() => {})
+    }
+  } catch {
+    return null
+  }
+}
+
+// Best-effort: turn a track's colon-style library path into an absolute
+// path under either the local mount or the iPod mount. Returns the
+// first one that exists, or null. Sync flows use this when we don't
+// know which mount the file lives on at verify time.
+async function resolveTrackAbsPath(colonPath: string, mounts: string[]): Promise<string | null> {
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  if (!colonPath) return null
+  const rel = colonPath.replace(/:/g, pathSep)
+  for (const mount of mounts) {
+    if (!mount) continue
+    const abs = join(mount, rel)
+    try {
+      const s = await stat(abs)
+      if (s.isFile()) return abs
+    } catch { /* try next mount */ }
+  }
+  return null
+}
+
+interface VerifyTrackInput {
+  id: number
+  path: string
+  duration: number
+  audioFingerprint?: string
+}
+interface VerifyTrackUpdate {
+  id: number
+  audioFingerprint?: string
+  path?: string
+  audioMissing?: boolean
+}
+
+// Silent post-sync verifier. For each input track:
+//   1. Resolve current path against {local, iPod} mounts.
+//   2. If the file exists and has no stored fingerprint, compute one
+//      and emit a backfill update. (Never overwrites an existing
+//      fingerprint — that would mask a real wrong-file case.)
+//   3. If the file exists AND a fingerprint is stored AND they differ,
+//      scan the available F-dirs looking for a file whose fingerprint
+//      matches the stored one. If found, rewrite the track's path
+//      silently. If not found, mark audioMissing.
+//   4. If the file doesn't exist, do the same F-dir scan with the
+//      stored fingerprint. Same outcome — re-link if found, mark
+//      audioMissing if not.
+//
+// NEVER deletes a track. NEVER updates the stored fingerprint when a
+// mismatch is detected (only on initial backfill). The worst this can
+// do is mark a track as audioMissing, which is a UI flag the user can
+// resolve by re-importing or pointing at a new file.
+async function verifyAndHealTracks(
+  inputs: VerifyTrackInput[],
+  mounts: string[],
+): Promise<VerifyTrackUpdate[]> {
+  if (inputs.length === 0) return []
+  const updates: VerifyTrackUpdate[] = []
+
+  // Lazy-build a fingerprint index across the F-dirs of each mount.
+  // Only computed on first miss so a clean sync (everything matches)
+  // costs nothing extra. Indexes file → fingerprint (we look up the
+  // other direction by filtering).
+  let indexBuilt = false
+  const fpToPath = new Map<string, string>()  // fingerprint → first abs path
+  const buildIndex = async () => {
+    if (indexBuilt) return
+    indexBuilt = true
+    const { readdir: rd } = await import('fs/promises')
+    for (const mount of mounts) {
+      if (!mount) continue
+      for (let i = 0; i < 50; i++) {
+        const sub = join(mount, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
+        let entries: string[] = []
+        try { entries = await rd(sub) } catch { continue }
+        for (const fn of entries) {
+          const abs = join(sub, fn)
+          // We don't know the file's duration without parsing tags,
+          // which is expensive. Use 0 for the duration component;
+          // verify lookups below match by fingerprint *string* with the
+          // correct duration on each side, so an index entry built with
+          // duration=0 is keyed differently from a stored fingerprint.
+          // We accept that and instead store hash-only keys for the
+          // index, then compare the hash portion separately.
+          // Compute the file fingerprint with duration=0 to get a stable hash key.
+          const hashOnly = await computeAudioFingerprint(abs, 0)
+          if (hashOnly) {
+            // Strip the "|0" duration suffix to leave just "sha1:<hex>".
+            const key = hashOnly.split('|')[0]
+            if (!fpToPath.has(key)) fpToPath.set(key, abs)
+          }
+        }
+      }
+    }
+  }
+
+  // Convert "sha1:<hex>|<dur>" → "sha1:<hex>" so we can lookup against
+  // the hash-only index above.
+  const hashKey = (fp: string | undefined): string | null => {
+    if (!fp || !fp.startsWith('sha1:')) return null
+    return fp.split('|')[0]
+  }
+
+  // Convert an absolute path on either mount back into the colon form
+  // the library uses. Returns null if abs is not under any mount.
+  const colonFromAbs = (abs: string): string | null => {
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+    for (const mount of mounts) {
+      if (!mount) continue
+      if (abs.startsWith(mount + pathSep)) {
+        return ':' + abs.slice(mount.length + 1).split(pathSep).join(':')
+      }
+    }
+    return null
+  }
+
+  for (const tr of inputs) {
+    const absNow = await resolveTrackAbsPath(tr.path, mounts)
+    if (absNow) {
+      // File exists at expected path. Backfill fingerprint if missing.
+      // (One-time per track; after that the field is permanent and only
+      // updated by an explicit re-import.)
+      if (!tr.audioFingerprint) {
+        const fp = await computeAudioFingerprint(absNow, tr.duration)
+        if (fp) updates.push({ id: tr.id, audioFingerprint: fp, audioMissing: false })
+        continue
+      }
+      // Stored fingerprint present — verify against the current file.
+      const cur = await computeAudioFingerprint(absNow, tr.duration)
+      if (cur && cur === tr.audioFingerprint) {
+        // Healthy. Nothing to do.
+        continue
+      }
+      // Stored fingerprint differs from the current file. Two cases:
+      //   (a) The file at this path was overwritten by a re-encode
+      //       (ALAC compat fix, etc.) — file is fine, fingerprint is
+      //       stale. We can't tell this case apart from (b) without
+      //       text matching, which is what we deliberately moved away
+      //       from. So we don't touch path or fingerprint here. The
+      //       stale fingerprint will get refreshed if the user
+      //       re-imports the track.
+      //   (b) The path got cross-linked to a different song — this is
+      //       the actual bug we want to catch. We DO try to find the
+      //       right audio elsewhere on the mounts via the fingerprint
+      //       index. If found, re-link silently. If not found, leave
+      //       the track alone (do NOT flag audioMissing — the file
+      //       exists, the user can still play SOMETHING, even if it's
+      //       wrong; and we want to avoid false positives on case
+      //       (a)).
+      await buildIndex()
+      const target = hashKey(tr.audioFingerprint)
+      const found = target ? fpToPath.get(target) : null
+      if (found) {
+        const newColon = colonFromAbs(found)
+        if (newColon && newColon !== tr.path) {
+          updates.push({ id: tr.id, path: newColon, audioMissing: false })
+          continue
+        }
+      }
+      // Mismatch with no recovery possible; leave the track untouched.
+      continue
+    }
+    // File missing entirely (path resolved to nothing on any mount).
+    // Try the heal-by-fingerprint scan. If we find it, re-link. If
+    // not, flag audioMissing so the UI can show the user.
+    if (tr.audioFingerprint) {
+      await buildIndex()
+      const target = hashKey(tr.audioFingerprint)
+      const found = target ? fpToPath.get(target) : null
+      if (found) {
+        const newColon = colonFromAbs(found)
+        if (newColon) {
+          updates.push({ id: tr.id, path: newColon, audioMissing: false })
+          continue
+        }
+      }
+    }
+    updates.push({ id: tr.id, audioMissing: true })
+  }
+  return updates
+}
+
+interface SingleImportResult {
+  ok: boolean
+  track?: Record<string, unknown>
+  dupe?: { src: string; matchedTitle: string; matchedArtist: string }
+  error?: string
+}
+
+async function importOneFile(
+  srcPath: string,
+  id: number,
+  chosenFmt: AudioFormat,
+  preferredFormat: string | undefined,
+  dupeFingerprints: Set<string>,
+  dateOverride?: Date,
+): Promise<SingleImportResult> {
+  const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
+  try {
+    const mm = await import('music-metadata')
+    const metadata = await mm.parseFile(srcPath)
+    const common = metadata.common
+    const format = metadata.format
+
+    const ft = _normFingerprint(common.title)
+    const fa = _normFingerprint(common.artist)
+    const fd = Math.round(Number(format.duration || 0))
+    if (ft && fa && fd > 0 && dupeFingerprints.has(`${ft}|${fa}|${fd}`)) {
+      return {
+        ok: true,
+        dupe: {
+          src: srcPath,
+          matchedTitle: String(common.title || ''),
+          matchedArtist: String(common.artist || ''),
+        },
+      }
+    }
+
+    const subDir = `F${String(id % 50).padStart(2, '0')}`
+    const destDir = join(MUSIC_DIR, subDir)
+    await mkdir(destDir, { recursive: true })
+
+    const codec = format.codec?.toLowerCase() || ''
+    const needsConvert = codec.includes('alac') || codec.includes('flac') ||
+      ext === '.flac' || ext === '.wav' || ext === '.wave' || ext === '.aiff' || ext === '.aif'
+
+    let finalExt = ext
+    let fileName: string
+    let destPath: string
+
+    const embedTags = {
+      title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
+      artist: common.artist || '',
+      album: common.album || '',
+      albumArtist: common.albumartist || '',
+      genre: common.genre?.[0] || '',
+      year: common.year ? String(common.year) : '',
+      trackNumber: common.track?.no || 0,
+      trackCount: common.track?.of || 0,
+      discNumber: common.disk?.no || 0,
+      discCount: common.disk?.of || 0,
+    }
+
+    const sourcePlayable = ext === '.m4a' || ext === '.mp3' || ext === '.aac'
+    const userRequestedReencode = preferredFormat != null && preferredFormat !== 'aac-256'
+    const doConvert = needsConvert || userRequestedReencode || !sourcePlayable
+
+    if (doConvert) {
+      finalExt = extensionForFormat(chosenFmt)
+      fileName = `imported_${id}${finalExt}`
+      destPath = join(destDir, fileName)
+      try {
+        await convertAudio(srcPath, destPath, chosenFmt, embedTags)
+      } catch (convertErr) {
+        console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
+        finalExt = ext
+        fileName = `imported_${id}${finalExt}`
+        destPath = join(destDir, fileName)
+        await copyFile(srcPath, destPath)
+      }
+    } else {
+      fileName = `imported_${id}${finalExt}`
+      destPath = join(destDir, fileName)
+      await copyFile(srcPath, destPath)
+    }
+
+    const fileStats = await stat(destPath)
+    const trackTime = dateOverride || new Date()
+    const durationMs = Math.round((format.duration || 0) * 1000)
+
+    // Stable per-file identity. Stored at import and used by the silent
+    // post-sync verifier to detect cross-linked paths without resorting
+    // to fragile text matching. See computeAudioFingerprint for the
+    // format and verifyAndHealTracks for how it's consumed.
+    const audioFingerprint = await computeAudioFingerprint(destPath, durationMs)
+
+    const track: Record<string, unknown> = {
+      id,
+      title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
+      artist: common.artist || '',
+      album: common.album || '',
+      genre: common.genre?.[0] || '',
+      year: common.year || '',
+      duration: durationMs,
+      path: `:iPod_Control:Music:${subDir}:${fileName}`,
+      trackNumber: common.track?.no || 0,
+      trackCount: common.track?.of || 0,
+      discNumber: common.disk?.no || 0,
+      discCount: common.disk?.of || 0,
+      playCount: 0,
+      dateAdded: trackTime.toISOString(),
+      fileSize: fileStats.size,
+      rating: 0,
+      ...(audioFingerprint ? { audioFingerprint } : {}),
+    }
+
+    // Add this fingerprint to the set so a duplicate appearing later in
+    // the same batch (or a back-to-back drop) gets caught even before
+    // library.json is rewritten on disk.
+    if (ft && fa && fd > 0) {
+      dupeFingerprints.add(`${ft}|${fa}|${fd}`)
+    }
+
+    return { ok: true, track }
+  } catch (err) {
+    console.error(`Failed to import ${srcPath}:`, err)
+    return { ok: false, error: String(err) }
+  }
+}
+
+// Single-file IPC for the renderer-side import queue. The queue calls
+// this once per item, in series, with retry on failure. Folders are
+// resolved before enqueuing in the renderer so this only ever sees
+// individual audio files.
+ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
+  const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
+  const chosenFmt: AudioFormat = validFormats.includes(preferredFormat as AudioFormat)
+    ? (preferredFormat as AudioFormat)
+    : 'aac-256'
+  const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
+  const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints)
+
+  // Record this import's fingerprint at the session level so the
+  // NEXT import-track call (which may fire before save-library has
+  // had a chance to flush) sees this track as already present and
+  // refuses to import it a second time. Pass duration in
+  // milliseconds — fingerprintTrack normalises to seconds itself.
+  if (r.ok && r.track) {
+    const fp = fingerprintTrack({
+      title: r.track.title,
+      artist: r.track.artist,
+      duration: r.track.duration,
+    })
+    if (fp) sessionImportedFingerprints.add(fp)
+  }
+
+  // If we just wrote an ALAC file to local storage, kick off its
+  // play-cache transcode in the background so first-play is instant.
+  // (No-op for AAC/MP3 — those play directly from the m4a/mp3 file.)
+  if (r.ok && r.track && chosenFmt === 'alac') {
+    const colon = String(r.track.path || '')
+    if (colon) {
+      const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+      const pathSep = IS_WINDOWS ? '\\' : '/'
+      const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+      prewarmAlacCache([abs]).catch(() => {})
+    }
+  }
+
+  return r
+})
+
+// Resolve folders + filter to audio extensions for the renderer queue.
+// Splits a single drop into its constituent files so the queue can show
+// progress per-file rather than per-folder.
+ipcMain.handle('import-resolve-paths', async (_e, paths: string[]) => {
+  try {
+    const resolved = await resolveAudioPaths(paths)
+    return { ok: true, paths: resolved }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
+})
+
 ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
   // Resolve folders into individual audio files
   const resolvedPaths = await resolveAudioPaths(filePaths)
   const imported: Array<Record<string, unknown>> = []
+  const skippedDupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> = []
   let id = nextId
 
-  // Honor the user's current import format preference (aac-256 / alac / wav / etc).
-  // Without this, dragging a CD track or other lossless source into the app
-  // would silently convert to AAC 256 regardless of what the user picked
-  // for CD imports — the exact complaint: "i told it to import as lossless
-  // and it auto went back to AAC 256".
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   const chosenFmt: AudioFormat = validFormats.includes(preferredFormat as AudioFormat)
     ? (preferredFormat as AudioFormat)
     : 'aac-256'
 
-  // Dynamic import for ESM module
-  const mm = await import('music-metadata')
+  const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
 
-  // Emit an initial progress event so the LCD pill can light up even
-  // before the first track finishes. Lets the user know their drop
-  // was received and how big the batch is.
+  // Initial progress event so the pill lights up immediately
   mainWindow?.webContents.send('import-progress', {
     current: 0, total: resolvedPaths.length, title: '',
   })
@@ -794,119 +1682,44 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   let trackIndex = 0
 
   for (const srcPath of resolvedPaths) {
-    const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
-
-    try {
-      // Parse metadata first (from original file, before any conversion)
-      const metadata = await mm.parseFile(srcPath)
-      const common = metadata.common
-      const format = metadata.format
-
-      // Copy file to iPod music dir in F00-F49 subdirectory structure
-      const subDir = `F${String(id % 50).padStart(2, '0')}`
-      const destDir = join(MUSIC_DIR, subDir)
-      await mkdir(destDir, { recursive: true })
-
-      const { copyFile } = await import('fs/promises')
-      const { execFile } = await import('child_process')
-      const { promisify } = await import('util')
-      const execP = promisify(execFile)
-
-      // Check if the file needs conversion (ALAC, FLAC, WAV → AAC for Chromium compatibility)
-      const codec = format.codec?.toLowerCase() || ''
-      const needsConvert = codec.includes('alac') || codec.includes('flac') ||
-        ext === '.flac' || ext === '.wav' || ext === '.wave' || ext === '.aiff' || ext === '.aif'
-
-      let finalExt = ext
-      let fileName: string
-      let destPath: string
-
-      // Pull tags once, for both the track record AND to embed into the
-      // output file (so it stays self-identifying).
-      const embedTags = {
-        title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
-        artist: common.artist || '',
-        album: common.album || '',
-        albumArtist: common.albumartist || '',
-        genre: common.genre?.[0] || '',
-        year: common.year ? String(common.year) : '',
-        trackNumber: common.track?.no || 0,
-        trackCount: common.track?.of || 0,
-        discNumber: common.disk?.no || 0,
-        discCount: common.disk?.of || 0,
-      }
-
-      // If the source is already a Chromium-playable format (AAC .m4a,
-      // .mp3) and the user didn't explicitly request a re-encode, we
-      // can just copy. Otherwise honor the user's chosen format.
-      const sourcePlayable = ext === '.m4a' || ext === '.mp3' || ext === '.aac'
-      const userRequestedReencode = preferredFormat != null && preferredFormat !== 'aac-256'
-      const doConvert = needsConvert || userRequestedReencode || !sourcePlayable
-
-      if (doConvert) {
-        finalExt = extensionForFormat(chosenFmt)
-        fileName = `imported_${id}${finalExt}`
-        destPath = join(destDir, fileName)
-        try {
-          await convertAudio(srcPath, destPath, chosenFmt, embedTags)
-        } catch (convertErr) {
-          console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
-          // Fall back to copying the original file
-          finalExt = ext
-          fileName = `imported_${id}${finalExt}`
-          destPath = join(destDir, fileName)
-          await copyFile(srcPath, destPath)
-        }
-      } else {
-        fileName = `imported_${id}${finalExt}`
-        destPath = join(destDir, fileName)
-        await copyFile(srcPath, destPath)
-      }
-
-      const fileStats = await stat(destPath)
-
-      // Each track in batch gets a unique timestamp so sort order is preserved
-      const trackTime = new Date(batchBaseTime + trackIndex)
-
-      const track: Record<string, unknown> = {
-        id,
-        title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
-        artist: common.artist || '',
-        album: common.album || '',
-        genre: common.genre?.[0] || '',
-        year: common.year || '',
-        duration: Math.round((format.duration || 0) * 1000),
-        path: `:iPod_Control:Music:${subDir}:${fileName}`,
-        trackNumber: common.track?.no || 0,
-        trackCount: common.track?.of || 0,
-        discNumber: common.disk?.no || 0,
-        discCount: common.disk?.of || 0,
-        playCount: 0,
-        dateAdded: trackTime.toISOString(),
-        fileSize: fileStats.size,
-        rating: 0,
-      }
-
-      imported.push(track)
+    const trackTime = new Date(batchBaseTime + trackIndex)
+    const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints, trackTime)
+    if (r.ok && r.track) {
+      imported.push(r.track)
+      // Track in session set — guards future single-file imports from
+      // racing this batch (and matches what import-track does).
+      // duration is in ms; fingerprintTrack divides to seconds itself.
+      const fp = fingerprintTrack({
+        title: r.track.title,
+        artist: r.track.artist,
+        duration: r.track.duration,
+      })
+      if (fp) sessionImportedFingerprints.add(fp)
       id++
       trackIndex++
       mainWindow?.webContents.send('import-progress', {
         current: imported.length,
         total: resolvedPaths.length,
-        title: track.title as string,
+        title: r.track.title as string,
       })
-    } catch (err) {
-      console.error(`Failed to import ${srcPath}:`, err)
+    } else if (r.ok && r.dupe) {
+      skippedDupes.push(r.dupe)
+      trackIndex++
+      mainWindow?.webContents.send('import-progress', {
+        current: trackIndex, total: resolvedPaths.length,
+        title: `Skipped (already in library): ${r.dupe.matchedTitle}`,
+      })
+    } else {
       mainWindow?.webContents.send('import-progress', {
         current: imported.length,
         total: resolvedPaths.length,
         title: srcPath.substring(srcPath.lastIndexOf('/') + 1),
-        error: String(err),
+        error: r.error,
       })
     }
   }
 
-  return { ok: true, tracks: imported }
+  return { ok: true, tracks: imported, skippedDupes }
 })
 
 const MIME_TYPES: Record<string, string> = {

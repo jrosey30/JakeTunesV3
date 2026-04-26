@@ -114,6 +114,29 @@
   font-weight: 500;
 }
 
+/* Tiny "!" badge that appears in the title cell when the post-sync
+ * identity verifier flagged a track as audioMissing — its audio file
+ * couldn't be located on any known mount and no other file with the
+ * same fingerprint was found. Library entry stays put; a re-import
+ * fixes it. */
+.songs-cell-missing-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #d6a023;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  flex-shrink: 0;
+  cursor: help;
+  vertical-align: -1px;
+}
+
 /* Star rating */
 .star-rating {
   display: inline-flex;

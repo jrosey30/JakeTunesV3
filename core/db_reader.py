@@ -736,15 +736,40 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     print(f"Matched {len(name_to_mhyp_hdr)} existing playlist headers by name", file=sys.stderr)
 
     # ── Assign dbids ──
+    #
+    # Each library entry must end up with a UNIQUE dbid in this sync. The
+    # mhit record uses it, AND the master library playlist's mhip records
+    # use it — so if two entries share a dbid, the iPod hardware "Songs"
+    # view (which walks mhip and dedupes by dbid) silently collapses them
+    # and reports "1 of N-k" instead of "1 of N". User-visible symptom:
+    # iTunesDB has 4550 tracks, click-wheel hardware shows "1 of 4542".
+    #
+    # The collision source is `path_to_dbid` itself — built from the
+    # existing iTunesDB. If a prior sync ever wrote two different paths
+    # with the same dbid (which has happened in this codebase's history),
+    # both library entries pointing at those paths inherit the duplicate
+    # dbid and we propagate the bug forward forever.
+    #
+    # Defense: track which dbids we've already claimed in this sync. If
+    # the prior dbid is already taken, allocate a fresh one. The mhit
+    # record + the mhip reference both pull from track_dbids, so this
+    # one fix-up keeps both consistent.
     track_dbids = {}
+    used_dbids = set()
+    collisions = 0
     next_dbid = max_dbid + 2
     for t in tracks:
         path = t.get('path', '')
-        if path in path_to_dbid:
-            track_dbids[t['id']] = path_to_dbid[path]
-        else:
-            track_dbids[t['id']] = next_dbid
+        candidate = path_to_dbid.get(path)
+        if candidate is None or candidate in used_dbids:
+            if candidate is not None and candidate in used_dbids:
+                collisions += 1
+            candidate = next_dbid
             next_dbid += 2
+        track_dbids[t['id']] = candidate
+        used_dbids.add(candidate)
+    if collisions > 0:
+        print(f"dbid collision dedupe: reassigned {collisions} duplicate dbids", file=sys.stderr)
 
     reused = sum(1 for t in tracks if t.get('path', '') in path_to_mhit)
     new_count = len(tracks) - reused

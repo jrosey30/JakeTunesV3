@@ -8,6 +8,9 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
+import { ratingMenuEntries } from '../components/StarRating'
+import { useCynthia } from '../context/CynthiaContext'
+import { toCynthiaTrack } from '../utils/cynthia'
 import type { SortColumn, Track } from '../types'
 import '../styles/songs.css'
 
@@ -76,6 +79,7 @@ export default function SongsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
+  const { openCynthia } = useCynthia()
 
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set())
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
@@ -191,6 +195,7 @@ export default function SongsView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      ...ratingMenuEntries(selectedTracks, libDispatch),
       { separator: true as const },
       {
         label: 'Get Info',
@@ -204,13 +209,27 @@ export default function SongsView() {
       ...artworkItems,
       { separator: true as const },
       {
+        label: 'Cynthia!!',
+        onClick: () => {
+          openCynthia({
+            x: ctxMenu.x, y: ctxMenu.y,
+            scope: {
+              type: 'tracks',
+              label: count > 1 ? `${count} tracks` : track.title,
+              tracks: selectedTracks.map(toCynthiaTrack),
+            },
+          })
+        },
+      },
+      { separator: true as const },
+      {
         label: count > 1 ? `Delete ${count} Songs` : 'Delete Song',
         onClick: () => {
           setDeleteConfirm({ ids: selectedTracks.map(t => t.id), count })
         },
       },
     ]
-  }, [ctxMenu, lib.selectedTrackIds, sorted, playTrack, pbDispatch])
+  }, [ctxMenu, lib.selectedTrackIds, sorted, playTrack, pbDispatch, libDispatch, openCynthia])
 
   const handleColResize = useCallback((colKey: string, colIndex: number, e: React.MouseEvent) => {
     e.preventDefault()
@@ -523,7 +542,18 @@ export default function SongsView() {
                       case 'playing':
                         return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
                       case 'title':
-                        return <div key={col.key} className="songs-cell songs-cell--title">{track.title || ''}</div>
+                        return (
+                          <div key={col.key} className="songs-cell songs-cell--title">
+                            {track.audioMissing && (
+                              <span
+                                className="songs-cell-missing-badge"
+                                title="JakeTunes can't find this track's audio file. The library entry is preserved — re-import the file to restore playback."
+                                aria-label="Audio file missing"
+                              >!</span>
+                            )}
+                            {track.title || ''}
+                          </div>
+                        )
                       case 'time':
                         return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
                       case 'artist':
