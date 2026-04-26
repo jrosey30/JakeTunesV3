@@ -503,7 +503,7 @@ export default function SongsView() {
           </div>
         ))}
       </div>
-      <div className="songs-body" ref={containerRef} onScroll={onScroll}>
+      <div className="songs-body" ref={containerRef as React.RefObject<HTMLDivElement>} onScroll={onScroll}>
         <div style={{ height: totalHeight, position: 'relative' }}>
           <div style={{ position: 'absolute', top: offsetY, left: 0, right: 0 }}>
             {sorted.slice(startIndex, endIndex).map((track, i) => {

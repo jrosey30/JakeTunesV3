@@ -142,6 +142,18 @@ export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'date
 export type SortDirection = 'asc' | 'desc'
 
 declare global {
+  // Electron exposes the absolute filesystem path on dropped File objects.
+  // Standard DOM lib types don't include this, so augment.
+  // Always populated for File objects originating from native drops in
+  // an Electron renderer, which is the only place we read this.
+  interface File {
+    readonly path: string
+  }
+
+  // Image asset module declarations (electron-vite exposes these as URL
+  // strings at runtime).
+  // (Defined in renderer types.ts so the renderer build picks them up.)
+
   interface Window {
     electronAPI: {
       loadTracks: () => Promise<{ tracks: Track[]; playlists: { name: string; trackIds: number[] }[] }>
@@ -210,6 +222,10 @@ declare global {
       onImportProgress: (callback: (progress: { current: number; total: number; title: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
+      // Music Man taste-learning hooks (preload exposes; main may no-op).
+      recordPlay: (track: { title: string; artist: string; album: string; genre: string }) => Promise<{ ok: boolean }>
+      recordSkip: (track: { title: string; artist: string }) => Promise<{ ok: boolean }>
+      recordRating: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>
@@ -220,3 +236,4 @@ declare global {
     }
   }
 }
+

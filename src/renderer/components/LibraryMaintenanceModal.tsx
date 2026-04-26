@@ -40,7 +40,7 @@ export default function LibraryMaintenanceModal({ mode, onClose }: Props) {
   // Initial dry-run scan.
   useEffect(() => {
     window.electronAPI.alacCompatScan().then((r) => {
-      setAlac(r)
+      setAlac(r as AlacResult)
       setScanning(false)
       if (!r.ok) setError(r.error || 'Scan failed')
     })

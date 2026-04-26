@@ -4114,7 +4114,7 @@ app.whenReady().then(async () => {
     const filePath = join(getArtworkDir(), `${hash}.jpg`)
     try {
       const data = await readFile(filePath)
-      return new Response(data, {
+      return new Response(new Uint8Array(data), {
         headers: {
           'Content-Type': 'image/jpeg',
           'Cache-Control': 'no-store, no-cache, must-revalidate',

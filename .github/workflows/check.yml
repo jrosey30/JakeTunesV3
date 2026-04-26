@@ -58,21 +58,14 @@ jobs:
         # either; that's the bug we want to catch.
         run: npm run build
 
-      - name: TypeScript type-check (informational)
-        # SOFT GATE — continue-on-error is true. Reports type errors
-        # but doesn't fail the run.
-        #
-        # Why soft: as of this workflow's creation there are ~13
-        # pre-existing type drift errors (File.path Electron extension,
+      - name: TypeScript type-check
+        # HARD GATE. The 13 pre-existing type drift errors that
+        # justified the soft-gate (File.path Electron extension,
         # RefObject<T|null> React 18 narrowing, missing image module
-        # decls, AlacResult shape mismatch, etc.) that esbuild
-        # tolerates but tsc flags. The app builds and runs correctly.
-        # Cleaning these up is its own task — see follow-up issue.
-        #
-        # When the existing 13 are gone, flip this to a hard gate by
-        # removing `continue-on-error: true`. New type errors will
-        # then break the build, which is what we want long-term.
-        continue-on-error: true
+        # decls, AlacResult shape mismatch, etc.) are now resolved.
+        # Type errors should fail the run — they were the proximate
+        # cause of every "red ❌" CI run on `main` since this workflow
+        # was added.
         run: npx tsc -b --noEmit
 
       - name: Python syntax check

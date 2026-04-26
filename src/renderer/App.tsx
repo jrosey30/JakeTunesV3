@@ -66,7 +66,7 @@ function AppInner() {
             continue
           }
           for (const [field, value] of Object.entries(entry.fields)) {
-            (t as Record<string, unknown>)[field] = value
+            (t as unknown as Record<string, unknown>)[field] = value
           }
           appliedCount++
         }
