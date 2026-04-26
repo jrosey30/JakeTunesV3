@@ -3,11 +3,17 @@
 **Severity:** P3 (cosmetic firmware behavior, not a JakeTunes bug)
 **Time spent diagnosing:** most of a day before this writeup
 **Action items:** none in code; this doc + `core/ipod_db_audit.py` exist so future-you doesn't redo the investigation
-**Two related symptoms, same root cause:**
+**Three related symptoms, same root cause:**
 1. The "1 of 4396" counter shown in Music → Songs / Shuffle All when the
    library contains 4546 tracks.
 2. Newly-added tracks (synced today) not appearing in the iPod UI even
    though sync ran and the tracks are in the iTunesDB and on disk.
+3. The "Recently Added" smart playlist appearing empty on the iPod even
+   though the iTunesDB on disk has it populated with 100 mhip refs that
+   all resolve to real tracks (and include all 82 today-added tracks).
+
+All three are the iPod firmware showing stale runtime state. The on-disk
+database is fine throughout.
 
 ## Symptom
 
@@ -140,6 +146,33 @@ clean eject from JakeTunes and unplug/replug.
 without a full restart — iTunes did this via specific "Eject" SCSI
 commands. Worth investigating in a separate brief if this becomes a
 recurring frustration. For now, restart-after-sync is the cheap fix.
+
+## Symptom 3: "Recently Added smart playlist is empty on the iPod"
+
+Reported as a third concern late in the same investigation. The user
+opened "Recently Added" on the iPod and saw an empty list.
+
+**Verified false the same way as #2:**
+- Walked the iTunesDB's playlist dataset; "Recently Added" exists and
+  has 100 mhip records.
+- All 100 mhip refs resolve to valid mhit dbids (no broken pointers).
+- Cross-referenced the 82 today-added tracks (by lowercase
+  title+artist) against the playlist's mhip refs: **82/82 are in it.**
+
+So the playlist on disk is fully populated. The iPod showing it empty
+is the same stale-runtime-cache symptom as #2.
+
+**Note about smart playlists in JakeTunes:** at the moment, all
+playlists in the iTunesDB (including iTunes' built-in smart playlists
+like "Recently Added", "Top 25 Most Played", etc.) have their `smart`
+flag effectively false — JakeTunes is *freezing* their contents at
+sync time rather than carrying the smart-playlist criteria forward
+for the iPod firmware to evaluate dynamically. This is fine for now
+(every sync re-evaluates and re-freezes), but it means **a track
+added between syncs will not appear in "Recently Added" until the
+next sync runs**. Worth a brief if it becomes annoying — see the
+discussion of mhod types 50/51 (smart-playlist data/criteria) in
+db_reader.py for the entry point.
 
 ## Why this took a long time
 
