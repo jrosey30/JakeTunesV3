@@ -4,9 +4,12 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { useCynthia } from '../context/CynthiaContext'
+import { toCynthiaTrack } from '../utils/cynthia'
 import ConfirmDialog from '../components/ConfirmDialog'
 import UndoToast from '../components/UndoToast'
 import GetInfoModal from '../components/GetInfoModal'
+import StarRating, { ratingMenuEntries } from '../components/StarRating'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import '../styles/songs.css'
 
@@ -48,6 +51,7 @@ export default function PlaylistView() {
   const { state, dispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
+  const { openCynthia } = useCynthia()
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -88,8 +92,9 @@ export default function PlaylistView() {
     if (state.activePlaylistId) sortPrefs.set(state.activePlaylistId, { col: sortCol, dir: sortDir })
   }, [state.activePlaylistId, sortCol, sortDir])
 
-  // Column visibility & width state
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount', 'rating']))
+  // Column visibility & width state. Rating column stays visible by
+  // default so ratings can be edited inline from any playlist.
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount']))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -382,12 +387,28 @@ export default function PlaylistView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
+      ...ratingMenuEntries(selected, dispatch),
       { separator: true as const },
       {
         label: `Get Info`,
         onClick: () => setGetInfoState({ tracks: selected, index: idx }),
       },
       ...artworkItems,
+      { separator: true as const },
+      {
+        label: 'Cynthia!!',
+        onClick: () => {
+          if (!ctxMenu) return
+          openCynthia({
+            x: ctxMenu.x, y: ctxMenu.y,
+            scope: {
+              type: 'tracks',
+              label: count > 1 ? `${count} tracks` : track.title,
+              tracks: selected.map(toCynthiaTrack),
+            },
+          })
+        },
+      },
       { separator: true as const },
       {
         label: `Remove from Playlist`,
@@ -550,7 +571,18 @@ export default function PlaylistView() {
                     case 'playCount':
                       return <div key={col.key} className="songs-cell songs-cell--time">{track.playCount || ''}</div>
                     case 'rating':
-                      return <div key={col.key} className="songs-cell songs-cell--time">{track.rating ? '★'.repeat(Math.round(track.rating / 20)) : ''}</div>
+                      return (
+                        <div key={col.key} className="songs-cell songs-cell--rating">
+                          <StarRating
+                            value={Number(track.rating) || 0}
+                            onChange={(r) => {
+                              const value = String(r)
+                              dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
+                              window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
+                            }}
+                          />
+                        </div>
+                      )
                     default:
                       return null
                   }

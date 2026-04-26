@@ -6,6 +6,9 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
+import { ratingMenuEntries } from '../components/StarRating'
+import { useCynthia } from '../context/CynthiaContext'
+import { toCynthiaTrack } from '../utils/cynthia'
 import { Track } from '../types'
 import '../styles/albums.css'
 
@@ -21,6 +24,7 @@ export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
+  const { openCynthia } = useCynthia()
   const [selected, setSelected] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; tracks: Track[]; idx: number } | null>(null)
@@ -69,12 +73,19 @@ export default function AlbumsView() {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [lib.tracks])
 
-  // Apply the page-local search filter on top of the computed albums.
+  // Apply search filter on top of the computed albums. Uses whichever
+  // of the two search inputs has a value: the global toolbar Search
+  // Pill (state.searchQuery) OR the local search box. The toolbar pill
+  // wins if both are filled, because it's what the user likely reaches
+  // for first — this was the source of the "I typed in the search bar
+  // and nothing filtered on the Albums page" bug.
+  //
   // Matches album name, artist, or any track title — so typing a song
   // title finds the album it lives on even if you don't remember the
   // album name.
+  const effectiveQuery = (lib.searchQuery || search).trim().toLowerCase()
   const filteredAlbums = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = effectiveQuery
     if (!q) return albums
     return albums.filter(a => {
       if (a.name.toLowerCase().includes(q)) return true
@@ -83,7 +94,7 @@ export default function AlbumsView() {
       if (a.tracks.some(t => (t.title || '').toLowerCase().includes(q))) return true
       return false
     })
-  }, [albums, search])
+  }, [albums, effectiveQuery])
 
   // Helper: find artwork hash trying all artist variants for an album
   const findArtHash = (album: Album): string | undefined => {
@@ -173,18 +184,39 @@ export default function AlbumsView() {
       },
     ] : []
 
+    // Album-level scope for Cynthia — the popover sees every track in
+    // the album, which is exactly what she needs for "find the missing
+    // tracks" / "fix track numbers" type questions. The user's right-
+    // click coordinates anchor the popover near where they clicked.
+    const albumLabel = `${track.albumArtist || track.artist} — ${track.album}`
+
     return [
       { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: sel }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: sel }) },
+      ...ratingMenuEntries(sel, libDispatch),
       { separator: true as const },
       { label: 'Get Info', onClick: () => setGetInfoState({ tracks: sel, index: idx }) },
       ...artworkItems,
       { separator: true as const },
+      {
+        label: 'Cynthia!! (this album)',
+        onClick: () => {
+          openCynthia({
+            x: ctxMenu.x, y: ctxMenu.y,
+            scope: {
+              type: 'album',
+              label: albumLabel,
+              tracks: tracks.map(toCynthiaTrack),
+            },
+          })
+        },
+      },
+      { separator: true as const },
       { label: count > 1 ? `Delete ${count} Songs` : 'Delete Song', onClick: () => setDeleteConfirm({ ids: sel.map(t => t.id), count }) },
     ]
-  }, [ctxMenu, selectedTrackIds, playTrack, pbDispatch, libDispatch])
+  }, [ctxMenu, selectedTrackIds, playTrack, pbDispatch, libDispatch, openCynthia])
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
@@ -254,11 +286,12 @@ export default function AlbumsView() {
         <input
           className="view-search-input"
           type="search"
-          placeholder={`Search ${albums.length} albums...`}
+          placeholder={lib.searchQuery ? `Filtering by "${lib.searchQuery}" (toolbar)` : `Search ${albums.length} albums...`}
           value={search}
           onChange={e => setSearch(e.target.value)}
+          disabled={!!lib.searchQuery}
         />
-        {search && (
+        {effectiveQuery && (
           <span className="view-search-count">
             {filteredAlbums.length} match{filteredAlbums.length !== 1 ? 'es' : ''}
           </span>

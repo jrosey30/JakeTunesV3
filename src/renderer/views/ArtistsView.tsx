@@ -4,8 +4,11 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { useCynthia } from '../context/CynthiaContext'
+import { toCynthiaTrack } from '../utils/cynthia'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
+import { ratingMenuEntries } from '../components/StarRating'
 import { Track } from '../types'
 import '../styles/artists.css'
 
@@ -29,6 +32,7 @@ function initials(name: string): string {
 
 export default function ArtistsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
+  const { openCynthia } = useCynthia()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -62,9 +66,16 @@ export default function ArtistsView() {
       })
   }, [lib.tracks])
 
-  // Page-local search. Matches artist name, album name, or track title.
+  // Search filter. Honors BOTH the global toolbar Search Pill
+  // (lib.searchQuery) and this page's local search box — whichever has
+  // content. Toolbar pill wins when both are filled. This was the
+  // source of "I typed in the search bar and nothing happened on the
+  // Artists page" — the global search state was being ignored.
+  //
+  // Matches artist name, album name, or track title.
+  const effectiveQuery = (lib.searchQuery || search).trim().toLowerCase()
   const filteredArtists = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = effectiveQuery
     if (!q) return artists
     return artists.filter(a => {
       if (a.name.toLowerCase().includes(q)) return true
@@ -72,7 +83,7 @@ export default function ArtistsView() {
       if (a.tracks.some(t => (t.title || '').toLowerCase().includes(q))) return true
       return false
     })
-  }, [artists, search])
+  }, [artists, effectiveQuery])
 
   const toggleArtist = useCallback((name: string) => {
     setExpanded(prev => {
@@ -123,18 +134,35 @@ export default function ArtistsView() {
         },
       },
     ] : []
+    const albumLabel = `${track.albumArtist || track.artist} — ${track.album}`
+
     return [
       { label: `Play "${track.title}"`, onClick: () => playTrack(track, tracks, idx) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
+      ...ratingMenuEntries([track], libDispatch),
       { separator: true as const },
       { label: 'Get Info', onClick: () => setGetInfoState({ tracks: [track], index: idx }) },
       ...artworkItems,
       { separator: true as const },
+      {
+        label: 'Cynthia!! (this album)',
+        onClick: () => {
+          openCynthia({
+            x: ctxMenu.x, y: ctxMenu.y,
+            scope: {
+              type: 'album',
+              label: albumLabel,
+              tracks: tracks.map(toCynthiaTrack),
+            },
+          })
+        },
+      },
+      { separator: true as const },
       { label: 'Delete Song', onClick: () => setDeleteConfirm({ ids: [track.id], count: 1 }) },
     ]
-  }, [ctxMenu, playTrack, pbDispatch, libDispatch])
+  }, [ctxMenu, playTrack, pbDispatch, libDispatch, openCynthia])
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
@@ -174,11 +202,12 @@ export default function ArtistsView() {
         <input
           className="view-search-input"
           type="search"
-          placeholder={`Search ${artists.length} artists...`}
+          placeholder={lib.searchQuery ? `Filtering by "${lib.searchQuery}" (toolbar)` : `Search ${artists.length} artists...`}
           value={search}
           onChange={e => setSearch(e.target.value)}
+          disabled={!!lib.searchQuery}
         />
-        {search && (
+        {effectiveQuery && (
           <span className="view-search-count">
             {filteredArtists.length} match{filteredArtists.length !== 1 ? 'es' : ''}
           </span>

@@ -7,6 +7,7 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
+import StarRating, { ratingMenuEntries } from '../components/StarRating'
 import '../styles/musicman.css'
 import '../styles/songs.css'
 
@@ -183,7 +184,9 @@ export default function SmartPlaylistView() {
   }, [smartTracks, libState.searchQuery])
 
   // --- Column visibility ---
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount', 'rating']))
+  // Rating stays visible so ratings can be edited from any smart
+  // playlist (Recently Added, Top 25, The Music Man Picks…).
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount']))
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   const visibleCols = ALL_COLUMN_DEFS.filter(c => !hiddenCols.has(c.key))
@@ -430,6 +433,7 @@ export default function SmartPlaylistView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
+      ...ratingMenuEntries(selected, dispatch),
       { separator: true as const },
       { label: `Get Info`, onClick: () => setGetInfoState({ tracks: selected, index: idx }) },
       ...artworkItems,
@@ -609,7 +613,18 @@ export default function SmartPlaylistView() {
                   case 'playCount':
                     return <div key={col.key} className="songs-cell">{track.playCount || ''}</div>
                   case 'rating':
-                    return <div key={col.key} className="songs-cell">{track.rating ? '★'.repeat(Math.round(track.rating / 20)) : ''}</div>
+                    return (
+                      <div key={col.key} className="songs-cell songs-cell--rating">
+                        <StarRating
+                          value={Number(track.rating) || 0}
+                          onChange={(r) => {
+                            const value = String(r)
+                            dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
+                            window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
+                          }}
+                        />
+                      </div>
+                    )
                   default:
                     return null
                 }

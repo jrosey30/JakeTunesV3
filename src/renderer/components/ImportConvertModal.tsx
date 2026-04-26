@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useLibrary } from '../context/LibraryContext'
-import { Track } from '../types'
-import { subscribe, getSnapshot, getRip } from '../activity'
-import { useSyncExternalStore } from 'react'
+import { enqueueFiles } from '../importQueue'
 import '../styles/import-convert.css'
 
 type ImportFormat = 'aac-256' | 'aac-128' | 'aac-320' | 'alac' | 'aiff' | 'wav'
@@ -27,11 +24,9 @@ interface Props {
  * in the pill. Supports drag-and-drop onto the dialog too.
  */
 export default function ImportConvertModal({ onClose }: Props) {
-  const { state: libState, dispatch } = useLibrary()
   const [paths, setPaths] = useState<string[]>([])
   const [format, setFormat] = useState<ImportFormat>('alac')
-  const [running, setRunning] = useState(false)
-  const [done, setDone] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
   const [dropHere, setDropHere] = useState(false)
   const [error, setError] = useState('')
 
@@ -46,11 +41,6 @@ export default function ImportConvertModal({ onClose }: Props) {
       }
     }).catch(() => {})
   }, [])
-
-  // Subscribe to activity store so we can show progress inline as
-  // well as in the pill.
-  useSyncExternalStore(subscribe, getSnapshot)
-  const progress = getRip()
 
   const handlePick = useCallback(async () => {
     const r = await window.electronAPI.importPickFiles()
@@ -92,14 +82,12 @@ export default function ImportConvertModal({ onClose }: Props) {
 
   const clearAll = useCallback(() => {
     setPaths([])
-    setDone(false)
+    setSubmitted(false)
     setError('')
   }, [])
 
   const handleStart = useCallback(async () => {
-    if (paths.length === 0 || running) return
-    setRunning(true)
-    setDone(false)
+    if (paths.length === 0) return
     setError('')
     // Persist format so future drops and CD rips match this choice.
     try {
@@ -107,20 +95,20 @@ export default function ImportConvertModal({ onClose }: Props) {
       const existing = (ui.ok && ui.state) ? ui.state : {}
       await window.electronAPI.saveUiState({ ...existing, importFormat: format })
     } catch { /* non-fatal */ }
-    const nextId = Math.max(0, ...libState.tracks.map(t => t.id)) + 1
-    try {
-      const result = await window.electronAPI.importTracks(paths, nextId, format)
-      if (result.ok && result.tracks && result.tracks.length > 0) {
-        dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: result.tracks as Track[] })
-        setDone(true)
-      } else {
-        setError('Nothing was imported.')
-      }
-    } catch (err) {
-      setError(String(err))
+
+    // Hand the paths off to the global import queue and close the
+    // dialog. The floating queue panel takes over from here — the
+    // user gets per-file progress, retry on failure, and the modal
+    // doesn't need to babysit a 30-minute import.
+    const added = await enqueueFiles(paths, format)
+    setSubmitted(true)
+    if (added === 0) {
+      setError('Those files are already queued or already in your library.')
+      return
     }
-    setRunning(false)
-  }, [paths, format, running, libState.tracks, dispatch])
+    // Brief confirmation, then close so the queue panel is unobstructed.
+    setTimeout(() => onClose(), 600)
+  }, [paths, format, onClose])
 
   const baseName = (p: string): string => p.substring(p.lastIndexOf('/') + 1) || p
 
@@ -144,7 +132,7 @@ export default function ImportConvertModal({ onClose }: Props) {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <button className="imp-pick-btn" onClick={handlePick} disabled={running}>
+            <button className="imp-pick-btn" onClick={handlePick}>
               Choose Files or Folders…
             </button>
             <span className="imp-dropzone-hint">or drag them here</span>
@@ -156,7 +144,6 @@ export default function ImportConvertModal({ onClose }: Props) {
               id="imp-format"
               value={format}
               onChange={e => setFormat(e.target.value as ImportFormat)}
-              disabled={running}
             >
               {(Object.entries(FORMAT_LABELS) as [ImportFormat, string][]).map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
@@ -168,7 +155,7 @@ export default function ImportConvertModal({ onClose }: Props) {
             <>
               <div className="imp-list-header">
                 <span>{paths.length} item{paths.length !== 1 ? 's' : ''} queued</span>
-                <button className="imp-clear" onClick={clearAll} disabled={running}>Clear</button>
+                <button className="imp-clear" onClick={clearAll}>Clear</button>
               </div>
               <div className="imp-list">
                 {paths.map(p => (
@@ -177,7 +164,6 @@ export default function ImportConvertModal({ onClose }: Props) {
                     <button
                       className="imp-list-remove"
                       onClick={() => removePath(p)}
-                      disabled={running}
                       title="Remove"
                     >×</button>
                   </div>
@@ -186,24 +172,9 @@ export default function ImportConvertModal({ onClose }: Props) {
             </>
           )}
 
-          {running && progress && (
-            <div className="imp-progress">
-              <div className="imp-progress-bar">
-                <div
-                  className="imp-progress-fill"
-                  style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
-                />
-              </div>
-              <div className="imp-progress-text">
-                Importing {progress.current}/{progress.total}
-                {progress.trackTitle ? ` — ${progress.trackTitle}` : ''}
-              </div>
-            </div>
-          )}
-
-          {done && !running && (
+          {submitted && !error && (
             <div className="imp-result imp-result--done">
-              ✓ Import complete. Tracks are in your library.
+              ✓ Added to import queue. Watch the dock in the bottom-right for progress.
             </div>
           )}
           {error && (
@@ -212,15 +183,15 @@ export default function ImportConvertModal({ onClose }: Props) {
         </div>
 
         <div className="imp-footer">
-          <button className="imp-btn imp-btn--cancel" onClick={onClose} disabled={running}>
-            {done ? 'Close' : 'Cancel'}
+          <button className="imp-btn imp-btn--cancel" onClick={onClose}>
+            {submitted ? 'Close' : 'Cancel'}
           </button>
           <button
             className="imp-btn imp-btn--start"
             onClick={handleStart}
-            disabled={paths.length === 0 || running}
+            disabled={paths.length === 0 || submitted}
           >
-            {running ? 'Importing…' : `Import ${paths.length || ''}`.trim()}
+            {`Import ${paths.length || ''}`.trim()}
           </button>
         </div>
       </div>

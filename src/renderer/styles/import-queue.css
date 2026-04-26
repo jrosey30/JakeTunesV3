@@ -1,0 +1,224 @@
+/* Floating import-queue dock — bottom-right of the app shell. Sits
+ * above the status bar and out of the way of the playback controls.
+ * Dark slate with the same chrome vocabulary as the rest of the app. */
+
+.iq-dock {
+  position: fixed;
+  right: 14px;
+  bottom: 38px;             /* clear the status bar (~24px tall) */
+  width: 360px;
+  background: #2c2f33;
+  border: 1px solid #1a1c1f;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  color: #ddd;
+  z-index: 1100;
+  overflow: hidden;
+  user-select: none;
+}
+
+.iq-dock--expanded {
+  width: 420px;
+}
+
+.iq-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, #3b3f44 0%, #2c2f33 100%);
+  border: none;
+  border-bottom: 1px solid #1a1c1f;
+  color: #f0f0f0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.iq-summary:hover { background: linear-gradient(180deg, #44494f 0%, #34373b 100%); }
+
+.iq-summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #4a90e2;
+  color: white;
+  font-size: 11px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.iq-dock--expanded .iq-summary { background: #2c2f33; }
+
+.iq-summary-text { flex: 1; }
+.iq-summary-toggle { color: #888; font-size: 10px; }
+
+.iq-body {
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+}
+
+.iq-current {
+  padding: 10px 12px;
+  border-bottom: 1px solid #1a1c1f;
+  background: #25272a;
+}
+
+.iq-current-label {
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.iq-current-name {
+  color: #fff;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 6px;
+}
+.iq-current-bar {
+  height: 4px;
+  background: #1a1c1f;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.iq-current-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a90e2 0%, #6ab0ff 100%);
+  transition: width 0.2s ease;
+}
+
+.iq-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.iq-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.iq-item:last-child { border-bottom: none; }
+
+.iq-item-status {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  text-align: center;
+}
+
+.iq-item--pending .iq-item-status { color: #666; }
+.iq-item--running .iq-item-status { color: #4a90e2; }
+.iq-item--done .iq-item-status { color: #5cb85c; }
+.iq-item--dupe .iq-item-status { color: #999; }
+.iq-item--failed .iq-item-status { color: #e36464; font-weight: bold; }
+
+.iq-item--pending { color: #999; }
+.iq-item--done { color: #ccc; }
+.iq-item--dupe { color: #888; }
+.iq-item--failed { background: rgba(227, 100, 100, 0.06); }
+
+.iq-item-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.iq-item-error {
+  color: #e36464;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.iq-item-dupe {
+  color: #888;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.iq-item-btn {
+  background: #3b3f44;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #ddd;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.iq-item-btn:hover { background: #4a90e2; border-color: #4a90e2; color: white; }
+
+.iq-item-btn--remove {
+  background: transparent;
+  border: none;
+  color: #666;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.iq-item-btn--remove:hover { color: #e36464; background: transparent; }
+
+.iq-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #1a1c1f;
+  background: #25272a;
+}
+
+.iq-action {
+  background: #3b3f44;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #ddd;
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.iq-action:hover { background: #4a90e2; border-color: #4a90e2; color: white; }
+.iq-action--retry { background: #4a90e2; color: white; border-color: #4a90e2; }
+.iq-action--retry:hover { background: #5aa0f2; }
+.iq-action--close { margin-left: auto; }
+
+.iq-show-all {
+  background: transparent;
+  border: none;
+  color: #4a90e2;
+  font-size: 11px;
+  padding: 6px 12px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.iq-show-all:hover { color: #6ab0ff; }
+
+.iq-spinner {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border: 2px solid rgba(74, 144, 226, 0.3);
+  border-top-color: #4a90e2;
+  border-radius: 50%;
+  animation: iq-spin 0.7s linear infinite;
+}
+
+@keyframes iq-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

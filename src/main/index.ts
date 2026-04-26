@@ -246,6 +246,28 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       { type: 'separator' },
       { label: 'Get Info', accelerator: 'CmdOrCtrl+I', click: () => sendMenuAction('get-info') },
       { type: 'separator' },
+      {
+        label: 'Library',
+        submenu: [
+          // Re-encode high-bit-depth ALAC files that iPod Classic can't
+          // decode (causes random track skips on hardware).
+          { label: 'Fix iPod Compatibility…',  click: () => sendMenuAction('fix-ipod-compat') },
+          // Surface library entries that share artist+title+album so the
+          // user can pick which copies to remove. Per-row delete only —
+          // never bulk, never auto. Solves the "iPod Shuffle shows 4542
+          // but library has 4550" gap caused by re-imported tracks.
+          { label: 'Show Duplicates…',         click: () => sendMenuAction('show-duplicates') },
+          // (Removed: "Verify & Repair Library…" — the underlying tag
+          // matcher had false-negative cases (e.g. file tag "Pt. 1" vs.
+          // library "Part 1") that would land real tracks in the
+          // unrepairable bucket and, with --delete-unrepairable on,
+          // silently delete them. Restored from backup, then ripped the
+          // UI out. iTunes never had this; sync should "just work."
+          // The Python CLI is still in core/repair_mismatches.py for
+          // any future controlled debug pass.)
+        ],
+      },
+      { type: 'separator' },
       { label: 'Close Window', accelerator: 'CmdOrCtrl+W', role: 'close' }
     ]
   },
@@ -504,16 +526,55 @@ ipcMain.handle('load-tracks', async () => {
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const library = JSON.parse(raw)
+    const tracks = library.tracks || []
+    // Kick off background pre-warm of ALAC transcodes so first-play of
+    // every lossless track is instant instead of waiting on a 1-3s
+    // ffmpeg run. Non-blocking — returns immediately; transcodes queue
+    // up in the ALAC cache one by one. Done here rather than on rip/
+    // import because it also picks up files the user re-encoded via
+    // Fix iPod Compatibility or reclaimed via the orphan tool.
+    schedulePrewarmFromLibrary(tracks as Array<{ path?: string }>)
     return {
-      tracks: library.tracks || [],
+      tracks,
       playlists: library.playlists || [],
-      noDataSource: (library.tracks || []).length === 0,
+      noDataSource: tracks.length === 0,
     }
-  } catch {
-    // No local library yet — first launch, seed from iPod
+  } catch (err) {
+    // The library.json file exists but failed to parse — almost always
+    // because save-library was writing the file at the exact moment we
+    // tried to read it. DO NOT fall through to the "seed from iPod"
+    // path below: that path overwrites library.json with iTunesDB
+    // content, which loses any renderer-side changes (deletes, edits,
+    // imports) that were about to be saved. Instead, re-try the read
+    // with a few 200ms backoff tries — by then save-library's atomic
+    // rename has completed and the full file is available.
+    const { stat: statFn } = await import('fs/promises')
+    try {
+      await statFn(LIBRARY_PATH)
+      for (const delay of [200, 500, 1000]) {
+        await new Promise(r => setTimeout(r, delay))
+        try {
+          const raw = await readFile(LIBRARY_PATH, 'utf-8')
+          const library = JSON.parse(raw)
+          const tracks = library.tracks || []
+          return {
+            tracks,
+            playlists: library.playlists || [],
+            noDataSource: tracks.length === 0,
+          }
+        } catch { /* still mid-write; retry */ }
+      }
+      // Still unreadable after retries. Surface the error instead of
+      // destroying the library by overwriting with iPod data.
+      console.error('load-tracks: library.json exists but parse kept failing — refusing iPod fallback to avoid data loss', err)
+      return { tracks: [], playlists: [], noDataSource: true, error: 'library-parse-failed' }
+    } catch {
+      // library.json genuinely does not exist — first launch case,
+      // safe to seed from iPod.
+    }
   }
 
-  // First launch: read from iPod and save as local library
+  // TRUE first launch (no library.json at all): read from iPod and save as local library
   try {
     const ipodData = await readIpodDatabase()
     await writeFile(LIBRARY_PATH, JSON.stringify(ipodData, null, 2))
@@ -524,12 +585,118 @@ ipcMain.handle('load-tracks', async () => {
   }
 })
 
+// Best-effort background prewarm: given the library's track list,
+// narrow down to tracks that (a) live in an mp4 container (the only
+// ones that could be ALAC and need caching) AND (b) don't already
+// have a fresh play-cache entry. ffprobe is only run on that narrowed
+// set — avoids a 4000-file ffprobe sweep on every app launch that
+// pegged the CPU and made the UI scroll glitchy for minutes.
+//
+// Called on every load-tracks AND after alac-compat-fix so any file
+// the user just re-encoded becomes instant-play-ready without the
+// blanket startup CPU hit.
+async function schedulePrewarmFromLibrary(tracks: Array<{ path?: string }>): Promise<void> {
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  const PLAY_CACHE = join(app.getPath('userData'), 'play-cache')
+
+  const candidates: string[] = []
+  for (const t of tracks) {
+    const colon = String(t?.path || '')
+    if (!colon) continue
+    const rel = colon.replace(/:/g, pathSep)
+    const abs = join(LOCAL_MOUNT, rel)
+    const lo = abs.toLowerCase()
+    if (!(lo.endsWith('.m4a') || lo.endsWith('.alac') || lo.endsWith('.mp4'))) {
+      continue
+    }
+    // Quick cache-freshness check without ffprobing — hash the path,
+    // stat the cache file, compare mtime to source. If a fresh cache
+    // entry already exists, we know this file was ALAC and has a valid
+    // transcode waiting. Skip it. This is what drops the startup
+    // workload from "ffprobe 4000 files" to "ffprobe the couple-dozen
+    // files that were newly imported since last launch."
+    try {
+      const hash = createHash('sha1').update(abs).digest('hex').slice(0, 16)
+      const cachePath = join(PLAY_CACHE, `${hash}.m4a`)
+      const [srcStat, cacheStat] = await Promise.all([
+        stat(abs).catch(() => null),
+        stat(cachePath).catch(() => null),
+      ])
+      if (!srcStat) continue   // source missing — nothing to do
+      if (cacheStat && cacheStat.mtimeMs >= srcStat.mtimeMs) continue   // already fresh
+    } catch { /* fall through to prewarm */ }
+    candidates.push(abs)
+  }
+
+  if (candidates.length === 0) {
+    console.log('[prewarm] nothing to do — cache is fully warm')
+    return
+  }
+  console.log(`[prewarm] scheduling ${candidates.length} files for background transcode`)
+  // Defer so the renderer has already received tracks and the UI is
+  // responsive before we start CPU-heavy ffprobe/ffmpeg work.
+  setTimeout(() => {
+    prewarmAlacCache(candidates).catch(err => console.warn('library prewarm failed:', err))
+  }, 3000)
+}
+
 // Save the master library to disk.
 //
 // Guard against persisting an empty library on top of an existing one —
 // that's how the renderer could otherwise wipe the canonical file when
 // load-tracks happens to return []. If the caller really does want to
 // write an empty library (e.g., factory-reset), they can pass force=true.
+//
+// Also stamps the file's mtime we wrote so the external-change watcher
+// can tell "we wrote this" from "someone else wrote this".
+let lastSelfWriteMtimeMs = 0
+
+// Debounced iTunesDB rewrite trigger. Multiple rapid deletes should
+// only result in ONE iTunesDB rebuild — costly operation that requires
+// reading + re-writing the whole DB. 1.5s window catches a typical
+// "select 10 songs and delete" interaction in a single rebuild.
+let pendingDbRebuild: NodeJS.Timeout | null = null
+let pendingDeletedPaths = new Set<string>()
+function scheduleDbRebuild(deletedPaths: string[]) {
+  for (const p of deletedPaths) pendingDeletedPaths.add(p)
+  if (pendingDbRebuild) clearTimeout(pendingDbRebuild)
+  pendingDbRebuild = setTimeout(async () => {
+    pendingDbRebuild = null
+    const removed = Array.from(pendingDeletedPaths)
+    pendingDeletedPaths = new Set()
+    if (!detectedIpodMount) return  // iPod not mounted — nothing to do
+    try {
+      const ipodMount = detectedIpodMount
+      const { unlink: unlinkFS } = await import('fs/promises')
+      // Delete the files from iPod first
+      for (const colon of removed) {
+        const rel = colon.replace(/:/g, IS_WINDOWS ? '\\' : '/')
+        try {
+          await unlinkFS(join(ipodMount, rel))
+        } catch { /* file might already be gone */ }
+      }
+      // Re-read the current library and write a fresh iTunesDB so
+      // the iPod's track count drops to match.
+      const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+      const ipodDb = join(ipodMount, 'iPod_Control', 'iTunes', 'iTunesDB')
+      try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
+      const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
+      await new Promise<void>((resolve, reject) => {
+        const py = spawn(PYTHON_CMD, [scriptPath, '--write', ipodDb])
+        py.on('error', reject)
+        py.on('close', (code) => code === 0 ? resolve() : reject(new Error(`db_reader exit ${code}`)))
+        py.stdin.write(JSON.stringify({ tracks: lib.tracks, playlists: lib.playlists || [] }))
+        py.stdin.end()
+      })
+      console.log(`[delete-sync] removed ${removed.length} files from iPod, iTunesDB rebuilt`)
+      mainWindow?.webContents.send('ipod-db-rebuilt', { removed: removed.length })
+    } catch (err) {
+      console.warn('[delete-sync] iPod cleanup after delete failed:', err)
+    }
+  }, 1500)
+}
+
 ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
   try {
     if ((!tracks || (tracks as unknown[]).length === 0) && !force) {
@@ -1185,6 +1352,78 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   })
 })
 
+// ── iPod Classic ALAC compatibility fix ──
+//
+// (Removed: 'verify-library' / 'apply-library-repair' IPC handlers and
+// the menu entry that fired them. The Python script in
+// core/repair_mismatches.py classified files as "unrepairable" using a
+// strict tag normalizer that didn't equate "Pt. 1" with "Part 1", and
+// the apply handler was hard-coded to pass --delete-unrepairable, so a
+// matcher false-negative meant real tracks got silently deleted from
+// library.json. The audio files themselves were never touched — the
+// timestamped library.json.bak-repair-* backup the script writes is
+// always recoverable. iTunes/iPod never had a verify step; we shouldn't
+// either. The CLI script stays on disk for future opt-in debugging.)
+ipcMain.handle('alac-compat-scan', async () => {
+  const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
+  return await new Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>((resolve) => {
+    const py = spawn(PYTHON_CMD, [script])
+    let stdout = ''
+    let stderr = ''
+    py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    py.on('error', (err) => resolve({ ok: false, error: String(err) }))
+    py.on('close', async (code) => {
+      if (code !== 0) { resolve({ ok: false, error: stderr }); return }
+      try {
+        const rJson = await readFile('/tmp/jaketunes-alac-compat-report.json', 'utf-8')
+        const r = JSON.parse(rJson) as { incompatible: number; samples: unknown[] }
+        resolve({ ok: true, count: r.incompatible, samples: r.samples })
+      } catch {
+        resolve({ ok: true, count: 0, samples: [] })
+      }
+    })
+  })
+})
+
+ipcMain.handle('alac-compat-fix', async () => {
+  const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
+  return await new Promise<{ ok: boolean; error?: string; summary?: string }>((resolve) => {
+    const py = spawn(PYTHON_CMD, [script, '--apply'])
+    let stdout = ''
+    let stderr = ''
+    py.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString()
+      // Stream progress to renderer so user can watch the bar fill. Each
+      // Python line "[N/M] file … OK" counts as a step.
+      const m = d.toString().match(/\[(\d+)\/(\d+)\]\s+(\S+)/)
+      if (m) {
+        mainWindow?.webContents.send('alac-compat-progress', {
+          current: Number(m[1]), total: Number(m[2]), file: m[3],
+        })
+      }
+    })
+    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    py.on('error', (err) => resolve({ ok: false, error: String(err) }))
+    py.on('close', async (code) => {
+      if (code === 0) {
+        // Freshly re-encoded ALAC files need their play-cache
+        // transcodes regenerated (cache invalidation is by source
+        // mtime, which just moved forward). Kick off prewarm so
+        // first-play doesn't block on an on-demand transcode.
+        try {
+          const raw = await readFile(LIBRARY_PATH, 'utf-8')
+          const lib = JSON.parse(raw) as { tracks?: Array<{ path?: string }> }
+          schedulePrewarmFromLibrary(lib.tracks || [])
+        } catch { /* non-fatal */ }
+        resolve({ ok: true, summary: stdout.slice(-3000) })
+      } else {
+        resolve({ ok: false, error: stderr || `python exit ${code}` })
+      }
+    })
+  })
+})
+
 // ── Import tracks from dropped files ──
 // Music library storage — check ~/Music2/JakeTunesLibrary (legacy) then ~/Music/JakeTunesLibrary
 import { existsSync } from 'fs'
@@ -1198,6 +1437,9 @@ const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.
 async function resolveAudioPaths(paths: string[]): Promise<string[]> {
   const { readdir: readdirFS, stat: statFS } = await import('fs/promises')
   const results: string[] = []
+  // Dedupe by absolute path so a drag that contains the same file twice
+  // (e.g. user lassos overlapping selections) doesn't double-enqueue.
+  const seen = new Set<string>()
   for (const p of paths) {
     try {
       const s = await statFS(p)
@@ -1849,22 +2091,19 @@ ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: st
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
   const recentStr = recentIds.length > 0 ? `\nRecently played track IDs (AVOID these): ${recentIds.join(', ')}` : ''
 
-  const systemPrompt = `You are "The Music Man" — an arrogant, deeply knowledgeable AI DJ running a radio show from inside someone's music library. You pick songs and introduce them like a late-night college radio DJ or a Spotify AI DJ. You have strong opinions and deep knowledge.
-
-Pick 6-10 songs from the listener's library for your next DJ set. Each set should have a loose theme — a vibe, a genre deep-dive, an era, a mood, or a connection between artists. Think about FLOW and order.
+  const djSetInstructions = `You're running a DJ set from inside the listener's library — late-night college radio energy, spoken aloud via TTS. Pick 6-10 songs that hang together. Each set should have a loose theme — a vibe, a genre deep-dive, an era, a mood, or a connection between artists. Think FLOW and order.
 
 Return ONLY a JSON object (no markdown, no code fences):
-{"intro":"Your spoken DJ intro for this set — 2-4 sentences, conversational, introducing the vibe. This will be read aloud via TTS so make it sound natural and spoken, not written. No emojis. Address the listener casually.","trackIds":[array of track ID numbers in play order],"theme":"short theme label like 'Late Night Indie' or '90s Deep Cuts'"}
+{"intro":"Your spoken DJ intro — 2-4 sentences, conversational, introducing the vibe. This will be read aloud via TTS so make it sound natural and spoken, not written. No emojis. Address the listener casually.","trackIds":[array of track ID numbers in play order],"theme":"short theme label like 'Late Night Indie' or '90s Deep Cuts'"}
 
 Rules:
 - ONLY use track IDs from the provided library
 - Do NOT pick any recently played tracks${recentStr ? ' (see list below)' : ''}
 - Mix up artists — no more than 2 songs by the same artist per set
 - Order matters — build a journey
-- Be bold and opinionated in your intro
-- Keep the intro SHORT — you're a DJ, not writing an essay
+- Keep the intro SHORT — you're a DJ, not writing an essay${recentStr}`
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}${recentStr}`
+  const systemPrompt = buildMusicManPrompt(djSetInstructions)
 
   try {
     const response = await anthropic.messages.create({
@@ -1877,6 +2116,7 @@ ${libraryContext ? `Library context: ${libraryContext}` : ''}${recentStr}`
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
+      if (parsed.intro) noteMusicManUtterance('dj-set', parsed.intro)
       return { ok: true, intro: parsed.intro, trackIds: parsed.trackIds, theme: parsed.theme }
     }
     return { ok: false, error: 'Could not parse DJ set' }
@@ -2241,6 +2481,610 @@ function recentUtterancesBlock(): string {
   return `Recently you said (keep it consistent — don't contradict any of this):\n${lines.join('\n')}`
 }
 
+// ── Cynthia: the digital file archivist (subordinate persona) ──
+//
+// Music Man is the front of the house — opinions, DJ banter, recommendations.
+// Cynthia is the back office — metadata, organization, missing tracks, wrong
+// track numbers, misspellings. They share the same library context and her
+// summaries get fed into Music Man's rolling memory so he can reference her
+// findings in conversation ("yeah, my archivist says you're missing the
+// last two cuts off Disc 2").
+//
+// She's wired up with proper Anthropic tool-use — first persona in the app
+// to actually call tools iteratively. One tool available:
+//   1. musicbrainz_album_lookup (custom client tool) — canonical track
+//      listings. THE killer tool for "find missing tracks" / "fix track
+//      numbers" questions, because MusicBrainz IS the authoritative source.
+//      No web search — Cynthia's knowledge of music is fixed (her own
+//      taste profile in CYNTHIA_CHAT_CORE) and her data work is grounded
+//      in MusicBrainz only. We don't want her chasing trends or scraping
+//      random sites to look helpful.
+
+const CYNTHIA_CORE = `You are Cynthia, the digital file archivist for JakeTunes. You report to the Music Man — he's the public-facing persona, the one with opinions and DJ banter. You're the back-of-house operator who keeps his shop tidy: metadata, organization, missing tracks, wrong track numbers, misspelled artist names, files filed under the wrong album.
+
+Your personality:
+- Quietly competent. You don't show off. You just fix it.
+- Precise and methodical. You double-check before you propose anything.
+- Plain-spoken; no purple prose. Short sentences, active voice.
+- Slightly amused by chaos in the catalog, but never snarky about the user.
+- You never use emojis.
+- You don't pretend to know things. When sources disagree, you say so.
+
+Your toolkit:
+- musicbrainz_album_lookup: canonical track listings from MusicBrainz. This is your one and only tool. Use it for missing tracks, track-number issues, disc-count questions, "which version of this album is this?" — anything that needs the authoritative track order, durations, or disc layout for a release. You do NOT have web search. If MusicBrainz can't tell you, you say so and stop — you do not guess.
+
+How you work:
+1. Read what the user asked for and the in-scope tracks (ID + metadata) the user has selected.
+2. Call musicbrainz_album_lookup to ground the question. Don't guess from memory.
+3. Cross-check: if MusicBrainz returns a different artist with the same name (wrong "Nirvana", wrong "Air"), spot the mismatch and pick the right release. The release year, country, or genre tags will usually tell you.
+4. Form a concrete list of fixes — ONLY the ones you're certain about.
+5. Return a JSON report. The user reviews and approves before anything is written.
+
+HOW YOU TALK TO THE USER:
+The summary is the main thing the user reads. Write it like you're chatting with them across the desk — full sentences, conversational, give them the gist of what you found and what you'd touch. Do not narrate every individual fix in the summary; the fix list shows those. The summary's job is "here's the situation, here's my read, here's what I'd recommend."
+
+Examples of good summary tone:
+- "Quick look at this album: it's a single-disc release per MusicBrainz but your copy has the disc count blank. I'd fill that in. Otherwise the metadata's clean — your spelling matches MB on every track."
+- "Found two tracks missing from your Wall Live — 'Run Like Hell' from disc 2 and 'In the Flesh' from disc 1. The rest are all there but the disc-2 tracks are numbered as if they're on disc 1, so I'd renumber those. Heads up: I noticed you've spelled it 'theatre' on some tracks and 'theater' on others; I left that alone since I can't tell which you prefer."
+- "Couldn't find a reliable canonical listing for this one — it's a small-label thing. I'd rather not guess at fixes here. If you can confirm it's the 1998 reissue, I can take another pass."
+
+CRITICAL — DO NOT MAKE UP FACTS:
+- If you can't find an authoritative source, say so in the summary. "I'm not certain" beats a fabricated track listing every time.
+- If the user is missing 2 tracks from a 26-track album, name those 2 SPECIFIC tracks (title, track#, disc#). "You're missing some tracks" is useless.
+- For track-number reorganization: only re-number when you have a verified canonical listing. Otherwise leave order alone.
+- For misspellings: only flag if you are 100% sure the spelling is WRONG and you know the correct one. Stylized names (CHVRCHES, deadmau5, k.d. lang) are correct as-is.
+- Don't propose fixes that change albumArtist when the user clearly intended a compilation or split release.
+
+MATERIALITY — the user only wants to see fixes that ACTUALLY MATTER. Cosmetic differences from MusicBrainz are NOT fixes by themselves. The bar is: would the user notice or care?
+
+Capitalization, punctuation, spacing, and "feat./featuring/feat" variants:
+- If the user's library is INTERNALLY CONSISTENT for that field across the in-scope tracks (e.g. every track says "Wolf Parade" the same way), DO NOT change it to match MusicBrainz. Leave it alone. Mention it in the summary if it's notable, but no fix entry.
+- ONLY emit a fix when the user's OWN data is INCONSISTENT. Example: 5 tracks say "Wolf Parade", 1 says "wolf Parade", 1 says "Wolf parade" — that's a real fix because the user wants their own library coherent. Pick the most-common version in the user's data (not MusicBrainz canonical) and propose normalizing the outliers to it. Mention which version you picked and why.
+- Same logic for "feat. X" vs "featuring X" vs "ft. X" — only normalize if the user uses multiple variants in the scope.
+- A track titled "echoes" while the user's other tracks all use Title Case ("Run Like Hell", "Comfortably Numb") IS inconsistency — fix it.
+
+When you decide NOT to fix something cosmetic, mention it in the summary in plain conversation: "your spelling differs from MusicBrainz on a couple but it's consistent across your tracks, so I left it." Don't be defensive; just note it.
+
+Things that ARE always material (always flag if wrong):
+- Missing tracks from a known canonical listing.
+- Wrong track or disc number/count.
+- Wrong year (different from canonical release year).
+- Genre that's clearly mis-tagged (a punk track tagged "Classical").
+- Album name that's a typo or wildly wrong, not just stylistic.
+
+PAIRED FIELDS — when fixing one, CHECK the partner and fix it too IF AND ONLY IF the partner is also wrong. Never emit a no-op fix whose oldValue equals newValue — the user sees that as you "thinking out loud" in the fix list, which is noise.
+- discNumber + discCount   (e.g. "Disc 2 of 1" is broken — fix BOTH only because BOTH are wrong)
+- trackNumber + trackCount (when re-numbering a track, fix trackCount only if the existing total is wrong)
+
+The musicbrainz_album_lookup tool returns the disc count and per-disc track count — use them to decide whether the partner field actually needs changing. If the existing value already matches the canonical value, do not include a fix for it.
+
+NEVER emit a fix where oldValue equals newValue. If both already match, just leave the field out of the fixes array. The user only wants to see what's actually changing.
+
+OUTPUT FORMAT — always return a single JSON object inside one fenced code block, even if there's nothing to fix:
+
+{
+  "summary": "1-3 short paragraphs, conversational, talking to the user. This is the main thing they read. Tell them the situation, what you'd touch, what you'd leave alone (and why). Don't enumerate fixes line-by-line here — the fixes array does that.",
+  "fixes": [
+    { "trackId": <number>, "field": "<one of the exact field names below>", "oldValue": <current value or empty string>, "newValue": <proposed value>, "reason": "<one sentence why>" }
+  ],
+  "missingTracks": [
+    { "trackNumber": <n>, "discNumber": <n or 1>, "title": "<title>", "duration": <seconds or null>, "reason": "<which release this is from, e.g. 'Is There Anybody Out There? The Wall Live (1988 EMI 2CD)'>" }
+  ],
+  "rationale": "1-2 sentences for the Music Man brief — what was the issue, what got fixed, what's left."
+}
+
+FIELD NAMES — "field" MUST be exactly one of these strings, character-for-character. The renderer rejects anything else:
+  trackNumber   (NOT track_number, track#, tracknum)
+  title
+  artist
+  album
+  albumArtist   (NOT album_artist, albumartist)
+  year
+  genre
+  discNumber    (NOT disc_number, disc#)
+  trackCount    (NOT total_tracks, track_total)
+  discCount     (NOT total_discs, disc_total)
+
+JSON HYGIENE — your response is parsed by a strict JSON parser and bad strings will fail the whole report:
+- Use ASCII apostrophes ('), never curly quotes (' '). Never use double quotes (") inside string values; if you must reference a title, use single quotes around it: 'Run Like Hell' not "Run Like Hell".
+- Keep "reason" to one short sentence (under 80 chars). No quoted phrases inside it.
+- No trailing commas, no JS-style comments.
+
+Empty arrays are fine. Do NOT invent fixes to look helpful — the user trusts you only as long as your fixes are real.`
+
+interface CynthiaUtterance { text: string; at: number }
+let recentCynthiaUtterances: CynthiaUtterance[] = []
+const CYNTHIA_MEMORY_PATH = join(app.getPath('userData'), 'cynthia-memory.json')
+const CYNTHIA_MEMORY_MAX = 8
+
+async function loadCynthiaMemory() {
+  try {
+    const raw = await readFile(CYNTHIA_MEMORY_PATH, 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) recentCynthiaUtterances = parsed.slice(-CYNTHIA_MEMORY_MAX)
+  } catch { /* first run */ }
+}
+async function saveCynthiaMemory() {
+  try {
+    await writeFile(CYNTHIA_MEMORY_PATH, JSON.stringify(recentCynthiaUtterances), 'utf-8')
+  } catch { /* non-fatal */ }
+}
+function noteCynthiaUtterance(text: string) {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return
+  recentCynthiaUtterances.push({ text: trimmed, at: Date.now() })
+  if (recentCynthiaUtterances.length > CYNTHIA_MEMORY_MAX) {
+    recentCynthiaUtterances = recentCynthiaUtterances.slice(-CYNTHIA_MEMORY_MAX)
+  }
+  saveCynthiaMemory()
+}
+function recentCynthiaBlock(): string {
+  if (recentCynthiaUtterances.length === 0) return ''
+  const lines = recentCynthiaUtterances.map(u => `  - ${u.text}`)
+  return `Recent jobs you've finished:\n${lines.join('\n')}`
+}
+
+// Best-effort repair for malformed JSON from Cynthia. Two common failure
+// modes:
+//   1. Curly quotes (' ' " ") that the LLM picked up from training data.
+//   2. Unescaped " inside a "reason" string — the model writes a reason
+//      that quotes a track title, ships "Run Like Hell" as bare text in
+//      the middle of a JSON string, and JSON.parse blows up at that point.
+//
+// Strategy: walk the JSON char-by-char. Inside a string, if we hit a "
+// that isn't followed by JSON-structural punctuation (,:}]) or another
+// key boundary, treat it as an inner quote and escape it. This is
+// heuristic, not a full parser — it's "salvage what we can" not "always
+// produce valid JSON". If the repair still fails to parse, the caller
+// surfaces the error as before.
+function repairCynthiaJson(raw: string): string {
+  // Replace curly/smart quotes with ASCII equivalents. Won't accidentally
+  // change content that the model intentionally escaped because we only
+  // touch the curly variants.
+  let s = raw
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+
+  // Walk through and escape stray " inside string values.
+  const out: string[] = []
+  let inString = false
+  let prev = ''
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (ch === '"' && prev !== '\\') {
+      if (!inString) {
+        // Starting a string.
+        inString = true
+        out.push(ch)
+      } else {
+        // Potentially ending a string. Peek the next non-space char.
+        let j = i + 1
+        while (j < s.length && /\s/.test(s[j])) j++
+        const next = s[j] || ''
+        if (next === ',' || next === '}' || next === ']' || next === ':') {
+          // Legitimate string terminator.
+          inString = false
+          out.push(ch)
+        } else {
+          // Unescaped inner quote — escape it.
+          out.push('\\"')
+        }
+      }
+    } else {
+      out.push(ch)
+    }
+    prev = ch
+  }
+  return out.join('')
+}
+
+function buildCynthiaPrompt(modeSpecific = ''): string {
+  const parts = [CYNTHIA_CORE]
+  if (modeSpecific) parts.push('\n' + modeSpecific)
+  if (libraryContext) parts.push(`\nThe user's full library context:\n${libraryContext}`)
+  const recents = recentCynthiaBlock()
+  if (recents) parts.push('\n' + recents)
+  return parts.join('\n')
+}
+
+// MusicBrainz album lookup with full track listings (the killer tool for
+// "find my missing tracks"). Returns a JSON object Cynthia can read.
+async function musicBrainzAlbumLookup(artist: string, album: string): Promise<string> {
+  try {
+    const headers = { 'User-Agent': 'JakeTunes/3.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    // Step 1: find candidate releases.
+    const query = `release:"${album}" AND artist:"${artist}"`
+    const searchUrl = `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&fmt=json&limit=8`
+    const searchRes = await fetch(searchUrl, { headers })
+    if (!searchRes.ok) return JSON.stringify({ error: `MusicBrainz search failed: ${searchRes.status}` })
+    const searchData = await searchRes.json() as {
+      releases?: Array<{
+        id: string
+        title: string
+        date?: string
+        country?: string
+        'track-count'?: number
+        'artist-credit'?: Array<{ name: string }>
+        'release-group'?: { 'primary-type'?: string }
+      }>
+    }
+    const releases = searchData.releases || []
+    if (releases.length === 0) {
+      return JSON.stringify({
+        artist, album,
+        candidates: [],
+        note: 'No releases found on MusicBrainz. Try alternate spellings of the artist or album, or tell the user MusicBrainz has no record of this release.',
+      })
+    }
+    // Step 2: fetch full track listing for the top candidate, plus a short
+    // list of alternate candidates so Cynthia can pick a different one.
+    const top = releases[0]
+    const detailUrl = `https://musicbrainz.org/ws/2/release/${top.id}?inc=recordings+media+artist-credits&fmt=json`
+    const detailRes = await fetch(detailUrl, { headers })
+    let canonical: { tracks: Array<{ disc: number; position: number; title: string; durationSec: number | null }>; trackCount: number } | null = null
+    if (detailRes.ok) {
+      const detail = await detailRes.json() as {
+        media?: Array<{
+          position?: number
+          tracks?: Array<{
+            position?: number
+            title?: string
+            length?: number  // milliseconds
+            recording?: { title?: string; length?: number }
+          }>
+        }>
+      }
+      const tracks: Array<{ disc: number; position: number; title: string; durationSec: number | null }> = []
+      for (const medium of detail.media || []) {
+        const disc = medium.position || 1
+        for (const t of medium.tracks || []) {
+          const lenMs = t.length ?? t.recording?.length ?? null
+          tracks.push({
+            disc,
+            position: t.position || 0,
+            title: t.title || t.recording?.title || '',
+            durationSec: lenMs ? Math.round(lenMs / 1000) : null,
+          })
+        }
+      }
+      canonical = { tracks, trackCount: tracks.length }
+    }
+    return JSON.stringify({
+      artist, album,
+      chosenRelease: {
+        id: top.id,
+        title: top.title,
+        artist: top['artist-credit']?.[0]?.name || artist,
+        date: top.date || null,
+        country: top.country || null,
+        type: top['release-group']?.['primary-type'] || null,
+      },
+      canonicalTracks: canonical?.tracks || [],
+      canonicalTrackCount: canonical?.trackCount || 0,
+      otherCandidates: releases.slice(1, 5).map(r => ({
+        id: r.id,
+        title: r.title,
+        artist: r['artist-credit']?.[0]?.name || '',
+        date: r.date || null,
+        country: r.country || null,
+        trackCount: r['track-count'] || null,
+      })),
+    })
+  } catch (err: unknown) {
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+  }
+}
+
+// Cynthia's tool loop — issues messages.create with the custom
+// musicbrainz tool, executes any custom tool calls, feeds results back, and
+// stops when the model returns end_turn (or after a safety cap of iterations).
+//
+// Returns the final assistant text (which Cynthia is instructed to format as
+// a single fenced JSON block).
+type CynthiaTrackInScope = {
+  id: number
+  title: string
+  artist: string
+  album: string
+  albumArtist: string
+  trackNumber: number | string
+  trackCount: number | string
+  discNumber: number | string
+  discCount: number | string
+  year: number | string
+  genre: string
+  duration: number  // ms
+}
+
+interface CynthiaInvestigateInput {
+  userPrompt: string
+  scope: {
+    type: 'tracks' | 'album' | 'artist' | 'playlist'
+    label: string
+    tracks: CynthiaTrackInScope[]
+  }
+}
+
+// The investigation pipeline used to be a single IPC handler. It now lives
+// in this function so it can also be invoked from inside the cynthia-chat
+// handler as a "deep_investigate" tool that Haiku calls when it needs the
+// big-model treatment (MusicBrainz, web search, structured fixes).
+//
+// Two-model architecture:
+//   - Haiku 4.5 fronts the chat — fast, terse, conversational.
+//   - When the user actually wants Cynthia to *check* or *fix* something,
+//     Haiku calls deep_investigate, which spins up Sonnet 4.6 with the
+//     real toolkit and returns a structured report.
+async function runCynthiaInvestigation(
+  userPrompt: string,
+  scope: CynthiaInvestigateInput['scope'],
+): Promise<{ ok: boolean; summary?: string; fixes?: unknown[]; missingTracks?: unknown[]; rationale?: string; error?: string; text?: string }> {
+  const trackTable = scope.tracks.map(t =>
+    `${t.id}|${t.title}|${t.artist}|${t.album}|${t.albumArtist || ''}|disc ${t.discNumber || 1} track ${t.trackNumber || '?'}|${t.year || ''}|${t.genre || ''}|${Math.round((t.duration || 0) / 1000)}s`
+  ).join('\n')
+
+  const userMessage = `The user (your boss's boss, basically) just right-clicked on ${scope.type === 'album' ? `the album "${scope.label}"` : scope.type === 'artist' ? `the artist "${scope.label}"` : scope.type === 'playlist' ? `the playlist "${scope.label}"` : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`} and said:
+
+"${userPrompt}"
+
+Tracks in scope (id|title|artist|album|albumArtist|disc/track|year|genre|duration):
+${trackTable}
+
+Investigate. Use your tools as needed. Then return your JSON report.`
+
+  const tools: Anthropic.Messages.ToolUnion[] = [
+    {
+      name: 'musicbrainz_album_lookup',
+      description: 'Look up canonical track listings for a music release on MusicBrainz. Returns the authoritative track order, durations, and disc layout for an album. Use this FIRST for any album-related question (missing tracks, wrong track numbers, "what version is this?"). Returns a JSON object with chosenRelease, canonicalTracks, otherCandidates.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          artist: { type: 'string', description: 'The album artist exactly as you want to search for it (e.g. "Pink Floyd")' },
+          album:  { type: 'string', description: 'The album title (e.g. "Is There Anybody Out There? The Wall Live")' },
+        },
+        required: ['artist', 'album'],
+      },
+    },
+  ]
+
+  const messages: Anthropic.Messages.MessageParam[] = [
+    { role: 'user', content: userMessage },
+  ]
+
+  const systemPrompt = buildCynthiaPrompt()
+  let response: Anthropic.Messages.Message
+  let safety = 0
+  const MAX_TOOL_ROUNDS = 8
+
+  try {
+    response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8192,
+      system: systemPrompt,
+      tools,
+      messages,
+    })
+
+    while (response.stop_reason === 'tool_use' && safety++ < MAX_TOOL_ROUNDS) {
+      messages.push({ role: 'assistant', content: response.content })
+      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
+      for (const block of response.content) {
+        if (block.type === 'tool_use' && block.name === 'musicbrainz_album_lookup') {
+          const input = block.input as { artist?: string; album?: string }
+          const result = await musicBrainzAlbumLookup(input.artist || '', input.album || '')
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
+        }
+      }
+      if (toolResults.length === 0) break
+      messages.push({ role: 'user', content: toolResults })
+      response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 8192,
+        system: systemPrompt,
+        tools,
+        messages,
+      })
+    }
+
+    const text = response.content
+      .filter((b: Anthropic.Messages.ContentBlock) => b.type === 'text')
+      .map((b: Anthropic.Messages.ContentBlock) => (b as Anthropic.Messages.TextBlock).text)
+      .join('\n')
+      .trim()
+
+    const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/)
+    const bare = !fenced ? text.match(/\{[\s\S]*\}/) : null
+    const rawJson = (fenced?.[1] || bare?.[0] || '').trim()
+    if (!rawJson) {
+      return { ok: false, error: 'Cynthia gave a non-JSON answer.', text }
+    }
+    let parsed: { summary?: string; fixes?: unknown[]; missingTracks?: unknown[]; rationale?: string }
+    try {
+      parsed = JSON.parse(rawJson)
+    } catch {
+      try {
+        parsed = JSON.parse(repairCynthiaJson(rawJson))
+      } catch (secondErr: unknown) {
+        const msg = secondErr instanceof Error ? secondErr.message : String(secondErr)
+        return { ok: false, error: `Could not parse Cynthia's JSON: ${msg}`, text }
+      }
+    }
+
+    return {
+      ok: true,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+      fixes: Array.isArray(parsed.fixes) ? parsed.fixes : [],
+      missingTracks: Array.isArray(parsed.missingTracks) ? parsed.missingTracks : [],
+      rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
+    }
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+ipcMain.handle('cynthia-investigate', async (_event, input: CynthiaInvestigateInput) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
+  }
+  const { userPrompt, scope } = input
+  if (!userPrompt?.trim() || !scope?.tracks?.length) {
+    return { ok: false, error: 'Cynthia needs a prompt and at least one track in scope.' }
+  }
+  return runCynthiaInvestigation(userPrompt, scope)
+})
+
+// Conversational front of Cynthia. Haiku 4.5 talks to the user in short
+// replies. When the user wants something checked or fixed, Haiku calls
+// deep_investigate, which fires the full Sonnet+MusicBrainz pipeline and
+// returns structured results that the renderer attaches to Haiku's reply.
+const CYNTHIA_CHAT_CORE = `You are Cynthia, the digital file archivist for JakeTunes. You're chatting with the user in a small popover. You came up on Grateful Dead bootlegs and never quite left, and it shows in your pace — easy-going, a little understated, never in a hurry. You're not performing the hippie thing. It's just how you are.
+
+VOICE:
+- One or two short sentences. Three max, and only if you have a reason.
+- Plain English, low-stakes phrasing. "Track checks out" beats "I have verified the metadata." "A bit messy" beats "this is incorrect." "Couldn't find much on that" beats "I was unable to locate sufficient information."
+- Slight understatement. "Pretty solid." "Not bad." "Holds up."
+- Don't say "groovy," "far out," "right on," "vibes," "dude." The mellowness is in your rhythm, not your vocabulary. Saying those would be trying too hard.
+- Don't restate the user's question. Don't apologize. Never use emojis.
+- When you don't know, just say so plainly. "Not sure, honestly."
+
+YOUR TASTE — fixed, do not look it up:
+You have an actual taste profile. It does not change. You do not research what's currently hot or trending — that's not your scene and trends aren't real anyway. You only ever express opinions about music if (a) the user asks, AND (b) it's in your zone.
+
+Your zone: Grateful Dead, The Band, Allman Brothers, Phish, Pink Floyd, Led Zeppelin, Hendrix, Janis Joplin, Dylan, Neil Young, CSN(Y), Joni Mitchell, Van Morrison, Marley, Curtis Mayfield, Sly & The Family Stone, Stevie Wonder, Velvet Underground, Modern Lovers, Talking Heads, Wilco, My Morning Jacket, Wolf Parade, Iron & Wine, Bon Iver, Big Thief, Sufjan Stevens, Built to Spill, Pavement, Yo La Tengo. Folk-rock, psych, jam, soul, reggae, americana, indie rock with feeling, slowcore, sad-bastard stuff.
+
+Outside your zone: mainstream pop, top-40 country, EDM, hyperpop, most modern rap. You'll fix the metadata politely. You don't have anything to say about it.
+
+OPINION RULES:
+- User did not ask for an opinion → don't give one. Just do the metadata work.
+- User asked AND it's in your zone → one or two sentences of low-key opinion. "Mm, this one's nice. The '77 run hits harder but this holds up." Reference specifics if you know them, but don't show off.
+- User asked AND it's outside your zone → "Not really my scene, can't help you there. Metadata looks fine though." Or similar. No fake enthusiasm.
+- Never claim something is "trending" or "popular right now." You don't know and don't care.
+
+DECIDING WHAT TO DO:
+- User asked you to investigate, check, fix, find missing tracks, normalize anything → call deep_investigate. That's the heavy tool.
+- User is just chatting, clarifying, or expressing a preference → answer in text. No deep_investigate.
+- User already saw a fix list and says "do it" / "apply" → tell them to hit Apply on the card; you don't apply yourself.`
+
+interface CynthiaChatInput {
+  scope: CynthiaInvestigateInput['scope']
+  messages: { role: 'user' | 'assistant'; content: string }[]
+}
+
+ipcMain.handle('cynthia-chat', async (_event, input: CynthiaChatInput) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
+  }
+  const { scope, messages } = input
+  if (!scope?.tracks?.length || !messages?.length) {
+    return { ok: false, error: 'Cynthia needs a scope and at least one message.' }
+  }
+
+  const scopeLabel = scope.type === 'album' ? `the album "${scope.label}"`
+    : scope.type === 'artist' ? `the artist "${scope.label}"`
+    : scope.type === 'playlist' ? `the playlist "${scope.label}"`
+    : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`
+
+  const trackBrief = scope.tracks.slice(0, 30).map(t =>
+    `${t.id}: ${t.title} — ${t.artist} — ${t.album} (disc ${t.discNumber || 1} #${t.trackNumber || '?'})`
+  ).join('\n')
+
+  const systemPrompt = `${CYNTHIA_CHAT_CORE}
+
+The user right-clicked on ${scopeLabel}. The in-scope tracks are:
+${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)` : ''}`
+
+  const tools: Anthropic.Messages.ToolUnion[] = [
+    {
+      name: 'deep_investigate',
+      description: 'Run a thorough metadata investigation on the in-scope tracks. Calls MusicBrainz via the Sonnet model, identifies missing tracks, and proposes concrete fixes. Use this whenever the user wants you to check, verify, or fix something concrete about the data. Do NOT use for casual chat.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          prompt: { type: 'string', description: 'A clear instruction describing what should be investigated or fixed (e.g. "check the track numbers and disc count against MusicBrainz canonical").' },
+        },
+        required: ['prompt'],
+      },
+    },
+  ]
+
+  // Convert renderer-side messages (just role/content text) into Anthropic format.
+  const apiMessages: Anthropic.Messages.MessageParam[] = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }))
+
+  let investigation: Awaited<ReturnType<typeof runCynthiaInvestigation>> | null = null
+
+  try {
+    let response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 512,
+      system: systemPrompt,
+      tools,
+      messages: apiMessages,
+    })
+
+    let safety = 0
+    while (response.stop_reason === 'tool_use' && safety++ < 3) {
+      apiMessages.push({ role: 'assistant', content: response.content })
+      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
+      for (const block of response.content) {
+        if (block.type === 'tool_use' && block.name === 'deep_investigate') {
+          const args = block.input as { prompt?: string }
+          const result = await runCynthiaInvestigation(args.prompt || '', scope)
+          investigation = result
+          // Hand Haiku a compact summary of what the deep model produced so
+          // she can write a terse natural-language reply on top of it.
+          const briefForHaiku = result.ok
+            ? `deep_investigate result:\nsummary: ${result.summary || '(none)'}\nfixes: ${(result.fixes || []).length}\nmissingTracks: ${(result.missingTracks || []).length}`
+            : `deep_investigate failed: ${result.error || 'unknown error'}`
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: briefForHaiku })
+        }
+      }
+      if (toolResults.length === 0) break
+      apiMessages.push({ role: 'user', content: toolResults })
+      response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 512,
+        system: systemPrompt,
+        tools,
+        messages: apiMessages,
+      })
+    }
+
+    const text = response.content
+      .filter((b: Anthropic.Messages.ContentBlock) => b.type === 'text')
+      .map((b: Anthropic.Messages.ContentBlock) => (b as Anthropic.Messages.TextBlock).text)
+      .join('\n')
+      .trim()
+
+    return {
+      ok: true,
+      text: text || (investigation?.ok ? (investigation.summary || '') : ''),
+      investigation: investigation?.ok ? {
+        summary: investigation.summary || '',
+        fixes: investigation.fixes || [],
+        missingTracks: investigation.missingTracks || [],
+        rationale: investigation.rationale || '',
+      } : null,
+    }
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// After the user approves Cynthia's fixes, the renderer calls this so her
+// summary lands in Music Man's rolling memory ("Recently you said...") and
+// her own log. Now Music Man can casually reference the work in chat:
+// "yeah, my archivist sorted out the Pink Floyd thing yesterday."
+ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale: string; summary?: string }) => {
+  const text = (payload?.rationale || payload?.summary || '').trim()
+  if (!text) return { ok: false, error: 'Empty report' }
+  noteCynthiaUtterance(text)
+  noteMusicManUtterance('cynthia-report', `[Cynthia, archivist] ${text}`)
+  return { ok: true }
+})
+
 /** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
  *  specific instructions, library context, taste profile, and recent
  *  Music Man utterances. Every Music Man endpoint should use this. */
@@ -2290,9 +3134,7 @@ ipcMain.handle('musicman-chat', async (_event, messages: { role: string; content
 ipcMain.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
 
-  const systemPrompt = `You are "The Music Man" — the arrogant, opinionated record store savant. Build a playlist from the user's ACTUAL music library for their requested mood.
-
-Pick 15-25 tracks that match. Track ORDER matters — think about flow, transitions, energy arc. This is a curated experience, not a shuffle.
+  const playlistInstructions = `Build a playlist from the user's ACTUAL library for their requested mood. Pick 15-25 tracks that match. Track ORDER matters — think about flow, transitions, energy arc. This is a curated experience, not a shuffle.
 
 Return ONLY a JSON object (no markdown, no code fences):
 {"name":"creative playlist name","commentary":"2-3 sentences about your picks, in character","trackIds":[array of track ID numbers in playlist order]}
@@ -2302,11 +3144,9 @@ Rules:
 - Order matters — build a journey with intentional pacing
 - VARIETY IS KEY: Mix up the artists. Do NOT put 3+ songs by the same artist in a row. Spread artists throughout the playlist. Back-to-back songs from the same artist should be RARE — maybe once in a playlist if it truly serves the flow. Think like a great radio DJ, not someone hitting "play all" on one album.
 - Aim for at least 10-12 different artists in a 20-track playlist
-- Be bold and opinionated about your choices
-- If the mood is vague, interpret it with confidence
+- If the mood is vague, interpret it with confidence`
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}
-${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
+  const systemPrompt = buildMusicManPrompt(playlistInstructions)
 
   try {
     const response = await anthropic.messages.create({
@@ -2319,6 +3159,7 @@ ${buildTasteProfile() ? `\nWhat you know about this listener from their history:
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
+      if (parsed.commentary) noteMusicManUtterance('playlist', parsed.commentary)
       return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
     }
     return { ok: false, error: 'Could not parse playlist' }
@@ -2336,9 +3177,7 @@ ipcMain.handle('musicman-picks', async (_event, tracks: { id: number; title: str
   const month = today.getMonth() // 0-11
   const season = month <= 1 || month === 11 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'fall'
 
-  const systemPrompt = `You are "The Music Man" — the arrogant, opinionated record store savant. Today is ${dateStr} and it's ${season}.
-
-Pick 15-20 tracks from the user's library for TODAY's daily playlist. Your picks should be influenced by:
+  const picksInstructions = `Today is ${dateStr} and it's ${season}. Pick 15-20 tracks from the user's library for TODAY's daily playlist. Your picks should be influenced by:
 - The day of the week (Monday blues? Friday energy? Lazy Sunday?)
 - The season and time of year
 - Current cultural moments, holidays, anniversaries of famous albums/events
@@ -2351,11 +3190,10 @@ Return ONLY a JSON object (no markdown, no code fences):
 Rules:
 - ONLY use track IDs from the provided library
 - VARIETY IS KEY: Mix up artists, don't clump 3+ songs by the same artist together
-- Be bold, opinionated, and personal about why you picked these today
-- This should feel different every single day
+- Be personal about why you picked these today
+- This should feel different every single day`
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}
-${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
+  const systemPrompt = buildMusicManPrompt(picksInstructions)
 
   try {
     const response = await anthropic.messages.create({
@@ -2368,6 +3206,7 @@ ${buildTasteProfile() ? `\nWhat you know about this listener from their history:
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
+      if (parsed.commentary) noteMusicManUtterance('picks', parsed.commentary)
       return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
     }
     return { ok: false, error: 'Could not parse picks' }
@@ -2392,14 +3231,14 @@ ipcMain.handle('musicman-recommendations', async (_event, tracks: { id: number; 
   const topGenres = Array.from(genreCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([g, c]) => `${g} (${c})`).join(', ')
   const albumList = Array.from(albumSet).sort().join('\n')
 
-  const systemPrompt = `You are "The Music Man" — the arrogant, opinionated record store savant. You have been asked to recommend albums that are NOT already in the user's library.
+  const recsInstructions = `You've been asked to recommend albums that are NOT already in the user's library.
 
 CRITICAL RULES:
 - NEVER recommend albums/artists the user ALREADY HAS. Check the album list carefully.
 - Recommend 8-12 albums. Mix well-known essentials they're missing with deeper cuts they'd never find on their own.
 - Each recommendation should connect to something already in their library — explain WHY based on what they listen to.
 - Prefer Bandcamp and independent releases when possible, but don't force it. Major label classics are fine too.
-- Be opinionated. If an album is a masterpiece, say so. If it's an acquired taste, warn them.
+- If an album is a masterpiece, say so. If it's an acquired taste, warn them.
 - Tag each with a source: "bandcamp" for indie/small label, "qobuz" for hi-res/audiophile, "streaming" for widely available.
 
 Return ONLY a JSON array (no markdown, no code fences):
@@ -2407,6 +3246,8 @@ Return ONLY a JSON array (no markdown, no code fences):
 
 The user's top artists: ${topArtists}
 Their top genres: ${topGenres}`
+
+  const systemPrompt = buildMusicManPrompt(recsInstructions)
 
   try {
     const response = await anthropic.messages.create({
@@ -2474,9 +3315,7 @@ Their top genres: ${topGenres}`
 ipcMain.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
 
-  const systemPrompt = `You are "The Music Man" — the arrogant, opinionated record store savant. You've been asked to scan a music library for metadata issues.
-
-Analyze the track list and find ALL issues. Categories:
+  const scanInstructions = `You've been asked to scan a music library for metadata issues. Analyze the track list and find ALL issues. Categories:
 
 1. **misspelling** — Artist or album names that are clearly misspelled (e.g., "Beetles" → "Beatles", "Radiohaed" → "Radiohead")
 2. **inconsistent** — Same artist/album spelled differently across tracks (e.g., "RHCP" and "Red Hot Chili Peppers", "The Beatles" and "Beatles")
@@ -2506,10 +3345,9 @@ Rules:
 - For "inconsistent" issues, show both variants with trackIds and altTrackIds
 - For "suggested" fixes, provide the correct value. If you're not sure of the fix, do NOT include the issue.
 - Sort issues by severity (most impactful first)
-- Return an empty array [] if there are no certain issues. That's fine.
+- Return an empty array [] if there are no certain issues. That's fine.`
 
-${libraryContext ? `Library context: ${libraryContext}` : ''}
-${buildTasteProfile() ? `\nWhat you know about this listener from their history:\n${buildTasteProfile()}` : ''}`
+  const systemPrompt = buildMusicManPrompt(scanInstructions)
 
   try {
     const response = await anthropic.messages.create({
@@ -3233,10 +4071,37 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
 })
 
 app.whenReady().then(async () => {
+  // ── Purge renderer caches on version change ──
+  // When the user installs a new DMG over an old one, Electron keeps
+  // the previous Session Storage + Local Storage from the old
+  // renderer. Combined with new main-process code, that stale cache
+  // showed up as "library empty" on first launch after an install,
+  // forcing the user to quit + relaunch or manually clear session
+  // storage. This purge happens BEFORE createWindow so the renderer
+  // starts from a clean slate whenever the app binary changed.
+  try {
+    const versionFile = join(app.getPath('userData'), '.last-version')
+    const currentVersion = app.getVersion()
+    let prevVersion: string | null = null
+    try { prevVersion = (await readFile(versionFile, 'utf-8')).trim() } catch { /* first launch */ }
+    if (prevVersion !== currentVersion) {
+      console.log(`[launch] version changed (${prevVersion} → ${currentVersion}) — purging renderer cache`)
+      const { rm } = await import('fs/promises')
+      for (const dir of ['Session Storage', 'Local Storage']) {
+        await rm(join(app.getPath('userData'), dir), { recursive: true, force: true }).catch(() => {})
+      }
+      await writeFile(versionFile, currentVersion, 'utf-8').catch(() => {})
+    }
+  } catch (err) {
+    console.warn('[launch] version-change cache purge failed (non-fatal):', err)
+  }
+
   // Load listener profile for Music Man
   loadListenerProfile()
   // Load Music Man's cross-mode memory (things he's said recently)
   await loadMusicManMemory()
+  // Load Cynthia's archivist memory (recent jobs she's finished)
+  await loadCynthiaMemory()
   // Fetch Discogs collection for Music Man taste context
   fetchDiscogsCollection()
 
@@ -3319,16 +4184,29 @@ app.whenReady().then(async () => {
     if (existing) return existing
 
     const p = (async () => {
+      // Atomic write: ffmpeg → tmp file → rename into place. Without
+      // this, a killed ffmpeg (app quit mid-transcode, OS reap, etc.)
+      // leaves a partial file at `cached` whose mtime still passes
+      // the freshness check, so the app would keep serving a
+      // truncated 42-second version of a 4-minute song. rename()
+      // guarantees the final path is either complete or absent.
+      // .partial.m4a (not .tmp) so ffmpeg recognizes the mp4 container
+      // format from the extension. Rename on success is still atomic.
+      const tmp = cached + '.partial.m4a'
       try {
-        // 256kbps AAC in .m4a — good balance of size and fidelity for playback.
-        // -map_metadata 0 preserves tags; -vn drops any cover-art video stream.
         await execP('ffmpeg', [
           '-y', '-i', src, '-vn',
           '-c:a', 'aac', '-b:a', '256k',
           '-map_metadata', '0',
-          cached,
+          tmp,
         ], { timeout: 300000 })
+        const { rename: renameFS } = await import('fs/promises')
+        await renameFS(tmp, cached)
         return cached
+      } catch (err) {
+        // Clean up the partial tmp file so we don't leave garbage.
+        try { await unlink(tmp) } catch { /* already gone */ }
+        throw err
       } finally {
         transcodeInFlight.delete(src)
       }
@@ -3341,15 +4219,32 @@ app.whenReady().then(async () => {
   // library-load path later, if we want) can kick off transcodes for
   // newly-imported ALAC files before the user clicks play. Best-effort;
   // failures log and skip.
+  //
+  // CRITICAL: cap concurrency at 4. The original implementation
+  // fire-and-forgot every file in the loop, which on a fresh install
+  // with 800 ALAC tracks meant 800 simultaneous ffmpeg processes. The
+  // box would peg every core, the UI would stutter on scroll, and the
+  // first-play latency we were trying to hide actually got WORSE
+  // because the on-demand transcode for the song the user just hit
+  // play on was queued behind 799 background jobs all fighting for
+  // CPU. Four workers = enough throughput to chew through 800 files
+  // in a few minutes without starving the renderer.
   prewarmAlacCache = async (paths: string[]) => {
-    for (const p of paths) {
-      try {
-        const s = await stat(p)
-        // Schedule but don't await — let transcodes run in the
-        // background, parallel to whatever the user is doing.
-        aacCachePath(p, s.mtimeMs).catch(() => {})
-      } catch { /* file missing — skip */ }
+    const CONCURRENCY = 4
+    let i = 0
+    const worker = async (): Promise<void> => {
+      while (i < paths.length) {
+        const idx = i++
+        const p = paths[idx]
+        try {
+          const s = await stat(p)
+          await aacCachePath(p, s.mtimeMs).catch(() => {})
+        } catch { /* file missing — skip */ }
+      }
     }
+    const workers: Promise<void>[] = []
+    for (let w = 0; w < CONCURRENCY; w++) workers.push(worker())
+    await Promise.all(workers)
   }
 
   // Populate the codec cache with a codec we already know (from a rip
@@ -3423,6 +4318,11 @@ app.whenReady().then(async () => {
   const menu = Menu.buildFromTemplate(menuTemplate)
   Menu.setApplicationMenu(menu)
   createWindow()
+  // Start watching library.json for external modifications so any
+  // Python-script edits or out-of-band rewrites propagate into the
+  // running UI instead of getting silently overwritten. Fire after
+  // createWindow so mainWindow is defined when the watcher emits.
+  startLibraryWatcher()
 
   // Auto-update: check for updates in production
   if (!isDev) {

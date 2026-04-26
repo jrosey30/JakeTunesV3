@@ -269,6 +269,50 @@ async function embedTags(path: string, tags: AudioTags): Promise<void> {
 }
 
 /**
+ * Two-step ALAC conversion that's guaranteed to produce iPod-Classic-
+ * playable output regardless of source format:
+ *
+ *   1. ffmpeg decodes the source to 16-bit PCM WAV at ≤48 kHz
+ *   2. afconvert encodes the WAV back to ALAC
+ *
+ * Why both tools? Going ffmpeg → ALAC direct produces files that
+ * metadata-wise claim 16-bit but contain bitstream layouts iPod's
+ * hardware decoder chokes on ("scratched CD" stutter). afconvert is
+ * Apple's own encoder — its ALAC output is byte-for-byte compatible
+ * with iPod's decoder. But afconvert can't easily force 16-bit from
+ * a 32-bit input in one shot, hence the WAV intermediate.
+ */
+async function convertToIpodSafeAlac(src: string, dest: string): Promise<void> {
+  const { unlink } = await import('fs/promises')
+  const { randomBytes } = await import('crypto')
+  const os = await import('os')
+  const { join } = await import('path')
+  const wavTmp = join(os.tmpdir(), `jaketunes-alac-${randomBytes(6).toString('hex')}.wav`)
+
+  try {
+    // Step 1: decode to 16-bit PCM WAV. Let ffmpeg pick sample rate
+    // up to 48kHz; only downsample if the source is higher-res.
+    await execP('ffmpeg', [
+      '-y', '-i', src,
+      '-map', '0:a:0',
+      '-sample_fmt', 's16',
+      '-ar', '44100',
+      '-f', 'wav',
+      '-loglevel', 'error',
+      wavTmp,
+    ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
+
+    // Step 2: afconvert → ALAC
+    await execP('afconvert', [
+      '-f', 'm4af', '-d', 'alac', wavTmp, dest,
+    ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
+  } finally {
+    // Always clean up the WAV scratch file, even on failure.
+    await unlink(wavTmp).catch(() => {})
+  }
+}
+
+/**
  * Convert `src` to `dest` in the requested format. Uses afconvert on macOS
  * and ffmpeg on Windows. For the AIFF "format" we just copy the source
  * unchanged, since most CDs already rip as AIFF.
@@ -295,13 +339,27 @@ export async function convertAudio(
   }
 
   if (IS_MAC) {
+    // Special case: ALAC import ALWAYS targets 16-bit / 44.1kHz so
+    // anything imported is guaranteed iPod-Classic-playable. Without
+    // this, importing a 24/32-bit or 96/192kHz "high-res" album as
+    // ALAC would produce files the iPod hardware skips like a
+    // scratched CD. We use a two-step pipeline so the output is
+    // written by afconvert (Apple's own encoder, iPod-friendly
+    // bitstream), not ffmpeg-direct-to-ALAC (which creates valid-
+    // looking files that iPod's decoder chokes on).
+    if (fmt === 'alac') {
+      await convertToIpodSafeAlac(src, dest)
+      if (tags) await embedTags(dest, tags)
+      return
+    }
+
     const args: string[] = (() => {
       switch (fmt) {
         case 'aac-128': return ['-f', 'm4af', '-d', 'aac', '-b', '128000', '-s', '2']
         case 'aac-256': return ['-f', 'm4af', '-d', 'aac', '-b', '256000', '-s', '2']
         case 'aac-320': return ['-f', 'm4af', '-d', 'aac', '-b', '320000', '-s', '2']
-        case 'alac':    return ['-f', 'm4af', '-d', 'alac']
         case 'wav':     return ['-f', 'WAVE', '-d', 'LEI16']
+        default:        return []
       }
     })()
     // 5 min timeout — long tracks + slow CD reads can legitimately

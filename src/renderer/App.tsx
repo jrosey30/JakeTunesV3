@@ -1,14 +1,18 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { Track } from './types'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
+import { CynthiaProvider } from './context/CynthiaContext'
 import { useAudio } from './hooks/useAudio'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
 import QueuePanel from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
+import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
+import ShowDuplicatesModal from './components/ShowDuplicatesModal'
+import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
+import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
 import './styles/variables.css'
 import './styles/reset.css'
 import './styles/app.css'
@@ -22,6 +26,8 @@ function AppInner() {
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
   const [importConvertOpen, setImportConvertOpen] = useState(false)
+  const [alacCompatOpen, setAlacCompatOpen] = useState(false)
+  const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [uiReady, setUiReady] = useState(false)
 
   useEffect(() => {
@@ -361,10 +367,28 @@ function AppInner() {
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
         case 'open-import-convert': setImportConvertOpen(true); break
+        case 'fix-ipod-compat':     setAlacCompatOpen(true); break
+        case 'show-duplicates':     setShowDuplicatesOpen(true); break
       }
     })
-    return cleanup
-  }, [togglePlayPause, nextTrack, prevTrack, setVolume])
+    // Main process watches library.json on disk and fires this when
+    // something OTHER than us writes it. Reload automatically so the UI
+    // stays consistent with disk and save-library doesn't overwrite the
+    // external edit later.
+    const reloadHandler = () => {
+      window.electronAPI.loadTracks().then((r) => {
+        if (r.tracks) dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+      })
+    }
+    const unsubExt = window.electronAPI.onLibraryExternalChange(() => {
+      console.log('library.json changed externally, reloading in-memory state')
+      reloadHandler()
+    })
+    return () => {
+      cleanup()
+      unsubExt()
+    }
+  }, [togglePlayPause, nextTrack, prevTrack, setVolume, dispatch])
 
   // Global keyboard shortcuts
   const toggleRef = useRef(togglePlayPause)
@@ -420,16 +444,28 @@ function AppInner() {
   }, [])
 
   // ── Drag-and-drop file import ──
-  const [importing, setImporting] = useState(false)
+  // Routes through the import queue (importQueue.ts) so each dropped
+  // file gets its own pending/running/done/failed state and back-to-
+  // back drops accumulate cleanly instead of racing. The user gets
+  // per-item visibility + retry on every failure.
   const [dropActive, setDropActive] = useState(false)
 
-  const nextIdRef = useRef(0)
+  // Keep the queue's nextId in sync with the library's max track id
+  // so each import gets a fresh, non-colliding library id.
   useEffect(() => {
     if (libState.tracks.length > 0) {
       const maxId = Math.max(0, ...libState.tracks.map(t => t.id))
-      if (maxId >= nextIdRef.current) nextIdRef.current = maxId + 1
+      setNextLibraryId(maxId + 1)
     }
   }, [libState.tracks])
+
+  // As the queue worker finishes each item, push it into the library
+  // immediately. The user sees their drop landing one track at a time.
+  useEffect(() => {
+    return onTrackImported((t) => {
+      dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
+    })
+  }, [dispatch])
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -437,33 +473,16 @@ function AppInner() {
     setDropActive(false)
 
     const files = Array.from(e.dataTransfer.files)
-    // Pass ALL paths (files + folders) — backend resolves folders recursively
     const droppedPaths = files.map(f => f.path).filter(Boolean)
-
     if (droppedPaths.length === 0) return
 
-    setImporting(true)
-    const nextId = nextIdRef.current
-    try {
-      // Pull the user's currently-selected import format out of ui-state
-      // so a dragged file respects "ALAC" vs "AAC 256" etc. — matches
-      // what the CD Import dropdown is set to.
-      const ui = await window.electronAPI.loadUiState().catch(() => ({ ok: false, state: null }))
-      const importFormat = (ui.ok && ui.state && typeof (ui.state as Record<string, unknown>).importFormat === 'string')
-        ? (ui.state as Record<string, unknown>).importFormat as string
-        : undefined
-      const result = await window.electronAPI.importTracks(droppedPaths, nextId, importFormat)
-      if (result.ok && result.tracks.length > 0) {
-        const newTracks = result.tracks as Track[]
-        // Advance the counter past all imported IDs to prevent collisions
-        nextIdRef.current = Math.max(nextIdRef.current, ...newTracks.map(t => t.id)) + 1
-        dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: newTracks })
-      }
-    } catch (err) {
-      console.error('Import failed:', err)
-    }
-    setImporting(false)
-  }, [dispatch])
+    // Honor the user's persisted import format (ALAC / AAC 256 / etc).
+    const ui = await window.electronAPI.loadUiState().catch(() => ({ ok: false, state: null }))
+    const importFormat = (ui.ok && ui.state && typeof (ui.state as Record<string, unknown>).importFormat === 'string')
+      ? (ui.state as Record<string, unknown>).importFormat as string
+      : undefined
+    void enqueueFiles(droppedPaths, importFormat)
+  }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -512,6 +531,14 @@ function AppInner() {
         <MainContent />
         {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
+        {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
+        {showDuplicatesOpen && (
+          <ShowDuplicatesModal
+            tracks={libState.tracks}
+            onClose={() => setShowDuplicatesOpen(false)}
+            onDelete={(id) => dispatch({ type: 'DELETE_TRACKS', ids: [id] })}
+          />
+        )}
       </div>
       <div className="statusbar-area">
         <StatusBar />
@@ -521,11 +548,7 @@ function AppInner() {
           <div className="app-drop-message">Drop to import</div>
         </div>
       )}
-      {importing && (
-        <div className="app-drop-overlay app-drop-overlay--importing">
-          <div className="app-drop-message">Importing...</div>
-        </div>
-      )}
+      <ImportQueuePanel />
     </div>
   )
 }
@@ -534,7 +557,9 @@ export default function App() {
   return (
     <LibraryProvider>
       <PlaybackProvider>
-        <AppInner />
+        <CynthiaProvider>
+          <AppInner />
+        </CynthiaProvider>
       </PlaybackProvider>
     </LibraryProvider>
   )
