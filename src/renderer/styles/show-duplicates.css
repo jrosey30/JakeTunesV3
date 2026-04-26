@@ -1,0 +1,213 @@
+/* Possible Duplicates modal — extends import-convert.css base modal chrome.
+   Visual goal: matches the 2006-iTunes admin-modal vocabulary used by
+   ImportConvertModal and LibraryMaintenanceModal. */
+
+.dup-modal {
+  width: 640px;
+  max-width: 90vw;
+}
+
+.dup-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.dup-summary {
+  font-size: 12px;
+  color: #444;
+  padding: 4px 0 2px;
+}
+
+.dup-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dup-group {
+  background: #fdfdfd;
+  border: 1px solid #d4d4d4;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.dup-group-header {
+  background: linear-gradient(180deg, #f0f0f0, #e0e0e0);
+  padding: 7px 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border-bottom: 1px solid #cfcfcf;
+  font-size: 12px;
+}
+.dup-group-title {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+.dup-group-artist {
+  color: #555;
+}
+.dup-group-album {
+  color: #888;
+  font-style: italic;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dup-group-count {
+  background: #c75c14;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.dup-group-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.dup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-top: 1px solid #efefef;
+  font-size: 11px;
+}
+.dup-row:first-child { border-top: none; }
+.dup-row:nth-child(even) { background: #fafafa; }
+
+.dup-row-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+  color: #444;
+  min-width: 240px;
+}
+.dup-tn { font-weight: 600; min-width: 28px; color: #333; }
+.dup-dur { min-width: 40px; }
+.dup-size { min-width: 56px; }
+.dup-fp {
+  color: #888;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+}
+
+.dup-row-path {
+  flex: 1;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  color: #777;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dup-delete-btn {
+  /* 22×64 px button: visually small but click target stays comfortable.
+     Color: warm rust gradient on cream — matches the Brick palette
+     ('Jake's hippy palette' for destructive admin actions). */
+  padding: 4px 10px;
+  border: 1px solid #b54a14;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #f0c8b0, #e0a070);
+  color: #5b1f08;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+.dup-delete-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f5d0b8, #e8a878);
+}
+.dup-delete-btn:active:not(:disabled) {
+  background: linear-gradient(180deg, #d89668, #c07848);
+}
+.dup-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: linear-gradient(180deg, #ececec, #d8d8d8);
+  color: #888;
+  border-color: #b8b8b8;
+}
+
+/* Not-a-duplicate dismiss button — small neutral pill on the group
+   header. NOT destructive (only hides from view), so we keep the brick
+   palette reserved for actual deletion and use a quiet gray-cream
+   instead. Lives to the right of the orange count badge. */
+.dup-group-dismiss-btn {
+  padding: 3px 8px;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #fafafa, #e5e5e5);
+  color: #444;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.dup-group-dismiss-btn:hover {
+  background: linear-gradient(180deg, #ffffff, #ededed);
+  border-color: #909090;
+  color: #222;
+}
+.dup-group-dismiss-btn:active {
+  background: linear-gradient(180deg, #d8d8d8, #c5c5c5);
+}
+
+/* Restore variant — same shape, slightly warmer to signal "undo". */
+.dup-group-dismiss-btn--restore {
+  background: linear-gradient(180deg, #f8f0e0, #ecdcb8);
+  border-color: #b09060;
+  color: #6b4818;
+}
+.dup-group-dismiss-btn--restore:hover {
+  background: linear-gradient(180deg, #fcf4e4, #f0e0c0);
+  border-color: #907040;
+  color: #4a2f08;
+}
+
+/* Hidden-group rendering when "Show hidden" is on — dimmed so the user
+   can tell at a glance which groups are being surfaced for re-review
+   vs which are still active candidates. */
+.dup-group--hidden {
+  opacity: 0.55;
+}
+.dup-group--hidden .dup-group-header {
+  background: linear-gradient(180deg, #e8e8e8, #d4d4d4);
+}
+
+/* Footer toggle that surfaces hidden groups for re-review. Pinned to
+   the LEFT of the footer (margin-right: auto) so the Done button stays
+   anchored to the right where users expect it. Visually quieter than
+   the primary action so it doesn't compete. */
+.dup-show-hidden-toggle {
+  margin-right: auto;
+  padding: 5px 14px;
+  border: 1px solid #b0b0b0;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #f8f8f8, #e0e0e0);
+  color: #444;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dup-show-hidden-toggle:hover {
+  background: linear-gradient(180deg, #fcfcfc, #e8e8e8);
+  border-color: #909090;
+  color: #222;
+}
+.dup-show-hidden-toggle:active {
+  background: linear-gradient(180deg, #d8d8d8, #c5c5c5);
+}
