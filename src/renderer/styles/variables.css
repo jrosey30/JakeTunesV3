@@ -1,10 +1,14 @@
 :root {
   --chrome-top: #d8d8d8;
   --chrome-bottom: #b8b8b8;
-  --sidebar-top: #c0c0c0;
-  --sidebar-bottom: #b0b0b0;
-  --selection-top: #4a90d9;
-  --selection-bottom: #2a6db8;
+  /* Sidebar: iTunes 8 (Sept 2008) cool light blue-gray gradient.
+     Reference: docs/4.0-ui-references/itunes-8-main.png. */
+  --sidebar-top: #c1cad7;
+  --sidebar-bottom: #a9b4c2;
+  /* Selection pill (iTunes 8 blue, slightly more saturated than the
+     2006-era selection blue we shipped before). */
+  --selection-top: #5b86dc;
+  --selection-bottom: #3e6ec7;
   --row-alt: #f7f7f7;
   --pill-top: #f0eedc;
   --pill-bottom: #dddbb8;

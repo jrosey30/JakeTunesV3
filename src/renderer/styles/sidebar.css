@@ -24,7 +24,8 @@
   padding: 2px 10px;
   font-size: var(--font-label);
   font-weight: 700;
-  color: #666;
+  /* iTunes 8 section header color (LIBRARY / STORE / SHARED / etc.). */
+  color: #5a5a5a;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   width: 100%;
@@ -66,6 +67,11 @@
 .sidebar-item--selected {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
   color: #fff;
+  /* iTunes 8 selection pill carries a subtle inner top-edge highlight
+     and a 1px deeper-blue border, giving it a slightly lifted feel. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
 }
 
 .sidebar-item--selected:hover {
