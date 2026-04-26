@@ -118,9 +118,10 @@
 
 .artist-track-row:hover { background: rgba(0,0,0,0.05); }
 
-.artist-track-row--playing {
-  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-  color: #fff;
+/* Now-playing indicator only — the SpeakerPlayingIcon shows in the
+ * left cell. No row fill. */
+.artist-track-row--playing .artist-track-title {
+  font-weight: 700;
 }
 
 .artist-track-icon {

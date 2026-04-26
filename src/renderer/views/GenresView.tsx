@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -140,8 +140,50 @@ export default function GenresView() {
     [libDispatch]
   )
 
+  // Auto-follow now-playing (4.0). When the playing track changes and
+  // the user has been idle for >5s, drill the genre/artist/album columns
+  // into the track's location and scroll its row into view. Same idle-
+  // gate pattern as SongsView.
+  const viewRootRef = useRef<HTMLDivElement>(null)
+  const lastUserActivityAtRef = useRef<number>(0)
+  const isAutoScrollAtRef = useRef<number>(0)
+  const FOLLOW_IDLE_MS = 5000
+  const noteUserActivity = useCallback(() => {
+    if (Date.now() - isAutoScrollAtRef.current > 200) {
+      lastUserActivityAtRef.current = Date.now()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (lib.currentView !== 'genres') return
+    if (!pb.nowPlaying) return
+    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
+    const t = pb.nowPlaying
+    const targetGenre = t.genre || null
+    const targetArtist = t.artist || null
+    const targetAlbum = t.album || null
+    if (!targetGenre) return
+    isAutoScrollAtRef.current = Date.now()
+    setSelectedGenre(targetGenre)
+    setSelectedArtist(targetArtist)
+    setSelectedAlbum(targetAlbum)
+    requestAnimationFrame(() => {
+      const root = viewRootRef.current
+      if (!root) return
+      const row = root.querySelector(`[data-track-id="${t.id}"]`) as HTMLElement | null
+      if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+    })
+  }, [pb.nowPlaying?.id, lib.currentView])
+
   return (
-    <div className="genres-view">
+    <div
+      className="genres-view"
+      ref={viewRootRef}
+      onClickCapture={noteUserActivity}
+      onWheelCapture={noteUserActivity}
+      onScrollCapture={noteUserActivity}
+      onKeyDownCapture={noteUserActivity}
+    >
       <div className="genres-browser">
         <div className="genres-column">
           <div className="genres-column-header">Genre</div>
@@ -177,6 +219,7 @@ export default function GenresView() {
           return (
             <div
               key={track.id}
+              data-track-id={track.id}
               className={`genres-track-row ${i % 2 ? 'genres-track-row--alt' : ''} ${isPlaying ? 'genres-track-row--playing' : ''}`}
               onDoubleClick={() => playTrack(track, filteredTracks, i)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}

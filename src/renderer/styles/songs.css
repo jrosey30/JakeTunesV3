@@ -4,14 +4,17 @@
   height: 100%;
 }
 
+/* iTunes 8 column header: flat #dcdcdc with vertical column dividers
+ * #a8a8a8 and bold dark-charcoal label text. The earlier gradient +
+ * lighter dividers read as iTunes 6/7-era; iTunes 8 went flatter. */
 .songs-header {
   display: grid;
   height: 20px;
-  background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
-  border-bottom: 1px solid #b0b0b0;
+  background: #dcdcdc;
+  border-bottom: 1px solid #888;
   font-size: var(--font-label);
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 700;
+  color: #3a3a3a;
   flex-shrink: 0;
   user-select: none;
 }
@@ -20,7 +23,7 @@
   display: flex;
   align-items: center;
   padding: 0 6px;
-  border-right: 1px solid #c0c0c0;
+  border-right: 1px solid #a8a8a8;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -31,8 +34,8 @@
   -webkit-user-select: none;
 }
 
-.songs-header-cell:hover { background: rgba(0,0,0,0.04); }
-.songs-header-cell.sorted { color: var(--text-primary); }
+.songs-header-cell:hover { background: rgba(0,0,0,0.05); }
+.songs-header-cell.sorted { color: #1a1a1a; }
 
 .col-resize-handle {
   position: absolute;
@@ -68,8 +71,11 @@
   -webkit-user-select: none;
 }
 
+/* Cool blue-tint alternating row (iTunes 8). The previous warm
+ * #f7f7f7 read as Leopard Aqua-era; the cool tint pairs with the
+ * blue selection state without fighting it. */
 .songs-row--alt {
-  background: var(--row-alt);
+  background: #f0f4fa;
 }
 
 .songs-row:hover {
@@ -77,22 +83,24 @@
 }
 
 
+/* Solid iTunes 8 selection blue with white text. The earlier gradient
+ * was a softer aqua-era treatment; iTunes 8 selection is flat-blue. */
 .songs-row--selected {
-  background: linear-gradient(180deg, #b8d4f0, #a0c4e8);
-  color: var(--text-primary);
+  background: #4577d3;
+  color: #fff;
 }
 
 .songs-row--selected:hover {
-  background: linear-gradient(180deg, #b8d4f0, #a0c4e8);
+  background: #4577d3;
 }
 
-.songs-row--playing,
-.songs-row--playing:hover,
-.songs-row--playing.songs-row--alt,
-.songs-row--playing.songs-row--selected,
-.songs-row--playing.songs-row--selected:hover {
-  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-  color: #fff;
+/* Now-playing is a passive indicator — the SpeakerPlayingIcon in the
+ * left cell + a subtly bolder title is the cue. Row fill is reserved
+ * for *selected* rows (i.e., the user clicked them). When the user
+ * does click the playing row, --selected wins and the row turns blue
+ * normally. */
+.songs-row--playing .songs-cell--title {
+  font-weight: 700;
 }
 
 .songs-cell {
@@ -161,11 +169,14 @@
   color: #daa520;
 }
 
-.songs-row--playing .star-rating-star {
+/* Selected (blue) rows: switch the star colors so they read against
+ * blue. Playing-only rows now keep the normal gray/gold stars since
+ * we no longer paint the row blue. */
+.songs-row--selected .star-rating-star {
   color: rgba(255,255,255,0.4);
 }
 
-.songs-row--playing .star-rating-star--filled {
+.songs-row--selected .star-rating-star--filled {
   color: #ffd700;
 }
 

@@ -27,11 +27,14 @@ export function SpeakerHighIcon() {
 }
 
 export function SpeakerPlayingIcon() {
+  // currentColor: the icon inherits the surrounding row's text color, so
+  // it reads as dark on white/alt rows and as white on a selected
+  // (blue) row without needing a separate variant.
   return (
-    <svg width="13" height="13" viewBox="0 0 10 10" fill="#fff">
+    <svg width="13" height="13" viewBox="0 0 10 10" fill="currentColor">
       <path d="M0.5 3.5h1.5L4.5 1.5v7L2 6.5H0.5a.3.3 0 01-.3-.3v-2.4a.3.3 0 01.3-.3z" />
-      <path d="M6 4a1.5 1.5 0 010 2" stroke="#fff" strokeWidth="0.9" fill="none" strokeLinecap="round" />
-      <path d="M7.2 2.8a3.2 3.2 0 010 4.4" stroke="#fff" strokeWidth="0.9" fill="none" strokeLinecap="round" />
+      <path d="M6 4a1.5 1.5 0 010 2" stroke="currentColor" strokeWidth="0.9" fill="none" strokeLinecap="round" />
+      <path d="M7.2 2.8a3.2 3.2 0 010 4.4" stroke="currentColor" strokeWidth="0.9" fill="none" strokeLinecap="round" />
     </svg>
   )
 }

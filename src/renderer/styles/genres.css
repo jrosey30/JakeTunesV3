@@ -25,9 +25,9 @@
   padding: 3px 8px;
   font-size: var(--font-label);
   font-weight: 700;
-  color: var(--text-secondary);
-  background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
-  border-bottom: 1px solid #b0b0b0;
+  color: #3a3a3a;
+  background: #dcdcdc;
+  border-bottom: 1px solid #888;
   flex-shrink: 0;
   user-select: none;
 }
@@ -72,12 +72,14 @@
   cursor: default;
 }
 
-.genres-track-row--alt { background: var(--row-alt); }
+.genres-track-row--alt { background: #f0f4fa; }
 .genres-track-row:hover { background: rgba(74,144,217,0.08); }
 
-.genres-track-row--playing {
-  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-  color: #fff;
+/* Now-playing indicator only — the SpeakerPlayingIcon already shows
+ * in the left cell. No row fill (that's reserved for click-selection,
+ * which Genres view doesn't currently track row-level). */
+.genres-track-row--playing .genres-track-title {
+  font-weight: 700;
 }
 
 .genres-track-icon {
@@ -97,5 +99,5 @@
 
 .genres-track-title { font-weight: 500; }
 .genres-track-artist, .genres-track-album { color: var(--text-secondary); }
-.genres-track-row--playing .genres-track-artist,
-.genres-track-row--playing .genres-track-album { color: rgba(255,255,255,0.8); }
+/* (No special artist/album color override needed now that --playing
+ * doesn't repaint the row.) */

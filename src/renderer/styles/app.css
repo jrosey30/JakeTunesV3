@@ -100,7 +100,10 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
+  /* Continue the unified iTunes 8 chrome gradient up into the titlebar
+   * so the window reads as one piece of brushed gray rather than two
+   * stacked gradients meeting at a seam. */
+  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
   text-shadow: 0 1px 0 rgba(255,255,255,0.5);
@@ -171,14 +174,16 @@
   color: #666;
 }
 
+/* iTunes 8 status bar: flat light gray, no gradient. The previous
+ * gradient read as Leopard glassy-aqua; iTunes 8 went matte. */
 .statusbar-area {
   grid-area: statusbar;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 12px;
-  background: linear-gradient(180deg, #e0e0e0, #c8c8c8);
-  border-top: 1px solid var(--border-subtle);
+  background: #d4d4d4;
+  border-top: 1px solid #888;
   font-size: var(--font-label);
-  color: var(--text-secondary);
+  color: #3a3a3a;
 }

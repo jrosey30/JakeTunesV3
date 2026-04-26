@@ -140,16 +140,11 @@
 
 .album-detail-row--selected .album-detail-num { color: #fff; }
 
-.album-detail-row--playing {
-  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-  color: #fff;
+/* Now-playing: passive cue only — the SpeakerPlayingIcon shows in
+ * the left cell. Selection (click) is what fills the row blue. */
+.album-detail-row--playing .album-detail-track-title {
+  font-weight: 700;
 }
-
-.album-detail-row--playing:hover {
-  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-}
-
-.album-detail-row--playing .album-detail-num { color: #fff; }
 
 .album-detail-icon { width: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .album-detail-num { font-size: var(--font-label); color: var(--text-dim); }

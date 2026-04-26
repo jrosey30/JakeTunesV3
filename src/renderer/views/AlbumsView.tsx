@@ -26,7 +26,6 @@ export default function AlbumsView() {
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
   const [selected, setSelected] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; tracks: Track[]; idx: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
@@ -73,17 +72,10 @@ export default function AlbumsView() {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [lib.tracks])
 
-  // Apply search filter on top of the computed albums. Uses whichever
-  // of the two search inputs has a value: the global toolbar Search
-  // Pill (state.searchQuery) OR the local search box. The toolbar pill
-  // wins if both are filled, because it's what the user likely reaches
-  // for first — this was the source of the "I typed in the search bar
-  // and nothing filtered on the Albums page" bug.
-  //
-  // Matches album name, artist, or any track title — so typing a song
-  // title finds the album it lives on even if you don't remember the
-  // album name.
-  const effectiveQuery = (lib.searchQuery || search).trim().toLowerCase()
+  // Filter against the global toolbar Search Pill. Matches album name,
+  // artist, or any track title — so typing a song title finds the
+  // album it lives on even if you don't remember the album name.
+  const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
   const filteredAlbums = useMemo(() => {
     const q = effectiveQuery
     if (!q) return albums
@@ -270,6 +262,48 @@ export default function AlbumsView() {
     return () => observer.disconnect()
   }, [])
 
+  // Auto-follow now-playing (4.0). Mirrors the SongsView pattern: when the
+  // playing track changes and the user has been idle for >5s, reveal the
+  // album that owns the new track — select it (so the detail panel opens
+  // and the SpeakerPlayingIcon shows on the right row) and scroll the
+  // card into view. lastUserActivityAtRef is bumped on any
+  // click/scroll/wheel inside the view; programmatic scrolls within
+  // 200ms of isAutoScrollAtRef are not counted as activity.
+  const viewRootRef = useRef<HTMLDivElement>(null)
+  const lastUserActivityAtRef = useRef<number>(0)
+  const isAutoScrollAtRef = useRef<number>(0)
+  const FOLLOW_IDLE_MS = 5000
+  const noteUserActivity = useCallback(() => {
+    if (Date.now() - isAutoScrollAtRef.current > 200) {
+      lastUserActivityAtRef.current = Date.now()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (lib.currentView !== 'albums') return
+    if (!pb.nowPlaying) return
+    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
+    const t = pb.nowPlaying
+    const groupArtist = (t.albumArtist || t.artist || 'Unknown Artist').toLowerCase().trim()
+    const albumKey = (t.album || 'Unknown').toLowerCase().trim()
+    const key = `${groupArtist}|||${albumKey}`
+    const exists = filteredAlbums.some(a =>
+      `${a.artist.toLowerCase().trim()}|||${a.name.toLowerCase().trim()}` === key
+    )
+    if (!exists) return
+    isAutoScrollAtRef.current = Date.now()
+    setSelected(key)
+    // Defer scroll until after React renders the (possibly newly inserted)
+    // detail panel — querySelector on the previous DOM would miss layout
+    // changes from the just-set selected key.
+    requestAnimationFrame(() => {
+      const root = viewRootRef.current
+      if (!root) return
+      const card = root.querySelector(`[data-album-key="${CSS.escape(key)}"]`) as HTMLElement | null
+      if (card) card.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+    })
+  }, [pb.nowPlaying?.id, lib.currentView, filteredAlbums])
+
   // Find the selected album's index
   const selectedIdx = selected
     ? filteredAlbums.findIndex(a => `${a.artist.toLowerCase().trim()}|||${a.name.toLowerCase().trim()}` === selected)
@@ -281,22 +315,14 @@ export default function AlbumsView() {
   const selectedAlbum = selectedIdx >= 0 ? filteredAlbums[selectedIdx] : null
 
   return (
-    <div className="albums-view">
-      <div className="view-search-bar">
-        <input
-          className="view-search-input"
-          type="search"
-          placeholder={lib.searchQuery ? `Filtering by "${lib.searchQuery}" (toolbar)` : `Search ${albums.length} albums...`}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          disabled={!!lib.searchQuery}
-        />
-        {effectiveQuery && (
-          <span className="view-search-count">
-            {filteredAlbums.length} match{filteredAlbums.length !== 1 ? 'es' : ''}
-          </span>
-        )}
-      </div>
+    <div
+      className="albums-view"
+      ref={viewRootRef}
+      onClickCapture={noteUserActivity}
+      onWheelCapture={noteUserActivity}
+      onScrollCapture={noteUserActivity}
+      onKeyDownCapture={noteUserActivity}
+    >
       <div className="albums-grid" ref={gridRef}>
         {filteredAlbums.map((album, albumIdx) => {
           const key = `${album.artist.toLowerCase().trim()}|||${album.name.toLowerCase().trim()}`
@@ -308,6 +334,7 @@ export default function AlbumsView() {
             <React.Fragment key={key}>
               <div
                 className={`album-card ${isSelected ? 'album-card--selected' : ''}`}
+                data-album-key={key}
                 onClick={() => setSelected(isSelected ? null : key)}
               >
                 <div className="album-card-art">

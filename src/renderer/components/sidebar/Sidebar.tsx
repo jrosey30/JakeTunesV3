@@ -36,9 +36,17 @@ const SMART_PLAYLIST_NAMES = new Set([
   'Classical Music', // empty iPod smart playlist
 ])
 
+// iTunes 8 sidebar icons stayed COLORED (the monochrome conversion didn't
+// happen until iTunes 10). Each icon takes a category-tied color:
+// blue music notation, purple gear/playlist, green genre grid, etc.
+const ICON_BLUE   = '#4a7fbf'   // Songs / Albums (Music)
+const ICON_PURPLE = '#a557a6'   // Artists (person silhouette)
+const ICON_GREEN  = '#5b9b54'   // Genres (category grid)
+const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
+
 function SongsIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="#555">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill={ICON_BLUE}>
       <path d="M10 1.5v7a1.75 1.75 0 11-1.2-1.6V3L5 4v5.5a1.75 1.75 0 11-1.2-1.6V2.5L10 1.5z" />
     </svg>
   )
@@ -46,7 +54,7 @@ function SongsIcon() {
 
 function ArtistsIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="#555">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill={ICON_PURPLE}>
       <circle cx="6" cy="4" r="2.2" />
       <path d="M2 10.5c0-2.2 1.8-3.5 4-3.5s4 1.3 4 3.5" />
     </svg>
@@ -55,9 +63,9 @@ function ArtistsIcon() {
 
 function AlbumsIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="#555">
-      <circle cx="6" cy="6" r="5" fill="none" stroke="#555" strokeWidth="1.2" />
-      <circle cx="6" cy="6" r="2" fill="none" stroke="#555" strokeWidth="1" />
+    <svg width="12" height="12" viewBox="0 0 12 12" fill={ICON_BLUE}>
+      <circle cx="6" cy="6" r="5" fill="none" stroke={ICON_BLUE} strokeWidth="1.2" />
+      <circle cx="6" cy="6" r="2" fill="none" stroke={ICON_BLUE} strokeWidth="1" />
       <circle cx="6" cy="6" r="0.8" />
     </svg>
   )
@@ -65,7 +73,7 @@ function AlbumsIcon() {
 
 function GenresIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1.2">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={ICON_GREEN} strokeWidth="1.2">
       <rect x="1" y="1" width="4.5" height="4.5" rx="0.8" />
       <rect x="6.5" y="1" width="4.5" height="4.5" rx="0.8" />
       <rect x="1" y="6.5" width="4.5" height="4.5" rx="0.8" />
@@ -76,7 +84,7 @@ function GenresIcon() {
 
 function PlaylistIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1.2">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={ICON_PLAYLIST_PURPLE} strokeWidth="1.2">
       <path d="M1 3h8M1 6h8M1 9h5" strokeLinecap="round" />
     </svg>
   )
@@ -86,12 +94,12 @@ function SmartPlaylistIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       {/* Playlist lines */}
-      <path d="M1 2.5h5M1 5h4" stroke="#555" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M1 2.5h5M1 5h4" stroke={ICON_PLAYLIST_PURPLE} strokeWidth="1.2" strokeLinecap="round" />
       {/* Gear */}
       <g transform="translate(8,8)">
-        <circle cx="0" cy="0" r="1.2" stroke="#555" strokeWidth="0.7" fill="none" />
+        <circle cx="0" cy="0" r="1.2" stroke={ICON_PLAYLIST_PURPLE} strokeWidth="0.7" fill="none" />
         <path d="M0-2.8v1M0 1.8v1M-2.8 0h1M1.8 0h1M-2-2 l.7.7M1.3 1.3 l.7.7M2-2 l-.7.7M-1.3 1.3 l-.7.7"
-              stroke="#555" strokeWidth="0.7" strokeLinecap="round" />
+              stroke={ICON_PLAYLIST_PURPLE} strokeWidth="0.7" strokeLinecap="round" />
       </g>
     </svg>
   )

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -40,7 +40,6 @@ export default function ArtistsView() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; tracks: Track[]; idx: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
-  const [search, setSearch] = useState('')
 
   const artists = useMemo((): ArtistGroup[] => {
     const map = new Map<string, Track[]>()
@@ -66,14 +65,9 @@ export default function ArtistsView() {
       })
   }, [lib.tracks])
 
-  // Search filter. Honors BOTH the global toolbar Search Pill
-  // (lib.searchQuery) and this page's local search box — whichever has
-  // content. Toolbar pill wins when both are filled. This was the
-  // source of "I typed in the search bar and nothing happened on the
-  // Artists page" — the global search state was being ignored.
-  //
-  // Matches artist name, album name, or track title.
-  const effectiveQuery = (lib.searchQuery || search).trim().toLowerCase()
+  // Filter against the global toolbar Search Pill. Matches artist
+  // name, album name, or track title.
+  const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
   const filteredArtists = useMemo(() => {
     const q = effectiveQuery
     if (!q) return artists
@@ -196,25 +190,62 @@ export default function ArtistsView() {
     [libDispatch]
   )
 
+  // Auto-follow now-playing (4.0). When the playing track changes and
+  // the user has been idle for >5s, expand the artist + album that own
+  // the new track, and scroll the artist row into view. Same idle-gate
+  // pattern as SongsView.
+  const viewRootRef = useRef<HTMLDivElement>(null)
+  const lastUserActivityAtRef = useRef<number>(0)
+  const isAutoScrollAtRef = useRef<number>(0)
+  const FOLLOW_IDLE_MS = 5000
+  const noteUserActivity = useCallback(() => {
+    if (Date.now() - isAutoScrollAtRef.current > 200) {
+      lastUserActivityAtRef.current = Date.now()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (lib.currentView !== 'artists') return
+    if (!pb.nowPlaying) return
+    if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
+    const t = pb.nowPlaying
+    const artistName = t.artist || 'Unknown Artist'
+    const albumName = t.album || 'Unknown Album'
+    const albumKey = `${artistName}::${albumName}`
+    const exists = filteredArtists.some(a => a.name === artistName)
+    if (!exists) return
+    isAutoScrollAtRef.current = Date.now()
+    setExpanded(prev => {
+      if (prev.has(artistName)) return prev
+      const next = new Set(prev)
+      next.add(artistName)
+      return next
+    })
+    setExpandedAlbums(prev => {
+      if (prev.has(albumKey)) return prev
+      const next = new Set(prev)
+      next.add(albumKey)
+      return next
+    })
+    requestAnimationFrame(() => {
+      const root = viewRootRef.current
+      if (!root) return
+      const row = root.querySelector(`[data-artist-name="${CSS.escape(artistName)}"]`) as HTMLElement | null
+      if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+    })
+  }, [pb.nowPlaying?.id, lib.currentView, filteredArtists])
+
   return (
-    <div className="artists-view">
-      <div className="view-search-bar">
-        <input
-          className="view-search-input"
-          type="search"
-          placeholder={lib.searchQuery ? `Filtering by "${lib.searchQuery}" (toolbar)` : `Search ${artists.length} artists...`}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          disabled={!!lib.searchQuery}
-        />
-        {effectiveQuery && (
-          <span className="view-search-count">
-            {filteredArtists.length} match{filteredArtists.length !== 1 ? 'es' : ''}
-          </span>
-        )}
-      </div>
+    <div
+      className="artists-view"
+      ref={viewRootRef}
+      onClickCapture={noteUserActivity}
+      onWheelCapture={noteUserActivity}
+      onScrollCapture={noteUserActivity}
+      onKeyDownCapture={noteUserActivity}
+    >
       {filteredArtists.map((artist) => (
-        <div key={artist.name} className="artist-group">
+        <div key={artist.name} className="artist-group" data-artist-name={artist.name}>
           <div className="artist-row" onClick={() => toggleArtist(artist.name)}>
             <div className="artist-avatar" style={{ background: hashColor(artist.name) }}>
               {initials(artist.name)}
