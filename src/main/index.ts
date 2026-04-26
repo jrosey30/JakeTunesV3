@@ -436,6 +436,27 @@ ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>
   }
 })
 
+// Async read used by handlers that need to gate behavior on a setting
+// (musicman-speak, sync-to-ipod, import-track, etc.). Returns null on
+// any failure; callers fall back to safe defaults.
+async function readAppSettingsAsync(): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await readFile(appSettingsPath(), 'utf-8')
+    return JSON.parse(raw)
+  } catch { return null }
+}
+
+// Update the Claude daily ceiling immediately (mirrors what's saved in
+// app-settings.json). The wrapper at top of file reads claudeStats so
+// we update that in-memory and on disk.
+ipcMain.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
+  await loadClaudeStats()
+  const safe = Math.max(1, Math.min(10000, Number(ceiling) || 200))
+  claudeStats.dailyCeiling = safe
+  await saveClaudeStats()
+  return { ok: true, dailyCeiling: safe }
+})
+
 async function createWindow(): Promise<void> {
   const saved = await loadWindowState()
 
@@ -961,6 +982,16 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     const removed = Array.from(pendingDeletedPaths)
     pendingDeletedPaths = new Set()
     if (!detectedIpodMount) return  // iPod not mounted — nothing to do
+
+    // 4.0 Settings gate: skip the auto-delete-from-iPod when Jake hasn't
+    // opted in. Tracks are still removed from library.json — just not
+    // mirrored to the iPod automatically. They'll go on the next manual
+    // sync. Default-off matches the user's "don't surprise me" expectation.
+    const settings = await readAppSettingsAsync()
+    const sync = settings?.sync as { autoRemoveDeletedFromIpod?: boolean } | undefined
+    if (sync && sync.autoRemoveDeletedFromIpod === false) {
+      return
+    }
     try {
       const ipodMount = detectedIpodMount
       const { unlink: unlinkFS } = await import('fs/promises')
@@ -2199,8 +2230,18 @@ async function importOneFile(
 // individual audio files.
 ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
-  const chosenFmt: AudioFormat = validFormats.includes(preferredFormat as AudioFormat)
-    ? (preferredFormat as AudioFormat)
+  // 4.0 Settings: when caller doesn't specify a format, fall back to the
+  // user's preferred default from app-settings.json (Library tab).
+  let resolvedFormat = preferredFormat
+  if (!validFormats.includes(resolvedFormat as AudioFormat)) {
+    const settings = await readAppSettingsAsync()
+    const lib = settings?.library as { defaultImportFormat?: string } | undefined
+    if (lib && validFormats.includes(lib.defaultImportFormat as AudioFormat)) {
+      resolvedFormat = lib.defaultImportFormat
+    }
+  }
+  const chosenFmt: AudioFormat = validFormats.includes(resolvedFormat as AudioFormat)
+    ? (resolvedFormat as AudioFormat)
     : 'aac-256'
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
   const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints)
@@ -2305,8 +2346,18 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   let id = nextId
 
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
-  const chosenFmt: AudioFormat = validFormats.includes(preferredFormat as AudioFormat)
-    ? (preferredFormat as AudioFormat)
+  // 4.0 Settings: when caller doesn't specify a format, fall back to the
+  // user's preferred default from app-settings.json.
+  let resolvedFormat = preferredFormat
+  if (!validFormats.includes(resolvedFormat as AudioFormat)) {
+    const settings = await readAppSettingsAsync()
+    const lib = settings?.library as { defaultImportFormat?: string } | undefined
+    if (lib && validFormats.includes(lib.defaultImportFormat as AudioFormat)) {
+      resolvedFormat = lib.defaultImportFormat
+    }
+  }
+  const chosenFmt: AudioFormat = validFormats.includes(resolvedFormat as AudioFormat)
+    ? (resolvedFormat as AudioFormat)
     : 'aac-256'
 
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
@@ -2429,6 +2480,14 @@ protocol.registerSchemesAsPrivileged([
 // ElevenLabs TTS
 ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean) => {
   try {
+    // 4.0 Settings gate: Music Man voice can be turned off entirely from
+    // Preferences → AI. Caller still gets ok=true so flow continues; the
+    // empty audio just makes the renderer skip playback.
+    const settings = await readAppSettingsAsync()
+    const ai = (settings?.ai as { musicManVoiceEnabled?: boolean } | undefined)
+    if (ai && ai.musicManVoiceEnabled === false) {
+      return { ok: true, audio: '' }
+    }
     // Public default Music Man voice. Override via ELEVENLABS_VOICE_ID
     // in .env — userData/.env takes precedence over the bundled one, so
     // a personal voice override in userData won't be clobbered on updates.

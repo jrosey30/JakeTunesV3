@@ -158,19 +158,35 @@ export interface RestoreApplyResult {
   tracksWritten?: number
   error?: string
 }
-// User preferences (4.0 §6.7). Persisted to userData/app-settings.json
+// User preferences (4.0 §6.7+). Persisted to userData/app-settings.json
 // via electronAPI.loadAppSettings / saveAppSettings. New fields added
 // here should also be reflected in DEFAULT_APP_SETTINGS so renderer
 // fallback is total.
+export type ImportFormatChoice = 'aac-128' | 'aac-256' | 'aac-320' | 'alac' | 'aiff' | 'wav'
+
 export interface AppSettings {
   crossfade: {
     enabled: boolean
     seconds: number   // 1..12, iTunes-default 6
   }
+  library: {
+    defaultImportFormat: ImportFormatChoice   // applied when user imports new tracks
+  }
+  sync: {
+    autoSyncOnConnect: boolean        // auto-fire sync when iPod is mounted
+    autoRemoveDeletedFromIpod: boolean // gate the existing debounced delete-sync
+  }
+  ai: {
+    musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
+    claudeDailyCeiling: number      // mirrored to claude-stats.json on save
+  }
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
+  library: { defaultImportFormat: 'aac-256' },
+  sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
+  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200 },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
@@ -212,6 +228,7 @@ declare global {
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
       saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
+      setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       removeArtwork: (artist: string, album: string) => Promise<{ ok: boolean; key?: string; error?: string }>

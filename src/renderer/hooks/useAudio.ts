@@ -54,6 +54,26 @@ function cleanupCrossfadeAudio() {
   crossfading = false
 }
 
+// ── Gapless playback (4.0) ──
+// Always-on. Pre-loads the next track in the last few seconds of the
+// current track, then promotes it on natural end so there's no decode
+// latency at the seam. Decoupled from crossfade — when crossfade is
+// enabled, crossfade takes priority and we skip the gapless preload.
+let gaplessNextHowl: Howl | null = null
+let gaplessNextTrack: Track | null = null
+let gaplessNextQueue: Track[] | null = null
+let gaplessNextIdx = -1
+function cleanupGaplessPreload() {
+  if (gaplessNextHowl) {
+    try { gaplessNextHowl.stop() } catch { /* ignore */ }
+    try { gaplessNextHowl.unload() } catch { /* ignore */ }
+    gaplessNextHowl = null
+  }
+  gaplessNextTrack = null
+  gaplessNextQueue = null
+  gaplessNextIdx = -1
+}
+
 
 export function useAudio() {
   const { state, dispatch } = usePlayback()
@@ -67,9 +87,11 @@ export function useAudio() {
   const tracksRef = useRef(libState.tracks)
   tracksRef.current = libState.tracks
 
-  // Held by ref so updatePosition can call it without making
-  // updatePosition reference loadAndPlay (which references updatePosition).
+  // Held by refs so updatePosition can call them without forming
+  // circular useCallback dep cycles back through loadAndPlay (which
+  // itself depends on updatePosition).
   const startCrossfadeRef = useRef<((track: Track, queue: Track[], queueIndex: number) => void) | null>(null)
+  const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
     if (isPaused || !sharedHowl || !sharedHowl.playing()) return
@@ -90,6 +112,60 @@ export function useAudio() {
       try { sharedHowl.volume(targetVol * progress) } catch { /* ignore */ }
       if (progress >= 1) {
         cleanupCrossfadeAudio()
+      }
+    }
+
+    // Gapless preload: in the last ~3 seconds of the current track,
+    // create a Howl for the next track. The audio file decode happens
+    // during the current track's tail, so when the natural end fires
+    // we can promote the preloaded Howl with near-zero latency.
+    // Skipped when crossfade is active (crossfade does its own preload
+    // with fade), DJ Mode is on, repeat=one, or no next track exists.
+    if (
+      !crossfadeSettings.enabled &&
+      !crossfading &&
+      !autoDjMode &&
+      sharedHowl &&
+      !gaplessNextHowl &&
+      dur > 4
+    ) {
+      const remaining = dur - pos
+      if (remaining > 0 && remaining <= 3) {
+        const s = stateRef.current
+        if (s.repeat !== 'one' && s.queue.length > 0) {
+          let nextIdx: number
+          if (s.shuffle) {
+            nextIdx = Math.floor(Math.random() * s.queue.length)
+            if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+              nextIdx = (nextIdx + 1) % s.queue.length
+            }
+          } else {
+            nextIdx = s.queueIndex + 1
+            if (nextIdx >= s.queue.length) {
+              nextIdx = s.repeat === 'all' ? 0 : -1
+            }
+          }
+          if (nextIdx >= 0) {
+            const nextTrack = s.queue[nextIdx]
+            if (nextTrack) {
+              const { url: nextUrl, format: nextFormat } = ipodPathToAudioURL(nextTrack.path || '')
+              const preload = new Howl({
+                src: [nextUrl],
+                format: [nextFormat],
+                html5: true,
+                loop: false,
+                volume: 0,
+                preload: true,
+                autoplay: false,
+                onloaderror: () => { /* swallow — we'll fall back to normal advance */ },
+              })
+              gaplessNextHowl = preload
+              gaplessNextTrack = nextTrack
+              gaplessNextQueue = s.queue
+              gaplessNextIdx = nextIdx
+            }
+          }
+        }
       }
     }
 
@@ -148,6 +224,7 @@ export function useAudio() {
       crossfadeStartedAtMs = Date.now()
     } else {
       cleanupCrossfadeAudio()
+      cleanupGaplessPreload()
       if (sharedHowl) {
         sharedHowl.unload()
         sharedHowl = null
@@ -160,7 +237,7 @@ export function useAudio() {
     // playback, which would cause the same track to auto-play again
     // even with repeat off. Also belt-and-suspenders loop:false so no
     // underlying <audio> element ever auto-loops.
-    let ended = false
+    const endedHolder = { v: false }
     const startVolume = asCrossfade ? 0 : stateRef.current.volume
     const howl = new Howl({
       src: [url],
@@ -173,81 +250,7 @@ export function useAudio() {
         sharedRaf = requestAnimationFrame(updatePosition)
       },
       onend: () => {
-        if (ended) return
-        ended = true
-        // If this Howl is no longer the owner (user skipped to a new
-        // track, the Howl got unloaded, etc.), its end event is a
-        // leftover — don't run the next-track logic.
-        if (sharedHowl !== howl) return
-        cancelAnimationFrame(sharedRaf)
-
-        // Increment play count (look up latest count from tracks ref)
-        const latest = tracksRef.current.find(tr => tr.id === track.id)
-        const newCount = (Number(latest?.playCount ?? track.playCount) || 0) + 1
-        libDispatchRef.current({
-          type: 'UPDATE_TRACKS',
-          updates: [{ id: track.id, field: 'playCount', value: String(newCount) }],
-        })
-        window.electronAPI.saveMetadataOverride(track.id, 'playCount', String(newCount))
-        // 4.0 background signal: epoch ms of natural completion. Skip-ended
-        // plays do not touch this. Fingerprint-bound so the override survives
-        // restart (App.tsx applies on load with numeric coercion).
-        const playedFp = `${(track.title || '').toLowerCase().trim()}|${(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
-        window.electronAPI.saveMetadataOverride(track.id, 'lastPlayedAt', String(Date.now()), playedFp)
-        // Record play for Music Man taste learning
-        window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
-
-        const s = stateRef.current
-        if (s.repeat === 'one') {
-          loadAndPlay(track, s.queue, s.queueIndex)
-          return
-        }
-        let nextIdx: number
-        if (s.shuffle) {
-          nextIdx = Math.floor(Math.random() * s.queue.length)
-          if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-            nextIdx = (nextIdx + 1) % s.queue.length
-          }
-        } else {
-          nextIdx = s.queueIndex + 1
-          if (nextIdx >= s.queue.length) {
-            if (autoDjMode) {
-              // Check if DJ mode is actually active and listening
-              let handled = false
-              const ackHandler = () => { handled = true }
-              window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
-              window.dispatchEvent(new Event('musicman-dj-set-ended'))
-              window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
-              if (handled) return
-              // Nobody handled it — force off
-              console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
-              autoDjMode = false
-            }
-            if (s.repeat === 'all') nextIdx = 0
-            else {
-              dispatchRef.current({ type: 'STOP' })
-              return
-            }
-          }
-        }
-        const nextTrack = s.queue[nextIdx]
-        if (!nextTrack) return
-        if (autoDjMode) {
-          // Check if a DJ transition handler is actually listening
-          let handled = false
-          const ackHandler = () => { handled = true }
-          window.addEventListener('musicman-dj-transition-ack', ackHandler, { once: true })
-          window.dispatchEvent(new CustomEvent('musicman-dj-transition', {
-            detail: { prevTrack: track, nextTrack, nextIdx, queue: s.queue }
-          }))
-          window.removeEventListener('musicman-dj-transition-ack', ackHandler)
-          if (handled) return
-          // Nobody handled it — autoDjMode is stale, force it off and play normally
-          console.warn('[Audio] DJ transition not handled, forcing autoDjMode off')
-          autoDjMode = false
-        }
-        dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
-        loadAndPlay(nextTrack, s.queue, nextIdx)
+        runNaturalEndRef.current?.(track, howl, endedHolder)
       },
       onloaderror: (_id: number, err: unknown) => {
         console.error('Audio load error:', err, url)
@@ -257,6 +260,122 @@ export function useAudio() {
     sharedHowl = howl
     howl.play()
   }, [updatePosition])
+
+  // Bind the natural-end handler to a ref so both this loadAndPlay's
+  // Howl and gapless-promoted Howls (which need the same recursive
+  // advance logic) can share it. Body extracted from the prior inline
+  // onend so we can reuse it from the gapless promote path below.
+  useEffect(() => {
+    runNaturalEndRef.current = (track, howl, endedHolder) => {
+      if (endedHolder.v) return
+      endedHolder.v = true
+      if (sharedHowl !== howl) return
+      cancelAnimationFrame(sharedRaf)
+
+      // Increment play count (look up latest count from tracks ref)
+      const latest = tracksRef.current.find(tr => tr.id === track.id)
+      const newCount = (Number(latest?.playCount ?? track.playCount) || 0) + 1
+      libDispatchRef.current({
+        type: 'UPDATE_TRACKS',
+        updates: [{ id: track.id, field: 'playCount', value: String(newCount) }],
+      })
+      window.electronAPI.saveMetadataOverride(track.id, 'playCount', String(newCount))
+      // 4.0 background signal: epoch ms of natural completion.
+      const playedFp = `${(track.title || '').toLowerCase().trim()}|${(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
+      window.electronAPI.saveMetadataOverride(track.id, 'lastPlayedAt', String(Date.now()), playedFp)
+      window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
+
+      const s = stateRef.current
+      if (s.repeat === 'one') {
+        cleanupGaplessPreload()
+        loadAndPlay(track, s.queue, s.queueIndex)
+        return
+      }
+      let nextIdx: number
+      if (s.shuffle) {
+        nextIdx = Math.floor(Math.random() * s.queue.length)
+        if (s.queue.length > 1 && nextIdx === s.queueIndex) {
+          nextIdx = (nextIdx + 1) % s.queue.length
+        }
+      } else {
+        nextIdx = s.queueIndex + 1
+        if (nextIdx >= s.queue.length) {
+          if (autoDjMode) {
+            let handled = false
+            const ackHandler = () => { handled = true }
+            window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
+            window.dispatchEvent(new Event('musicman-dj-set-ended'))
+            window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
+            if (handled) return
+            console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
+            autoDjMode = false
+          }
+          if (s.repeat === 'all') nextIdx = 0
+          else {
+            cleanupGaplessPreload()
+            dispatchRef.current({ type: 'STOP' })
+            return
+          }
+        }
+      }
+      const nextTrack = s.queue[nextIdx]
+      if (!nextTrack) return
+      if (autoDjMode) {
+        let handled = false
+        const ackHandler = () => { handled = true }
+        window.addEventListener('musicman-dj-transition-ack', ackHandler, { once: true })
+        window.dispatchEvent(new CustomEvent('musicman-dj-transition', {
+          detail: { prevTrack: track, nextTrack, nextIdx, queue: s.queue }
+        }))
+        window.removeEventListener('musicman-dj-transition-ack', ackHandler)
+        if (handled) return
+        console.warn('[Audio] DJ transition not handled, forcing autoDjMode off')
+        autoDjMode = false
+      }
+
+      // GAPLESS PROMOTE: if a preloaded Howl matches the next track,
+      // skip loadAndPlay and promote the preloaded Howl. This avoids
+      // the load+decode latency at the seam — true near-gapless.
+      if (
+        gaplessNextHowl &&
+        gaplessNextTrack &&
+        gaplessNextTrack.id === nextTrack.id &&
+        !crossfadeSettings.enabled  // crossfade has its own preload path
+      ) {
+        const next = gaplessNextHowl
+        const nt = gaplessNextTrack
+        const nq = gaplessNextQueue || s.queue
+        const ni = gaplessNextIdx >= 0 ? gaplessNextIdx : nextIdx
+        // Detach gapless state — we're handing off
+        gaplessNextHowl = null
+        gaplessNextTrack = null
+        gaplessNextQueue = null
+        gaplessNextIdx = -1
+        // Wire up the preloaded Howl's lifecycle (it was created without
+        // these handlers in the preload step).
+        const nextEndedHolder = { v: false }
+        next.once('play', () => {
+          dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
+          sharedRaf = requestAnimationFrame(updatePosition)
+        })
+        next.once('end', () => {
+          runNaturalEndRef.current?.(nt, next, nextEndedHolder)
+        })
+        // Unload the just-finished Howl, promote the preload to shared.
+        try { howl.unload() } catch { /* ignore */ }
+        sharedHowl = next
+        next.volume(s.volume)
+        next.play()
+        dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+        return
+      }
+
+      // Standard advance — preload didn't match (or wasn't ready).
+      cleanupGaplessPreload()
+      dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
+      loadAndPlay(nextTrack, s.queue, nextIdx)
+    }
+  }, [loadAndPlay, updatePosition])
 
   // Bind the crossfade-start callable to the ref so updatePosition can
   // reach it without forming a circular useCallback dep cycle.
@@ -379,6 +498,7 @@ export function useAudio() {
     isPaused = true
     cancelAnimationFrame(sharedRaf)
     cleanupCrossfadeAudio()
+    cleanupGaplessPreload()
     if (sharedHowl) {
       try { sharedHowl.stop() } catch { /* ignore */ }
       try { sharedHowl.unload() } catch { /* ignore */ }

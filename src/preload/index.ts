@@ -87,6 +87,8 @@ const electronAPI = {
     ipcRenderer.invoke('load-app-settings'),
   saveAppSettings: (settings: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('save-app-settings', settings),
+  setClaudeDailyCeiling: (ceiling: number): Promise<{ ok: boolean; dailyCeiling: number }> =>
+    ipcRenderer.invoke('set-claude-daily-ceiling', ceiling),
   fetchAlbumArt: (artist: string, album: string, force?: boolean): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>
     ipcRenderer.invoke('fetch-album-art', artist, album, force),
   setCustomArtwork: (artist: string, album: string, imagePath: string): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>

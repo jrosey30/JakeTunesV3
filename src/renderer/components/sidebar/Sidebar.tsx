@@ -194,20 +194,34 @@ export default function Sidebar() {
     // kick the user off the Device page (which reads as "the iPod
     // auto-ejected").
     let ipodMissStreak = 0
+    let prevMounted = false
     const check = () => {
       window.electronAPI.checkIpodMounted().then(r => {
         if (r.mounted) {
           ipodMissStreak = 0
           setIpodMounted(true)
+          if (!prevMounted) {
+            // 4.0: notify app-level listeners (e.g. auto-sync-on-connect).
+            // Dispatched only on the false→true transition so a user who
+            // ejects + replugs gets exactly one event per session.
+            window.dispatchEvent(new Event('jaketunes-ipod-mounted'))
+          }
+          prevMounted = true
           if (r.name) setIpodName(r.name)
         } else {
           ipodMissStreak += 1
-          if (ipodMissStreak >= 2) setIpodMounted(false)
+          if (ipodMissStreak >= 2) {
+            setIpodMounted(false)
+            prevMounted = false
+          }
         }
       }).catch(() => {
         // Treat IPC error same as a miss, with the same debouncing.
         ipodMissStreak += 1
-        if (ipodMissStreak >= 2) setIpodMounted(false)
+        if (ipodMissStreak >= 2) {
+          setIpodMounted(false)
+          prevMounted = false
+        }
       })
       window.electronAPI.checkCdDrive().then(r => {
         setCdMounted(r.hasCd)

@@ -38,17 +38,40 @@ function AppInner() {
   // Load persisted settings once on mount and push to the audio layer.
   useEffect(() => {
     window.electronAPI.loadAppSettings().then(r => {
+      const raw = (r.settings || {}) as Partial<AppSettings>
       const merged: AppSettings = {
         ...DEFAULT_APP_SETTINGS,
-        ...((r.settings || {}) as Partial<AppSettings>),
-        crossfade: {
-          ...DEFAULT_APP_SETTINGS.crossfade,
-          ...(((r.settings || {}) as Partial<AppSettings>).crossfade || {}),
-        },
+        ...raw,
+        crossfade: { ...DEFAULT_APP_SETTINGS.crossfade, ...(raw.crossfade || {}) },
+        library:   { ...DEFAULT_APP_SETTINGS.library,   ...(raw.library || {}) },
+        sync:      { ...DEFAULT_APP_SETTINGS.sync,      ...(raw.sync || {}) },
+        ai:        { ...DEFAULT_APP_SETTINGS.ai,        ...(raw.ai || {}) },
       }
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
     })
+  }, [])
+
+  // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
+  // 'jaketunes-ipod-mounted' on each false→true transition; we react
+  // here only when the user has opted in.
+  const appSettingsRef = useRef(appSettings)
+  appSettingsRef.current = appSettings
+  const libStateRef = useRef(libState)
+  libStateRef.current = libState
+  useEffect(() => {
+    const onIpodMounted = () => {
+      const settings = appSettingsRef.current
+      if (!settings.sync.autoSyncOnConnect) return
+      const lib = libStateRef.current
+      if (lib.tracks.length === 0) return
+      const playlists = (lib.playlists || []).filter((p: import('./types').Playlist) => !p.id.startsWith('ipod-'))
+      window.electronAPI.syncToIpod(lib.tracks, playlists).catch((err) => {
+        console.warn('[auto-sync] failed:', err)
+      })
+    }
+    window.addEventListener('jaketunes-ipod-mounted', onIpodMounted)
+    return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)
   }, [])
 
   useEffect(() => {
