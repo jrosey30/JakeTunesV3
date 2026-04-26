@@ -91,15 +91,17 @@
   gap: 6px;
 }
 
-/* Now Playing Pill */
+/* Now Playing Pill — iTunes 8 cream LCD. Reference:
+   docs/4.0-ui-references/itunes-8-main.png. The border + inner top
+   shadow give it the inset "screen" look. */
 .now-playing-pill {
   flex: 1;
   min-width: 0;
   height: 46px;
   background: linear-gradient(180deg, var(--pill-top), var(--pill-bottom));
   border-radius: 20px;
-  border: 1px solid #b8b6a0;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.12), 0 1px 0 rgba(255,255,255,0.4);
+  border: 1px solid var(--pill-border);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.5);
   padding: 4px 16px;
   display: flex;
   flex-direction: column;
@@ -257,15 +259,17 @@
   top: 50%;
   height: 6px;
   transform: translateY(-50%);
-  background: rgba(0,0,0,0.15);
+  /* iTunes 8: lighter track, charcoal fill — opposite of the
+     2006-era darker-track look. */
+  background: #c8c8c8;
   border-radius: 3px;
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
+  box-shadow: inset 0 1px 1px rgba(0,0,0,0.15);
 }
 
 .volume-fill {
   height: 100%;
-  background: linear-gradient(180deg, #c0c0c0, #a0a0a0);
+  background: linear-gradient(180deg, #6a6a6a, #4e4e4e);
   border-radius: 3px 0 0 3px;
 }
 

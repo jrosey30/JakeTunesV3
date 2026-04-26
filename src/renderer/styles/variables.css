@@ -1,6 +1,8 @@
 :root {
-  --chrome-top: #d8d8d8;
-  --chrome-bottom: #b8b8b8;
+  /* Window chrome / toolbar — iTunes 8 unified gray gradient
+     (Leopard era; brushed metal removed). */
+  --chrome-top: #d6d6d6;
+  --chrome-bottom: #c4c4c4;
   /* Sidebar: iTunes 8 (Sept 2008) cool light blue-gray gradient.
      Reference: docs/4.0-ui-references/itunes-8-main.png. */
   --sidebar-top: #c1cad7;
@@ -10,8 +12,12 @@
   --selection-top: #5b86dc;
   --selection-bottom: #3e6ec7;
   --row-alt: #f7f7f7;
-  --pill-top: #f0eedc;
-  --pill-bottom: #dddbb8;
+  /* Now-playing LCD pill — iTunes-8 cream. The earlier values were a
+     touch warm/bright; pulled toward the actual on-screen tone in
+     the iTunes 8 reference. */
+  --pill-top: #ece4cc;
+  --pill-bottom: #d6cdb0;
+  --pill-border: #9b9682;
   --musicman-bg: #1e140a;
   --musicman-accent: #c87828;
   --text-primary: #1a1a1a;
