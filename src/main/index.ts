@@ -102,7 +102,12 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' })
 // them identically to a fresh response, so swapping a stale cache for a new
 // reply is transparent at the call site.
 
-type ClaudeMessageReply = Awaited<ReturnType<typeof anthropic.messages.create>>
+// Use the non-streaming-only types so response.content / response.stop_reason
+// are accessible at call sites. anthropic.messages.create() is overloaded —
+// using Awaited<ReturnType<...>> collapses to (Message | Stream) which
+// loses the Message-specific properties.
+type ClaudeMessageReply = Anthropic.Messages.Message
+type ClaudeMessageParams = Anthropic.Messages.MessageCreateParamsNonStreaming
 
 interface ClaudeStats {
   dailyCeiling: number
@@ -170,7 +175,7 @@ function rolloverIfNewDay(): void {
 
 async function claudeCall(
   callKey: string,
-  params: Parameters<typeof anthropic.messages.create>[0]
+  params: ClaudeMessageParams
 ): Promise<ClaudeMessageReply> {
   await loadClaudeStats()
   rolloverIfNewDay()
@@ -188,9 +193,9 @@ async function claudeCall(
 
   try {
     const reply = await anthropic.messages.create(params)
-    claudeStats.lastResponses[callKey] = { reply: reply as ClaudeMessageReply, ts: Date.now() }
+    claudeStats.lastResponses[callKey] = { reply, ts: Date.now() }
     void saveClaudeStats()
-    return reply as ClaudeMessageReply
+    return reply
   } catch (err) {
     void saveClaudeStats()
     const cached = claudeStats.lastResponses[callKey]?.reply
