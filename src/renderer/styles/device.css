@@ -218,41 +218,6 @@
   background: linear-gradient(180deg, #d0d0d0, #c0c0c0);
 }
 
-/* ── Sync state badge: always-visible "is iPod in sync?" indicator. ── */
-.device-sync-badge {
-  margin: 8px 0 4px;
-  display: flex;
-  justify-content: flex-end;
-}
-.device-sync-badge-pill {
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-weight: 500;
-  border: 1px solid transparent;
-}
-.device-sync-badge-pill--good {
-  background: #e6f5e6;
-  border-color: #b0d8b0;
-  color: #2a7a2a;
-}
-.device-sync-badge-pill--diff {
-  background: #fff4dd;
-  border-color: #e8c980;
-  color: #8a5a0a;
-}
-.device-sync-badge-pill--warn {
-  background: #f4f4f4;
-  border-color: #d0d0d0;
-  color: #666;
-}
-.device-sync-badge-pill--idle {
-  background: #f4f4f4;
-  border-color: #d0d0d0;
-  color: #888;
-  font-style: italic;
-}
-
 /* ── Sync status ── */
 .device-sync-status {
   margin-top: 12px;

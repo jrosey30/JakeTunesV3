@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import type { Playlist, Track } from '../types'
 import IpodLibraryModal from '../components/IpodLibraryModal'
@@ -124,35 +124,9 @@ export default function DeviceView() {
   const [optDiskUse, setOptDiskUse] = useState(true)
   const optsLoaded = useRef(false)
 
-  // ── Live sync-state probe ──
-  // Reads the iPod's iTunesDB track count and compares to the library
-  // count. Drives a banner that tells the user at a glance whether
-  // their iPod matches their library or is N tracks behind. Refreshes
-  // when the user lands on this view, after every sync, and when an
-  // iPod connects/ejects. Without this the user has to do the math
-  // themselves between the "Songs" line on this page and the library
-  // counter — which is exactly what triggered the "i genuinely have
-  // no idea if my ipod is in sync" frustration.
-  const [ipodTrackCount, setIpodTrackCount] = useState<number | null>(null)
-  const [ipodMounted, setIpodMounted] = useState<boolean>(false)
-  const refreshSyncState = useCallback(() => {
-    window.electronAPI.checkIpodMounted().then(r => {
-      setIpodMounted(!!r.mounted)
-      if (r.mounted) {
-        window.electronAPI.getIpodDbTracks().then(d => {
-          if (d.ok) setIpodTrackCount(d.total)
-          else setIpodTrackCount(null)
-        }).catch(() => setIpodTrackCount(null))
-      } else {
-        setIpodTrackCount(null)
-      }
-    }).catch(() => {})
-  }, [])
-
   useEffect(() => {
     window.electronAPI.checkIpodMounted().then(r => {
       if (r.name) setIpodName(r.name)
-      setIpodMounted(!!r.mounted)
     }).catch(() => {})
     // Ask the main process for the real capacity of the mounted iPod
     // (modded units can be anything — 64GB, 128GB, 256GB, etc.).
@@ -173,11 +147,7 @@ export default function DeviceView() {
       if (typeof s.optDiskUse === 'boolean') setOptDiskUse(s.optDiskUse)
       optsLoaded.current = true
     }).catch(() => { optsLoaded.current = true })
-    refreshSyncState()
-    const onEjected = () => { refreshSyncState() }
-    window.addEventListener('jaketunes-ipod-ejected', onEjected)
-    return () => window.removeEventListener('jaketunes-ipod-ejected', onEjected)
-  }, [refreshSyncState])
+  }, [])
 
   // Persist device options on change — merged into ui-state, not overwriting.
   useEffect(() => {
@@ -294,8 +264,6 @@ export default function DeviceView() {
       })
       activity.setSync({ active: true, step: `Sync complete — ${result.copied || 0} new tracks` })
       setTimeout(() => activity.setSync(null), 4000)
-      // Re-probe iPod track count so the in-sync badge updates.
-      refreshSyncState()
     } catch (err) {
       console.error('Sync failed:', err)
       const msg = String(err)
@@ -386,33 +354,15 @@ export default function DeviceView() {
         </div>
       </div>
 
-      {/* ── Always-visible sync-state badge ──
-            Pulls the iTunesDB track count from the mounted iPod and
-            compares it against the library count. Tells the user at
-            a glance whether they need to hit Sync or not — no more
-            doing the math themselves between two different counters. */}
-      <div className="device-sync-badge">
-        {!ipodMounted && (
-          <span className="device-sync-badge-pill device-sync-badge-pill--warn">
-            ◌ iPod not connected
-          </span>
-        )}
-        {ipodMounted && ipodTrackCount === null && (
-          <span className="device-sync-badge-pill device-sync-badge-pill--idle">
-            … reading iPod
-          </span>
-        )}
-        {ipodMounted && ipodTrackCount !== null && ipodTrackCount === stats.trackCount && (
-          <span className="device-sync-badge-pill device-sync-badge-pill--good">
-            ✓ In sync — {stats.trackCount.toLocaleString()} songs match
-          </span>
-        )}
-        {ipodMounted && ipodTrackCount !== null && ipodTrackCount !== stats.trackCount && (
-          <span className="device-sync-badge-pill device-sync-badge-pill--diff">
-            ⚠ Out of sync — Library: {stats.trackCount.toLocaleString()} · iPod: {ipodTrackCount.toLocaleString()} · Click Sync to update
-          </span>
-        )}
-      </div>
+      {/* The "Out of sync — Library: X · iPod: Y" badge that used to
+          live here was removed — it consistently showed stale or
+          confusing counts (especially right after a wipe + restore,
+          where the iTunesDB on the iPod takes a moment to settle)
+          and the user reported it might also be interfering with the
+          live sync flow by reading the iTunesDB at inopportune
+          moments. The Sync button below is the source of truth now;
+          if you want to inspect what's actually on the iPod, the
+          sidebar has the dedicated iPod library modal. */}
 
       {/* ── Sync status (floats above the capacity bar when active) ── */}
       {syncStatus.state !== 'idle' && (
