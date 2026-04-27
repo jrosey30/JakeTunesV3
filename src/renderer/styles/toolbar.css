@@ -83,12 +83,9 @@
   border-radius: 4px;
 }
 
-/* iTunes 8 layout: the LCD pill is a fixed-width centerpiece. We let
- * a flex-grow spacer (the search box on the right) absorb dead space
- * on a wide window — toolbar items sit shoulder-to-shoulder rather
- * than awkwardly drifting around an auto-centered pill. */
 .now-playing-group {
-  flex: 0 0 auto;
+  flex: 1;
+  min-width: 200px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -96,19 +93,19 @@
 
 /* Now Playing Pill — iTunes 8 cream LCD. Reference:
    docs/4.0-ui-references/itunes-8-main.png. The border + inner top
-   shadow give it the inset "screen" look.
-   Width is capped (not flex:1) so it doesn't dominate the toolbar
-   on wide windows — iTunes 8's pill sits centered with breathing
-   room either side. */
+   shadow give it the inset "screen" look. */
 .now-playing-pill {
-  flex: 0 0 auto;
-  width: 420px;
+  flex: 1;
+  min-width: 0;
   height: 46px;
   background: linear-gradient(180deg, var(--pill-top), var(--pill-bottom));
   border-radius: 20px;
   border: 1px solid var(--pill-border);
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.5);
-  padding: 4px 16px;
+  /* Asymmetric padding: extra room on the right reserves space for
+   * the vertically-centered mini waveform visualizer (36 px wide at
+   * right:10) so the title and scrubber don't bleed into it. */
+  padding: 4px 56px 4px 16px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -131,6 +128,22 @@
 .now-playing-album { color: #7a7560; font-style: italic; }
 
 .now-playing-empty { height: 100%; }
+
+/* Mini oscilloscope-style waveform — single line traced by JS reading
+ * the Web Audio AnalyserNode's time-domain data. Vertically centered
+ * on the right side of the LCD pill, mirroring the cycle button on
+ * the left. Drawn into a <canvas> so we don't fight CSS positioning
+ * with per-frame DOM mutation. */
+.mini-viz {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 16px;
+  pointer-events: none;
+  z-index: 1;
+}
 
 /* Cycle button inside the LCD pill — toggles between Now Playing
    and Import/Sync status when multiple activities are active. */
@@ -238,7 +251,7 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  width: 160px;
+  width: 120px;
 }
 
 .volume-icon {
@@ -308,18 +321,13 @@
 .search-pill {
   display: flex;
   align-items: center;
-  /* Elastic: search box absorbs remaining toolbar width up to 380px
-   * so a wide window doesn't leave dead space between the pill and
-   * the right edge. Falls back to the 220px floor on tighter
-   * windows. */
-  flex: 1 1 220px;
-  min-width: 220px;
-  max-width: 380px;
+  width: 140px;
   height: 22px;
   background: #fff;
   border: 1px solid #b0b0b0;
   border-radius: 11px;
   padding: 0 8px;
+  flex-shrink: 0;
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.08);
 }
 
@@ -373,7 +381,10 @@
   animation: dj-pulse 1s ease-in-out infinite;
 }
 
-/* Mic / DJ comment button */
+/* Mic / DJ comment button. Idle: solid orange disc with a subtle drop
+ * shadow. Earlier iteration had a 28px rgba glow halo that bled into
+ * the volume slider once the toolbar layout tightened; the warm-glow
+ * treatment is reserved for the --active state now. */
 .dj-btn {
   width: 30px;
   height: 30px;
@@ -381,23 +392,26 @@
   color: #fff;
   border: none;
   border-radius: 50%;
-  box-shadow: 0 0 12px rgba(224,129,46,0.65), 0 0 28px rgba(224,129,46,0.3), 0 2px 4px rgba(0,0,0,0.2);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.25);
   transition: background 0.15s, box-shadow 0.15s;
   position: relative;
 }
 
 .dj-btn:hover:not(:disabled) {
   background: #e88a35;
-  box-shadow: 0 0 12px rgba(218,123,43,0.7), 0 2px 6px rgba(0,0,0,0.2);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.3);
 }
 
 .dj-btn:disabled {
   opacity: 0.35;
 }
 
+/* Active = Music Man is currently commenting. Bring back the warm
+ * glow as the visual cue that the button has agency. */
 .dj-btn--active {
   opacity: 1;
   color: var(--musicman-accent, #c87828);
+  box-shadow: 0 0 10px rgba(224,129,46,0.6), 0 0 18px rgba(224,129,46,0.25), 0 2px 4px rgba(0,0,0,0.2);
   animation: dj-pulse 1s ease-in-out infinite;
 }
 

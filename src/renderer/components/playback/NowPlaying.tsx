@@ -2,6 +2,83 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { subscribe, getSnapshot, getRip, getSync } from '../../activity'
+import { getVisualizerWaveform } from '../../audio/eq'
+
+const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
+const SAMPLE_FRAMES  = 256  // samples averaged per frame for RMS
+
+/** Mini visualizer — EKG-style scrolling loudness trace. Each rAF
+ *  tick computes the RMS amplitude of the current audio snapshot and
+ *  pushes it into a circular history buffer; the canvas redraws the
+ *  buffer as a polyline that scrolls right-to-left. Quiet passages →
+ *  flat baseline; transients → upward spikes. */
+function MiniVisualizer({ active }: { active: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const historyRef = useRef<Float32Array>(new Float32Array(HISTORY_LENGTH))
+  useEffect(() => {
+    if (!active) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Honor device pixel ratio for crisp 1 px lines on retina.
+    const dpr = window.devicePixelRatio || 1
+    const cssW = canvas.clientWidth
+    const cssH = canvas.clientHeight
+    if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+      canvas.width = cssW * dpr
+      canvas.height = cssH * dpr
+      ctx.scale(dpr, dpr)
+    }
+
+    let raf = 0
+    const tick = (now: DOMHighResTimeStamp) => {
+      // Compute current RMS amplitude (0..1) from the audio snapshot.
+      // Procedural breath when the audio chain isn't ready yet.
+      const wave = getVisualizerWaveform(SAMPLE_FRAMES)
+      let rms = 0
+      if (wave) {
+        let sumSq = 0
+        for (let i = 0; i < wave.length; i++) {
+          const v = (wave[i] - 128) / 128
+          sumSq += v * v
+        }
+        rms = Math.sqrt(sumSq / wave.length)
+      } else {
+        rms = 0.04 + Math.abs(Math.sin(now / 250)) * 0.03
+      }
+      const value = Math.min(1, rms * 2.4)
+
+      // Shift history left, append new sample at the tail.
+      const hist = historyRef.current
+      for (let i = 0; i < hist.length - 1; i++) hist[i] = hist[i + 1]
+      hist[hist.length - 1] = value
+
+      ctx.clearRect(0, 0, cssW, cssH)
+      ctx.strokeStyle = '#5a5540'
+      ctx.lineWidth = 1
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      // Baseline at 75% of canvas height — trace lives toward the
+      // bottom, peaks shoot up like an EKG.
+      const baseline = cssH * 0.75
+      const headroom = baseline - 1
+      for (let i = 0; i < hist.length; i++) {
+        const x = (i / (hist.length - 1)) * cssW
+        const y = baseline - hist[i] * headroom
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      ctx.stroke()
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [active])
+  return <canvas ref={canvasRef} className="mini-viz" aria-hidden />
+}
 
 type PillMode = 'playing' | 'rip' | 'sync'
 
@@ -110,6 +187,7 @@ export default function NowPlaying() {
       )}
       {effectiveMode === 'playing' && track ? (
         <>
+          <MiniVisualizer active={state.isPlaying} />
           <div className="now-playing-info">
             <span className="now-playing-title">{track.title}</span>
             <span className="now-playing-sep"> — </span>
