@@ -229,3 +229,96 @@ Three reasons worth documenting so future investigations don't repeat:
 The empirical test that ended the investigation cleanly: pick 3 tracks
 from the 150 (one from each of <30s, 30-60s, >10min buckets) and
 attempt to play them. All three played normally.
+
+---
+
+## 2026-04-26 (end of day) — three writer bugs fixed; outstanding gap requires verification
+
+After the firmware-display-quirk theory was disproven, the investigation
+turned to the iTunesDB writer. **Three real bugs were found and fixed
+in the same day:**
+
+1. **0x64 written as discNumber instead of mediaKind = 1.** The firmware
+   reads 0x64 as a media-type classifier; non-1 values silently
+   exclude tracks from "Music > Songs". Our writer was packing
+   discNumber there. Multi-disc albums lost their disc-2/3/+ tracks.
+   Fix: `build_mhit_record` unconditionally writes `pack_into('<I', hdr,
+   0x64, 1)`. Commit: `b6a17e7`.
+
+2. **mhsd-4 album list copied verbatim from input instead of rebuilt.**
+   The album list in mhsd type-4 was a stale snapshot from the previous
+   sync; tracks present in the current library but not the prior album
+   list rendered without album metadata in the iPod's Albums view.
+   Fix: `write_itunesdb` rebuilds mhsd-4 from current track data using
+   mhia + mhod types 200/201/202. Commit: `f5d8ad0`.
+
+3. **Every mhit inheriting the FIRST track's persistent_dbid (0x6C/0x94).**
+   `build_mhit_record` was using `bytearray(template_header)` —
+   copying bytes from one mhit to all others — and never overwriting
+   0x6C/0x94. The iPod firmware's browse cache de-duplicates by 64-bit
+   persistent_dbid, so ~140 tracks collapsed into duplicates and got
+   silently filtered. This is the most likely culprit for the 4557 →
+   4417 gap that motivated the wipe-and-restore loop.
+   Fix: derive persistent_dbid deterministically from
+   `SHA1(audioFingerprint | path)[:8]`, MSB set, write at both 0x6C
+   and 0x94. Commit: `c0db845`.
+
+### Outstanding: VERIFY the firmware-display gap actually closed
+
+As of end of day 2026-04-26 the persistent_dbid fix was committed and
+shipped in JakeTunes 4.0.0, **but the iPod has not yet been re-synced
+with the 4.0 build to confirm the About-panel count caught up to the
+iTunesDB count.** The badge screenshot taken this evening showed
+Library 4,556 vs iPod 4,546 — that's a 10-track gap at the
+**iTunesDB-on-disk** layer (separate from the original ~140-track
+About-panel gap). Both need verification.
+
+### Next-session diagnostic plan
+
+Run *in this order* on a freshly-mounted iPod, with the 4.0 build:
+
+1. **Sync once.** Capture which tracks were copied vs skipped (`syncToIpod`
+   logs `copied / copyErrors`).
+2. **Compare library.json to the on-disk iTunesDB.** Use
+   `core/db_reader.py parse_tracks` against
+   `<iPod>/iPod_Control/iTunes/iTunesDB` and diff against
+   `~/Library/Application Support/JakeTunes/library.json` by
+   audioFingerprint (NOT path — paths get rewritten on import).
+   Expected: zero gap. If non-zero, those are tracks the WRITER
+   dropped, and the round-trip harness should be extended to flag
+   them (`core/tests/test_db_roundtrip.py`).
+3. **Check the About panel.** Should match the iTunesDB count after
+   the persistent_dbid fix. If still short, there's a fourth filter
+   field we haven't found.
+4. **Candidate fields to investigate** if step 3 still shows a gap
+   (in priority order):
+     - `hashAB` / iTunesDB "firewire ID" hash file. Mini Gen 1
+       *shouldn't* require it but worth checking the iPod_Control
+       directory for stray ones.
+     - mhit field 0x18 (codec marker / filetype): wrong values can
+       classify a track as audiobook/podcast. Currently set to 'MP3 '
+       or codec-specific only on new tracks; existing template carries
+       through, which could be wrong if the prior writer mis-set it.
+     - mhit field 0x60 (bookmark time / unknown): some firmware
+       versions read this as a hidden filter.
+     - `Play Counts` / `Play State` files in iPod_Control/iTunes/.
+       If these list dbids the user 'cleared,' the firmware can hide
+       tracks until counters reset.
+
+### What we have to support this
+
+- **Round-trip harness** (`core/tests/test_db_roundtrip.py`) — locked
+  in 18 mhit-header offsets the writer is allowed to touch; will yell
+  if a future commit silently adds a 19th. Extending it to also do
+  library-vs-iTunesDB diff is one well-named function away.
+- **Known-good iPod audio backup** (`~/iPod-audio-backup/Music/`,
+  4,556 tracks, library-aligned). Wipe-and-restore is safe — no audio
+  loss risk.
+- **3 commits' worth of fixes in 4.0.0** that haven't yet been
+  confirmed against a live iPod with this exact iTunesDB shape. The
+  next sync IS the test.
+
+> The next person debugging this should not assume any of the three
+> fixes worked. They were derived from inspection, not measurement.
+> Step 1 above is the first measurement.
+
