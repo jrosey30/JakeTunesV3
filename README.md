@@ -1,8 +1,8 @@
 # JakeTunes
 
-A pixel-perfect iTunes 7 replica for macOS, built with Electron + React + TypeScript.
+A pixel-perfect iTunes 8 replica for macOS, built with Electron + React + TypeScript.
 
-**Vision:** 2006 iTunes shell, 2040 brain inside. Brushed-metal chrome, Aqua gradients, and a persistent AI DJ called The Music Man.
+**Vision:** 2008 iTunes shell, 2040 brain inside. Leopard-era unified-gray chrome, cool blue-gray sidebar, cream LCD pill, and a persistent AI DJ called The Music Man.
 
 ## Features
 

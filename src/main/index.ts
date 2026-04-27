@@ -546,9 +546,9 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 </style></head>
 <body>
   <h1>JakeTunes</h1>
-  <div class="version">Version 3.0.0</div>
+  <div class="version">Version 4.0.0</div>
   <div class="author">by Jacob Rosenbaum</div>
-  <div class="tagline">2006 visuals, 2026 brain</div>
+  <div class="tagline">2008 visuals, 2026 brain</div>
 </body>
 </html>`)}`)
         },
@@ -661,7 +661,7 @@ async function searchWikipedia(query: string): Promise<string> {
 // Search MusicBrainz for accurate music data (genre, country, years active, releases)
 async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/3.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Search for artist
     const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
     const artistRes = await fetch(artistUrl, { headers })
@@ -3170,7 +3170,7 @@ function buildCynthiaPrompt(modeSpecific = ''): string {
 // "find my missing tracks"). Returns a JSON object Cynthia can read.
 async function musicBrainzAlbumLookup(artist: string, album: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/3.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Step 1: find candidate releases.
     const query = `release:"${album}" AND artist:"${artist}"`
     const searchUrl = `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&fmt=json&limit=8`
@@ -4343,7 +4343,7 @@ ipcMain.handle('get-cd-info', async () => {
         // a genre from MusicBrainz release / release-group tags.
         const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'JakeTunes/3.0.0 (jaketunes@example.com)' }
+          headers: { 'User-Agent': 'JakeTunes/4.0.0 (jaketunes@example.com)' }
         })
         if (res.ok) {
           type MBTag = { name: string; count?: number }
