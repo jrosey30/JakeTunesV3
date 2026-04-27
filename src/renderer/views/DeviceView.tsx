@@ -291,7 +291,7 @@ export default function DeviceView() {
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Software Version:</span>
-            <span className="device-itunes-value">JakeTunes 4.0.3</span>
+            <span className="device-itunes-value">JakeTunes 4.0.4</span>
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Format:</span>
@@ -364,15 +364,11 @@ export default function DeviceView() {
           if you want to inspect what's actually on the iPod, the
           sidebar has the dedicated iPod library modal. */}
 
-      {/* ── Sync status (floats above the capacity bar when active) ── */}
-      {syncStatus.state !== 'idle' && (
+      {/* ── Sync status (only shows done / error here — live sync
+            progress lives in the toolbar's LCD pill, no need for a
+            second bar in the iPod view that duplicates it). ── */}
+      {(syncStatus.state === 'done' || syncStatus.state === 'error') && (
         <div className={`device-sync-status device-sync-status--${syncStatus.state}`}>
-          {syncStatus.state === 'syncing' && (
-            <>
-              <div className="device-sync-progress-bar"><div className="device-sync-progress-fill" /></div>
-              <span className="device-sync-message">{syncStatus.step}</span>
-            </>
-          )}
           {syncStatus.state === 'done' && (
             <span className="device-sync-message">
               ✓ Sync complete — {syncStatus.total.toLocaleString()} songs{syncStatus.copied > 0 ? ` (${syncStatus.copied} new copied)` : ''} synced to iPod at {syncStatus.time}

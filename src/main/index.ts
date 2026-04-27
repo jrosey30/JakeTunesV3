@@ -546,7 +546,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 </style></head>
 <body>
   <h1>JakeTunes</h1>
-  <div class="version">Version 4.0.3</div>
+  <div class="version">Version 4.0.4</div>
   <div class="author">by Jacob Rosenbaum</div>
   <div class="tagline">2008 visuals, 2026 brain</div>
 </body>
@@ -661,7 +661,7 @@ async function searchWikipedia(query: string): Promise<string> {
 // Search MusicBrainz for accurate music data (genre, country, years active, releases)
 async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.3 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.4 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Search for artist
     const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
     const artistRes = await fetch(artistUrl, { headers })
@@ -1198,7 +1198,28 @@ ipcMain.handle('get-ipod-db-tracks', async () => {
 // track's existing path too, so even a library.json that got
 // corrupted by some OTHER flow can't write incorrect paths into the
 // iPod database.
+// Module-level lock so a second sync-to-ipod invocation can't fire
+// while one is already in flight. Without this, two paths can race:
+// (1) the user clicks Sync, (2) the auto-sync-on-mount listener in
+// App.tsx fires when the iPod momentarily ejects/remounts during the
+// running sync. The race manifests as the preflight progress
+// counter running up to ~1600/4530 then jumping back to 0/4530, plus
+// random write failures from two writers stomping the same iTunesDB.
+let syncInFlight = false
+
 ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
+  if (syncInFlight) {
+    return { ok: false, error: 'A sync is already in progress', copied: 0, copyErrors: 0 }
+  }
+  syncInFlight = true
+  try {
+    return await runSyncToIpod(tracks, playlists)
+  } finally {
+    syncInFlight = false
+  }
+})
+
+async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>): Promise<unknown> {
   if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', copied: 0 }
   const IPOD_MOUNT = detectedIpodMount
   // Strip the trailing "iPod_Control/Music" segment whether it's / or \ delimited.
@@ -1701,7 +1722,7 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
       resolve({ ok: false, error: String(err), copied, copyErrors })
     })
   })
-})
+}
 
 // ── iPod Classic ALAC compatibility fix ──
 //
@@ -3189,7 +3210,7 @@ function buildCynthiaPrompt(modeSpecific = ''): string {
 // "find my missing tracks"). Returns a JSON object Cynthia can read.
 async function musicBrainzAlbumLookup(artist: string, album: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.3 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.4 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Step 1: find candidate releases.
     const query = `release:"${album}" AND artist:"${artist}"`
     const searchUrl = `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&fmt=json&limit=8`
@@ -4362,7 +4383,7 @@ ipcMain.handle('get-cd-info', async () => {
         // a genre from MusicBrainz release / release-group tags.
         const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'JakeTunes/4.0.3 (jaketunes@example.com)' }
+          headers: { 'User-Agent': 'JakeTunes/4.0.4 (jaketunes@example.com)' }
         })
         if (res.ok) {
           type MBTag = { name: string; count?: number }
