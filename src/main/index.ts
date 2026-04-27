@@ -546,7 +546,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 </style></head>
 <body>
   <h1>JakeTunes</h1>
-  <div class="version">Version 4.0.4</div>
+  <div class="version">Version 4.0.5</div>
   <div class="author">by Jacob Rosenbaum</div>
   <div class="tagline">2008 visuals, 2026 brain</div>
 </body>
@@ -661,7 +661,7 @@ async function searchWikipedia(query: string): Promise<string> {
 // Search MusicBrainz for accurate music data (genre, country, years active, releases)
 async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.4 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.5 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Search for artist
     const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
     const artistRes = await fetch(artistUrl, { headers })
@@ -1489,128 +1489,23 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     console.log(`sync-to-ipod: smart-match rewrote ${pathRewrites.length} track paths (saved that many redundant copies)`)
   }
 
-  // ──────────────────────── PREFLIGHT CONTENT-SAFETY CHECK ────────────────────────
-  // Belt-and-suspenders: before committing anything to iTunesDB, tag-
-  // verify every track against the file its library path points at.
-  // This catches the case where library.json itself got corrupted by
-  // some other flow (an older bug, a restore, a crash mid-write), not
-  // just the smart-match case we already verified above.
-  //
-  // Any mismatch aborts the sync with a list of the offending entries
-  // so the user can resolve them in Get Info before retrying. (The
-  // post-sync fingerprint verifier below is the silent self-heal path;
-  // this preflight is the loud "we will not write a known-bad state to
-  // your iPod" check.)
-  try {
-    const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
-    const preflightPaths: string[] = []
-    const preflightOwners: Array<Record<string, unknown>> = []
-    for (const t of tracks) {
-      const colonPath = String(t.path || '')
-      if (!colonPath) continue
-      const relPath = colonPath.replace(/:/g, pathSep)
-      const abs = join(IPOD_MOUNT, relPath)
-      preflightPaths.push(abs)
-      preflightOwners.push(t)
-    }
+  // The full-library tag-verification preflight that used to live here
+  // was removed in 4.0.5. It read tags off every audio file on the
+  // iPod every sync (~5 minutes over USB 2.0 on a 4500-track library)
+  // for a safety net the codebase no longer needs:
+  //   • smart-match (above) already tag-verifies tracks whose paths got
+  //     rewritten to point at existing files on the iPod — that's the
+  //     case the preflight was ACTUALLY catching most of the time
+  //   • the post-sync fingerprint verifier (below, after the writer)
+  //     silently self-heals path drift, fingerprint backfills, and
+  //     audioMissing flags
+  //   • the round-trip harness in core/tests/test_db_roundtrip.py
+  //     guards against writer regressions at dev time
+  // For the rare case of a directly-corrupted library.json, the user
+  // can run core/tools/refresh_fingerprints.py to recompute every
+  // fingerprint from disk on demand.
 
-    // Chunk the Python invocation so ~4,000-path payloads don't blow
-    // the argv/stdin buffer.
-    const CHUNK = 800
-    const mismatches: Array<{ id: number; title: string; artist: string; fileTitle: string; fileArtist: string; path: string }> = []
-    // Tell the renderer we're entering the preflight phase BEFORE the
-    // first chunk runs — without this the user sees no UI change for
-    // 2–5 minutes while we read tags off ~4500 audio files over USB,
-    // and assumes the sync hung. Per-chunk progress is emitted below.
-    mainWindow?.webContents.send('sync-progress', {
-      phase: 'preflight', current: 0, total: preflightPaths.length,
-      title: 'Verifying audio files…',
-    })
-    for (let i = 0; i < preflightPaths.length; i += CHUNK) {
-      const batch = preflightPaths.slice(i, i + CHUNK)
-      const tagsArr = await new Promise<Array<{ path: string; title?: string; artist?: string; ok?: boolean }>>((resolve, reject) => {
-        const py = spawn(PYTHON_CMD, [tagReaderScript])
-        let out = ''; let err = ''
-        py.stdout.on('data', (d: Buffer) => { out += d.toString() })
-        py.stderr.on('data', (d: Buffer) => { err += d.toString() })
-        py.on('error', reject)
-        py.on('close', (code) => { code === 0 ? resolve(JSON.parse(out)) : reject(new Error(err)) })
-        py.stdin.write(JSON.stringify(batch))
-        py.stdin.end()
-      })
-      for (let j = 0; j < batch.length; j++) {
-        const track = preflightOwners[i + j]
-        const file = tagsArr[j]
-        if (!file || !file.ok) continue
-        const ft = normalize(file.title)
-        const fa = normalize(file.artist)
-        const lt = normalize(track.title)
-        const la = normalize(track.artist)
-        // Only flag when the FILE has tags AND they disagree. Tagless
-        // files stay allowed (can't assert either way; most of our iPod
-        // content is tagless from the XML-rebuild era).
-        if ((ft || fa) && lt) {
-          const titleDisagrees  = ft && !(lt === ft || lt.includes(ft) || ft.includes(lt))
-          const artistDisagrees = fa && la && !(la === fa || la.includes(fa) || fa.includes(la))
-          // Two separate signals: title disagreement alone is enough
-          // evidence (artist-only is noisy because of collabs and
-          // compilation tagging).
-          if (titleDisagrees) {
-            // Identity-based escape hatch: if the track has a stored
-            // audioFingerprint AND the file's current fingerprint
-            // matches it, the file IS the right file by binary content.
-            // Trust the fingerprint over noisy text comparison. This
-            // catches harmless variations we can't pre-enumerate
-            // (Pt./Part is the one that bit us; the next one will be
-            // some smart-quote, title-case, or feat./with thing). We
-            // only do this on flagged tracks, so the SHA cost is
-            // negligible (typically 0-5 tracks per sync).
-            const storedFp = typeof track.audioFingerprint === 'string' ? track.audioFingerprint : ''
-            if (storedFp) {
-              const absForFp = preflightPaths[i + j]
-              const liveFp = await computeAudioFingerprint(absForFp, Number(track.duration || 0))
-              if (liveFp && liveFp === storedFp) {
-                // Same file we imported — text drift is cosmetic, not a path mix-up.
-                void artistDisagrees // intentionally unused; identity wins
-                continue
-              }
-            }
-            mismatches.push({
-              id: track.id as number,
-              title: String(track.title || ''),
-              artist: String(track.artist || ''),
-              fileTitle: file.title || '',
-              fileArtist: file.artist || '',
-              path: String(track.path || ''),
-            })
-          }
-        }
-      }
-      // Per-chunk preflight progress so the toolbar status moves with
-      // the actual work instead of looking frozen on 4500-track libraries.
-      mainWindow?.webContents.send('sync-progress', {
-        phase: 'preflight',
-        current: Math.min(i + CHUNK, preflightPaths.length),
-        total: preflightPaths.length,
-        title: 'Verifying audio files…',
-      })
-    }
-
-    if (mismatches.length > 0) {
-      const sample = mismatches.slice(0, 5).map(m => `  • "${m.title}" / ${m.artist} → file is "${m.fileTitle}" / ${m.fileArtist}`).join('\n')
-      const msg = `Sync aborted: ${mismatches.length} library entr${mismatches.length === 1 ? 'y points' : 'ies point'} at the wrong audio file.\n\nOpen each track's Get Info to fix the path, or delete the bad entry and re-import the source file. Then sync again.\n\nExamples:\n${sample}${mismatches.length > 5 ? `\n  …and ${mismatches.length - 5} more` : ''}`
-      console.error('sync-to-ipod: content-safety preflight failed:\n' + msg)
-      return { ok: false, error: msg, copied, copyErrors, mismatches: mismatches.length }
-    }
-    console.log(`sync-to-ipod: preflight OK, ${preflightPaths.length} tracks verified`)
-  } catch (err) {
-    console.warn('sync-to-ipod: preflight verification crashed; proceeding without it:', err)
-    // Don't block sync on a tooling error — users rely on sync even when
-    // Python subprocesses misbehave. The smart-match verifier above
-    // already caught the common case.
-  }
-
-  // Switch the toolbar status to the actual writer phase NOW — the
+  // Switch the toolbar status to the writer phase — the
   // preflight is done; from here it's the iTunesDB rebuild + write
   // (sub-second) and then the post-sync verifier (seconds).
   mainWindow?.webContents.send('sync-progress', {
@@ -3210,7 +3105,7 @@ function buildCynthiaPrompt(modeSpecific = ''): string {
 // "find my missing tracks"). Returns a JSON object Cynthia can read.
 async function musicBrainzAlbumLookup(artist: string, album: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.4 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.5 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Step 1: find candidate releases.
     const query = `release:"${album}" AND artist:"${artist}"`
     const searchUrl = `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&fmt=json&limit=8`
@@ -4383,7 +4278,7 @@ ipcMain.handle('get-cd-info', async () => {
         // a genre from MusicBrainz release / release-group tags.
         const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'JakeTunes/4.0.4 (jaketunes@example.com)' }
+          headers: { 'User-Agent': 'JakeTunes/4.0.5 (jaketunes@example.com)' }
         })
         if (res.ok) {
           type MBTag = { name: string; count?: number }
