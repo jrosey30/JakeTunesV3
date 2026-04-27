@@ -291,7 +291,7 @@ export default function DeviceView() {
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Software Version:</span>
-            <span className="device-itunes-value">JakeTunes 4.0.2</span>
+            <span className="device-itunes-value">JakeTunes 4.0.3</span>
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Format:</span>

@@ -1,7 +1,7 @@
 {
   "name": "JakeTunes",
   "productName": "JakeTunes",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "description": "iTunes 8 replica — 2008 visuals, 2026 brain",
   "author": "Jacob Rosenbaum",
   "main": "out/main/index.js",

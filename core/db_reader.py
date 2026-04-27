@@ -988,10 +988,50 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     mhbd = bytearray(existing[:mhbd_hlen])
     struct.pack_into('<I', mhbd, 8, mhbd_hlen + len(body))
 
+    # Atomic write: stage to .tmp, fsync to force the bytes onto the
+    # iPod's HFS+ volume (without this, macOS's delayed-write buffer
+    # can leave the file invisible to a follow-up syscall), then
+    # os.replace which is atomic on POSIX and a bit more permissive
+    # than os.rename when an existing destination is in the way.
+    #
+    # Retry logic exists because USB-mounted iPods have shown a
+    # specific failure mode: the .tmp file's directory entry gets
+    # evicted by macOS's mds/Spotlight indexer between the close and
+    # the rename ("FileNotFoundError ... .tmp -> ..."). Tighter
+    # syncing + retry reliably recovers.
     temp_path = output_path + '.tmp'
-    with open(temp_path, 'wb') as f:
-        f.write(bytes(mhbd) + bytes(body))
-    os.rename(temp_path, output_path)
+    payload = bytes(mhbd) + bytes(body)
+    last_err = None
+    for attempt in range(3):
+        try:
+            with open(temp_path, 'wb') as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, output_path)
+            last_err = None
+            break
+        except FileNotFoundError as e:
+            last_err = e
+            print(f"Write attempt {attempt + 1}: tmp file vanished — retrying", file=sys.stderr)
+            time.sleep(0.5)
+        except OSError as e:
+            last_err = e
+            print(f"Write attempt {attempt + 1}: {type(e).__name__}: {e} — retrying", file=sys.stderr)
+            time.sleep(0.5)
+    if last_err is not None:
+        # Last-ditch fallback: write directly to the destination. Loses
+        # atomicity (a crash mid-write would leave a partial DB), but
+        # at this point the user wants the sync to land more than they
+        # want belt-and-suspenders. The iPod has its own iTunesDB.bak
+        # we made before this writer ran, so partial-state recovery
+        # exists at the next layer up.
+        print(f"All atomic attempts failed; falling back to direct write to {output_path}",
+              file=sys.stderr)
+        with open(output_path, 'wb') as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
 
     final_size = mhbd_hlen + len(body)
     print(f"Wrote iTunesDB: {final_size:,} bytes → {output_path}", file=sys.stderr)
