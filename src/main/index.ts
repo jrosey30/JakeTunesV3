@@ -546,7 +546,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 </style></head>
 <body>
   <h1>JakeTunes</h1>
-  <div class="version">Version 4.0.0</div>
+  <div class="version">Version 4.0.2</div>
   <div class="author">by Jacob Rosenbaum</div>
   <div class="tagline">2008 visuals, 2026 brain</div>
 </body>
@@ -661,7 +661,7 @@ async function searchWikipedia(query: string): Promise<string> {
 // Search MusicBrainz for accurate music data (genre, country, years active, releases)
 async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.2 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Search for artist
     const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
     const artistRes = await fetch(artistUrl, { headers })
@@ -1456,10 +1456,6 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
       phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
     })
   }
-  mainWindow?.webContents.send('sync-progress', {
-    phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
-  })
-
   // Apply smart-match path rewrites to the in-flight tracks array so
   // the Python DB writer (which reads this JSON) gets the correct
   // (already-on-iPod) paths, not the stale ones from library.json.
@@ -1501,6 +1497,14 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     // the argv/stdin buffer.
     const CHUNK = 800
     const mismatches: Array<{ id: number; title: string; artist: string; fileTitle: string; fileArtist: string; path: string }> = []
+    // Tell the renderer we're entering the preflight phase BEFORE the
+    // first chunk runs — without this the user sees no UI change for
+    // 2–5 minutes while we read tags off ~4500 audio files over USB,
+    // and assumes the sync hung. Per-chunk progress is emitted below.
+    mainWindow?.webContents.send('sync-progress', {
+      phase: 'preflight', current: 0, total: preflightPaths.length,
+      title: 'Verifying audio files…',
+    })
     for (let i = 0; i < preflightPaths.length; i += CHUNK) {
       const batch = preflightPaths.slice(i, i + CHUNK)
       const tagsArr = await new Promise<Array<{ path: string; title?: string; artist?: string; ok?: boolean }>>((resolve, reject) => {
@@ -1561,6 +1565,14 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
           }
         }
       }
+      // Per-chunk preflight progress so the toolbar status moves with
+      // the actual work instead of looking frozen on 4500-track libraries.
+      mainWindow?.webContents.send('sync-progress', {
+        phase: 'preflight',
+        current: Math.min(i + CHUNK, preflightPaths.length),
+        total: preflightPaths.length,
+        title: 'Verifying audio files…',
+      })
     }
 
     if (mismatches.length > 0) {
@@ -1576,6 +1588,13 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     // Python subprocesses misbehave. The smart-match verifier above
     // already caught the common case.
   }
+
+  // Switch the toolbar status to the actual writer phase NOW — the
+  // preflight is done; from here it's the iTunesDB rebuild + write
+  // (sub-second) and then the post-sync verifier (seconds).
+  mainWindow?.webContents.send('sync-progress', {
+    phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
+  })
 
   // Backup existing iTunesDB
   const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
@@ -3170,7 +3189,7 @@ function buildCynthiaPrompt(modeSpecific = ''): string {
 // "find my missing tracks"). Returns a JSON object Cynthia can read.
 async function musicBrainzAlbumLookup(artist: string, album: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.0 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': 'JakeTunes/4.0.2 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
     // Step 1: find candidate releases.
     const query = `release:"${album}" AND artist:"${artist}"`
     const searchUrl = `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&fmt=json&limit=8`
@@ -4343,7 +4362,7 @@ ipcMain.handle('get-cd-info', async () => {
         // a genre from MusicBrainz release / release-group tags.
         const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'JakeTunes/4.0.0 (jaketunes@example.com)' }
+          headers: { 'User-Agent': 'JakeTunes/4.0.2 (jaketunes@example.com)' }
         })
         if (res.ok) {
           type MBTag = { name: string; count?: number }

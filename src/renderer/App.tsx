@@ -362,6 +362,13 @@ function AppInner() {
               ? `Copying ${progress.current}/${progress.total} to iPod${progress.title ? ' — ' + progress.title : ''}`
               : 'Copying to iPod...',
           })
+        } else if (progress.phase === 'preflight') {
+          a.setSync({
+            active: true,
+            step: progress.total > 0
+              ? `Verifying ${progress.current}/${progress.total} audio files…`
+              : 'Verifying audio files…',
+          })
         } else if (progress.phase === 'db') {
           a.setSync({
             active: true,
