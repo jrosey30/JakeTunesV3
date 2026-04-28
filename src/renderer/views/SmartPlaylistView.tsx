@@ -37,6 +37,19 @@ interface PicksData {
   date: string
 }
 
+const MUSICMAN_PICKS_UI_KEY = 'musicmanPicks'
+
+function isSameCalendarDay(isoDate: string): boolean {
+  const savedDate = new Date(isoDate)
+  if (Number.isNaN(savedDate.getTime())) return false
+  const now = new Date()
+  return (
+    savedDate.getFullYear() === now.getFullYear() &&
+    savedDate.getMonth() === now.getMonth() &&
+    savedDate.getDate() === now.getDate()
+  )
+}
+
 interface ColDef {
   key: string
   label: string
@@ -71,33 +84,53 @@ export default function SmartPlaylistView() {
   // Music Man Picks state — persists until midnight via UI state
   // Resets at 12:00 AM each day. If the app was closed before midnight,
   // picks regenerate on next launch after midnight has passed.
-  const [picks, setPicks] = useState<PicksData | null>(() => {
-    try {
-      const raw = localStorage.getItem('musicman-picks')
-      if (raw) {
-        const saved = JSON.parse(raw) as PicksData
-        const savedDate = new Date(saved.date)
-        const now = new Date()
-        // Same calendar day = keep picks. Different day = regenerate.
-        const sameDay =
-          savedDate.getFullYear() === now.getFullYear() &&
-          savedDate.getMonth() === now.getMonth() &&
-          savedDate.getDate() === now.getDate()
-        if (sameDay) return saved
-      }
-    } catch { /* ignore */ }
-    return null
-  })
+  const [picks, setPicks] = useState<PicksData | null>(null)
+  const [picksStateLoaded, setPicksStateLoaded] = useState(false)
   const [picksLoading, setPicksLoading] = useState(false)
-  const picksRequested = useRef(!!picks)
+  const picksRequested = useRef(false)
 
-  // Save picks to localStorage when they change
+  // Renderer storage APIs are unreliable in Electron. Persist via main's
+  // ui-state file so picks survive restarts without localStorage.
   useEffect(() => {
-    if (picks) localStorage.setItem('musicman-picks', JSON.stringify(picks))
-  }, [picks])
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled || !r.ok || !r.state) return
+      const raw = (r.state as Record<string, unknown>)[MUSICMAN_PICKS_UI_KEY]
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+      const saved = raw as PicksData
+      if (
+        typeof saved.name !== 'string' ||
+        typeof saved.commentary !== 'string' ||
+        !Array.isArray(saved.trackIds) ||
+        typeof saved.date !== 'string'
+      ) return
+      if (!saved.trackIds.every((id) => typeof id === 'number')) return
+      if (!isSameCalendarDay(saved.date)) return
+      setPicks(saved)
+      picksRequested.current = true
+    }).catch(() => {
+      // Non-fatal — picks will regenerate for this session.
+    }).finally(() => {
+      if (!cancelled) setPicksStateLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Save picks to ui-state when they change.
+  useEffect(() => {
+    if (!picksStateLoaded || !picks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, [MUSICMAN_PICKS_UI_KEY]: picks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [picks, picksStateLoaded])
 
   // Generate Music Man Picks — only when no valid cached picks exist
   useEffect(() => {
+    if (!picksStateLoaded) return
     if (playlistId !== 'musicman-picks' || libState.tracks.length === 0) return
     if (picks || picksRequested.current) return
 
@@ -120,7 +153,7 @@ export default function SmartPlaylistView() {
     }).catch(() => {
       setPicksLoading(false)
     })
-  }, [playlistId, libState.tracks, picks])
+  }, [playlistId, libState.tracks, picks, picksStateLoaded])
 
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
