@@ -9,7 +9,8 @@
     "ios:device": "react-native run-ios --device",
     "pods": "cd ios && pod install",
     "tsc": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "node --test --experimental-strip-types src/__tests__/*.test.ts"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.1.0",

@@ -385,7 +385,32 @@ grep -rn "function <name>\|const <name>\|^def <name>" src/ core/ mobile/
 # 3) Unit grep — make sure no bare Number is being passed across a
 #    seconds/ms boundary without a comment.
 grep -rn "duration:" mobile/src
+
+# 4) Run the pure-function regression suites — Node 22 native test
+#    runner, no install needed (uses --experimental-strip-types so
+#    .ts files run directly).
+npm run test:all
 ```
 
-Cycle: **edit → grep → reread → typecheck → run on simulator**.
-Skipping the middle two makes the user the test suite.
+The test suites pin the postmortem rules in code:
+- `src/main/__tests__/library-overrides.test.ts` — identity gate
+  (fingerprint-mismatch, fingerprint-missing-on-* discards). Adding
+  a code path that lets a mismatched override merge will fail this.
+- `src/main/__tests__/library-snapshot.test.ts` — path-format and
+  schema-version contract on the wire JSON.
+- `src/main/__tests__/twin-invariants.test.ts` — desktop and mobile
+  schema constants must match. Bumping ONE side without the other
+  fails this immediately.
+- `mobile/src/__tests__/*.test.ts` — pure mobile utilities (unit
+  contract on `formatDuration`, path-prepend on `joinNasPath`,
+  grouping helpers).
+
+**Add a regression test for every postmortem class of bug.** When a
+new failure mode is discovered, the smallest pin against recurrence
+is a single test that asserts the post-fix invariant. Citation: §F of
+the verify-repair postmortem ("regression tests for known failure
+patterns").
+
+Cycle: **edit → grep → reread → typecheck → npm run test:all → run
+on simulator**. Skipping the middle three makes the user the test
+suite.

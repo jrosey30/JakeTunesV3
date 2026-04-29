@@ -24,7 +24,9 @@ import type { SynologyClient } from '@/services/nas/synologyClient'
 
 // Join the NAS prefix to the snapshot's slash-relative path, normalizing
 // adjacent / leading slashes so we always emit exactly one separator.
-function joinNasPath(prefix: string, rel: string): string {
+// Exported for unit-testing — the path-format contract is critical
+// enough that it has its own regression suite (mobile/src/__tests__/).
+export function joinNasPath(prefix: string, rel: string): string {
   const p = (prefix || '').replace(/\/+$/, '')
   const r = (rel || '').replace(/^\/+/, '')
   return p ? `${p}/${r}` : `/${r}`

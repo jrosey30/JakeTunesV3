@@ -16,7 +16,10 @@
     "release": "electron-vite build && electron-builder --mac --publish always",
     "release:patch": "npm version patch && npm run release",
     "release:minor": "npm version minor && npm run release",
-    "release:major": "npm version major && npm run release"
+    "release:major": "npm version major && npm run release",
+    "test": "node --test --experimental-strip-types src/main/__tests__/*.test.ts",
+    "test:mobile": "node --test --experimental-strip-types mobile/src/__tests__/*.test.ts",
+    "test:all": "npm test && npm run test:mobile"
   },
   "build": {
     "appId": "com.jacobrosenbaum.jaketunes",
