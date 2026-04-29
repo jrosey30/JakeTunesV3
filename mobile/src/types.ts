@@ -235,3 +235,27 @@ export interface LibrarySnapshot {
 // Bump on both sides in the same commit; update the mobile reader
 // to handle the new shape before shipping the desktop change.
 export const LIBRARY_SNAPSHOT_VERSION = 1
+
+// ─────────────────────────────────────────────────────────────────────
+// Mobile → desktop overrides queue (mobile-recorded play counts, etc.)
+// ─────────────────────────────────────────────────────────────────────
+
+// File envelope for the override queue when written to disk for the
+// desktop to consume. Mobile writes one of these on "Export overrides
+// queue" (Settings); desktop reads it via File → Library → Apply
+// Mobile Overrides… The contract is twinned with src/main/library-overrides.ts;
+// mobile must refuse to read forward-version files written by a
+// future desktop, and desktop must refuse forward-version files
+// written by a future mobile. Bump both sides in the same commit.
+export const OVERRIDES_QUEUE_VERSION = 1
+
+export interface OverridesQueueFile {
+  version: number
+  // Device identifier — opaque string set on first launch and reused
+  // (e.g. random UUID stored in AsyncStorage). Lets the desktop
+  // distinguish "this is the same device's queue applied twice" from
+  // "two devices both played the same track."
+  deviceId: string
+  exportedAt: string  // ISO timestamp
+  overrides: MobileTrackOverrides[]
+}

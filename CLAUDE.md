@@ -259,6 +259,36 @@ after every successful save. Snapshot write failures are logged but
 do NOT break the desktop save — the desktop's `library.json` is the
 source of truth; the snapshot is a derived view.
 
+**Mobile → desktop overrides drain (mobile-recorded play counts).**
+Mobile records natural-completion plays via the playbackService
+background context (no React) into AsyncStorage as
+`MobileTrackOverrides[]`. The user exports the queue via Settings →
+Export overrides…  (iOS Share Sheet, Phase 0 transport is manual —
+AirDrop/Mail/Files). The desktop drains via File → Library → Apply
+Mobile Overrides… → file picker. The contracts:
+
+1. **Schema version** — `OVERRIDES_QUEUE_VERSION` in
+   `src/main/library-overrides.ts` MUST equal the constant in
+   `mobile/src/types.ts`. Same versioning rule as the snapshot.
+2. **Identity gate** — `applyOverrides` REFUSES any override whose
+   `audioFingerprint` doesn't match the current track at `trackId`.
+   This is the postmortem rule applied to the cross-platform sync:
+   text-based merging is unsafe; binary identity is the contract.
+   Discarded overrides are logged with reasons (`unknown-trackid`,
+   `fingerprint-mismatch`, `fingerprint-missing-on-mobile/desktop`)
+   and never force-applied.
+3. **Manual queue clear** — mobile does NOT auto-clear the queue on
+   export. The user manually clears via Settings → "Clear queue
+   (after desktop merge)" with a tap-to-arm pattern. This is
+   deliberate: file transport can fail silently (corrupted AirDrop,
+   wrong file picked); auto-clearing on export would lose plays on
+   any bad transfer.
+
+When the DS224 ships and the NAS transport replaces manual file
+moves, the same `applyOverrides` function stays — only the
+file-loading path (`readOverridesQueueFile`) gets a network sibling.
+Don't fold transport into the merge logic.
+
 **Do Not Touch (mobile, without explicit permission):**
 - `mobile/src/types.ts` `Track` interface — desktop is authoritative.
 - `mobile/src/services/playback/playbackService.ts` — runs in a

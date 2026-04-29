@@ -97,6 +97,29 @@ const electronAPI = {
     playlists: unknown[]
   }): Promise<{ ok: boolean; canceled?: boolean; path?: string; trackCount?: number; bytes?: number; error?: string }> =>
     ipcRenderer.invoke('export-library-snapshot', payload),
+  // Mobile → desktop overrides drain. Two IPCs because the renderer
+  // wants to show the user the file path between picking and
+  // applying — see src/main/library-overrides.ts.
+  mobileOverridesPickFile: (): Promise<{ ok: boolean; canceled?: boolean; path?: string }> =>
+    ipcRenderer.invoke('mobile-overrides-pick-file'),
+  // tracks comes in / goes out as unknown[] — the renderer's Track
+  // type carries fields main shouldn't have to know about.
+  // applyOverrides preserves shape via generic spread; the renderer
+  // narrows back on the way out.
+  mobileOverridesApply: (args: {
+    path: string
+    tracks: unknown[]
+  }): Promise<{
+    ok: boolean
+    error?: string
+    deviceId?: string
+    exportedAt?: string
+    overrideCount?: number
+    applied?: number
+    appliedTrackIds?: number[]
+    discarded?: Array<{ trackId: number; reason: string }>
+    tracks?: unknown[]
+  }> => ipcRenderer.invoke('mobile-overrides-apply', args),
   setClaudeDailyCeiling: (ceiling: number): Promise<{ ok: boolean; dailyCeiling: number }> =>
     ipcRenderer.invoke('set-claude-daily-ceiling', ceiling),
   fetchAlbumArt: (artist: string, album: string, force?: boolean): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>

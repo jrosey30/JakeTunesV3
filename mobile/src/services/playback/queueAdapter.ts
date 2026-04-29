@@ -17,13 +17,28 @@ import type { NasConnectionConfig, Track } from '@/types'
 import type { SynologyClient } from '@/services/nas/synologyClient'
 import { buildStreamUrl } from '@/services/nas/streamUrl'
 
+// Custom fields we stash on the TrackPlayer track so the background
+// playback service can read identity off PlaybackActiveTrackChanged
+// without going through React contexts.
+//
+// ⚠️ Identity rule: audioFingerprint MUST ride with the TP track so
+// the override queue can carry it. The desktop merge gates on
+// fingerprint match (per the verify-repair postmortem). If we
+// queued an override keyed only on Track.id, a re-import that
+// reassigned id=4709 to a different song would silently mis-apply
+// the play count.
+export interface JakeTunesTPExtras {
+  jakeTrackId: number
+  audioFingerprint?: string
+}
+
 export function trackToTrackPlayer(
   client: SynologyClient,
   config: NasConnectionConfig,
   track: Track,
-): TPTrack {
+): TPTrack & JakeTunesTPExtras {
   const url = buildStreamUrl(client, track, config)
-  const tp: TPTrack = {
+  const tp: TPTrack & JakeTunesTPExtras = {
     id: String(track.id),
     url,
     title: track.title,
@@ -34,6 +49,8 @@ export function trackToTrackPlayer(
     duration: track.duration > 0 ? track.duration / 1000 : 0,
     // artwork is filled by the library context once we wire art
     // fetching against Audio Station's cover endpoint.
+    jakeTrackId: track.id,
+    audioFingerprint: track.audioFingerprint,
   }
   // WebDAV transport requires Basic auth via headers. The password is
   // applied at playback-context level where it's pulled from Keychain.

@@ -272,6 +272,40 @@ A 5-line jq query over `library.json` beats hours of TrackPlayer
 queue inspection. The desktop build learned this the hard way; see
 `docs/postmortems/2026-04-26-duplicates-wrong-layer.md`.
 
+## Override queue (mobile → desktop play counts)
+
+Mobile records each natural-completion play (track played to within
+~2s of its duration before advancing) as a `MobileTrackOverrides`
+entry in AsyncStorage. The recorder lives in
+`services/playback/playbackService.ts` (background JS context) and
+classifies via `Event.PlaybackActiveTrackChanged` — works whether the
+app is foregrounded, backgrounded, on the lock screen, or via AirPlay.
+
+The queue carries the `audioFingerprint` of the track it observed, so
+the desktop merge can verify identity per the postmortem rule. Track
+IDs alone are not safe — re-imports reassign them.
+
+**Manual round-trip (Phase 0, no NAS):**
+
+1. Mobile: play some music. Watch Settings → "Plays awaiting desktop
+   merge" climb.
+2. Mobile: Settings → "Export overrides…" → routes JSON through the
+   iOS Share Sheet. AirDrop or email it to your Mac.
+3. Desktop: File → Library → Apply Mobile Overrides… → pick the
+   JSON file. Console logs `applied N/M from device <id>` plus any
+   discarded entries with reasons.
+4. Mobile: Settings → "Clear queue (after desktop merge)" (tap-to-arm,
+   tap-again-to-clear). The queue resets.
+
+Auto-clear on export is intentionally NOT wired — file transport in
+Phase 0 can fail silently, and losing plays on a bad AirDrop is
+worse than the user manually confirming.
+
+When the NAS arrives, the same `applyOverrides` function stays put;
+only `readOverridesQueueFile` gets a network sibling that fetches
+from the NAS. Mobile's auto-export-on-NAS-availability is a Phase 1
+addition.
+
 ## Phase 1 audit checklist
 
 Before any build that talks to a real DS224:
