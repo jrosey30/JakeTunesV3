@@ -7,7 +7,7 @@
 //   → { data: { sid: "..." } }   (sid threaded as ?_sid= on later calls)
 //
 // Status: code is wired end-to-end (login does fire a real fetch and
-// store a sid). It is UNVERIFIED against a real DSM until the DS224
+// store a sid). It is UNVERIFIED against a real DSM until the DS225
 // is online — the spec was reconstructed from public DSM docs, not
 // observed on a live server. The first connect on real hardware will
 // be the first measurement; treat unexpected error shapes as data,

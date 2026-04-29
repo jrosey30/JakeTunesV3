@@ -97,7 +97,7 @@ export interface MobileTrackOverrides {
 // NAS connection
 // ─────────────────────────────────────────────────────────────────────
 
-// Synology DS224 will run DSM (DiskStation Manager). The mobile app
+// Synology DS225 will run DSM (DiskStation Manager). The mobile app
 // connects via one of these transports, in priority order:
 //   1. Audio Station HTTP API (best metadata + streaming, requires
 //      Audio Station package installed)

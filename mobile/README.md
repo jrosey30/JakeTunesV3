@@ -2,7 +2,7 @@
 
 iOS-first React Native companion to the desktop JakeTunes app. Phase 0
 scaffolding for an architecture that will sit in front of a Synology
-DS224 NAS once that hardware is online.
+DS225 NAS once that hardware is online.
 
 ## What this is (Phase 0)
 
@@ -10,7 +10,7 @@ DS224 NAS once that hardware is online.
 - A complete app shell: providers, navigation, views, playback wiring.
 - A NAS service layer with the **shape** of the eventual Synology
   integration — auth, library fetch, stream-URL building. The actual
-  network calls are implemented but unverified until the DS224 lands.
+  network calls are implemented but unverified until the DS225 lands.
 - No native iOS project committed yet (`ios/` is generated on first
   setup; see [Setup on Mac](#setup-on-mac) below).
 
@@ -39,7 +39,7 @@ DS224 NAS once that hardware is online.
                           │
                           ▼  (HTTP/WebDAV)
 ┌─────────────────────────────────────────────────────────────────┐
-│  Synology DS224 (DSM 7.x)                                        │
+│  Synology DS225 (DSM 7.x)                                        │
 │   • /music/...               raw audio files                    │
 │   • /music/.jaketunes/library.json   desktop-exported snapshot  │
 │   • Audio Station / WebDAV / File Station HTTP                   │
@@ -150,7 +150,7 @@ The mobile app can run end-to-end on a simulator with a local
 
 This validates the full mobile pipeline (snapshot fetch, parse,
 display, transition to NowPlaying, play attempt) without DSM. The
-DS224 swap later only changes the connection config; the rest of
+DS225 swap later only changes the connection config; the rest of
 the app is exercised today.
 
 ## Setup on Mac
@@ -189,7 +189,7 @@ npm run ios:device
 
 ## Phase 1 checklist
 
-Before building the next phase against the live DS224:
+Before building the next phase against the live DS225:
 
 - [ ] Replace `secureStore` stub with `react-native-keychain`
 - [ ] Wire Audio Station's `SYNO.AudioStation.Stream` (proper id-based
@@ -308,7 +308,7 @@ addition.
 
 ## Phase 1 audit checklist
 
-Before any build that talks to a real DS224:
+Before any build that talks to a real DS225:
 
 - [ ] `secureStore` swapped to `react-native-keychain`.
 - [ ] `streamUrl` Audio Station path swapped to
@@ -332,4 +332,4 @@ Before any build that talks to a real DS224:
 ## Status
 
 Phase 0 — infrastructure complete. No real NAS to test against until
-the DS224 ships.
+the DS225 ships.

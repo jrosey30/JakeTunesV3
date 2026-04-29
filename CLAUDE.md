@@ -204,7 +204,7 @@ and search. Be surgical when editing it.
 ## Mobile (mobile/)
 
 JakeTunes Mobile is the iOS-first React Native client living in
-`mobile/`. It ships as a thin client over the future Synology DS224 —
+`mobile/`. It ships as a thin client over the future Synology DS225 —
 the desktop is the source of truth for the library, the NAS is the
 storage layer, the phone is a player. See `mobile/README.md` for the
 full architecture diagram.
@@ -284,7 +284,7 @@ Mobile Overrides… → file picker. The contracts:
    wrong file picked); auto-clearing on export would lose plays on
    any bad transfer.
 
-When the DS224 ships and the NAS transport replaces manual file
+When the DS225 ships and the NAS transport replaces manual file
 moves, the same `applyOverrides` function stays — only the
 file-loading path (`readOverridesQueueFile`) gets a network sibling.
 Don't fold transport into the merge logic.
