@@ -220,17 +220,12 @@ export function useAudio() {
         if (remaining > 0 && remaining <= 3) {
           const s = stateRef.current
           if (s.repeat !== 'one' && s.queue.length > 0) {
-            let nextIdx: number
-            if (s.shuffle) {
-              nextIdx = Math.floor(Math.random() * s.queue.length)
-              if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-                nextIdx = (nextIdx + 1) % s.queue.length
-              }
-            } else {
-              nextIdx = s.queueIndex + 1
-              if (nextIdx >= s.queue.length) {
-                nextIdx = s.repeat === 'all' ? 0 : -1
-              }
+            // Shuffle is achieved by reordering the queue itself (see
+            // TOGGLE_SHUFFLE in PlaybackContext) — playback always
+            // walks the queue sequentially from queueIndex+1.
+            let nextIdx = s.queueIndex + 1
+            if (nextIdx >= s.queue.length) {
+              nextIdx = s.repeat === 'all' ? 0 : -1
             }
             if (nextIdx >= 0) {
               const nextTrack = s.queue[nextIdx]
@@ -289,17 +284,12 @@ export function useAudio() {
         if (remaining > 0 && remaining <= crossfadeSettings.seconds) {
           const s = stateRef.current
           if (s.repeat !== 'one' && s.queue.length > 0) {
-            let nextIdx: number
-            if (s.shuffle) {
-              nextIdx = Math.floor(Math.random() * s.queue.length)
-              if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-                nextIdx = (nextIdx + 1) % s.queue.length
-              }
-            } else {
-              nextIdx = s.queueIndex + 1
-              if (nextIdx >= s.queue.length) {
-                nextIdx = s.repeat === 'all' ? 0 : -1
-              }
+            // Shuffle is achieved by reordering the queue itself (see
+            // TOGGLE_SHUFFLE in PlaybackContext) — playback always
+            // walks the queue sequentially from queueIndex+1.
+            let nextIdx = s.queueIndex + 1
+            if (nextIdx >= s.queue.length) {
+              nextIdx = s.repeat === 'all' ? 0 : -1
             }
             if (nextIdx >= 0) {
               const nextTrack = s.queue[nextIdx]
@@ -472,31 +462,25 @@ export function useAudio() {
         loadAndPlay(track, s.queue, s.queueIndex)
         return
       }
-      let nextIdx: number
-      if (s.shuffle) {
-        nextIdx = Math.floor(Math.random() * s.queue.length)
-        if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-          nextIdx = (nextIdx + 1) % s.queue.length
+      // Shuffle is queue-order-baked, not per-track-random — see
+      // TOGGLE_SHUFFLE in PlaybackContext. Always sequential here.
+      let nextIdx = s.queueIndex + 1
+      if (nextIdx >= s.queue.length) {
+        if (autoDjMode) {
+          let handled = false
+          const ackHandler = () => { handled = true }
+          window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
+          window.dispatchEvent(new Event('musicman-dj-set-ended'))
+          window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
+          if (handled) return
+          console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
+          autoDjMode = false
         }
-      } else {
-        nextIdx = s.queueIndex + 1
-        if (nextIdx >= s.queue.length) {
-          if (autoDjMode) {
-            let handled = false
-            const ackHandler = () => { handled = true }
-            window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
-            window.dispatchEvent(new Event('musicman-dj-set-ended'))
-            window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
-            if (handled) return
-            console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
-            autoDjMode = false
-          }
-          if (s.repeat === 'all') nextIdx = 0
-          else {
-            cleanupGaplessPreload()
-            dispatchRef.current({ type: 'STOP' })
-            return
-          }
+        if (s.repeat === 'all') nextIdx = 0
+        else {
+          cleanupGaplessPreload()
+          dispatchRef.current({ type: 'STOP' })
+          return
         }
       }
       const nextTrack = s.queue[nextIdx]
@@ -651,19 +635,13 @@ export function useAudio() {
       const skipFp = `${(ct.title || '').toLowerCase().trim()}|${(ct.artist || '').toLowerCase().trim()}|${ct.duration || 0}`
       window.electronAPI.saveMetadataOverride(ct.id, 'skipCount', String(newCount), skipFp)
     }
-    let nextIdx: number
-    if (s.shuffle) {
-      nextIdx = Math.floor(Math.random() * s.queue.length)
-      // Avoid repeating same track if possible
-      if (s.queue.length > 1 && nextIdx === s.queueIndex) {
-        nextIdx = (nextIdx + 1) % s.queue.length
-      }
-    } else {
-      nextIdx = s.queueIndex + 1
-      if (nextIdx >= s.queue.length) {
-        if (s.repeat === 'all') nextIdx = 0
-        else return
-      }
+    // Shuffle bakes randomness into queue order; manual next/prev
+    // walks the queue sequentially. (TOGGLE_SHUFFLE shuffles the
+    // upcoming queue when turning on.)
+    let nextIdx = s.queueIndex + 1
+    if (nextIdx >= s.queue.length) {
+      if (s.repeat === 'all') nextIdx = 0
+      else return
     }
     const track = s.queue[nextIdx]
     if (track) playTrack(track, s.queue, nextIdx)

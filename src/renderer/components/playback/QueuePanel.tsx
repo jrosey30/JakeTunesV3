@@ -35,13 +35,36 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
     setDropIndex(e.clientY < midY ? i : i + 1)
   }, [])
 
+  const handleItemDragStart = useCallback((e: React.DragEvent, i: number) => {
+    // Intra-queue reorder. `i` is the index within `upcoming`; convert
+    // to the absolute queue index (skip past current + earlier).
+    const absIndex = state.queueIndex + 1 + i
+    e.dataTransfer.setData('application/jaketunes-queue-reorder', String(absIndex))
+    e.dataTransfer.effectAllowed = 'move'
+  }, [state.queueIndex])
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
+    // Reorder branch: a queue item was the drag source. Take precedence
+    // over the library-track import branch — the user is rearranging
+    // existing queue items, not adding new ones.
+    const reorderRaw = e.dataTransfer.getData('application/jaketunes-queue-reorder')
+    if (reorderRaw) {
+      const fromIndex = parseInt(reorderRaw, 10)
+      if (Number.isFinite(fromIndex) && dropIndex !== null) {
+        const toIndex = state.queueIndex + 1 + dropIndex
+        dispatch({ type: 'MOVE_IN_QUEUE', fromIndex, toIndex })
+      }
+      setDropIndex(null)
+      return
+    }
+    // Library-track import branch (existing behavior).
     const tracks = resolveTracks(e)
-    if (tracks.length === 0) return
-
+    if (tracks.length === 0) {
+      setDropIndex(null)
+      return
+    }
     if (dropIndex !== null) {
-      // Insert at specific position in the queue (absolute index)
       const absIndex = state.queueIndex + 1 + dropIndex
       dispatch({ type: 'INSERT_IN_QUEUE', tracks, atIndex: absIndex })
     } else {
@@ -105,6 +128,8 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
             <div key={`${track.id}-${i}`}>
               <div
                 className="queue-item"
+                draggable
+                onDragStart={(e) => handleItemDragStart(e, i)}
                 onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i)}
                 onDragOver={(e) => handleItemDragOver(e, i)}
               >

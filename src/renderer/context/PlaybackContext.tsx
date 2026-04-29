@@ -33,6 +33,7 @@ type PlaybackAction =
   | { type: 'INSERT_IN_QUEUE'; tracks: Track[]; atIndex: number }
   | { type: 'CLEAR_QUEUE' }
   | { type: 'SHUFFLE_QUEUE' }
+  | { type: 'MOVE_IN_QUEUE'; fromIndex: number; toIndex: number }
   | { type: 'SET_SHUFFLE_HISTORY'; history: number[] }
 
 const initialState: PlaybackState = {
@@ -83,8 +84,29 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
       return { ...state, volume: action.volume }
     case 'SET_REPEAT':
       return { ...state, repeat: action.mode }
-    case 'TOGGLE_SHUFFLE':
-      return { ...state, shuffle: !state.shuffle, shuffleHistory: [] }
+    case 'TOGGLE_SHUFFLE': {
+      const newShuffle = !state.shuffle
+      // When turning shuffle ON, Fisher-Yates the upcoming queue so the
+      // visible Up Next list reflects the new playback order. Past tracks
+      // (queueIndex and earlier) stay put — they're history. Without this,
+      // shuffle was just a flag that picked random tracks per natural-end
+      // while the displayed Up Next stayed unchanged — looked like
+      // "skipping lots of songs in the queue."
+      if (!newShuffle) {
+        return { ...state, shuffle: false, shuffleHistory: [] }
+      }
+      const upcoming = state.queue.slice(state.queueIndex + 1)
+      for (let i = upcoming.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[upcoming[i], upcoming[j]] = [upcoming[j], upcoming[i]]
+      }
+      return {
+        ...state,
+        shuffle: true,
+        shuffleHistory: [],
+        queue: [...state.queue.slice(0, state.queueIndex + 1), ...upcoming],
+      }
+    }
     case 'NEXT_TRACK': {
       if (state.queue.length === 0) return state
       let nextIdx = state.queueIndex + 1
@@ -152,6 +174,31 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         [upcoming[i], upcoming[j]] = [upcoming[j], upcoming[i]]
       }
       return { ...state, queue: [...state.queue.slice(0, state.queueIndex + 1), ...upcoming] }
+    }
+    case 'MOVE_IN_QUEUE': {
+      // Drag-reorder support inside QueuePanel. fromIndex and toIndex
+      // are absolute queue positions. toIndex is a "drop slot" — a value
+      // of N means "place item before the item currently at index N",
+      // so toIndex == queue.length pushes to the end. Adjust queueIndex
+      // if the move shifts the currently-playing item or shifts items
+      // around it.
+      const { fromIndex, toIndex } = action
+      if (fromIndex < 0 || fromIndex >= state.queue.length) return state
+      if (toIndex < 0 || toIndex > state.queue.length) return state
+      if (fromIndex === toIndex || fromIndex + 1 === toIndex) return state
+      const newQueue = [...state.queue]
+      const [moved] = newQueue.splice(fromIndex, 1)
+      const adjustedTo = toIndex > fromIndex ? toIndex - 1 : toIndex
+      newQueue.splice(adjustedTo, 0, moved)
+      let newQueueIndex = state.queueIndex
+      if (fromIndex === state.queueIndex) {
+        newQueueIndex = adjustedTo
+      } else if (fromIndex < state.queueIndex && adjustedTo >= state.queueIndex) {
+        newQueueIndex = state.queueIndex - 1
+      } else if (fromIndex > state.queueIndex && adjustedTo <= state.queueIndex) {
+        newQueueIndex = state.queueIndex + 1
+      }
+      return { ...state, queue: newQueue, queueIndex: newQueueIndex }
     }
     case 'SET_SHUFFLE_HISTORY':
       return { ...state, shuffleHistory: action.history }
