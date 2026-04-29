@@ -112,8 +112,9 @@ so DSM session sids don't go stale mid-queue.
 - **Secrets** (Keychain via `react-native-keychain`):
   - `jt.nasPassword` — NAS account password
 
-Phase 0's `secureStore` is an in-memory stub. **Replace with
-`react-native-keychain` before any build that talks to a real NAS.**
+`secureStore` is the keychain-backed real implementation as of
+Phase 1. The Phase 0 stub history is documented in the file's
+header comment.
 
 ### Provider order (matters)
 
@@ -306,13 +307,32 @@ only `readOverridesQueueFile` gets a network sibling that fetches
 from the NAS. Mobile's auto-export-on-NAS-availability is a Phase 1
 addition.
 
-## Phase 1 audit checklist
+## Phase 1 status
 
-Before any build that talks to a real DS225:
+DS225 is online. End-to-end setup is documented in
+[`../docs/mobile-sync-setup.md`](../docs/mobile-sync-setup.md) — Drive
+Client for audio file mirroring, snapshot exporter for library.json,
+mobile Connection screen for the per-device config.
 
-- [ ] `secureStore` swapped to `react-native-keychain`.
+**Done:**
+- [x] `secureStore` is real (react-native-keychain, service
+      `jt.nasPassword`, AFTER_FIRST_UNLOCK so background JS can read).
+- [x] `MobileTrackOverrides` queue + drain with fingerprint-gated
+      merge on the desktop side.
+- [x] Schema version contracts (snapshot v1, overrides v1) twinned
+      between desktop and mobile, regression-tested.
+
+**Phase 1 in flight (validate against live DSM):**
+- [ ] First successful login from mobile → DSM → connected.
+- [ ] Library snapshot loads + tracks render in Songs view.
+- [ ] First track plays end-to-end (stream URL → audio output).
+- [ ] Override queue round-trip (play → export → desktop apply →
+      verify count incremented).
+
+**Phase 2 / deferred:**
 - [ ] `streamUrl` Audio Station path swapped to
-      `SYNO.AudioStation.Stream` with id-based streaming.
+      `SYNO.AudioStation.Stream` with id-based streaming. (File
+      Station works for Phase 1 — supports range requests.)
 - [ ] WebDAV transport's Basic auth header is actually populated from
       Keychain in the playback layer (currently an empty `headers: {}`
       placeholder in `queueAdapter`).
@@ -320,14 +340,11 @@ Before any build that talks to a real DS225:
       `react-native-fs`.
 - [ ] On-device audio cache (`MobileSettings.cache`) implemented +
       eviction by `lastPlayedAt`.
-- [ ] `MobileTrackOverrides` queue + drain (mobile → desktop sync)
-      with **fingerprint-gated merge** on the desktop side.
 - [ ] Background sync of `library.json` on app foreground.
+- [ ] Auto-export of override queue when NAS is online.
+- [ ] Skip-detection (only natural completions queued today).
 - [ ] Genres tab parity with desktop.
-- [ ] Twin grep run on every shared utility (`formatDuration`,
-      `albumKey`, normalize-style helpers, the `Track` type).
-- [ ] Schema-version bump documented and reader updated if the
-      desktop snapshot shape changed.
+- [ ] HTTPS + 2FA support on the DSM auth flow.
 
 ## Status
 

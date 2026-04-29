@@ -224,13 +224,20 @@ app is not allowed to extend it.
 independent — running `npm install` at the repo root does NOT install
 mobile deps. CI and dev flows for the desktop never touch `mobile/`.
 
-**Phase 0 stubs that must be replaced before any build hits a real
-NAS:**
-- `mobile/src/services/secureStore.ts` is in-memory only — replace
-  with `react-native-keychain` before storing a real password.
+**Phase 1 stubs still pending:**
 - `mobile/src/services/nas/streamUrl.ts` uses File Station for the
-  Audio Station transport — Phase 1 swaps to
-  `SYNO.AudioStation.Stream` for proper id-based streaming.
+  Audio Station transport. File Station handles range requests so
+  basic playback + scrub works; switching to `SYNO.AudioStation.Stream`
+  is a Phase 2 tuning pass for proper id-based streaming + better
+  metadata.
+
+**Resolved Phase 0 stubs (do NOT regress):**
+- `mobile/src/services/secureStore.ts` is now a real
+  `react-native-keychain` implementation. The NAS password lives in
+  iOS Keychain under service `jt.nasPassword`. Don't put it in
+  AsyncStorage; don't add a memory cache; don't change the service
+  identifier without a migration plan (existing installs lose their
+  stored credential).
 
 **Library snapshot pipeline (desktop → mobile).** The desktop writes
 a `LibrarySnapshot` JSON via `src/main/library-snapshot.ts`; mobile
