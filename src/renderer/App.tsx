@@ -438,6 +438,27 @@ function AppInner() {
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
         case 'open-preferences':    setSettingsOpen(true); break
+        case 'export-mobile-snapshot': {
+          // Read latest library state via ref (closure captured stale
+          // libState on first render). Strip iPod-only playlists —
+          // those are reconstructed from the device on next sync, not
+          // something mobile should see.
+          const lib = libStateRef.current
+          const playlists = (lib.playlists || []).filter(
+            (p: import('./types').Playlist) => !p.id.startsWith('ipod-'),
+          )
+          window.electronAPI
+            .exportLibrarySnapshot({ tracks: lib.tracks, playlists })
+            .then((r) => {
+              if (r.canceled) return
+              if (r.ok) {
+                console.log(`[snapshot] wrote ${r.trackCount} tracks (${r.bytes} B) to ${r.path}`)
+              } else {
+                console.warn(`[snapshot] export failed: ${r.error}`)
+              }
+            })
+          break
+        }
       }
     })
     // Main process watches library.json on disk and fires this when

@@ -208,6 +208,13 @@ export type RepeatMode = 'off' | 'all' | 'one'
 // Library snapshot — what the desktop writes to NAS at library.json
 // ─────────────────────────────────────────────────────────────────────
 
+// ⚠️ TWIN: src/main/library-snapshot.ts (producer). Both sides
+// must agree on this shape. When the desktop bumps the version
+// constant below, update the mobile reader (services/nas/libraryFetcher.ts)
+// in the same commit. Never silently re-purpose a field — see the
+// 0x64 mediaKind incident in
+// docs/postmortems/2026-04-26-ipod-songcount-counter.md for what
+// happens when a writer treats a field as A and a reader treats it as B.
 export interface LibrarySnapshot {
   // Schema version. Bumped when the desktop side changes the snapshot
   // shape. Mobile refuses to load snapshots with a version it doesn't
@@ -217,9 +224,14 @@ export interface LibrarySnapshot {
   exportedAt: string  // ISO timestamp
   tracks: Track[]
   playlists: Playlist[]
-  // The desktop writes this so the mobile stream-URL builder can
-  // verify its libraryRootPath matches what the desktop is exporting.
+  // Hint from the desktop about where it expects mobile to find the
+  // music share. Empty string = "use whatever the user configured on
+  // the mobile side." Currently always empty (Phase 0); reserved for
+  // a future preference that lets the desktop pre-populate this.
   libraryRootPath: string
 }
 
+// ⚠️ Must equal LIBRARY_SNAPSHOT_VERSION in src/main/library-snapshot.ts.
+// Bump on both sides in the same commit; update the mobile reader
+// to handle the new shape before shipping the desktop change.
 export const LIBRARY_SNAPSHOT_VERSION = 1

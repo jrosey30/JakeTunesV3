@@ -232,6 +232,33 @@ NAS:**
   Audio Station transport — Phase 1 swaps to
   `SYNO.AudioStation.Stream` for proper id-based streaming.
 
+**Library snapshot pipeline (desktop → mobile).** The desktop writes
+a `LibrarySnapshot` JSON via `src/main/library-snapshot.ts`; mobile
+reads it via `mobile/src/services/nas/libraryFetcher.ts`. The wire
+contract is twinned on three axes:
+
+1. **Schema version** — `LIBRARY_SNAPSHOT_VERSION` in
+   `src/main/library-snapshot.ts` MUST equal the constant in
+   `mobile/src/types.ts`. Mobile refuses forward-version snapshots.
+   Bump both sides in the same commit. Update mobile's reader before
+   shipping the desktop bump.
+2. **Path format** — `Track.path` in the snapshot is
+   slash-separated, no leading slash. The desktop's exporter does
+   the colon→slash conversion at the boundary so mobile never sees
+   the iPod-style colon convention. Mobile's `streamUrl.ts` PREPENDS
+   `config.libraryRootPath`; it does not strip. Don't reintroduce a
+   strip step without changing the exporter contract first.
+3. **Unit contract on `duration`** — milliseconds across the wire.
+   See the unit-contract rule below.
+
+The export path is configured via
+`AppSettings.mobile.snapshotExportPath` (set the first time the user
+runs File → Library → Export Snapshot for Mobile…). Once set,
+`save-library` auto-fires the snapshot writer in the background
+after every successful save. Snapshot write failures are logged but
+do NOT break the desktop save — the desktop's `library.json` is the
+source of truth; the snapshot is a derived view.
+
 **Do Not Touch (mobile, without explicit permission):**
 - `mobile/src/types.ts` `Track` interface — desktop is authoritative.
 - `mobile/src/services/playback/playbackService.ts` — runs in a

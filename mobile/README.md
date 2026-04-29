@@ -30,7 +30,11 @@ DS224 NAS once that hardware is online.
 ┌─────────────────────────────────────────────────────────────────┐
 │  Desktop JakeTunes (Electron, src/)                              │
 │   • Source of truth for library.json + audio files              │
-│   • Writes library.json to NAS at libraryJsonPath               │
+│   • src/main/library-snapshot.ts writes the wire-format          │
+│     LibrarySnapshot JSON whenever save-library fires.            │
+│     Path is configured via                                       │
+│     AppSettings.mobile.snapshotExportPath (set via               │
+│     File → Library → Export Snapshot for Mobile…)               │
 └─────────────────────────────────────────────────────────────────┘
                           │
                           ▼  (HTTP/WebDAV)
@@ -62,6 +66,26 @@ Mobile-only mutations (play counts queued on device) live in
 `MobileTrackOverrides`, never bolted onto `Track`. The eventual sync
 step on the desktop drains this queue and merges into the desktop
 library.
+
+### Snapshot wire format
+
+The desktop's `src/main/library-snapshot.ts` produces the JSON mobile
+reads. Three contracts must stay in sync between the two sides:
+
+| Contract       | Desktop side                         | Mobile side                                      |
+| -------------- | ------------------------------------ | ------------------------------------------------ |
+| Schema version | `LIBRARY_SNAPSHOT_VERSION` constant  | `LIBRARY_SNAPSHOT_VERSION` in `types.ts`         |
+| Path format    | `colonPathToSlashRelative` converts colon → slash, strips leading slash | `streamUrl.ts::joinNasPath` PREPENDS `libraryRootPath`; never strips |
+| Duration unit  | ms (passed through from desktop's `Track.duration`) | ms (`formatDuration` takes ms; queueAdapter divides for TrackPlayer) |
+
+**Path format example:**
+
+| Layer                                     | Path                                              |
+| ----------------------------------------- | ------------------------------------------------- |
+| Desktop `Track.path` (in-memory)          | `:iPod_Control:Music:F12:ABCD.m4a`                |
+| Snapshot JSON (after exporter)            | `iPod_Control/Music/F12/ABCD.m4a`                 |
+| Mobile NAS-absolute (after streamUrl)     | `/music/iPod_Control/Music/F12/ABCD.m4a`          |
+| (where `libraryRootPath` = `/music`)      |                                                   |
 
 ### NAS transports
 
@@ -101,6 +125,33 @@ GestureHandlerRootView
         PlaybackProvider   ← queues stream URLs from client + config
           RootNavigator
 ```
+
+## Local dev (no NAS required)
+
+The mobile app can run end-to-end on a simulator with a local
+`library.json` instead of a real Synology. The fastest path:
+
+1. **On the desktop**: File → Library → Export Snapshot for Mobile…
+   Pick a folder under `~/Synology/music/.jaketunes/` (or any path
+   you prefer). The snapshot writes once and re-writes on every
+   subsequent `save-library`.
+2. **Mount the snapshot folder** on the mobile dev machine (drop a
+   simple HTTP server in front of it during dev — `python3 -m
+   http.server 8080` over the export folder works).
+3. **In the mobile Connection screen**, set:
+   - Host: `localhost` (or your dev machine's LAN IP for a real device)
+   - Port: `8080`
+   - HTTPS: off
+   - Transport: `webdav` (the simplest fit for an HTTP server with
+     directory listing)
+   - `library.json path`: `/library.json`
+   - Music root: `/` (or wherever the audio files live behind the
+     server)
+
+This validates the full mobile pipeline (snapshot fetch, parse,
+display, transition to NowPlaying, play attempt) without DSM. The
+DS224 swap later only changes the connection config; the rest of
+the app is exercised today.
 
 ## Setup on Mac
 

@@ -87,6 +87,16 @@ const electronAPI = {
     ipcRenderer.invoke('load-app-settings'),
   saveAppSettings: (settings: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('save-app-settings', settings),
+  // Mobile snapshot export — see src/main/library-snapshot.ts. The
+  // first call (no path saved) opens a Save dialog and persists the
+  // chosen path; later calls reuse it. save-library auto-fires the
+  // same writer when the path is configured, so manual export is
+  // mostly a one-time setup action.
+  exportLibrarySnapshot: (payload: {
+    tracks: unknown[]
+    playlists: unknown[]
+  }): Promise<{ ok: boolean; canceled?: boolean; path?: string; trackCount?: number; bytes?: number; error?: string }> =>
+    ipcRenderer.invoke('export-library-snapshot', payload),
   setClaudeDailyCeiling: (ceiling: number): Promise<{ ok: boolean; dailyCeiling: number }> =>
     ipcRenderer.invoke('set-claude-daily-ceiling', ceiling),
   fetchAlbumArt: (artist: string, album: string, force?: boolean): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>

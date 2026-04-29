@@ -1,18 +1,33 @@
 // Builds an HTTP(S) URL the audio engine can stream from, given a
-// desktop-authored Track.path. The desktop writes paths relative to a
-// known NAS mount root (config.libraryRootPath) — we strip that prefix
-// and append the rest to the configured transport's stream endpoint.
+// desktop-authored Track.path.
+//
+// ⚠️ Path-format contract:
+//   - The desktop's library-snapshot exporter writes Track.path as
+//     SLASH-separated, NO leading slash, e.g.
+//         "iPod_Control/Music/F12/ABCD.m4a"
+//     (See src/main/library-snapshot.ts::colonPathToSlashRelative.)
+//   - This module PREPENDS `config.libraryRootPath` (the NAS-side
+//     prefix where the user's music share lives, e.g. "/music") to
+//     produce the absolute NAS path the transport API expects.
+//   - The opposite direction was attempted in an earlier draft (strip
+//     a prefix from an already-absolute path). That contract is
+//     wrong: the snapshot format does NOT include a prefix to strip.
+//     Don't reintroduce a strip step here without changing the
+//     exporter contract on the desktop side first.
+//
+// ⚠️ TWIN: src/main/library-snapshot.ts (the producer of these
+// paths). When that exporter changes the path shape, this builder
+// must change in the same commit.
 
 import type { NasConnectionConfig, Track } from '@/types'
 import type { SynologyClient } from '@/services/nas/synologyClient'
 
-function trimPrefix(path: string, prefix: string): string {
-  if (!prefix) return path
-  if (path.startsWith(prefix)) return path.slice(prefix.length).replace(/^\/+/, '')
-  // Desktop paths may be macOS-absolute (/Volumes/Music/...) or already
-  // server-relative. If the prefix doesn't match, return the path
-  // as-is and let the caller handle the mismatch.
-  return path
+// Join the NAS prefix to the snapshot's slash-relative path, normalizing
+// adjacent / leading slashes so we always emit exactly one separator.
+function joinNasPath(prefix: string, rel: string): string {
+  const p = (prefix || '').replace(/\/+$/, '')
+  const r = (rel || '').replace(/^\/+/, '')
+  return p ? `${p}/${r}` : `/${r}`
 }
 
 export function buildStreamUrl(
@@ -20,7 +35,7 @@ export function buildStreamUrl(
   track: Track,
   config: NasConnectionConfig,
 ): string {
-  const rel = trimPrefix(track.path, config.libraryRootPath)
+  const absolute = joinNasPath(config.libraryRootPath, track.path)
   switch (config.transport) {
     case 'synology-audio-station': {
       // SYNO.AudioStation.Stream supports range requests, which
@@ -30,7 +45,7 @@ export function buildStreamUrl(
       // Station — Audio Station id-mapping requires a separate library
       // scan call we'll add when we wire real playback.
       return client.webapiUrl('SYNO.FileStation.Download', 'download', {
-        path: encodeURI(`/${rel}`),
+        path: encodeURI(absolute),
         mode: 'open',
       })
     }
@@ -41,7 +56,11 @@ export function buildStreamUrl(
       // Password is NOT URL-embedded — TrackPlayer source headers must
       // carry Basic auth instead. Caller is expected to attach the
       // header via the playback layer's `headers` option.
-      return `${scheme}://${auth}@${config.host}:${port}/${rel}`
+      // absolute already starts with '/' from joinNasPath when prefix
+      // is empty, or is "/<prefix>/<rel>" otherwise; encode each
+      // segment so spaces / unicode survive.
+      const encoded = absolute.split('/').map((seg) => encodeURIComponent(seg)).join('/')
+      return `${scheme}://${auth}@${config.host}:${port}${encoded}`
     }
     case 'auto':
       // Resolved at config save time. If we hit this branch, the

@@ -22,6 +22,11 @@ import {
   extensionForFormat,
   type AudioFormat,
 } from './platform'
+import {
+  writeLibrarySnapshot,
+  type SnapshotTrack,
+  type SnapshotPlaylist,
+} from './library-snapshot'
 
 const isDev = !app.isPackaged
 
@@ -579,6 +584,12 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // never bulk, never auto. Solves the "iPod Shuffle shows 4542
           // but library has 4550" gap caused by re-imported tracks.
           { label: 'Show Duplicates…',         click: () => sendMenuAction('show-duplicates') },
+          { type: 'separator' },
+          // Write the in-memory library to disk in the wire format
+          // JakeTunes Mobile reads. First selection prompts for a
+          // path (saved to app-settings.mobile.snapshotExportPath);
+          // subsequent saves auto-fire from save-library.
+          { label: 'Export Snapshot for Mobile…', click: () => sendMenuAction('export-mobile-snapshot') },
           // (Removed: "Verify & Repair Library…" — the underlying tag
           // matcher had false-negative cases (e.g. file tag "Pt. 1" vs.
           // library "Part 1") that would land real tracks in the
@@ -1098,9 +1109,91 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
       }
       scheduleDbRebuild(deletedPaths)
     }
+
+    // ── Mobile snapshot export (best-effort) ──
+    // If the user has configured a snapshot export path (File →
+    // Library → Export Snapshot for Mobile…), fire the snapshot
+    // writer in the background. Failures here MUST NOT break the
+    // local save-library — the desktop's library.json is the source
+    // of truth; the snapshot is a derived view for mobile.
+    void exportSnapshotIfConfigured(tracks as SnapshotTrack[], (playlists || []) as SnapshotPlaylist[])
     return { ok: true, deletedPaths: deletedPaths.length }
   } catch (err) {
     return { ok: false, error: String(err) }
+  }
+})
+
+// Read snapshot export path from app-settings, write the snapshot if
+// configured. Logs but never throws — see save-library above for why.
+async function exportSnapshotIfConfigured(
+  tracks: SnapshotTrack[],
+  playlists: SnapshotPlaylist[],
+): Promise<void> {
+  try {
+    const settings = await readAppSettingsAsync()
+    const mobile = (settings?.mobile ?? null) as { snapshotExportPath?: string | null } | null
+    const dest = mobile?.snapshotExportPath
+    if (!dest) return  // not configured — skip silently
+    const result = await writeLibrarySnapshot(dest, { tracks, playlists })
+    if (!result.ok) {
+      console.warn(`[snapshot] export failed: ${result.error}`)
+      return
+    }
+    console.log(`[snapshot] wrote ${result.trackCount} tracks (${result.bytes} bytes) to ${dest}`)
+  } catch (err) {
+    console.warn('[snapshot] unexpected error during export:', err)
+  }
+}
+
+// Manual export — fired from File → Library → Export Snapshot for
+// Mobile…  If a path is already configured, write there directly.
+// Otherwise prompt the user for a folder, save the path to settings,
+// and write the snapshot. The renderer drives the actual track +
+// playlist payload (it's the source of truth for the in-memory
+// library); main asks for both via a request-snapshot-payload action.
+ipcMain.handle('export-library-snapshot', async (_e, payload: {
+  tracks: SnapshotTrack[]
+  playlists: SnapshotPlaylist[]
+}) => {
+  try {
+    const settings = (await readAppSettingsAsync()) ?? {}
+    const mobile = (settings.mobile ?? {}) as { snapshotExportPath?: string | null }
+    let dest = mobile.snapshotExportPath ?? null
+
+    if (!dest) {
+      // First-time export: ask for a target file path. Default the
+      // basename to library.json so power users who pick a folder by
+      // accident still end up with a file.
+      const dialogOptions = {
+        title: 'Export library snapshot for JakeTunes Mobile',
+        defaultPath: 'library.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      }
+      const result = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+      if (result.canceled || !result.filePath) {
+        return { ok: false, canceled: true }
+      }
+      dest = result.filePath
+      // Persist the choice so subsequent save-library calls auto-fire.
+      const next = { ...settings, mobile: { ...mobile, snapshotExportPath: dest } }
+      await writeFile(appSettingsPath(), JSON.stringify(next, null, 2), 'utf-8')
+    }
+
+    const writeResult = await writeLibrarySnapshot(dest, {
+      tracks: payload.tracks,
+      playlists: payload.playlists,
+    })
+    if (!writeResult.ok) return { ok: false, error: writeResult.error }
+    return {
+      ok: true,
+      path: dest,
+      trackCount: writeResult.trackCount,
+      bytes: writeResult.bytes,
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 })
 
