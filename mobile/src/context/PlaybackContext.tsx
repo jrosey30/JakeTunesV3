@@ -19,9 +19,20 @@ import { useConnection } from '@/context/ConnectionContext'
 interface PlaybackContextValue {
   ready: boolean
   isPlaying: boolean
+  // ⚠️ Unit: SECONDS (passes through from TrackPlayer's useProgress).
+  // Track.duration in the rest of the app is MILLISECONDS. If you
+  // hand `position` or `duration` to formatDuration, multiply by 1000
+  // first. See mobile/README.md "Unit contracts".
   position: number
   duration: number
   activeTrackId: number | null
+  // Most recent user-visible playback error (e.g. "NAS not
+  // configured", stream URL build failure). Cleared automatically
+  // on the next successful playTracks call. Views should surface
+  // this — `void playTracks(...)` swallows the throw, so without
+  // this field the user sees a tap that does nothing.
+  lastError: string | null
+  clearError: () => void
   playTracks: (tracks: Track[], startIndex?: number) => Promise<void>
   togglePlay: () => Promise<void>
   next: () => Promise<void>
@@ -34,6 +45,7 @@ const Ctx = createContext<PlaybackContextValue | null>(null)
 export function PlaybackProvider({ children }: { children: React.ReactNode }) {
   const { client, config } = useConnection()
   const [ready, setReady] = useState(false)
+  const [lastError, setLastError] = useState<string | null>(null)
 
   useEffect(() => {
     void ensureTrackPlayerReady().then(() => setReady(true))
@@ -60,16 +72,24 @@ export function PlaybackProvider({ children }: { children: React.ReactNode }) {
   const playTracks = useCallback(
     async (tracks: Track[], startIndex = 0) => {
       if (!client || !config) {
-        throw new Error('Cannot play: NAS not configured')
+        setLastError('NAS not configured — open Settings → Synology to connect.')
+        return
       }
-      const tpTracks = tracks.map((t) => trackToTrackPlayer(client, config, t))
-      await TrackPlayer.reset()
-      await TrackPlayer.add(tpTracks)
-      if (startIndex > 0) await TrackPlayer.skip(startIndex)
-      await TrackPlayer.play()
+      try {
+        const tpTracks = tracks.map((t) => trackToTrackPlayer(client, config, t))
+        await TrackPlayer.reset()
+        await TrackPlayer.add(tpTracks)
+        if (startIndex > 0) await TrackPlayer.skip(startIndex)
+        await TrackPlayer.play()
+        setLastError(null)
+      } catch (err) {
+        setLastError(`Couldn't start playback: ${(err as Error).message}`)
+      }
     },
     [client, config],
   )
+
+  const clearError = useCallback(() => setLastError(null), [])
 
   const togglePlay = useCallback(async () => {
     const s = await TrackPlayer.getPlaybackState()
@@ -88,13 +108,15 @@ export function PlaybackProvider({ children }: { children: React.ReactNode }) {
       position: progress.position,
       duration: progress.duration,
       activeTrackId: activeTrack?.id != null ? Number(activeTrack.id) : null,
+      lastError,
+      clearError,
       playTracks,
       togglePlay,
       next,
       previous,
       seekTo,
     }),
-    [ready, playbackState.state, progress.position, progress.duration, activeTrack?.id, playTracks, togglePlay, next, previous, seekTo],
+    [ready, playbackState.state, progress.position, progress.duration, activeTrack?.id, lastError, clearError, playTracks, togglePlay, next, previous, seekTo],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

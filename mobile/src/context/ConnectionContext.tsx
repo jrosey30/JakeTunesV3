@@ -23,6 +23,11 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const [config, setConfig] = useState<NasConnectionConfig | null>(null)
   const [state, setState] = useState<ConnectionState>({ status: 'disconnected' })
   const clientRef = useRef<SynologyClient | null>(null)
+  // Generation counter so an in-flight connect() that loses the race
+  // to forget()/saveConfig() can't write its result over the new
+  // state. Per CLAUDE.md: "every cancel path must reverse all side
+  // effects of the corresponding start path."
+  const connectGenRef = useRef(0)
 
   // Hydrate stored config on mount.
   useEffect(() => {
@@ -41,26 +46,41 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
 
   const connect = useCallback(async () => {
     if (!clientRef.current) return
+    const gen = ++connectGenRef.current
+    const client = clientRef.current
     setState({ status: 'connecting' })
     try {
-      await clientRef.current.login()
+      await client.login()
+      // If forget()/saveConfig() ran while we were awaiting, drop the
+      // result — the client we logged into may not even be the
+      // current one.
+      if (connectGenRef.current !== gen || clientRef.current !== client) return
       setState({
         status: 'connected',
-        serverInfo: { hostname: clientRef.current.config.host },
+        serverInfo: { hostname: client.config.host },
       })
     } catch (err) {
+      if (connectGenRef.current !== gen || clientRef.current !== client) return
       setState({ status: 'error', message: (err as Error).message })
     }
   }, [])
 
   const disconnect = useCallback(async () => {
-    if (!clientRef.current) return
+    // Invalidate any in-flight connect attempt before we logout, so a
+    // racing successful login can't flip us back to 'connected'.
+    connectGenRef.current++
+    if (!clientRef.current) {
+      setState({ status: 'disconnected' })
+      return
+    }
     await clientRef.current.logout().catch(() => undefined)
     setState({ status: 'disconnected' })
   }, [])
 
   const saveConfig = useCallback(
     async (next: NasConnectionConfig, password: string) => {
+      // Replacing the client invalidates any in-flight connect.
+      connectGenRef.current++
       const withFlag: NasConnectionConfig = { ...next, hasStoredCredential: true }
       await secureStore.setNasPassword(password)
       await storage.saveNasConfig(withFlag)
@@ -71,6 +91,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   )
 
   const forget = useCallback(async () => {
+    connectGenRef.current++
     await secureStore.clearNasPassword()
     await storage.saveNasConfig(null)
     clientRef.current = null

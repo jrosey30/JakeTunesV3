@@ -8,12 +8,30 @@ import type { RootStackParamList } from '@/types'
 import { colors, spacing, typography } from '@/styles/theme'
 
 export function MiniPlayer() {
-  const { activeTrackId, isPlaying, togglePlay, position, duration } = usePlayback()
+  const {
+    activeTrackId,
+    isPlaying,
+    togglePlay,
+    position,
+    duration,
+    lastError,
+    clearError,
+  } = usePlayback()
   const { tracks } = useLibrary()
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>()
   const track = activeTrackId != null ? tracks.find((t) => t.id === activeTrackId) : undefined
 
-  if (!track) return null
+  // Surface playback errors even when no track is active. Without this
+  // the user taps a song, nothing happens, and they never know why.
+  if (!track) {
+    if (!lastError) return null
+    return (
+      <Pressable style={styles.errorBar} onPress={clearError}>
+        <Text style={styles.errorText} numberOfLines={2}>{lastError}</Text>
+        <Text style={styles.errorDismiss}>Dismiss</Text>
+      </Pressable>
+    )
+  }
 
   const progress = duration > 0 ? Math.min(1, position / duration) : 0
 
@@ -85,5 +103,26 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: typography.weights.bold,
+  },
+  errorBar: {
+    backgroundColor: colors.bgElevated,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.negative,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  errorText: {
+    flex: 1,
+    color: colors.negative,
+    fontSize: typography.sizes.small,
+  },
+  errorDismiss: {
+    color: colors.textDim,
+    fontSize: typography.sizes.small,
+    fontWeight: typography.weights.semibold,
   },
 })

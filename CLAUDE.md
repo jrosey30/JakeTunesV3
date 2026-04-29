@@ -239,3 +239,96 @@ NAS:**
 - Provider order in `mobile/App.tsx`: Connection → Library → Playback.
   Library reads from Connection; Playback reads from both. Reordering
   causes silent null-deref on first render.
+
+### Lessons baked in from the desktop postmortems
+
+These are the explicit things the desktop build learned the hard way.
+They apply to mobile too — sometimes more so, because the cross-language
+twin distance is larger (TS/desktop ↔ TS/mobile ↔ Python/core ↔
+Synology DSM HTTP).
+
+**Unit contracts at every boundary.** `Track.duration` is **ms**
+everywhere in JakeTunes — the source field in `src/main/index.ts`
+(`durationMs = Math.round((format.duration || 0) * 1000)`) sets the
+contract; the library JSON the desktop writes carries ms; the mobile
+type carries ms; `formatDuration` on both sides takes ms. The ONLY
+boundary where seconds appear is react-native-track-player (its
+`Track.duration` and `useProgress()` are seconds). The conversion
+happens in exactly two places: `mobile/src/services/playback/queueAdapter.ts`
+(ms → s on the way in) and `mobile/src/views/NowPlayingView.tsx` (s
+→ ms on the way out, for `formatDuration`). Don't add a third site —
+every conversion site is a chance to forget one. **When you add a
+new field with a unit, document the unit in the type definition,
+not just in one consumer's comment.** (Postmortem citation:
+`docs/postmortems/2026-04-25-verify-repair-cascade.md` §4 — the
+"normalize" twin shipped because the contract wasn't named in one place.)
+
+**Layer order on count/discrepancy investigations.** When mobile and
+desktop disagree on a count or a set, inspect the easier-to-read
+layer first. The order is:
+
+1. **NAS-hosted `library.json`** (the wire format) — `cat | jq`.
+2. **Mobile in-memory snapshot** — log `tracks.length`, `lastRefreshedAt`.
+3. **Desktop in-memory state** — DevTools or `library.json` on disk.
+4. **TrackPlayer queue / device storage** — only after layers 1–3 are
+   provably consistent.
+
+A 5-line jq query over the wire JSON beats hours of TrackPlayer queue
+inspection. (Citation: `docs/postmortems/2026-04-26-duplicates-wrong-layer.md`.)
+
+**Schema-version contract on `library.json`.** The wire JSON the
+desktop writes carries a `version` field
+(`mobile/src/types.ts::LIBRARY_SNAPSHOT_VERSION`). Mobile **refuses**
+snapshots with a higher version than it understands and surfaces a
+"desktop and mobile are out of sync" message instead of crashing or
+silently misreading. When you change the snapshot shape on the
+desktop side, bump the version in the same commit and update the
+mobile reader. Never silently re-purpose a field. (Citation: the
+0x64 mediaKind incident — `docs/postmortems/2026-04-26-ipod-songcount-counter.md`
+— a writer repurposed a field the consumer treated as a classifier
+and silently filtered out 150 tracks.)
+
+**Identity over text, on every destructive op.** When the eventual
+mobile→desktop sync drains `MobileTrackOverrides`, the desktop merge
+MUST verify `audioFingerprint` matches the current track at
+`trackId` before applying the override. If it doesn't match, the
+override is stale (the user re-imported between mobile-play and
+desktop-merge) and is discarded with a log line — never force-merged.
+The same rule applies to ANY future mobile feature that writes back
+to the library. Text comparison is a hint; binary fingerprint is a
+fact. (Citation: §C of the verify-repair postmortem.)
+
+**No native dialogs for input or confirmation.** The Electron-renderer
+rule (`window.prompt`/`alert`/`confirm` are silently blocked) does
+NOT directly apply on RN — `Alert.alert` works. But the spirit
+applies: native dialogs hide intent and break the inline React UX.
+Mobile uses inline `<TextInput>` for text input (see `ConnectionView`)
+and inline two-step "tap to arm, tap again within Ns to fire"
+buttons for destructive ops (see `ForgetNasButton`). When you add a
+destructive action, do not reach for `Alert.alert`.
+
+**Cancel paths must reverse start-path side effects.** Every
+imperative async flow in mobile (connect, refresh, playTracks) has a
+counterpart that can run while the original is in flight. The
+ConnectionContext uses a generation counter (`connectGenRef`) so a
+racing `forget()`/`saveConfig()` invalidates the in-flight `connect()`
+result. When you add a new async action, check whether something
+else can stomp it mid-flight and add the equivalent guard.
+
+**Sweep before ship — mobile edition.** Before declaring a mobile
+change done:
+
+```bash
+# 1) No forbidden APIs (per the renderer rule, applied to mobile).
+grep -rn "window\.prompt\|window\.alert\|window\.confirm\|localStorage" mobile/src
+
+# 2) Twin grep for any utility you touched.
+grep -rn "function <name>\|const <name>\|^def <name>" src/ core/ mobile/
+
+# 3) Unit grep — make sure no bare Number is being passed across a
+#    seconds/ms boundary without a comment.
+grep -rn "duration:" mobile/src
+```
+
+Cycle: **edit → grep → reread → typecheck → run on simulator**.
+Skipping the middle two makes the user the test suite.

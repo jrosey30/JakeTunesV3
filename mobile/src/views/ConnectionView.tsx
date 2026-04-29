@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
@@ -113,13 +113,57 @@ export function ConnectionView() {
             <Pressable style={styles.button} onPress={() => void disconnect()}>
               <Text style={[styles.buttonText, { color: colors.text }]}>Disconnect</Text>
             </Pressable>
-            <Pressable style={styles.button} onPress={() => void forget()}>
-              <Text style={[styles.buttonText, { color: colors.negative }]}>Forget this NAS</Text>
-            </Pressable>
+            <ForgetNasButton onConfirm={() => void forget()} />
           </>
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  )
+}
+
+// Inline two-step confirmation for the destructive forget action.
+// Per CLAUDE.md: don't use OS-level Alert.alert (the Electron-renderer
+// rule generalizes — native dialogs hide intent and break the inline
+// React UX). The user must tap once to arm, again within 4 seconds to
+// fire. The armed state self-clears so an accidental tap can't sit
+// hot indefinitely.
+function ForgetNasButton({ onConfirm }: { onConfirm: () => void }) {
+  const [armed, setArmed] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current)
+    }
+  }, [])
+
+  const onPress = () => {
+    if (armed) {
+      if (timer.current) {
+        clearTimeout(timer.current)
+        timer.current = null
+      }
+      setArmed(false)
+      onConfirm()
+      return
+    }
+    setArmed(true)
+    timer.current = setTimeout(() => {
+      setArmed(false)
+      timer.current = null
+    }, 4000)
+  }
+
+  return (
+    <Pressable
+      style={[styles.button, armed && styles.buttonArmed]}
+      onPress={onPress}
+      accessibilityLabel={armed ? 'Tap again to confirm forget' : 'Forget this NAS'}
+    >
+      <Text style={[styles.buttonText, { color: armed ? '#fff' : colors.negative }]}>
+        {armed ? 'Tap again to forget' : 'Forget this NAS'}
+      </Text>
+    </Pressable>
   )
 }
 
@@ -212,6 +256,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgElevated,
   },
   buttonPrimary: { backgroundColor: colors.accent },
+  buttonArmed: { backgroundColor: colors.negative },
   buttonText: {
     color: '#fff',
     fontSize: typography.sizes.body,

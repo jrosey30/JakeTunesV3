@@ -6,9 +6,16 @@
 //        &account=<user>&passwd=<pass>&session=AudioStation&format=sid
 //   → { data: { sid: "..." } }   (sid threaded as ?_sid= on later calls)
 //
-// We don't ship the actual fetch yet — Phase 0 scaffolds the surface
-// area and validates URL shape. The first real call goes in Phase 1
-// when the user has the DS224 online.
+// Status: code is wired end-to-end (login does fire a real fetch and
+// store a sid). It is UNVERIFIED against a real DSM until the DS224
+// is online — the spec was reconstructed from public DSM docs, not
+// observed on a live server. The first connect on real hardware will
+// be the first measurement; treat unexpected error shapes as data,
+// not as a bug in the user's setup.
+//
+// 2FA, QuickConnect IDs, and DSM-on-non-default-paths (e.g. behind a
+// reverse proxy) are NOT handled in Phase 0. Auth here assumes
+// host:port reaches `/webapi/entry.cgi` directly.
 
 import type { NasConnectionConfig } from '@/types'
 import { secureStore } from '@/services/secureStore'

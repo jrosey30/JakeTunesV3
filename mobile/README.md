@@ -152,14 +152,21 @@ Before building the next phase against the live DS224:
 
 ## Code rules (mobile-specific)
 
-These extend the project root `CLAUDE.md`:
+These extend the project root `CLAUDE.md`. The full list of lessons
+inherited from desktop postmortems lives there — this is the
+mobile-relevant slice.
 
 - **Never bolt mobile-only state onto `Track`.** Use
   `MobileTrackOverrides`. The desktop's library schema is the contract.
+- **Identity > text, always.** `MobileTrackOverrides` carries an
+  `audioFingerprint` for exactly this reason. Mobile→desktop merge
+  rejects overrides whose fingerprint doesn't match the live track
+  rather than force-applying based on `trackId`. Track IDs get
+  reassigned on re-import; fingerprints don't.
 - **Twin discipline applies across the platform boundary.** If you
   touch `formatDuration`, `albumKey`, `groupByAlbum`, or anything in
-  `types.ts`, grep both `mobile/src/` and `src/renderer/` for the
-  partner before committing.
+  `types.ts`, grep both `mobile/src/` and `src/renderer/` (and
+  `core/` for Python twins) for the partner before committing.
 - **Stream URLs are built per-call, never cached on the model.**
   Session ids expire; URLs that look fine in storage break at play time.
 - **Secrets only go through `secureStore`, never AsyncStorage.**
@@ -167,6 +174,75 @@ These extend the project root `CLAUDE.md`:
 - **Provider order is locked.** Don't reorder
   `Connection → Library → Playback`. Library reads from Connection;
   Playback reads from both.
+
+## Unit contracts
+
+The single most expensive class of bug in cross-language codebases:
+"the field is named `duration` on both sides, but one is ms and the
+other is seconds." Document this here, once, and link to it from any
+new code that touches a unit.
+
+| Where                                 | Field           | Unit  |
+| ------------------------------------- | --------------- | ----- |
+| `library.json` (NAS)                  | `duration`      | ms    |
+| `mobile/src/types.ts::Track`          | `duration`      | ms    |
+| `mobile/src/utils/format.ts`          | `formatDuration(ms)` | ms |
+| `react-native-track-player::Track`    | `duration`      | **s** |
+| `useProgress()` from track-player     | `position` / `duration` | **s** |
+| `iPod iTunesDB mhit 0x28`             | `duration_ms`   | ms    |
+| `music-metadata format.duration`      | `duration`      | **s** |
+
+The two boundaries where the unit changes:
+
+1. **`mobile/src/services/playback/queueAdapter.ts`** — divides
+   `track.duration` by 1000 before handing to TrackPlayer.
+2. **`mobile/src/views/NowPlayingView.tsx`** — multiplies
+   `useProgress` values by 1000 before calling `formatDuration`.
+
+If you add a third boundary, add it to this table. If you find
+yourself doing math on a duration in some other file without
+consulting this table, stop and either (a) move the conversion to one
+of the two existing boundaries, or (b) update this table.
+
+## Debugging discrepancies (layer order)
+
+When mobile and desktop disagree on a count, a track set, or
+metadata for a specific track, **never start at the audio engine.**
+The order is:
+
+| Layer | Inspect with | Touch only when |
+|---|---|---|
+| 1. NAS `library.json` (the wire format) | `cat | jq`, `python -c 'import json…'` | Always start here. |
+| 2. Mobile in-memory snapshot | log `tracks.length`, `lastRefreshedAt`, write a temporary RN debug screen if needed | Layer 1 is consistent. |
+| 3. Desktop `library.json` on disk | `~/Library/Application Support/JakeTunes/library.json` | Layer 1 ≠ Layer 2 and you suspect the desktop didn't write what you expected. |
+| 4. TrackPlayer queue, AsyncStorage, Keychain | `TrackPlayer.getQueue()`, AsyncStorage dump | Layers 1–3 are provably consistent. |
+
+A 5-line jq query over `library.json` beats hours of TrackPlayer
+queue inspection. The desktop build learned this the hard way; see
+`docs/postmortems/2026-04-26-duplicates-wrong-layer.md`.
+
+## Phase 1 audit checklist
+
+Before any build that talks to a real DS224:
+
+- [ ] `secureStore` swapped to `react-native-keychain`.
+- [ ] `streamUrl` Audio Station path swapped to
+      `SYNO.AudioStation.Stream` with id-based streaming.
+- [ ] WebDAV transport's Basic auth header is actually populated from
+      Keychain in the playback layer (currently an empty `headers: {}`
+      placeholder in `queueAdapter`).
+- [ ] Album art: Audio Station `cover.cgi` → on-disk cache via
+      `react-native-fs`.
+- [ ] On-device audio cache (`MobileSettings.cache`) implemented +
+      eviction by `lastPlayedAt`.
+- [ ] `MobileTrackOverrides` queue + drain (mobile → desktop sync)
+      with **fingerprint-gated merge** on the desktop side.
+- [ ] Background sync of `library.json` on app foreground.
+- [ ] Genres tab parity with desktop.
+- [ ] Twin grep run on every shared utility (`formatDuration`,
+      `albumKey`, normalize-style helpers, the `Track` type).
+- [ ] Schema-version bump documented and reader updated if the
+      desktop snapshot shape changed.
 
 ## Status
 

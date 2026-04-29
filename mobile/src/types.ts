@@ -24,6 +24,9 @@ export interface Track {
   albumArtist: string
   genre: string
   year: number | string
+  // ⚠️ Unit: MILLISECONDS. Set by src/main/index.ts (durationMs).
+  // See mobile/README.md "Unit contracts" before reading this in any
+  // component. Mobile twin must stay in sync with the desktop type.
   duration: number
   dateAdded: string
   playCount: number
@@ -53,10 +56,30 @@ export interface Playlist {
 }
 
 // Mobile-only mutations the user makes on the device. Synced back to
-// the desktop library on next NAS write window. Keyed by Track.id so
-// reconciliation against the desktop library is fingerprint-stable.
+// the desktop library on the next NAS write window.
+//
+// ⚠️ Identity rule (per docs/postmortems/2026-04-25-verify-repair-cascade):
+// reconciliation MUST gate on identity, not on `trackId` alone.
+// Track.id is reassigned on re-import — a play count queued for
+// id=4709 ("Another Brick in the Wall, Part 1") would silently apply
+// to a totally different song if the user re-imported the album
+// between mobile-play and desktop-merge.
+//
+// The desktop merge MUST verify `audioFingerprint` matches the
+// current track at id=trackId before applying the override. If the
+// fingerprint doesn't match, the override is stale and discarded
+// (logged, not silently dropped — see Phase 1 desktop merge code).
+//
+// `audioFingerprint` is captured from the Track at queue time. If the
+// snapshot doesn't carry one (older desktop builds), the override is
+// recorded but applied conservatively: the desktop falls back to
+// (title, artist, album, duration) — and if that ambiguity bites,
+// the override is dropped, never force-merged.
 export interface MobileTrackOverrides {
   trackId: number
+  // Identity at queue time. SHA-1 + duration; matches the desktop's
+  // computeAudioFingerprint contract.
+  audioFingerprint?: string
   // Set on natural completion (TrackPlayer 'PlaybackQueueEnded' or
   // explicit end-of-track). Skip-ended plays are counted in skipDelta
   // instead, mirroring the desktop's lastPlayedAt vs skipCount split.

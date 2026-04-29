@@ -45,8 +45,10 @@ export function NowPlayingView() {
             <View style={[styles.scrubFill, { width: `${progress * 100}%` }]} />
           </View>
           <View style={styles.scrubLabels}>
-            <Text style={styles.scrubText}>{formatDuration(position)}</Text>
-            <Text style={styles.scrubText}>-{formatDuration(Math.max(0, duration - position))}</Text>
+            {/* useProgress returns SECONDS; formatDuration takes MS.
+                See queueAdapter.ts for the unit-contract note. */}
+            <Text style={styles.scrubText}>{formatDuration(position * 1000)}</Text>
+            <Text style={styles.scrubText}>-{formatDuration(Math.max(0, duration - position) * 1000)}</Text>
           </View>
         </View>
         <View style={styles.transport}>

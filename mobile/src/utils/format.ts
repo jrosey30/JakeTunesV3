@@ -1,15 +1,29 @@
-// Display formatters. ⚠️ TWIN: src/renderer/utils/* on the desktop
-// has equivalents — when one changes (e.g. duration formatting
-// rounding), update both sides in the same commit. Mobile's behavior
-// must match desktop for any value the user can see in both places
-// (a track's duration shouldn't read 3:42 on desktop and 3:43 on
-// mobile).
+// Display formatters.
+//
+// ⚠️ TWIN: src/renderer/views/SongsView.tsx::formatDuration (and 8
+// other near-duplicate copies sprinkled across desktop components —
+// see grep `function formatDuration` in src/renderer/). They all take
+// MILLISECONDS as input. Mobile must too, because the contract on
+// `Track.duration` is set in src/main/index.ts (line ~2126):
+//
+//     durationMs = Math.round((format.duration || 0) * 1000)
+//     ...
+//     duration: durationMs
+//
+// The library JSON the desktop writes carries duration-in-ms. The
+// mobile snapshot reads that JSON. So `formatDuration` here is in the
+// same unit. **Don't** convert at the row level; convert only when
+// crossing into a system that uses different units (TrackPlayer's
+// `useProgress` returns SECONDS — see queueAdapter for the boundary).
+//
+// If you change the rounding/formatting here, update the desktop's
+// copies (they're scattered, but conceptually one twin).
 
-export function formatDuration(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
-  const total = Math.round(seconds)
-  const m = Math.floor(total / 60)
-  const s = total % 60
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '0:00'
+  const totalSeconds = Math.round(ms / 1000)
+  const m = Math.floor(totalSeconds / 60)
+  const s = totalSeconds % 60
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 

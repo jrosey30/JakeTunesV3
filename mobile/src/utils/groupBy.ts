@@ -14,9 +14,23 @@ export interface ArtistGroup {
   trackCount: number
 }
 
-// Stable album key matches the desktop's grouping key shape so the
-// same albums collapse the same way on both clients. Keep these in
-// sync with the desktop's groupBy logic.
+// Album grouping key.
+//
+// ⚠️ NOT a true twin of the desktop's grouping key (which is
+// `${groupArtist}|||${albumKey}` with a `|||` separator and a
+// `.trim()` step on the album side — see
+// src/renderer/views/AlbumsView.tsx and src/renderer/views/ArtistsView.tsx,
+// which themselves use TWO different shapes: `|||` and `::`).
+// Mobile's key is used ONLY for navigation params (Album detail
+// route) — it never crosses the wire. If we ever sync grouping
+// metadata with the desktop or have to merge album-level user state,
+// this needs to be unified across the renderer/mobile boundary in a
+// single canonicalization function with explicit Pt./Part rules
+// (see docs/postmortems/2026-04-25-verify-repair-cascade.md).
+//
+// Until then, the rule is: never compare an albumKey on this side to
+// an albumKey from the desktop. They're both derived locally for
+// local use.
 export function albumKey(track: Track): string {
   const artist = (track.albumArtist || track.artist || 'Unknown').toLowerCase()
   const album = (track.album || 'Unknown').toLowerCase()
