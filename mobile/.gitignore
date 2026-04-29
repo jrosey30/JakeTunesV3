@@ -1,0 +1,43 @@
+# React Native
+node_modules/
+.expo/
+.expo-shared/
+
+# iOS
+ios/Pods/
+ios/build/
+ios/.xcode.env.local
+ios/DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+# Android (not used yet but reserved)
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+
+# Metro
+.metro-health-check*
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build artifacts
+dist/
+build/

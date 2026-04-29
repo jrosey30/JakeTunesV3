@@ -198,3 +198,44 @@ and search. Be surgical when editing it.
 - Listener profile data in Get Info modal
 - Double-click to rename playlists (deferred)
 - Select-all on playlist input focus (deferred)
+
+---
+
+## Mobile (mobile/)
+
+JakeTunes Mobile is the iOS-first React Native client living in
+`mobile/`. It ships as a thin client over the future Synology DS224 —
+the desktop is the source of truth for the library, the NAS is the
+storage layer, the phone is a player. See `mobile/README.md` for the
+full architecture diagram.
+
+**Twin discipline crosses the platform boundary.** `Track`, `Playlist`,
+`formatDuration`, `albumKey`, and the album/artist grouping logic
+exist in both `src/renderer/` and `mobile/src/`. Both sides carry a
+`⚠️ TWIN: <path>` comment. Treat them like any other twin pair: when
+you change one, grep the other in the same commit.
+
+**Never put mobile-only state on `Track`.** Mobile mutations queued on
+the device (play counts, ratings) live in `MobileTrackOverrides` in
+`mobile/src/types.ts`. The desktop owns `Track`'s shape; the mobile
+app is not allowed to extend it.
+
+**The mobile app is its own npm project.** `mobile/package.json` is
+independent — running `npm install` at the repo root does NOT install
+mobile deps. CI and dev flows for the desktop never touch `mobile/`.
+
+**Phase 0 stubs that must be replaced before any build hits a real
+NAS:**
+- `mobile/src/services/secureStore.ts` is in-memory only — replace
+  with `react-native-keychain` before storing a real password.
+- `mobile/src/services/nas/streamUrl.ts` uses File Station for the
+  Audio Station transport — Phase 1 swaps to
+  `SYNO.AudioStation.Stream` for proper id-based streaming.
+
+**Do Not Touch (mobile, without explicit permission):**
+- `mobile/src/types.ts` `Track` interface — desktop is authoritative.
+- `mobile/src/services/playback/playbackService.ts` — runs in a
+  separate JS context; cannot import React or any context.
+- Provider order in `mobile/App.tsx`: Connection → Library → Playback.
+  Library reads from Connection; Playback reads from both. Reordering
+  causes silent null-deref on first render.

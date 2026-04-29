@@ -1,3 +1,9 @@
+// ⚠️ TWIN: mobile/src/types.ts (JakeTunes Mobile). Desktop is the
+// authoritative source for the Track/Playlist shape. When you add a
+// field here that the mobile app needs to display or filter on, add
+// it to the mobile twin too and document the divergence in
+// mobile/README.md. Mobile-only mutations (play counts queued on
+// device) live in MobileTrackOverrides on the mobile side, never here.
 export interface Track {
   id: number
   title: string
