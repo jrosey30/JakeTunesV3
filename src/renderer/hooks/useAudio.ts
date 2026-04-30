@@ -462,53 +462,22 @@ export function useAudio() {
         logAudioEvent('howl.onstop', { title: track.title })
       },
       onpause: () => {
+        // REMOVED in 4.0.12: the auto-resume handler that lived here was
+        // calling howl.play() 200ms after every pause event. That's fine
+        // for the intended Airfoil/device-switch case, but it ALSO fires
+        // when the HTMLAudioElement briefly pauses because the buffer is
+        // starved (mouse-move / disk hiccup / GC pause). The auto-resume
+        // re-triggers buffering, which can stall again, which fires
+        // another onpause, which fires another auto-resume — a feedback
+        // loop that turned a minor underrun into the "broken record"
+        // cascade the user reported. Logging stays so we can still see
+        // the pause if it happens.
         logAudioEvent('howl.onpause', {
           title: track.title,
           isPaused_flag: isPaused,
           react_isPlaying: stateRef.current.isPlaying,
           sharedHowl_match: sharedHowl === howl,
         })
-        // External-pause recovery (Airfoil, audio device switch, AirPods
-        // reconnect, system audio session interruption).
-        //
-        // Howler's onpause fires for ALL pauses — including ones triggered
-        // by macOS Core Audio when a third-party tool (Airfoil, Loopback,
-        // BlackHole) grabs the audio device, or when the user yanks
-        // headphones, or when AirPlay swaps the route. None of those
-        // route through togglePlayPause, so the React state still says
-        // "isPlaying=true" while the underlying <audio> element has
-        // silently paused. UI looks live, audio is dead — exactly the
-        // "plays, then pauses without showing paused" symptom.
-        //
-        // Distinguish user-pause from system-pause via two checks that
-        // both have to disagree with "we should be playing":
-        //   1. `isPaused` (module flag) — set synchronously by
-        //      togglePlayPause BEFORE calling howl.pause(), so by the
-        //      time onpause fires, isPaused === true for user actions.
-        //   2. `state.isPlaying` — the React state, source of truth for
-        //      "what the user wants right now."
-        //
-        // Stale-Howl guard: if we've already swapped to a new track
-        // (sharedHowl !== howl), don't try to resume this dead one.
-        if (sharedHowl !== howl) return
-        if (isPaused) return
-        if (!stateRef.current.isPlaying) return
-        // External pause. Brief settle delay so the audio device has time
-        // to come back if it's mid-route-swap, then resume.
-        setTimeout(() => {
-          if (sharedHowl !== howl) return
-          if (isPaused) return
-          if (!stateRef.current.isPlaying) return
-          try {
-            howl.play()
-            console.log('[Audio] auto-resumed after external pause (Airfoil/device-switch)')
-          } catch (err) {
-            console.warn('[Audio] auto-resume failed:', err)
-            // Sync the UI to actual state so the user can hit play again.
-            isPaused = true
-            dispatchRef.current({ type: 'PAUSE' })
-          }
-        }, 200)
       },
       onend: () => {
         logAudioEvent('howl.onend', { title: track.title })
@@ -616,28 +585,9 @@ export function useAudio() {
         next.once('end', () => {
           runNaturalEndRef.current?.(nt, next, nextEndedHolder)
         })
-        // External-pause recovery on the promoted Howl. Same Airfoil/
-        // device-switch case as the main loadAndPlay onpause — the
-        // gapless-promoted Howl wasn't constructed via the main path
-        // so it doesn't share that handler. Attach one explicitly.
-        next.on('pause', () => {
-          if (sharedHowl !== next) return
-          if (isPaused) return
-          if (!stateRef.current.isPlaying) return
-          setTimeout(() => {
-            if (sharedHowl !== next) return
-            if (isPaused) return
-            if (!stateRef.current.isPlaying) return
-            try {
-              next.play()
-              console.log('[Audio] auto-resumed gapless-promoted Howl after external pause')
-            } catch (err) {
-              console.warn('[Audio] gapless auto-resume failed:', err)
-              isPaused = true
-              dispatchRef.current({ type: 'PAUSE' })
-            }
-          }, 200)
-        })
+        // REMOVED in 4.0.12: the matching auto-resume handler on the
+        // gapless-promoted Howl. Same feedback-loop reason as the main
+        // path. See onpause comment above.
         // Unload the just-finished Howl, promote the preload to shared.
         try { howl.unload() } catch { /* ignore */ }
         sharedHowl = next
