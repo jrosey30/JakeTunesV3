@@ -297,7 +297,17 @@ async function persistOverrideFields(
   }
   overrides[key] = entry
   await mkdir(app.getPath('userData'), { recursive: true })
-  await writeFile(overridesPath, JSON.stringify(overrides, null, 2), 'utf-8')
+  // Atomic write: writeFile is NOT atomic and races between two callers
+  // (analysis worker + manual override save, or two analysis jobs back to
+  // back) can clobber the file mid-write — leaving a tail of leftover
+  // bytes from the previous version after the new content. We saw this
+  // exact corruption ("Extra data" parse error) tonight when an external
+  // backfill script wrote concurrently with the running app. Write to a
+  // sibling .tmp, then rename — POSIX rename is atomic.
+  const tmpPath = overridesPath + '.tmp'
+  await writeFile(tmpPath, JSON.stringify(overrides, null, 2), 'utf-8')
+  const { rename } = await import('fs/promises')
+  await rename(tmpPath, overridesPath)
 }
 
 async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
@@ -3969,7 +3979,12 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   }
   overrides[key] = entry
   await mkdir(join(app.getPath('userData')), { recursive: true })
-  await writeFile(path, JSON.stringify(overrides, null, 2), 'utf-8')
+  // Atomic write — see persistOverrideFields for why direct writeFile
+  // races between concurrent callers and corrupts the file.
+  const tmpPath = path + '.tmp'
+  await writeFile(tmpPath, JSON.stringify(overrides, null, 2), 'utf-8')
+  const { rename } = await import('fs/promises')
+  await rename(tmpPath, path)
   return { ok: true }
 })
 

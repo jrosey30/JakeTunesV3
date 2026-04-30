@@ -327,13 +327,18 @@ export default function MusicManView() {
   }, [metaScanning, libState.tracks])
 
   // Audio analysis backfill (4.0 §2.4b). Resume-on-restart is automatic:
-  // the filter excludes tracks that already have audioAnalysisAt, so a
-  // cancel + restart picks up where the previous run left off. Each
-  // analyze-track IPC call persists immediately, so a crash mid-loop
-  // doesn't lose work.
+  // the filter excludes tracks that have BOTH a timestamp AND a bpm
+  // (i.e. tracks that succeeded). Tracks where analysis ran but
+  // produced no bpm — librosa failed for whatever transient reason —
+  // are surfaced for retry on the next button click. Without this, a
+  // single failed run permanently flagged 38 tracks as "analyzed" with
+  // no actual data; the button would then say "All tracks analyzed"
+  // and there was no way to retry short of clearing audioAnalysisAt by
+  // hand. (Each analyze-track IPC call persists immediately, so a
+  // crash mid-loop doesn't lose work.)
   const runAudioAnalysisBackfill = useCallback(async () => {
     if (analysisRunning) return
-    const tracksToAnalyze = libState.tracks.filter(t => !t.audioAnalysisAt && t.path)
+    const tracksToAnalyze = libState.tracks.filter(t => t.path && (!t.audioAnalysisAt || !t.bpm))
     if (tracksToAnalyze.length === 0) {
       setAnalysisStatus('All tracks already analyzed.')
       setTimeout(() => setAnalysisStatus(null), 4000)
@@ -394,7 +399,10 @@ export default function MusicManView() {
     for (const t of libState.tracks) {
       if (!t.path) continue
       total++
-      if (t.audioAnalysisAt) analyzed++
+      // "Analyzed" means both timestamp set AND bpm produced. Tracks
+      // where librosa failed (timestamp set, no bpm) count as remaining
+      // so the user has a path to retry them.
+      if (t.audioAnalysisAt && t.bpm) analyzed++
     }
     return { analyzed, total, remaining: total - analyzed }
   }, [libState.tracks])
