@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { Track, MetadataIssue, ChatConversation, RestoreScanResult, RestoreApplyResult, RestoreDiff } from '../types'
 import musicmanAvatar from '../assets/musicman-avatar.png'
@@ -91,6 +92,9 @@ interface Recommendation {
 export default function MusicManView() {
   const { state: libState, dispatch } = useLibrary()
   const { playTrack } = useAudio()
+  const { state: pbState } = usePlayback()
+  const pbStateRef = useRef(pbState)
+  pbStateRef.current = pbState
   const [activeTab, setActiveTab] = useState<Tab>('Ask Me Anything')
   const [chatInput, setChatInput] = useState('')
   const [playlistInput, setPlaylistInput] = useState('')
@@ -353,6 +357,17 @@ export default function MusicManView() {
     let failCount = 0
     for (let i = 0; i < tracksToAnalyze.length; i++) {
       if (analysisCancelRef.current) break
+      // Yield to playback. Files live on iPod-USB; librosa's spawn
+      // and the audio decoder share the same bus, so an analysis run
+      // during playback produces "broken record" stutter on output.
+      // Sleep in 2-second chunks while playing, re-check cancel each
+      // iteration so the user can still abort.
+      while (pbStateRef.current.isPlaying) {
+        setAnalysisStatus('Paused — playback active')
+        await new Promise(r => setTimeout(r, 2000))
+        if (analysisCancelRef.current) return
+      }
+      setAnalysisStatus(null)
       const t = tracksToAnalyze[i]
       setAnalysisProgress({ current: i + 1, total: tracksToAnalyze.length, trackTitle: t.title || t.path })
       const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`

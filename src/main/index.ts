@@ -241,6 +241,18 @@ interface AudioAnalysisJob {
 const audioAnalysisQueue: AudioAnalysisJob[] = []
 let audioAnalysisRunning = false
 
+// Renderer pings this when isPlaying changes so background workers
+// (audio analysis, ALAC prewarm) can yield while playback is live.
+// Files live on the iPod (USB-mounted), so a librosa scan or ffmpeg
+// transcode reading from /Volumes/JakeTunes saturates the same USB
+// bus that's feeding the audio decoder — buffer underruns surface as
+// a "broken record" stutter on output. Defer everything heavy until
+// playback stops.
+let playbackActive = false
+ipcMain.on('set-playback-active', (_e, active: boolean) => {
+  playbackActive = !!active
+})
+
 function getAudioAnalysisScriptPath(): string {
   return join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/audio_analysis.py')
 }
@@ -336,6 +348,12 @@ async function audioAnalysisWorker(): Promise<void> {
   audioAnalysisRunning = true
   try {
     while (audioAnalysisQueue.length > 0) {
+      // Yield to playback. Files live on iPod-USB; librosa pulls the
+      // whole file at decode speed and competes with the playback
+      // stream on the same bus. Defer until playback stops.
+      while (playbackActive) {
+        await new Promise(r => setTimeout(r, 2000))
+      }
       const job = audioAnalysisQueue.shift()!
       try {
         await processAudioAnalysisJob(job)
@@ -931,6 +949,20 @@ async function schedulePrewarmFromLibrary(tracks: Array<{ path?: string }>): Pro
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
   const PLAY_CACHE = join(app.getPath('userData'), 'play-cache')
+
+  // Skip prewarm entirely when the source mount is a removable volume
+  // (i.e., the iPod). Prewarm transcodes ALAC→AAC into a local cache so
+  // first-play is instant; the cost is reading the source file at
+  // decode speed via ffmpeg, which on USB-mounted iPod competes with
+  // playback I/O and produces "broken record" stutter on the active
+  // playback stream. The benefit (instant first-play) doesn't outweigh
+  // that cost when the source is already too slow to predictably feed
+  // playback in the first place. Local-mount installs (where MUSIC_DIR
+  // points at internal disk) keep prewarm.
+  if (LOCAL_MOUNT.startsWith('/Volumes/') || (IS_WINDOWS && /^[A-Z]:[/\\]/.test(LOCAL_MOUNT) && !LOCAL_MOUNT.toLowerCase().startsWith('c:'))) {
+    console.log(`[prewarm] skipped — source mount is ${LOCAL_MOUNT} (removable / USB; would compete with playback I/O)`)
+    return
+  }
 
   const candidates: string[] = []
   for (const t of tracks) {

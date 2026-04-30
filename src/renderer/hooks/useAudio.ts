@@ -171,6 +171,18 @@ export function useAudio() {
   const tracksRef = useRef(libState.tracks)
   tracksRef.current = libState.tracks
 
+  // Notify main when isPlaying changes so background workers (audio
+  // analysis, ALAC prewarm — both heavy I/O on iPod-USB sources) can
+  // yield while playback is live. Fire-and-forget IPC — preload
+  // exposes setPlaybackActive as one-way send.
+  useEffect(() => {
+    const api = window.electronAPI as Record<string, unknown> | undefined
+    const fn = api && typeof api.setPlaybackActive === 'function'
+      ? api.setPlaybackActive as (active: boolean) => void
+      : null
+    fn?.(state.isPlaying)
+  }, [state.isPlaying])
+
   // Held by refs so updatePosition can call them without forming
   // circular useCallback dep cycles back through loadAndPlay (which
   // itself depends on updatePosition).
