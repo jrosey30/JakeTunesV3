@@ -28,6 +28,51 @@ let sharedHowl: Howl | null = null
 let sharedRaf = 0
 let isPaused = false
 let autoDjMode = false
+
+// ── Diagnostic ring buffer (4.0.9) ──────────────────────────────────────
+// Capture the last 50 audio-pipeline events so when "music stops playing"
+// happens, we can pull recent events with one command instead of guessing.
+// Type `__audioLog()` in the dev console to dump.
+interface AudioLogEntry { t: number; ev: string; detail?: unknown }
+const audioLogBuffer: AudioLogEntry[] = []
+function logAudioEvent(ev: string, detail?: unknown) {
+  audioLogBuffer.push({ t: Date.now(), ev, detail })
+  if (audioLogBuffer.length > 50) audioLogBuffer.shift()
+  // Skip the very chatty position-tick events from console output but
+  // keep the structural ones. Everything still lands in the buffer.
+  if (ev !== 'tick') console.log('[Audio]', ev, detail ?? '')
+}
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__audioLog = () => {
+    console.table(audioLogBuffer.map(e => ({
+      ms_ago: Date.now() - e.t,
+      time: new Date(e.t).toISOString().slice(11, 23),
+      event: e.ev,
+      detail: typeof e.detail === 'object' ? JSON.stringify(e.detail) : e.detail,
+    })))
+    return audioLogBuffer
+  }
+}
+
+// Native HTMLAudioElement events that explain "audio stopped" cases
+// Howler doesn't surface. Attached to the underlying <audio> element
+// once Howler has loaded (we grab it from howl._sounds[0]._node).
+const NATIVE_AUDIO_EVENTS = ['stalled', 'suspend', 'waiting', 'error', 'emptied', 'abort', 'canplay', 'playing'] as const
+function attachNativeListeners(howl: Howl, label: string) {
+  type HowlInternal = Howl & { _sounds?: Array<{ _node?: HTMLAudioElement }> }
+  const node = (howl as HowlInternal)._sounds?.[0]?._node
+  if (!node) {
+    logAudioEvent(`${label}.no-native-node`)
+    return
+  }
+  for (const ev of NATIVE_AUDIO_EVENTS) {
+    node.addEventListener(ev, () => {
+      const detail = ev === 'error' ? { code: node.error?.code, msg: node.error?.message } : undefined
+      logAudioEvent(`${label}.native:${ev}`, detail)
+    })
+  }
+}
+
 export function setAutoDjMode(on: boolean) {
   console.log('[Audio] autoDjMode:', on)
   autoDjMode = on
@@ -361,11 +406,15 @@ export function useAudio() {
       loop: false,
       volume: startVolume,
       onplay: () => {
+        logAudioEvent('howl.onplay', { title: track.title, url: url.slice(0, 80) })
         // EQ tap: bind the underlying HTMLAudioElement to the Web Audio
         // chain. Idempotent + a no-op when EQ is disabled. Done in onplay
         // (not after construction) because Howler's _sounds[0]._node
         // isn't populated until the element starts decoding.
         attachHowlToEq(howl)
+        // Native listeners — attached on first play because the
+        // _sounds[0]._node element isn't populated until decode begins.
+        attachNativeListeners(howl, 'main')
         if (asCrossfade) {
           // The rAF loop is already running; updatePosition will pick
           // up this Howl on its next tick. Don't dispatch SET_DURATION
@@ -377,7 +426,19 @@ export function useAudio() {
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         sharedRaf = requestAnimationFrame(updatePosition)
       },
+      onplayerror: (_id: number, err: unknown) => {
+        logAudioEvent('howl.onplayerror', { err: String(err), title: track.title })
+      },
+      onstop: () => {
+        logAudioEvent('howl.onstop', { title: track.title })
+      },
       onpause: () => {
+        logAudioEvent('howl.onpause', {
+          title: track.title,
+          isPaused_flag: isPaused,
+          react_isPlaying: stateRef.current.isPlaying,
+          sharedHowl_match: sharedHowl === howl,
+        })
         // External-pause recovery (Airfoil, audio device switch, AirPods
         // reconnect, system audio session interruption).
         //
@@ -421,9 +482,11 @@ export function useAudio() {
         }, 200)
       },
       onend: () => {
+        logAudioEvent('howl.onend', { title: track.title })
         runNaturalEndRef.current?.(track, howl, endedHolder)
       },
       onloaderror: (_id: number, err: unknown) => {
+        logAudioEvent('howl.onloaderror', { err: String(err), url: url.slice(0, 80) })
         console.error('Audio load error:', err, url)
       }
     })
