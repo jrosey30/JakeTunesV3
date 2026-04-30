@@ -28,6 +28,9 @@ let sharedHowl: Howl | null = null
 let sharedRaf = 0
 let isPaused = false
 let autoDjMode = false
+// Throttle clock for SET_POSITION dispatches — see updatePosition.
+// 100ms = 10Hz UI updates, way less render-thread pressure than 60Hz.
+let lastPositionDispatchMs = 0
 
 // ── Diagnostic ring buffer (4.0.9) ──────────────────────────────────────
 // Capture the last 50 audio-pipeline events so when "music stops playing"
@@ -245,11 +248,25 @@ export function useAudio() {
       (outgoingHowl && outgoingHowl.playing()) ? outgoingHowl :
       null
     if (positionHowl) {
-      const pos = positionHowl.seek() as number
-      dispatchRef.current({ type: 'SET_POSITION', position: pos })
-      const dur = positionHowl.duration()
-      if (dur > 0) {
-        dispatchRef.current({ type: 'SET_DURATION', duration: dur })
+      // Throttle SET_POSITION dispatch to 10Hz. The rAF loop fires at
+      // 60Hz, and dispatching a React state update every frame forces
+      // 60 re-renders per second on the renderer thread — which is the
+      // same thread Howler's html5: true HTMLAudioElement decodes audio
+      // on. When the user moves the mouse / scrolls / interacts at the
+      // same time, the thread saturates and the audio decoder runs out
+      // of buffered samples → "broken record" stutter on output.
+      // Visually, 10Hz position-bar updates are indistinguishable from
+      // 60Hz to the human eye (the bar advances ~6px per tick at
+      // typical widths, well under the perceptual flicker threshold).
+      const now = Date.now()
+      if (now - lastPositionDispatchMs >= 100) {
+        const pos = positionHowl.seek() as number
+        dispatchRef.current({ type: 'SET_POSITION', position: pos })
+        const dur = positionHowl.duration()
+        if (dur > 0) {
+          dispatchRef.current({ type: 'SET_DURATION', duration: dur })
+        }
+        lastPositionDispatchMs = now
       }
     }
 
