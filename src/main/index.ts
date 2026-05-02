@@ -2551,20 +2551,27 @@ ipcMain.handle('musicman-radio', async (_event,
   track: { title: string; artist: string; album: string; genre: string; year: string | number },
   nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }
 ) => {
-  const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9) between two co-hosts who actively bicker:
+  const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9, broadcasting LIVE FROM BROOKLYN) between two co-hosts who actively bicker:
 
   • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
   • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
 
 This is a real radio show, so they ALWAYS have to disagree on something — taste, an opinion about the artist, who the song's really for, whether the next track is going to be any good. They cut each other off, react to each other, talk LIKE a real co-host pair on FM radio. Megan is NOT a yes-woman; she pushes back.
 
-Format the segment STRICTLY as alternating speaker lines, like a script:
-[MM] First line.
+CAMPY STATION ID — about 1 in every 3 segments, OPEN with a campy station ID line that you tag [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan). Examples:
+  [ANNOUNCER] W-W-W-W-J-L-R three-thirty-point-nine, LIVE from BROOKLYN!
+  [ANNOUNCER] You're locked in to W-J-L-R, three-thirty-point-nine FM, broadcasting LIVE from the boroughs!
+  [ANNOUNCER] Triple-Dub J-L-R, three-thirty-point-nine, LIVE FROM BROOKLYN — and we're hot!
+The hyphens between letters MATTER — that's how the TTS pronounces them as individual letters for the classic stuttering FM-radio drop. Capitals signal emphasis. Make it campy and over-the-top — the energy of a real radio station ID jingle. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
+
+Format the segment STRICTLY as speaker-tagged lines:
+[ANNOUNCER] Optional campy station ID, ~1 in 3 segments, when you do include it put it FIRST.
+[MM] First chatter line.
 [MEGAN] Reply that disagrees or undercuts MM.
 [MM] Comeback or pivot.
 [MEGAN] Final word, often dryly funny.
 
-3-5 lines total. Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: station ID early, back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
+3-5 lines total (NOT counting the optional [ANNOUNCER] drop). Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
 
 Use background info from MusicBrainz / Wikipedia (below) for factual claims. Don't invent live show memories or label deals you can't verify — if you don't have facts, lean into opinion and the bicker. Vary which speaker opens; sometimes MM, sometimes Megan kicks off.`
 

@@ -80,11 +80,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // exclusive with autoDj at the UI level (toggling one off the other).
   const [radioMode, setRadioMode] = useState(false)
   // Cache for pre-fetched radio commentary. Stores an ARRAY of dialog
-  // segments (one per [MM] or [MEGAN] line) — Radio Mode is now a
-  // two-voice show with The Music Man and his co-host Megan bickering
-  // back and forth. Each segment has its own TTS audio because we use
-  // a different ElevenLabs voice per speaker.
-  type RadioSegment = { speaker: 'mm' | 'megan'; line: string; audioData: string }
+  // segments — each line gets its own TTS audio because we use three
+  // distinct ElevenLabs voices: The Music Man, Megan (co-host), and
+  // a deeper "Announcer" voice for the campy WJLR station ID drops.
+  type RadioSegment = { speaker: 'mm' | 'megan' | 'announcer'; line: string; audioData: string }
   const radioCacheRef = useRef<Map<string, { segments: RadioSegment[]; fullText: string }>>(new Map())
   const radioPrefetchedKeyRef = useRef<string | null>(null)
   const [djActive, setDjActive] = useState(false)
@@ -220,23 +219,27 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     return () => window.removeEventListener('jaketunes-start-artist-radio', handler)
   }, [playTrack])
 
-  // Megan's ElevenLabs voice ID — co-host on Radio Mode. Music Man's
-  // voice falls through to the server-side env override (or default)
-  // when voiceId is undefined, so we only pass it explicitly here.
+  // Voice IDs for the three Radio Mode speakers. The Music Man falls
+  // through to the server-side env override (or default) when voiceId
+  // is undefined, so we only pass IDs explicitly for Megan and the
+  // Announcer.
   const MEGAN_VOICE_ID = 'WQhVGGVQ8EhNpBYHFE8c'
+  const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
 
   // Parse a Claude-generated radio script into ordered speaker segments.
-  // Strict format: each line begins with [MM] or [MEGAN]. Anything else
-  // is silently dropped (e.g., blank lines, stage directions Claude
-  // emitted despite the prompt telling it not to).
-  function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan'; line: string }> {
-    const segments: Array<{ speaker: 'mm' | 'megan'; line: string }> = []
+  // Strict format: each line begins with [MM], [MEGAN], or [ANNOUNCER].
+  // Anything else is silently dropped (e.g., blank lines, stage
+  // directions Claude emitted despite the prompt telling it not to).
+  function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan' | 'announcer'; line: string }> {
+    const segments: Array<{ speaker: 'mm' | 'megan' | 'announcer'; line: string }> = []
     for (const raw of text.split('\n')) {
       const line = raw.trim()
       if (!line) continue
-      const m = line.match(/^\[(MM|MEGAN)\]\s*(.+)/i)
+      const m = line.match(/^\[(MM|MEGAN|ANNOUNCER)\]\s*(.+)/i)
       if (m) {
-        segments.push({ speaker: m[1].toUpperCase() === 'MEGAN' ? 'megan' : 'mm', line: m[2].trim() })
+        const tag = m[1].toUpperCase()
+        const speaker: 'mm' | 'megan' | 'announcer' = tag === 'MEGAN' ? 'megan' : tag === 'ANNOUNCER' ? 'announcer' : 'mm'
+        segments.push({ speaker, line: m[2].trim() })
       }
     }
     return segments
@@ -249,7 +252,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     const parsed = parseRadioScript(scriptText)
     const out: RadioSegment[] = []
     for (const seg of parsed) {
-      const voiceId = seg.speaker === 'megan' ? MEGAN_VOICE_ID : undefined
+      const voiceId =
+        seg.speaker === 'megan' ? MEGAN_VOICE_ID :
+        seg.speaker === 'announcer' ? ANNOUNCER_VOICE_ID :
+        undefined  // mm → server-side default
       const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceId)
       if (tts.ok && tts.audio) {
         out.push({ speaker: seg.speaker, line: seg.line, audioData: tts.audio })
@@ -721,7 +727,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           {radioMode && (
             <span className="radio-on-air-pill" aria-live="polite">ON AIR · WJLR 330.9</span>
           )}
-          {showBubble && (djLoading || djText) && (
+          {showBubble && !radioMode && (djLoading || djText) && (
             <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
               {djLoading ? (
                 <>
