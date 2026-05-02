@@ -283,43 +283,69 @@ function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
   })
 }
 
-// Write multiple override fields in a single file write. Mirrors the
-// existing save-metadata-override IPC handler (~line 3639) but takes a
-// fields-map so the analysis worker doesn't trigger N separate writes.
+// 4.1.1: Serialized read-modify-write through a single Promise chain.
+// Without this, the analysis worker writing a BPM and a record-play IPC
+// firing at the same time (which happens whenever the user is listening
+// to music while analysis runs) BOTH:
+//   • opened the same overridesPath+'.tmp' file simultaneously, writing
+//     interleaved bytes → corrupt tmp → atomic rename publishes corrupt
+//     overrides → JSON.parse fails → JakeTunes treats overrides as
+//     empty → the user's hours of bpm data look "reset"
+//   • read overridesPath at the same time → both compute their next
+//     state from the same input → whichever writes second clobbers the
+//     other's change → silent data loss
+// Fix: chain every write off the previous one. Only one read-modify-
+// write operation is in flight at a time. Serial throughput is fine
+// (each op is sub-millisecond on local SSD) — well under the rate at
+// which the worker + ipc handlers can produce updates.
+let overridesWriteChain: Promise<void> = Promise.resolve()
+function writeOverridesSerialized(mutate: (current: Record<string, unknown>) => Record<string, unknown>): Promise<void> {
+  const job = overridesWriteChain.then(async () => {
+    const overridesPath = join(app.getPath('userData'), 'metadata-overrides.json')
+    let current: Record<string, unknown> = {}
+    try {
+      const data = await readFile(overridesPath, 'utf-8')
+      current = JSON.parse(data)
+      if (!current || typeof current !== 'object' || Array.isArray(current)) current = {}
+    } catch { /* file may not exist yet, or it's corrupt — start clean */ }
+    const next = mutate(current)
+    await mkdir(app.getPath('userData'), { recursive: true })
+    // Unique .tmp filename per write — even if two write chains somehow
+    // run concurrently (they shouldn't given the chain, but defense in
+    // depth), each gets its own tmp file so writes never interleave.
+    const tmpPath = `${overridesPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
+    await writeFile(tmpPath, JSON.stringify(next, null, 2), 'utf-8')
+    const { rename } = await import('fs/promises')
+    await rename(tmpPath, overridesPath)
+  }).catch((err) => {
+    console.warn('[overrides] serialized write failed:', err instanceof Error ? err.message : err)
+  })
+  // The chain advances regardless of whether THIS job succeeded — failures
+  // are logged but don't block subsequent writes (otherwise one bad job
+  // would jam every future override save).
+  overridesWriteChain = job
+  return job
+}
+
+// Write multiple override fields in a single file write. Used by the
+// analysis worker. Goes through writeOverridesSerialized so it can't
+// race with save-metadata-override or another concurrent analysis job.
 async function persistOverrideFields(
   trackId: number,
   fields: Record<string, string>,
   fingerprint: string,
 ): Promise<void> {
-  const overridesPath = join(app.getPath('userData'), 'metadata-overrides.json')
-  let overrides: Record<string, unknown> = {}
-  try {
-    const data = await readFile(overridesPath, 'utf-8')
-    overrides = JSON.parse(data)
-  } catch { /* file may not exist yet */ }
-
-  const key = String(trackId)
-  const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
-  const isV2 = existing && typeof existing === 'object' && 'fields' in existing
-  let entry: { fp: string; fields: Record<string, string> }
-  if (isV2 && existing!.fp && existing!.fp === fingerprint) {
-    entry = { fp: existing!.fp, fields: { ...(existing!.fields || {}), ...fields } }
-  } else {
-    entry = { fp: fingerprint || '', fields: { ...fields } }
-  }
-  overrides[key] = entry
-  await mkdir(app.getPath('userData'), { recursive: true })
-  // Atomic write: writeFile is NOT atomic and races between two callers
-  // (analysis worker + manual override save, or two analysis jobs back to
-  // back) can clobber the file mid-write — leaving a tail of leftover
-  // bytes from the previous version after the new content. We saw this
-  // exact corruption ("Extra data" parse error) tonight when an external
-  // backfill script wrote concurrently with the running app. Write to a
-  // sibling .tmp, then rename — POSIX rename is atomic.
-  const tmpPath = overridesPath + '.tmp'
-  await writeFile(tmpPath, JSON.stringify(overrides, null, 2), 'utf-8')
-  const { rename } = await import('fs/promises')
-  await rename(tmpPath, overridesPath)
+  await writeOverridesSerialized((overrides) => {
+    const key = String(trackId)
+    const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
+    const isV2 = existing && typeof existing === 'object' && 'fields' in existing
+    if (isV2 && existing!.fp && existing!.fp === fingerprint) {
+      overrides[key] = { fp: existing!.fp, fields: { ...(existing!.fields || {}), ...fields } }
+    } else {
+      overrides[key] = { fp: fingerprint || '', fields: { ...fields } }
+    }
+    return overrides
+  })
 }
 
 async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
@@ -3939,29 +3965,21 @@ ipcMain.handle('load-metadata-overrides', async () => {
 // Legacy entries are kept on disk but the renderer ignores them (can't
 // validate), which is what we want after the wrong-overrides incident.
 ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
-  const path = getOverridesPath()
-  let overrides: Record<string, unknown> = {}
-  try {
-    const data = await readFile(path, 'utf-8')
-    overrides = JSON.parse(data)
-  } catch {}
-  const key = String(trackId)
-  const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
-  const isV2 = existing && typeof existing === 'object' && 'fields' in existing
-  let entry: { fp: string; fields: Record<string, string> }
-  if (isV2 && existing!.fp && existing!.fp === fingerprint) {
-    entry = { fp: existing!.fp, fields: { ...(existing!.fields || {}), [field]: value } }
-  } else {
-    entry = { fp: fingerprint || '', fields: { [field]: value } }
-  }
-  overrides[key] = entry
-  await mkdir(join(app.getPath('userData')), { recursive: true })
-  // Atomic write — see persistOverrideFields for why direct writeFile
-  // races between concurrent callers and corrupts the file.
-  const tmpPath = path + '.tmp'
-  await writeFile(tmpPath, JSON.stringify(overrides, null, 2), 'utf-8')
-  const { rename } = await import('fs/promises')
-  await rename(tmpPath, path)
+  // Routed through the serialized writer so this can't race with the
+  // analysis worker's persistOverrideFields. Both go through the same
+  // single-flight Promise chain — no shared tmp filename, no
+  // interleaved writes, no lost updates.
+  await writeOverridesSerialized((overrides) => {
+    const key = String(trackId)
+    const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
+    const isV2 = existing && typeof existing === 'object' && 'fields' in existing
+    if (isV2 && existing!.fp && existing!.fp === fingerprint) {
+      overrides[key] = { fp: existing!.fp, fields: { ...(existing!.fields || {}), [field]: value } }
+    } else {
+      overrides[key] = { fp: fingerprint || '', fields: { [field]: value } }
+    }
+    return overrides
+  })
   return { ok: true }
 })
 
