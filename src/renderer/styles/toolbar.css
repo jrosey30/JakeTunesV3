@@ -456,22 +456,37 @@
   50%      { box-shadow: 0 0 14px rgba(209,31,46,0.85), 0 0 24px rgba(209,31,46,0.4),  0 2px 4px rgba(0,0,0,0.2); }
 }
 
-/* Tiny red recording-style dot inside the button when on, just for an
- * extra-clear "this thing is live" cue at a glance. */
-.radio-on-air-dot {
+/* Broadcasting-wave animation when Radio Mode is on.
+ *
+ * Three concentric rings emanate outward from the button center,
+ * staggered 0.4s apart so a new wave is always being born as the
+ * previous one fades out — gives the continuous "the tower is
+ * actively broadcasting RIGHT NOW" feel the user asked for, instead
+ * of a static dot. Pure CSS pseudo-element-style spans positioned
+ * absolutely on top of the button.
+ */
+.radio-wave {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 6px;
-  height: 6px;
+  top: 50%;
+  left: 50%;
+  width: 30px;
+  height: 30px;
+  margin-top: -15px;
+  margin-left: -15px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 4px rgba(255,255,255,0.8);
-  animation: radio-on-air-dot-blink 1.2s ease-in-out infinite;
+  border: 1.5px solid rgba(255,255,255,0.9);
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.6);
+  animation: radio-wave-pulse 1.8s ease-out infinite;
 }
-@keyframes radio-on-air-dot-blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.3; }
+.radio-wave--2 { animation-delay: 0.6s; }
+.radio-wave--3 { animation-delay: 1.2s; }
+
+@keyframes radio-wave-pulse {
+  0%   { transform: scale(0.6); opacity: 0.9; border-color: rgba(255,255,255,0.95); }
+  60%  { opacity: 0.45; }
+  100% { transform: scale(1.85); opacity: 0; border-color: rgba(255,255,255,0); }
 }
 
 /* "ON AIR · WJLR 330.9" pill that sits next to the button when Radio
@@ -505,10 +520,13 @@
   opacity: 0.5;
 }
 
-/* DJ button wrapper */
+/* DJ button wrapper. 8px gap between mode buttons (DJ Mode + Radio Mode)
+ * so they read as separate controls, not a stacked toggle group. */
 .dj-btn-wrapper {
   position: relative;
   display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Spinning ring while loading */

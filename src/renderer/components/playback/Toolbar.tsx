@@ -701,13 +701,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         <NowPlaying />
         <div className="dj-btn-wrapper">
           <button
-            className={`transport-toggle dj-btn ${djActive && !djModeActive ? 'dj-btn--active' : ''} ${djLoading && !djModeActive ? 'dj-btn--loading' : ''}`}
-            onClick={handleDjClick}
-            onContextMenu={(e) => { e.preventDefault(); setShowBubble(s => !s) }}
-            disabled={!pb.nowPlaying}
-            title="Music Man comment (right-click: toggle bubble)"
+            className="transport-toggle dj-btn dj-mode-btn"
+            disabled
+            title="DJ Mode — coming soon (beatmatched / Camelot-mixed continuous music, no commentary)"
           >
-            <MicIcon />
+            <VinylIcon />
           </button>
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
@@ -715,31 +713,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             title={radioMode ? 'Radio Mode is ON — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode — click to start WJLR 330.9 (whole library shuffled, MM + Megan banter)'}
           >
             <RadioIcon />
-            {radioMode && <span className="radio-on-air-dot" aria-hidden="true" />}
-          </button>
-          <button
-            className="transport-toggle dj-btn dj-mode-btn"
-            disabled
-            title="DJ Mode — coming soon (beatmatched / Camelot-mixed continuous music, no commentary)"
-          >
-            <VinylIcon />
+            {radioMode && (
+              <>
+                <span className="radio-wave radio-wave--1" aria-hidden="true" />
+                <span className="radio-wave radio-wave--2" aria-hidden="true" />
+                <span className="radio-wave radio-wave--3" aria-hidden="true" />
+              </>
+            )}
           </button>
           {radioMode && (
             <span className="radio-on-air-pill" aria-live="polite">ON AIR · WJLR 330.9</span>
-          )}
-          {showBubble && !radioMode && (djLoading || djText) && (
-            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
-              {djLoading ? (
-                <>
-                  <span className="dj-bubble-label">The Music Man</span>{' '}
-                  <span className="dj-loading-dots">is listening</span>
-                </>
-              ) : (
-                <>
-                  <span className="dj-bubble-label">The Music Man:</span> {djText}
-                </>
-              )}
-            </div>
           )}
         </div>
       </div>

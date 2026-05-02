@@ -2486,9 +2486,16 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
         text,
         model_id: model,
         voice_settings: {
-          stability: 0.4,
+          // Lower stability + higher style = more emotional, theatrical
+          // delivery. The Radio Mode prompt now writes lines with
+          // capitals / exclamations / ellipses / em-dashes specifically
+          // to drive expressive delivery; the voice settings need to
+          // honor that. 4.2.0 was at style=0.3 (relatively flat) and
+          // user feedback was the hosts didn't sound passionate enough
+          // when delivering hot takes.
+          stability: 0.35,
           similarity_boost: 0.75,
-          style: 0.3,
+          style: 0.55,
         }
       })
     })
@@ -2547,16 +2554,31 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
 // `musicman-dj` (which is the casual one-shot mic-click commentary)
 // because Radio Mode runs continuously between every track and needs a
 // stylistically consistent voice.
+//
+// `opener=true` flips the prompt into "welcome to the show" mode for
+// the very first segment when the user clicks Radio on. Without this
+// the show feels like it starts mid-sentence.
 ipcMain.handle('musicman-radio', async (_event,
   track: { title: string; artist: string; album: string; genre: string; year: string | number },
-  nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }
+  nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number },
+  opener?: boolean
 ) => {
+  const segmentMode = opener
+    ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in. ALWAYS lead with a campy [ANNOUNCER] station ID drop. Then MM and Megan welcome the listener, set the energy, and tee up the first track.`
+    : `${nextTrack ? "You're transitioning between songs in a continuous broadcast." : 'A song is currently on the air.'}`
+
   const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9, broadcasting LIVE FROM BROOKLYN) between two co-hosts who actively bicker:
 
   • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
   • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
 
+${segmentMode}
+
 This is a real radio show, so they ALWAYS have to disagree on something — taste, an opinion about the artist, who the song's really for, whether the next track is going to be any good. They cut each other off, react to each other, talk LIKE a real co-host pair on FM radio. Megan is NOT a yes-woman; she pushes back.
+
+LANGUAGE — they're real broadcast personalities, not a corporate playlist host. Drop natural profanity when it earns its place: "this song fucking slaps", "goddamn masterpiece", "shit-hot pick", "hell of a record". Don't be gratuitous, but DON'T sand them flat either. Megan especially uses sharper language when calling MM out.
+
+EMOTION — when either of them has a HOT TAKE or hits an emotional / passionate moment, write it that way. Capitalize the word they'd PUNCH. Use exclamation marks for genuine excitement. Use ellipses... for dramatic, stretched pauses. Use em-dashes — for cut-offs and overlapping reactions. The TTS reads punctuation directly into delivery, so write the way you want them to SOUND.
 
 CAMPY STATION ID — about 1 in every 3 segments, OPEN with a campy station ID line that you tag [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan). Examples:
   [ANNOUNCER] W-W-W-W-J-L-R three-thirty-point-nine, LIVE from BROOKLYN!
@@ -2582,10 +2604,15 @@ Use background info from MusicBrainz / Wikipedia (below) for factual claims. Don
     nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve('')
   ])
 
-  let userMessage = nextTrack
-    ? `Song that just finished: "${track.title}" by ${track.artist} from "${track.album}" (${track.genre}, ${track.year}). Coming up next: "${nextTrack.title}" by ${nextTrack.artist} from "${nextTrack.album}" (${nextTrack.genre}, ${nextTrack.year}).`
-    : `Now playing: "${track.title}" by ${track.artist} from the album "${track.album}" (${track.genre}, ${track.year})`
-  if (artistFacts) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
+  let userMessage: string
+  if (opener && nextTrack) {
+    userMessage = `Show open — first track up: "${nextTrack.title}" by ${nextTrack.artist} from "${nextTrack.album}" (${nextTrack.genre}, ${nextTrack.year}). Welcome the listener, do a campy [ANNOUNCER] station ID, get the show rolling.`
+  } else if (nextTrack) {
+    userMessage = `Song that just finished: "${track.title}" by ${track.artist} from "${track.album}" (${track.genre}, ${track.year}). Coming up next: "${nextTrack.title}" by ${nextTrack.artist} from "${nextTrack.album}" (${nextTrack.genre}, ${nextTrack.year}).`
+  } else {
+    userMessage = `Now playing: "${track.title}" by ${track.artist} from the album "${track.album}" (${track.genre}, ${track.year})`
+  }
+  if (artistFacts && !opener) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
   if (nextArtistFacts && nextTrack) userMessage += `\nBackground on ${nextTrack.artist}: ${nextArtistFacts}`
 
   try {
