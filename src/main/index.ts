@@ -2475,7 +2475,17 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     // public default Music Man voice. The env override is per-user; a
     // value in userData/.env takes precedence over bundled .env.
     const voice = voiceId || process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w'
-    const model = fast ? 'eleven_flash_v2_5' : 'eleven_v3'
+    // Model selection:
+    //   - eleven_flash_v2_5  : ultra-low-latency, slightly flatter delivery
+    //   - eleven_turbo_v2_5  : fast (~half the latency of multilingual_v2)
+    //                         AND retains emotional range — the right
+    //                         choice for Radio Mode where lines are short,
+    //                         conversational, and need to feel reactive
+    //                         not scripted.
+    // Previous code routed non-fast → eleven_v3, which is the alpha-gated
+    // newest model. Not all accounts have access; turbo_v2_5 is the
+    // dependable equivalent for the kind of delivery the user wants.
+    const model = fast ? 'eleven_flash_v2_5' : 'eleven_turbo_v2_5'
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
       headers: {
@@ -2487,15 +2497,14 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
         model_id: model,
         voice_settings: {
           // Lower stability + higher style = more emotional, theatrical
-          // delivery. The Radio Mode prompt now writes lines with
-          // capitals / exclamations / ellipses / em-dashes specifically
-          // to drive expressive delivery; the voice settings need to
-          // honor that. 4.2.0 was at style=0.3 (relatively flat) and
-          // user feedback was the hosts didn't sound passionate enough
-          // when delivering hot takes.
-          stability: 0.35,
-          similarity_boost: 0.75,
-          style: 0.55,
+          // delivery. The Radio Mode prompt writes lines with capitals /
+          // exclamations / ellipses / em-dashes / stuttering commas to
+          // drive expressive delivery; the voice settings honor that.
+          // 4.2.2 felt scripted; pushed style further and stability
+          // lower for more variance per phrase.
+          stability: 0.28,
+          similarity_boost: 0.7,
+          style: 0.7,
         }
       })
     })
@@ -2574,11 +2583,23 @@ ipcMain.handle('musicman-radio', async (_event,
 
 ${segmentMode}
 
-This is a real radio show, so they ALWAYS have to disagree on something — taste, an opinion about the artist, who the song's really for, whether the next track is going to be any good. They cut each other off, react to each other, talk LIKE a real co-host pair on FM radio. Megan is NOT a yes-woman; she pushes back.
+This is a REAL conversation, not a script being read. Make it sound like two people actually talking to each other:
 
-LANGUAGE — they're real broadcast personalities, not a corporate playlist host. Drop natural profanity when it earns its place: "this song fucking slaps", "goddamn masterpiece", "shit-hot pick", "hell of a record". Don't be gratuitous, but DON'T sand them flat either. Megan especially uses sharper language when calling MM out.
+  • REACT to specific words the other one just said. Quote them, mock them, agree-then-twist them. "Underrated? You think THIS is underrated?" "A masterpiece — sure, if you've never heard a Steely Dan record."
+  • CUT EACH OTHER OFF mid-thought. End MM's line with an em-dash and have Megan barge in. End Megan's line with "—" and have MM stomp on it.
+  • Use FILLER and reactions: "I mean—", "Oh come ON", "ha—", "wait wait wait", "no, no", "right? RIGHT?", "ugh", "okay but". Real radio is full of these.
+  • DISAGREE on something specific every time. Taste, the artist's reputation, who the song's really for, whether the upcoming track is going to be good. Megan PUSHES BACK on MM's takes — she's not playing along.
+  • Reference the same thing from different angles. If MM says "this album invented the genre," Megan replies about the SAME album from a different angle, not a totally new tangent.
 
-EMOTION — when either of them has a HOT TAKE or hits an emotional / passionate moment, write it that way. Capitalize the word they'd PUNCH. Use exclamation marks for genuine excitement. Use ellipses... for dramatic, stretched pauses. Use em-dashes — for cut-offs and overlapping reactions. The TTS reads punctuation directly into delivery, so write the way you want them to SOUND.
+LANGUAGE — they're broadcast personalities, not a corporate playlist host. Drop natural profanity when it earns its place: "this song fucking slaps", "goddamn masterpiece", "shit-hot pick", "hell of a record". Megan especially uses sharper language when calling MM out. Don't be gratuitous, DON'T sand them flat either.
+
+DELIVERY CUES (TTS reads punctuation directly):
+  • CAPITALIZE the word that gets punched ("absolutely INSANE drum break").
+  • Exclamation marks for genuine excitement ("hell yes!").
+  • Ellipses... for stretched, thinking pauses.
+  • Em-dashes — for cut-offs and overlapping reactions.
+  • Multiple commas for stuttering ("it's, it's just, it's not even close").
+Write the way you want them to SOUND.
 
 CAMPY STATION ID — about 1 in every 3 segments, OPEN with a campy station ID line that you tag [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan). Examples:
   [ANNOUNCER] W-W-W-W-J-L-R three-thirty-point-nine, LIVE from BROOKLYN!
