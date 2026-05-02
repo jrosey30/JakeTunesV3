@@ -32,6 +32,26 @@ let autoDjMode = false
 // 100ms = 10Hz UI updates, way less render-thread pressure than 60Hz.
 let lastPositionDispatchMs = 0
 
+// Watchdog state for the "stuck audio" recovery (Airfoil hijack edge
+// case). When the underlying HTMLAudioElement gets stuck because Core
+// Audio renegotiated the output device under us, position stops
+// advancing while React state still says isPlaying=true. The user's
+// pause/play toggle doesn't recover it because the Howl itself is in a
+// broken state. After WATCHDOG_STUCK_THRESHOLD_MS of confirmed stuck
+// state, we forcibly recreate the Howl from scratch and resume from
+// the last known position.
+//
+// Conservative thresholds — transient pauses (buffer underruns, brief
+// device blips, mouse-move stutter) recover in milliseconds, well
+// under 5 sec, so they never trigger this. The 30-sec cooldown
+// prevents recovery loops if the recreated Howl also gets stuck.
+const WATCHDOG_STUCK_THRESHOLD_MS = 5000
+const WATCHDOG_COOLDOWN_MS = 30000
+let watchdogLastObservedPos = -1
+let watchdogLastAdvanceMs = 0
+let watchdogLastRecoveryMs = 0
+let watchdogRecoveryInFlight = false
+
 // ── Diagnostic ring buffer (4.0.9) ──────────────────────────────────────
 // Capture the last 50 audio-pipeline events so when "music stops playing"
 // happens, we can pull recent events with one command instead of guessing.
@@ -191,6 +211,10 @@ export function useAudio() {
   // itself depends on updatePosition).
   const startCrossfadeRef = useRef<((track: Track, queue: Track[], queueIndex: number) => void) | null>(null)
   const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }) => void) | null>(null)
+  // playTrackRef lets the stuck-audio watchdog (inside updatePosition)
+  // recover by re-loading the current track. updatePosition is defined
+  // first, so this ref is the cycle-breaker.
+  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
     if (isPaused) return
@@ -267,6 +291,69 @@ export function useAudio() {
           dispatchRef.current({ type: 'SET_DURATION', duration: dur })
         }
         lastPositionDispatchMs = now
+
+        // ── Stuck-audio watchdog (Airfoil hijack recovery) ──
+        // If the user expects playback (isPlaying && !isPaused) but the
+        // Howl's position hasn't advanced in N seconds, the underlying
+        // element is stuck — the pause/play toggle won't fix it because
+        // the Howl is in a broken state. Forcibly recreate.
+        const expectedPlaying = stateRef.current.isPlaying && !isPaused && !crossfading
+        if (expectedPlaying && positionHowl === sharedHowl) {
+          if (pos !== watchdogLastObservedPos) {
+            watchdogLastObservedPos = pos
+            watchdogLastAdvanceMs = now
+          } else if (
+            watchdogLastAdvanceMs > 0 &&
+            now - watchdogLastAdvanceMs > WATCHDOG_STUCK_THRESHOLD_MS &&
+            now - watchdogLastRecoveryMs > WATCHDOG_COOLDOWN_MS &&
+            !watchdogRecoveryInFlight
+          ) {
+            watchdogRecoveryInFlight = true
+            watchdogLastRecoveryMs = now
+            const stuckTrack = stateRef.current.currentTrack
+            const stuckQueue = stateRef.current.queue
+            const stuckIdx = stateRef.current.queueIndex
+            const stuckPos = pos
+            logAudioEvent('watchdog.recover', {
+              stuckAt: stuckPos,
+              stuckSeconds: ((now - watchdogLastAdvanceMs) / 1000).toFixed(1),
+              title: stuckTrack?.title,
+            })
+            console.warn(`[Audio] watchdog: stuck at ${stuckPos.toFixed(2)}s for ${((now - watchdogLastAdvanceMs)/1000).toFixed(1)}s — recreating Howl`)
+            // Tear down the broken Howl. Stop the rAF — the new Howl
+            // will restart it via its onplay handler.
+            try { sharedHowl?.stop() } catch { /* ignore */ }
+            try { sharedHowl?.unload() } catch { /* ignore */ }
+            sharedHowl = null
+            cancelAnimationFrame(sharedRaf)
+            sharedRaf = 0
+            // Recreate via the existing playTrack path. After it loads,
+            // seek to where we got stuck so the user doesn't lose their
+            // place. The seek call is a no-op until the new Howl's
+            // onplay fires; defer with a brief wait so the seek sticks.
+            if (stuckTrack && stuckQueue.length > 0) {
+              const recoverPlay = () => {
+                playTrackRef.current?.(stuckTrack, stuckQueue, stuckIdx)
+                setTimeout(() => {
+                  try { sharedHowl?.seek(stuckPos) } catch { /* ignore */ }
+                  watchdogLastObservedPos = -1
+                  watchdogLastAdvanceMs = 0
+                  watchdogRecoveryInFlight = false
+                }, 500)
+              }
+              recoverPlay()
+            } else {
+              watchdogRecoveryInFlight = false
+            }
+            return  // skip rest of this rAF tick — new Howl will take over
+          }
+        } else {
+          // Not expected to play (paused, crossfading, etc) — reset
+          // watchdog timers so they don't accumulate during legit
+          // pauses and immediately fire on resume.
+          watchdogLastObservedPos = -1
+          watchdogLastAdvanceMs = 0
+        }
       }
     }
 
@@ -656,6 +743,13 @@ export function useAudio() {
     dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi })
     loadAndPlay(track, q, qi)
   }, [loadAndPlay])
+
+  // Wire the ref so updatePosition's stuck-audio watchdog can call
+  // playTrack to rebuild the broken Howl. Has to be a ref because
+  // updatePosition is defined long before playTrack.
+  useEffect(() => {
+    playTrackRef.current = playTrack
+  }, [playTrack])
 
   const togglePlayPause = useCallback(() => {
     if (stateRef.current.isPlaying) {
