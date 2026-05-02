@@ -2596,11 +2596,23 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
 ipcMain.handle('musicman-radio', async (_event,
   track: { title: string; artist: string; album: string; genre: string; year: string | number },
   nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number },
-  opener?: boolean
+  opener?: boolean,
+  forceAnnouncer?: boolean,
 ) => {
+  // Three modes for the segment:
+  //   - opener           → ALWAYS [ANNOUNCER] first (show going live)
+  //   - forceAnnouncer   → ALWAYS [ANNOUNCER] first (renderer counter
+  //                        decided this transition gets one — currently
+  //                        every 4th transition for predictable cadence)
+  //   - default          → NO [ANNOUNCER]. Pure MM + Megan banter.
+  // Replaces the old "Claude rolls a 1-in-3 die" approach which was
+  // unpredictable and came up too often.
+  const wantsAnnouncer = opener || forceAnnouncer
   const segmentMode = opener
     ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in. ALWAYS lead with a campy [ANNOUNCER] station ID drop. Then MM and Megan welcome the listener, set the energy, and tee up the first track.`
-    : `${nextTrack ? "You're transitioning between songs in a continuous broadcast." : 'A song is currently on the air.'}`
+    : forceAnnouncer
+      ? `You're transitioning between songs in a continuous broadcast. ALWAYS lead with a campy [ANNOUNCER] station ID drop, THEN MM and Megan back-announce / tee up next.`
+      : `${nextTrack ? "You're transitioning between songs in a continuous broadcast. NO station ID this segment — pure MM + Megan banter." : 'A song is currently on the air.'}`
 
   const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9, broadcasting LIVE FROM BROOKLYN) between two co-hosts who actively bicker:
 
@@ -2627,20 +2639,22 @@ DELIVERY CUES (TTS reads punctuation directly):
   • Multiple commas for stuttering ("it's, it's just, it's not even close").
 Write the way you want them to SOUND.
 
-CAMPY STATION ID — about 1 in every 3 segments, OPEN with a campy station ID line that you tag [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan). Examples:
+CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan). Examples:
   [ANNOUNCER] W-W-W-W-J-L-R three-thirty-point-nine, LIVE from BROOKLYN!
   [ANNOUNCER] You're locked in to W-J-L-R, three-thirty-point-nine FM, broadcasting LIVE from the boroughs!
   [ANNOUNCER] Triple-Dub J-L-R, three-thirty-point-nine, LIVE FROM BROOKLYN — and we're hot!
 The hyphens between letters MATTER — that's how the TTS pronounces them as individual letters for the classic stuttering FM-radio drop. Capitals signal emphasis. Make it campy and over-the-top — the energy of a real radio station ID jingle. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
 
+When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is now controlled at the system level, not at your discretion.
+
 Format the segment STRICTLY as speaker-tagged lines:
-[ANNOUNCER] Optional campy station ID, ~1 in 3 segments, when you do include it put it FIRST.
+${wantsAnnouncer ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).' : '(NO [ANNOUNCER] line this segment.)'}
 [MM] First chatter line.
 [MEGAN] Reply that disagrees or undercuts MM.
 [MM] Comeback or pivot.
 [MEGAN] Final word, often dryly funny.
 
-3-5 lines total (NOT counting the optional [ANNOUNCER] drop). Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
+3-5 lines total${wantsAnnouncer ? ' (NOT counting the [ANNOUNCER] drop)' : ''}. Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
 
 Use background info from MusicBrainz / Wikipedia (below) for factual claims. Don't invent live show memories or label deals you can't verify — if you don't have facts, lean into opinion and the bicker. Vary which speaker opens; sometimes MM, sometimes Megan kicks off.`
 

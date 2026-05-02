@@ -85,6 +85,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // a deeper "Announcer" voice for the campy WJLR station ID drops.
   type RadioSegment = { speaker: 'mm' | 'megan' | 'announcer'; line: string; audioData: string }
   const radioCacheRef = useRef<Map<string, { segments: RadioSegment[]; fullText: string }>>(new Map())
+  // 4.2.7: deterministic announcer scheduling. The opener always has
+  // an [ANNOUNCER] drop; between-track transitions get one every 4th
+  // transition (predictable cadence — roughly one drop every 4 songs
+  // after the opener). Counter is reset when Radio Mode toggles off.
+  const radioTransitionCounterRef = useRef<number>(0)
   const radioPrefetchedKeyRef = useRef<string | null>(null)
   const [djActive, setDjActive] = useState(false)
   const [djText, setDjText] = useState('')
@@ -189,6 +194,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setRadioMode(false)
       radioCacheRef.current.clear()
       radioPrefetchedKeyRef.current = null
+      radioTransitionCounterRef.current = 0
       return
     }
     setAutoDj(false)
@@ -322,9 +328,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     ;(async () => {
       try {
         const prev = pb.nowPlaying!
+        // Look ahead at what the counter WILL be when this transition
+        // fires (current + 1). Every 4th gets an announcer drop.
+        const upcomingTransitionNumber = radioTransitionCounterRef.current + 1
+        const forceAnnouncer = upcomingTransitionNumber % 4 === 0
         const r = await window.electronAPI.musicmanRadio(
           { title: prev.title || '', artist: prev.artist || '', album: prev.album || '', genre: prev.genre || '', year: prev.year || '' },
           { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+          false,
+          forceAnnouncer,
         )
         if (!r.ok || !r.text) return
         const segments = await synthesizeRadioSegments(r.text)
@@ -458,6 +470,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         playOne()
       }
 
+      // Bump the transition counter ONCE per real transition. Used by
+      // both the cache-hit and live-fetch paths to decide announcer
+      // scheduling. (The pre-fetch effect peeks at counter+1 to align
+      // its forceAnnouncer decision with what THIS transition will
+      // actually compute.)
+      if (radioMode) {
+        radioTransitionCounterRef.current += 1
+      }
+      const forceAnnouncerThisTransition = radioMode && (radioTransitionCounterRef.current % 4 === 0)
+
       // Radio Mode fast path: pre-fetched dialog cached as a segment array.
       if (radioMode) {
         const cacheKey = `${prevTrack.id}-${nextTrack.id}`
@@ -477,7 +499,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         if (radioMode) {
           const r = await window.electronAPI.musicmanRadio(
             { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
-            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' }
+            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+            false,
+            forceAnnouncerThisTransition,
           )
           if (r.ok && r.text) {
             const segments = await synthesizeRadioSegments(r.text)
