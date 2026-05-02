@@ -433,43 +433,76 @@
 }
 
 /* ── Radio Mode toggle button ─────────────────────────────────────────
- * Bigger surface than the standard dj-btn because it's a persistent
- * mode toggle (vs. the mic button's one-shot action) and the user
- * needs a clear at-a-glance ON/OFF read so they don't get stuck. The
- * "ON AIR" label flips to "RADIO" when off; active state is bright
- * red instead of the warm orange used by the mic button so the two
- * controls visually distinguish at a glance.
+ * Same 30×30 circle dimensions as the mic / DJ buttons so the toolbar
+ * row stays visually rhythmic. Distinguished by color (red vs orange)
+ * and an animated "ON AIR" pill that appears next to the button only
+ * when Radio Mode is live — that's the explicit on/off indicator the
+ * user needs.
  */
 .radio-mode-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  min-width: 48px;
-  padding: 2px 6px;
+  background: #b85b5b;
 }
-.radio-mode-label {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  line-height: 1;
-  color: #888;
-  text-transform: uppercase;
+.radio-mode-btn:hover:not(:disabled) {
+  background: #c46868;
 }
 .radio-mode-btn--on {
-  opacity: 1;
-  color: #d11f2e;
+  background: #d11f2e;
+  color: #fff;
   box-shadow: 0 0 10px rgba(209,31,46,0.65), 0 0 18px rgba(209,31,46,0.25), 0 2px 4px rgba(0,0,0,0.2);
-  background: rgba(209,31,46,0.08);
   animation: radio-on-air-pulse 1.2s ease-in-out infinite;
-}
-.radio-mode-btn--on .radio-mode-label {
-  color: #d11f2e;
 }
 @keyframes radio-on-air-pulse {
   0%, 100% { box-shadow: 0 0 10px rgba(209,31,46,0.65), 0 0 18px rgba(209,31,46,0.25), 0 2px 4px rgba(0,0,0,0.2); }
   50%      { box-shadow: 0 0 14px rgba(209,31,46,0.85), 0 0 24px rgba(209,31,46,0.4),  0 2px 4px rgba(0,0,0,0.2); }
+}
+
+/* Tiny red recording-style dot inside the button when on, just for an
+ * extra-clear "this thing is live" cue at a glance. */
+.radio-on-air-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 4px rgba(255,255,255,0.8);
+  animation: radio-on-air-dot-blink 1.2s ease-in-out infinite;
+}
+@keyframes radio-on-air-dot-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+/* "ON AIR · WJLR 330.9" pill that sits next to the button when Radio
+ * Mode is live. Reads at-a-glance from across the room. */
+.radio-on-air-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  margin-left: 6px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #e8404f, #b81d2c);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* DJ Mode placeholder — vinyl record icon, disabled until the
+ * Camelot-mixing engine ships. Same 30×30 footprint, different
+ * idle tone to hint at "different mode, different palette." */
+.dj-mode-btn {
+  background: #4a4a52;
+  color: #d8d8e0;
+}
+.dj-mode-btn:disabled {
+  opacity: 0.5;
 }
 
 /* DJ button wrapper */

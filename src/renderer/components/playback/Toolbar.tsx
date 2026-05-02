@@ -45,6 +45,20 @@ function RadioIcon() {
   )
 }
 
+// Vinyl record — DJ Mode (beatmatched / Camelot-mixed continuous music
+// without commentary). Concentric grooves + label dot in the middle.
+function VinylIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10" cy="10" r="8.5" strokeWidth="1.5" />
+      <circle cx="10" cy="10" r="6.5" opacity="0.55" />
+      <circle cx="10" cy="10" r="4.5" opacity="0.4" />
+      <circle cx="10" cy="10" r="2.8" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="10" r="0.8" fill="#fff" stroke="none" />
+    </svg>
+  )
+}
+
 function AirPlayIcon({ active }: { active?: boolean }) {
   return (
     <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -692,12 +706,21 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
             onClick={handleRadioToggle}
-            disabled={!pb.nowPlaying}
-            title={radioMode ? 'Radio Mode is ON — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode is OFF — click to turn ON (WJLR 330.9 commentary between every song)'}
+            title={radioMode ? 'Radio Mode is ON — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode — click to start WJLR 330.9 (whole library shuffled, MM + Megan banter)'}
           >
             <RadioIcon />
-            <span className="radio-mode-label">{radioMode ? 'ON AIR' : 'RADIO'}</span>
+            {radioMode && <span className="radio-on-air-dot" aria-hidden="true" />}
           </button>
+          <button
+            className="transport-toggle dj-btn dj-mode-btn"
+            disabled
+            title="DJ Mode — coming soon (beatmatched / Camelot-mixed continuous music, no commentary)"
+          >
+            <VinylIcon />
+          </button>
+          {radioMode && (
+            <span className="radio-on-air-pill" aria-live="polite">ON AIR · WJLR 330.9</span>
+          )}
           {showBubble && (djLoading || djText) && (
             <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
               {djLoading ? (
