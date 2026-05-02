@@ -602,6 +602,10 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // Re-encode high-bit-depth ALAC files that iPod Classic can't
           // decode (causes random track skips on hardware).
           { label: 'Fix iPod Compatibility…',  click: () => sendMenuAction('fix-ipod-compat') },
+          // 4.1: ALAC play-cache management. Replaces the launch-time
+          // prewarm scanner with explicit user actions.
+          { label: 'Prepare ALAC Tracks for Instant Play…', click: () => sendMenuAction('prepare-alac-cache') },
+          { label: 'Prune Play-Cache…', click: () => sendMenuAction('prune-alac-cache') },
           // Surface library entries that share artist+title+album so the
           // user can pick which copies to remove. Per-row delete only —
           // never bulk, never auto. Solves the "iPod Shuffle shows 4542
@@ -877,13 +881,10 @@ ipcMain.handle('load-tracks', async () => {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const library = JSON.parse(raw)
     const tracks = library.tracks || []
-    // Kick off background pre-warm of ALAC transcodes so first-play of
-    // every lossless track is instant instead of waiting on a 1-3s
-    // ffmpeg run. Non-blocking — returns immediately; transcodes queue
-    // up in the ALAC cache one by one. Done here rather than on rip/
-    // import because it also picks up files the user re-encoded via
-    // Fix iPod Compatibility or reclaimed via the orphan tool.
-    schedulePrewarmFromLibrary(tracks as Array<{ path?: string }>)
+    // (4.1: removed launch-time prewarm scheduler. ALAC transcodes are
+    // now done synchronously at import time and via the explicit
+    // "Prepare ALAC tracks" maintenance action — no background scan
+    // on every load-tracks. See prepare-alac-cache IPC handler.)
     return {
       tracks,
       playlists: library.playlists || [],
@@ -935,75 +936,17 @@ ipcMain.handle('load-tracks', async () => {
   }
 })
 
-// Best-effort background prewarm: given the library's track list,
-// narrow down to tracks that (a) live in an mp4 container (the only
-// ones that could be ALAC and need caching) AND (b) don't already
-// have a fresh play-cache entry. ffprobe is only run on that narrowed
-// set — avoids a 4000-file ffprobe sweep on every app launch that
-// pegged the CPU and made the UI scroll glitchy for minutes.
-//
-// Called on every load-tracks AND after alac-compat-fix so any file
-// the user just re-encoded becomes instant-play-ready without the
-// blanket startup CPU hit.
-async function schedulePrewarmFromLibrary(tracks: Array<{ path?: string }>): Promise<void> {
-  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-  const pathSep = IS_WINDOWS ? '\\' : '/'
-  const PLAY_CACHE = join(app.getPath('userData'), 'play-cache')
-
-  // Skip prewarm entirely when the source mount is a removable volume
-  // (i.e., the iPod). Prewarm transcodes ALAC→AAC into a local cache so
-  // first-play is instant; the cost is reading the source file at
-  // decode speed via ffmpeg, which on USB-mounted iPod competes with
-  // playback I/O and produces "broken record" stutter on the active
-  // playback stream. The benefit (instant first-play) doesn't outweigh
-  // that cost when the source is already too slow to predictably feed
-  // playback in the first place. Local-mount installs (where MUSIC_DIR
-  // points at internal disk) keep prewarm.
-  if (LOCAL_MOUNT.startsWith('/Volumes/') || (IS_WINDOWS && /^[A-Z]:[/\\]/.test(LOCAL_MOUNT) && !LOCAL_MOUNT.toLowerCase().startsWith('c:'))) {
-    console.log(`[prewarm] skipped — source mount is ${LOCAL_MOUNT} (removable / USB; would compete with playback I/O)`)
-    return
-  }
-
-  const candidates: string[] = []
-  for (const t of tracks) {
-    const colon = String(t?.path || '')
-    if (!colon) continue
-    const rel = colon.replace(/:/g, pathSep)
-    const abs = join(LOCAL_MOUNT, rel)
-    const lo = abs.toLowerCase()
-    if (!(lo.endsWith('.m4a') || lo.endsWith('.alac') || lo.endsWith('.mp4'))) {
-      continue
-    }
-    // Quick cache-freshness check without ffprobing — hash the path,
-    // stat the cache file, compare mtime to source. If a fresh cache
-    // entry already exists, we know this file was ALAC and has a valid
-    // transcode waiting. Skip it. This is what drops the startup
-    // workload from "ffprobe 4000 files" to "ffprobe the couple-dozen
-    // files that were newly imported since last launch."
-    try {
-      const hash = createHash('sha1').update(abs).digest('hex').slice(0, 16)
-      const cachePath = join(PLAY_CACHE, `${hash}.m4a`)
-      const [srcStat, cacheStat] = await Promise.all([
-        stat(abs).catch(() => null),
-        stat(cachePath).catch(() => null),
-      ])
-      if (!srcStat) continue   // source missing — nothing to do
-      if (cacheStat && cacheStat.mtimeMs >= srcStat.mtimeMs) continue   // already fresh
-    } catch { /* fall through to prewarm */ }
-    candidates.push(abs)
-  }
-
-  if (candidates.length === 0) {
-    console.log('[prewarm] nothing to do — cache is fully warm')
-    return
-  }
-  console.log(`[prewarm] scheduling ${candidates.length} files for background transcode`)
-  // Defer so the renderer has already received tracks and the UI is
-  // responsive before we start CPU-heavy ffprobe/ffmpeg work.
-  setTimeout(() => {
-    prewarmAlacCache(candidates).catch(err => console.warn('library prewarm failed:', err))
-  }, 3000)
-}
+// (4.1: removed `schedulePrewarmFromLibrary`. The launch-time prewarm
+// scanner used to fire on every load-tracks, scan the entire library,
+// run ffprobe on every m4a candidate, and queue ffmpeg transcodes for
+// any uncached ALAC files. Two problems: it spent CPU/disk on every
+// launch even when no work was needed, and the launch-time scan
+// competed with whatever the user was doing in the first 30 seconds.
+// Replaced by:
+//   - import-time await of prewarmAlacCache (cache hot the moment a
+//     track lands; no on-demand transcode at first-play),
+//   - explicit "Prepare ALAC tracks" maintenance action in
+//     LibraryMaintenanceModal for the existing library backlog.)
 
 // Save the master library to disk.
 //
@@ -1716,15 +1659,11 @@ ipcMain.handle('alac-compat-fix', async () => {
     py.on('error', (err) => resolve({ ok: false, error: String(err) }))
     py.on('close', async (code) => {
       if (code === 0) {
-        // Freshly re-encoded ALAC files need their play-cache
-        // transcodes regenerated (cache invalidation is by source
-        // mtime, which just moved forward). Kick off prewarm so
-        // first-play doesn't block on an on-demand transcode.
-        try {
-          const raw = await readFile(LIBRARY_PATH, 'utf-8')
-          const lib = JSON.parse(raw) as { tracks?: Array<{ path?: string }> }
-          schedulePrewarmFromLibrary(lib.tracks || [])
-        } catch { /* non-fatal */ }
+        // (4.1: removed schedulePrewarmFromLibrary call here. The user
+        // can hit "Prepare ALAC tracks for instant play" in the
+        // Library Maintenance modal to refresh the cache for the
+        // re-encoded files. Doing it inline here would silently spawn
+        // ffmpeg jobs the user didn't ask for.)
         resolve({ ok: true, summary: stdout.slice(-3000) })
       } else {
         resolve({ ok: false, error: stderr || `python exit ${code}` })
@@ -2243,16 +2182,22 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
     if (fp) sessionImportedFingerprints.add(fp)
   }
 
-  // If we just wrote an ALAC file to local storage, kick off its
-  // play-cache transcode in the background so first-play is instant.
-  // (No-op for AAC/MP3 — those play directly from the m4a/mp3 file.)
+  // If we just wrote an ALAC file, transcode its AAC mirror to the
+  // play-cache NOW (await) — Chromium can't decode ALAC, and the user
+  // is already in import-progress UI so an extra 3-5s here is invisible.
+  // Without this await, the transcode is async-fire-and-forget, and the
+  // first time the user clicked play on the new track they hit the 5s
+  // on-demand transcode wait. (4.1 design: cache is hot the moment
+  // import completes, never on-demand at play-time.)
   if (r.ok && r.track && chosenFmt === 'alac') {
     const colon = String(r.track.path || '')
     if (colon) {
       const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
       const pathSep = IS_WINDOWS ? '\\' : '/'
       const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
-      prewarmAlacCache([abs]).catch(() => {})
+      await prewarmAlacCache([abs]).catch((err) => {
+        console.warn(`[import] alac cache transcode failed for ${abs}:`, err)
+      })
     }
   }
 
@@ -4511,11 +4456,11 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     }
   }
 
-  // If we ripped as ALAC, kick off background transcodes into the
-  // play cache so the user's first click on these tracks plays
-  // instantly instead of waiting 2-3 seconds for on-demand transcode.
+  // If we ripped as ALAC, transcode the play-cache mirror NOW (await).
+  // Same reasoning as importOneFile — user is already in rip-progress
+  // UI; an extra few seconds is invisible. First-play is then instant.
   if (fmt === 'alac') {
-    prewarmAlacCache(importedAbsPaths).catch(err => console.warn('pre-warm failed:', err))
+    await prewarmAlacCache(importedAbsPaths).catch(err => console.warn('pre-warm failed:', err))
   }
 
   return { ok: true, tracks: imported }
@@ -4767,6 +4712,144 @@ app.whenReady().then(async () => {
   registerKnownCodec = (path, mtime, codec) => {
     codecCache.set(path, { mtime, codec })
   }
+
+  // ── 4.1 Library Maintenance: ALAC cache management ─────────────────
+  //
+  // Replaces the launch-time `schedulePrewarmFromLibrary` scan. Both are
+  // user-initiated from the Library Maintenance modal and run in the
+  // foreground with explicit progress reporting so the user knows what
+  // they triggered and can cancel.
+
+  // Cancel signal: the renderer can ping `cancel-alac-cache` to stop
+  // an in-flight prepare loop early. Set inside the handler, cleared on
+  // exit. Single shared flag — only one prepare loop runs at a time.
+  let prepareCacheCancelled = false
+  ipcMain.on('cancel-alac-cache', () => { prepareCacheCancelled = true })
+
+  ipcMain.handle('prepare-alac-cache', async (event) => {
+    prepareCacheCancelled = false
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+
+    let lib: { tracks?: Array<{ path?: string; title?: string; artist?: string }> }
+    try {
+      lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+    } catch (err) {
+      return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
+    }
+    const tracks = lib.tracks || []
+    const total = tracks.length
+
+    // 4-worker pipeline. Each worker pulls the next track index, calls
+    // aacCachePath (which ffprobes once per source, codec-caches it,
+    // and only spawns ffmpeg for actual ALAC sources whose cache entry
+    // is missing or stale), and emits progress. AAC tracks return
+    // immediately from aacCachePath without any ffmpeg work — the only
+    // unavoidable cost is the per-file ffprobe on first encounter.
+    let processed = 0
+    let transcoded = 0
+    let i = 0
+
+    const worker = async (): Promise<void> => {
+      while (i < tracks.length) {
+        if (prepareCacheCancelled) return
+        const idx = i++
+        const t = tracks[idx]
+        const colon = t?.path || ''
+        if (!colon) {
+          processed++
+          continue
+        }
+        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+        const srcStat = await stat(abs).catch(() => null)
+        if (!srcStat) {
+          processed++
+          continue
+        }
+
+        // Was the cache already fresh BEFORE this call? Need to know
+        // so we can report "transcoded" honestly (not just "had cache").
+        const hash = createHash('sha1').update(abs).digest('hex').slice(0, 16)
+        const cachePath = join(PLAY_CACHE, `${hash}.m4a`)
+        const cBefore = await stat(cachePath).catch(() => null)
+        const wasFresh = cBefore && cBefore.mtimeMs >= srcStat.mtimeMs
+
+        const cacheRet = await aacCachePath(abs, srcStat.mtimeMs).catch(() => null)
+        processed++
+        if (cacheRet && !wasFresh) transcoded++
+
+        event.sender.send('prepare-alac-cache:progress', {
+          processed,
+          transcoded,
+          total,
+          title: t.title || '?',
+          artist: t.artist || '?',
+        })
+      }
+    }
+
+    const workers: Promise<void>[] = []
+    for (let w = 0; w < 4; w++) workers.push(worker())
+    await Promise.all(workers)
+
+    return {
+      ok: true,
+      processed,
+      transcoded,
+      total,
+      cancelled: prepareCacheCancelled,
+    }
+  })
+
+  ipcMain.handle('prune-alac-cache', async () => {
+    // Delete cache entries whose hashed source path doesn't match any
+    // current library track. After 4.0.x rounds of import / dedup /
+    // path-collision-cleanup, the cache typically has hundreds of
+    // orphaned transcodes from tracks that no longer exist in the
+    // library. Each entry is ~3-10MB so the savings add up fast.
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+
+    let lib: { tracks?: Array<{ path?: string }> }
+    try {
+      lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+    } catch (err) {
+      return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
+    }
+
+    // Build the set of expected cache filenames (one per library track,
+    // hashed-from-abs-path). Only tracks whose abs path actually exists
+    // — tracks pointing at missing files have no valid cache anyway.
+    const expected = new Set<string>()
+    for (const t of (lib.tracks || [])) {
+      const colon = t.path || ''
+      if (!colon) continue
+      const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+      const hash = createHash('sha1').update(abs).digest('hex').slice(0, 16)
+      expected.add(`${hash}.m4a`)
+    }
+
+    const { readdir } = await import('fs/promises')
+    let entries: string[]
+    try {
+      entries = await readdir(PLAY_CACHE)
+    } catch {
+      return { ok: true, pruned: 0, bytesFreed: 0 }
+    }
+
+    let pruned = 0
+    let bytesFreed = 0
+    for (const f of entries) {
+      if (!f.endsWith('.m4a')) continue
+      if (expected.has(f)) continue
+      const fp = join(PLAY_CACHE, f)
+      const s = await stat(fp).catch(() => null)
+      if (s) bytesFreed += s.size
+      await unlink(fp).catch(() => {})
+      pruned++
+    }
+    return { ok: true, pruned, bytesFreed }
+  })
 
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))

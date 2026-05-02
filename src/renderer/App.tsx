@@ -10,6 +10,7 @@ import QueuePanel from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
+import PlayCacheModal from './components/PlayCacheModal'
 import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
@@ -31,6 +32,7 @@ function AppInner() {
   const [showQueue, setShowQueue] = useState(false)
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
+  const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
@@ -436,6 +438,8 @@ function AppInner() {
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
         case 'open-import-convert': setImportConvertOpen(true); break
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
+        case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
+        case 'prune-alac-cache':    setPlayCacheMode('prune'); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
         case 'open-preferences':    setSettingsOpen(true); break
       }
@@ -620,6 +624,7 @@ function AppInner() {
         {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
+        {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}
         {settingsOpen && (
           <SettingsModal
             initial={appSettings}

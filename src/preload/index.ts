@@ -184,6 +184,18 @@ const electronAPI = {
     ipcRenderer.on('alac-compat-progress', handler)
     return () => { ipcRenderer.removeListener('alac-compat-progress', handler) }
   },
+  // 4.1 Library Maintenance: ALAC play-cache management. Replaces the
+  // launch-time prewarm scanner with explicit user-triggered actions.
+  prepareAlacCache: (): Promise<{ ok: boolean; processed?: number; transcoded?: number; total?: number; cancelled?: boolean; error?: string }> =>
+    ipcRenderer.invoke('prepare-alac-cache'),
+  cancelAlacCache: (): void => { ipcRenderer.send('cancel-alac-cache') },
+  onPrepareAlacCacheProgress: (callback: (p: { processed: number; transcoded: number; total: number; title: string; artist: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: { processed: number; transcoded: number; total: number; title: string; artist: string }) => callback(p)
+    ipcRenderer.on('prepare-alac-cache:progress', handler)
+    return () => { ipcRenderer.removeListener('prepare-alac-cache:progress', handler) }
+  },
+  pruneAlacCache: (): Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; error?: string }> =>
+    ipcRenderer.invoke('prune-alac-cache'),
   // Read the iPod's actual iTunesDB so the UI can show the real
   // device state (the "On This iPod" view from classic iTunes).
   getIpodDbTracks: (): Promise<{ ok: boolean; tracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }> =>
