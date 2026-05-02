@@ -322,6 +322,39 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
 
           {tab === 'AI' && (
             <>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
+                Default host
+              </label>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="ai-host"
+                    checked={(draft.ai.aiHost ?? 'mm') === 'mm'}
+                    onChange={() => setDraft({
+                      ...draft,
+                      ai: { ...draft.ai, aiHost: 'mm' },
+                    })}
+                  />
+                  <span>The Music Man</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="ai-host"
+                    checked={draft.ai.aiHost === 'megan'}
+                    onChange={() => setDraft({
+                      ...draft,
+                      ai: { ...draft.ai, aiHost: 'megan' },
+                    })}
+                  />
+                  <span>Megan</span>
+                </label>
+              </div>
+              <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
+                Sets the persona + voice for chat, picks, recommendations, and DJ Set commentary. Each host has distinct taste and opinions — they disagree on almost everything. Radio Mode co-hosts both regardless of this setting.
+              </p>
+
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <input
                   type="checkbox"
@@ -331,10 +364,10 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     ai: { ...draft.ai, musicManVoiceEnabled: e.target.checked },
                   })}
                 />
-                <span>Music Man voice (ElevenLabs)</span>
+                <span>Voice (ElevenLabs)</span>
               </label>
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
-                When off, Music Man chats in text only. Saves ElevenLabs credits on quiet days.
+                When off, your selected host chats in text only. Saves ElevenLabs credits on quiet days.
               </p>
 
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>

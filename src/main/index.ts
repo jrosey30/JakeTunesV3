@@ -484,6 +484,10 @@ ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>
   try {
     await mkdir(app.getPath('userData'), { recursive: true })
     await writeFile(appSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
+    // Refresh the cached host preference so subsequent prompt builds
+    // pick up the new value without an app restart.
+    const ai = (settings.ai as { aiHost?: 'mm' | 'megan' } | undefined)
+    cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -498,6 +502,20 @@ async function readAppSettingsAsync(): Promise<Record<string, unknown> | null> {
     const raw = await readFile(appSettingsPath(), 'utf-8')
     return JSON.parse(raw)
   } catch { return null }
+}
+
+// 4.2.5: cached host preference for sync access from buildMusicManPrompt
+// (which is called inside synchronous prompt-building paths). Refreshed
+// when settings are saved via the save-app-settings IPC, and bootstrapped
+// from disk on app whenReady. Default 'mm' until the first read lands.
+let cachedActiveHost: 'mm' | 'megan' = 'mm'
+async function refreshActiveHostFromSettings(): Promise<void> {
+  const s = await readAppSettingsAsync()
+  const ai = (s?.ai as { aiHost?: 'mm' | 'megan' } | undefined)
+  cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
+}
+function readActiveHostSync(): 'mm' | 'megan' {
+  return cachedActiveHost
 }
 
 // Update the Claude daily ceiling immediately (mirrors what's saved in
@@ -2474,7 +2492,15 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     // Megan's ID for her lines) > ELEVENLABS_VOICE_ID env override >
     // public default Music Man voice. The env override is per-user; a
     // value in userData/.env takes precedence over bundled .env.
-    const voice = voiceId || process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w'
+    // Default voice resolution: explicit voiceId arg wins. Otherwise,
+    // honor the user's host preference (4.2.5) — Megan if they picked
+    // her, Music Man otherwise. Env var override still works on top of
+    // both for users who want a custom Music Man voice clone.
+    const meganVoice = 'WQhVGGVQ8EhNpBYHFE8c'
+    const defaultByHost = readActiveHostSync() === 'megan'
+      ? meganVoice
+      : (process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w')
+    const voice = voiceId || defaultByHost
     // Model selection:
     //   - eleven_flash_v2_5  : ultra-low-latency, slightly flatter delivery
     //   - eleven_turbo_v2_5  : fast (~half the latency of multilingual_v2)
@@ -3046,6 +3072,44 @@ function recentUtterancesBlock(): string {
   const lines = recentMusicManUtterances.map(u => `  [${u.mode}] ${u.text}`)
   return `Recently you said (keep it consistent — don't contradict any of this):\n${lines.join('\n')}`
 }
+
+// ── Megan: the co-host persona (alternate to Music Man) ──
+//
+// 4.2.5 lets the user pick between Music Man and Megan as the default
+// host voice for chat / picks / recommendations / DJ-set workflows.
+// They co-host on Radio Mode together (always, regardless of preference);
+// the preference only affects the SOLO persona for everything else.
+//
+// Megan is NOT a softer Music Man. She's a different listener with
+// different taste, different opinions, different reference points. The
+// fixed-opinions block here is intentionally non-overlapping with
+// MUSIC_MAN_CORE so when the user asks both of them about the same
+// artist, they give genuinely different answers.
+const MEGAN_CORE = `You are Megan — the co-host at WJLR 330.9 and one of the two voices the user can talk to inside JakeTunes. Sharp, witty, slightly contrarian, lower-key than the Music Man but absolutely doesn't pull punches. Where the Music Man is a record-store snob, Megan is a working music critic with broader taste and less reverence for canon.
+
+Your personality:
+- Direct, dry, observational. You'd rather make a precise small claim than a sweeping one.
+- Skeptical of "greatest of all time" narratives — you push back on them.
+- Genre-fluid. You'll defend a great pop song against a snob's sneer, AND defend a tape-loop noise record against the people who think it's pretentious.
+- Quick to call out lazy thinking, including the user's. But you stay funny about it.
+- You never use emojis. Concise — this is a chat.
+- Profanity when it earns its place ("fucking great record", "shit-hot"), not gratuitous.
+
+FIXED, NON-NEGOTIABLE opinions (these NEVER change, across any interaction; non-overlapping with the Music Man's):
+- Charli XCX: Overrated by the discourse — the singles are sharp but the cult around her is doing too much work. Brat is a B+, not the album of the decade.
+- Chappell Roan: Loves her. The voice is real, the songwriting is sturdier than the aesthetic suggests, and the live show is unimpeachable. Will defend her to the Music Man's face.
+- Red Hot Chili Peppers: Mostly bored. Even Blood Sugar Sex Magik has too many filler tracks. Frusciante's the only thing keeping the catalog interesting.
+- Taylor Swift: Folklore + evermore are the only ones that hold up; the rest is content-shaped product. Will roll her eyes at "1989" reverence.
+- Phoebe Bridgers: Hard yes — Stranger in the Alps is the actual masterpiece, not Punisher.
+- Steely Dan: Cold, calculating, virtuoso music for people who don't actually like music. The Music Man's wrong on this one.
+- LCD Soundsystem: Deeply unimpressed. Murphy's whole shtick is being a smarter-than-you fan; the songs themselves are middling.
+- Kendrick Lamar: Yes, but To Pimp a Butterfly over DAMN. always. The cultural-Olympics framing of his career has gotten exhausting.
+- Recent vinyl resurgence: Mostly a marketing exercise. Buy the records you'd play, don't curate a wall.
+- AI-generated music: Hard no. Will roast it on sight.
+
+When recommending music, lean toward sharp left-field picks: jazz that's actually weird (Alice Coltrane, Don Cherry), post-punk's lesser-known second wave, contemporary R&B that doesn't crossover, ambient that has actual ideas, and anything from a label with under 30 releases. You'd rather give a great B-tier suggestion than a safe A-tier one.
+
+Don't pose. Don't lecture. Make a take, defend it briefly, move on.`
 
 // ── Cynthia: the digital file archivist (subordinate persona) ──
 //
@@ -3668,7 +3732,13 @@ ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale
  *  the API — no benefit, but no error either.
  */
 function buildMusicManPrompt(modeSpecific = ''): Anthropic.Messages.TextBlockParam[] {
-  const stableParts = [MUSIC_MAN_CORE]
+  // 4.2.5: read the active host persona from app settings. Default 'mm'
+  // for backward compatibility. Reads syncronously from the cached
+  // settings — async path would require every caller to be async-aware
+  // which is a wider refactor.
+  const activeHost = readActiveHostSync()
+  const personaCore = activeHost === 'megan' ? MEGAN_CORE : MUSIC_MAN_CORE
+  const stableParts = [personaCore]
   if (libraryContext) stableParts.push(`The user's music library contains:\n${libraryContext}`)
   const stableText = stableParts.join('\n\n')
 
@@ -4695,6 +4765,11 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
 })
 
 app.whenReady().then(async () => {
+  // 4.2.5: bootstrap the cached host preference so the very first
+  // prompt build of the session picks the user's chosen persona,
+  // not the 'mm' module-default.
+  await refreshActiveHostFromSettings()
+
   // ── Purge renderer caches on version change ──
   // When the user installs a new DMG over an old one, Electron keeps
   // the previous Session Storage + Local Storage from the old

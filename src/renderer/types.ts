@@ -186,6 +186,7 @@ export interface AppSettings {
   ai: {
     musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
     claudeDailyCeiling: number      // mirrored to claude-stats.json on save
+    aiHost: 'mm' | 'megan'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
   }
   eq: EqSettings   // 10-band parametric EQ (4.0 §6.5)
 }
@@ -198,7 +199,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
   library: { defaultImportFormat: 'aac-256' },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
-  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200 },
+  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm' },
   eq: {
     enabled: false,
     preamp: 0,
