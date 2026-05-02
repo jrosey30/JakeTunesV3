@@ -65,11 +65,13 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // DJ Set. Radio Mode rides whatever queue the user picked. Mutually
   // exclusive with autoDj at the UI level (toggling one off the other).
   const [radioMode, setRadioMode] = useState(false)
-  // Cache for pre-fetched radio commentary so the audio is ready the
-  // moment the current track ends — kills the 3-5s Claude+TTS round-trip
-  // delay that the user complained about. Keyed by `${prev}-${next}` ID
-  // pair; cleared on use, on track change, or on Radio Mode toggle off.
-  const radioCacheRef = useRef<Map<string, { text: string; audioData: string }>>(new Map())
+  // Cache for pre-fetched radio commentary. Stores an ARRAY of dialog
+  // segments (one per [MM] or [MEGAN] line) — Radio Mode is now a
+  // two-voice show with The Music Man and his co-host Megan bickering
+  // back and forth. Each segment has its own TTS audio because we use
+  // a different ElevenLabs voice per speaker.
+  type RadioSegment = { speaker: 'mm' | 'megan'; line: string; audioData: string }
+  const radioCacheRef = useRef<Map<string, { segments: RadioSegment[]; fullText: string }>>(new Map())
   const radioPrefetchedKeyRef = useRef<string | null>(null)
   const [djActive, setDjActive] = useState(false)
   const [djText, setDjText] = useState('')
@@ -179,20 +181,57 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     })
   }, [])
 
-  // Pre-fetch radio commentary during the last ~30s of the current
-  // track. By the time the track ends, the Claude text + TTS audio are
-  // sitting in the cache and the transition handler plays them
-  // immediately — no 3-5s gap waiting on the network.
+  // Megan's ElevenLabs voice ID — co-host on Radio Mode. Music Man's
+  // voice falls through to the server-side env override (or default)
+  // when voiceId is undefined, so we only pass it explicitly here.
+  const MEGAN_VOICE_ID = 'WQhVGGVQ8EhNpBYHFE8c'
+
+  // Parse a Claude-generated radio script into ordered speaker segments.
+  // Strict format: each line begins with [MM] or [MEGAN]. Anything else
+  // is silently dropped (e.g., blank lines, stage directions Claude
+  // emitted despite the prompt telling it not to).
+  function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan'; line: string }> {
+    const segments: Array<{ speaker: 'mm' | 'megan'; line: string }> = []
+    for (const raw of text.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const m = line.match(/^\[(MM|MEGAN)\]\s*(.+)/i)
+      if (m) {
+        segments.push({ speaker: m[1].toUpperCase() === 'MEGAN' ? 'megan' : 'mm', line: m[2].trim() })
+      }
+    }
+    return segments
+  }
+
+  // Synthesize each script line with the appropriate voice. Sequential
+  // (not parallel) to be polite to the ElevenLabs rate limiter and so
+  // the array stays ordered.
+  async function synthesizeRadioSegments(scriptText: string): Promise<RadioSegment[]> {
+    const parsed = parseRadioScript(scriptText)
+    const out: RadioSegment[] = []
+    for (const seg of parsed) {
+      const voiceId = seg.speaker === 'megan' ? MEGAN_VOICE_ID : undefined
+      const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceId)
+      if (tts.ok && tts.audio) {
+        out.push({ speaker: seg.speaker, line: seg.line, audioData: tts.audio })
+      }
+    }
+    return out
+  }
+
+  // Pre-fetch radio dialog during the last ~30s of the current track.
+  // Result lands in the cache as an array of {speaker, line, audioData}
+  // segments ready for sequential playback.
   useEffect(() => {
     if (!radioMode) return
     if (!pb.nowPlaying || pb.duration <= 0) return
     const remaining = pb.duration - pb.position
-    if (remaining > 30 || remaining < 5) return  // outside the prefetch window
+    if (remaining > 30 || remaining < 5) return
     const nextIdx = pb.queueIndex + 1
-    if (nextIdx >= pb.queue.length) return  // no next track
+    if (nextIdx >= pb.queue.length) return
     const nextTrack = pb.queue[nextIdx]
     const cacheKey = `${pb.nowPlaying.id}-${nextTrack.id}`
-    if (radioPrefetchedKeyRef.current === cacheKey) return  // already prefetched
+    if (radioPrefetchedKeyRef.current === cacheKey) return
     if (radioCacheRef.current.has(cacheKey)) return
     radioPrefetchedKeyRef.current = cacheKey
     ;(async () => {
@@ -203,11 +242,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
         )
         if (!r.ok || !r.text) return
-        const tts = await window.electronAPI.musicmanSpeak(r.text, false)
-        if (!tts.ok || !tts.audio) return
-        radioCacheRef.current.set(cacheKey, { text: r.text, audioData: tts.audio })
-      } catch { /* prefetch failures are non-fatal — handler will fall back to live fetch */ }
+        const segments = await synthesizeRadioSegments(r.text)
+        if (segments.length === 0) return
+        radioCacheRef.current.set(cacheKey, { segments, fullText: r.text })
+      } catch { /* non-fatal — transition handler will fall back to live fetch */ }
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radioMode, pb.nowPlaying, pb.position, pb.duration, pb.queue, pb.queueIndex])
 
   // Click mic: one-shot DJ comment on current track. Click again to stop.
@@ -299,20 +339,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjLoading(true)
       setDjText('')
 
-      // Radio Mode fast path: check if we pre-fetched the commentary
-      // during the last 30s of the previous track. If so, skip the
-      // Claude + TTS round-trip and play immediately.
-      if (radioMode) {
-        const cacheKey = `${prevTrack.id}-${nextTrack.id}`
-        const cached = radioCacheRef.current.get(cacheKey)
-        if (cached) {
-          radioCacheRef.current.delete(cacheKey)
-          radioPrefetchedKeyRef.current = null
-          setDjLoading(false)
-          setDjText(cached.text)
-          const audio = new Audio(`data:audio/mpeg;base64,${cached.audioData}`)
-          djAudioRef.current = audio
-          audio.onended = () => {
+      // Helper: play an array of {speaker, line, audioData} segments
+      // sequentially with the volume fades + state transitions the
+      // existing single-clip path used. When the last segment finishes,
+      // advance to the next track. Used by both Radio Mode (multi-voice)
+      // and the single-voice DJ Set path (which passes a 1-element array).
+      const playSegmentSequence = async (segments: RadioSegment[], displayText: string) => {
+        setDjText(displayText)
+        let i = 0
+        const playOne = (): void => {
+          if (i >= segments.length) {
+            // All segments done — restore volume, advance, fade out the bubble
             djAudioRef.current = null
             setDjActive(false)
             fadeVolumeIn()
@@ -322,58 +359,61 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
               setDjExiting(true)
               setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
             }, 3000)
+            return
           }
-          audio.onerror = () => {
-            djAudioRef.current = null
-            setDjActive(false)
-            setDjText('')
-            fadeVolumeIn()
-            isFadedRef.current = false
-            playTrack(nextTrack, queue, nextIdx, true)
-          }
-          savedVolumeRef.current = pb.volume
-          await fadeVolumeOut()
-          await audio.play()
+          const seg = segments[i++]
+          const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+          djAudioRef.current = audio
+          audio.onended = playOne  // chain to next segment
+          audio.onerror = playOne  // skip on error rather than stalling
+          audio.play().catch(() => playOne())
+        }
+        savedVolumeRef.current = pb.volume
+        await fadeVolumeOut()
+        playOne()
+      }
+
+      // Radio Mode fast path: pre-fetched dialog cached as a segment array.
+      if (radioMode) {
+        const cacheKey = `${prevTrack.id}-${nextTrack.id}`
+        const cached = radioCacheRef.current.get(cacheKey)
+        if (cached && cached.segments.length > 0) {
+          radioCacheRef.current.delete(cacheKey)
+          radioPrefetchedKeyRef.current = null
+          setDjLoading(false)
+          await playSegmentSequence(cached.segments, cached.fullText)
           return
         }
       }
 
+      // Live fetch path. Radio Mode → musicmanRadio + per-segment TTS;
+      // DJ Set autoDj → musicmanDj + single-clip TTS.
       try {
-        const ipcCall = radioMode ? window.electronAPI.musicmanRadio : window.electronAPI.musicmanDj
-        const result = await ipcCall(
-          { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
-          { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' }
-        )
-        if (result.ok && result.text) {
-          const tts = await window.electronAPI.musicmanSpeak(result.text, false)
-          setDjLoading(false)
-          if (tts.ok && tts.audio) {
-            setDjText(result.text)
-            const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
-            djAudioRef.current = audio
-            audio.onended = () => {
-              djAudioRef.current = null
-              setDjActive(false)
-              fadeVolumeIn()
-              isFadedRef.current = false
-              playTrack(nextTrack, queue, nextIdx, true)
-              setTimeout(() => {
-                setDjExiting(true)
-                setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
-              }, 3000)
+        if (radioMode) {
+          const r = await window.electronAPI.musicmanRadio(
+            { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
+            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' }
+          )
+          if (r.ok && r.text) {
+            const segments = await synthesizeRadioSegments(r.text)
+            setDjLoading(false)
+            if (segments.length > 0) {
+              await playSegmentSequence(segments, r.text)
+              return
             }
-            audio.onerror = () => {
-              djAudioRef.current = null
-              setDjActive(false)
-              setDjText('')
-              fadeVolumeIn()
-              isFadedRef.current = false
-              playTrack(nextTrack, queue, nextIdx, true)
+          }
+        } else {
+          const result = await window.electronAPI.musicmanDj(
+            { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
+            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' }
+          )
+          if (result.ok && result.text) {
+            const tts = await window.electronAPI.musicmanSpeak(result.text, false)
+            setDjLoading(false)
+            if (tts.ok && tts.audio) {
+              await playSegmentSequence([{ speaker: 'mm', line: result.text, audioData: tts.audio }], result.text)
+              return
             }
-            savedVolumeRef.current = pb.volume
-            await fadeVolumeOut()
-            await audio.play()
-            return
           }
         }
       } catch {}
@@ -625,12 +665,13 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             <MicIcon />
           </button>
           <button
-            className={`transport-toggle dj-btn ${radioMode ? 'dj-btn--active' : ''}`}
+            className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
             onClick={handleRadioToggle}
             disabled={!pb.nowPlaying}
-            title={radioMode ? 'Radio Mode: ON — WJLR 330.9 between every track' : 'Radio Mode: OFF — click for WJLR-style commentary between every song'}
+            title={radioMode ? 'Radio Mode is ON — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode is OFF — click to turn ON (WJLR 330.9 commentary between every song)'}
           >
             <RadioIcon />
+            <span className="radio-mode-label">{radioMode ? 'ON AIR' : 'RADIO'}</span>
           </button>
           {showBubble && (djLoading || djText) && (
             <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>

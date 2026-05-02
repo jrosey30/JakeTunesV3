@@ -15,8 +15,8 @@ const electronAPI = {
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
   musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string }> =>
     ipcRenderer.invoke('musicman-chat', messages),
-  musicmanSpeak: (text: string, fast?: boolean): Promise<{ ok: boolean; audio?: string; error?: string }> =>
-    ipcRenderer.invoke('musicman-speak', text, fast),
+  musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
+    ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }): Promise<{ ok: boolean; text: string }> =>
     ipcRenderer.invoke('musicman-dj', track, nextTrack),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct

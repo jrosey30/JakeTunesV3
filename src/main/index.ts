@@ -2460,7 +2460,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 // ElevenLabs TTS
-ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean) => {
+ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
   try {
     // 4.0 Settings gate: Music Man voice can be turned off entirely from
     // Preferences → AI. Caller still gets ok=true so flow continues; the
@@ -2470,10 +2470,11 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean) =>
     if (ai && ai.musicManVoiceEnabled === false) {
       return { ok: true, audio: '' }
     }
-    // Public default Music Man voice. Override via ELEVENLABS_VOICE_ID
-    // in .env — userData/.env takes precedence over the bundled one, so
-    // a personal voice override in userData won't be clobbered on updates.
-    const voice = process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w'
+    // Voice selection priority: explicit voiceId arg (Radio Mode passes
+    // Megan's ID for her lines) > ELEVENLABS_VOICE_ID env override >
+    // public default Music Man voice. The env override is per-user; a
+    // value in userData/.env takes precedence over bundled .env.
+    const voice = voiceId || process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w'
     const model = fast ? 'eleven_flash_v2_5' : 'eleven_v3'
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
@@ -2550,17 +2551,22 @@ ipcMain.handle('musicman-radio', async (_event,
   track: { title: string; artist: string; album: string; genre: string; year: string | number },
   nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }
 ) => {
-  const radioInstructions = `You are the live DJ at WJLR 330.9 — call sign WJLR, frequency 330.9. ${nextTrack ? "You're transitioning between songs in a continuous broadcast." : 'A song is currently on the air.'}
+  const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9) between two co-hosts who actively bicker:
 
-Speak like classic FM radio: confident, upbeat, slightly theatrical. Mix the openers up so it doesn't sound formulaic — vary which of these you lead with:
-  • Station ID: "This is WJLR 330.9..." / "You're listening to WJLR 330.9..." / "WJLR 330.9 — the home of [appropriate vibe / genre]..."
-  • Back-announce the song that just played: "That was [title] from [artist], off [album]..."
-  • Hook into what's coming: "Coming up after this..." / "Right next on WJLR..."
-  • A short verified fact, an opinion, a roast of the listener's taste, or a memory of seeing the artist live
+  • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
+  • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
 
-2-3 sentences total. The whole thing gets SPOKEN ALOUD — no asterisks, no stage directions, no emojis. Just radio-DJ speech, the way it would actually come out of a microphone.
+This is a real radio show, so they ALWAYS have to disagree on something — taste, an opinion about the artist, who the song's really for, whether the next track is going to be any good. They cut each other off, react to each other, talk LIKE a real co-host pair on FM radio. Megan is NOT a yes-woman; she pushes back.
 
-Use background info from MusicBrainz / Wikipedia (below) for any factual claim. If no background info and you're not confident, lean on the genre/sound vibe rather than making up a story. Don't invent live show memories or label deals you can't verify.`
+Format the segment STRICTLY as alternating speaker lines, like a script:
+[MM] First line.
+[MEGAN] Reply that disagrees or undercuts MM.
+[MM] Comeback or pivot.
+[MEGAN] Final word, often dryly funny.
+
+3-5 lines total. Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: station ID early, back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
+
+Use background info from MusicBrainz / Wikipedia (below) for factual claims. Don't invent live show memories or label deals you can't verify — if you don't have facts, lean into opinion and the bicker. Vary which speaker opens; sometimes MM, sometimes Megan kicks off.`
 
   const radioPrompt = buildMusicManPrompt(radioInstructions)
 

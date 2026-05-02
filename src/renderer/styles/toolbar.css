@@ -432,6 +432,46 @@
   line-height: 1;
 }
 
+/* ── Radio Mode toggle button ─────────────────────────────────────────
+ * Bigger surface than the standard dj-btn because it's a persistent
+ * mode toggle (vs. the mic button's one-shot action) and the user
+ * needs a clear at-a-glance ON/OFF read so they don't get stuck. The
+ * "ON AIR" label flips to "RADIO" when off; active state is bright
+ * red instead of the warm orange used by the mic button so the two
+ * controls visually distinguish at a glance.
+ */
+.radio-mode-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 48px;
+  padding: 2px 6px;
+}
+.radio-mode-label {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  line-height: 1;
+  color: #888;
+  text-transform: uppercase;
+}
+.radio-mode-btn--on {
+  opacity: 1;
+  color: #d11f2e;
+  box-shadow: 0 0 10px rgba(209,31,46,0.65), 0 0 18px rgba(209,31,46,0.25), 0 2px 4px rgba(0,0,0,0.2);
+  background: rgba(209,31,46,0.08);
+  animation: radio-on-air-pulse 1.2s ease-in-out infinite;
+}
+.radio-mode-btn--on .radio-mode-label {
+  color: #d11f2e;
+}
+@keyframes radio-on-air-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(209,31,46,0.65), 0 0 18px rgba(209,31,46,0.25), 0 2px 4px rgba(0,0,0,0.2); }
+  50%      { box-shadow: 0 0 14px rgba(209,31,46,0.85), 0 0 24px rgba(209,31,46,0.4),  0 2px 4px rgba(0,0,0,0.2); }
+}
+
 /* DJ button wrapper */
 .dj-btn-wrapper {
   position: relative;
