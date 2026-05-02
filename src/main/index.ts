@@ -1035,8 +1035,16 @@ function scheduleDbRebuild(deletedPaths: string[]) {
         const py = spawn(PYTHON_CMD, [scriptPath, '--write', ipodDb])
         py.on('error', reject)
         py.on('close', (code) => code === 0 ? resolve() : reject(new Error(`db_reader exit ${code}`)))
-        py.stdin.write(JSON.stringify({ tracks: lib.tracks, playlists: lib.playlists || [] }))
-        py.stdin.end()
+        // EPIPE-safe stdin write. If the Python child dies before we
+        // finish writing (iPod unmount, parse error, signal), Node
+        // emits 'error' on stdin and — without a listener — escalates
+        // to an Uncaught Exception that crashes the main process.
+        // Same pattern at every spawn-and-write site below.
+        py.stdin.on('error', (err) => reject(err))
+        try {
+          py.stdin.write(JSON.stringify({ tracks: lib.tracks, playlists: lib.playlists || [] }))
+          py.stdin.end()
+        } catch (err) { reject(err) }
       })
       console.log(`[delete-sync] removed ${removed.length} files from iPod, iTunesDB rebuilt`)
       mainWindow?.webContents.send('ipod-db-rebuilt', { removed: removed.length })
@@ -1420,8 +1428,11 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           if (code === 0) resolve(stdout)
           else reject(new Error(`tag_reader exit ${code}: ${stderr}`))
         })
-        py.stdin.write(JSON.stringify(rewriteCandidatePaths))
-        py.stdin.end()
+        py.stdin.on('error', reject)  // EPIPE-safe — see scheduleDbRebuild for why
+        try {
+          py.stdin.write(JSON.stringify(rewriteCandidatePaths))
+          py.stdin.end()
+        } catch (err) { reject(err) }
       })
       const arr = JSON.parse(read) as Array<{ path: string; title?: string; artist?: string; ok?: boolean }>
       for (const t of arr) {
@@ -1549,8 +1560,19 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         resolve({ ok: false, error: String(err), copied, copyErrors })
       }
     })
-    py.stdin.write(input)
-    py.stdin.end()
+    // EPIPE-safe stdin write. User hit a main-process crash on 4.1.3
+    // right after a sync — almost certainly this write or a debounced
+    // post-sync child died with no listener on stdin's 'error', so the
+    // EPIPE escalated to an Uncaught Exception. Same pattern below.
+    py.stdin.on('error', (err) => {
+      resolve({ ok: false, error: `stdin write failed: ${String(err)}`, copied, copyErrors })
+    })
+    try {
+      py.stdin.write(input)
+      py.stdin.end()
+    } catch (err) {
+      resolve({ ok: false, error: `stdin write threw: ${String(err)}`, copied, copyErrors })
+    }
 
     let stderr = ''
     let stdout = ''
@@ -3880,8 +3902,16 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
     py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     if (stdinData !== undefined) {
-      py.stdin.write(stdinData)
-      py.stdin.end()
+      // EPIPE-safe stdin write — see scheduleDbRebuild for why
+      py.stdin.on('error', (err) => {
+        resolve({ ok: false, error: `stdin write failed: ${String(err)}` })
+      })
+      try {
+        py.stdin.write(stdinData)
+        py.stdin.end()
+      } catch (err) {
+        resolve({ ok: false, error: `stdin write threw: ${String(err)}` })
+      }
     }
     py.on('close', (code: number) => {
       if (code !== 0) {

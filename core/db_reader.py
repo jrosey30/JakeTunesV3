@@ -18,12 +18,21 @@ _xml_candidates = [
     os.path.expanduser("~/Music/iTunes/iTunes Music Library.xml"),
     os.path.expanduser("~/Music/iTunes/iTunes Library.xml"),
 ]
-# Also check Desktop for any exported XML
+# Also check Desktop for any exported XML. macOS sandboxes the Desktop
+# for apps without explicit permission, so listdir can raise
+# PermissionError (Errno 1, "Operation not permitted") — when that
+# happens, skip Desktop discovery silently. Without this guard, the
+# error escaped on `import db_reader` and the script died with exit
+# code 1 before it could read stdin, which crashed the Electron main
+# process with an EPIPE on the stdin write.
 _desktop = os.path.expanduser("~/Desktop")
 if os.path.isdir(_desktop):
-    for f in os.listdir(_desktop):
-        if f.endswith('.xml') and 'library' in f.lower():
-            _xml_candidates.insert(0, os.path.join(_desktop, f))
+    try:
+        for f in os.listdir(_desktop):
+            if f.endswith('.xml') and 'library' in f.lower():
+                _xml_candidates.insert(0, os.path.join(_desktop, f))
+    except (PermissionError, OSError):
+        pass  # Desktop access denied by macOS sandboxing — skip
 ITUNES_XML_PATH = next((p for p in _xml_candidates if os.path.exists(p)), _xml_candidates[0] if _xml_candidates else '')
 
 def read_utf16(data, offset, length):
