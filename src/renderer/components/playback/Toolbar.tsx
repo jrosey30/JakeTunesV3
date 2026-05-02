@@ -60,6 +60,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const { state: lib } = useLibrary()
   const { setVolume, playTrack } = useAudio()
   const [autoDj, setAutoDj] = useState(false)
+  // 4.1.6: Radio Mode — continuous WJLR-style commentary between tracks.
+  // Distinct from `autoDj` which is only on during a Music-Man-curated
+  // DJ Set. Radio Mode rides whatever queue the user picked. Mutually
+  // exclusive with autoDj at the UI level (toggling one off the other).
+  const [radioMode, setRadioMode] = useState(false)
+  // Cache for pre-fetched radio commentary so the audio is ready the
+  // moment the current track ends — kills the 3-5s Claude+TTS round-trip
+  // delay that the user complained about. Keyed by `${prev}-${next}` ID
+  // pair; cleared on use, on track change, or on Radio Mode toggle off.
+  const radioCacheRef = useRef<Map<string, { text: string; audioData: string }>>(new Map())
+  const radioPrefetchedKeyRef = useRef<string | null>(null)
   const [djActive, setDjActive] = useState(false)
   const [djText, setDjText] = useState('')
   const [djLoading, setDjLoading] = useState(false)
@@ -145,10 +156,59 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     return () => window.removeEventListener('musicman-dj-cancel', handler)
   }, [setVolume])
 
-  // Sync auto-DJ mode to audio module
+  // Sync auto-DJ mode to audio module. Either DJ-Set's autoDj OR the
+  // user-toggled Radio Mode triggers the between-track event the
+  // transition handler listens on.
   useEffect(() => {
-    setAutoDjMode(autoDj)
-  }, [autoDj])
+    setAutoDjMode(autoDj || radioMode)
+  }, [autoDj, radioMode])
+
+  // Toggle handler for Radio Mode — mutual exclusion with autoDj.
+  const handleRadioToggle = useCallback(() => {
+    setRadioMode((prev) => {
+      const next = !prev
+      if (next) {
+        // Turning Radio on; cancel any active DJ Set commentary path.
+        setAutoDj(false)
+      } else {
+        // Turning off; flush any in-flight pre-fetch cache.
+        radioCacheRef.current.clear()
+        radioPrefetchedKeyRef.current = null
+      }
+      return next
+    })
+  }, [])
+
+  // Pre-fetch radio commentary during the last ~30s of the current
+  // track. By the time the track ends, the Claude text + TTS audio are
+  // sitting in the cache and the transition handler plays them
+  // immediately — no 3-5s gap waiting on the network.
+  useEffect(() => {
+    if (!radioMode) return
+    if (!pb.nowPlaying || pb.duration <= 0) return
+    const remaining = pb.duration - pb.position
+    if (remaining > 30 || remaining < 5) return  // outside the prefetch window
+    const nextIdx = pb.queueIndex + 1
+    if (nextIdx >= pb.queue.length) return  // no next track
+    const nextTrack = pb.queue[nextIdx]
+    const cacheKey = `${pb.nowPlaying.id}-${nextTrack.id}`
+    if (radioPrefetchedKeyRef.current === cacheKey) return  // already prefetched
+    if (radioCacheRef.current.has(cacheKey)) return
+    radioPrefetchedKeyRef.current = cacheKey
+    ;(async () => {
+      try {
+        const prev = pb.nowPlaying!
+        const r = await window.electronAPI.musicmanRadio(
+          { title: prev.title || '', artist: prev.artist || '', album: prev.album || '', genre: prev.genre || '', year: prev.year || '' },
+          { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+        )
+        if (!r.ok || !r.text) return
+        const tts = await window.electronAPI.musicmanSpeak(r.text, false)
+        if (!tts.ok || !tts.audio) return
+        radioCacheRef.current.set(cacheKey, { text: r.text, audioData: tts.audio })
+      } catch { /* prefetch failures are non-fatal — handler will fall back to live fetch */ }
+    })()
+  }, [radioMode, pb.nowPlaying, pb.position, pb.duration, pb.queue, pb.queueIndex])
 
   // Click mic: one-shot DJ comment on current track. Click again to stop.
   const handleDjClick = useCallback(async () => {
@@ -226,9 +286,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjText('')
   }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
 
-  // Auto-DJ: listen for track transitions
+  // Auto-DJ / Radio Mode: listen for track transitions. Either flag
+  // arms the listener; the body picks which prompt + cache to use.
   useEffect(() => {
-    if (!autoDj) return
+    if (!autoDj && !radioMode) return
 
     const handler = async (e: Event) => {
       // Acknowledge so useAudio knows we're handling this
@@ -238,8 +299,48 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjLoading(true)
       setDjText('')
 
+      // Radio Mode fast path: check if we pre-fetched the commentary
+      // during the last 30s of the previous track. If so, skip the
+      // Claude + TTS round-trip and play immediately.
+      if (radioMode) {
+        const cacheKey = `${prevTrack.id}-${nextTrack.id}`
+        const cached = radioCacheRef.current.get(cacheKey)
+        if (cached) {
+          radioCacheRef.current.delete(cacheKey)
+          radioPrefetchedKeyRef.current = null
+          setDjLoading(false)
+          setDjText(cached.text)
+          const audio = new Audio(`data:audio/mpeg;base64,${cached.audioData}`)
+          djAudioRef.current = audio
+          audio.onended = () => {
+            djAudioRef.current = null
+            setDjActive(false)
+            fadeVolumeIn()
+            isFadedRef.current = false
+            playTrack(nextTrack, queue, nextIdx, true)
+            setTimeout(() => {
+              setDjExiting(true)
+              setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
+            }, 3000)
+          }
+          audio.onerror = () => {
+            djAudioRef.current = null
+            setDjActive(false)
+            setDjText('')
+            fadeVolumeIn()
+            isFadedRef.current = false
+            playTrack(nextTrack, queue, nextIdx, true)
+          }
+          savedVolumeRef.current = pb.volume
+          await fadeVolumeOut()
+          await audio.play()
+          return
+        }
+      }
+
       try {
-        const result = await window.electronAPI.musicmanDj(
+        const ipcCall = radioMode ? window.electronAPI.musicmanRadio : window.electronAPI.musicmanDj
+        const result = await ipcCall(
           { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
           { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' }
         )
@@ -284,7 +385,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
     window.addEventListener('musicman-dj-transition', handler)
     return () => window.removeEventListener('musicman-dj-transition', handler)
-  }, [autoDj, playTrack])
+  }, [autoDj, radioMode, playTrack, pb.volume, fadeVolumeIn, fadeVolumeOut])
 
   // ── AirPlay / Audio Output ──
   interface AudioDevice { id: number; name: string; transport: string; isDefault: boolean }
@@ -522,6 +623,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             title="Music Man comment (right-click: toggle bubble)"
           >
             <MicIcon />
+          </button>
+          <button
+            className={`transport-toggle dj-btn ${radioMode ? 'dj-btn--active' : ''}`}
+            onClick={handleRadioToggle}
+            disabled={!pb.nowPlaying}
+            title={radioMode ? 'Radio Mode: ON — WJLR 330.9 between every track' : 'Radio Mode: OFF — click for WJLR-style commentary between every song'}
+          >
+            <RadioIcon />
           </button>
           {showBubble && (djLoading || djText) && (
             <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>

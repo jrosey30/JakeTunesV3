@@ -19,6 +19,11 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-speak', text, fast),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }): Promise<{ ok: boolean; text: string }> =>
     ipcRenderer.invoke('musicman-dj', track, nextTrack),
+  // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
+  // from one-shot DJ comment (mic click). Same shape, different system
+  // prompt + voice.
+  musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }): Promise<{ ok: boolean; text: string }> =>
+    ipcRenderer.invoke('musicman-radio', track, nextTrack),
   musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]): Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-dj-set', tracks, recentIds),
   musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>

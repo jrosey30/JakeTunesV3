@@ -2541,6 +2541,56 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
   }
 })
 
+// Music Man Radio Mode — between-song commentary in classic FM-radio
+// style (call sign, station ID, back-announce, hype-up). Distinct from
+// `musicman-dj` (which is the casual one-shot mic-click commentary)
+// because Radio Mode runs continuously between every track and needs a
+// stylistically consistent voice.
+ipcMain.handle('musicman-radio', async (_event,
+  track: { title: string; artist: string; album: string; genre: string; year: string | number },
+  nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }
+) => {
+  const radioInstructions = `You are the live DJ at WJLR 330.9 — call sign WJLR, frequency 330.9. ${nextTrack ? "You're transitioning between songs in a continuous broadcast." : 'A song is currently on the air.'}
+
+Speak like classic FM radio: confident, upbeat, slightly theatrical. Mix the openers up so it doesn't sound formulaic — vary which of these you lead with:
+  • Station ID: "This is WJLR 330.9..." / "You're listening to WJLR 330.9..." / "WJLR 330.9 — the home of [appropriate vibe / genre]..."
+  • Back-announce the song that just played: "That was [title] from [artist], off [album]..."
+  • Hook into what's coming: "Coming up after this..." / "Right next on WJLR..."
+  • A short verified fact, an opinion, a roast of the listener's taste, or a memory of seeing the artist live
+
+2-3 sentences total. The whole thing gets SPOKEN ALOUD — no asterisks, no stage directions, no emojis. Just radio-DJ speech, the way it would actually come out of a microphone.
+
+Use background info from MusicBrainz / Wikipedia (below) for any factual claim. If no background info and you're not confident, lean on the genre/sound vibe rather than making up a story. Don't invent live show memories or label deals you can't verify.`
+
+  const radioPrompt = buildMusicManPrompt(radioInstructions)
+
+  const [artistFacts, nextArtistFacts] = await Promise.all([
+    searchWeb(`${track.artist} musician`, track.album),
+    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve('')
+  ])
+
+  let userMessage = nextTrack
+    ? `Song that just finished: "${track.title}" by ${track.artist} from "${track.album}" (${track.genre}, ${track.year}). Coming up next: "${nextTrack.title}" by ${nextTrack.artist} from "${nextTrack.album}" (${nextTrack.genre}, ${nextTrack.year}).`
+    : `Now playing: "${track.title}" by ${track.artist} from the album "${track.album}" (${track.genre}, ${track.year})`
+  if (artistFacts) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
+  if (nextArtistFacts && nextTrack) userMessage += `\nBackground on ${nextTrack.artist}: ${nextArtistFacts}`
+
+  try {
+    const response = await claudeCall('musicman-radio', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 220,
+      system: radioPrompt,
+      messages: [{ role: 'user', content: userMessage }]
+    })
+    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    if (text) noteMusicManUtterance('radio', text)
+    return { ok: true, text }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, text: `Error: ${msg}` }
+  }
+})
+
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
 ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
