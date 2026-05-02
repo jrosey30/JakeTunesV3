@@ -376,11 +376,21 @@ export function useAudio() {
       }
     }
 
-    // Reschedule rAF as long as something is producing audio OR a fade
-    // is mid-flight (volume animation needs to run until completion
-    // even when the new sharedHowl hasn't started playing yet).
+    // Reschedule rAF based on user-intent (state.isPlaying), not on
+    // Howler's transient `.playing()` reports. After a programmatic
+    // seek, Howler with html5: true briefly returns playing()=false
+    // while the audio element re-buffers. The old gate `sharedHowl
+    // .playing()` would then fail to reschedule, rAF would stop, and
+    // there was no mechanism to restart it once buffering completed —
+    // so the position bar froze at the seek-to spot while audio kept
+    // playing past it. Trusting React state instead lets rAF tick
+    // through buffering hiccups; the bar resumes the moment Howler's
+    // seek() getter starts returning current values again. Crossfade
+    // path keeps its own check since it has separate animation needs
+    // unrelated to user playback intent.
     const stillActive =
-      (sharedHowl && (sharedHowl.playing() || crossfading)) ||
+      (sharedHowl && stateRef.current.isPlaying && !isPaused) ||
+      crossfading ||
       (outgoingHowl && outgoingHowl.playing())
     if (stillActive) {
       sharedRaf = requestAnimationFrame(updatePosition)
@@ -724,6 +734,12 @@ export function useAudio() {
       const pos = pct * stateRef.current.duration
       sharedHowl.seek(pos)
       dispatchRef.current({ type: 'SET_POSITION', position: pos })
+      // Invalidate the throttle gate so the very next rAF tick
+      // dispatches the actual current position, not the user's
+      // drag-to value. Otherwise the bar can sit at the drag-to
+      // value for up to 100ms while the gate re-opens. Sub-perceptual
+      // gap usually but worth the one extra dispatch.
+      lastPositionDispatchMs = 0
     }
   }, [])
 
