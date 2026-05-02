@@ -265,6 +265,20 @@
   background: #e88a35;
 }
 
+/* Vinyl variant — DJ Mode placeholder. Same shape as --dj but in the
+ * grey palette that matches the toolbar's DJ Mode button, so the two
+ * controls read as the same feature in two locations. */
+.album-art-btn--vinyl {
+  background: #4a4a52;
+  color: #d8d8e0;
+  border-color: #333339;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+}
+
+.album-art-btn--vinyl:hover {
+  background: #5a5a64;
+}
+
 .album-art-btn--dj-active {
   background: linear-gradient(180deg, #e8912e, #c87020) !important;
   border-color: #a85e18 !important;

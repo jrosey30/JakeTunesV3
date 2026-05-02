@@ -202,46 +202,62 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (tracks.length === 0) return
     const shuffled = [...tracks].sort(() => Math.random() - 0.5)
     const firstTrack = shuffled[0]
-    setRadioMode(true)  // ON AIR pill shows immediately while opener generates
-
-    // Stop any currently-playing music FIRST. The opener uses a fresh
-    // <audio> element (not Howler), so without stopping the existing
-    // Howl, both would play simultaneously during the 5-10s opener.
+    setRadioMode(true)
     stopPlayback()
+    console.log('[Radio] toggle ON — generating opener…')
 
-    // Try to generate + play the opener. Falls through to plain
-    // playTrack if anything fails so the user is never left without
-    // music after clicking Radio.
-    try {
-      const r = await window.electronAPI.musicmanRadio(
-        { title: '', artist: '', album: '', genre: '', year: '' },
-        { title: firstTrack.title || '', artist: firstTrack.artist || '', album: firstTrack.album || '', genre: firstTrack.genre || '', year: firstTrack.year || '' },
-        true,  // opener=true → prompt forces [ANNOUNCER] station ID drop
-      )
-      if (r.ok && r.text) {
-        const segments = await synthesizeRadioSegments(r.text)
-        if (segments.length > 0) {
-          // Play opener segments sequentially, then start first track.
-          // No fade — there's no music yet to fade out from.
-          await new Promise<void>((resolve) => {
-            let i = 0
-            const playOne = (): void => {
-              if (i >= segments.length) { resolve(); return }
-              const seg = segments[i++]
-              const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
-              djAudioRef.current = audio
-              audio.onended = playOne
-              audio.onerror = playOne
-              audio.play().catch(() => playOne())
-            }
-            playOne()
-          })
-          djAudioRef.current = null
+    // Hard timeout for the whole opener flow (IPC + TTS + segment
+    // playback). If anything in the chain hangs (Claude latency,
+    // ElevenLabs, network blip, decoder stall), we fall through to
+    // playTrack within 15s so the user is NEVER left staring at a
+    // dead radio button.
+    const TIMEOUT_MS = 15000
+    const openerDone = new Promise<void>((resolve) => {
+      let resolved = false
+      const finish = () => { if (!resolved) { resolved = true; resolve() } }
+      setTimeout(() => {
+        if (!resolved) console.warn(`[Radio] opener timeout after ${TIMEOUT_MS}ms — starting track`)
+        finish()
+      }, TIMEOUT_MS)
+
+      ;(async () => {
+        try {
+          console.log('[Radio] calling musicmanRadio (opener)…')
+          const r = await window.electronAPI.musicmanRadio(
+            { title: '', artist: '', album: '', genre: '', year: '' },
+            { title: firstTrack.title || '', artist: firstTrack.artist || '', album: firstTrack.album || '', genre: firstTrack.genre || '', year: firstTrack.year || '' },
+            true,
+            true,
+          )
+          console.log('[Radio] musicmanRadio returned ok=' + r.ok + ' text-length=' + (r.text?.length ?? 0))
+          if (!r.ok || !r.text) { finish(); return }
+          if (resolved) return  // timeout already fired
+          console.log('[Radio] synthesizing segments…')
+          const segments = await synthesizeRadioSegments(r.text)
+          console.log('[Radio] got ' + segments.length + ' segments')
+          if (resolved) return
+          if (segments.length === 0) { finish(); return }
+          let i = 0
+          const playOne = (): void => {
+            if (resolved) return
+            if (i >= segments.length) { finish(); return }
+            const seg = segments[i++]
+            const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+            djAudioRef.current = audio
+            audio.onended = playOne
+            audio.onerror = () => { console.warn('[Radio] segment ' + (i-1) + ' errored, advancing'); playOne() }
+            audio.play().catch((e) => { console.warn('[Radio] segment play() rejected:', e); playOne() })
+          }
+          playOne()
+        } catch (err) {
+          console.warn('[Radio] opener flow threw, starting track directly:', err)
+          finish()
         }
-      }
-    } catch (err) {
-      console.warn('[Radio] opener generation failed, starting track directly:', err)
-    }
+      })()
+    })
+    await openerDone
+    djAudioRef.current = null
+    console.log('[Radio] starting first track:', firstTrack.title)
     playTrack(firstTrack, shuffled, 0, false)
   }, [radioMode, lib.tracks, playTrack, stopPlayback])
 
@@ -765,6 +781,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         <NowPlaying />
         <div className="dj-btn-wrapper">
           <button
+            className={`transport-toggle dj-btn ${djActive && !djModeActive ? 'dj-btn--active' : ''} ${djLoading && !djModeActive ? 'dj-btn--loading' : ''}`}
+            onClick={handleDjClick}
+            onContextMenu={(e) => { e.preventDefault(); setShowBubble(s => !s) }}
+            disabled={!pb.nowPlaying}
+            title="Music Man — one-shot comment on the current track (right-click: toggle bubble)"
+          >
+            <MicIcon />
+          </button>
+          <button
             className="transport-toggle dj-btn dj-mode-btn"
             disabled
             title="DJ Mode — coming soon (beatmatched / Camelot-mixed continuous music, no commentary)"
@@ -787,6 +812,20 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           </button>
           {radioMode && (
             <span className="radio-on-air-pill" aria-live="polite">ON AIR · WJLR 330.9</span>
+          )}
+          {showBubble && !radioMode && (djLoading || djText) && (
+            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
+              {djLoading ? (
+                <>
+                  <span className="dj-bubble-label">The Music Man</span>{' '}
+                  <span className="dj-loading-dots">is listening</span>
+                </>
+              ) : (
+                <>
+                  <span className="dj-bubble-label">The Music Man:</span> {djText}
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>

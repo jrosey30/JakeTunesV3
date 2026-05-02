@@ -167,10 +167,10 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
           }}
         ><svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="square" strokeLinejoin="miter"><path d="M5 10V4l6-2v6" /><circle cx="3.5" cy="10" r="1.5" /><circle cx="9.5" cy="8" r="1.5" /></svg></button>
         <button
-          className={`album-art-btn album-art-btn--dj ${djModeActive ? 'album-art-btn--dj-active' : ''}`}
-          title={djModeActive ? 'DJ Mode: On (click to stop)' : 'Start DJ Mode'}
+          className={`album-art-btn album-art-btn--vinyl ${djModeActive ? 'album-art-btn--dj-active' : ''}`}
+          title={djModeActive ? 'DJ Mode: On (click to stop)' : 'Start DJ Mode (Music Man picks 25 tracks)'}
           onClick={() => window.dispatchEvent(new CustomEvent('toggle-dj-mode'))}
-        ><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 5v12" strokeWidth="1.8" /><path d="M10 17L6 19M10 17L14 19" /><path d="M8 10h4" /><path d="M9 13h2" /><path d="M10 7L7 17" strokeWidth="1" /><path d="M10 7L13 17" strokeWidth="1" /><path d="M7 4.5a4 4 0 016 0" strokeWidth="1.3" /><path d="M5 2.5a7 7 0 0110 0" strokeWidth="1.2" /><circle cx="10" cy="4.2" r="1" fill="currentColor" stroke="none" /></svg></button>
+        ><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="10" cy="10" r="8.5" strokeWidth="1.5" /><circle cx="10" cy="10" r="6.5" opacity="0.55" /><circle cx="10" cy="10" r="4.5" opacity="0.4" /><circle cx="10" cy="10" r="2.8" fill="currentColor" stroke="none" /><circle cx="10" cy="10" r="0.8" fill="#fff" stroke="none" /></svg></button>
       </div>
 
       {ctxMenu && (
