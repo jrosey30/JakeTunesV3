@@ -190,11 +190,30 @@ export default function SongsView() {
       },
     ] : []
 
+    // Artist Radio: filter library by this song's artist, dispatch to
+    // Toolbar so it shuffles + starts Radio Mode focused on that artist.
+    // Toolbar listens on 'jaketunes-start-artist-radio'.
+    const trackArtist = (track.artist || '').trim()
+    const artistTracks = trackArtist
+      ? lib.tracks.filter(t => (t.artist || '').trim().toLowerCase() === trackArtist.toLowerCase())
+      : []
+
     return [
       { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      ...(trackArtist && artistTracks.length > 0 ? [
+        { separator: true as const },
+        {
+          label: `Start ${trackArtist} Radio`,
+          onClick: () => {
+            window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', {
+              detail: { tracks: artistTracks, label: trackArtist },
+            }))
+          },
+        },
+      ] : []),
       ...ratingMenuEntries(selectedTracks, libDispatch),
       { separator: true as const },
       {

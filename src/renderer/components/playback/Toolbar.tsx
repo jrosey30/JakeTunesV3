@@ -166,20 +166,45 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   }, [autoDj, radioMode])
 
   // Toggle handler for Radio Mode — mutual exclusion with autoDj.
+  // Turning ON shuffles the entire library into the queue and starts
+  // playing the first track. The user explicitly asked for "default to
+  // entire library radio" so the queue gets replaced even if they had
+  // a manual queue going. Turning OFF leaves the queue alone.
   const handleRadioToggle = useCallback(() => {
-    setRadioMode((prev) => {
-      const next = !prev
-      if (next) {
-        // Turning Radio on; cancel any active DJ Set commentary path.
-        setAutoDj(false)
-      } else {
-        // Turning off; flush any in-flight pre-fetch cache.
-        radioCacheRef.current.clear()
-        radioPrefetchedKeyRef.current = null
-      }
-      return next
-    })
-  }, [])
+    if (radioMode) {
+      setRadioMode(false)
+      radioCacheRef.current.clear()
+      radioPrefetchedKeyRef.current = null
+      return
+    }
+    setAutoDj(false)
+    const tracks = lib.tracks
+    if (tracks.length > 0) {
+      const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+      playTrack(shuffled[0], shuffled, 0, false)
+    }
+    setRadioMode(true)
+  }, [radioMode, lib.tracks, playTrack])
+
+  // "Start Artist Radio" — dispatched from any view's right-click menu
+  // (initially SongsView, expandable to Albums/Artists/Genres later).
+  // Filters the library to that artist, shuffles, sets queue, turns
+  // Radio Mode on. Same flow as the default toggle but with a focused
+  // track set instead of the whole library.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { tracks } = (e as CustomEvent).detail as { tracks: typeof lib.tracks; label?: string }
+      if (!tracks || tracks.length === 0) return
+      const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+      playTrack(shuffled[0], shuffled, 0, false)
+      setAutoDj(false)
+      setRadioMode(true)
+      radioCacheRef.current.clear()
+      radioPrefetchedKeyRef.current = null
+    }
+    window.addEventListener('jaketunes-start-artist-radio', handler)
+    return () => window.removeEventListener('jaketunes-start-artist-radio', handler)
+  }, [playTrack])
 
   // Megan's ElevenLabs voice ID — co-host on Radio Mode. Music Man's
   // voice falls through to the server-side env override (or default)
