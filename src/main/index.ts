@@ -600,7 +600,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
 </style></head>
 <body>
   <h1>JakeTunes</h1>
-  <div class="version">Version 4.0.5</div>
+  <div class="version">Version ${app.getVersion()}</div>
   <div class="author">by Jacob Rosenbaum</div>
   <div class="tagline">2008 visuals, 2026 brain</div>
 </body>
@@ -719,7 +719,7 @@ async function searchWikipedia(query: string): Promise<string> {
 // Search MusicBrainz for accurate music data (genre, country, years active, releases)
 async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.5 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`, 'Accept': 'application/json' }
     // Search for artist
     const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
     const artistRes = await fetch(artistUrl, { headers })
@@ -893,6 +893,12 @@ const LIBRARY_PATH = join(app.getPath('userData'), 'library.json')
 ipcMain.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
 })
+
+// Single source of truth for the app version, sourced from package.json.
+// Renderer pulls this once at startup so version-display surfaces don't
+// drift from the actual installed build (the way the About dialog
+// hardcoded "4.0.5" did across 4.0.6 → 4.1.2).
+ipcMain.handle('get-app-version', () => app.getVersion())
 
 // Load the JakeTunes master library (independent of iPod).
 //
@@ -3118,7 +3124,7 @@ function buildCynthiaPrompt(modeSpecific = ''): string {
 // "find my missing tracks"). Returns a JSON object Cynthia can read.
 async function musicBrainzAlbumLookup(artist: string, album: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': 'JakeTunes/4.0.5 (jacobrosenbaum@gmail.com)', 'Accept': 'application/json' }
+    const headers = { 'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`, 'Accept': 'application/json' }
     // Step 1: find candidate releases.
     const query = `release:"${album}" AND artist:"${artist}"`
     const searchUrl = `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&fmt=json&limit=8`
@@ -4288,7 +4294,7 @@ ipcMain.handle('get-cd-info', async () => {
         // a genre from MusicBrainz release / release-group tags.
         const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'JakeTunes/4.0.5 (jaketunes@example.com)' }
+          headers: { 'User-Agent': `JakeTunes/${app.getVersion()} (jaketunes@example.com)` }
         })
         if (res.ok) {
           type MBTag = { name: string; count?: number }

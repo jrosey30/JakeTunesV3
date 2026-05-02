@@ -111,6 +111,15 @@ export default function DeviceView() {
   const [ipodName, setIpodName] = useState('iPod')
   const [ipodCapacityBytes, setIpodCapacityBytes] = useState<number>(FALLBACK_CAPACITY_BYTES)
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  // Pull the version from main once on mount. Sourced from package.json
+  // via app.getVersion() so it auto-tracks the actual installed build.
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.getAppVersion().then(v => { if (!cancelled) setAppVersion(v) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   // iTunes-style device options. Stored in ui-state.json so they persist
   // across launches. Behavior for each option is implemented as the
@@ -291,7 +300,7 @@ export default function DeviceView() {
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Software Version:</span>
-            <span className="device-itunes-value">JakeTunes 4.0.5</span>
+            <span className="device-itunes-value">JakeTunes{appVersion ? ` ${appVersion}` : ''}</span>
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Format:</span>

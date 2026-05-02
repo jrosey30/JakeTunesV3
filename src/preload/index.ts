@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
   // One-way notify: tells main "playback state changed" so background
   // workers (audio analysis, prewarm) can yield while music is live.
   // Fire-and-forget — no return value needed, no async overhead.
