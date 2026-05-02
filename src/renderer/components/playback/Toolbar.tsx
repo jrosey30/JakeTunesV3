@@ -72,7 +72,7 @@ function AirPlayIcon({ active }: { active?: boolean }) {
 export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean }) {
   const { state: pb } = usePlayback()
   const { state: lib } = useLibrary()
-  const { setVolume, playTrack } = useAudio()
+  const { setVolume, playTrack, stopPlayback } = useAudio()
   const [autoDj, setAutoDj] = useState(false)
   // 4.1.6: Radio Mode — continuous WJLR-style commentary between tracks.
   // Distinct from `autoDj` which is only on during a Music-Man-curated
@@ -179,11 +179,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   }, [autoDj, radioMode])
 
   // Toggle handler for Radio Mode — mutual exclusion with autoDj.
-  // Turning ON shuffles the entire library into the queue and starts
-  // playing the first track. The user explicitly asked for "default to
-  // entire library radio" so the queue gets replaced even if they had
-  // a manual queue going. Turning OFF leaves the queue alone.
-  const handleRadioToggle = useCallback(() => {
+  // Turning ON shuffles the entire library, generates a SHOW OPENER
+  // (campy [ANNOUNCER] station ID + MM/Megan welcome banter), plays
+  // it through, THEN starts the first track. Without the opener, the
+  // user just heard music start with no station ID — defeating the
+  // "WJLR coming on the air" feel.
+  const handleRadioToggle = useCallback(async () => {
     if (radioMode) {
       setRadioMode(false)
       radioCacheRef.current.clear()
@@ -192,12 +193,51 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
     setAutoDj(false)
     const tracks = lib.tracks
-    if (tracks.length > 0) {
-      const shuffled = [...tracks].sort(() => Math.random() - 0.5)
-      playTrack(shuffled[0], shuffled, 0, false)
+    if (tracks.length === 0) return
+    const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+    const firstTrack = shuffled[0]
+    setRadioMode(true)  // ON AIR pill shows immediately while opener generates
+
+    // Stop any currently-playing music FIRST. The opener uses a fresh
+    // <audio> element (not Howler), so without stopping the existing
+    // Howl, both would play simultaneously during the 5-10s opener.
+    stopPlayback()
+
+    // Try to generate + play the opener. Falls through to plain
+    // playTrack if anything fails so the user is never left without
+    // music after clicking Radio.
+    try {
+      const r = await window.electronAPI.musicmanRadio(
+        { title: '', artist: '', album: '', genre: '', year: '' },
+        { title: firstTrack.title || '', artist: firstTrack.artist || '', album: firstTrack.album || '', genre: firstTrack.genre || '', year: firstTrack.year || '' },
+        true,  // opener=true → prompt forces [ANNOUNCER] station ID drop
+      )
+      if (r.ok && r.text) {
+        const segments = await synthesizeRadioSegments(r.text)
+        if (segments.length > 0) {
+          // Play opener segments sequentially, then start first track.
+          // No fade — there's no music yet to fade out from.
+          await new Promise<void>((resolve) => {
+            let i = 0
+            const playOne = (): void => {
+              if (i >= segments.length) { resolve(); return }
+              const seg = segments[i++]
+              const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+              djAudioRef.current = audio
+              audio.onended = playOne
+              audio.onerror = playOne
+              audio.play().catch(() => playOne())
+            }
+            playOne()
+          })
+          djAudioRef.current = null
+        }
+      }
+    } catch (err) {
+      console.warn('[Radio] opener generation failed, starting track directly:', err)
     }
-    setRadioMode(true)
-  }, [radioMode, lib.tracks, playTrack])
+    playTrack(firstTrack, shuffled, 0, false)
+  }, [radioMode, lib.tracks, playTrack, stopPlayback])
 
   // "Start Artist Radio" — dispatched from any view's right-click menu
   // (initially SongsView, expandable to Albums/Artists/Genres later).
