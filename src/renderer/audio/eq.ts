@@ -69,6 +69,22 @@ let filterNodes: BiquadFilterNode[] = []
 let analyserNode: AnalyserNode | null = null
 let masterTapped = false
 let currentSettings: EqSettings = { ...DEFAULT_EQ }
+// 4.2.20: tail of the EQ chain (last filter). Held so we can dynamically
+// connect a recording-tap MediaStreamDestination after the chain has
+// already been built (i.e. when the user clicks Record mid-playback).
+let chainTail: AudioNode | null = null
+
+// 4.2.20: recording infrastructure. The tail of the chain is connected
+// to a MediaStreamAudioDestinationNode whose stream feeds a MediaRecorder.
+// Whatever flows through preampNode → filters (music + TTS that's been
+// attached via attachClipToBroadcast) is captured. We also tap Howler's
+// master gain so html5:false (gapless preload) Howls don't get dropped
+// from the recording.
+let recordStreamDest: MediaStreamAudioDestinationNode | null = null
+let mediaRecorder: MediaRecorder | null = null
+let recordChunks: Blob[] = []
+let recordStartedAtMs = 0
+let recordHowlerMasterTapped = false
 
 // Tracks which HTMLAudio elements have already been routed through the
 // EQ chain. createMediaElementSource throws if called twice on the
@@ -104,6 +120,11 @@ function buildChain(): void {
     return f
   })
   tail.connect(audioContext.destination)
+  chainTail = tail
+  // If recording was started before the chain existed, wire it up now.
+  if (recordStreamDest) {
+    chainTail.connect(recordStreamDest)
+  }
 
   // Analyser for the LCD-pill mini visualizer. Side-branched off the
   // preamp so it captures every html5:true source flowing through the
@@ -216,6 +237,123 @@ export function attachHowlToEq(howl: Howl | null | undefined): void {
     // sources. Either way: silently skip this track.
     console.warn('[eq] could not bind audio element:', err)
   }
+}
+
+/** 4.2.20: route an arbitrary HTMLAudioElement (typically a TTS clip)
+ *  through the broadcast chain so it (a) plays through the same EQ
+ *  pipeline as music, and (b) is captured by an active recording.
+ *  Without this, TTS plays direct-to-speakers and is invisible to the
+ *  recording tap. Idempotent — duplicate binds on the same element are
+ *  guarded by the same boundSources WeakMap as music elements. Caller
+ *  is responsible for calling .play() on the returned element. */
+export function attachClipToBroadcast(audio: HTMLAudioElement): void {
+  buildChain()
+  if (!audioContext || !preampNode) return
+  if (boundSources.has(audio)) return
+  try {
+    const src = audioContext.createMediaElementSource(audio)
+    src.connect(preampNode)
+    boundSources.set(audio, src)
+    if (audioContext.state === 'suspended') {
+      void audioContext.resume()
+    }
+  } catch (err) {
+    // If MediaElementSource is unavailable (cross-origin, etc.), the
+    // clip will still play to the speakers via its native HTMLAudio
+    // path — recording just won't capture it. Better than failing.
+    console.warn('[broadcast] could not bind clip:', err)
+  }
+}
+
+/** 4.2.20: start recording the broadcast (music + TTS routed via
+ *  attachClipToBroadcast). Builds the chain if it doesn't exist yet,
+ *  taps the chain tail + Howler's master gain into a MediaStream, and
+ *  starts a MediaRecorder against that stream. Audio is held in chunks
+ *  in module state until stopRecording() is called. */
+export function startRecording(): { ok: boolean; error?: string } {
+  if (mediaRecorder) return { ok: false, error: 'already recording' }
+  buildChain()
+  if (!audioContext) return { ok: false, error: 'no audio context' }
+  try {
+    recordStreamDest = audioContext.createMediaStreamDestination()
+    if (chainTail) chainTail.connect(recordStreamDest)
+    // Also tap Howler's master gain — handles html5:false Howls (gapless
+    // preload promotes) that don't go through the chainTail. If we've
+    // already tapped it once for this recording, skip; otherwise wire it.
+    if (!recordHowlerMasterTapped) {
+      const masterGain = (Howler as unknown as { masterGain?: GainNode }).masterGain
+      if (masterGain) {
+        try { masterGain.connect(recordStreamDest) } catch { /* already connected */ }
+        recordHowlerMasterTapped = true
+      }
+    }
+    // Choose the best supported MediaRecorder mimeType. Chromium prefers
+    // webm/opus. We hand it to ffmpeg in main for the final MP3 step.
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+    ]
+    const mimeType = candidates.find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || ''
+    recordChunks = []
+    mediaRecorder = new MediaRecorder(recordStreamDest.stream, mimeType ? { mimeType } : undefined)
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordChunks.push(e.data)
+    }
+    mediaRecorder.start(1000) // emit a chunk every second so a crash mid-show doesn't lose everything
+    recordStartedAtMs = Date.now()
+    if (audioContext.state === 'suspended') void audioContext.resume()
+    return { ok: true }
+  } catch (err) {
+    console.warn('[broadcast] startRecording failed:', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** 4.2.20: stop recording. Resolves with a Blob of the captured audio
+ *  (webm/opus by default) and the duration in seconds. Caller is
+ *  responsible for transcoding to MP3 in main and offering save dialog. */
+export function stopRecording(): Promise<{ ok: boolean; blob?: Blob; durationSec?: number; mimeType?: string; error?: string }> {
+  return new Promise((resolve) => {
+    if (!mediaRecorder) {
+      resolve({ ok: false, error: 'not recording' })
+      return
+    }
+    const rec = mediaRecorder
+    const chunks = recordChunks
+    const startedAt = recordStartedAtMs
+    const mimeType = rec.mimeType || 'audio/webm'
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType })
+      const durationSec = (Date.now() - startedAt) / 1000
+      // Tear down the stream destination so future startRecording calls
+      // build a fresh tap. Keep the Howler master tap state so we don't
+      // double-connect on the next start.
+      try {
+        if (chainTail && recordStreamDest) chainTail.disconnect(recordStreamDest)
+      } catch { /* ignore */ }
+      try {
+        const masterGain = (Howler as unknown as { masterGain?: GainNode }).masterGain
+        if (recordHowlerMasterTapped && masterGain && recordStreamDest) {
+          masterGain.disconnect(recordStreamDest)
+        }
+      } catch { /* ignore */ }
+      recordHowlerMasterTapped = false
+      recordStreamDest = null
+      mediaRecorder = null
+      recordChunks = []
+      resolve({ ok: true, blob, durationSec, mimeType })
+    }
+    try {
+      rec.stop()
+    } catch (err) {
+      resolve({ ok: false, error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+}
+
+export function isRecording(): boolean {
+  return mediaRecorder !== null
 }
 
 /** Read N visualizer band amplitudes (0–255) from the analyser, with

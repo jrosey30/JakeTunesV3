@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
+import { attachClipToBroadcast, startRecording, stopRecording } from '../../audio/eq'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
@@ -45,6 +46,17 @@ function RadioIcon() {
   )
 }
 
+// Record button glyph — a solid circle (canonical "record" symbol). When
+// active, the CSS pulses it red.
+function RecordIcon({ active }: { active?: boolean }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="10" r="6" fill={active ? '#ff3b3b' : 'currentColor'} />
+      {active && <circle cx="10" cy="10" r="8.5" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.6" />}
+    </svg>
+  )
+}
+
 function AirPlayIcon({ active }: { active?: boolean }) {
   return (
     <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -65,6 +77,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // DJ Set. Radio Mode rides whatever queue the user picked. Mutually
   // exclusive with autoDj at the UI level (toggling one off the other).
   const [radioMode, setRadioMode] = useState(false)
+  // 4.2.20: recording state — captures the broadcast (music + TTS routed
+  // through the AudioContext via attachClipToBroadcast) into a single
+  // audio file. Click Record to start, click again to stop. On stop we
+  // hand the blob to main for ffmpeg → MP3 + native save dialog.
+  const [recording, setRecording] = useState(false)
+  const [recElapsed, setRecElapsed] = useState(0)
+  const recElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const recStartedAtRef = useRef(0)
   // Cache for pre-fetched radio commentary. Stores an ARRAY of dialog
   // segments — each line gets its own TTS audio because we use three
   // distinct ElevenLabs voices: The Music Man, Megan (co-host), and
@@ -175,6 +195,46 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // it through, THEN starts the first track. Without the opener, the
   // user just heard music start with no station ID — defeating the
   // "WJLR coming on the air" feel.
+  // 4.2.20: Record button handler — toggles recording. On stop, asks
+  // main to write blob → MP3 (via ffmpeg) at a user-chosen path.
+  const handleRecordToggle = useCallback(async () => {
+    if (recording) {
+      // Stop. Pause the elapsed timer immediately so the UI returns
+      // before the (potentially several-second) MP3 transcode runs.
+      setRecording(false)
+      if (recElapsedTimerRef.current) {
+        clearInterval(recElapsedTimerRef.current)
+        recElapsedTimerRef.current = null
+      }
+      const result = await stopRecording()
+      if (!result.ok || !result.blob) {
+        console.warn('[Record] stop failed:', result.error)
+        return
+      }
+      const arrayBuffer = await result.blob.arrayBuffer()
+      const bytes = new Uint8Array(arrayBuffer)
+      const saveResult = await window.electronAPI.saveRecordingMp3(bytes, result.mimeType || 'audio/webm')
+      if (saveResult.ok) {
+        console.log('[Record] saved to', saveResult.path)
+      } else {
+        console.warn('[Record] save failed:', saveResult.error)
+      }
+    } else {
+      // Start.
+      const result = startRecording()
+      if (!result.ok) {
+        console.warn('[Record] start failed:', result.error)
+        return
+      }
+      setRecording(true)
+      recStartedAtRef.current = Date.now()
+      setRecElapsed(0)
+      recElapsedTimerRef.current = setInterval(() => {
+        setRecElapsed(Math.floor((Date.now() - recStartedAtRef.current) / 1000))
+      }, 1000)
+    }
+  }, [recording])
+
   const handleRadioToggle = useCallback(async () => {
     if (radioMode) {
       setRadioMode(false)
@@ -229,6 +289,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             if (i >= segments.length) { finish(); return }
             const seg = segments[i++]
             const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+            attachClipToBroadcast(audio)
             djAudioRef.current = audio
             audio.onended = playOne
             audio.onerror = () => { console.warn('[Radio] segment ' + (i-1) + ' errored, advancing'); playOne() }
@@ -441,6 +502,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         if (tts.ok && tts.audio) {
           setDjText(result.text)
           const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+          attachClipToBroadcast(audio)
           djAudioRef.current = audio
           audio.onended = () => {
             fadeVolumeIn()
@@ -538,6 +600,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           }
           const seg = segments[i++]
           const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+          attachClipToBroadcast(audio)
           djAudioRef.current = audio
           audio.onended = playOne  // chain to next segment
           audio.onerror = playOne  // skip on error rather than stalling
@@ -768,6 +831,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         if (tts.ok && tts.audio) {
           setDjText(result.intro)
           const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+          attachClipToBroadcast(audio)
           djAudioRef.current = audio
           await fadeVolumeOut()
           await new Promise<void>((resolve) => {
@@ -896,8 +960,20 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
               </>
             )}
           </button>
+          <button
+            className={`transport-toggle dj-btn record-btn ${recording ? 'record-btn--on' : ''}`}
+            onClick={handleRecordToggle}
+            title={recording ? `Recording — click to stop and save as MP3 (${Math.floor(recElapsed/60)}:${String(recElapsed%60).padStart(2,'0')})` : 'Record — capture this broadcast (music + banter) to an MP3 file'}
+          >
+            <RecordIcon active={recording} />
+          </button>
           {radioMode && (
             <span className="radio-on-air-pill" aria-live="polite">ON AIR · WJLR 330.9</span>
+          )}
+          {recording && (
+            <span className="rec-pill" aria-live="polite">
+              <span className="rec-pill-dot" /> REC {Math.floor(recElapsed/60)}:{String(recElapsed%60).padStart(2,'0')}
+            </span>
           )}
           {showBubble && !radioMode && (djLoading || djText) && (
             <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>

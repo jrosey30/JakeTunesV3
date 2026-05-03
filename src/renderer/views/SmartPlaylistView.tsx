@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { attachClipToBroadcast } from '../audio/eq'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -410,6 +411,7 @@ export default function SmartPlaylistView() {
         setTimeout(resolve, 2000)
       })
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+      attachClipToBroadcast(audio)
       audioRef.current = audio
       audio.onended = () => {
         setSpeaking(false)

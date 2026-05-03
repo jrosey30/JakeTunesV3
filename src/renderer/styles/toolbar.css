@@ -509,6 +509,61 @@
   white-space: nowrap;
 }
 
+/* Record button. Idle: dim grey circle. Active: solid red dot, pulsing
+ * outer ring. Same footprint as the Radio button so they read as a pair. */
+.record-btn {
+  background: #4a4a52;
+  color: #aaa;
+}
+.record-btn--on {
+  background: linear-gradient(180deg, #4a1414, #2c0808);
+  color: #ff3b3b;
+  box-shadow:
+    0 0 6px rgba(255, 59, 59, 0.5),
+    0 0 12px rgba(255, 59, 59, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(255,59,59,0.5), 0 0 12px rgba(255,59,59,0.25); }
+  50%      { box-shadow: 0 0 10px rgba(255,59,59,0.85), 0 0 20px rgba(255,59,59,0.45); }
+}
+
+/* "REC 0:24" pill — appears next to the record button while recording.
+ * Same shape as the ON AIR pill but in red-tinted grey, with a blinking
+ * dot in front to signal that capture is live. */
+.rec-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  margin-left: 6px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #2a1010, #160808);
+  color: #ff8080;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+  vertical-align: middle;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rec-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b3b;
+  box-shadow: 0 0 4px rgba(255, 59, 59, 0.8);
+  animation: rec-dot-blink 1s ease-in-out infinite;
+}
+@keyframes rec-dot-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
 /* DJ Mode placeholder — vinyl record icon, disabled until the
  * Camelot-mixing engine ships. Same 30×30 footprint, different
  * idle tone to hint at "different mode, different palette." */

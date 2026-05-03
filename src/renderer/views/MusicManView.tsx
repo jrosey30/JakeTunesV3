@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { attachClipToBroadcast } from '../audio/eq'
 import { Track, MetadataIssue, ChatConversation, RestoreScanResult, RestoreApplyResult, RestoreDiff } from '../types'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
@@ -219,6 +220,7 @@ export default function MusicManView() {
     const tts = await window.electronAPI.musicmanSpeak(text)
     if (tts.ok && tts.audio) {
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+      attachClipToBroadcast(audio)
       audioRef.current = audio
       audio.onended = () => {
         setIsSpeaking(false)
@@ -295,6 +297,7 @@ export default function MusicManView() {
     const tts = await window.electronAPI.musicmanSpeak(playlistResult.commentary)
     if (tts.ok && tts.audio) {
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+      attachClipToBroadcast(audio)
       audioRef.current = audio
       audio.onended = () => {
         setSpeakingCommentary(false)
