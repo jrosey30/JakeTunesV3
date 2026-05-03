@@ -903,6 +903,14 @@
   border-bottom-color: rgba(200,120,40,0.2);
 }
 
+/* Megan picks — same dark commentary tone but in her teal/blue palette
+ * to read as a sibling-of-MM picks panel, not a duplicate. */
+.playlist-view-commentary--megan {
+  background: #0e2030;
+  color: #b8d0e0;
+  border-bottom-color: rgba(58, 124, 165, 0.3);
+}
+
 .playlist-view-columns {
   display: flex;
   align-items: center;

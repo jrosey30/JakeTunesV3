@@ -2571,7 +2571,7 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     const meganVoice = 'T7eLpgAAhoXHlrNajG8v'
     const defaultByHost = readActiveHostSync() === 'megan'
       ? meganVoice
-      : (process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w')
+      : (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')
     const voice = voiceId || defaultByHost
     // Model selection:
     //   - eleven_flash_v2_5  : ultra-low-latency, slightly flatter delivery
@@ -4000,43 +4000,93 @@ Rules:
 })
 
 // Music Man daily picks
-ipcMain.handle('musicman-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
-  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+// 4.2.18: Picks are now WEEKLY — 25 tracks each, reset every Friday. The
+// week-of framing replaces the "today's vibe" framing and makes the
+// picks feel curated rather than churned. Friday-to-Friday matches how
+// real station rotations work (new chart drops, weekly highlight reels).
+function buildPicksInstructions(opts: { trackCount: number; persona: 'mm' | 'megan' }): string {
   const today = new Date()
-  const dateStr = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
-  const month = today.getMonth() // 0-11
+  // Find Friday-of-this-week (or today if today IS Friday).
+  // getDay(): 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+  const day = today.getDay()
+  const daysSinceFriday = (day - 5 + 7) % 7
+  const weekStart = new Date(today)
+  weekStart.setDate(today.getDate() - daysSinceFriday)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekStart.getDate() + 6)
+  const startStr = weekStart.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
+  const endStr = weekEnd.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const month = today.getMonth()
   const season = month <= 1 || month === 11 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'fall'
 
-  const picksInstructions = `Today is ${dateStr} and it's ${season}. Pick 15-20 tracks from the user's library for TODAY's daily playlist. Your picks should be influenced by:
-- The day of the week (Monday blues? Friday energy? Lazy Sunday?)
-- The season and time of year
-- Current cultural moments, holidays, anniversaries of famous albums/events
-- Your MOOD today — make it personal and specific
-- Whatever random obsession you're on this week
+  const personaName = opts.persona === 'megan' ? 'Megan' : 'the Music Man'
+  return `It's the week of ${startStr} – ${endStr} (${season}). Build ${personaName}'s WEEKLY rotation — exactly ${opts.trackCount} tracks from the user's library that you stand behind for THIS WEEK. The list resets every Friday and runs Friday-through-Thursday.
+
+Your picks should be shaped by:
+- The week itself — the season, weather, news, cultural moments, anniversaries of famous albums/events landing in this 7-day window
+- Your obsession-of-the-week — what you've been chewing on lately, in character
+- Variety across the week — these will be on rotation for 7 days, so build a list that holds up across morning coffee, afternoon work, evening wind-down
 
 Return ONLY a JSON object (no markdown, no code fences):
-{"name":"creative playlist name for today","commentary":"3-4 sentences explaining your picks today, in character — why THIS music TODAY. Be specific about what's driving your choices. Reference the day, season, or cultural moment.","trackIds":[array of track ID numbers]}
+{"name":"creative weekly rotation name","commentary":"3-4 sentences explaining the week's picks, in character — why THIS music for THIS WEEK. Be specific about what's driving your choices.","trackIds":[array of exactly ${opts.trackCount} track ID numbers]}
 
 Rules:
 - ONLY use track IDs from the provided library
-- VARIETY IS KEY: Mix up artists, don't clump 3+ songs by the same artist together
-- Be personal about why you picked these today
-- This should feel different every single day`
+- EXACTLY ${opts.trackCount} track IDs in trackIds
+- VARIETY IS KEY: mix artists, don't clump 3+ songs by the same artist together
+- Reference the actual week (season / current moment / mood) so the list feels of-this-week, not generic
+- Stay deeply in character — your fixed opinions show up in the picks themselves, not just the commentary`
+}
 
-  const systemPrompt = buildMusicManPrompt(picksInstructions)
+ipcMain.handle('musicman-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+  const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'mm' })
+  // Force MM persona regardless of the user's default-host preference —
+  // the user explicitly asked for Music Man's list under his name.
+  const systemPrompt = MUSIC_MAN_CORE + '\n\n' + picksInstructions
 
   try {
     const response = await claudeCall('musicman-picks', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: `Build today's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+      messages: [{ role: 'user', content: `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
       if (parsed.commentary) noteMusicManUtterance('picks', parsed.commentary)
+      return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+    }
+    return { ok: false, error: 'Could not parse picks' }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: msg }
+  }
+})
+
+// Megan's weekly picks — same structure as MM picks but uses MEGAN_CORE
+// so her fixed contrarian opinions (Charli XCX overrated, Steely Dan
+// cold, LCD Soundsystem unimpressive, Phoebe Bridgers' Stranger in the
+// Alps over Punisher, etc.) shape what gets selected and how the
+// commentary reads. 25 tracks, weekly Friday-to-Friday rotation.
+ipcMain.handle('megan-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+  const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
+  const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
+
+  try {
+    const response = await claudeCall('megan-picks', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+    })
+    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
       return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
     }
     return { ok: false, error: 'Could not parse picks' }

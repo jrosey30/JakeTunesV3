@@ -28,6 +28,7 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Top 25 Most Played', id: 'top-25' },
   { label: 'My Top Rated', id: 'top-rated' },
   { label: 'The Music Man Picks', id: 'musicman-picks' },
+  { label: 'Megan Picks', id: 'megan-picks' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them
@@ -114,6 +115,19 @@ function MusicManPicksIcon() {
       <circle cx="6" cy="6" r="1.2" fill="#c87828" />
       {/* Sparkle */}
       <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#c87828" />
+    </svg>
+  )
+}
+
+// Megan picks gets a vinyl too — same shape so the picks pair reads as a
+// pair, but in a teal/blue tone to differentiate her from MM's orange.
+function MeganPicksIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <circle cx="6" cy="6" r="5" stroke="#3a7ca5" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#3a7ca5" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#3a7ca5" />
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#3a7ca5" />
     </svg>
   )
 }
@@ -311,7 +325,11 @@ export default function Sidebar() {
             <SidebarItem
               key={sp.id}
               label={sp.label}
-              icon={sp.id === 'musicman-picks' ? <MusicManPicksIcon /> : <SmartPlaylistIcon />}
+              icon={
+                sp.id === 'musicman-picks' ? <MusicManPicksIcon /> :
+                sp.id === 'megan-picks' ? <MeganPicksIcon /> :
+                <SmartPlaylistIcon />
+              }
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
             />

@@ -55,7 +55,7 @@ export interface Playlist {
 }
 
 export type ViewName = 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import'
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks'
 
 export interface ChatConversation {
   id: string
@@ -219,11 +219,12 @@ declare global {
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string }>
-      musicmanSpeak: (text: string, fast?: boolean) => Promise<{ ok: boolean; audio?: string; error?: string }>
+      musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }) => Promise<{ ok: boolean; text: string }>
       musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
       musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; issues?: MetadataIssue[]; error?: string }>
       musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string; artUrl?: string }[]; error?: string }>
       cynthiaInvestigate: (input: { userPrompt: string; scope: CynthiaScope }) => Promise<CynthiaResult>
