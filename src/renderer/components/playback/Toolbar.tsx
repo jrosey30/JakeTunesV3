@@ -475,21 +475,39 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjText('')
 
       // Helper: play an array of {speaker, line, audioData} segments
-      // sequentially with the volume fades + state transitions the
-      // existing single-clip path used. When the last segment finishes,
-      // advance to the next track. Used by both Radio Mode (multi-voice)
-      // and the single-voice DJ Set path (which passes a 1-element array).
+      // over the next track at ducked volume — real-radio-DJ style.
+      //
+      // 4.2.16: previously the sequence was "fade music down → play
+      // segments in silence → fade music up → start next track at full
+      // volume." That left dead air during banter. Now: start the next
+      // track FIRST, give it ~250ms to begin, fade volume down to ~15%
+      // so banter sits clearly on top, play all segments back-to-back,
+      // fade volume back up to full when the last segment ends. Same
+      // ducking concept the mic button uses, applied to between-track
+      // banter.
       const playSegmentSequence = async (segments: RadioSegment[], displayText: string) => {
         setDjText(displayText)
+        savedVolumeRef.current = pb.volume
+
+        // 1. Pre-duck the renderer volume to ~15% BEFORE starting the
+        //    next track, so the Howl is created at the ducked level and
+        //    nobody hears a full-volume blast for 250ms.
+        const ducked = savedVolumeRef.current * 0.15
+        setVolume(ducked)
+        isFadedRef.current = true
+
+        // 2. Start the next track (at the ducked volume).
+        playTrack(nextTrack, queue, nextIdx, true)
+
+        // 3. Play segments sequentially over the ducked music.
         let i = 0
         const playOne = (): void => {
           if (i >= segments.length) {
-            // All segments done — restore volume, advance, fade out the bubble
+            // All done — fade music back up, clean up bubble.
             djAudioRef.current = null
             setDjActive(false)
             fadeVolumeIn()
             isFadedRef.current = false
-            playTrack(nextTrack, queue, nextIdx, true)
             setTimeout(() => {
               setDjExiting(true)
               setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
@@ -503,8 +521,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           audio.onerror = playOne  // skip on error rather than stalling
           audio.play().catch(() => playOne())
         }
-        savedVolumeRef.current = pb.volume
-        await fadeVolumeOut()
         playOne()
       }
 
