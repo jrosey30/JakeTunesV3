@@ -30,7 +30,7 @@ const TITLES: Record<string, string> = {
   'top-rated': 'My Top Rated',
   'musicman-picks': 'The Music Man Picks',
   'megan-picks': 'Megan Picks',
-  'dj-hands-picks': 'DJ Hands Picks',
+  'dj-hands-picks': 'DJ Stephen Hands Picks',
 }
 
 interface PicksData {
@@ -165,7 +165,7 @@ export default function SmartPlaylistView() {
       if (result.ok && result.trackIds) {
         const fallbackName =
           picksConfig.kind === 'megan'   ? "Megan's Picks" :
-          picksConfig.kind === 'djhands' ? "DJ Hands Picks" :
+          picksConfig.kind === 'djhands' ? "DJ Stephen Hands Picks" :
           "This Week's Picks"
         setPicks({
           name: result.name || fallbackName,
@@ -606,7 +606,7 @@ export default function SmartPlaylistView() {
   const displayName = isPicksView && picks?.name ? picks.name : title
   const loadingLabel =
     picksConfig?.kind === 'megan'   ? 'Megan is picking tracks…' :
-    picksConfig?.kind === 'djhands' ? 'DJ Hands is picking tracks…' :
+    picksConfig?.kind === 'djhands' ? 'DJ Stephen Hands is picking tracks…' :
     'The Music Man is picking tracks…'
 
   return (

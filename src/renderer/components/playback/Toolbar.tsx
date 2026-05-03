@@ -348,26 +348,28 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // react in character. Voice is conversational / regular-guy on a
   // phone, NOT broadcast-polished.
   const GIOVANNI_VOICE_ID = 'UOB3uZCEf2cjGpZaGOXq'
-  // 4.2.19: DJ Hands — rare radio guest + DJ Mode default + own picks.
+  // 4.3.0: DJ Stephen Hands — rare radio guest + DJ Mode default + own picks.
+  // Tag is [STEPHEN] (or legacy [DJ_HANDS] still accepted in case Claude
+  // emits the older form during transition).
   const DJ_HANDS_VOICE_ID = 'ApBE43wHy5MiZGz9ihqB'
 
   // Parse a Claude-generated radio script into ordered speaker segments.
   // Strict format: each line begins with [MM], [MEGAN], [ANNOUNCER],
-  // [GIOVANNI], or [DJ_HANDS]. Anything else is silently dropped.
+  // [GIOVANNI], or [STEPHEN]. Anything else is silently dropped.
   function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'; line: string }> {
     type Speaker = 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'
     const segments: Array<{ speaker: Speaker; line: string }> = []
     for (const raw of text.split('\n')) {
       const line = raw.trim()
       if (!line) continue
-      const m = line.match(/^\[(MM|MEGAN|ANNOUNCER|GIOVANNI|DJ_HANDS)\]\s*(.+)/i)
+      const m = line.match(/^\[(MM|MEGAN|ANNOUNCER|GIOVANNI|STEPHEN|DJ_HANDS|DJ_STEPHEN|DJ_STEPHEN_HANDS)\]\s*(.+)/i)
       if (m) {
         const tag = m[1].toUpperCase()
         const speaker: Speaker =
           tag === 'MEGAN' ? 'megan' :
           tag === 'ANNOUNCER' ? 'announcer' :
           tag === 'GIOVANNI' ? 'giovanni' :
-          tag === 'DJ_HANDS' ? 'djhands' :
+          tag === 'STEPHEN' || tag === 'DJ_HANDS' || tag === 'DJ_STEPHEN' || tag === 'DJ_STEPHEN_HANDS' ? 'djhands' :
           'mm'
         segments.push({ speaker, line: m[2].trim() })
       }

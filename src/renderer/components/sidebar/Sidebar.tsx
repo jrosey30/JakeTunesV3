@@ -29,7 +29,7 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'My Top Rated', id: 'top-rated' },
   { label: 'The Music Man Picks', id: 'musicman-picks' },
   { label: 'Megan Picks', id: 'megan-picks' },
-  { label: 'DJ Hands Picks', id: 'dj-hands-picks' },
+  { label: 'DJ Stephen Hands Picks', id: 'dj-hands-picks' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them

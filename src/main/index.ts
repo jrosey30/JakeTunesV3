@@ -1,4 +1,12 @@
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker } from 'electron'
+import {
+  getBrooklynWeather, formatWeatherForPrompt,
+  getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
+  getRecentReviews, formatReviewsForPrompt,
+  getDiscogsReleaseInfo, formatDiscogsForPrompt,
+  getWikidataArtist, formatWikidataForPrompt,
+  getMusicBrainzReleaseMbid, getCoverArtUrlByMbid,
+} from './external'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
@@ -2729,14 +2737,14 @@ Format for this segment:
   [MEGAN] React in character — usually undercutting MM's reaction or going harder than him.
   Optional final [MM] or [MEGAN] line wrapping it up.`
       : djHandsSegment
-        ? `You're transitioning between songs and DJ HANDS is in the booth — a rare guest spot. He doesn't sit in for the whole show, just drops by to weigh in. He'll cut MM off if MM is wrong about a beat or a sample. Megan respects him more than MM (she likes that he doesn't perform expertise).
+        ? `You're transitioning between songs and DJ STEPHEN HANDS is in the booth — a rare guest spot. He doesn't sit in for the whole show, just drops by to weigh in. He'll cut MM off if MM is wrong about a beat or a sample. Megan respects him more than MM (she likes that he doesn't perform expertise).
 
 Format for this segment:
-  [MM] One line bringing him in ("got DJ Hands in the booth — Hands, what we got?")
-  [DJ_HANDS] 1-2 sentences of his take on the just-played or upcoming track. ALWAYS pivots to a beat / sample / production / BPM angle even if the track is rock or pop. He'll either spot a sample, name-drop a producer, or call out a sonic decision other people miss. Brief and confident, no overexplaining.
+  [MM] One line bringing him in ("got Stephen Hands in the booth — Stephen, what we got?")
+  [STEPHEN] 1-2 sentences of his take on the just-played or upcoming track. ALWAYS pivots to whether it MOVES a room — danceable, beat / sample / production / BPM angle. He'll either spot a sample, name-drop a producer, call out a disco / boogie / house lineage other people miss, or bluntly say it doesn't bang. Brief and confident, no overexplaining.
   [MEGAN] Reacts — agrees with him over MM, or pushes him on something specific.
-  [MM] Tries to reassert. DJ Hands undercuts him OR Megan does.
-  Optional one more [DJ_HANDS] line as he peaces out.`
+  [MM] Tries to reassert. Stephen undercuts him OR Megan does.
+  Optional one more [STEPHEN] line as he peaces out.`
         : forceAnnouncer
           ? `You're transitioning between songs in a continuous broadcast. ALWAYS lead with a campy [ANNOUNCER] station ID drop, THEN MM and Megan back-announce / tee up next.`
           : `${nextTrack ? "You're transitioning between songs in a continuous broadcast. NO station ID this segment — pure MM + Megan banter." : 'A song is currently on the air.'}`
@@ -2793,7 +2801,7 @@ Format for this segment:
   • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
   • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
   • Giovanni (tag: [GIOVANNI]) — RECURRING CALLER. Regular guy from Brooklyn / Bay Ridge / Bensonhurst on a phone. Slight Brooklyn accent in his cadence. Asks music questions that range from sharp to clueless. Sometimes mishears artists' names, sometimes drops a wildly contrarian opinion he wasn't asked for, sometimes asks a genuinely deep question MM and Megan have to actually think about. NOT a broadcast professional — sounds conversational, slightly rambling, like he just dialed in. Only appears when this segment's mode says he's calling in.
-  • DJ Hands (tag: [DJ_HANDS]) — RARE GUEST. JakeTunes' in-house DJ. Lives and breathes rap and electronic music — 90s boom-bap, Detroit / Chicago house, Memphis crunk lineage, Dilla, footwork, UK garage, Miami bass, modern drill, Aphex, Burial, Madlib, Knxwledge. Doesn't engage with rock or pop discourse — pivots conversations back to beats, samples, drum programming, BPM. Confident, brief, doesn't overexplain. Slang is casual but not dated. Only appears when this segment's mode says he's on the show.
+  • DJ Stephen Hands (tag: [STEPHEN]) — RARE GUEST. JakeTunes' in-house DJ. Goes by Stephen, Hands, or Stephen Hands. PARTY-FIRST: house, rap, electronic, techno, disco, boogie — anything to make a room move. Loves the disco / boogie source-code lineage (Patrick Adams, Larry Levan, Paradise Garage, Salsoul) and modern dance (Daft Punk, Justice, Disclosure, Fred again..). Doesn't engage with rock or pop discourse on its own terms — pivots back to whether anyone could DANCE to it. Brief, hyped, "this fucking goes" energy. Not a man of many words. Only appears when this segment's mode says he's on the show.
 
 ${segmentMode}
 
@@ -2851,7 +2859,7 @@ Capitals signal punched emphasis. Exclamation marks drive energy. Make it campy 
 
 When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
 
-Format the segment STRICTLY as speaker-tagged lines${callerSegment ? ' — caller mode is dictated above, follow that structure verbatim.' : djHandsSegment ? ' — DJ Hands guest mode is dictated above, follow that structure verbatim.' : ':'}
+Format the segment STRICTLY as speaker-tagged lines${callerSegment ? ' — caller mode is dictated above, follow that structure verbatim.' : djHandsSegment ? ' — DJ Stephen Hands guest mode is dictated above, follow that structure verbatim.' : ':'}
 ${opener
   ? `[ANNOUNCER] Campy WJLR station ID drop.
 [ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!  (mandatory verbatim — "Here's" / "It's" / "Welcome back to" interchangeable, rest of the line is fixed)`
@@ -2865,13 +2873,45 @@ ${callerSegment || djHandsSegment ? '' : `[MM] First chatter line.
 
 3-5 lines total${wantsAnnouncer ? ' (NOT counting the [ANNOUNCER] drop)' : ''}. Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
 
-Use background info from MusicBrainz / Wikipedia (below) for factual claims. Don't invent live show memories or label deals you can't verify — if you don't have facts, lean into opinion and the bicker. Vary which speaker opens; sometimes MM, sometimes Megan kicks off.`
+EXTERNAL CONTEXT — below the user message you may see Brooklyn weather, US Last.fm scrobble charts this week, recent music-press headlines (Pitchfork / Stereogum / The Quietus), Wikidata structured artist info, Discogs pressing detail, Last.fm "similar to" data, and MusicBrainz / Wikipedia background. Use these as TEXTURE AND REACTION HOOKS, not as a fact dump.
+
+  • Weather → drop ONE line about it if it's interesting ("36 and miserable out, perfect for this one"). Don't beat it.
+  • Charts → only if it gives you a sharp hot take ("I see Sabrina Carpenter at the top, you and I both know that's not real").
+  • Press headlines → if a Pitchfork rating or Stereogum take is worth reacting to (Megan especially), USE IT. Otherwise skip.
+  • Wikidata / Discogs → ONE small detail at most, dropped naturally ("right, this was on Sub Pop"). NOT a recital. NEVER list members or release years like a teleprompter.
+  • Last.fm similar → if MM/Megan want to say "if you like X, you should be into Y," reach for the similar list rather than inventing.
+
+Don't invent specifics you can't verify — if you don't have facts, lean into opinion and the bicker. Vary which speaker opens; sometimes MM, sometimes Megan kicks off.`
 
   const radioPrompt = buildMusicManPrompt(radioInstructions)
 
-  const [artistFacts, nextArtistFacts] = await Promise.all([
+  // 4.3.0: pull external context in parallel — weather, charts, recent
+  // music-press headlines, Wikidata structured facts for both the
+  // outgoing and incoming artists, Discogs pressing detail, and Last.fm
+  // similar artists. All cached, all fail-soft. The prompt picks
+  // selectively from this firehose; we don't dump it all.
+  const [
+    artistFacts,
+    nextArtistFacts,
+    weather,
+    chart,
+    reviews,
+    wdCurrent,
+    wdNext,
+    discogsCurrent,
+    discogsNext,
+    similarCurrent,
+  ] = await Promise.all([
     searchWeb(`${track.artist} musician`, track.album),
-    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve('')
+    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve(''),
+    getBrooklynWeather(),
+    getLastFmNyChart(),
+    getRecentReviews(),
+    getWikidataArtist(track.artist),
+    nextTrack && nextTrack.artist !== track.artist ? getWikidataArtist(nextTrack.artist) : Promise.resolve(null),
+    getDiscogsReleaseInfo(track.artist, track.album),
+    nextTrack && nextTrack.artist !== track.artist ? getDiscogsReleaseInfo(nextTrack.artist, nextTrack.album) : Promise.resolve(null),
+    getLastFmSimilarArtists(track.artist),
   ])
 
   let userMessage: string
@@ -2884,6 +2924,25 @@ Use background info from MusicBrainz / Wikipedia (below) for factual claims. Don
   }
   if (artistFacts && !opener) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
   if (nextArtistFacts && nextTrack) userMessage += `\nBackground on ${nextTrack.artist}: ${nextArtistFacts}`
+
+  // External-API enrichment — append only what came back. The prompt's
+  // KILL VANILLA / HUMAN MOVES rules tell Claude to use these as
+  // *texture and reaction hooks*, not facts to recite.
+  const weatherLine = formatWeatherForPrompt(weather)
+  const chartLine = formatLastFmChartForPrompt(chart)
+  const reviewsBlock = formatReviewsForPrompt(reviews)
+  const wdCurLine = formatWikidataForPrompt(wdCurrent)
+  const wdNextLine = formatWikidataForPrompt(wdNext)
+  const discogsCurLine = formatDiscogsForPrompt(discogsCurrent)
+  const discogsNextLine = formatDiscogsForPrompt(discogsNext)
+  if (weatherLine) userMessage += `\n\n${weatherLine}`
+  if (chartLine) userMessage += `\n${chartLine}`
+  if (similarCurrent.length) userMessage += `\nLast.fm similar to ${track.artist}: ${similarCurrent.slice(0, 4).join(', ')}.`
+  if (wdCurLine) userMessage += `\n${track.artist} — ${wdCurLine}`
+  if (wdNextLine && nextTrack) userMessage += `\n${nextTrack.artist} — ${wdNextLine}`
+  if (discogsCurLine) userMessage += `\n${track.artist} / ${track.album} — ${discogsCurLine}`
+  if (discogsNextLine && nextTrack) userMessage += `\n${nextTrack.artist} / ${nextTrack.album} — ${discogsNextLine}`
+  if (reviewsBlock) userMessage += `\n\n${reviewsBlock}`
 
   try {
     const response = await claudeCall('musicman-radio', {
@@ -3344,11 +3403,11 @@ Don't pose. Don't lecture. Make a take, defend it briefly, move on.`
 // jungle, miami bass, baltimore club. Doesn't perform expertise — when
 // he says something is good, it's a small precise claim, not a sweeping
 // "greatest of all time" pronouncement.
-const DJ_HANDS_CORE = `You are DJ Hands — JakeTunes' in-house DJ. PARTY-FIRST. Whatever makes the room move is your job. You're the default voice for DJ Mode and a rare guest on the WJLR show.
+const DJ_HANDS_CORE = `You are DJ Stephen Hands — JakeTunes' in-house DJ. (People who know him just call him Stephen, or Hands, or Stephen Hands.) PARTY-FIRST. Whatever makes the room move is your job. You're the default voice for DJ Mode and a rare guest on the WJLR show.
 
 Your personality:
 - PARTY ENERGY before everything else. You're not a music critic. You're the guy who sees the room and reads what hits. The picks have to MOVE PEOPLE.
-- House, rap, electronic, techno — those are home. Anything you'd actually play at 1 AM in a sweaty room. Bangers, hype tracks, dance floor cuts, heaters, club records, festival drops, body-music. Less "this drum loop is interesting" — more "this clears the room or fills it."
+- House, rap, electronic, techno, disco, boogie — those are home. Anything you'd actually play at 1 AM in a sweaty room. Bangers, hype tracks, dance floor cuts, heaters, club records, festival drops, body-music. Less "this drum loop is interesting" — more "this clears the room or fills it."
 - You know the technical side (drum programming, sample sources, mix, BPM), but you DON'T lead with it. You lead with "this one bangs" and explain only if pushed.
 - You DO NOT engage with rock-canon discourse on its own terms. If MM goes "greatest album ever" you pivot to whether anyone could dance to it.
 - Brief, hyped, in-the-moment. "That joint goes." "Run it back." "Shit knocks." "Off the rip."
@@ -3357,6 +3416,7 @@ Your personality:
 
 FIXED, NON-NEGOTIABLE opinions (non-overlapping with MM and Megan):
 - DJing > critic-writing. Always. The room tells you the truth.
+- Disco / boogie / post-disco: the original blueprint for everything good in dance. Patrick Adams, Leroy Burgess, Larry Levan, Loose Joints, Dinosaur L, Salsoul, West End, Prelude. The Paradise Garage was right.
 - Daft Punk: yes always, but Discovery > Homework live. Homework's better at home.
 - Justice: Cross is one of the best dance records of the 2000s, fight me.
 - Disclosure: house revivalists who actually delivered — Settle holds up.
@@ -3372,7 +3432,7 @@ FIXED, NON-NEGOTIABLE opinions (non-overlapping with MM and Megan):
 - Steely Dan: the drums knock. That's the only opinion needed.
 - AI music: useless for the function. Won't ever sound good in a room with people in it.
 
-When picking music, you go heavy on what makes people MOVE: house (French / Detroit / Chicago / NY garage / UK), techno (banging, not minimal), bass-heavy or hype rap (drill, trap, party-leaning, club rap), club tracks broadly (Jersey / Baltimore / Miami / footwork), drum & bass / jungle when you can, anything with crowd response baked in. Less heady-IDM, less abstract-experimental, less "interesting drum programming" for its own sake. Pick BANGERS.
+When picking music, you go heavy on what makes people MOVE: disco / boogie / post-disco (the source code), house (French / Detroit / Chicago / NY garage / UK), techno (banging, not minimal), bass-heavy or hype rap (drill, trap, party-leaning, club rap), club tracks broadly (Jersey / Baltimore / Miami / footwork), drum & bass / jungle when you can, anything with crowd response baked in. Less heady-IDM, less abstract-experimental, less "interesting drum programming" for its own sake. Pick BANGERS.
 
 Brief. Hyped. Don't oversell — let the picks oversell themselves.`
 
@@ -4127,7 +4187,9 @@ Return ONLY a JSON object (no markdown, no code fences):
 Rules:
 - ONLY use track IDs from the provided library
 - EXACTLY ${opts.trackCount} track IDs in trackIds
-- HARD ARTIST RULE: try to use each artist ONLY ONCE across the entire list. If a single artist truly anchors the whole week's mood and you must repeat, MAXIMUM 2 tracks from that artist — never 3 or more. Variety across the list reads as a curated rotation; clumping reads as lazy.
+- ★ HARDEST RULE — MIX UP THE ARTISTS ★
+  Each artist appears AT MOST ONCE across the entire ${opts.trackCount}-track list. Aim for ${opts.trackCount} distinct artists. If the library is so small that you literally cannot fill ${opts.trackCount} slots without a repeat, ONE artist may appear twice — never more. Three from one artist is a bug.
+  Self-check before returning: count distinct artists in trackIds. If it's less than ${opts.trackCount} - 2, you've stacked someone — go fix it. The reader will SEE the artist column and notice immediately. A list that has 4 Beastie Boys and 4 Nas reads as lazy and unfinished.
 - Reference the actual week (season / current moment / mood) so the list feels of-this-week, not generic
 - Stay deeply in character — your fixed opinions show up in the picks themselves, not just the commentary`
 }
@@ -4138,13 +4200,16 @@ ipcMain.handle('musicman-picks', async (_event, tracks: { id: number; title: str
   // Force MM persona regardless of the user's default-host preference —
   // the user explicitly asked for Music Man's list under his name.
   const systemPrompt = MUSIC_MAN_CORE + '\n\n' + picksInstructions
+  const chart = await getLastFmNyChart()
+  const chartLine = formatLastFmChartForPrompt(chart)
+  const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\nWeek context — ${chartLine} (Use this only as a 'what's the cultural moment' anchor — DO NOT pick from this list unless it's already in my library.)` : ''}`
 
   try {
     const response = await claudeCall('musicman-picks', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+      messages: [{ role: 'user', content: userContent }]
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
@@ -4169,13 +4234,17 @@ ipcMain.handle('megan-picks', async (_event, tracks: { id: number; title: string
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
   const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
   const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
+  const [chart, reviews] = await Promise.all([getLastFmNyChart(), getRecentReviews()])
+  const chartLine = formatLastFmChartForPrompt(chart)
+  const reviewsBlock = formatReviewsForPrompt(reviews)
+  const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine}` : ''}${reviewsBlock ? `\n\n${reviewsBlock}\n\n(The press headlines are reaction context for the COMMENTARY — Megan can roast a Pitchfork take while she explains the picks. Do NOT pick tracks from these — pick only from MY library.)` : ''}`
 
   try {
     const response = await claudeCall('megan-picks', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+      messages: [{ role: 'user', content: userContent }]
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
@@ -4209,30 +4278,35 @@ ipcMain.handle('dj-hands-picks', async (_event, tracks: { id: number; title: str
   const month = today.getMonth()
   const season = month <= 1 || month === 11 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'fall'
 
-  const picksInstructions = `It's the week of ${startStr} – ${endStr} (${season}). Build DJ Hands' WEEKLY rotation — exactly 25 tracks from the user's library that you stand behind for THIS WEEK. The list resets every Friday and runs Friday-through-Thursday.
+  const picksInstructions = `It's the week of ${startStr} – ${endStr} (${season}). Build DJ Stephen Hands' WEEKLY rotation — exactly 25 tracks from the user's library that you stand behind for THIS WEEK. The list resets every Friday and runs Friday-through-Thursday.
 
-Lean HEAVY into PARTY MUSIC. Stuff that moves a room. House, rap (hype / club / drill / trap-leaning), techno, electronic, anything DANCEABLE. Bangers > heady listening. If a track is technically interesting but boring on a dance floor, skip it. If it slaps in a crowd, take it.
+Lean HEAVY into PARTY MUSIC. Stuff that moves a room. Disco / boogie (the source code — Patrick Adams, Loose Joints, Salsoul, Larry Levan / Paradise Garage lineage), house, rap (hype / club / drill / trap-leaning), techno, electronic, anything DANCEABLE. Bangers > heady listening. If a track is technically interesting but boring on a dance floor, skip it. If it slaps in a crowd, take it.
 
-The library may be heavy on rock and other non-party genres — DON'T overcompensate by reaching for thinky underground stuff. If the library has Daft Punk / Justice / Disclosure / club rap / hyped hip-hop / techno / house / drum-driven dance music in any quantity, pull from THAT. If the closest thing to party music is sample-heavy 90s hip-hop or driving electronic rock, take it — but bias hard toward energy, not pedigree.
+The library may be heavy on rock and other non-party genres — DON'T overcompensate by reaching for thinky underground stuff. If the library has Daft Punk / Justice / Disclosure / disco / boogie / club rap / hyped hip-hop / techno / house / drum-driven dance music in any quantity, pull from THAT. If the closest thing to party music is sample-heavy 90s hip-hop or driving electronic rock, take it — but bias hard toward energy, not pedigree.
 
 Return ONLY a JSON object (no markdown, no code fences):
-{"name":"creative weekly rotation name in DJ Hands' voice — short, hype, party-forward (NOT cerebral)","commentary":"1-2 sentences max in DJ Hands' voice. He is NOT a man of many words. NO long explanations. NO defending picks. NO genre-historian talk. Examples of the right length and tone: 'Dance floor week. If it doesn't knock, it's not in here.' OR 'Library leans rock so I had to dig — these are the ones with pulse.' One thought, maybe two. STOP.","trackIds":[array of exactly 25 track ID numbers]}
+{"name":"creative weekly rotation name in Stephen Hands' voice — short, hype, party-forward (NOT cerebral)","commentary":"1-2 sentences max in DJ Stephen Hands' voice. He is NOT a man of many words. NO long explanations. NO defending picks. NO genre-historian talk. Examples of the right length and tone: 'Dance floor week. If it doesn't knock, it's not in here.' OR 'Library leans rock so I had to dig — these are the ones with pulse.' One thought, maybe two. STOP.","trackIds":[array of exactly 25 track ID numbers]}
 
 Rules:
 - ONLY use track IDs from the provided library
 - EXACTLY 25 track IDs
-- HARD ARTIST RULE: try to use each artist ONLY ONCE across the whole list. If you absolutely must repeat one, MAXIMUM 2 — never 3 or more. Pick the heaviest single track from each artist instead of stacking their catalog.
+- ★ HARDEST RULE — MIX UP THE ARTISTS ★
+  Each artist appears AT MOST ONCE across the entire 25-track list. Aim for 25 distinct artists. If the library is so small that you literally cannot fill 25 slots without a repeat, ONE artist may appear twice — never more.
+  Self-check before returning: count distinct artists. If less than 23, you've stacked someone — fix it. (4 Daft Punk + 4 Soulwax = bug, not a rotation.)
 - Bias toward MOVEMENT — anything you'd play at a house party at 1 AM
 - Commentary: 1-2 sentences. STOP. He's not lecturing. If you write a third sentence, delete one.`
 
   const systemPrompt = DJ_HANDS_CORE + '\n\n' + picksInstructions
+  const chart = await getLastFmNyChart()
+  const chartLine = formatLastFmChartForPrompt(chart)
+  const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine} (Pick from MY library only — this is just party-pulse context.)` : ''}`
 
   try {
     const response = await claudeCall('dj-hands-picks', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+      messages: [{ role: 'user', content: userContent }]
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
@@ -4744,14 +4818,30 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
   const albumLower = album.toLowerCase().trim()
 
   try {
-    let artUrl = await searchDeezerArt(`${artist} ${album}`, artistLower, albumLower)
+    // 4.3.0: Cover Art Archive first — higher quality than Deezer when
+    // we can match a MusicBrainz release. Falls through to Deezer on
+    // miss so existing behavior is preserved.
+    let artUrl: string | null = null
+    const mbid = await getMusicBrainzReleaseMbid(artist, album)
+    if (mbid) {
+      const candidate = getCoverArtUrlByMbid(mbid)
+      // HEAD-check the URL — Cover Art Archive returns 404 when the
+      // release exists in MusicBrainz but no front art has been uploaded.
+      try {
+        const head = await fetch(candidate, { method: 'HEAD', signal: AbortSignal.timeout(5000), redirect: 'follow' })
+        if (head.ok) artUrl = candidate
+      } catch { /* fall through to Deezer */ }
+    }
+    if (!artUrl) {
+      artUrl = await searchDeezerArt(`${artist} ${album}`, artistLower, albumLower)
+    }
     if (!artUrl) {
       artUrl = await searchDeezerArt(album, artistLower, albumLower)
     }
 
     if (!artUrl) return { ok: false, error: 'No matching artwork found' }
 
-    const imgRes = await fetch(artUrl)
+    const imgRes = await fetch(artUrl, { redirect: 'follow' })
     if (!imgRes.ok) return { ok: false, error: 'Failed to download image' }
     const imgBuf = Buffer.from(await imgRes.arrayBuffer())
     await writeFile(filePath, imgBuf)
