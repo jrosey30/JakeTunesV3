@@ -2,7 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
-import { attachClipToBroadcast, startRecording, stopRecording } from '../../audio/eq'
+import { attachClipToBroadcast, attachAnnouncerToBroadcast, startRecording, stopRecording } from '../../audio/eq'
+import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } from '../../audio/stingers'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
@@ -289,11 +290,28 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             if (i >= segments.length) { finish(); return }
             const seg = segments[i++]
             const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
-            attachClipToBroadcast(audio)
-            djAudioRef.current = audio
-            audio.onended = playOne
-            audio.onerror = () => { console.warn('[Radio] segment ' + (i-1) + ' errored, advancing'); playOne() }
-            audio.play().catch((e) => { console.warn('[Radio] segment play() rejected:', e); playOne() })
+            if (seg.speaker === 'announcer') {
+              // 4.3.3: opener announcer drops also get full broadcast
+              // FX + stinger treatment.
+              attachAnnouncerToBroadcast(audio)
+              djAudioRef.current = audio
+              const preType = randomPreStinger()
+              const preDur = playStinger(preType)
+              audio.onended = () => {
+                playStinger(randomEndStinger())
+                setTimeout(playOne, 200)
+              }
+              audio.onerror = () => { console.warn('[Radio] opener announcer errored, advancing'); playOne() }
+              setTimeout(() => {
+                audio.play().catch((e) => { console.warn('[Radio] opener announcer play() rejected:', e); playOne() })
+              }, Math.max(50, preDur * 700))
+            } else {
+              attachClipToBroadcast(audio)
+              djAudioRef.current = audio
+              audio.onended = playOne
+              audio.onerror = () => { console.warn('[Radio] segment ' + (i-1) + ' errored, advancing'); playOne() }
+              audio.play().catch((e) => { console.warn('[Radio] segment play() rejected:', e); playOne() })
+            }
           }
           playOne()
         } catch (err) {
@@ -583,18 +601,41 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
         // 1. Play segments in silence — no music underneath. The
         //    previous song already ended naturally; we just don't
-        //    start the next one yet.
+        //    start the next one yet. ANNOUNCER segments get the
+        //    full broadcast-FX treatment + stingers (4.3.3).
         let i = 0
         await new Promise<void>((resolve) => {
           const playOne = (): void => {
             if (i >= segments.length) { resolve(); return }
             const seg = segments[i++]
             const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
-            attachClipToBroadcast(audio)
-            djAudioRef.current = audio
-            audio.onended = playOne
-            audio.onerror = playOne
-            audio.play().catch(() => playOne())
+            if (seg.speaker === 'announcer') {
+              // Production-rated path: pre-stinger riser → broadcast-
+              // processed announcer voice → endcap stinger.
+              attachAnnouncerToBroadcast(audio)
+              djAudioRef.current = audio
+              const preType = randomPreStinger()
+              const preDur = playStinger(preType)
+              audio.onended = () => {
+                playStinger(randomEndStinger())
+                // Brief beat after the endcap, then continue.
+                setTimeout(playOne, 200)
+              }
+              audio.onerror = playOne
+              // Wait until ~70% through the riser before announcer
+              // voice kicks in — the riser builds INTO the drop.
+              setTimeout(() => {
+                audio.play().catch(() => playOne())
+              }, Math.max(50, preDur * 700))
+            } else {
+              // Normal MM / Megan / Giovanni / DJ Hands path — direct
+              // through preamp/EQ.
+              attachClipToBroadcast(audio)
+              djAudioRef.current = audio
+              audio.onended = playOne
+              audio.onerror = playOne
+              audio.play().catch(() => playOne())
+            }
           }
           playOne()
         })

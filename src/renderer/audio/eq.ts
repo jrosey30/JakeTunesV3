@@ -265,6 +265,135 @@ export function attachClipToBroadcast(audio: HTMLAudioElement): void {
   }
 }
 
+// ── 4.3.3: Announcer broadcast-FX chain ───────────────────────────────
+// A separate sub-chain for the [ANNOUNCER] voice so station-ID drops
+// sound like a real radio station ID instead of a TTS line. Heavy
+// compression + presence EQ + small-room convolution reverb. Output
+// connects into the existing preamp so EQ + recording still see it.
+//
+//   raw announcer TTS → MediaElementSource
+//                       → broadcastFxInput
+//                       → compressor → low-shelf → presence peak
+//                         → high-shelf → split: dry / convolver-wet
+//                       → broadcastFxOutput (sums dry + wet, gain boost)
+//                       → preampNode (joins normal chain)
+//
+// The convolver uses a synthesized impulse response — exponentially
+// decaying noise. ~1.5s tail, sounds like a small room / vocal booth.
+// Cheap to generate, no IR file to bundle.
+let broadcastFxInput: GainNode | null = null
+let broadcastFxOutput: GainNode | null = null
+
+function makeImpulseResponse(ctx: AudioContext, duration: number, decay: number): AudioBuffer {
+  const sampleRate = ctx.sampleRate
+  const length = Math.floor(sampleRate * duration)
+  const ir = ctx.createBuffer(2, length, sampleRate)
+  for (let ch = 0; ch < 2; ch++) {
+    const data = ir.getChannelData(ch)
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay)
+    }
+  }
+  return ir
+}
+
+function ensureBroadcastFx(): void {
+  if (broadcastFxInput && broadcastFxOutput) return
+  buildChain()
+  if (!audioContext || !preampNode) return
+  const ctx = audioContext
+
+  const input = ctx.createGain()
+  input.gain.value = 1.0
+
+  // Heavy broadcast compression — keeps the announcer voice glued and
+  // present, and tames the per-syllable peaks v3 sometimes produces.
+  const comp = ctx.createDynamicsCompressor()
+  comp.threshold.value = -22
+  comp.knee.value = 10
+  comp.ratio.value = 8
+  comp.attack.value = 0.002
+  comp.release.value = 0.18
+
+  // Low shelf — adds chest / body weight (the "deep voice" feel).
+  const lowShelf = ctx.createBiquadFilter()
+  lowShelf.type = 'lowshelf'
+  lowShelf.frequency.value = 180
+  lowShelf.gain.value = 4
+
+  // Presence peak — voice intelligibility, makes call letters cut.
+  const presence = ctx.createBiquadFilter()
+  presence.type = 'peaking'
+  presence.frequency.value = 2800
+  presence.Q.value = 0.7
+  presence.gain.value = 5
+
+  // High shelf — air / sparkle.
+  const sparkle = ctx.createBiquadFilter()
+  sparkle.type = 'highshelf'
+  sparkle.frequency.value = 8000
+  sparkle.gain.value = 2
+
+  // Convolver reverb (small chamber / booth).
+  const conv = ctx.createConvolver()
+  conv.buffer = makeImpulseResponse(ctx, 1.5, 2.5)
+
+  const dryGain = ctx.createGain()
+  dryGain.gain.value = 0.85
+  const wetGain = ctx.createGain()
+  wetGain.gain.value = 0.18  // subtle — too wet sounds like a bathroom
+
+  const output = ctx.createGain()
+  output.gain.value = 1.4  // small overall boost so announcer sits on top
+
+  // Wire it: input → comp → low → presence → sparkle → split (dry+wet) → output → preamp
+  input.connect(comp)
+  comp.connect(lowShelf)
+  lowShelf.connect(presence)
+  presence.connect(sparkle)
+  sparkle.connect(dryGain)
+  sparkle.connect(conv)
+  conv.connect(wetGain)
+  dryGain.connect(output)
+  wetGain.connect(output)
+  output.connect(preampNode)
+
+  broadcastFxInput = input
+  broadcastFxOutput = output
+}
+
+/** 4.3.3: route an announcer TTS clip through the broadcast-FX chain
+ *  (compression + presence EQ + chamber reverb) so it sounds like a
+ *  real station ID drop. Falls through to the regular clip-broadcast
+ *  routing if the FX chain can't be built. Idempotent. */
+export function attachAnnouncerToBroadcast(audio: HTMLAudioElement): void {
+  ensureBroadcastFx()
+  if (!audioContext || !broadcastFxInput) {
+    attachClipToBroadcast(audio)
+    return
+  }
+  if (boundSources.has(audio)) return
+  try {
+    const src = audioContext.createMediaElementSource(audio)
+    src.connect(broadcastFxInput)
+    boundSources.set(audio, src)
+    if (audioContext.state === 'suspended') {
+      void audioContext.resume()
+    }
+  } catch (err) {
+    console.warn('[announcer-fx] could not bind clip:', err)
+  }
+}
+
+/** 4.3.3: get the audio context + preamp so external modules (stingers)
+ *  can play synthesized sounds INTO the same chain — guarantees they
+ *  flow through EQ and into the recording tap. */
+export function getBroadcastDestination(): { ctx: AudioContext; node: AudioNode } | null {
+  buildChain()
+  if (!audioContext || !preampNode) return null
+  return { ctx: audioContext, node: preampNode }
+}
+
 /** 4.2.20: start recording the broadcast (music + TTS routed via
  *  attachClipToBroadcast). Builds the chain if it doesn't exist yet,
  *  taps the chain tail + Howler's master gain into a MediaStream, and
