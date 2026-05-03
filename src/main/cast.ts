@@ -287,9 +287,12 @@ MEGAN'S DEFAULT REACTION: ${c.meganReaction}
 WHAT ${c.name.toUpperCase()} NEVER DOES:
 ${c.never.map(t => `  • ${t}`).join('\n')}
 
+★ CRITICAL — WHAT THE CALLER KNOWS ★
+${c.name} is calling FROM HOME, listening to WJLR on the radio. They heard the song that JUST ENDED. They have NO IDEA what's coming up next — the upcoming track is private to MM and Megan in the studio. The caller CANNOT reference, ask about, predict, or comment on the song that's about to play. Their question/take is about: the song that just played, an artist or scene in general, something MM or Megan said earlier, or a random music opinion. NEVER about what's queued. (MM and Megan can tease the upcoming track in their reactions if it earns a line, but the CALLER can't.)
+
 Format for this segment:
   [MM] One line bringing ${c.name} in BY NAME ("alright we got ${c.name} on the line — ${c.name}, what's good?" / similar). Set the energy in MM's default-reaction mode above.
-  [${c.tag}] 1-2 sentence question / take / observation IN THEIR VOICE. Stay in character — match the speech profile and example openings, do NOT copy the openings.
+  [${c.tag}] 1-2 sentence question / take / observation IN THEIR VOICE — referencing only what they could plausibly know (the just-played song or general music). Stay in character — match the speech profile and example openings, do NOT copy the openings.
   [MM] React in default mode.
   [MEGAN] React in default mode.
   Optional final [${c.tag}], [MM], or [MEGAN] line wrapping it up. Keep total length tight — caller bits are 22-28 sec, the longest archetype.`
