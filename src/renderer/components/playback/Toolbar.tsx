@@ -244,7 +244,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     await openerDone
     djAudioRef.current = null
     console.log('[Radio] starting first track:', firstTrack.title)
-    playTrack(firstTrack, shuffled, 0, false)
+    // 4.2.15 critical bug fix: pass djTransition=TRUE here. Without it,
+    // playTrack sees `autoDjMode && !djTransition` and dispatches
+    // `musicman-dj-cancel`, which calls setAutoDjMode(false) directly.
+    // That flips the module-level flag off PERMANENTLY for this radio
+    // session — runNaturalEnd's `if (autoDjMode)` branch now reads false
+    // every time a song ends, so the dj-transition event never fires
+    // and MM/Megan never come back between songs. The user reported
+    // exactly this: "they speak once and then they don't come in and
+    // out." This is the kick that started turning the radio off.
+    playTrack(firstTrack, shuffled, 0, true)
   }, [radioMode, lib.tracks, playTrack, stopPlayback])
 
   // "Start Artist Radio" — dispatched from any view's right-click menu
@@ -327,6 +336,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (radioPrefetchedKeyRef.current === cacheKey) return
     if (radioCacheRef.current.has(cacheKey)) return
     radioPrefetchedKeyRef.current = cacheKey
+    console.log('[Radio] prefetch starting', { cacheKey, remaining: remaining.toFixed(1) })
     ;(async () => {
       try {
         const prev = pb.nowPlaying!
@@ -340,11 +350,31 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           false,
           forceAnnouncer,
         )
-        if (!r.ok || !r.text) return
+        if (!r.ok || !r.text) {
+          console.warn('[Radio] prefetch failed — clearing key for retry', { ok: r.ok, error: r.error })
+          // 4.2.15: clear the key so the transition handler can live-fetch
+          // without thinking a prefetch is "in flight or already done."
+          if (radioPrefetchedKeyRef.current === cacheKey) {
+            radioPrefetchedKeyRef.current = null
+          }
+          return
+        }
         const segments = await synthesizeRadioSegments(r.text)
-        if (segments.length === 0) return
+        if (segments.length === 0) {
+          console.warn('[Radio] prefetch synth returned no segments — clearing key')
+          if (radioPrefetchedKeyRef.current === cacheKey) {
+            radioPrefetchedKeyRef.current = null
+          }
+          return
+        }
         radioCacheRef.current.set(cacheKey, { segments, fullText: r.text })
-      } catch { /* non-fatal — transition handler will fall back to live fetch */ }
+        console.log('[Radio] prefetch cached', { cacheKey, segments: segments.length })
+      } catch (err) {
+        console.warn('[Radio] prefetch threw — clearing key for live-fetch fallback', err)
+        if (radioPrefetchedKeyRef.current === cacheKey) {
+          radioPrefetchedKeyRef.current = null
+        }
+      }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radioMode, pb.nowPlaying, pb.position, pb.duration, pb.queue, pb.queueIndex])
@@ -434,6 +464,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Acknowledge so useAudio knows we're handling this
       window.dispatchEvent(new Event('musicman-dj-transition-ack'))
       const { prevTrack, nextTrack, nextIdx, queue } = (e as CustomEvent).detail
+      console.log('[Radio] transition fired', {
+        radioMode, autoDj,
+        prev: prevTrack?.title, next: nextTrack?.title,
+        cacheSize: radioCacheRef.current.size,
+        prefetchedKey: radioPrefetchedKeyRef.current,
+      })
       setDjActive(true)
       setDjLoading(true)
       setDjText('')
@@ -497,21 +533,30 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
       // Live fetch path. Radio Mode → musicmanRadio + per-segment TTS;
       // DJ Set autoDj → musicmanDj + single-clip TTS.
+      // 4.2.15: every failure mode is now logged. The empty catch was
+      // swallowing API errors, prefetch failures, and TTS issues — leaving
+      // the user with "they speak once and never come back" and no clue why.
       try {
         if (radioMode) {
+          console.log('[Radio] live fetch starting...')
           const r = await window.electronAPI.musicmanRadio(
             { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
             { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
             false,
             forceAnnouncerThisTransition,
           )
+          console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
           if (r.ok && r.text) {
             const segments = await synthesizeRadioSegments(r.text)
+            console.log('[Radio] synthesized segments', { count: segments.length, speakers: segments.map(s => s.speaker) })
             setDjLoading(false)
             if (segments.length > 0) {
               await playSegmentSequence(segments, r.text)
               return
             }
+            console.warn('[Radio] no segments synthesized — TTS may have failed; falling through to silent advance')
+          } else {
+            console.warn('[Radio] musicmanRadio returned no text', r)
           }
         } else {
           const result = await window.electronAPI.musicmanDj(
@@ -527,7 +572,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             }
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error('[Radio] transition handler threw', err)
+      }
+      console.warn('[Radio] falling through to silent track advance')
       setDjActive(false)
       setDjLoading(false)
       setDjText('')
