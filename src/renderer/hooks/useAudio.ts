@@ -292,68 +292,26 @@ export function useAudio() {
         }
         lastPositionDispatchMs = now
 
-        // ── Stuck-audio watchdog (Airfoil hijack recovery) ──
-        // If the user expects playback (isPlaying && !isPaused) but the
-        // Howl's position hasn't advanced in N seconds, the underlying
-        // element is stuck — the pause/play toggle won't fix it because
-        // the Howl is in a broken state. Forcibly recreate.
-        const expectedPlaying = stateRef.current.isPlaying && !isPaused && !crossfading
-        if (expectedPlaying && positionHowl === sharedHowl) {
-          if (pos !== watchdogLastObservedPos) {
-            watchdogLastObservedPos = pos
-            watchdogLastAdvanceMs = now
-          } else if (
-            watchdogLastAdvanceMs > 0 &&
-            now - watchdogLastAdvanceMs > WATCHDOG_STUCK_THRESHOLD_MS &&
-            now - watchdogLastRecoveryMs > WATCHDOG_COOLDOWN_MS &&
-            !watchdogRecoveryInFlight
-          ) {
-            watchdogRecoveryInFlight = true
-            watchdogLastRecoveryMs = now
-            const stuckTrack = stateRef.current.currentTrack
-            const stuckQueue = stateRef.current.queue
-            const stuckIdx = stateRef.current.queueIndex
-            const stuckPos = pos
-            logAudioEvent('watchdog.recover', {
-              stuckAt: stuckPos,
-              stuckSeconds: ((now - watchdogLastAdvanceMs) / 1000).toFixed(1),
-              title: stuckTrack?.title,
-            })
-            console.warn(`[Audio] watchdog: stuck at ${stuckPos.toFixed(2)}s for ${((now - watchdogLastAdvanceMs)/1000).toFixed(1)}s — recreating Howl`)
-            // Tear down the broken Howl. Stop the rAF — the new Howl
-            // will restart it via its onplay handler.
-            try { sharedHowl?.stop() } catch { /* ignore */ }
-            try { sharedHowl?.unload() } catch { /* ignore */ }
-            sharedHowl = null
-            cancelAnimationFrame(sharedRaf)
-            sharedRaf = 0
-            // Recreate via the existing playTrack path. After it loads,
-            // seek to where we got stuck so the user doesn't lose their
-            // place. The seek call is a no-op until the new Howl's
-            // onplay fires; defer with a brief wait so the seek sticks.
-            if (stuckTrack && stuckQueue.length > 0) {
-              const recoverPlay = () => {
-                playTrackRef.current?.(stuckTrack, stuckQueue, stuckIdx)
-                setTimeout(() => {
-                  try { sharedHowl?.seek(stuckPos) } catch { /* ignore */ }
-                  watchdogLastObservedPos = -1
-                  watchdogLastAdvanceMs = 0
-                  watchdogRecoveryInFlight = false
-                }, 500)
-              }
-              recoverPlay()
-            } else {
-              watchdogRecoveryInFlight = false
-            }
-            return  // skip rest of this rAF tick — new Howl will take over
-          }
-        } else {
-          // Not expected to play (paused, crossfading, etc) — reset
-          // watchdog timers so they don't accumulate during legit
-          // pauses and immediately fire on resume.
-          watchdogLastObservedPos = -1
-          watchdogLastAdvanceMs = 0
-        }
+        // 4.2.12: stuck-audio watchdog DISABLED.
+        // Was meant for Airfoil hijack edge cases — when Core Audio
+        // renegotiated the output device, position would freeze and
+        // pause/play wouldn't recover it. But the recovery path
+        // (sharedHowl?.stop() + unload() + recreate) is itself
+        // disruptive, and false positives — momentary buffer underruns,
+        // any tick where positionHowl.seek() returned the same float
+        // twice — would tear down a perfectly fine Howl and try to seek
+        // back to where we "got stuck." That seek can land in the wrong
+        // place, fail silently, or leave the new Howl loaded but not
+        // playing. Better to let the user pause/play themselves on the
+        // rare Airfoil hiccup than to have phantom kills mid-song.
+        // (Refs to the watchdog state vars are kept so any other
+        // surviving references keep type-checking; nothing reads them.)
+        void watchdogLastObservedPos
+        void watchdogLastAdvanceMs
+        void watchdogLastRecoveryMs
+        void watchdogRecoveryInFlight
+        void WATCHDOG_STUCK_THRESHOLD_MS
+        void WATCHDOG_COOLDOWN_MS
       }
     }
 

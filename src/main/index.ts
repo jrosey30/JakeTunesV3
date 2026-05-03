@@ -411,13 +411,18 @@ async function audioAnalysisWorker(): Promise<void> {
   }
 }
 
-function enqueueAudioAnalysis(job: AudioAnalysisJob): void {
-  // De-dupe: same trackId already pending? Skip.
-  if (audioAnalysisQueue.some(j => j.trackId === job.trackId)) return
-  audioAnalysisQueue.push(job)
-  // Fire and forget — the worker re-checks queue length each iteration.
-  void audioAnalysisWorker()
+function enqueueAudioAnalysis(_job: AudioAnalysisJob): void {
+  // 4.2.12: librosa worker disabled. The 5-sec debounce in
+  // audioAnalysisWorker was supposed to keep it off the main thread
+  // during playback, but the user kept reproducing the 29-second
+  // mid-track audio death — and that 29s window matches the tail of a
+  // librosa job that started during a brief gate-open. Until we have a
+  // properly-isolated worker pipeline (or the analysis lives in its
+  // own subprocess that can't fight the audio decoder), the recommend
+  // engine stays disabled. Calls are still made but no-op so we don't
+  // have to rip out every callsite.
 }
+// Kept around in case we re-enable: void audioAnalysisWorker()
 
 let mainWindow: BrowserWindow | null = null
 
