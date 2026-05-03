@@ -2582,16 +2582,22 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
       : (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')
     const voice = voiceId || defaultByHost
     // Model selection:
-    //   - eleven_flash_v2_5  : ultra-low-latency, slightly flatter delivery
-    //   - eleven_turbo_v2_5  : fast (~half the latency of multilingual_v2)
-    //                         AND retains emotional range — the right
-    //                         choice for Radio Mode where lines are short,
-    //                         conversational, and need to feel reactive
-    //                         not scripted.
-    // Previous code routed non-fast → eleven_v3, which is the alpha-gated
-    // newest model. Not all accounts have access; turbo_v2_5 is the
-    // dependable equivalent for the kind of delivery the user wants.
-    const model = fast ? 'eleven_flash_v2_5' : 'eleven_turbo_v2_5'
+    //   - eleven_flash_v2_5  : ultra-low-latency, flatter delivery
+    //   - eleven_turbo_v2_5  : fast, retains emotional range
+    //   - eleven_v3          : alpha-gated, expressive, supports inline
+    //                          performance markers like [laughs],
+    //                          [whispers], [excited], [interrupts],
+    //                          [sarcastic], [sighs], [scoff], etc.
+    //                          When the script writes those brackets v3
+    //                          performs them rather than reading them.
+    //
+    // 4.3.1: v3 enabled for the long-form (non-fast) path now that the
+    // user's account has access. Mic-click one-shots stay on flash for
+    // the latency advantage. ELEVENLABS_V3 env var ('0' or 'false')
+    // forces a fallback to turbo_v2_5 if v3 ever errors out for the
+    // account — fail-soft escape hatch without requiring a rebuild.
+    const v3Enabled = (process.env.ELEVENLABS_V3 ?? '1') !== '0' && (process.env.ELEVENLABS_V3 ?? '1').toLowerCase() !== 'false'
+    const model = fast ? 'eleven_flash_v2_5' : (v3Enabled ? 'eleven_v3' : 'eleven_turbo_v2_5')
     // 4.2.13: per-voice TTS settings. Different cast members need
     // different deliveries.
     const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
@@ -2839,6 +2845,24 @@ DELIVERY CUES (TTS reads punctuation directly):
   • Ellipses... for stretched, thinking pauses.
   • Em-dashes — for cut-offs and overlapping reactions.
   • Multiple commas for stuttering ("it's, it's just, it's not even close").
+
+INLINE PERFORMANCE MARKERS — the TTS model performs these as actual sound. Sprinkle them in WHERE THEY EARN IT (not on every line, not lazily). They're how a written line becomes a spoken moment:
+  [laughs] — short laugh, used after MM says something Megan finds dumb.
+  [chuckles] — quieter, more under-the-breath.
+  [sighs] — exasperation, fatigue, "I cannot believe I'm doing this again."
+  [scoffs] — short dismissive exhale, one of Megan's signatures.
+  [whispers] — quiet aside, conspiratorial.
+  [excited] — bumps energy on the next phrase.
+  [sarcastic] — flips the tone of the next phrase.
+  [interrupts] — used at the START of a line that's stomping on the previous speaker.
+  [pauses] — beat of silence, "thinking" feel.
+Examples in context:
+  [MM] [scoffs] Underrated? You think THIS is underrated?
+  [MEGAN] [laughs] I mean — yeah, actually. The [excited] *whole* second side does it for me.
+  [MM] [sighs] Here we go.
+  [MEGAN] [interrupts] Don't "here we go" me, you said the same thing about Steely Dan.
+Use markers SPARINGLY — one per line at most, only when it does work. Overuse reads as a special-effects show, not a real conversation.
+
 Write the way you want them to SOUND.
 
 CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] — this voice is a CONFIDENT, BIG, deep FM-radio drop voice, distinct from MM and Megan. He never sounds unsure or tentative.
