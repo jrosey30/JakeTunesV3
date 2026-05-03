@@ -22,14 +22,21 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'The Music Man', view: 'musicman', highlight: '#c87828' },
 ]
 
+// 4.4.0: split into two sections so the WJLR Picks panel stands out as
+// the featured/curated content, separate from the standard system smart
+// playlists. Picks render with a distinct background tint, slightly
+// taller rows, and bolder labels — see styles/sidebar.css.
+const featuredPicks: { label: string; id: SmartPlaylistId }[] = [
+  { label: 'The Music Man Picks',  id: 'musicman-picks' },
+  { label: 'Megan Picks',          id: 'megan-picks' },
+  { label: 'DJ Stephen Hands Picks', id: 'dj-hands-picks' },
+]
+
 const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
   { label: 'My Top Rated', id: 'top-rated' },
-  { label: 'The Music Man Picks', id: 'musicman-picks' },
-  { label: 'Megan Picks', id: 'megan-picks' },
-  { label: 'DJ Stephen Hands Picks', id: 'dj-hands-picks' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them
@@ -334,17 +341,34 @@ export default function Sidebar() {
           </SidebarSection>
         )}
 
+        {/* 4.4.0: WJLR Picks featured section — stands above the standard
+            smart playlists with a distinct visual treatment. */}
+        <SidebarSection title="WJLR PICKS">
+          <div className="sidebar-picks-group">
+            {featuredPicks.map((sp) => (
+              <SidebarItem
+                key={sp.id}
+                label={sp.label}
+                className="sidebar-item--picks"
+                icon={
+                  sp.id === 'musicman-picks' ? <MusicManPicksIcon /> :
+                  sp.id === 'megan-picks' ? <MeganPicksIcon /> :
+                  sp.id === 'dj-hands-picks' ? <DjHandsPicksIcon /> :
+                  <SmartPlaylistIcon />
+                }
+                selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
+                onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
+              />
+            ))}
+          </div>
+        </SidebarSection>
+
         <SidebarSection title="PLAYLISTS">
           {smartPlaylists.map((sp) => (
             <SidebarItem
               key={sp.id}
               label={sp.label}
-              icon={
-                sp.id === 'musicman-picks' ? <MusicManPicksIcon /> :
-                sp.id === 'megan-picks' ? <MeganPicksIcon /> :
-                sp.id === 'dj-hands-picks' ? <DjHandsPicksIcon /> :
-                <SmartPlaylistIcon />
-              }
+              icon={<SmartPlaylistIcon />}
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
             />

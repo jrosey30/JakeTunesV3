@@ -9,9 +9,12 @@ interface Props {
   onClick: () => void
   droppable?: boolean
   onDrop?: (trackIds: number[]) => void
+  /** 4.4.0: extra className on the row — used for the WJLR Picks
+   *  featured-section treatment. */
+  className?: string
 }
 
-export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop }: Props) {
+export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop, className }: Props) {
   const [dragOver, setDragOver] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -47,6 +50,7 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
     highlight ? 'sidebar-item--highlight' : '',
     highlight && selected ? 'sidebar-item--highlight-selected' : '',
     dragOver ? 'sidebar-item--dragover' : '',
+    className || '',
   ].filter(Boolean).join(' ')
 
   const highlightStyle = highlight

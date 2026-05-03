@@ -90,7 +90,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // segments — each line gets its own TTS audio because we use three
   // distinct ElevenLabs voices: The Music Man, Megan (co-host), and
   // a deeper "Announcer" voice for the campy WJLR station ID drops.
-  type RadioSegment = { speaker: 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'; line: string; audioData: string }
+  type RadioSpeaker =
+    | 'mm' | 'megan' | 'announcer' | 'djhands'
+    // Callers (the 9-person rolodex):
+    | 'giovanni' | 'rajiv' | 'bernard' | 'lashonte' | 'kristina'
+    | 'devin' | 'maya' | 'mike' | 'zoe'
+  type RadioSegment = { speaker: RadioSpeaker; line: string; audioData: string }
   const radioCacheRef = useRef<Map<string, { segments: RadioSegment[]; fullText: string }>>(new Map())
   // 4.2.7: deterministic announcer scheduling. The opener always has
   // an [ANNOUNCER] drop; between-track transitions get one every 4th
@@ -362,34 +367,89 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // Announcer.
   const MEGAN_VOICE_ID = 'T7eLpgAAhoXHlrNajG8v'
   const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
-  // 4.2.19: Giovanni — caller character. He phones into the show and
-  // asks music questions ranging from sharp to confused. MM and Megan
-  // react in character. Voice is conversational / regular-guy on a
-  // phone, NOT broadcast-polished.
+  // 4.4.0: caller rolodex — 9 distinct caller voices, each occupying a
+  // different conversational function so callbacks don't collapse into
+  // "Giovanni again." Server-side cast bible in src/main/cast.ts.
   const GIOVANNI_VOICE_ID = 'UOB3uZCEf2cjGpZaGOXq'
+  const RAJIV_VOICE_ID    = 'miqykcv8BCUvQnRlIGUV'
+  const BERNARD_VOICE_ID  = 'Q0HZwrR1H2SmRvd5cX3U'
+  const LASHONTE_VOICE_ID = 'VYtAZPRhkK9OruILpVBz'
+  const KRISTINA_VOICE_ID = 'BlgEcC0TfWpBak7FmvHW'
+  const DEVIN_VOICE_ID    = 'YrAYvOVjAFiqVwBgB4qI'
+  const MAYA_VOICE_ID     = 'aKw9UnnjRq5scbeeGI7Z'
+  const MIKE_VOICE_ID     = 'Ib97zM6uFBc71OWgj75I'
+  const ZOE_VOICE_ID      = 'c8v8wiyiDwyuduufV6kB'
   // 4.3.0: DJ Stephen Hands — rare radio guest + DJ Mode default + own picks.
-  // Tag is [STEPHEN] (or legacy [DJ_HANDS] still accepted in case Claude
-  // emits the older form during transition).
   const DJ_HANDS_VOICE_ID = 'ApBE43wHy5MiZGz9ihqB'
 
+  // Caller scheduler: weighted random with Giovanni anchored ≈1/3, no-
+  // repeat-within-3 rule, and a Giovanni-only first 2 caller slots of a
+  // fresh session (the show's calling card).
+  const CALLER_ROLODEX: { id: 'giovanni' | 'rajiv' | 'bernard' | 'lashonte' | 'kristina' | 'devin' | 'maya' | 'mike' | 'zoe'; weight: number }[] = [
+    { id: 'giovanni', weight: 6 },
+    { id: 'rajiv',    weight: 2 },
+    { id: 'bernard',  weight: 1 },
+    { id: 'lashonte', weight: 3 },
+    { id: 'kristina', weight: 2 },
+    { id: 'devin',    weight: 2 },
+    { id: 'maya',     weight: 2 },
+    { id: 'mike',     weight: 1 },
+    { id: 'zoe',      weight: 2 },
+  ]
+  const recentCallersRef = useRef<string[]>([])
+  const callerSlotsThisSessionRef = useRef(0)
+
+  function pickCaller(): string {
+    callerSlotsThisSessionRef.current += 1
+    if (callerSlotsThisSessionRef.current <= 2) {
+      recentCallersRef.current = ['giovanni', ...recentCallersRef.current].slice(0, 3)
+      return 'giovanni'
+    }
+    const recent = new Set(recentCallersRef.current)
+    const eligible = CALLER_ROLODEX.filter(c => !recent.has(c.id))
+    const pool = eligible.length > 0 ? eligible : CALLER_ROLODEX
+    const total = pool.reduce((sum, c) => sum + c.weight, 0)
+    let r = Math.random() * total
+    let chosen = pool[0].id
+    for (const c of pool) {
+      r -= c.weight
+      if (r <= 0) { chosen = c.id; break }
+    }
+    recentCallersRef.current = [chosen, ...recentCallersRef.current].slice(0, 3)
+    return chosen
+  }
+
   // Parse a Claude-generated radio script into ordered speaker segments.
-  // Strict format: each line begins with [MM], [MEGAN], [ANNOUNCER],
-  // [GIOVANNI], or [STEPHEN]. Anything else is silently dropped.
-  function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'; line: string }> {
-    type Speaker = 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'
-    const segments: Array<{ speaker: Speaker; line: string }> = []
+  // 4.4.0: full caller rolodex tag set.
+  function parseRadioScript(text: string): Array<{ speaker: RadioSpeaker; line: string }> {
+    const segments: Array<{ speaker: RadioSpeaker; line: string }> = []
+    const TAG_RE = /^\[(MM|MEGAN|ANNOUNCER|STEPHEN|DJ_HANDS|DJ_STEPHEN|DJ_STEPHEN_HANDS|GIOVANNI|RAJIV|BERNARD|LASHONTE|KRISTINA|DEVIN|MAYA|MIKE|ZOE)\]\s*(.+)/i
     for (const raw of text.split('\n')) {
       const line = raw.trim()
       if (!line) continue
-      const m = line.match(/^\[(MM|MEGAN|ANNOUNCER|GIOVANNI|STEPHEN|DJ_HANDS|DJ_STEPHEN|DJ_STEPHEN_HANDS)\]\s*(.+)/i)
+      const m = line.match(TAG_RE)
       if (m) {
         const tag = m[1].toUpperCase()
-        const speaker: Speaker =
-          tag === 'MEGAN' ? 'megan' :
-          tag === 'ANNOUNCER' ? 'announcer' :
-          tag === 'GIOVANNI' ? 'giovanni' :
-          tag === 'STEPHEN' || tag === 'DJ_HANDS' || tag === 'DJ_STEPHEN' || tag === 'DJ_STEPHEN_HANDS' ? 'djhands' :
-          'mm'
+        let speaker: RadioSpeaker
+        switch (tag) {
+          case 'MEGAN':     speaker = 'megan'; break
+          case 'ANNOUNCER': speaker = 'announcer'; break
+          case 'STEPHEN':
+          case 'DJ_HANDS':
+          case 'DJ_STEPHEN':
+          case 'DJ_STEPHEN_HANDS':
+            speaker = 'djhands'; break
+          case 'GIOVANNI':  speaker = 'giovanni'; break
+          case 'RAJIV':     speaker = 'rajiv'; break
+          case 'BERNARD':   speaker = 'bernard'; break
+          case 'LASHONTE':  speaker = 'lashonte'; break
+          case 'KRISTINA':  speaker = 'kristina'; break
+          case 'DEVIN':     speaker = 'devin'; break
+          case 'MAYA':      speaker = 'maya'; break
+          case 'MIKE':      speaker = 'mike'; break
+          case 'ZOE':       speaker = 'zoe'; break
+          default:          speaker = 'mm'
+        }
         segments.push({ speaker, line: m[2].trim() })
       }
     }
@@ -407,8 +467,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const voiceId =
         seg.speaker === 'megan' ? MEGAN_VOICE_ID :
         seg.speaker === 'announcer' ? ANNOUNCER_VOICE_ID :
-        seg.speaker === 'giovanni' ? GIOVANNI_VOICE_ID :
         seg.speaker === 'djhands' ? DJ_HANDS_VOICE_ID :
+        seg.speaker === 'giovanni' ? GIOVANNI_VOICE_ID :
+        seg.speaker === 'rajiv'    ? RAJIV_VOICE_ID :
+        seg.speaker === 'bernard'  ? BERNARD_VOICE_ID :
+        seg.speaker === 'lashonte' ? LASHONTE_VOICE_ID :
+        seg.speaker === 'kristina' ? KRISTINA_VOICE_ID :
+        seg.speaker === 'devin'    ? DEVIN_VOICE_ID :
+        seg.speaker === 'maya'     ? MAYA_VOICE_ID :
+        seg.speaker === 'mike'     ? MIKE_VOICE_ID :
+        seg.speaker === 'zoe'      ? ZOE_VOICE_ID :
         undefined  // mm → server-side default
       const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceId)
       if (tts.ok && tts.audio) {
@@ -461,6 +529,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         const upcomingCaller   = upcomingSlot === 5 || upcomingSlot === 11
         const upcomingDjHands  = upcomingSlot === 9
         const upcomingUseAnn   = upcomingForceAnn && !upcomingCaller && !upcomingDjHands
+        // 4.4.0: pick caller now if upcoming slot is a caller slot, so the
+        // prefetch synthesizes with the right voice. The transition handler
+        // hits the cache and skips its own pickCaller call.
+        const upcomingCallerId = upcomingCaller ? pickCaller() : undefined
         const r = await window.electronAPI.musicmanRadio(
           { title: prev.title || '', artist: prev.artist || '', album: prev.album || '', genre: prev.genre || '', year: prev.year || '' },
           { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
@@ -468,6 +540,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           upcomingUseAnn,
           upcomingCaller,
           upcomingDjHands,
+          upcomingCallerId,
         )
         if (!r.ok || !r.text) {
           console.warn('[Radio] prefetch failed — clearing key for retry', { ok: r.ok, error: r.error })
@@ -693,6 +766,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Mutual-exclude: callers/DJ Hands suppress the announcer drop in
       // their own segment so the structure doesn't get crowded.
       const useAnnouncer = forceAnnouncerThisTransition && !callerThisTransition && !djHandsThisTransition
+      // 4.4.0: when a caller slot fires AND we don't have a prefetched
+      // cache hit, pick which caller. The prefetch effect already runs
+      // pickCaller for upcoming caller slots and bakes the synthesized
+      // voice into the cache, so on a cache hit we DON'T pickCaller
+      // again here (would double-increment scheduler state). The variable
+      // is only consumed in the live-fetch path below.
 
       // Radio Mode fast path: pre-fetched dialog cached as a segment array.
       if (radioMode) {
@@ -714,7 +793,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // the user with "they speak once and never come back" and no clue why.
       try {
         if (radioMode) {
-          console.log('[Radio] live fetch starting...', { slot, useAnnouncer, callerThisTransition, djHandsThisTransition })
+          // Pick caller live (cache missed — prefetch didn't supply one).
+          const liveCallerId = callerThisTransition ? pickCaller() : undefined
+          console.log('[Radio] live fetch starting...', { slot, useAnnouncer, callerThisTransition, callerId: liveCallerId, djHandsThisTransition })
           const r = await window.electronAPI.musicmanRadio(
             { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
             { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
@@ -722,6 +803,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             useAnnouncer,
             callerThisTransition,
             djHandsThisTransition,
+            liveCallerId,
           )
           console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
           if (r.ok && r.text) {
@@ -737,15 +819,18 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             console.warn('[Radio] musicmanRadio returned no text', r)
           }
         } else {
+          // 4.4.0: DJ Mode (autoDj && !radioMode) is Stephen Hands' lane.
+          // Pass persona='stephen' and route TTS through Stephen's voice.
           const result = await window.electronAPI.musicmanDj(
             { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
-            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' }
+            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+            'stephen',
           )
           if (result.ok && result.text) {
-            const tts = await window.electronAPI.musicmanSpeak(result.text, false)
+            const tts = await window.electronAPI.musicmanSpeak(result.text, false, DJ_HANDS_VOICE_ID)
             setDjLoading(false)
             if (tts.ok && tts.audio) {
-              await playSegmentSequence([{ speaker: 'mm', line: result.text, audioData: tts.audio }], result.text)
+              await playSegmentSequence([{ speaker: 'djhands', line: result.text, audioData: tts.audio }], result.text)
               return
             }
           }
@@ -878,7 +963,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
       // Speak the intro
       if (result.intro) {
-        const tts = await window.electronAPI.musicmanSpeak(result.intro, false)
+        // 4.4.0: DJ Mode is Stephen Hands' lane — route the intro
+        // through Stephen's voice instead of Music Man's.
+        const tts = await window.electronAPI.musicmanSpeak(result.intro, false, DJ_HANDS_VOICE_ID)
 
         // Bail out if cancelled during TTS
         if (djCancelledRef.current) return

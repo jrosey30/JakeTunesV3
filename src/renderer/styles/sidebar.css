@@ -157,6 +157,47 @@
   stroke: #c87828;
 }
 
+/* 4.4.0 — WJLR Picks featured section.
+ * The three cast picks (MM, Megan, DJ Stephen Hands) live in their own
+ * sidebar group with a slightly raised, tinted background so they read
+ * as the curated/editorial content rather than just another smart
+ * playlist. The group has a subtle amber-to-purple gradient mirroring
+ * the trio's icon palette, plus a thin top + bottom rule. Items inside
+ * use a slightly bolder weight and a hint more padding. */
+.sidebar-picks-group {
+  position: relative;
+  margin: 2px 6px 6px 6px;
+  padding: 4px 0;
+  border-radius: 4px;
+  background: linear-gradient(180deg,
+    rgba(200, 120, 40, 0.07) 0%,
+    rgba(58, 124, 165, 0.05) 50%,
+    rgba(122, 58, 156, 0.07) 100%
+  );
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.sidebar-item--picks {
+  font-weight: 600;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  /* Slight indent so the row sits inside the group's outline. */
+  padding-left: 18px;
+  margin: 0 4px;
+  border-radius: 3px;
+}
+
+.sidebar-item--picks:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* When selected, the picks-row uses the standard selection treatment but
+ * the bolder weight stays. */
+.sidebar-item--picks.sidebar-item--selected {
+  font-weight: 600;
+}
+
 /* Device row with inline eject */
 .sidebar-device-row {
   cursor: pointer;

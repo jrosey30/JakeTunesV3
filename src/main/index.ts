@@ -10,6 +10,7 @@ import {
 import {
   appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
 } from './radio-memory'
+import { CALLERS, buildCallerSegmentMode } from './cast'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
@@ -2610,10 +2611,11 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
       ? ['eleven_flash_v2_5']
       : (v3Enabled ? ['eleven_v3', 'eleven_turbo_v2_5'] : ['eleven_turbo_v2_5'])
     // 4.2.13: per-voice TTS settings. Different cast members need
-    // different deliveries.
+    // different deliveries. 4.4.0: caller settings now live in
+    // src/main/cast.ts — look up by voiceId.
     const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
-    const GIOVANNI_VOICE_ID   = 'UOB3uZCEf2cjGpZaGOXq'
     const DJ_HANDS_VOICE_ID   = 'ApBE43wHy5MiZGz9ihqB'
+    const callerByVoice = Object.values(CALLERS).find(c => c.voiceId === voice)
     const voiceSettings =
       voice === ANNOUNCER_VOICE_ID
         ? {
@@ -2623,21 +2625,13 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
             style: 0.45,
             use_speaker_boost: true,
           }
-        : voice === GIOVANNI_VOICE_ID
-          ? {
-              // Caller on a phone — conversational, slightly variable,
-              // not broadcast-polished. Medium stability lets a little
-              // unpredictability in (he's a regular guy), low style
-              // keeps it from being theatrical.
-              stability: 0.55,
-              similarity_boost: 0.75,
-              style: 0.35,
-            }
+        : callerByVoice
+          ? callerByVoice.voiceSettings  // per-caller settings from cast.ts
           : voice === DJ_HANDS_VOICE_ID
             ? {
-                // Heads-down DJ — confident but understated, not on-stage
-                // energy. Higher stability than Giovanni but not as locked
-                // as the announcer. Low style — not theatrical.
+                // Stephen Hands — confident, understated, party-DJ
+                // energy without being on-stage. Higher stability than
+                // most callers; low style keeps it from being theatrical.
                 stability: 0.6,
                 similarity_boost: 0.8,
                 style: 0.3,
@@ -2686,14 +2680,23 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
 })
 
 // Music Man DJ commentary
-ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }) => {
-  const djInstructions = `${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} Give a brief, punchy DJ-style comment. This will be SPOKEN ALOUD, so keep it to 2-3 sentences max.
+ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
+  // 4.4.0: persona override. The mic button (one-shot commentary on the
+  // current track) keeps Music Man as the host. DJ Mode (continuous
+  // AI-DJ between-track commentary) routes through Stephen Hands —
+  // brief, party-first, beats-forward.
+  const isStephen = persona === 'stephen'
+  const djInstructions = isStephen
+    ? `${nextTrack ? "You're transitioning between songs on a continuous DJ set you're running." : 'A track is on.'} Give a Stephen Hands DJ comment — 1-2 SENTENCES MAX. Pure Stephen voice: party-first, beats-forward, brief. No historian lectures, no Music Man framing. Examples of the right length: "That joint runs hot. Next up — drum programming on this one is unreal. Lock in." OR "Real quick — switching gears. Patrick Adams sample on the next one. Trust me."`
+    : `${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} Give a brief, punchy DJ-style comment. This will be SPOKEN ALOUD, so keep it to 2-3 sentences max.
 
 Be unpredictable — sometimes drop a verified fun fact, sometimes your arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes praise an underrated aspect. Keep it conversational and natural — you're talking between songs like a real DJ.
 
 If background info from MusicBrainz or Wikipedia is provided below, USE IT for any facts. If no background info and you're not confident, go with a take on the sound/genre rather than making up a story.`
 
-  const djPrompt = buildMusicManPrompt(djInstructions)
+  const djPrompt = isStephen
+    ? DJ_HANDS_CORE + '\n\n' + djInstructions
+    : buildMusicManPrompt(djInstructions)
 
   // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
   const [artistFacts, nextArtistFacts] = await Promise.all([
@@ -2739,12 +2742,17 @@ ipcMain.handle('musicman-radio', async (_event,
   forceAnnouncer?: boolean,
   callerSegment?: boolean,
   djHandsSegment?: boolean,
+  callerId?: string,  // 4.4.0: which caller from the 9-person rolodex
 ) => {
   // Segment modes:
   //   - opener            → ALWAYS [ANNOUNCER] first (show going live)
   //   - forceAnnouncer    → ALWAYS [ANNOUNCER] first (every 4th transition)
-  //   - callerSegment     → [GIOVANNI] phones in with a music question
-  //   - djHandsSegment    → DJ Hands stops by (rare guest, beats focus)
+  //   - callerSegment     → caller from the rolodex phones in (callerId picks
+  //                          which one — Giovanni, Rajiv, Bernard, LaShonte,
+  //                          Kristina, Devin, Maya, Mike, or Zoe). Each
+  //                          caller has a distinct conversational function;
+  //                          see src/main/cast.ts for the full bible.
+  //   - djHandsSegment    → DJ Stephen Hands stops by (rare guest, beats focus)
   //   - default           → NO [ANNOUNCER], NO guest. Pure MM + Megan banter.
   const wantsAnnouncer = opener || forceAnnouncer
   const segmentMode = opener
@@ -2758,14 +2766,7 @@ ALWAYS lead with TWO [ANNOUNCER] lines, in this exact order:
 
 After those two announcer lines, MM and Megan welcome the listener, set the energy, and tee up the first track.`
     : callerSegment
-      ? `You're transitioning between songs and we're TAKING A CALL. Giovanni — a regular caller, regular guy on a phone — phones in with a music question. The question can be sharp, clueless, oddly profound, or completely off-base — Giovanni is unpredictable. MM and Megan have to deal with it in character.
-
-Format for this segment:
-  [MM] One line introducing the caller ("alright we got Giovanni from Bay Ridge on the line, what's good Giovanni?")
-  [GIOVANNI] His question — a 1-2 sentence music question. Conversational, slightly rambling, like a guy on a phone. Could be: a basic question they should know better than to ask, a wildly contrarian opinion they didn't ask for, a genuine deep-cut question, a misremembered song / artist name, asking for a recommendation in a weirdly specific situation, asking a question that's only tangentially about music ("hey is it weird that I only listen to music in the car?"). Vary the type each time.
-  [MM] React in character — sometimes patient, sometimes annoyed, sometimes thrown.
-  [MEGAN] React in character — usually undercutting MM's reaction or going harder than him.
-  Optional final [MM] or [MEGAN] line wrapping it up.`
+      ? buildCallerSegmentMode(callerId || 'giovanni')
       : djHandsSegment
         ? `You're transitioning between songs and DJ STEPHEN HANDS is in the booth — a rare guest spot. He doesn't sit in for the whole show, just drops by to weigh in. He'll cut MM off if MM is wrong about a beat or a sample. Megan respects him more than MM (she likes that he doesn't perform expertise).
 
@@ -2830,7 +2831,7 @@ Format for this segment:
 
   • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
   • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
-  • Giovanni (tag: [GIOVANNI]) — RECURRING CALLER. Regular guy from Brooklyn / Bay Ridge / Bensonhurst on a phone. Slight Brooklyn accent in his cadence. Asks music questions that range from sharp to clueless. Sometimes mishears artists' names, sometimes drops a wildly contrarian opinion he wasn't asked for, sometimes asks a genuinely deep question MM and Megan have to actually think about. NOT a broadcast professional — sounds conversational, slightly rambling, like he just dialed in. Only appears when this segment's mode says he's calling in.
+  • CALLERS (tags: [GIOVANNI] / [RAJIV] / [BERNARD] / [LASHONTE] / [KRISTINA] / [DEVIN] / [MAYA] / [MIKE] / [ZOE]) — WJLR has a 9-person caller rolodex. The most frequent is Giovanni (Bay Ridge, earnest, rambling). The others occupy distinct conversational functions: Rajiv challenges the show's framing, Bernard is the elder who was actually there, LaShonte forces them out of the 1970s, Kristina demands they cover metal, Devin called the wrong show, Maya asks the questions that make them think, Mike has industry intel he won't quite source, Zoe announces wildly committed takes. EACH caller appears only when this segment's mode says THEY'RE calling in — the prompt will tell you which one and how MM and Megan should react.
   • DJ Stephen Hands (tag: [STEPHEN]) — RARE GUEST. JakeTunes' in-house DJ. Goes by Stephen, Hands, or Stephen Hands. PARTY-FIRST: house, rap, electronic, techno, disco, boogie — anything to make a room move. Loves the disco / boogie source-code lineage (Patrick Adams, Larry Levan, Paradise Garage, Salsoul) and modern dance (Daft Punk, Justice, Disclosure, Fred again..). Doesn't engage with rock or pop discourse on its own terms — pivots back to whether anyone could DANCE to it. Brief, hyped, "this fucking goes" energy. Not a man of many words. Only appears when this segment's mode says he's on the show.
 
 ${segmentMode}
@@ -3048,19 +3049,22 @@ ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: st
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
   const recentStr = recentIds.length > 0 ? `\nRecently played track IDs (AVOID these): ${recentIds.join(', ')}` : ''
 
-  const djSetInstructions = `You're running a DJ set from inside the listener's library — late-night college radio energy, spoken aloud via TTS. Pick 6-10 songs that hang together. Each set should have a loose theme — a vibe, a genre deep-dive, an era, a mood, or a connection between artists. Think FLOW and order.
+  // 4.4.0: DJ Mode is now Stephen Hands' lane, not Music Man's. Stephen
+  // is the in-house DJ — party-first, beats-forward, brief. He runs the
+  // continuous AI-DJ flow that DJ Mode triggers between tracks.
+  const djSetInstructions = `You are DJ Stephen Hands running a continuous DJ set from inside the listener's library. Pick 6-10 songs that hang together AS A SET. The criteria: do they MOVE A ROOM. BPM compatibility, key compatibility (Camelot when possible), energy arc, sample/genre bridges between tracks.
 
 Return ONLY a JSON object (no markdown, no code fences):
-{"intro":"Your spoken DJ intro — 2-4 sentences, conversational, introducing the vibe. This will be read aloud via TTS so make it sound natural and spoken, not written. No emojis. Address the listener casually.","trackIds":[array of track ID numbers in play order],"theme":"short theme label like 'Late Night Indie' or '90s Deep Cuts'"}
+{"intro":"YOUR spoken DJ intro in Stephen Hands' voice — 1-2 sentences MAX. Hyped, brief, party-first. NOT a Music Man intro — no historian-style framing, no genealogy talk. Sound like a DJ in a booth at 1AM. Examples of the right length: 'Stephen Hands. Pulled up a set that runs hot — disco into house into something nasty. Hands up.' OR 'Yo. Stephen. Built this around BPM matches and one Patrick Adams sample. Lock in.'","trackIds":[array of track ID numbers in play order],"theme":"short theme label in Stephen's voice — 'After Midnight', 'Disco / Boogie / House', 'Drum Programming Mt. Rushmore', etc."}
 
 Rules:
 - ONLY use track IDs from the provided library
 - Do NOT pick any recently played tracks${recentStr ? ' (see list below)' : ''}
-- Mix up artists — no more than 2 songs by the same artist per set
-- Order matters — build a journey
-- Keep the intro SHORT — you're a DJ, not writing an essay${recentStr}`
+- HARD ARTIST RULE: each artist appears AT MOST ONCE in the set. Aim for all distinct artists.
+- Order matters — build a journey, but a DANCE FLOOR journey, not a Music Man lecture journey
+- Keep the intro SHORT — Stephen is NOT a man of many words${recentStr}`
 
-  const systemPrompt = buildMusicManPrompt(djSetInstructions)
+  const systemPrompt = DJ_HANDS_CORE + '\n\n' + djSetInstructions
 
   try {
     const response = await claudeCall('musicman-dj-set', {

@@ -17,13 +17,13 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-chat', messages),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
-  musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }): Promise<{ ok: boolean; text: string }> =>
-    ipcRenderer.invoke('musicman-dj', track, nextTrack),
+  musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string }> =>
+    ipcRenderer.invoke('musicman-dj', track, nextTrack, persona),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
-  musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean): Promise<{ ok: boolean; text: string; error?: string }> =>
-    ipcRenderer.invoke('musicman-radio', track, nextTrack, opener, forceAnnouncer, callerSegment, djHandsSegment),
+  musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string): Promise<{ ok: boolean; text: string; error?: string }> =>
+    ipcRenderer.invoke('musicman-radio', track, nextTrack, opener, forceAnnouncer, callerSegment, djHandsSegment, callerId),
   musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]): Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-dj-set', tracks, recentIds),
   musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
