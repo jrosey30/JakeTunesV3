@@ -285,7 +285,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // through to the server-side env override (or default) when voiceId
   // is undefined, so we only pass IDs explicitly for Megan and the
   // Announcer.
-  const MEGAN_VOICE_ID = 'WQhVGGVQ8EhNpBYHFE8c'
+  const MEGAN_VOICE_ID = 'T7eLpgAAhoXHlrNajG8v'
   const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
 
   // Parse a Claude-generated radio script into ordered speaker segments.

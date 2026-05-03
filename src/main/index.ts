@@ -2515,7 +2515,7 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     // honor the user's host preference (4.2.5) — Megan if they picked
     // her, Music Man otherwise. Env var override still works on top of
     // both for users who want a custom Music Man voice clone.
-    const meganVoice = 'WQhVGGVQ8EhNpBYHFE8c'
+    const meganVoice = 'T7eLpgAAhoXHlrNajG8v'
     const defaultByHost = readActiveHostSync() === 'megan'
       ? meganVoice
       : (process.env.ELEVENLABS_VOICE_ID || 'qA5SHJ9UjGlW2QwXWR7w')
@@ -2658,13 +2658,23 @@ DELIVERY CUES (TTS reads punctuation directly):
   • Multiple commas for stuttering ("it's, it's just, it's not even close").
 Write the way you want them to SOUND.
 
-CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan). Examples:
-  [ANNOUNCER] W-W-W-W-J-L-R three-thirty-point-nine, LIVE from BROOKLYN!
-  [ANNOUNCER] You're locked in to W-J-L-R, three-thirty-point-nine FM, broadcasting LIVE from the boroughs!
-  [ANNOUNCER] Triple-Dub J-L-R, three-thirty-point-nine, LIVE FROM BROOKLYN — and we're hot!
-The hyphens between letters MATTER — that's how the TTS pronounces them as individual letters for the classic stuttering FM-radio drop. Capitals signal emphasis. Make it campy and over-the-top — the energy of a real radio station ID jingle. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
+CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan).
 
-When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is now controlled at the system level, not at your discretion.
+CRITICAL — write call-sign letters PHONETICALLY so the TTS pronounces each letter individually instead of mashing them together:
+  • "WJLR" → write it as "double-yoo... jay... el... arr" (lowercase, with ellipses between each letter for stuttered pause delivery)
+  • "330.9" → write it as "three thirty point nine" (words, never digits)
+  • For the campy stuttering W effect: "double-yoo... double-yoo... double-yoo... double-yoo... jay el arr"
+  • Multiple ellipses force the dramatic pause between repeats. NEVER write hyphens between letters (TTS treats them as one mashed word).
+
+Example drops (use these as templates — vary the form each time):
+  [ANNOUNCER] double-yoo... double-yoo... double-yoo... double-yoo... JAY EL ARR! Three thirty point nine. LIVE from BROOKLYN.
+  [ANNOUNCER] You're locked in to double-yoo jay el arr, three thirty point nine FM, broadcasting LIVE from the boroughs!
+  [ANNOUNCER] Triple-W JAY EL ARR, three thirty point nine, LIVE FROM BROOKLYN — and we're hot!
+  [ANNOUNCER] DOUBLE-YOO JAY EL ARR — three. thirty. point. NINE. The sound of Brooklyn, all night long.
+
+Capitals signal punched emphasis. Periods between words ("three. thirty. point. NINE.") force a staccato cadence. Make it campy and over-the-top — the energy of a real radio station ID jingle. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
+
+When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
 
 Format the segment STRICTLY as speaker-tagged lines:
 ${wantsAnnouncer ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).' : '(NO [ANNOUNCER] line this segment.)'}
