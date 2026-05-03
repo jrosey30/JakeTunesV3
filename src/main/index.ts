@@ -9,8 +9,10 @@ import {
 } from './external'
 import {
   appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
+  setHotTake, getHotTake,
 } from './radio-memory'
 import { CALLERS, buildCallerSegmentMode } from './cast'
+import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
@@ -2743,6 +2745,10 @@ ipcMain.handle('musicman-radio', async (_event,
   callerSegment?: boolean,
   djHandsSegment?: boolean,
   callerId?: string,  // 4.4.0: which caller from the 9-person rolodex
+  archetypeId?: string,  // 4.4.1: which structural archetype to use
+  slot?: number,  // 4.4.1: slot 0..11 — informs hour clock + memory
+  hourCounter?: number,  // 4.4.1: which hour we're in (for slot-1/slot-11 scoping)
+  miniId?: boolean,  // 4.4.1: slot-7 mini station ID (different from full slot-0 ID)
 ) => {
   // Segment modes:
   //   - opener            → ALWAYS [ANNOUNCER] first (show going live)
@@ -2765,8 +2771,15 @@ ALWAYS lead with TWO [ANNOUNCER] lines, in this exact order:
      (You may replace "Here's" with synonyms like "It's" or "Welcome back to" but the rest of the line — "Megan, and the one, the only, the MUSIC MAN!" — stays verbatim. ALL CAPS on "MUSIC MAN" so the TTS punches it.)
 
 After those two announcer lines, MM and Megan welcome the listener, set the energy, and tee up the first track.`
-    : callerSegment
-      ? buildCallerSegmentMode(callerId || 'giovanni')
+    : miniId
+      ? `MID-HOUR MINI STATION ID. Brief — about 8 seconds. ONE [ANNOUNCER] line that re-anchors any listener who tuned in late, then immediate hand-off to MM and Megan with a single quick exchange about what's been playing. The mini-ID is DRY — no production sting under it (production handles that).
+
+Format:
+  [ANNOUNCER] One short ID line — "Triple-W Jay El Arr. Three thirty point nine. You're listening." (or close variant — keep it under 10 words).
+  [MM] One quick line bridging.
+  [MEGAN] Quick reply, hand off to the next track.`
+      : callerSegment
+        ? buildCallerSegmentMode(callerId || 'giovanni')
       : djHandsSegment
         ? `You're transitioning between songs and DJ STEPHEN HANDS is in the booth — a rare guest spot. He doesn't sit in for the whole show, just drops by to weigh in. He'll cut MM off if MM is wrong about a beat or a sample. Megan respects him more than MM (she likes that he doesn't perform expertise).
 
@@ -2997,6 +3010,22 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   // 4.3.2: persistent radio memory — recent angles + callback fuel.
   if (memoryBlock) userMessage += `\n\n${memoryBlock}`
 
+  // 4.4.1: archetype block — names the structural template the segment
+  // should follow, with shape, length, energy, dwell, and tone-reference
+  // examples. For the deferred-punchline / hour-out archetypes (slot 11),
+  // also pulls the slot-1 hot take from memory so the close pays it off.
+  let archetypeBlock = ''
+  if (archetypeId && ARCHETYPES[archetypeId as ArchetypeId]) {
+    const id = archetypeId as ArchetypeId
+    let slot1HotTake: string | undefined
+    if ((id === 'deferred-punchline' || id === 'hour-out') && hourCounter !== undefined) {
+      const ht = await getHotTake(hourCounter)
+      slot1HotTake = ht?.text
+    }
+    archetypeBlock = buildArchetypeBlock(id, { slot1HotTake })
+  }
+  if (archetypeBlock) userMessage += `\n\n${archetypeBlock}`
+
   try {
     const response = await claudeCall('musicman-radio', {
       model: 'claude-sonnet-4-6',
@@ -3017,13 +3046,28 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
       void appendMemory({
         ts: Date.now(),
         transition: 0, // counter is renderer-side; we don't have it here, but ts ordering is enough
-        slot: -1,
+        slot: slot ?? -1,
         angle: topicAngle ? topicAngle.split(' — ')[0] : null,
         speakers,
         prevTrack: `${track.title} — ${track.artist}`,
         nextTrack: nextTrack ? `${nextTrack.title} — ${nextTrack.artist}` : '',
         callbacks: extractCallbacks(text),
       })
+      // 4.4.1: if this was a Cold Open Hot Take (slot 1, archetype A),
+      // extract the actual claim from MM/Megan's first line and store
+      // it as the hour's hot take. Slot 11 will pay it off.
+      if (archetypeId === 'cold-open-hot-take' && hourCounter !== undefined) {
+        const firstLine = text.split('\n')
+          .map(l => l.trim())
+          .find(l => /^\[(MM|MEGAN)\]/i.test(l))
+        if (firstLine) {
+          const m = firstLine.match(/^\[(MM|MEGAN)\]\s*(.+)/i)
+          if (m) {
+            const speaker = m[1].toUpperCase() === 'MEGAN' ? 'megan' : 'mm'
+            void setHotTake(m[2].trim(), speaker, hourCounter)
+          }
+        }
+      }
     }
     return { ok: true, text }
   } catch (err: unknown) {

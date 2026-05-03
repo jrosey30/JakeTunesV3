@@ -32,6 +32,15 @@ export interface RadioMemoryEntry {
 
 interface MemoryFile {
   entries: RadioMemoryEntry[]
+  /** 4.4.1: per-hour slot-1 hot take. Used by slot-11 Hour Out to pay
+   *  it off as a Deferred Punchline. Cleared at top of each new hour
+   *  (when slot 1 fires fresh). */
+  hotTake?: {
+    text: string
+    speaker: string  // 'mm' or 'megan' — the OTHER host runs the callback
+    setAt: number    // epoch ms — informational
+    hourCounter: number  // for sanity-checking we're still in the same hour
+  }
 }
 
 let cache: MemoryFile | null = null
@@ -74,6 +83,35 @@ export async function appendMemory(entry: RadioMemoryEntry): Promise<void> {
   }
   cache = file
   await saveMemory(file)
+}
+
+/** 4.4.1: store the hot take from a slot-1 Cold Open. Slot 11 will pull
+ *  it back as the Deferred Punchline payoff. The "speaker" is the host
+ *  who made the take — the OTHER host runs the slot-11 callback. */
+export async function setHotTake(text: string, speaker: 'mm' | 'megan', hourCounter: number): Promise<void> {
+  const file = await loadMemory()
+  file.hotTake = { text: text.slice(0, 400), speaker, setAt: Date.now(), hourCounter }
+  cache = file
+  await saveMemory(file)
+}
+
+export async function getHotTake(currentHour: number): Promise<{ text: string; speaker: string } | null> {
+  const file = await loadMemory()
+  if (!file.hotTake) return null
+  // If the hour has rolled over, ignore the stale take. (Within +1
+  // hour of when it was set is the only valid window — the slot-11
+  // callback should fire in the SAME hour as the slot-1 take.)
+  if (file.hotTake.hourCounter !== currentHour) return null
+  return { text: file.hotTake.text, speaker: file.hotTake.speaker }
+}
+
+export async function clearHotTake(): Promise<void> {
+  const file = await loadMemory()
+  if (file.hotTake) {
+    delete file.hotTake
+    cache = file
+    await saveMemory(file)
+  }
 }
 
 /** Recent topic angles — used by the prompt to bias against immediate

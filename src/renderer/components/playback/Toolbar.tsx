@@ -523,12 +523,35 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         // fires (current + 1). Mirror the rotation logic from the
         // transition handler so the prefetch matches what's actually
         // requested live (otherwise the live-fetch path runs anyway).
+        // 4.4.1: mirror the hour clock from the transition handler so
+        // prefetch picks the same archetype + caller + slot flags. If
+        // these get out of sync, prefetch caches dialog with the wrong
+        // shape and the cache hit during the live transition plays
+        // mismatched content.
         const upcoming = radioTransitionCounterRef.current + 1
         const upcomingSlot = upcoming % 12
-        const upcomingForceAnn = upcomingSlot === 0 || upcomingSlot === 4 || upcoming % 4 === 0
-        const upcomingCaller   = upcomingSlot === 5 || upcomingSlot === 11
-        const upcomingDjHands  = upcomingSlot === 9
-        const upcomingUseAnn   = upcomingForceAnn && !upcomingCaller && !upcomingDjHands
+        const upcomingHour = Math.floor(upcoming / 12)
+        const upcomingStephenHour = upcomingHour % 3 === 0
+        const upcomingForceAnn = upcomingSlot === 0
+        const upcomingMiniId   = upcomingSlot === 7
+        const upcomingCaller   = upcomingSlot === 5
+        const upcomingDjHands  = upcomingSlot === 9 && upcomingStephenHour
+        const upcomingUseAnn   = upcomingForceAnn
+        let upcomingArchetype: string | undefined = undefined
+        if (!upcomingCaller && !upcomingDjHands && !upcomingMiniId && !upcomingForceAnn) {
+          switch (upcomingSlot) {
+            case 1:  upcomingArchetype = 'cold-open-hot-take'; break
+            case 2:  upcomingArchetype = 'back-announce'; break
+            case 3:  upcomingArchetype = Math.random() < 0.5 ? 'lateral-pivot' : 'lineage-bridge'; break
+            case 4:  upcomingArchetype = ['brooklyn-texture', 'lyric-roast', 'lightning-round'][Math.floor(Math.random() * 3)]; break
+            case 6:  upcomingArchetype = 'recovery'; break
+            case 8:  upcomingArchetype = 'historian-dwell'; break
+            case 9:  upcomingArchetype = 'lightning-round'; break
+            case 10: upcomingArchetype = 'recovery'; break
+            case 11: upcomingArchetype = 'hour-out'; break
+            default: upcomingArchetype = 'back-announce'
+          }
+        }
         // 4.4.0: pick caller now if upcoming slot is a caller slot, so the
         // prefetch synthesizes with the right voice. The transition handler
         // hits the cache and skips its own pickCaller call.
@@ -541,6 +564,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           upcomingCaller,
           upcomingDjHands,
           upcomingCallerId,
+          upcomingArchetype,
+          upcomingSlot,
+          upcomingHour,
+          upcomingMiniId,
         )
         if (!r.ok || !r.text) {
           console.warn('[Radio] prefetch failed — clearing key for retry', { ok: r.ok, error: r.error })
@@ -759,19 +786,40 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // slot 0 (slot 0 would only fire on a 12-counter wrap to 0). The
       // "every 4th" announcer cadence is preserved because we're using
       // counter % 4 below as a fallback for non-special slots.
+      // 4.4.1: HOUR CLOCK — see show bible §1. The 12 slots per hour
+      // each have a structural role. Stephen's slot-9 guest spot is
+      // rationed to ≈1 hour in 3 (otherwise slot 9 is a Lightning Round
+      // substitute so the slot-9 PEAK still lands).
       const slot = radioTransitionCounterRef.current % 12
-      const forceAnnouncerThisTransition = radioMode && (slot === 0 || slot === 4 || radioTransitionCounterRef.current % 4 === 0)
-      const callerThisTransition         = radioMode && (slot === 5 || slot === 11)
-      const djHandsThisTransition        = radioMode && (slot === 9)
-      // Mutual-exclude: callers/DJ Hands suppress the announcer drop in
-      // their own segment so the structure doesn't get crowded.
-      const useAnnouncer = forceAnnouncerThisTransition && !callerThisTransition && !djHandsThisTransition
-      // 4.4.0: when a caller slot fires AND we don't have a prefetched
-      // cache hit, pick which caller. The prefetch effect already runs
-      // pickCaller for upcoming caller slots and bakes the synthesized
-      // voice into the cache, so on a cache hit we DON'T pickCaller
-      // again here (would double-increment scheduler state). The variable
-      // is only consumed in the live-fetch path below.
+      const hourCounter = Math.floor(radioTransitionCounterRef.current / 12)
+      const stephenThisHour = hourCounter % 3 === 0  // 1 in 3 hours has Stephen
+      const forceAnnouncerThisTransition = radioMode && slot === 0  // full ID at top of hour
+      const miniIdThisTransition         = radioMode && slot === 7  // mid-hour mini ID
+      const callerThisTransition         = radioMode && slot === 5  // caller bit (one per hour)
+      const djHandsThisTransition        = radioMode && slot === 9 && stephenThisHour
+      // Mutual-exclude: callers/Stephen/miniId suppress the announcer
+      // drop in their own segment so the structure doesn't get crowded.
+      const useAnnouncer = forceAnnouncerThisTransition
+      // Pick the structural archetype for this slot. Caller / Stephen /
+      // miniId / opener slots have their own dedicated segmentMode in
+      // the radio handler — for those we leave archetypeId undefined so
+      // the handler doesn't double up. For all other slots, the slot
+      // dictates the archetype per the hour clock.
+      let archetypeIdThisTransition: string | undefined = undefined
+      if (radioMode && !callerThisTransition && !djHandsThisTransition && !miniIdThisTransition && !forceAnnouncerThisTransition) {
+        switch (slot) {
+          case 1:  archetypeIdThisTransition = 'cold-open-hot-take'; break
+          case 2:  archetypeIdThisTransition = 'back-announce'; break
+          case 3:  archetypeIdThisTransition = Math.random() < 0.5 ? 'lateral-pivot' : 'lineage-bridge'; break
+          case 4:  archetypeIdThisTransition = ['brooklyn-texture', 'lyric-roast', 'lightning-round'][Math.floor(Math.random() * 3)]; break
+          case 6:  archetypeIdThisTransition = 'recovery'; break
+          case 8:  archetypeIdThisTransition = 'historian-dwell'; break
+          case 9:  archetypeIdThisTransition = 'lightning-round'; break  // Stephen-substitute hours
+          case 10: archetypeIdThisTransition = 'recovery'; break
+          case 11: archetypeIdThisTransition = 'hour-out'; break
+          default: archetypeIdThisTransition = 'back-announce'
+        }
+      }
 
       // Radio Mode fast path: pre-fetched dialog cached as a segment array.
       if (radioMode) {
@@ -795,7 +843,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         if (radioMode) {
           // Pick caller live (cache missed — prefetch didn't supply one).
           const liveCallerId = callerThisTransition ? pickCaller() : undefined
-          console.log('[Radio] live fetch starting...', { slot, useAnnouncer, callerThisTransition, callerId: liveCallerId, djHandsThisTransition })
+          console.log('[Radio] live fetch starting...', { slot, hour: hourCounter, archetype: archetypeIdThisTransition, useAnnouncer, miniId: miniIdThisTransition, callerThisTransition, callerId: liveCallerId, djHandsThisTransition })
           const r = await window.electronAPI.musicmanRadio(
             { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
             { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
@@ -804,6 +852,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             callerThisTransition,
             djHandsThisTransition,
             liveCallerId,
+            archetypeIdThisTransition,
+            slot,
+            hourCounter,
+            miniIdThisTransition,
           )
           console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
           if (r.ok && r.text) {
