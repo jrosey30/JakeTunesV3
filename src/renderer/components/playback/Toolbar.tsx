@@ -45,20 +45,6 @@ function RadioIcon() {
   )
 }
 
-// Vinyl record — DJ Mode (beatmatched / Camelot-mixed continuous music
-// without commentary). Concentric grooves + label dot in the middle.
-function VinylIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="10" cy="10" r="8.5" strokeWidth="1.5" />
-      <circle cx="10" cy="10" r="6.5" opacity="0.55" />
-      <circle cx="10" cy="10" r="4.5" opacity="0.4" />
-      <circle cx="10" cy="10" r="2.8" fill="currentColor" stroke="none" />
-      <circle cx="10" cy="10" r="0.8" fill="#fff" stroke="none" />
-    </svg>
-  )
-}
-
 function AirPlayIcon({ active }: { active?: boolean }) {
   return (
     <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -788,13 +774,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             title="Music Man — one-shot comment on the current track (right-click: toggle bubble)"
           >
             <MicIcon />
-          </button>
-          <button
-            className="transport-toggle dj-btn dj-mode-btn"
-            disabled
-            title="DJ Mode — coming soon (beatmatched / Camelot-mixed continuous music, no commentary)"
-          >
-            <VinylIcon />
           </button>
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}

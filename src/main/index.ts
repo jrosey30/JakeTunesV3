@@ -5159,36 +5159,44 @@ app.whenReady().then(async () => {
       const total = fileStat.size
       const rangeHeader = request.headers.get('range')
 
+      // 4.2.11: switched from Buffer.alloc + fh.read (entire file into
+      // memory) to a true streaming response via createReadStream +
+      // Readable.toWeb. The Buffer-based path produced a ~29-second
+      // playback cutoff: HTMLAudioElement decodes ~30s ahead, and once
+      // it had decoded its window, Electron's main-process Buffer was
+      // eligible for GC; if it got collected before the audio element
+      // requested more bytes, audio died mid-track. Streaming responses
+      // hold the file handle open for the duration of the consumer's
+      // read, no buffer to GC.
+      const { createReadStream } = await import('fs')
+      const { Readable } = await import('stream')
+
       if (rangeHeader) {
         const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
         const start = match ? parseInt(match[1]) : 0
         const end = match && match[2] ? parseInt(match[2]) : total - 1
         const chunkSize = end - start + 1
-        const fh = await open(filePath, 'r')
-        const buf = Buffer.alloc(chunkSize)
-        await fh.read(buf, 0, chunkSize, start)
-        await fh.close()
-        return new Response(buf, {
+        const nodeStream = createReadStream(filePath, { start, end })
+        const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
+        return new Response(webStream, {
           status: 206,
           headers: {
             'Content-Type': mimeType,
             'Content-Range': `bytes ${start}-${end}/${total}`,
             'Content-Length': String(chunkSize),
-            'Accept-Ranges': 'bytes'
-          }
+            'Accept-Ranges': 'bytes',
+          },
         })
       }
 
-      const fh = await open(filePath, 'r')
-      const buf = Buffer.alloc(total)
-      await fh.read(buf, 0, total, 0)
-      await fh.close()
-      return new Response(buf, {
+      const nodeStream = createReadStream(filePath)
+      const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
+      return new Response(webStream, {
         headers: {
           'Content-Type': mimeType,
           'Content-Length': String(total),
-          'Accept-Ranges': 'bytes'
-        }
+          'Accept-Ranges': 'bytes',
+        },
       })
     } catch {
       return new Response('Not found', { status: 404 })
