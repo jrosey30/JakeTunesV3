@@ -206,22 +206,34 @@ export function useAudio() {
     fn?.(state.isPlaying)
   }, [state.isPlaying])
 
-  // 4.2.13: heartbeat diagnostic. Logs audio-pipeline state every 2s
-  // while playback is supposedly active, so when the user hits another
-  // mid-track stop we can run __audioLog() in the dev console and see
-  // EXACTLY what changed (audio context state, native node readyState,
-  // howl playing(), position, error code). Cheap — 30 entries/min, ring
-  // buffer is 50 deep, so heartbeat alone fills a minute and a half.
+  // 4.2.13: heartbeat diagnostic. Logs audio-pipeline state every 2s.
+  // 4.2.14: heartbeat is now ALSO an active recovery loop:
+  //   1. If AudioContext is suspended, resume it. Chromium can suspend
+  //      ctxs that don't appear to be producing output, even mid-song.
+  //   2. If position has been frozen for 4+ seconds (2 consecutive
+  //      heartbeats at the same pos with playing:true), force-call
+  //      .play() on the underlying HTMLAudio element. That's enough to
+  //      kick a stalled element off its frozen tick in many cases.
   useEffect(() => {
     if (!state.isPlaying) return
+    let lastPos = -1
+    let stuckTicks = 0
     const id = window.setInterval(() => {
       try {
         type HowlInternal = Howl & { _sounds?: Array<{ _node?: HTMLAudioElement }>; _state?: string }
         const h = sharedHowl as HowlInternal | null
         const node = h?._sounds?.[0]?._node
         const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+
+        // 1. Auto-resume AudioContext if suspended. Cheap, idempotent.
+        if (ctx && ctx.state === 'suspended') {
+          void ctx.resume().catch(() => { /* ignore */ })
+          logAudioEvent('heartbeat.ctx.resume')
+        }
+
+        const pos = h ? Number((h.seek() as number).toFixed(2)) : null
         logAudioEvent('heartbeat', {
-          pos: h ? Number((h.seek() as number).toFixed(2)) : null,
+          pos,
           dur: h ? Number(h.duration().toFixed(2)) : null,
           playing: h ? h.playing() : null,
           state: h?._state,
@@ -232,6 +244,37 @@ export function useAudio() {
           nodeNetwork: node?.networkState,
           nodeError: node?.error?.code,
         })
+
+        // 2. Stuck-position kicker. If position is the same float as last
+        // heartbeat AND howl thinks it's playing, count a stuck tick.
+        // After 2 stuck ticks (4s of frozen audio) try a recovery.
+        const howlPlaying = h ? h.playing() : false
+        if (pos !== null && howlPlaying && pos === lastPos) {
+          stuckTicks++
+          if (stuckTicks >= 2) {
+            logAudioEvent('heartbeat.kick', { pos, stuckTicks })
+            try { node?.play() } catch { /* ignore */ }
+            // If the kick doesn't help in another 2 ticks, hard-recover.
+            if (stuckTicks >= 4 && playTrackRef.current) {
+              const cur = stateRef.current.currentTrack
+              const q = stateRef.current.queue
+              const qi = stateRef.current.queueIndex
+              const stuckAt = pos
+              if (cur && q.length > 0) {
+                logAudioEvent('heartbeat.hardRecover', { pos, title: cur.title })
+                try { sharedHowl?.stop() } catch { /* ignore */ }
+                try { sharedHowl?.unload() } catch { /* ignore */ }
+                sharedHowl = null
+                playTrackRef.current(cur, q, qi)
+                setTimeout(() => { try { sharedHowl?.seek(stuckAt) } catch { /* ignore */ } }, 600)
+                stuckTicks = 0
+              }
+            }
+          }
+        } else {
+          stuckTicks = 0
+        }
+        lastPos = pos ?? -1
       } catch { /* ignore */ }
     }, 2000)
     return () => window.clearInterval(id)
