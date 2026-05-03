@@ -623,25 +623,43 @@ export default function SmartPlaylistView() {
             )}
           </div>
         </div>
-        {sortedTracks.length > 0 && (
-          <div className="playlist-view-actions">
-            {isPicksView && picks && (
-              <button
-                className="playlist-view-save"
-                onClick={savePicks}
-                disabled={picksSaved}
-              >
-                {picksSaved ? 'Saved' : 'Save'}
-              </button>
-            )}
+        <div className="playlist-view-actions">
+          {isPicksView && (
+            <button
+              className="playlist-view-save"
+              onClick={() => {
+                // 4.4.2: force a fresh pull. Clears the cached picks
+                // and the per-persona "have we already requested?"
+                // flag so the generation effect re-fires immediately.
+                if (picksConfig?.kind === 'mm')      { setMmPicks(null);     mmRequestedRef.current = false }
+                if (picksConfig?.kind === 'megan')   { setMeganPicks(null);  meganRequestedRef.current = false }
+                if (picksConfig?.kind === 'djhands') { setDjHandsPicks(null);djHandsRequestedRef.current = false }
+                setPicksLoading(true)
+              }}
+              disabled={picksLoading}
+              title="Force a fresh rotation now (overrides the weekly cache)"
+            >
+              {picksLoading ? '…' : '↻ Regenerate'}
+            </button>
+          )}
+          {isPicksView && picks && (
+            <button
+              className="playlist-view-save"
+              onClick={savePicks}
+              disabled={picksSaved}
+            >
+              {picksSaved ? 'Saved' : 'Save'}
+            </button>
+          )}
+          {sortedTracks.length > 0 && (
             <button
               className="playlist-view-play"
               onClick={() => playTrack(sortedTracks[0], sortedTracks, 0)}
             >
               Play All
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       {isPicksView && picks?.commentary && (
         <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'megan' ? 'megan' : picksConfig?.kind === 'djhands' ? 'djhands' : 'musicman'}`}>
