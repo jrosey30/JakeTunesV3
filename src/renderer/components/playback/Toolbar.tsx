@@ -78,6 +78,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // DJ Set. Radio Mode rides whatever queue the user picked. Mutually
   // exclusive with autoDj at the UI level (toggling one off the other).
   const [radioMode, setRadioMode] = useState(false)
+  // 4.4.3: Radio Mode is capped at 90 minutes per session. Real FM
+  // shows have a runtime; an unbounded radio session loses its sense of
+  // pacing and burns through tokens. Visible elapsed-time pill counts
+  // up next to ON AIR so the listener sees how much air-time is left.
+  const RADIO_CAP_MS = 90 * 60 * 1000
+  const [radioElapsedMs, setRadioElapsedMs] = useState(0)
+  const radioStartedAtRef = useRef(0)
+  const radioTickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const radioCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 4.2.20: recording state — captures the broadcast (music + TTS routed
   // through the AudioContext via attachClipToBroadcast) into a single
   // audio file. Click Record to start, click again to stop. On stop we
@@ -243,10 +252,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
   const handleRadioToggle = useCallback(async () => {
     if (radioMode) {
+      // OFF — clear caches, counters, and the cap timer.
       setRadioMode(false)
       radioCacheRef.current.clear()
       radioPrefetchedKeyRef.current = null
       radioTransitionCounterRef.current = 0
+      if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
+      if (radioCapTimerRef.current) { clearTimeout(radioCapTimerRef.current); radioCapTimerRef.current = null }
+      setRadioElapsedMs(0)
       return
     }
     setAutoDj(false)
@@ -256,6 +269,30 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     const firstTrack = shuffled[0]
     setRadioMode(true)
     stopPlayback()
+    // 4.4.3: arm the 90-min cap. After RADIO_CAP_MS the show wraps —
+    // the toggle flips back to OFF as if the user clicked it. Tick
+    // updates radioElapsedMs every second so the pill counts up.
+    radioStartedAtRef.current = Date.now()
+    setRadioElapsedMs(0)
+    if (radioTickIntervalRef.current) clearInterval(radioTickIntervalRef.current)
+    radioTickIntervalRef.current = setInterval(() => {
+      setRadioElapsedMs(Date.now() - radioStartedAtRef.current)
+    }, 1000)
+    if (radioCapTimerRef.current) clearTimeout(radioCapTimerRef.current)
+    radioCapTimerRef.current = setTimeout(() => {
+      console.log('[Radio] 90-minute cap reached — signing off.')
+      // Trigger the same teardown the OFF branch above runs. Calling
+      // setRadioMode(false) flips the React state; the cleanup
+      // useEffect handles the rest. Manually clear the timer/interval
+      // so they don't double-fire if the user toggles fast after.
+      setRadioMode(false)
+      radioCacheRef.current.clear()
+      radioPrefetchedKeyRef.current = null
+      radioTransitionCounterRef.current = 0
+      if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
+      radioCapTimerRef.current = null
+      setRadioElapsedMs(0)
+    }, RADIO_CAP_MS)
     console.log('[Radio] toggle ON — generating opener…')
 
     // Hard timeout for the whole opener flow (IPC + TTS + segment
@@ -1163,7 +1200,26 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             <RecordIcon active={recording} />
           </button>
           {radioMode && (
-            <span className="radio-on-air-pill" aria-live="polite">ON AIR · WJLR 330.9</span>
+            <span className="radio-on-air-pill" aria-live="polite">
+              ON AIR · WJLR 330.9
+              {/* 4.4.3: count-up + 90-min cap indicator. Format mm:ss
+                  under 1h, h:mm:ss above. The remaining minutes sit
+                  next to the elapsed time so the listener sees the
+                  show's runtime budget. */}
+              {(() => {
+                const elapsedSec = Math.floor(radioElapsedMs / 1000)
+                const remainingSec = Math.max(0, Math.floor((RADIO_CAP_MS - radioElapsedMs) / 1000))
+                const fmt = (s: number) => {
+                  const h = Math.floor(s / 3600)
+                  const m = Math.floor((s % 3600) / 60)
+                  const ss = s % 60
+                  return h > 0
+                    ? `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`
+                    : `${m}:${String(ss).padStart(2,'0')}`
+                }
+                return ` · ${fmt(elapsedSec)} / ${fmt(remainingSec)} left`
+              })()}
+            </span>
           )}
           {recording && (
             <span className="rec-pill" aria-live="polite">
