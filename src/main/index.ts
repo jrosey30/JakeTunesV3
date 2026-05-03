@@ -2694,10 +2694,65 @@ ipcMain.handle('musicman-radio', async (_event,
   // unpredictable and came up too often.
   const wantsAnnouncer = opener || forceAnnouncer
   const segmentMode = opener
-    ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in. ALWAYS lead with a campy [ANNOUNCER] station ID drop. Then MM and Megan welcome the listener, set the energy, and tee up the first track.`
+    ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in.
+
+ALWAYS lead with TWO [ANNOUNCER] lines, in this exact order:
+  1. A campy WJLR station ID drop (call sign + frequency + LIVE FROM BROOKLYN energy).
+  2. The MANDATORY hosts intro line — write it EXACTLY like this, with this phrasing and emphasis:
+     [ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!
+     (You may replace "Here's" with synonyms like "It's" or "Welcome back to" but the rest of the line — "Megan, and the one, the only, the MUSIC MAN!" — stays verbatim. ALL CAPS on "MUSIC MAN" so the TTS punches it.)
+
+After those two announcer lines, MM and Megan welcome the listener, set the energy, and tee up the first track.`
     : forceAnnouncer
       ? `You're transitioning between songs in a continuous broadcast. ALWAYS lead with a campy [ANNOUNCER] station ID drop, THEN MM and Megan back-announce / tee up next.`
       : `${nextTrack ? "You're transitioning between songs in a continuous broadcast. NO station ID this segment — pure MM + Megan banter." : 'A song is currently on the air.'}`
+
+  // 4.2.17: TOPIC ROTATION. Each segment picks ONE angle from this list
+  // so the show doesn't fall into "they always argue about whether the
+  // last song was overrated." Real radio shows roam — back-announce,
+  // tee-up, hot take, industry gossip, scene lore, personal anecdote,
+  // local color. The fixed personas (MUSIC_MAN_CORE / MEGAN_CORE) keep
+  // their opinions consistent across topics, but the *terrain* of each
+  // segment is different. Opener and forceAnnouncer segments get the
+  // tee-up / station-ID flavor and skip the rotation.
+  const TOPIC_ANGLES = [
+    `BACK-ANNOUNCE — focus the segment on the song that JUST played. One of them picks apart a specific element (the bass tone, the snare hit, a single line of lyrics, the production choice on the bridge). The other disagrees about whether that element works. Reference the actual song by name.`,
+    `TEE-UP HYPE — focus on the song that's coming up next. Build anticipation OR trash-talk it before it plays. One of them is excited, the other thinks it's a misfire. Reference the upcoming track and artist by name.`,
+    `GENRE BEEF — argue about the genre, scene, or era the just-played song belongs to. Is it actually that genre? Is the genre played out, underrated, dead, due for a revival? Both come at it from their FIXED opinions but disagree on the angle.`,
+    `HOT TAKE — one of them drops a wildly contrarian opinion about music in general (not necessarily this song). The other absolutely loses it. Examples: "albums are over, EPs are the only honest format" / "vinyl was always a scam" / "the drum machine ruined music" / "no rock band after 1979 has mattered."`,
+    `INDUSTRY GOSSIP — riff like there's recent music-industry news (don't fabricate specific people, but be plausibly current — label drama, a feud, a contract leak, someone canceling a tour). They have OPPOSITE reactions to whatever it is.`,
+    `PERSONAL ANECDOTE — one of them tells a 10-second story (in character) about hearing this song for the first time, a show they went to, a record store, a band they used to know. The other one cuts in skeptical that it happened that way.`,
+    `BROOKLYN LOCAL COLOR — ground the segment in WJLR being LIVE FROM BROOKLYN. Reference a neighborhood, a venue, a specific spot, the weather outside, the studio. Megan and MM disagree about something local (best slice, best venue, most overrated park).`,
+    `SOUND CRITIQUE — pick apart the SONIC details. Drum sound, mix, the way the vocals sit, whether it's compressed to death, the room sound. One of them defends the choices, the other says they hate it.`,
+    `CONNECTION BRIDGE — explicitly tie the just-played song to the upcoming song. Lineage, sonic similarity, sharp contrast, a producer or guest in common, opposite emotional registers. They agree on the connection but argue about which song does it better.`,
+    `NOSTALGIA / ERA — the year/era the just-played song came from. What ELSE was happening then. They disagree about whether the era was actually any good or just remembered fondly.`,
+    `MEGAN OFF-TOPIC — Megan kicks off with something seemingly unrelated (a movie she watched, a tweet she saw, a thing she ate) and loops it back to the song. MM is annoyed she's wasting airtime, then grudgingly admits the connection works.`,
+    `MM HISTORIAN — MM drops an obscure factual claim about the just-played artist (recording session lore, a session musician who really played the part, a famously bad gig). Megan questions whether that's true. MM doubles down.`,
+    `LIVE-IN-STUDIO — react to something happening "in the room": food someone brought, the producer doing something dumb, the mic levels, a phone ringing, a guest who hasn't shown up. Anchor the segment in studio physicality, then loop back to the music.`,
+    `PRETEND CALLER — riff like they're responding to a caller (don't voice the caller; just react). "Mark from Bay Ridge with a take we did NOT need." MM and Megan disagree about whether the imaginary caller was right.`,
+    `ROAST SPECIFIC LYRIC — one of them quotes a specific line from the just-played song and roasts it. The other defends it as unironically great. Quote the lyric in their lines.`,
+    `CHARTS / RECEPTION — argue about how the song was received critically vs. commercially. One of them says "people slept on this", the other says it got exactly the reception it deserved.`,
+    `BAND DYNAMICS — argue about the human relationships inside the band that made the song. Who actually wrote it, who pushed for it, who hated it, who quit over it. Made-up but plausible based on the actual band's known history.`,
+    `LIVE VS STUDIO — one of them claims this song is way better live (or the studio version's the only version that works). The other has the opposite take.`,
+  ]
+  // Don't apply the rotation to opener — opener has its own dedicated job
+  // (welcome the listener, set the energy, tee up the first track). The
+  // forceAnnouncer middle-of-show ID drops still get a topic since they're
+  // long enough to fit one.
+  const topicAngle = opener
+    ? null
+    : TOPIC_ANGLES[Math.floor(Math.random() * TOPIC_ANGLES.length)]
+  // Time-of-day context — real radio shows have different vibes morning
+  // vs late-night. Cheap to add, gives Claude a natural color knob.
+  const now = new Date()
+  const hour = now.getHours()
+  const timeOfDay =
+    hour < 6  ? 'late night / overnight (after-hours, low-lit, conspiratorial)' :
+    hour < 11 ? 'morning (coffee, sharper, talky)' :
+    hour < 14 ? 'midday (steady, lunch-hour energy)' :
+    hour < 18 ? 'afternoon drive (commute, hyped, wider audience)' :
+    hour < 22 ? 'evening (relaxed, dialed-in)' :
+                'late evening (winding down, looser, weirder)'
 
   const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9, broadcasting LIVE FROM BROOKLYN) between two co-hosts who actively bicker:
 
@@ -2706,6 +2761,8 @@ ipcMain.handle('musicman-radio', async (_event,
 
 ${segmentMode}
 
+TIME OF DAY (set the show's energy accordingly): ${timeOfDay}.
+${topicAngle ? `\nTOPIC FOCUS THIS SEGMENT (USE THIS SPECIFIC ANGLE — do NOT default to the same generic "was that song overrated" beat every time):\n${topicAngle}\n\nMM and Megan keep their FIXED opinions across all topics (those don't change), but the TERRAIN of this segment is the angle above. Stay on it. A real radio show roams between angles like this — back-announce, hot take, gossip, anecdote, local color — and never sounds like the same conversation twice.\n` : ''}
 This is a REAL conversation, not a script being read. Make it sound like two people actually talking to each other:
 
   • REACT to specific words the other one just said. Quote them, mock them, agree-then-twist them. "Underrated? You think THIS is underrated?" "A masterpiece — sure, if you've never heard a Steely Dan record."
@@ -2743,7 +2800,12 @@ Capitals signal punched emphasis. Exclamation marks drive energy. Make it campy 
 When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
 
 Format the segment STRICTLY as speaker-tagged lines:
-${wantsAnnouncer ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).' : '(NO [ANNOUNCER] line this segment.)'}
+${opener
+  ? `[ANNOUNCER] Campy WJLR station ID drop.
+[ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!  (mandatory verbatim — "Here's" / "It's" / "Welcome back to" interchangeable, rest of the line is fixed)`
+  : forceAnnouncer
+    ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).'
+    : '(NO [ANNOUNCER] line this segment.)'}
 [MM] First chatter line.
 [MEGAN] Reply that disagrees or undercuts MM.
 [MM] Comeback or pivot.
