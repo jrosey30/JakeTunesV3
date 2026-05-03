@@ -279,9 +279,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           console.log('[Radio] musicmanRadio returned ok=' + r.ok + ' text-length=' + (r.text?.length ?? 0))
           if (!r.ok || !r.text) { finish(); return }
           if (resolved) return  // timeout already fired
+          console.log('[Radio] OPENER FULL TEXT:\n' + r.text)
           console.log('[Radio] synthesizing segments…')
           const segments = await synthesizeRadioSegments(r.text)
-          console.log('[Radio] got ' + segments.length + ' segments')
+          console.log('[Radio] got ' + segments.length + ' segments, speakers:', segments.map(s => s.speaker))
           if (resolved) return
           if (segments.length === 0) { finish(); return }
           let i = 0
@@ -400,6 +401,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // the array stays ordered.
   async function synthesizeRadioSegments(scriptText: string): Promise<RadioSegment[]> {
     const parsed = parseRadioScript(scriptText)
+    console.log(`[Radio] parseRadioScript → ${parsed.length} segments:`, parsed.map(p => p.speaker))
     const out: RadioSegment[] = []
     for (const seg of parsed) {
       const voiceId =
@@ -411,8 +413,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceId)
       if (tts.ok && tts.audio) {
         out.push({ speaker: seg.speaker, line: seg.line, audioData: tts.audio })
+      } else {
+        // 4.3.4: surface the dropped segment so we can debug. Previously
+        // a TTS failure (e.g. v3 not supporting a specific voice) silently
+        // dropped the segment from the array, so the user heard the rest
+        // of the script with the dropped speaker missing — manifested as
+        // "no station ID played" when announcer's TTS failed.
+        console.warn(`[Radio] TTS dropped a [${seg.speaker.toUpperCase()}] segment:`, tts.error || '(no error reported)', '— line:', seg.line.slice(0, 80))
       }
     }
+    console.log(`[Radio] synthesizeRadioSegments → ${out.length} usable segments`)
     return out
   }
 

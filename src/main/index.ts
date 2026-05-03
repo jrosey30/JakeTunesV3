@@ -2600,7 +2600,15 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     // forces a fallback to turbo_v2_5 if v3 ever errors out for the
     // account — fail-soft escape hatch without requiring a rebuild.
     const v3Enabled = (process.env.ELEVENLABS_V3 ?? '1') !== '0' && (process.env.ELEVENLABS_V3 ?? '1').toLowerCase() !== 'false'
-    const model = fast ? 'eleven_flash_v2_5' : (v3Enabled ? 'eleven_v3' : 'eleven_turbo_v2_5')
+    // 4.3.4: per-call fallback. v3 is preferred for non-fast paths but
+    // not every voice/account combination supports it; if v3 returns a
+    // 4xx (e.g. "voice not v3-trained"), automatically retry with
+    // turbo_v2_5 so the segment still plays. Without this, a v3 error
+    // for one voice (e.g. the Announcer) silently dropped the segment
+    // and the user heard "no station ID."
+    const modelChain = fast
+      ? ['eleven_flash_v2_5']
+      : (v3Enabled ? ['eleven_v3', 'eleven_turbo_v2_5'] : ['eleven_turbo_v2_5'])
     // 4.2.13: per-voice TTS settings. Different cast members need
     // different deliveries.
     const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
@@ -2640,24 +2648,37 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
                 similarity_boost: 0.7,
                 style: 0.7,
               }
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-      method: 'POST',
-      headers: {
-        'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        text,
-        model_id: model,
-        voice_settings: voiceSettings,
-      })
-    })
-    if (!res.ok) {
-      const err = await res.text()
-      return { ok: false, error: err }
+    let lastError = ''
+    for (const model of modelChain) {
+      try {
+        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
+          method: 'POST',
+          headers: {
+            'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text,
+            model_id: model,
+            voice_settings: voiceSettings,
+          })
+        })
+        if (!res.ok) {
+          lastError = await res.text()
+          console.warn(`[TTS] ${model} failed for voice ${voice.slice(0, 8)}…: ${res.status} ${lastError.slice(0, 200)}`)
+          continue  // try next model in chain
+        }
+        const arrayBuf = await res.arrayBuffer()
+        if (model !== modelChain[0]) {
+          console.log(`[TTS] fell back to ${model} for voice ${voice.slice(0, 8)}…`)
+        }
+        return { ok: true, audio: Buffer.from(arrayBuf).toString('base64') }
+      } catch (err: unknown) {
+        lastError = err instanceof Error ? err.message : String(err)
+        console.warn(`[TTS] ${model} threw for voice ${voice.slice(0, 8)}…: ${lastError}`)
+      }
     }
-    const arrayBuf = await res.arrayBuffer()
-    return { ok: true, audio: Buffer.from(arrayBuf).toString('base64') }
+    return { ok: false, error: lastError || 'all TTS models failed' }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, error: msg }

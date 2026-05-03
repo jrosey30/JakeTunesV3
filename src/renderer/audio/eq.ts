@@ -365,7 +365,15 @@ function ensureBroadcastFx(): void {
 /** 4.3.3: route an announcer TTS clip through the broadcast-FX chain
  *  (compression + presence EQ + chamber reverb) so it sounds like a
  *  real station ID drop. Falls through to the regular clip-broadcast
- *  routing if the FX chain can't be built. Idempotent. */
+ *  routing if the FX chain can't be built. Idempotent.
+ *
+ *  4.3.4: hardened — if createMediaElementSource throws (or any
+ *  routing step fails) we fall back to attachClipToBroadcast so the
+ *  audio still PLAYS, just without the FX. Previously a thrown bind
+ *  could leave the announcer silent (createMediaElementSource has a
+ *  side effect: it routes the element AWAY from the default speakers
+ *  even if the bind didn't complete), which manifested as "no station
+ *  ID played." */
 export function attachAnnouncerToBroadcast(audio: HTMLAudioElement): void {
   ensureBroadcastFx()
   if (!audioContext || !broadcastFxInput) {
@@ -380,8 +388,13 @@ export function attachAnnouncerToBroadcast(audio: HTMLAudioElement): void {
     if (audioContext.state === 'suspended') {
       void audioContext.resume()
     }
+    logAudioEvent('announcer-fx.bound')
   } catch (err) {
-    console.warn('[announcer-fx] could not bind clip:', err)
+    console.warn('[announcer-fx] could not bind clip, falling back to plain routing:', err)
+    logAudioEvent('announcer-fx.bind-failed', { err: String(err) })
+    // attachClipToBroadcast may also fail (the element's already been
+    // touched by createMediaElementSource above) — but we try anyway.
+    try { attachClipToBroadcast(audio) } catch { /* ignore */ }
   }
 }
 
