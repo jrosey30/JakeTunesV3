@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
@@ -249,8 +249,56 @@ let audioAnalysisRunning = false
 // a "broken record" stutter on output. Defer everything heavy until
 // playback stops.
 let playbackActive = false
+// 4.2.13: powerSaveBlocker to defeat macOS App Nap during playback.
+// HTMLAudio buffers ~30 seconds ahead via Range requests against our
+// `ipod-audio://` protocol handler. Once that initial buffer is filled
+// the main process goes idle from the OS's perspective — no
+// foreground UI activity, no recent user input, no perceived "work."
+// macOS App Nap kicks in around 30 seconds of detected idleness and
+// throttles the napped process's CPU dramatically. When HTMLAudio
+// later asks for the next chunk of bytes, the main process is too
+// slow / unresponsive to serve them in time and audio dies mid-track.
+// `prevent-app-suspension` keeps the app marked as "doing meaningful
+// work" so App Nap can't grab it. Started on first play, stopped only
+// when the renderer reports playbackActive=false for a sustained
+// stretch (so brief track-change false flips don't drop the blocker).
+let powerSaveBlockerId: number | null = null
+let powerSaveStopTimer: ReturnType<typeof setTimeout> | null = null
+function startPowerSaveBlocker() {
+  if (powerSaveStopTimer) {
+    clearTimeout(powerSaveStopTimer)
+    powerSaveStopTimer = null
+  }
+  if (powerSaveBlockerId !== null) return
+  try {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+    console.log('[powerSave] blocker started id=', powerSaveBlockerId)
+  } catch (err) {
+    console.warn('[powerSave] start failed:', err)
+  }
+}
+function stopPowerSaveBlocker() {
+  if (powerSaveBlockerId === null) return
+  try {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+    console.log('[powerSave] blocker stopped id=', powerSaveBlockerId)
+  } catch (err) {
+    console.warn('[powerSave] stop failed:', err)
+  }
+  powerSaveBlockerId = null
+}
 ipcMain.on('set-playback-active', (_e, active: boolean) => {
   playbackActive = !!active
+  if (active) {
+    startPowerSaveBlocker()
+  } else {
+    // Don't drop the blocker on transient false flips (track changes
+    // briefly toggle isPlaying off). Wait 10s of sustained inactivity.
+    if (powerSaveStopTimer) clearTimeout(powerSaveStopTimer)
+    powerSaveStopTimer = setTimeout(() => {
+      if (!playbackActive) stopPowerSaveBlocker()
+    }, 10000)
+  }
 })
 
 function getAudioAnalysisScriptPath(): string {
@@ -2536,6 +2584,29 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     // newest model. Not all accounts have access; turbo_v2_5 is the
     // dependable equivalent for the kind of delivery the user wants.
     const model = fast ? 'eleven_flash_v2_5' : 'eleven_turbo_v2_5'
+    // 4.2.13: per-voice TTS settings. The announcer needs CONFIDENT,
+    // BIG, punchy delivery — not the loose-stability "could be anyone in
+    // any mood" treatment that works for MM/Megan banter. Low stability
+    // on the announcer voice was making him sound tentative and unsure
+    // between phrases. High stability (0.75) locks his timbre into the
+    // big-radio-voice register and stops the per-phrase variance that
+    // reads as hesitation.
+    const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
+    const isAnnouncer = voice === ANNOUNCER_VOICE_ID
+    const voiceSettings = isAnnouncer
+      ? {
+          // Big confident FM-radio drop — locked, punchy, no waver.
+          stability: 0.75,
+          similarity_boost: 0.85,
+          style: 0.45,
+          use_speaker_boost: true,
+        }
+      : {
+          // MM / Megan — emotional, reactive, theatrical banter.
+          stability: 0.28,
+          similarity_boost: 0.7,
+          style: 0.7,
+        }
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
       headers: {
@@ -2545,17 +2616,7 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
       body: JSON.stringify({
         text,
         model_id: model,
-        voice_settings: {
-          // Lower stability + higher style = more emotional, theatrical
-          // delivery. The Radio Mode prompt writes lines with capitals /
-          // exclamations / ellipses / em-dashes / stuttering commas to
-          // drive expressive delivery; the voice settings honor that.
-          // 4.2.2 felt scripted; pushed style further and stability
-          // lower for more variance per phrase.
-          stability: 0.28,
-          similarity_boost: 0.7,
-          style: 0.7,
-        }
+        voice_settings: voiceSettings,
       })
     })
     if (!res.ok) {
@@ -2663,21 +2724,21 @@ DELIVERY CUES (TTS reads punctuation directly):
   • Multiple commas for stuttering ("it's, it's just, it's not even close").
 Write the way you want them to SOUND.
 
-CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] (a deep, dramatic, deliberately over-the-top FM-radio drop voice — distinct from MM and Megan).
+CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] — this voice is a CONFIDENT, BIG, deep FM-radio drop voice, distinct from MM and Megan. He never sounds unsure or tentative.
 
-CRITICAL — write call-sign letters PHONETICALLY so the TTS pronounces each letter individually instead of mashing them together:
-  • "WJLR" → write it as "double-yoo... jay... el... arr" (lowercase, with ellipses between each letter for stuttered pause delivery)
+CRITICAL — write call-sign letters PHONETICALLY so the TTS pronounces each letter individually, but with CONFIDENCE not hesitation:
+  • "WJLR" → write it as "DOUBLE YOU JAY EL ARR" (each letter as a separate uppercase word, single space, NO ellipses, NO hyphens between letters)
   • "330.9" → write it as "three thirty point nine" (words, never digits)
-  • For the campy stuttering W effect: "double-yoo... double-yoo... double-yoo... double-yoo... jay el arr"
-  • Multiple ellipses force the dramatic pause between repeats. NEVER write hyphens between letters (TTS treats them as one mashed word).
+  • DO NOT use ellipses (...) between letters or words — ellipses make the TTS pause uncertainly and the announcer sounds tentative. Use ONLY commas, periods, and exclamation marks for cadence.
+  • For repeated W energy use "TRIPLE-W" (one word) — never "double-yoo... double-yoo..." which reads as stutter / hesitation.
 
 Example drops (use these as templates — vary the form each time):
-  [ANNOUNCER] double-yoo... double-yoo... double-yoo... double-yoo... JAY EL ARR! Three thirty point nine. LIVE from BROOKLYN.
-  [ANNOUNCER] You're locked in to double-yoo jay el arr, three thirty point nine FM, broadcasting LIVE from the boroughs!
-  [ANNOUNCER] Triple-W JAY EL ARR, three thirty point nine, LIVE FROM BROOKLYN — and we're hot!
-  [ANNOUNCER] DOUBLE-YOO JAY EL ARR — three. thirty. point. NINE. The sound of Brooklyn, all night long.
+  [ANNOUNCER] TRIPLE-W JAY EL ARR! Three thirty point nine FM! LIVE from BROOKLYN!
+  [ANNOUNCER] You are LOCKED IN to DOUBLE YOU JAY EL ARR, three thirty point nine, broadcasting LIVE from the boroughs!
+  [ANNOUNCER] DOUBLE YOU JAY EL ARR, three thirty point nine. The sound of Brooklyn, ALL NIGHT LONG!
+  [ANNOUNCER] This is DOUBLE YOU JAY EL ARR, three thirty point nine FM — Brooklyn's loudest, and we are HOT!
 
-Capitals signal punched emphasis. Periods between words ("three. thirty. point. NINE.") force a staccato cadence. Make it campy and over-the-top — the energy of a real radio station ID jingle. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
+Capitals signal punched emphasis. Exclamation marks drive energy. Make it campy and over-the-top — the energy of a real radio station ID jingle, delivered with TOTAL CONFIDENCE. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
 
 When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
 

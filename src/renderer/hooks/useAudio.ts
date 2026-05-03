@@ -206,6 +206,37 @@ export function useAudio() {
     fn?.(state.isPlaying)
   }, [state.isPlaying])
 
+  // 4.2.13: heartbeat diagnostic. Logs audio-pipeline state every 2s
+  // while playback is supposedly active, so when the user hits another
+  // mid-track stop we can run __audioLog() in the dev console and see
+  // EXACTLY what changed (audio context state, native node readyState,
+  // howl playing(), position, error code). Cheap — 30 entries/min, ring
+  // buffer is 50 deep, so heartbeat alone fills a minute and a half.
+  useEffect(() => {
+    if (!state.isPlaying) return
+    const id = window.setInterval(() => {
+      try {
+        type HowlInternal = Howl & { _sounds?: Array<{ _node?: HTMLAudioElement }>; _state?: string }
+        const h = sharedHowl as HowlInternal | null
+        const node = h?._sounds?.[0]?._node
+        const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+        logAudioEvent('heartbeat', {
+          pos: h ? Number((h.seek() as number).toFixed(2)) : null,
+          dur: h ? Number(h.duration().toFixed(2)) : null,
+          playing: h ? h.playing() : null,
+          state: h?._state,
+          paused: isPaused,
+          ctxState: ctx?.state,
+          nodeReady: node?.readyState,
+          nodePaused: node?.paused,
+          nodeNetwork: node?.networkState,
+          nodeError: node?.error?.code,
+        })
+      } catch { /* ignore */ }
+    }, 2000)
+    return () => window.clearInterval(id)
+  }, [state.isPlaying])
+
   // Held by refs so updatePosition can call them without forming
   // circular useCallback dep cycles back through loadAndPlay (which
   // itself depends on updatePosition).
