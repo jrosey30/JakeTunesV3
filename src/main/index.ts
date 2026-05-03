@@ -374,11 +374,30 @@ async function audioAnalysisWorker(): Promise<void> {
   audioAnalysisRunning = true
   try {
     while (audioAnalysisQueue.length > 0) {
-      // Yield to playback. Files live on iPod-USB; librosa pulls the
-      // whole file at decode speed and competes with the playback
-      // stream on the same bus. Defer until playback stops.
-      while (playbackActive) {
-        await new Promise(r => setTimeout(r, 2000))
+      // Yield to playback with a 5-second debounce. The brief false flip
+      // when `handleRadioToggle` calls stopPlayback() during opener
+      // generation, OR the track-change transition window, would
+      // otherwise un-pause the worker → librosa runs concurrently with
+      // music playback → audio decoder starves → music stops mid-track.
+      // (User reproduced this stopping at ~29s into two different songs;
+      // ~29s lined up with the tail of a librosa job that started during
+      // the brief gate-open.) The debounce requires 5 continuous seconds
+      // of playbackActive=false before pulling a new job. Real "user
+      // stopped listening" cases easily clear the bar; transient flips
+      // don't.
+      let inactiveSince = 0
+      while (true) {
+        if (playbackActive) {
+          inactiveSince = 0
+          await new Promise(r => setTimeout(r, 2000))
+          continue
+        }
+        if (inactiveSince === 0) inactiveSince = Date.now()
+        if (Date.now() - inactiveSince < 5000) {
+          await new Promise(r => setTimeout(r, 1000))
+          continue
+        }
+        break
       }
       const job = audioAnalysisQueue.shift()!
       try {
