@@ -22,8 +22,8 @@ const electronAPI = {
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
-  musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean): Promise<{ ok: boolean; text: string }> =>
-    ipcRenderer.invoke('musicman-radio', track, nextTrack, opener, forceAnnouncer),
+  musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean): Promise<{ ok: boolean; text: string; error?: string }> =>
+    ipcRenderer.invoke('musicman-radio', track, nextTrack, opener, forceAnnouncer, callerSegment, djHandsSegment),
   musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]): Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-dj-set', tracks, recentIds),
   musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
@@ -32,6 +32,8 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-picks', tracks),
   meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
     ipcRenderer.invoke('megan-picks', tracks),
+  djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
+    ipcRenderer.invoke('dj-hands-picks', tracks),
   musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; issues?: unknown[]; error?: string }> =>
     ipcRenderer.invoke('musicman-scan-metadata', tracks),
   musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string }[]; error?: string }> =>

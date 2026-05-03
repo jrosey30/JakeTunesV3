@@ -911,6 +911,13 @@
   border-bottom-color: rgba(58, 124, 165, 0.3);
 }
 
+/* DJ Hands picks — deep purple to read as the third sibling. */
+.playlist-view-commentary--djhands {
+  background: #1f1029;
+  color: #d0bce0;
+  border-bottom-color: rgba(122, 58, 156, 0.3);
+}
+
 .playlist-view-columns {
   display: flex;
   align-items: center;

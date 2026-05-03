@@ -29,6 +29,7 @@ const TITLES: Record<string, string> = {
   'top-rated': 'My Top Rated',
   'musicman-picks': 'The Music Man Picks',
   'megan-picks': 'Megan Picks',
+  'dj-hands-picks': 'DJ Hands Picks',
 }
 
 interface PicksData {
@@ -55,10 +56,11 @@ function getWeekStartFriday(d: Date): Date {
 // Pick which persona's picks the current view should use, plus the
 // localStorage key to use. One key per persona so MM and Megan picks
 // don't overwrite each other.
-type PicksKind = 'mm' | 'megan'
-function picksConfigForId(id: string | null): { kind: PicksKind; storageKey: string; apiCall: 'musicmanPicks' | 'meganPicks' } | null {
-  if (id === 'musicman-picks') return { kind: 'mm', storageKey: 'musicman-picks', apiCall: 'musicmanPicks' }
-  if (id === 'megan-picks')    return { kind: 'megan', storageKey: 'megan-picks',  apiCall: 'meganPicks' }
+type PicksKind = 'mm' | 'megan' | 'djhands'
+function picksConfigForId(id: string | null): { kind: PicksKind; storageKey: string; apiCall: 'musicmanPicks' | 'meganPicks' | 'djHandsPicks' } | null {
+  if (id === 'musicman-picks')   return { kind: 'mm',     storageKey: 'musicman-picks', apiCall: 'musicmanPicks' }
+  if (id === 'megan-picks')      return { kind: 'megan',  storageKey: 'megan-picks',    apiCall: 'meganPicks' }
+  if (id === 'dj-hands-picks')   return { kind: 'djhands',storageKey: 'dj-hands-picks', apiCall: 'djHandsPicks' }
   return null
 }
 
@@ -111,17 +113,29 @@ export default function SmartPlaylistView() {
     return null
   }
 
-  const [mmPicks, setMmPicks]       = useState<PicksData | null>(() => loadCachedPicks('musicman-picks'))
-  const [meganPicks, setMeganPicks] = useState<PicksData | null>(() => loadCachedPicks('megan-picks'))
-  const picks = picksConfig?.kind === 'megan' ? meganPicks : picksConfig?.kind === 'mm' ? mmPicks : null
-  const setPicks = picksConfig?.kind === 'megan' ? setMeganPicks : setMmPicks
+  const [mmPicks, setMmPicks]             = useState<PicksData | null>(() => loadCachedPicks('musicman-picks'))
+  const [meganPicks, setMeganPicks]       = useState<PicksData | null>(() => loadCachedPicks('megan-picks'))
+  const [djHandsPicks, setDjHandsPicks]   = useState<PicksData | null>(() => loadCachedPicks('dj-hands-picks'))
+  const picks =
+    picksConfig?.kind === 'megan'   ? meganPicks :
+    picksConfig?.kind === 'djhands' ? djHandsPicks :
+    picksConfig?.kind === 'mm'      ? mmPicks :
+    null
+  const setPicks =
+    picksConfig?.kind === 'megan'   ? setMeganPicks :
+    picksConfig?.kind === 'djhands' ? setDjHandsPicks :
+    setMmPicks
 
   const [picksLoading, setPicksLoading] = useState(false)
   // Track per-persona "have we already kicked off generation this session"
   // so re-renders don't re-fire the IPC. Reset on persona change.
-  const mmRequestedRef = useRef(!!mmPicks)
-  const meganRequestedRef = useRef(!!meganPicks)
-  const requestedRef = picksConfig?.kind === 'megan' ? meganRequestedRef : mmRequestedRef
+  const mmRequestedRef      = useRef(!!mmPicks)
+  const meganRequestedRef   = useRef(!!meganPicks)
+  const djHandsRequestedRef = useRef(!!djHandsPicks)
+  const requestedRef =
+    picksConfig?.kind === 'megan'   ? meganRequestedRef :
+    picksConfig?.kind === 'djhands' ? djHandsRequestedRef :
+    mmRequestedRef
 
   // Persist whichever picks set just changed.
   useEffect(() => {
@@ -130,6 +144,9 @@ export default function SmartPlaylistView() {
   useEffect(() => {
     if (meganPicks) localStorage.setItem('megan-picks', JSON.stringify(meganPicks))
   }, [meganPicks])
+  useEffect(() => {
+    if (djHandsPicks) localStorage.setItem('dj-hands-picks', JSON.stringify(djHandsPicks))
+  }, [djHandsPicks])
 
   // Generate this persona's picks if we don't have a fresh cached set.
   useEffect(() => {
@@ -145,8 +162,12 @@ export default function SmartPlaylistView() {
     const apiCall = window.electronAPI[picksConfig.apiCall]
     apiCall(compactTracks).then((result) => {
       if (result.ok && result.trackIds) {
+        const fallbackName =
+          picksConfig.kind === 'megan'   ? "Megan's Picks" :
+          picksConfig.kind === 'djhands' ? "DJ Hands Picks" :
+          "This Week's Picks"
         setPicks({
-          name: result.name || (picksConfig.kind === 'megan' ? "Megan's Picks" : "This Week's Picks"),
+          name: result.name || fallbackName,
           commentary: result.commentary || '',
           trackIds: result.trackIds,
           date: new Date().toISOString(),
@@ -202,7 +223,8 @@ export default function SmartPlaylistView() {
           .slice(0, 50)
       }
       case 'musicman-picks':
-      case 'megan-picks': {
+      case 'megan-picks':
+      case 'dj-hands-picks': {
         if (!picks) return []
         const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
         return picks.trackIds
@@ -372,10 +394,14 @@ export default function SmartPlaylistView() {
       return
     }
     setSpeaking(true)
-    // Route Megan's commentary through Megan's voice. MM picks use the
+    // Route each persona's commentary to their voice. MM picks use the
     // default voice (server-side pulls MUSIC_MAN_CORE's voice).
     const MEGAN_VOICE_ID = 'T7eLpgAAhoXHlrNajG8v'
-    const voiceId = picksConfig?.kind === 'megan' ? MEGAN_VOICE_ID : undefined
+    const DJ_HANDS_VOICE_ID = 'ApBE43wHy5MiZGz9ihqB'
+    const voiceId =
+      picksConfig?.kind === 'megan'   ? MEGAN_VOICE_ID :
+      picksConfig?.kind === 'djhands' ? DJ_HANDS_VOICE_ID :
+      undefined
     const tts = await window.electronAPI.musicmanSpeak(picks.commentary, false, voiceId)
     if (tts.ok && tts.audio) {
       window.dispatchEvent(new Event('musicman-speaking-start'))
@@ -576,9 +602,10 @@ export default function SmartPlaylistView() {
 
   const isPicksView = picksConfig !== null
   const displayName = isPicksView && picks?.name ? picks.name : title
-  const loadingLabel = picksConfig?.kind === 'megan'
-    ? 'Megan is picking tracks…'
-    : 'The Music Man is picking tracks…'
+  const loadingLabel =
+    picksConfig?.kind === 'megan'   ? 'Megan is picking tracks…' :
+    picksConfig?.kind === 'djhands' ? 'DJ Hands is picking tracks…' :
+    'The Music Man is picking tracks…'
 
   return (
     <div className="playlist-view">
@@ -615,7 +642,7 @@ export default function SmartPlaylistView() {
         )}
       </div>
       {isPicksView && picks?.commentary && (
-        <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'megan' ? 'megan' : 'musicman'}`}>
+        <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'megan' ? 'megan' : picksConfig?.kind === 'djhands' ? 'djhands' : 'musicman'}`}>
           {picks.commentary}{' '}
           <button
             className={`musicman-commentary-play ${speaking ? 'musicman-commentary-play--active' : ''}`}

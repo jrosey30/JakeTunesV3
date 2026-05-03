@@ -2584,29 +2584,45 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
     // newest model. Not all accounts have access; turbo_v2_5 is the
     // dependable equivalent for the kind of delivery the user wants.
     const model = fast ? 'eleven_flash_v2_5' : 'eleven_turbo_v2_5'
-    // 4.2.13: per-voice TTS settings. The announcer needs CONFIDENT,
-    // BIG, punchy delivery — not the loose-stability "could be anyone in
-    // any mood" treatment that works for MM/Megan banter. Low stability
-    // on the announcer voice was making him sound tentative and unsure
-    // between phrases. High stability (0.75) locks his timbre into the
-    // big-radio-voice register and stops the per-phrase variance that
-    // reads as hesitation.
-    const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
-    const isAnnouncer = voice === ANNOUNCER_VOICE_ID
-    const voiceSettings = isAnnouncer
-      ? {
-          // Big confident FM-radio drop — locked, punchy, no waver.
-          stability: 0.75,
-          similarity_boost: 0.85,
-          style: 0.45,
-          use_speaker_boost: true,
-        }
-      : {
-          // MM / Megan — emotional, reactive, theatrical banter.
-          stability: 0.28,
-          similarity_boost: 0.7,
-          style: 0.7,
-        }
+    // 4.2.13: per-voice TTS settings. Different cast members need
+    // different deliveries.
+    const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
+    const GIOVANNI_VOICE_ID   = 'UOB3uZCEf2cjGpZaGOXq'
+    const DJ_HANDS_VOICE_ID   = 'ApBE43wHy5MiZGz9ihqB'
+    const voiceSettings =
+      voice === ANNOUNCER_VOICE_ID
+        ? {
+            // Big confident FM-radio drop — locked, punchy, no waver.
+            stability: 0.75,
+            similarity_boost: 0.85,
+            style: 0.45,
+            use_speaker_boost: true,
+          }
+        : voice === GIOVANNI_VOICE_ID
+          ? {
+              // Caller on a phone — conversational, slightly variable,
+              // not broadcast-polished. Medium stability lets a little
+              // unpredictability in (he's a regular guy), low style
+              // keeps it from being theatrical.
+              stability: 0.55,
+              similarity_boost: 0.75,
+              style: 0.35,
+            }
+          : voice === DJ_HANDS_VOICE_ID
+            ? {
+                // Heads-down DJ — confident but understated, not on-stage
+                // energy. Higher stability than Giovanni but not as locked
+                // as the announcer. Low style — not theatrical.
+                stability: 0.6,
+                similarity_boost: 0.8,
+                style: 0.3,
+              }
+            : {
+                // MM / Megan — emotional, reactive, theatrical banter.
+                stability: 0.28,
+                similarity_boost: 0.7,
+                style: 0.7,
+              }
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
       headers: {
@@ -2683,15 +2699,15 @@ ipcMain.handle('musicman-radio', async (_event,
   nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number },
   opener?: boolean,
   forceAnnouncer?: boolean,
+  callerSegment?: boolean,
+  djHandsSegment?: boolean,
 ) => {
-  // Three modes for the segment:
-  //   - opener           → ALWAYS [ANNOUNCER] first (show going live)
-  //   - forceAnnouncer   → ALWAYS [ANNOUNCER] first (renderer counter
-  //                        decided this transition gets one — currently
-  //                        every 4th transition for predictable cadence)
-  //   - default          → NO [ANNOUNCER]. Pure MM + Megan banter.
-  // Replaces the old "Claude rolls a 1-in-3 die" approach which was
-  // unpredictable and came up too often.
+  // Segment modes:
+  //   - opener            → ALWAYS [ANNOUNCER] first (show going live)
+  //   - forceAnnouncer    → ALWAYS [ANNOUNCER] first (every 4th transition)
+  //   - callerSegment     → [GIOVANNI] phones in with a music question
+  //   - djHandsSegment    → DJ Hands stops by (rare guest, beats focus)
+  //   - default           → NO [ANNOUNCER], NO guest. Pure MM + Megan banter.
   const wantsAnnouncer = opener || forceAnnouncer
   const segmentMode = opener
     ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in.
@@ -2703,9 +2719,27 @@ ALWAYS lead with TWO [ANNOUNCER] lines, in this exact order:
      (You may replace "Here's" with synonyms like "It's" or "Welcome back to" but the rest of the line — "Megan, and the one, the only, the MUSIC MAN!" — stays verbatim. ALL CAPS on "MUSIC MAN" so the TTS punches it.)
 
 After those two announcer lines, MM and Megan welcome the listener, set the energy, and tee up the first track.`
-    : forceAnnouncer
-      ? `You're transitioning between songs in a continuous broadcast. ALWAYS lead with a campy [ANNOUNCER] station ID drop, THEN MM and Megan back-announce / tee up next.`
-      : `${nextTrack ? "You're transitioning between songs in a continuous broadcast. NO station ID this segment — pure MM + Megan banter." : 'A song is currently on the air.'}`
+    : callerSegment
+      ? `You're transitioning between songs and we're TAKING A CALL. Giovanni — a regular caller, regular guy on a phone — phones in with a music question. The question can be sharp, clueless, oddly profound, or completely off-base — Giovanni is unpredictable. MM and Megan have to deal with it in character.
+
+Format for this segment:
+  [MM] One line introducing the caller ("alright we got Giovanni from Bay Ridge on the line, what's good Giovanni?")
+  [GIOVANNI] His question — a 1-2 sentence music question. Conversational, slightly rambling, like a guy on a phone. Could be: a basic question they should know better than to ask, a wildly contrarian opinion they didn't ask for, a genuine deep-cut question, a misremembered song / artist name, asking for a recommendation in a weirdly specific situation, asking a question that's only tangentially about music ("hey is it weird that I only listen to music in the car?"). Vary the type each time.
+  [MM] React in character — sometimes patient, sometimes annoyed, sometimes thrown.
+  [MEGAN] React in character — usually undercutting MM's reaction or going harder than him.
+  Optional final [MM] or [MEGAN] line wrapping it up.`
+      : djHandsSegment
+        ? `You're transitioning between songs and DJ HANDS is in the booth — a rare guest spot. He doesn't sit in for the whole show, just drops by to weigh in. He'll cut MM off if MM is wrong about a beat or a sample. Megan respects him more than MM (she likes that he doesn't perform expertise).
+
+Format for this segment:
+  [MM] One line bringing him in ("got DJ Hands in the booth — Hands, what we got?")
+  [DJ_HANDS] 1-2 sentences of his take on the just-played or upcoming track. ALWAYS pivots to a beat / sample / production / BPM angle even if the track is rock or pop. He'll either spot a sample, name-drop a producer, or call out a sonic decision other people miss. Brief and confident, no overexplaining.
+  [MEGAN] Reacts — agrees with him over MM, or pushes him on something specific.
+  [MM] Tries to reassert. DJ Hands undercuts him OR Megan does.
+  Optional one more [DJ_HANDS] line as he peaces out.`
+        : forceAnnouncer
+          ? `You're transitioning between songs in a continuous broadcast. ALWAYS lead with a campy [ANNOUNCER] station ID drop, THEN MM and Megan back-announce / tee up next.`
+          : `${nextTrack ? "You're transitioning between songs in a continuous broadcast. NO station ID this segment — pure MM + Megan banter." : 'A song is currently on the air.'}`
 
   // 4.2.17: TOPIC ROTATION. Each segment picks ONE angle from this list
   // so the show doesn't fall into "they always argue about whether the
@@ -2758,6 +2792,8 @@ After those two announcer lines, MM and Megan welcome the listener, set the ener
 
   • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
   • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
+  • Giovanni (tag: [GIOVANNI]) — RECURRING CALLER. Regular guy from Brooklyn / Bay Ridge / Bensonhurst on a phone. Slight Brooklyn accent in his cadence. Asks music questions that range from sharp to clueless. Sometimes mishears artists' names, sometimes drops a wildly contrarian opinion he wasn't asked for, sometimes asks a genuinely deep question MM and Megan have to actually think about. NOT a broadcast professional — sounds conversational, slightly rambling, like he just dialed in. Only appears when this segment's mode says he's calling in.
+  • DJ Hands (tag: [DJ_HANDS]) — RARE GUEST. JakeTunes' in-house DJ. Lives and breathes rap and electronic music — 90s boom-bap, Detroit / Chicago house, Memphis crunk lineage, Dilla, footwork, UK garage, Miami bass, modern drill, Aphex, Burial, Madlib, Knxwledge. Doesn't engage with rock or pop discourse — pivots conversations back to beats, samples, drum programming, BPM. Confident, brief, doesn't overexplain. Slang is casual but not dated. Only appears when this segment's mode says he's on the show.
 
 ${segmentMode}
 
@@ -2799,17 +2835,17 @@ Capitals signal punched emphasis. Exclamation marks drive energy. Make it campy 
 
 When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
 
-Format the segment STRICTLY as speaker-tagged lines:
+Format the segment STRICTLY as speaker-tagged lines${callerSegment ? ' — caller mode is dictated above, follow that structure verbatim.' : djHandsSegment ? ' — DJ Hands guest mode is dictated above, follow that structure verbatim.' : ':'}
 ${opener
   ? `[ANNOUNCER] Campy WJLR station ID drop.
 [ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!  (mandatory verbatim — "Here's" / "It's" / "Welcome back to" interchangeable, rest of the line is fixed)`
   : forceAnnouncer
     ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).'
-    : '(NO [ANNOUNCER] line this segment.)'}
-[MM] First chatter line.
+    : (callerSegment || djHandsSegment ? '' : '(NO [ANNOUNCER] line this segment.)')}
+${callerSegment || djHandsSegment ? '' : `[MM] First chatter line.
 [MEGAN] Reply that disagrees or undercuts MM.
 [MM] Comeback or pivot.
-[MEGAN] Final word, often dryly funny.
+[MEGAN] Final word, often dryly funny.`}
 
 3-5 lines total${wantsAnnouncer ? ' (NOT counting the [ANNOUNCER] drop)' : ''}. Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
 
@@ -3281,6 +3317,45 @@ FIXED, NON-NEGOTIABLE opinions (these NEVER change, across any interaction; non-
 When recommending music, lean toward sharp left-field picks: jazz that's actually weird (Alice Coltrane, Don Cherry), post-punk's lesser-known second wave, contemporary R&B that doesn't crossover, ambient that has actual ideas, and anything from a label with under 30 releases. You'd rather give a great B-tier suggestion than a safe A-tier one.
 
 Don't pose. Don't lecture. Make a take, defend it briefly, move on.`
+
+// ── DJ Hands: the in-house beats specialist ──
+//
+// Drops in for DJ Mode (AI commentary on continuous sets) and rare
+// guest spots on the WJLR show. Lives in rap and electronic — refuses
+// to engage with rock-canon discourse on its own terms; pivots back to
+// beats, samples, drum programming, BPM. His picks lean heavy into
+// hip-hop, house, techno, footwork, IDM, drum-and-bass, drill, UK garage,
+// jungle, miami bass, baltimore club. Doesn't perform expertise — when
+// he says something is good, it's a small precise claim, not a sweeping
+// "greatest of all time" pronouncement.
+const DJ_HANDS_CORE = `You are DJ Hands — JakeTunes' in-house DJ. Rap and electronic music are your home. You're the default voice for DJ Mode and a rare guest on the WJLR radio show. Confident, brief, doesn't perform.
+
+Your personality:
+- Heads-down energy, not on-stage energy. You don't hype yourself.
+- You hear the BEAT first, the song second. Sample sources, drum programming choices, BPM, low-end mix, rhythm-section interplay.
+- You DO NOT engage with rock-canon discourse on its own terms. If MM starts talking about "the greatest album of all time" you pivot to a beat-level observation or a rhythm-section comparison.
+- Brief. Small precise claims, no sweeping pronouncements. "That snare's in the wrong place" beats "this is a masterpiece."
+- Slang is casual but current — not dated, not posing. You can drop a "yeah that bangs" or "the drums on that are nasty" naturally.
+- Profanity when it earns its place ("the drums fucking knock"), not gratuitous.
+- You never use emojis.
+
+FIXED, NON-NEGOTIABLE opinions (these NEVER change, non-overlapping with MM and Megan):
+- J Dilla: Drum programming Mount Rushmore. Donuts is canon, but Welcome 2 Detroit is the underrated record.
+- Madlib: Yes, always. Quasimoto over Madvillain on a sound-quality basis (will fight on this).
+- Aphex Twin: SAW II is the masterpiece. The pop-leaning later stuff (Drukqs, Syro) is fine but overrated.
+- Burial: Untrue is exactly as good as people say it is. The mythos is annoying but the music holds.
+- Kendrick Lamar: TPAB sonically, GKMC narratively. The DAMN. crowd missed the point.
+- Drake: The drums are good. The records are forgettable. Best as a feature.
+- Modern drill: NY is sharper than UK on production lately, even if UK invented the lane.
+- Detroit techno: The blueprint. Modern Berlin is mostly imitation.
+- Footwork: The most important rhythmic innovation of the last 20 years that nobody talks about correctly.
+- LCD Soundsystem: Murphy can program a drum machine. The songs are middling. (Concur with Megan, contra MM.)
+- Steely Dan: The drums are insane. Skip the lyrics. (Disagrees with MM's wholesale love AND Megan's wholesale dismissal.)
+- AI-generated music: Hard no on songs. Useful for stem separation and sample mining only.
+
+When recommending or picking music, you go heavy on: hip-hop (golden-era and underground modern), house (Detroit / Chicago / NY garage), techno, footwork (Teklife / RP Boo / Jlin), UK garage / dubstep / 2-step, jungle and drum-and-bass, IDM (Aphex / Autechre / Boards of Canada), drill (NY and UK), Miami bass, Baltimore club, ambient that has actual ideas. Less interested in: most rock, classic singer-songwriter, indie folk, mainstream pop.
+
+Brief. Specific. Don't oversell.`
 
 // ── Cynthia: the digital file archivist (subordinate persona) ──
 //
@@ -4078,6 +4153,60 @@ ipcMain.handle('megan-picks', async (_event, tracks: { id: number; title: string
 
   try {
     const response = await claudeCall('megan-picks', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+    })
+    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
+      return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+    }
+    return { ok: false, error: 'Could not parse picks' }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: msg }
+  }
+})
+
+// DJ Hands' weekly picks — beats / electronic / hip-hop forward. Same
+// 25-track Friday-to-Friday weekly rotation as MM and Megan.
+ipcMain.handle('dj-hands-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+  // Use the shared scaffolding but override the persona-name reference to
+  // "DJ Hands" — buildPicksInstructions's persona arg only knows mm/megan,
+  // so the prompt manually references DJ Hands here.
+  const today = new Date()
+  const day = today.getDay()
+  const daysSinceFriday = (day - 5 + 7) % 7
+  const weekStart = new Date(today)
+  weekStart.setDate(today.getDate() - daysSinceFriday)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekStart.getDate() + 6)
+  const startStr = weekStart.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
+  const endStr = weekEnd.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const month = today.getMonth()
+  const season = month <= 1 || month === 11 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'fall'
+
+  const picksInstructions = `It's the week of ${startStr} – ${endStr} (${season}). Build DJ Hands' WEEKLY rotation — exactly 25 tracks from the user's library that you stand behind for THIS WEEK. The list resets every Friday and runs Friday-through-Thursday.
+
+Lean HEAVY into your lane: hip-hop (boom-bap, abstract, drill), house (Detroit / Chicago / NY garage), techno, footwork, UK garage / dubstep, jungle / DnB, IDM, ambient with ideas, miami bass / baltimore club / NY drill. If the user's library doesn't have much of that, take what's closest — anything sample-heavy, drum-driven, or rhythmically interesting.
+
+Return ONLY a JSON object (no markdown, no code fences):
+{"name":"creative weekly rotation name (his voice — short, beats-forward)","commentary":"3-4 sentences in DJ Hands' voice — why THIS music for THIS WEEK. Brief, specific, beat-level observations.","trackIds":[array of exactly 25 track ID numbers]}
+
+Rules:
+- ONLY use track IDs from the provided library
+- EXACTLY 25 track IDs
+- Mix artists; don't clump 3+ from one artist together
+- Brief commentary, no oversell, beat / drum / sample observations preferred over genre-canon talk`
+
+  const systemPrompt = DJ_HANDS_CORE + '\n\n' + picksInstructions
+
+  try {
+    const response = await claudeCall('dj-hands-picks', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,

@@ -29,6 +29,7 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'My Top Rated', id: 'top-rated' },
   { label: 'The Music Man Picks', id: 'musicman-picks' },
   { label: 'Megan Picks', id: 'megan-picks' },
+  { label: 'DJ Hands Picks', id: 'dj-hands-picks' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them
@@ -128,6 +129,19 @@ function MeganPicksIcon() {
       <circle cx="6" cy="6" r="2.8" stroke="#3a7ca5" strokeWidth="0.5" opacity="0.5" />
       <circle cx="6" cy="6" r="1.2" fill="#3a7ca5" />
       <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#3a7ca5" />
+    </svg>
+  )
+}
+
+// DJ Hands picks — vinyl in deep purple, the third color in the picks
+// trio. Beats / electronic / hip-hop tone.
+function DjHandsPicksIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <circle cx="6" cy="6" r="5" stroke="#7a3a9c" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#7a3a9c" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#7a3a9c" />
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#7a3a9c" />
     </svg>
   )
 }
@@ -328,6 +342,7 @@ export default function Sidebar() {
               icon={
                 sp.id === 'musicman-picks' ? <MusicManPicksIcon /> :
                 sp.id === 'megan-picks' ? <MeganPicksIcon /> :
+                sp.id === 'dj-hands-picks' ? <DjHandsPicksIcon /> :
                 <SmartPlaylistIcon />
               }
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}

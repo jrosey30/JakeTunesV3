@@ -69,7 +69,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // segments — each line gets its own TTS audio because we use three
   // distinct ElevenLabs voices: The Music Man, Megan (co-host), and
   // a deeper "Announcer" voice for the campy WJLR station ID drops.
-  type RadioSegment = { speaker: 'mm' | 'megan' | 'announcer'; line: string; audioData: string }
+  type RadioSegment = { speaker: 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'; line: string; audioData: string }
   const radioCacheRef = useRef<Map<string, { segments: RadioSegment[]; fullText: string }>>(new Map())
   // 4.2.7: deterministic announcer scheduling. The opener always has
   // an [ANNOUNCER] drop; between-track transitions get one every 4th
@@ -282,20 +282,32 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // Announcer.
   const MEGAN_VOICE_ID = 'T7eLpgAAhoXHlrNajG8v'
   const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
+  // 4.2.19: Giovanni — caller character. He phones into the show and
+  // asks music questions ranging from sharp to confused. MM and Megan
+  // react in character. Voice is conversational / regular-guy on a
+  // phone, NOT broadcast-polished.
+  const GIOVANNI_VOICE_ID = 'UOB3uZCEf2cjGpZaGOXq'
+  // 4.2.19: DJ Hands — rare radio guest + DJ Mode default + own picks.
+  const DJ_HANDS_VOICE_ID = 'ApBE43wHy5MiZGz9ihqB'
 
   // Parse a Claude-generated radio script into ordered speaker segments.
-  // Strict format: each line begins with [MM], [MEGAN], or [ANNOUNCER].
-  // Anything else is silently dropped (e.g., blank lines, stage
-  // directions Claude emitted despite the prompt telling it not to).
-  function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan' | 'announcer'; line: string }> {
-    const segments: Array<{ speaker: 'mm' | 'megan' | 'announcer'; line: string }> = []
+  // Strict format: each line begins with [MM], [MEGAN], [ANNOUNCER],
+  // [GIOVANNI], or [DJ_HANDS]. Anything else is silently dropped.
+  function parseRadioScript(text: string): Array<{ speaker: 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'; line: string }> {
+    type Speaker = 'mm' | 'megan' | 'announcer' | 'giovanni' | 'djhands'
+    const segments: Array<{ speaker: Speaker; line: string }> = []
     for (const raw of text.split('\n')) {
       const line = raw.trim()
       if (!line) continue
-      const m = line.match(/^\[(MM|MEGAN|ANNOUNCER)\]\s*(.+)/i)
+      const m = line.match(/^\[(MM|MEGAN|ANNOUNCER|GIOVANNI|DJ_HANDS)\]\s*(.+)/i)
       if (m) {
         const tag = m[1].toUpperCase()
-        const speaker: 'mm' | 'megan' | 'announcer' = tag === 'MEGAN' ? 'megan' : tag === 'ANNOUNCER' ? 'announcer' : 'mm'
+        const speaker: Speaker =
+          tag === 'MEGAN' ? 'megan' :
+          tag === 'ANNOUNCER' ? 'announcer' :
+          tag === 'GIOVANNI' ? 'giovanni' :
+          tag === 'DJ_HANDS' ? 'djhands' :
+          'mm'
         segments.push({ speaker, line: m[2].trim() })
       }
     }
@@ -312,6 +324,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const voiceId =
         seg.speaker === 'megan' ? MEGAN_VOICE_ID :
         seg.speaker === 'announcer' ? ANNOUNCER_VOICE_ID :
+        seg.speaker === 'giovanni' ? GIOVANNI_VOICE_ID :
+        seg.speaker === 'djhands' ? DJ_HANDS_VOICE_ID :
         undefined  // mm → server-side default
       const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceId)
       if (tts.ok && tts.audio) {
@@ -341,14 +355,22 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       try {
         const prev = pb.nowPlaying!
         // Look ahead at what the counter WILL be when this transition
-        // fires (current + 1). Every 4th gets an announcer drop.
-        const upcomingTransitionNumber = radioTransitionCounterRef.current + 1
-        const forceAnnouncer = upcomingTransitionNumber % 4 === 0
+        // fires (current + 1). Mirror the rotation logic from the
+        // transition handler so the prefetch matches what's actually
+        // requested live (otherwise the live-fetch path runs anyway).
+        const upcoming = radioTransitionCounterRef.current + 1
+        const upcomingSlot = upcoming % 12
+        const upcomingForceAnn = upcomingSlot === 0 || upcomingSlot === 4 || upcoming % 4 === 0
+        const upcomingCaller   = upcomingSlot === 5 || upcomingSlot === 11
+        const upcomingDjHands  = upcomingSlot === 9
+        const upcomingUseAnn   = upcomingForceAnn && !upcomingCaller && !upcomingDjHands
         const r = await window.electronAPI.musicmanRadio(
           { title: prev.title || '', artist: prev.artist || '', album: prev.album || '', genre: prev.genre || '', year: prev.year || '' },
           { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
           false,
-          forceAnnouncer,
+          upcomingUseAnn,
+          upcomingCaller,
+          upcomingDjHands,
         )
         if (!r.ok || !r.text) {
           console.warn('[Radio] prefetch failed — clearing key for retry', { ok: r.ok, error: r.error })
@@ -532,7 +554,26 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       if (radioMode) {
         radioTransitionCounterRef.current += 1
       }
-      const forceAnnouncerThisTransition = radioMode && (radioTransitionCounterRef.current % 4 === 0)
+      // 4.2.19: rotation slot mapping (per-transition counter modulo 12,
+      // so the show feels like a real rotation rather than the same
+      // four-beat loop):
+      //   slot 0  → forceAnnouncer (campy station ID)
+      //   slot 4  → forceAnnouncer (second station ID in the dozen)
+      //   slot 5  → callerSegment (Giovanni phones in)
+      //   slot 9  → djHandsSegment (rare DJ Hands guest spot)
+      //   slot 11 → callerSegment (Giovanni again — he loves this show)
+      //   else    → pure MM + Megan banter
+      // Counter starts at 1 after the first increment, so transition 1 ≠
+      // slot 0 (slot 0 would only fire on a 12-counter wrap to 0). The
+      // "every 4th" announcer cadence is preserved because we're using
+      // counter % 4 below as a fallback for non-special slots.
+      const slot = radioTransitionCounterRef.current % 12
+      const forceAnnouncerThisTransition = radioMode && (slot === 0 || slot === 4 || radioTransitionCounterRef.current % 4 === 0)
+      const callerThisTransition         = radioMode && (slot === 5 || slot === 11)
+      const djHandsThisTransition        = radioMode && (slot === 9)
+      // Mutual-exclude: callers/DJ Hands suppress the announcer drop in
+      // their own segment so the structure doesn't get crowded.
+      const useAnnouncer = forceAnnouncerThisTransition && !callerThisTransition && !djHandsThisTransition
 
       // Radio Mode fast path: pre-fetched dialog cached as a segment array.
       if (radioMode) {
@@ -554,12 +595,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // the user with "they speak once and never come back" and no clue why.
       try {
         if (radioMode) {
-          console.log('[Radio] live fetch starting...')
+          console.log('[Radio] live fetch starting...', { slot, useAnnouncer, callerThisTransition, djHandsThisTransition })
           const r = await window.electronAPI.musicmanRadio(
             { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
             { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
             false,
-            forceAnnouncerThisTransition,
+            useAnnouncer,
+            callerThisTransition,
+            djHandsThisTransition,
           )
           console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
           if (r.ok && r.text) {
