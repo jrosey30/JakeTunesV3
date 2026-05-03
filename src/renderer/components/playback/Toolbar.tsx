@@ -405,7 +405,13 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (!radioMode) return
     if (!pb.nowPlaying || pb.duration <= 0) return
     const remaining = pb.duration - pb.position
-    if (remaining > 30 || remaining < 5) return
+    // 4.3.2: prefetch window pushed earlier (60s remaining instead of
+    // 30s) so Claude generation + per-segment ElevenLabs synthesis has
+    // headroom to complete before the song ends. Multi-segment radio
+    // dialog can take 15-25 seconds to fully synthesize; 30s of lead
+    // time was cutting it close and meant live-fetch fallback fired
+    // often, which is the slow path.
+    if (remaining > 60 || remaining < 5) return
     const nextIdx = pb.queueIndex + 1
     if (nextIdx >= pb.queue.length) return
     const nextTrack = pb.queue[nextIdx]
@@ -563,52 +569,49 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Helper: play an array of {speaker, line, audioData} segments
       // over the next track at ducked volume — real-radio-DJ style.
       //
-      // 4.2.16: previously the sequence was "fade music down → play
-      // segments in silence → fade music up → start next track at full
-      // volume." That left dead air during banter. Now: start the next
-      // track FIRST, give it ~250ms to begin, fade volume down to ~15%
-      // so banter sits clearly on top, play all segments back-to-back,
-      // fade volume back up to full when the last segment ends. Same
-      // ducking concept the mic button uses, applied to between-track
-      // banter.
+      // 4.3.2: REAL-RADIO TIMING. Dialog plays at the SEAM (in silence),
+      // next track starts AFTER the last segment. Previous (4.2.16)
+      // approach started the next track at ducked volume immediately
+      // and let dialog play over it — but TTS+API latency could leave
+      // the next song playing 30-45 seconds before banter actually
+      // dropped, which is the opposite of how real radio works. Real
+      // FM: previous song fades out → DJs talk in silence (or near-
+      // silence) → next song fades in. We do that now.
       const playSegmentSequence = async (segments: RadioSegment[], displayText: string) => {
         setDjText(displayText)
         savedVolumeRef.current = pb.volume
 
-        // 1. Pre-duck the renderer volume to ~15% BEFORE starting the
-        //    next track, so the Howl is created at the ducked level and
-        //    nobody hears a full-volume blast for 250ms.
-        const ducked = savedVolumeRef.current * 0.15
-        setVolume(ducked)
-        isFadedRef.current = true
+        // 1. Play segments in silence — no music underneath. The
+        //    previous song already ended naturally; we just don't
+        //    start the next one yet.
+        let i = 0
+        await new Promise<void>((resolve) => {
+          const playOne = (): void => {
+            if (i >= segments.length) { resolve(); return }
+            const seg = segments[i++]
+            const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+            attachClipToBroadcast(audio)
+            djAudioRef.current = audio
+            audio.onended = playOne
+            audio.onerror = playOne
+            audio.play().catch(() => playOne())
+          }
+          playOne()
+        })
 
-        // 2. Start the next track (at the ducked volume).
+        // 2. Segments done. Start the next track at the user's actual
+        //    volume — no ducking needed since dialog already finished.
+        djAudioRef.current = null
+        setDjActive(false)
+        isFadedRef.current = false
+        setVolume(savedVolumeRef.current)
         playTrack(nextTrack, queue, nextIdx, true)
 
-        // 3. Play segments sequentially over the ducked music.
-        let i = 0
-        const playOne = (): void => {
-          if (i >= segments.length) {
-            // All done — fade music back up, clean up bubble.
-            djAudioRef.current = null
-            setDjActive(false)
-            fadeVolumeIn()
-            isFadedRef.current = false
-            setTimeout(() => {
-              setDjExiting(true)
-              setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
-            }, 3000)
-            return
-          }
-          const seg = segments[i++]
-          const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
-          attachClipToBroadcast(audio)
-          djAudioRef.current = audio
-          audio.onended = playOne  // chain to next segment
-          audio.onerror = playOne  // skip on error rather than stalling
-          audio.play().catch(() => playOne())
-        }
-        playOne()
+        // 3. Bubble fade-out shortly after the new song starts.
+        setTimeout(() => {
+          setDjExiting(true)
+          setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
+        }, 3000)
       }
 
       // Bump the transition counter ONCE per real transition. Used by

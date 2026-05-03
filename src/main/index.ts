@@ -7,6 +7,9 @@ import {
   getWikidataArtist, formatWikidataForPrompt,
   getMusicBrainzReleaseMbid, getCoverArtUrlByMbid,
 } from './external'
+import {
+  appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
+} from './radio-memory'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
@@ -2925,6 +2928,7 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     discogsCurrent,
     discogsNext,
     similarCurrent,
+    memoryBlock,
   ] = await Promise.all([
     searchWeb(`${track.artist} musician`, track.album),
     nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve(''),
@@ -2936,6 +2940,7 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     getDiscogsReleaseInfo(track.artist, track.album),
     nextTrack && nextTrack.artist !== track.artist ? getDiscogsReleaseInfo(nextTrack.artist, nextTrack.album) : Promise.resolve(null),
     getLastFmSimilarArtists(track.artist),
+    formatMemoryForPrompt(),
   ])
 
   let userMessage: string
@@ -2967,6 +2972,8 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   if (discogsCurLine) userMessage += `\n${track.artist} / ${track.album} — ${discogsCurLine}`
   if (discogsNextLine && nextTrack) userMessage += `\n${nextTrack.artist} / ${nextTrack.album} — ${discogsNextLine}`
   if (reviewsBlock) userMessage += `\n\n${reviewsBlock}`
+  // 4.3.2: persistent radio memory — recent angles + callback fuel.
+  if (memoryBlock) userMessage += `\n\n${memoryBlock}`
 
   try {
     const response = await claudeCall('musicman-radio', {
@@ -2977,10 +2984,41 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     if (text) noteMusicManUtterance('radio', text)
+    // 4.3.2: persist this segment to radio memory so future segments
+    // can reference it. Fire-and-forget — failure to write doesn't
+    // affect the response.
+    if (text) {
+      const speakers: string[] = ['mm', 'megan']
+      if (callerSegment) speakers.push('giovanni')
+      if (djHandsSegment) speakers.push('stephen')
+      if (wantsAnnouncer) speakers.push('announcer')
+      void appendMemory({
+        ts: Date.now(),
+        transition: 0, // counter is renderer-side; we don't have it here, but ts ordering is enough
+        slot: -1,
+        angle: topicAngle ? topicAngle.split(' — ')[0] : null,
+        speakers,
+        prevTrack: `${track.title} — ${track.artist}`,
+        nextTrack: nextTrack ? `${nextTrack.title} — ${nextTrack.artist}` : '',
+        callbacks: extractCallbacks(text),
+      })
+    }
     return { ok: true, text }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, text: `Error: ${msg}` }
+  }
+})
+
+// 4.3.2: clear radio memory — wired up to the user's "stop Radio Mode"
+// gesture. Without this the show carries memory across sessions, which
+// can be a feature OR can feel stale if the user wants a fresh start.
+ipcMain.handle('clear-radio-memory', async () => {
+  try {
+    await clearMemory()
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 })
 
