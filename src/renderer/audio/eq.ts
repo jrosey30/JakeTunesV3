@@ -201,6 +201,28 @@ export function setEqSettings(next: EqSettings): void {
   }
 }
 
+/** 4.4.8: detach a Howl's HTMLAudio element from the EQ chain. Called
+ *  immediately before .unload() so the MediaElementSource node it owns
+ *  is removed from the graph instead of dangling there until GC.
+ *  Without this, every track played leaves a dead source connected to
+ *  preamp; over a session the graph accumulates dozens of dead nodes,
+ *  each one a per-sample CPU cost in the audio thread. Most output
+ *  paths tolerate this for a long time, but Airfoil's network
+ *  resampler is sensitive to upstream timing — accumulated dead nodes
+ *  manifest as audible rattle. */
+export function detachHowlFromEq(howl: Howl | null | undefined): void {
+  if (!howl) return
+  const sounds = (howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds
+  const audioEl = sounds && sounds[0] && sounds[0]._node
+  if (!audioEl || !(audioEl instanceof HTMLAudioElement)) return
+  const src = boundSources.get(audioEl)
+  if (!src) return
+  try { src.disconnect() } catch { /* already disconnected / ctx closed */ }
+  // We DON'T delete from boundSources because once an element is bound
+  // to a MediaElementSource, it can never be re-bound. Re-binding would
+  // throw. Keeping the entry prevents accidental rebind.
+}
+
 /** Route a Howl's HTMLAudio element through the EQ + analyser chain.
  *  Always attempts to bind (even when EQ is disabled) because the
  *  visualizer's analyser taps off the same chain. With EQ off the
@@ -523,6 +545,38 @@ export function stopRecording(): Promise<{ ok: boolean; blob?: Blob; durationSec
 
 export function isRecording(): boolean {
   return mediaRecorder !== null
+}
+
+/** 4.4.8: emergency escape-hatch. Disconnect every source we've ever
+ *  bound, clear the WeakMap (caveat: WeakMap doesn't iterate, so we
+ *  rely on disconnects being graceful), null the chain so the next
+ *  attach call rebuilds it cleanly. Available as window.__resetAudio()
+ *  in the dev console for manual recovery if audio gets weird. */
+export function resetBroadcastChain(): void {
+  // Disconnect named chain nodes if they exist. Their input/output
+  // connections to preamp/destination drop. Source nodes inside
+  // boundSources will GC over time as their HTMLAudioElements are
+  // released.
+  try { broadcastFxOutput?.disconnect() } catch { /* ignore */ }
+  try { broadcastFxInput?.disconnect() } catch { /* ignore */ }
+  try { preampNode?.disconnect() } catch { /* ignore */ }
+  try { analyserNode?.disconnect() } catch { /* ignore */ }
+  for (const f of filterNodes) {
+    try { f.disconnect() } catch { /* ignore */ }
+  }
+  // Null the references so buildChain() rebuilds them next time.
+  preampNode = null
+  filterNodes = []
+  analyserNode = null
+  broadcastFxInput = null
+  broadcastFxOutput = null
+  chainTail = null
+  masterTapped = false
+  console.log('[broadcast] chain reset — next attach will rebuild')
+}
+
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__resetAudio = resetBroadcastChain
 }
 
 /** Read N visualizer band amplitudes (0–255) from the analyser, with

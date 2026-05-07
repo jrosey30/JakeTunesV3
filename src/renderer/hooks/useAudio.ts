@@ -3,7 +3,7 @@ import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
-import { attachHowlToEq } from '../audio/eq'
+import { attachHowlToEq, detachHowlFromEq } from '../audio/eq'
 
 // Resolved at runtime from main process via IPC — set by init call
 let IPOD_MOUNT = ''
@@ -130,6 +130,7 @@ export function setCrossfadeSettings(s: { enabled: boolean; seconds: number }) {
 function cleanupCrossfadeAudio() {
   if (outgoingHowl) {
     try { outgoingHowl.stop() } catch { /* ignore */ }
+    detachHowlFromEq(outgoingHowl)
     try { outgoingHowl.unload() } catch { /* ignore */ }
     outgoingHowl = null
   }
@@ -172,6 +173,7 @@ const GAPLESS_PREWARM_LEAD_MS = 50
 function cleanupGaplessPreload() {
   if (gaplessNextHowl) {
     try { gaplessNextHowl.stop() } catch { /* ignore */ }
+    detachHowlFromEq(gaplessNextHowl)
     try { gaplessNextHowl.unload() } catch { /* ignore */ }
     gaplessNextHowl = null
   }
@@ -263,6 +265,7 @@ export function useAudio() {
               if (cur && q.length > 0) {
                 logAudioEvent('heartbeat.hardRecover', { pos, title: cur.title })
                 try { sharedHowl?.stop() } catch { /* ignore */ }
+                detachHowlFromEq(sharedHowl)
                 try { sharedHowl?.unload() } catch { /* ignore */ }
                 sharedHowl = null
                 playTrackRef.current(cur, q, qi)
@@ -544,6 +547,7 @@ export function useAudio() {
       cleanupCrossfadeAudio()
       cleanupGaplessPreload()
       if (sharedHowl) {
+        detachHowlFromEq(sharedHowl)
         sharedHowl.unload()
         sharedHowl = null
       }
@@ -718,6 +722,7 @@ export function useAudio() {
         // gapless-promoted Howl. Same feedback-loop reason as the main
         // path. See onpause comment above.
         // Unload the just-finished Howl, promote the preload to shared.
+        detachHowlFromEq(howl)
         try { howl.unload() } catch { /* ignore */ }
         sharedHowl = next
         if (wasPrewarmed) {
