@@ -4883,13 +4883,36 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   // analysis worker's persistOverrideFields. Both go through the same
   // single-flight Promise chain — no shared tmp filename, no
   // interleaved writes, no lost updates.
+  //
+  // 4.4.5: merge logic rewritten to fix the metadata-cascade bug. Old
+  // logic required `existing.fp === fingerprint` for merge — meaning
+  // any save WITHOUT a fingerprint (Get Info modal, StarRating, bulk
+  // rename) hit the else branch and OVERWROTE the whole entry,
+  // wiping previously-set fields, playCount, skipCount, lastPlayedAt.
+  // New logic: an explicit fingerprint MISMATCH still wipes (that's
+  // the re-parse safeguard); a no-fingerprint save MERGES preserving
+  // existing fields and keeping the existing fp; a matching
+  // fingerprint or empty-fp existing entry merges as before.
   await writeOverridesSerialized((overrides) => {
     const key = String(trackId)
     const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
-    const isV2 = existing && typeof existing === 'object' && 'fields' in existing
-    if (isV2 && existing!.fp && existing!.fp === fingerprint) {
-      overrides[key] = { fp: existing!.fp, fields: { ...(existing!.fields || {}), [field]: value } }
+    const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
+    const hasNewFp = typeof fingerprint === 'string' && fingerprint !== ''
+    const existingFp = isV2 ? (existing!.fp || '') : ''
+    if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint) {
+      // Explicit fingerprint mismatch — track at this ID has changed
+      // identity (re-parse, library shift, etc). Old overrides don't
+      // apply anymore; start fresh with just the new field.
+      overrides[key] = { fp: fingerprint, fields: { [field]: value } }
+    } else if (isV2) {
+      // Same track (matching fp, or one side has no fp). MERGE — never
+      // drop prior fields. Update fp only if a new one was passed.
+      overrides[key] = {
+        fp: hasNewFp ? fingerprint : existingFp,
+        fields: { ...(existing!.fields || {}), [field]: value },
+      }
     } else {
+      // No prior entry — fresh write.
       overrides[key] = { fp: fingerprint || '', fields: { [field]: value } }
     }
     return overrides

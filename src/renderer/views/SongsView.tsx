@@ -273,15 +273,35 @@ export default function SongsView() {
     window.addEventListener('mouseup', onUp)
   }, [colWidths, visibleCols])
 
-  // Save metadata edits from Get Info modal
+  // Save metadata edits from Get Info modal.
+  // 4.4.5: we now snapshot each track's PRE-EDIT fingerprint and pass
+  // it with every override save. The fingerprint is title|artist|
+  // duration computed from the track AS IT WAS BEFORE the user's
+  // edits — so on the next library re-parse, the load-time validator
+  // can confirm the override still applies to the correct track.
+  // Without this snapshot, the post-edit dispatch flips the track's
+  // in-memory state, the next save would compute a different
+  // fingerprint, and the safeguard logic in main would treat
+  // consecutive saves as different identities.
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
+      // Snapshot the original tracks BEFORE dispatch so we have
+      // pre-edit fingerprints to pass with each save.
+      const fpById = new Map<number, string>()
+      for (const u of updates) {
+        if (fpById.has(u.id)) continue
+        const t = libState.tracks.find(tr => tr.id === u.id)
+        if (!t) continue
+        const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+        fpById.set(u.id, fp)
+      }
       libDispatch({ type: 'UPDATE_TRACKS', updates })
       for (const u of updates) {
-        await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value)
+        const fp = fpById.get(u.id)
+        await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value, fp)
       }
     },
-    [libDispatch]
+    [libDispatch, libState.tracks]
   )
 
   // Fetch artwork for a track (called from Get Info modal)
