@@ -245,7 +245,18 @@ export function attachHowlToEq(howl: Howl | null | undefined): void {
  *  Without this, TTS plays direct-to-speakers and is invisible to the
  *  recording tap. Idempotent — duplicate binds on the same element are
  *  guarded by the same boundSources WeakMap as music elements. Caller
- *  is responsible for calling .play() on the returned element. */
+ *  is responsible for calling .play() on the returned element.
+ *
+ *  4.4.6: explicit disconnect on `ended` / `error`. Without this, every
+ *  TTS clip in a long Radio Mode session left a dead MediaElementSource
+ *  connected to the preamp until the clip's HTMLAudioElement was GC'd,
+ *  which is unpredictable. After 80-200 clips the graph accumulates
+ *  enough dead nodes that Web Audio's per-sample processing loop
+ *  starves at random moments — local speakers tolerate this; Airfoil's
+ *  network resampler turns it into audible rattle / distortion. The
+ *  user's "fine for a while, then rattly, restart fixes it" matches
+ *  this exactly. Disconnecting on end keeps the graph at a stable
+ *  ~3-5 live nodes regardless of session length. */
 export function attachClipToBroadcast(audio: HTMLAudioElement): void {
   buildChain()
   if (!audioContext || !preampNode) return
@@ -257,6 +268,11 @@ export function attachClipToBroadcast(audio: HTMLAudioElement): void {
     if (audioContext.state === 'suspended') {
       void audioContext.resume()
     }
+    const cleanup = () => {
+      try { src.disconnect() } catch { /* already disconnected / ctx closed */ }
+    }
+    audio.addEventListener('ended', cleanup, { once: true })
+    audio.addEventListener('error', cleanup, { once: true })
   } catch (err) {
     // If MediaElementSource is unavailable (cross-origin, etc.), the
     // clip will still play to the speakers via its native HTMLAudio
@@ -389,6 +405,17 @@ export function attachAnnouncerToBroadcast(audio: HTMLAudioElement): void {
       void audioContext.resume()
     }
     logAudioEvent('announcer-fx.bound')
+    // 4.4.6: same cleanup-on-end as attachClipToBroadcast — keeps the
+    // FX chain's input free of dead source nodes after each station
+    // ID drop. Otherwise the broadcast chain (which includes a
+    // DynamicsCompressor) ends up summing dozens of dead inputs into
+    // its compressor over a session, which is one of the worst
+    // CPU-cost-per-dead-node configurations in Web Audio.
+    const cleanup = () => {
+      try { src.disconnect() } catch { /* already disconnected / ctx closed */ }
+    }
+    audio.addEventListener('ended', cleanup, { once: true })
+    audio.addEventListener('error', cleanup, { once: true })
   } catch (err) {
     console.warn('[announcer-fx] could not bind clip, falling back to plain routing:', err)
     logAudioEvent('announcer-fx.bind-failed', { err: String(err) })
