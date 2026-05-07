@@ -290,7 +290,7 @@ export default function SongsView() {
       const fpById = new Map<number, string>()
       for (const u of updates) {
         if (fpById.has(u.id)) continue
-        const t = libState.tracks.find(tr => tr.id === u.id)
+        const t = lib.tracks.find(tr => tr.id === u.id)
         if (!t) continue
         const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
         fpById.set(u.id, fp)
@@ -301,7 +301,7 @@ export default function SongsView() {
         await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value, fp)
       }
     },
-    [libDispatch, libState.tracks]
+    [libDispatch, lib.tracks]
   )
 
   // Fetch artwork for a track (called from Get Info modal)
