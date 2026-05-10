@@ -228,7 +228,16 @@ export function detachHowlFromEq(howl: Howl | null | undefined): void {
  *  visualizer's analyser taps off the same chain. With EQ off the
  *  preamp is at unity and filters are at 0 dB, so the signal passes
  *  through transparently. Safe to call repeatedly — duplicate binds
- *  on the same element are guarded by the WeakMap. */
+ *  on the same element are guarded by the WeakMap.
+ *
+ *  4.4.9: handle the Howler-pool reuse case. When detachHowlFromEq
+ *  disconnected the source on unload, the WeakMap entry stayed (you
+ *  can't re-bind a MediaElementSource — it'd throw). Howler then
+ *  reused the same pool element for the next track; the bound-source
+ *  check skipped re-binding; the source stayed disconnected; the audio
+ *  element was routed-to-nowhere → music played silently. Fix: if
+ *  there's an existing source for this element, just RECONNECT it to
+ *  preamp instead of trying to bind. */
 export function attachHowlToEq(howl: Howl | null | undefined): void {
   if (!howl) return
   // Reach into Howler internals to get the underlying HTMLAudio element.
@@ -242,10 +251,21 @@ export function attachHowlToEq(howl: Howl | null | undefined): void {
     tapHowlerMaster()
     return
   }
-  if (boundSources.has(audioEl)) return  // already bound
   buildChain()
   tapHowlerMaster()  // retry in case Howler.masterGain wasn't ready at first build
   if (!audioContext || !preampNode) return
+  // 4.4.9: handle the pool-reuse case. If the element was bound earlier
+  // and detached on a previous track end, the source is sitting there
+  // disconnected. We can't re-bind (createMediaElementSource throws on
+  // an already-bound element) but we CAN reconnect the existing source.
+  const existing = boundSources.get(audioEl)
+  if (existing) {
+    try { existing.connect(preampNode) } catch { /* already connected, ignore */ }
+    if (audioContext.state === 'suspended') {
+      void audioContext.resume()
+    }
+    return
+  }
   try {
     const src = audioContext.createMediaElementSource(audioEl)
     src.connect(preampNode)
