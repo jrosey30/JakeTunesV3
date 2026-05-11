@@ -55,13 +55,35 @@ export default function GetInfoModal({
   const [localArtHash, setLocalArtHash] = useState<string | null>(null)
   const [artCacheBust, setArtCacheBust] = useState('')
   const firstInputRef = useRef<HTMLInputElement>(null)
+  const isInitialMount = useRef(true)
+  const userInteractedRef = useRef(false)
 
   const currentTrack = isMulti ? null : allTracks[currentIdx]
 
-  // Focus first input on mount and after navigation
+  // Focus first input on mount and after navigation. Auto-select-all only
+  // on initial open (iTunes convention — type to overwrite title); on
+  // prev/next navigation, focus without selecting. Earlier .select()-on-nav
+  // clobbered in-progress mouse-drag selection: user starts dragging in an
+  // input within the 50ms window, the timer fires, selects-all, drag dies.
   useEffect(() => {
-    const t = setTimeout(() => firstInputRef.current?.select(), 50)
-    return () => clearTimeout(t)
+    userInteractedRef.current = false
+    const onUserInteract = () => { userInteractedRef.current = true }
+    window.addEventListener('mousedown', onUserInteract, { capture: true, once: true })
+    window.addEventListener('focusin', onUserInteract, { capture: true, once: true })
+    const t = setTimeout(() => {
+      if (userInteractedRef.current) return
+      if (isInitialMount.current) {
+        firstInputRef.current?.select()
+        isInitialMount.current = false
+      } else {
+        firstInputRef.current?.focus()
+      }
+    }, 50)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('mousedown', onUserInteract, { capture: true })
+      window.removeEventListener('focusin', onUserInteract, { capture: true })
+    }
   }, [currentIdx])
 
   // Reset per-track edits when navigating
