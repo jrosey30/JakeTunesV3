@@ -443,18 +443,17 @@ export default function PlaylistView() {
       },
       { separator: true as const },
       {
-        label: `Remove from Playlist`,
+        label: count > 1 ? `Remove ${count} from Playlist` : `Remove from Playlist`,
         onClick: () => {
           setConfirmAction({ type: 'remove-tracks', trackIds: selected.map(t => t.id) })
         },
       },
-      { separator: true as const },
-      {
-        label: count > 1 ? `Delete ${count} Songs` : 'Delete Song',
-        onClick: () => {
-          setConfirmAction({ type: 'delete-tracks', trackIds: selected.map(t => t.id) })
-        },
-      },
+      // 4.4.10: removed "Delete Song" from the playlist context menu —
+      // sat right next to "Remove from Playlist" and made it trivial
+      // to accidentally nuke a song from the whole library when the
+      // user just wanted to take it out of THIS playlist. iTunes
+      // precedent: playlist context menus only offer "Remove from
+      // Playlist." Library deletion still works from the Songs view.
     ]
   }
 
