@@ -194,3 +194,135 @@ For reference, these were on Phase A and are already shipped:
 
 No code changes will be committed until the user has read this
 report and confirmed the path forward.
+
+---
+
+## Day 2 update — 2026-05-11
+
+### Bug 1 — fix shipped
+
+Commit `a9a8940`. Auto-select now only fires on initial mount;
+prev/next navigation focuses without selecting. Either way, the
+auto-select cancels itself if the user mousedowns or focuses any
+input first (capture phase, fires before the input handler).
+
+**User asked to retest:** if drag is still broken on non-Name
+fields after this fix, a separate cause exists (probably CSS or
+something app-wide we haven't found in code). Day 1 + Day 2 reads
+exhausted the obvious code-level suspects (no global mousedown
+preventDefault, no `app-region: drag` on the modal tree, no
+`user-select: none` on a parent that isn't already overridden by
+`getinfo.css` lines 24-25 + 179-180). If the user reproduces the
+"all fields" failure on the new build, screenshot or a screen
+recording would help — we may be looking at a Chromium/macOS
+quirk rather than codebase logic.
+
+### Bug 2 — disk-write path analysis
+
+Re-read `src/main/index.ts:2535-2559` (`getArtworkDir`,
+`loadArtworkIndex`, `saveArtworkIndex`) and `5067-5097`
+(`set-custom-artwork` IPC handler). Three real risks identified:
+
+**Risk 1: `saveArtworkIndex` is NOT atomic.** Line 2558:
+``writeFile(getArtworkIndexPath(), JSON.stringify(index, null, 2), 'utf-8')``
+writes the whole index file in place. If the process crashes
+mid-write (or the OS loses power), the file can be corrupted
+(truncated JSON). Next launch, `loadArtworkIndex` catches the
+parse error and returns `{}` — **silently losing every custom
+art entry the user ever added.** Standard fix: temp-file +
+atomic rename.
+
+**Risk 2: `saveArtworkIndex` is NOT serialized against itself.**
+Two concurrent IPC calls (e.g. user adding art for album A while
+the background auto-fetch loop in `App.tsx:223-230` finishes
+album B) classic read-modify-write race:
+- Call A: load index → add A entry → write
+- Call B: load index (without A!) → add B entry → write (overwrites A)
+
+CHANGELOG 4.1.1 mentions a single-flight writer was added for
+metadata-overrides for the same class of bug. The artwork index
+appears to NOT have the same protection.
+
+**Risk 3: `sips` failure path swallows the error in a way that
+makes the renderer think things succeeded enough to dispatch.**
+Lines 5085-5086 run `sips` to convert non-JPG sources. If `sips`
+fails (binary missing on user's macOS, malformed source image,
+disk full, permission), the outer try/catch returns
+`{ ok: false, error: String(err) }`. The renderer's view-level
+handler (e.g. `AlbumsView.tsx:159-162`) checks `if (result.ok)`
+before dispatching ADD_ARTWORK. So the dispatch correctly does
+NOT happen. **However** — the user already sees the art in the
+modal because `localArtHash` was set inside `GetInfoModal`. Only
+when the modal closes and the view falls back to `artworkMap`
+does the user notice the art "disappeared." False positive UX.
+
+### Suspect ranking after Day 2 reads
+
+| Suspect | Drives "after navigation"? | Drives "after restart"? |
+|---|---|---|
+| Risk 1 (corrupt index) | No | YES |
+| Risk 2 (concurrent write race) | Possibly | YES |
+| Risk 3 (silent sips failure) | YES (false-positive only) | YES (no dispatch + no disk write) |
+| `localArtHash` bleed in modal | No (just shows wrong art for current track in modal) | No |
+
+User said both timings happen ("sometimes one, sometimes the
+other"). Risks 1, 2, 3 collectively explain that pattern.
+
+### Diagnostic recipe — capture the failure mode tonight
+
+Run this in Terminal on the Mac, while reproducing the
+disappearance in JakeTunes. Lets us pin which risk fires when.
+
+```bash
+# In one terminal, watch the artwork directory for changes:
+INDEX=~/Library/Application\ Support/JakeTunes/artwork/index.json
+DIR=~/Library/Application\ Support/JakeTunes/artwork
+
+# Tail what's in the index file (refreshes when JakeTunes writes):
+fswatch -o "$INDEX" | while read; do
+  echo "─── $(date +%H:%M:%S) index.json changed ───"
+  wc -l "$INDEX"
+  # show last 5 entries so we can see what was just added/removed
+  python3 -c "
+import json
+with open('$INDEX') as f: d = json.load(f)
+print(f'{len(d)} entries')
+for k in list(d.keys())[-5:]: print(f'  {k} → {d[k]}')
+"
+done
+```
+
+Then in JakeTunes:
+1. Open Get Info on a track.
+2. Click "Add Artwork…", choose an image file.
+3. Look at terminal — did the index file change? Does the new
+   entry appear?
+4. Close the modal. Navigate to AlbumsView for that album. Does
+   the art show?
+5. Quit JakeTunes (Cmd+Q). Relaunch.
+6. Check AlbumsView for the same album. Does the art still show?
+7. Run `ls -la "$DIR"` — is there a JPG matching the hash in the
+   index?
+
+What we learn from each step:
+- **3=no** → `set-custom-artwork` IPC failed (Risk 1, 2, or 3).
+  Check the renderer DevTools console for an error.
+- **3=yes, 4=no** → in-renderer state issue (the dispatch isn't
+  reaching the view, OR view's lookup key doesn't match).
+- **6=no but 3=yes and 4=yes** → load-time failure (Risk 1
+  corruption, OR App.tsx dispatch not firing).
+- **7=no** → file write failed silently (Risk 3, sips quietly
+  lost it).
+
+Send screenshots of the terminal output at each step; that's
+enough for me to ship the targeted fix without guessing.
+
+### Day 2 result
+
+- Bug 1 fixed and pushed.
+- Bug 2 instrumentation deferred — diagnostic recipe above lets
+  us capture the live failure without shipping logging code.
+- Day 3 plan: once user runs the recipe and reports back, ship
+  the targeted fix(es). Likely combination: atomic
+  `saveArtworkIndex` (Risk 1), single-flight serialization
+  (Risk 2), better error surfacing on `sips` failure (Risk 3).
