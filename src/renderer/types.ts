@@ -260,8 +260,11 @@ declare global {
       getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
-      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }>
-      importTrack: (srcPath: string, id: number, format?: string) => Promise<{ ok: boolean; track?: Track; dupe?: { src: string; matchedTitle: string; matchedArtist: string }; error?: string }>
+      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }>; artwork?: Array<{ key: string; hash: string }> }>
+      importTrack: (srcPath: string, id: number, format?: string) => Promise<{ ok: boolean; track?: Track; dupe?: { src: string; matchedTitle: string; matchedArtist: string }; error?: string; artwork?: { key: string; hash: string } }>
+      artworkBackfillStatus: () => Promise<{ ok: boolean; done: boolean }>
+      backfillEmbeddedArtwork: (tracks: Array<{ path: string; artist: string; album: string }>) => Promise<{ ok: boolean; artwork?: Array<{ key: string; hash: string }>; error?: string }>
+      onArtworkBackfillProgress: (callback: (progress: { processed: number; total: number }) => void) => () => void
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>

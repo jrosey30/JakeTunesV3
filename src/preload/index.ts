@@ -135,7 +135,16 @@ const electronAPI = {
     ipcRenderer.invoke('get-music-library-path'),
   ejectIpod: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-ipod'),
-  importTracks: (filePaths: string[], nextId: number, format?: string): Promise<{ ok: boolean; tracks: unknown[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> =>
+  // 4.4.12: import results now include an `artwork` field when the
+  // imported file(s) had embedded album art that we successfully saved.
+  // import-tracks de-duplicates by key (10 tracks from one album → one
+  // artwork record). The renderer dispatches ADD_ARTWORK for each.
+  importTracks: (filePaths: string[], nextId: number, format?: string): Promise<{
+    ok: boolean
+    tracks: unknown[]
+    skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }>
+    artwork?: Array<{ key: string; hash: string }>
+  }> =>
     ipcRenderer.invoke('import-tracks', filePaths, nextId, format),
   // Single-file import for the renderer-side queue. Failures are
   // returned (not thrown) so the queue can mark and retry per item.
@@ -144,8 +153,26 @@ const electronAPI = {
     track?: unknown
     dupe?: { src: string; matchedTitle: string; matchedArtist: string }
     error?: string
+    artwork?: { key: string; hash: string }
   }> =>
     ipcRenderer.invoke('import-track', srcPath, id, format),
+  // 4.4.12: one-shot backfill for tracks imported before the import-time
+  // extractor landed. Status check is cheap (single fs.stat); the
+  // backfill itself is a longer-running parseFile loop that fires
+  // `artwork-backfill-progress` events along the way.
+  artworkBackfillStatus: (): Promise<{ ok: boolean; done: boolean }> =>
+    ipcRenderer.invoke('artwork-backfill-status'),
+  backfillEmbeddedArtwork: (tracks: Array<{ path: string; artist: string; album: string }>): Promise<{
+    ok: boolean
+    artwork?: Array<{ key: string; hash: string }>
+    error?: string
+  }> =>
+    ipcRenderer.invoke('backfill-embedded-artwork', tracks),
+  onArtworkBackfillProgress: (callback: (progress: { processed: number; total: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { processed: number; total: number }) => callback(progress)
+    ipcRenderer.on('artwork-backfill-progress', handler)
+    return () => { ipcRenderer.removeListener('artwork-backfill-progress', handler) }
+  },
   // Resolve folders + glob filtering on the main side; renderer only
   // ever sees individual audio file paths in the queue.
   importResolvePaths: (paths: string[]): Promise<{ ok: boolean; paths?: string[]; error?: string }> =>

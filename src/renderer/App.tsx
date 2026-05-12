@@ -202,6 +202,47 @@ function AppInner() {
           const map = r.map || {}
           dispatch({ type: 'SET_ARTWORK_MAP', map })
 
+          // 4.4.12: ONE-SHOT EMBEDDED-ART BACKFILL.
+          // Tracks imported before the import-time extractor landed (any
+          // build prior to 4.4.12) don't have their embedded covers on
+          // disk. Run a one-time pass that parseFile's every track,
+          // pulls the embedded picture, and writes it through the same
+          // (now atomic + single-flight) artwork pipeline. The backfill
+          // IPC writes a marker file when done; we check that first so
+          // we never re-run.
+          //
+          // We run this BEFORE the missing-art auto-fetch loop below so
+          // embedded-art recovery (free + offline) beats the network
+          // fetch (slow + can fail) when both could supply a cover.
+          try {
+            const status = await window.electronAPI.artworkBackfillStatus?.()
+            if (status?.ok && !status.done) {
+              const candidates = tracks
+                .filter(t => t.artist && t.album && t.path)
+                .map(t => ({ path: t.path, artist: t.artist, album: t.album }))
+              if (candidates.length > 0) {
+                const result = await window.electronAPI.backfillEmbeddedArtwork(candidates)
+                if (result?.ok && result.artwork) {
+                  for (const a of result.artwork) {
+                    dispatch({ type: 'ADD_ARTWORK', key: a.key, hash: a.hash })
+                  }
+                }
+              }
+            }
+          } catch { /* backfill best-effort; never block app launch on it */ }
+
+          // Refresh the in-memory map so the missing-art scan below sees
+          // anything the backfill just added (avoids fetching covers from
+          // the network for albums we already have embedded).
+          let postBackfillMap = map
+          try {
+            const r2 = await window.electronAPI.loadArtworkMap?.()
+            if (r2?.ok && r2.map) {
+              postBackfillMap = r2.map
+              dispatch({ type: 'SET_ARTWORK_MAP', map: r2.map })
+            }
+          } catch { /* keep original map */ }
+
           // Collect all unique artist+album pairs from the library
           const albums = new Map<string, { artist: string; album: string }>()
           for (const t of tracks) {
@@ -214,7 +255,7 @@ function AppInner() {
           // Find which albums are missing artwork
           const missing: { artist: string; album: string }[] = []
           for (const [k, v] of albums) {
-            if (!map[k]) missing.push(v)
+            if (!postBackfillMap[k]) missing.push(v)
           }
 
           if (missing.length === 0) return
@@ -553,9 +594,16 @@ function AppInner() {
 
   // As the queue worker finishes each item, push it into the library
   // immediately. The user sees their drop landing one track at a time.
+  // 4.4.12: if the import handler extracted embedded album art, dispatch
+  // ADD_ARTWORK in the same React batch so the cover shows up alongside
+  // the track on first render (instead of one render of "no art" then a
+  // second render after a per-track IPC).
   useEffect(() => {
-    return onTrackImported((t) => {
+    return onTrackImported((t, artwork) => {
       dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
+      if (artwork) {
+        dispatch({ type: 'ADD_ARTWORK', key: artwork.key, hash: artwork.hash })
+      }
     })
   }, [dispatch])
 

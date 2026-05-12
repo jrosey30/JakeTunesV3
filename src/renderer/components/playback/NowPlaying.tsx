@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
-import { subscribe, getSnapshot, getRip, getSync } from '../../activity'
+import { subscribe, getSnapshot, getRip, getSync, getNotice } from '../../activity'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -80,7 +80,7 @@ function MiniVisualizer({ active }: { active: boolean }) {
   return <canvas ref={canvasRef} className="mini-viz" aria-hidden />
 }
 
-type PillMode = 'playing' | 'rip' | 'sync'
+type PillMode = 'playing' | 'rip' | 'sync' | 'notice'
 
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
@@ -124,31 +124,39 @@ export default function NowPlaying() {
   useSyncExternalStore(subscribe, getSnapshot)
   const rip = getRip()
   const syn = getSync()
+  const notice = getNotice()
   const ripActive = !!rip?.active
   const syncActive = !!syn?.active
+  const noticeActive = !!notice
 
   // Which modes have anything to show right now?
   const available: PillMode[] = []
   if (track) available.push('playing')
   if (ripActive) available.push('rip')
   if (syncActive) available.push('sync')
+  if (noticeActive) available.push('notice')
 
   const [mode, setMode] = useState<PillMode>('playing')
 
   // Auto-follow rule: when a rip or sync STARTS, switch the pill to
   // show it (that's always the most interesting thing to surface).
   // When it ends, fall back to whatever's still active with the same
-  // priority (sync > rip > playing). User cycle override still works
-  // in between — clicking the arrow locks the pill to their chosen
-  // mode until the mode disappears from `available`.
+  // priority (notice > sync > rip > playing). User cycle override still
+  // works in between — clicking the arrow locks the pill to their chosen
+  // mode until the mode disappears from `available`. Notices are
+  // transient (auto-clear), so they take precedence over everything
+  // else while shown.
   const prevRipRef = useRef(ripActive)
   const prevSyncRef = useRef(syncActive)
+  const prevNoticeRef = useRef(noticeActive)
   useEffect(() => {
-    if (syncActive && !prevSyncRef.current) setMode('sync')
+    if (noticeActive && !prevNoticeRef.current) setMode('notice')
+    else if (syncActive && !prevSyncRef.current) setMode('sync')
     else if (ripActive && !prevRipRef.current) setMode('rip')
     prevRipRef.current = ripActive
     prevSyncRef.current = syncActive
-  }, [ripActive, syncActive])
+    prevNoticeRef.current = noticeActive
+  }, [ripActive, syncActive, noticeActive])
 
   // Also: if the current mode disappears from the available set
   // (e.g. sync ended and nothing else is selected), fall through to
@@ -156,8 +164,8 @@ export default function NowPlaying() {
   useEffect(() => {
     if (available.length === 0) return
     if (!available.includes(mode)) {
-      // Priority: sync > rip > playing
-      const priority: PillMode[] = ['sync', 'rip', 'playing']
+      // Priority: notice > sync > rip > playing
+      const priority: PillMode[] = ['notice', 'sync', 'rip', 'playing']
       const next = priority.find(m => available.includes(m)) || available[0]
       setMode(next)
     }
@@ -172,9 +180,14 @@ export default function NowPlaying() {
 
   const showCycle = available.length > 1
   // When nothing is playing and nothing's syncing/ripping, pill is
-  // empty (matches idle iTunes LCD).
+  // empty (matches idle iTunes LCD). If the selected mode isn't
+  // available (e.g. a notice fired while we were on 'playing' with no
+  // track), fall through to the highest-priority available mode so
+  // we don't flash an empty pill before the auto-follow effect catches up.
   const effectiveMode: PillMode | null = available.length === 0 ? null :
-    (available.includes(mode) ? mode : 'playing')
+    (available.includes(mode) ? mode : (
+      (['notice', 'sync', 'rip', 'playing'] as PillMode[]).find(m => available.includes(m)) || available[0]
+    ))
 
   return (
     <div className="now-playing-pill">
@@ -228,6 +241,19 @@ export default function NowPlaying() {
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill" style={{ width: `${(rip.current / Math.max(1, rip.total)) * 100}%` }} />
+            </div>
+          </div>
+        </>
+      ) : effectiveMode === 'notice' && notice ? (
+        <>
+          <div className={`now-playing-info now-playing-info--activity now-playing-info--notice-${notice.kind}`}>
+            <span className="now-playing-title">{notice.kind === 'error' ? 'Notice' : 'JakeTunes'}</span>
+            <span className="now-playing-sep"> — </span>
+            <span className="now-playing-artist">{notice.message}</span>
+          </div>
+          <div className="scrubber-row">
+            <div className="activity-bar">
+              <div className="activity-bar-fill activity-bar-fill--indeterminate" />
             </div>
           </div>
         </>

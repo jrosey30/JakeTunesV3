@@ -12,6 +12,7 @@ import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import type { SortColumn, Track } from '../types'
+import { setNotice } from '../activity'
 import '../styles/songs.css'
 
 function formatDuration(ms: number): string {
@@ -169,11 +170,25 @@ export default function SongsView() {
         onClick: async () => {
           const file = await window.electronAPI.chooseArtworkFile()
           if (!file.ok || !file.path) return
+          let failed = 0
+          let lastErr = ''
           for (const { artist, album } of artPairs.values()) {
             const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
             if (result.ok && result.key && result.hash) {
               libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+            } else {
+              failed += 1
+              lastErr = result.error || ''
             }
+          }
+          // 4.4.12: surface failures so the user knows the save didn't stick.
+          if (failed > 0) {
+            setNotice(
+              failed === 1
+                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
+                : `Couldn't save artwork for ${failed} albums.`,
+              { kind: 'error' }
+            )
           }
         },
       },
@@ -324,6 +339,10 @@ export default function SongsView() {
         libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [libDispatch]

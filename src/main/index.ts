@@ -2130,6 +2130,10 @@ interface SingleImportResult {
   track?: Record<string, unknown>
   dupe?: { src: string; matchedTitle: string; matchedArtist: string }
   error?: string
+  // 4.4.12: when the imported file had embedded album art that we just
+  // saved, the artwork's index key + versioned hash so the renderer can
+  // dispatch ADD_ARTWORK immediately, without a second IPC round-trip.
+  artwork?: { key: string; hash: string }
 }
 
 /**
@@ -2297,7 +2301,23 @@ async function importOneFile(
       dupeFingerprints.add(`${ft}|${fa}|${fd}`)
     }
 
-    return { ok: true, track }
+    // 4.4.12: extract embedded album art if the source has it. Best-effort;
+    // null result is fine (no embedded art OR identity gate hit OR sips
+    // failed). The audio file is the primary artifact and ships regardless.
+    // The {key, hash} comes back to the caller IPC handler, which passes
+    // it to the renderer so ADD_ARTWORK fires without a second round-trip.
+    let artwork: { key: string; hash: string } | null = null
+    try {
+      artwork = await extractAndSaveEmbeddedArtwork(
+        common.picture as ParsedPicture[] | undefined,
+        String(track.artist || ''),
+        String(track.album || ''),
+      )
+    } catch (err) {
+      console.warn(`[import] embedded-art extraction skipped for ${srcPath}:`, err instanceof Error ? err.message : err)
+    }
+
+    return { ok: true, track, ...(artwork ? { artwork } : {}) }
   } catch (err) {
     console.error(`Failed to import ${srcPath}:`, err)
     return { ok: false, error: String(err) }
@@ -2429,6 +2449,11 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   const resolvedPaths = await resolveAudioPaths(filePaths)
   const imported: Array<Record<string, unknown>> = []
   const skippedDupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> = []
+  // 4.4.12: artwork records returned to the renderer so it can dispatch
+  // ADD_ARTWORK in one shot at end-of-batch instead of per-file IPC.
+  // De-duped by key (one album with 10 tracks shows up once here).
+  const artworkKeysSeen = new Set<string>()
+  const artwork: Array<{ key: string; hash: string }> = []
   let id = nextId
 
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
@@ -2461,6 +2486,12 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
     const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints, trackTime)
     if (r.ok && r.track) {
       imported.push(r.track)
+      // 4.4.12: accumulate artwork records from successful imports.
+      // de-duped by key (10-track album → one artwork record returned).
+      if (r.artwork && !artworkKeysSeen.has(r.artwork.key)) {
+        artworkKeysSeen.add(r.artwork.key)
+        artwork.push(r.artwork)
+      }
       // Track in session set — guards future single-file imports from
       // racing this batch (and matches what import-track does).
       // duration is in ms; fingerprintTrack divides to seconds itself.
@@ -2512,7 +2543,7 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
     }
   }
 
-  return { ok: true, tracks: imported, skippedDupes }
+  return { ok: true, tracks: imported, skippedDupes, artwork }
 })
 
 const MIME_TYPES: Record<string, string> = {
@@ -2553,9 +2584,135 @@ async function loadArtworkIndex(): Promise<Record<string, string>> {
   }
 }
 
+// 4.4.12: single-flight + atomic write for the artwork index.
+//
+// Same class of bug 4.1.1 fixed for metadata-overrides (see
+// writeOverridesSerialized). Without this:
+//   • Risk 1 (atomic): writeFile in place could be torn by a mid-write
+//     crash → next launch loadArtworkIndex catches the parse error and
+//     returns {} → every custom-art entry the user ever added is gone.
+//   • Risk 2 (single-flight): two concurrent callers (e.g. drag-drop 10
+//     tracks from one album, OR user adds art for A while App.tsx's
+//     auto-fetch loop finishes B) all do load → mutate → save with stale
+//     snapshots → later writes overwrite earlier ones.
+//
+// Fix: a Promise chain that serializes every save through one writer,
+// with a unique tmp filename per write + atomic rename. Mirrors the
+// exact pattern used by writeOverridesSerialized.
+let artworkWriteChain: Promise<void> = Promise.resolve()
 async function saveArtworkIndex(index: Record<string, string>): Promise<void> {
-  await mkdir(getArtworkDir(), { recursive: true })
-  await writeFile(getArtworkIndexPath(), JSON.stringify(index, null, 2), 'utf-8')
+  const snapshot = { ...index }  // capture the caller's intent immediately
+  const job = artworkWriteChain.then(async () => {
+    const indexPath = getArtworkIndexPath()
+    await mkdir(getArtworkDir(), { recursive: true })
+    const tmpPath = `${indexPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
+    await writeFile(tmpPath, JSON.stringify(snapshot, null, 2), 'utf-8')
+    const { rename } = await import('fs/promises')
+    await rename(tmpPath, indexPath)
+  }).catch((err) => {
+    console.warn('[artwork-index] serialized write failed:', err instanceof Error ? err.message : err)
+  })
+  artworkWriteChain = job
+  return job
+}
+
+// 4.4.12: helper that takes the music-metadata parse result + the
+// destination artist/album and saves the embedded front cover into
+// the artwork directory using the SAME conventions as set-custom-artwork
+// (line ~5067):
+//   • key  = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
+//   • hash = artworkHash(artist, album)
+//   • file = `${getArtworkDir()}/${hash}.jpg` (or sips-converted to jpg)
+//   • index entry = `${hash}_${Date.now()}` (versioned for renderer cache-bust)
+//
+// IDENTITY GATE: never overwrites an existing index entry (the user may
+// have set custom art previously — embedded-art import should NOT clobber
+// that). Gated on `if (!index[key])`, not on text comparison.
+//
+// Returns the {key, hash} on success so the caller can pass it back to the
+// renderer for a single ADD_ARTWORK dispatch (no second IPC round-trip).
+// Returns null on any of: no artist, no album, no pictures, picture write
+// failed, sips failed. Failures are logged at warn level — they never
+// propagate to the import flow (the audio file is the primary artifact;
+// art is best-effort).
+interface ParsedPicture {
+  format?: string
+  type?: string
+  data: Buffer | Uint8Array
+}
+async function extractAndSaveEmbeddedArtwork(
+  pictures: ParsedPicture[] | undefined,
+  artist: string,
+  album: string,
+): Promise<{ key: string; hash: string } | null> {
+  if (!pictures || pictures.length === 0) return null
+  const cleanArtist = (artist || '').trim()
+  const cleanAlbum = (album || '').trim()
+  if (!cleanArtist || !cleanAlbum) return null  // no key to store under
+
+  // Prefer the front cover; fall back to the first picture if untagged.
+  const pic =
+    pictures.find(p => p.type === 'Cover (front)') ??
+    pictures[0]
+  if (!pic || !pic.data || pic.data.byteLength === 0) return null
+
+  const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
+  // IDENTITY GATE: don't overwrite existing entries. The user's manually
+  // set art always wins over embedded art (also: a second import of the
+  // same album shouldn't re-version a stable on-disk cover).
+  const existingIndex = await loadArtworkIndex()
+  if (existingIndex[key]) return null
+
+  const hash = artworkHash(cleanArtist, cleanAlbum)
+  const dir = getArtworkDir()
+  const destPath = join(dir, `${hash}.jpg`)
+  await mkdir(dir, { recursive: true })
+
+  try {
+    const fmt = (pic.format || '').toLowerCase()
+    const buf = Buffer.isBuffer(pic.data) ? pic.data : Buffer.from(pic.data)
+    if (fmt === 'image/jpeg' || fmt === 'image/jpg') {
+      await writeFile(destPath, buf)
+    } else {
+      // Same sips conversion path as set-custom-artwork. Write the
+      // embedded blob to a tmp file with an extension sips will recognize,
+      // convert, drop the tmp.
+      const inferredExt =
+        fmt.includes('png') ? '.png' :
+        fmt.includes('tiff') ? '.tiff' :
+        fmt.includes('bmp') ? '.bmp' :
+        fmt.includes('gif') ? '.gif' :
+        fmt.includes('webp') ? '.webp' :
+        '.img'
+      const { execFile } = await import('child_process')
+      const { promisify } = await import('util')
+      const execP = promisify(execFile)
+      const tmpPath = destPath + '.tmp' + inferredExt
+      await writeFile(tmpPath, buf)
+      try {
+        await execP('sips', ['-s', 'format', 'jpeg', tmpPath, '--out', destPath])
+      } finally {
+        await unlink(tmpPath).catch(() => {})
+      }
+    }
+  } catch (err) {
+    console.warn('[artwork] embedded-art write failed (continuing import):', err instanceof Error ? err.message : err)
+    return null
+  }
+
+  // Versioned hash so the renderer's <img src="album-art://${hash}.jpg">
+  // cache-busts when the same key+hash gets a fresher file.
+  const versionedHash = `${hash}_${Date.now()}`
+  // Single-flight save — won't race against concurrent imports / fetches /
+  // set-custom-artwork callers.
+  const index = await loadArtworkIndex()
+  // Re-check inside the load — another concurrent extractor or a manual
+  // Add Artwork could have raced us between our first check and now.
+  if (!index[key]) {
+    index[key] = versionedHash
+    await saveArtworkIndex(index)
+  }
+  return { key, hash: versionedHash }
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -5095,6 +5252,105 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
   } catch (err) {
     return { ok: false, error: String(err) }
   }
+})
+
+// 4.4.12: one-shot embedded-art backfill. Recovers art for tracks the
+// user imported BEFORE the import-time extractor landed. Runs once per
+// install (gated by a marker file in userData) — subsequent launches
+// no-op.
+//
+// Why a marker file rather than a per-track flag: the work is
+// idempotent (extractAndSaveEmbeddedArtwork's identity gate skips any
+// track whose album already has art in the index), so we just need to
+// know "have we walked the whole library once on this version?" The
+// marker is the simplest possible expression of that.
+//
+// Workload shape: parseFile is ~10-50ms per track on local SSD. A
+// 5000-track library is roughly 25-250 seconds in the background.
+// Yields between tracks via setImmediate so playback isn't impacted
+// (matches the 4.0.10 worker-yields pattern). The renderer awaits the
+// IPC and dispatches ADD_ARTWORK for each result as the batch progresses
+// via an `artwork-backfill-progress` event.
+function getArtworkBackfillMarkerPath(): string {
+  return join(app.getPath('userData'), 'artwork-backfill-done')
+}
+ipcMain.handle('artwork-backfill-status', async () => {
+  try {
+    await stat(getArtworkBackfillMarkerPath())
+    return { ok: true, done: true }
+  } catch {
+    return { ok: true, done: false }
+  }
+})
+ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
+  // resolve iPod-style colon paths to absolute file paths
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+
+  // Load the index once up-front so we can skip tracks whose albums
+  // already have art (without hammering loadArtworkIndex per-track).
+  const existingIndex = await loadArtworkIndex()
+  const seenKeys = new Set<string>(Object.keys(existingIndex))
+
+  const results: Array<{ key: string; hash: string }> = []
+  let processed = 0
+  const total = tracks.length
+
+  try {
+    const mm = await import('music-metadata')
+    for (const t of tracks) {
+      processed++
+      const cleanArtist = (t.artist || '').trim()
+      const cleanAlbum = (t.album || '').trim()
+      if (!cleanArtist || !cleanAlbum) continue
+      const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
+      // Identity gate: already covered (either pre-existing index entry
+      // OR we wrote it earlier in this same backfill batch).
+      if (seenKeys.has(key)) continue
+      seenKeys.add(key)  // claim the slot so a later track on the same album doesn't duplicate parseFile work
+
+      // Resolve to absolute path. The colon-format path lives in
+      // library.json; the underlying file lives in MUSIC_DIR.
+      const colon = String(t.path || '')
+      if (!colon) continue
+      const abs = colon.startsWith('/') ? colon : join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+
+      try {
+        const metadata = await mm.parseFile(abs)
+        const result = await extractAndSaveEmbeddedArtwork(
+          metadata.common.picture as ParsedPicture[] | undefined,
+          cleanArtist,
+          cleanAlbum,
+        )
+        if (result) results.push(result)
+      } catch (err) {
+        // parseFile can fail on weird codecs / inaccessible files.
+        // Backfill is best-effort — log and move on; never block.
+        console.warn(`[artwork-backfill] parseFile failed for ${abs}:`, err instanceof Error ? err.message : err)
+      }
+
+      // Progress + cooperative yield. Matches the "playback wins resource
+      // fights" rule from 4.0.10 — give the audio decoder a thread tick
+      // between every parseFile.
+      if (processed % 25 === 0) {
+        mainWindow?.webContents.send('artwork-backfill-progress', { processed, total })
+      }
+      await new Promise(resolve => setImmediate(resolve))
+    }
+  } catch (err) {
+    return { ok: false, error: String(err), artwork: results }
+  }
+
+  // Mark backfill done so it never runs again on this install.
+  try {
+    await mkdir(app.getPath('userData'), { recursive: true })
+    await writeFile(getArtworkBackfillMarkerPath(), `done ${new Date().toISOString()}\n`, 'utf-8')
+  } catch (err) {
+    console.warn('[artwork-backfill] failed to write marker (will re-run next launch):', err instanceof Error ? err.message : err)
+  }
+
+  mainWindow?.webContents.send('artwork-backfill-progress', { processed, total })
+  return { ok: true, artwork: results }
 })
 
 ipcMain.handle('remove-artwork', async (_event, artist: string, album: string) => {

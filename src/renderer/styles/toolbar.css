@@ -177,6 +177,15 @@
   font-style: normal;
   margin-left: 6px;
 }
+/* 4.4.12: transient notice modes (sips conversion failures, etc.).
+   Error reads red so the user notices it amid the normal CD-rip /
+   sync chatter. Info uses the default activity styling. */
+.now-playing-info--notice-error {
+  color: #a03030;
+}
+.now-playing-info--notice-info {
+  color: #4a3a18;
+}
 .activity-bar {
   flex: 1;
   min-width: 0;

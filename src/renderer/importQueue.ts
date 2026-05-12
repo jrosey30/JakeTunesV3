@@ -222,8 +222,12 @@ export function setNextLibraryId(id: number): void {
  * Subscribe to "track imported" events. App.tsx wires this to the
  * library reducer so each successful import shows up in the UI as
  * soon as it finishes (don't wait for the whole queue).
+ *
+ * 4.4.12: second argument carries embedded artwork (key + versioned
+ * hash) when the imported file had it. App.tsx dispatches ADD_ARTWORK
+ * alongside the track so the album cover appears on the same render.
  */
-type TrackHandler = (t: Track) => void
+type TrackHandler = (t: Track, artwork?: { key: string; hash: string }) => void
 const trackHandlers = new Set<TrackHandler>()
 export function onTrackImported(fn: TrackHandler): () => void {
   trackHandlers.add(fn)
@@ -270,7 +274,7 @@ async function runWorker(): Promise<void> {
           ),
         }
         for (const fn of trackHandlers) {
-          try { fn(track) } catch { /* handler crash shouldn't kill the worker */ }
+          try { fn(track, res.artwork) } catch { /* handler crash shouldn't kill the worker */ }
         }
       } else if (res.ok && res.dupe) {
         state = {

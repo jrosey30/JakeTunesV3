@@ -7,6 +7,7 @@ import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { Track } from '../types'
+import { setNotice } from '../activity'
 import '../styles/genres.css'
 
 export default function GenresView() {
@@ -82,6 +83,9 @@ export default function GenresView() {
           const result = await window.electronAPI.setCustomArtwork(track.artist, track.album, file.path)
           if (result.ok && result.key && result.hash) {
             libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+          } else {
+            // 4.4.12: surface failure (usually sips conversion).
+            setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
           }
         },
       },
@@ -135,6 +139,10 @@ export default function GenresView() {
         libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [libDispatch]
