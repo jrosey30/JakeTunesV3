@@ -352,3 +352,29 @@ The skill being banked here isn't "how to read iTunesDB" or "how
 to write a duplicates modal." It's: **when stumped, the next move
 is almost never to dig deeper at the current layer. It's to back
 out one layer and check whether you're at the right one at all.**
+
+---
+
+## Security note (added 2026-05-12)
+
+The wrong-layer lesson generalizes cleanly to supply-chain triage.
+Authoritative ruleset: `CLAUDE.md` §Security Protocols.
+
+When an unexpected build, install, or runtime failure shows up
+during an active npm-worm window, do not start at the
+hardest-to-inspect layer (the binary in `node_modules/`). The layer
+order:
+
+| Layer | Inspect with | Touch this layer when |
+|---|---|---|
+| `package.json` diff | `git diff package.json` | Always first — did anyone add a new top-level dep? |
+| `package-lock.json` diff | `git diff package-lock.json` | After layer 1 — what got pulled in or bumped? |
+| `npm audit` output | `npm audit --json` | After layer 2 — does the registry agree the new tree is clean? |
+| `npm view <pkg> time / maintainers` | shell | When a specific dep is suspect — was it published in the last 72h? Did its maintainer set change? |
+| Reading installed source | `ls node_modules/<pkg>/`, read `postinstall` | Only after layers 1–4 implicate a specific package |
+
+The investigative cost goes up an order of magnitude per layer. A
+5-line script over `library.json` would have found the 4550/4542
+discrepancy in 60 seconds; a 5-line look at `git diff package-lock.json`
+will find most "this package got compromised" cases just as fast,
+without ever opening a hex dump of a transitively-installed module.

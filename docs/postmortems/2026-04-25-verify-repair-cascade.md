@@ -259,3 +259,26 @@ The test infrastructure isn't set up yet; this is a P1 follow-up.
   available (audioFingerprint, hash, ID), use it instead of the hint.
 - "Verify and repair" is a polite-sounding name for "delete things based
   on heuristics." That's a category of feature this app should never have.
+
+---
+
+## Security note (added 2026-05-12)
+
+The same principle that resolved this cascade — **destructive
+operations must gate on identity, not on fragile text comparison** —
+generalizes directly to supply-chain defense. The npm parallels:
+
+- **Identity over text in the lockfile.** Dep resolution must gate on
+  the lockfile's integrity hash (`integrity: "sha512-..."`), not on
+  package name + version range. Hash mismatch = treat as compromised,
+  not "probably the same thing." `npm ci` enforces this; `npm install`
+  doesn't always. See `CLAUDE.md` §Security Protocols.
+- **Twin discovery applies to security advisories too.** When a CVE
+  lands for a package, grep `package-lock.json` for *every* path that
+  resolves to it (direct + transitive). Fixing the direct dep and
+  shipping is the same unforced error as fixing one `normalize()`
+  twin and shipping.
+- **Sweep before ship extends to `npm audit`.** The "edit → grep →
+  reread → build → install" cycle gains a step during active npm
+  worm windows: `npm audit && git diff package-lock.json` before the
+  build, every time.

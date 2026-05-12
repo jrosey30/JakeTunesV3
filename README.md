@@ -99,6 +99,42 @@ core/
 - **ffmpeg must be installed manually** (see Requirements). macOS has `afconvert` built in; Windows needs ffmpeg on PATH for CD ripping to work.
 - **Windows is tested less thoroughly than macOS** — if something breaks, please report it.
 
+## Security
+
+JakeTunes pulls hundreds of npm and pip packages at install time, so
+its security posture is mostly a **supply-chain** posture. The full
+rules live in [`CLAUDE.md`](./CLAUDE.md#security-protocols--supply-chain-defense);
+the short version every contributor needs to know:
+
+- **Install with the lockfile, not without it.** `npm ci` for clean
+  installs. `npm install` only when a dep is being added or bumped,
+  and the resulting `package-lock.json` diff is reviewed line-by-line
+  before commit.
+- **Treat fresh package versions as suspicious.** Before adding any
+  new top-level dep, run `npm view <pkg> time` and `npm view <pkg>
+  maintainers`. Versions < 72 hours old on long-stable packages, or
+  newly-added maintainers on popular packages, are the canonical
+  worm-takeover signatures — wait it out or pin to the prior version.
+- **Audit postinstall scripts.** First install of any new dep:
+  `npm install --ignore-scripts`. Read the `postinstall` /
+  `preinstall` / `install` scripts in the package's `package.json`
+  before re-running with scripts enabled.
+- **Never commit secrets.** `.env` is gitignored. Anthropic /
+  ElevenLabs / Discogs keys go in `.env` only — never in code,
+  comments, logs, test fixtures, or commit messages. The packaged
+  `.app` / `.exe` does not bundle `.env`; each user provides their
+  own.
+- **Run `npm audit` before any release build.** Critical / high
+  CVEs block the build unless explicitly waived with a one-sentence
+  rationale.
+- **During an active npm worm incident, freeze the lockfile.** No
+  fresh `npm install` against the public registry until it's
+  verified clean; build off the committed lockfile in the meantime.
+
+If you suspect a key may have been exposed to a compromised
+environment (dev machine, CI runner, shared workstation), rotate it
+immediately. Don't wait.
+
 ## License
 
 MIT — see [`LICENSE`](./LICENSE).

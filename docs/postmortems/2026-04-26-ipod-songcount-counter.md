@@ -322,3 +322,34 @@ Run *in this order* on a freshly-mounted iPod, with the 4.0 build:
 > fixes worked. They were derived from inspection, not measurement.
 > Step 1 above is the first measurement.
 
+---
+
+## Security note (added 2026-05-12)
+
+Authoritative ruleset: `CLAUDE.md` §Security Protocols.
+
+The mhit-writer fixes (commits `b6a17e7`, `f5d8ad0`, `c0db845`)
+landed in 4.0.0 and were verified against the round-trip harness
+(`core/tests/test_db_roundtrip.py`). That harness — which locks in
+the exact set of mhit header offsets the writer is allowed to touch —
+also doubles as a supply-chain canary: if a future Python dep update
+silently changes `struct.pack_into` semantics, byte ordering, or
+the behavior of `bytearray` slicing, the harness fails loudly before
+a packaged build can ship a corrupted iTunesDB to a user's iPod.
+
+Apply the same defensive posture when bumping `requirements.txt`:
+
+- Pin Python deps to exact versions (`==`). No `>=` ranges.
+- Re-run the round-trip harness on every Python dep bump, not just
+  app-code changes. A `mutagen` or `numpy` minor bump that quietly
+  changes byte handling is exactly the failure class the harness
+  exists to catch.
+- If a Python package's latest release is < 72h old, hold the bump
+  — same rule as npm.
+- The persistent_dbid (commit `c0db845`) is derived from
+  `SHA1(audioFingerprint | path)[:8]`. That's identity-based by
+  design and not subject to dependency drift — but if the
+  fingerprint hash function itself is ever upgraded (SHA1 → BLAKE2,
+  etc.), all existing iPod databases will renumber. Treat that
+  rev-bump as a destructive op per `CLAUDE.md` §Code Hygiene.
+

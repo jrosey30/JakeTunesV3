@@ -6,6 +6,35 @@
 
 ---
 
+## Security baseline (applies to every version in this changelog)
+
+Authoritative ruleset: [`CLAUDE.md` §Security Protocols](../CLAUDE.md#security-protocols--supply-chain-defense).
+Every patch listed below was built and shipped under these rules — and
+any future patch added here must continue to honor them.
+
+- Every dep bump references its `package-lock.json` diff in the commit.
+  Builds run `npm ci`, not `npm install`.
+- No version listed here introduces a dep whose latest published version
+  was less than 72h old at the time of the add, and no version
+  introduces a dep that runs install scripts without those scripts being
+  read first.
+- No version listed here ships any API key, signing credential, or
+  third-party token in source. `.env` is gitignored; the packaged
+  artifact does not bundle `.env`.
+- All six external integrations introduced in 4.3.0 (OpenWeatherMap,
+  Last.fm, RSS, Discogs, Wikidata, Cover Art Archive) communicate over
+  `https://` only.
+- During any active npm worm-class incident, the lockfile is frozen and
+  no new `npm install` runs against the public registry until it's
+  verified clean. A frozen-lockfile window does **not** mean the app
+  stops shipping — it means new patches build from the committed
+  lockfile until the registry is safe again.
+
+If a security-relevant fix lands as a future changelog entry, prefix the
+"Theme" cell with **[SEC]** so it's grep-able from the index.
+
+---
+
 ## 4.0 line — foundation hardening
 
 The 4.0 series was about getting playback / sync / metadata bulletproof before any "fun" features. The first half is sync-engine fixes, the second half is the playback-pipeline instrumentation work that exposed and fixed the resource fights between Airfoil, audio analysis, and the renderer.

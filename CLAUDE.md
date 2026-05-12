@@ -192,6 +192,121 @@ and search. Be surgical when editing it.
 
 ---
 
+## Security Protocols — Supply Chain Defense
+
+Active npm supply chain attacks (worm-class compromises that steal env
+vars and self-propagate through stolen maintainer credentials) make
+the rules below non-negotiable. Each one stops a real, observed attack
+vector. Strict — but no ceremony that doesn't catch a real risk.
+
+### Dependencies (npm / pip)
+
+- **Lockfile is law.** `package-lock.json` is committed with every dep
+  change. CI and build use `npm ci`, never `npm install` — `npm install`
+  can mutate the resolved tree and pull a fresh malicious version even
+  with a lockfile on disk. Same rule for Python: pin everything in
+  `requirements.txt` to exact versions (`==`, not `>=`).
+- **Adding a new top-level dep requires three checks, in order:**
+  1. `npm view <pkg> time` — reject if the latest version is < 72
+     hours old. Fresh publishes on long-stable packages are the
+     canonical worm signature. Wait it out, or pin to the prior
+     version.
+  2. `npm view <pkg> maintainers` — confirm the maintainer set looks
+     stable. A new maintainer added in the last week on a popular
+     package is a takeover signal.
+  3. Read the package's `package.json` for `postinstall`,
+     `preinstall`, and `install` scripts. Default to
+     `npm install --ignore-scripts` for the first install, then read
+     any scripts before re-enabling. Same treatment for any
+     transitive dep flagged by audit.
+- **Justify every dep add in the commit message.** "Needed for X
+  feature" is enough. An unjustified `package.json` addition is
+  rejected at review.
+- **No `npm install -g` from automation.** Global installs escape
+  the lockfile entirely.
+- **`npm audit` runs before every release build.** Critical / high
+  CVEs block the build unless explicitly waived with a one-sentence
+  rationale in the commit.
+- **Lockfile diffs get read line-by-line** when a dep is added or
+  bumped. Unexpected transitive additions are the worm's calling
+  card.
+
+### Secrets
+
+- Every API key, token, and signing credential lives in `.env`.
+  `.env` is gitignored. `.env.example` carries placeholder values only.
+- Before every commit, scan staged content for accidental leakage:
+  ```bash
+  git diff --staged | grep -Ei \
+    '(sk-[a-z0-9_-]{20,}|api[_-]?key|bearer |password|secret|token)' \
+    && echo "POSSIBLE SECRET — investigate before committing"
+  ```
+  A hit doesn't always mean a real leak (could be a variable name),
+  but every hit is reviewed by eye. Never bypass on autopilot.
+- No secrets in code, comments, test fixtures, log lines, telemetry,
+  or error messages. If a Claude / ElevenLabs / Discogs / GitHub key
+  ever shows up in a stack trace or log — P0: redact in source,
+  rotate the key, audit recent git history for the same pattern.
+- The packaged `.app` / `.exe` does **not** bundle `.env`. Each user
+  supplies their own keys in their own userData directory.
+
+### Build / runtime hardening
+
+- Electron renderer must keep `contextIsolation: true`,
+  `nodeIntegration: false`, `sandbox: true`. Preload exposes a
+  typed, narrow API surface via `contextBridge`. No raw
+  `ipcRenderer` reachable from renderer.
+- The electron-builder code-signing identity is on hardware-key or
+  TOTP 2FA. The signing keychain stays on the developer machine —
+  never uploaded to CI, never committed.
+- `npm run dist` must not require network access beyond the initial
+  `npm ci`. If a build step makes an outbound HTTP call during the
+  packaging phase, that is a red flag — investigate the offending
+  postinstall before shipping the DMG.
+- Python helper scripts in `core/` run as subprocesses with explicit
+  argv arrays. Never pass user-controlled strings to `shell=True`.
+  Existing code follows this — don't regress.
+- External HTTP callers (MusicBrainz, Last.fm, Discogs, Pitchfork
+  RSS, ElevenLabs, Anthropic, OpenWeatherMap, Cover Art Archive) go
+  through `https://` URLs only. No `http://` to a third party,
+  ever, even in dev.
+
+### Incident response
+
+- When an npm advisory lands for a package in `package-lock.json`:
+  1. `npm ls <pkg>` — confirm presence and dependency depth.
+  2. Direct dep: bump to the patched version, regen lockfile,
+     rebuild, verify locally before tagging.
+  3. Transitive dep: `npm audit fix`, or force the patched version
+     via the `overrides` block in `package.json`.
+  4. No patch yet: pin to the last known-good prior version via
+     `overrides`; track upstream for the fix.
+- **During active worm-class incident windows, the lockfile is
+  frozen.** No new `npm install` runs against the public registry
+  until it is verified clean. Existing builds continue from the
+  committed lockfile.
+- Any API key that may have touched a compromised build environment
+  (the dev machine, CI, a shared workstation) is rotated
+  immediately, not "soon." Assume exfil; treat as burned.
+
+### Anti-cargo-cult (what we explicitly DO NOT do)
+
+These would feel security-flavored but cost more than they're worth
+on a single-developer Electron project. Not adopted unless
+circumstances change:
+
+- Vendoring `node_modules` into the repo (lockfile + `npm ci` is the
+  right primitive).
+- Running a private registry mirror (introduces its own attack
+  surface).
+- Manual review gating on every install (kills velocity without
+  catching anything `npm view time` + lockfile diff doesn't already
+  catch).
+- Air-gapping the build (Electron + native deps make this
+  prohibitive, with no proportionate gain).
+
+---
+
 ## Out of Scope (current phase)
 - AirPlay auto-detection via Bonjour/mDNS
 - Intel Mac universal binary testing
