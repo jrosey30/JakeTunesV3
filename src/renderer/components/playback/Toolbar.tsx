@@ -8,6 +8,7 @@ import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
+import { setNotice } from '../../activity'
 
 function QueueIcon() {
   return (
@@ -1000,6 +1001,109 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // Check if a non-builtin device is active (for icon highlight)
   const isExternalOutput = audioDevices.length > 0 && defaultDeviceId != null &&
     audioDevices.find(d => d.id === defaultDeviceId)?.transport !== 'builtin'
+
+  // ── 4.4.15: output-device disconnect UX ──────────────────────────────
+  // Three layers of feedback when the active AirPlay/Bluetooth/external
+  // device drops mid-playback:
+  //
+  //   (a) Poll the device list every 5 sec while playing to detect when
+  //       the active external device disappears. Notify via the existing
+  //       activity-store notice (LCD-pill mode 4 from 4.4.12).
+  //   (b) On the next track start, if the previously-active device is
+  //       back in the list, auto-switch to it. Cooldown per device id
+  //       to avoid reconnect loops on a flaky device.
+  //   (c) When the device drops, macOS Core Audio reroutes to internal
+  //       speakers automatically — surface that explicitly so the user
+  //       always knows where audio is going.
+  //
+  // Device identity = stable numeric id from the audio helper (NOT name
+  // — "Living Room" could be two different AirPlay receivers).
+  //
+  // Out of scope: Bonjour/mDNS auto-discovery, cross-launch persistence
+  // of preferred device.
+  const lastExternalDeviceRef = useRef<{ id: number; name: string } | null>(null)
+  // Per-device cooldown: deviceId -> last-attempt timestamp (ms). Skip
+  // reconnect if attempted within the last 30 sec; reset on age.
+  const reconnectAttemptedRef = useRef<Map<number, number>>(new Map())
+
+  // Track which external device the user is currently using. Whenever
+  // a non-builtin device becomes default, remember it — that's our
+  // reconnect target if it later disappears. Manual switch to builtin
+  // clears the ref (user has expressed intent to stay on internal).
+  useEffect(() => {
+    if (defaultDeviceId == null) return
+    const dev = audioDevices.find(d => d.id === defaultDeviceId)
+    if (!dev) return
+    if (dev.transport === 'builtin') {
+      lastExternalDeviceRef.current = null
+      return
+    }
+    lastExternalDeviceRef.current = { id: dev.id, name: dev.name }
+  }, [audioDevices, defaultDeviceId])
+
+  // Poll the device list every 5 sec while playing to external. Skip
+  // when paused (no point), when on builtin (only external can drop),
+  // or when the airplay menu is open (existing refreshDevices covers
+  // that window).
+  useEffect(() => {
+    if (!pb.isPlaying || !isExternalOutput || airplayOpen) return
+    const tick = async () => {
+      try {
+        const result = await window.electronAPI.listAudioDevices()
+        if (!result.ok) return
+        const last = lastExternalDeviceRef.current
+        const stillPresent = last ? result.devices.find(d => d.id === last.id) : null
+        // Update local state from the poll regardless of disconnect.
+        setAudioDevices(result.devices)
+        const def = result.devices.find(d => d.isDefault)
+        setDefaultDeviceId(def ? def.id : null)
+        // Detect disconnect: the previously-active external device is
+        // no longer in the list (Core Audio has rerouted to builtin).
+        if (last && !stillPresent) {
+          setNotice(`Output → internal speakers (${last.name} unavailable)`, {
+            kind: 'info',
+            durationMs: 6000,
+          })
+        }
+      } catch (e) {
+        console.warn('[AudioDevice] poll failed:', e)
+      }
+    }
+    const id = setInterval(tick, 5000)
+    return () => clearInterval(id)
+  }, [pb.isPlaying, isExternalOutput, airplayOpen])
+
+  // On every track start, attempt to reconnect to the previously-active
+  // external device if it's back in the list. One attempt per device id
+  // per 30-sec window — prevents reconnect-loop on a flaky receiver.
+  useEffect(() => {
+    if (!pb.nowPlaying?.id) return
+    const last = lastExternalDeviceRef.current
+    if (!last) return
+    // If we're already on this device, nothing to do.
+    if (defaultDeviceId === last.id) return
+    // Cooldown check.
+    const attemptedAt = reconnectAttemptedRef.current.get(last.id)
+    if (attemptedAt && Date.now() - attemptedAt < 30_000) return
+    ;(async () => {
+      try {
+        const list = await window.electronAPI.listAudioDevices()
+        if (!list.ok) return
+        const target = list.devices.find(d => d.id === last.id)
+        if (!target) return  // device still gone — nothing to reconnect to
+        if (target.isDefault) return  // already on it (race with system reconnect)
+        reconnectAttemptedRef.current.set(last.id, Date.now())
+        const switchResult = await window.electronAPI.setAudioDevice(last.id)
+        if (!switchResult.ok) return
+        setNotice(`Reconnected to ${last.name}`, { kind: 'info', durationMs: 4000 })
+        // Refresh local state so the AirPlay menu reflects reality next open.
+        setAudioDevices(list.devices.map(d => ({ ...d, isDefault: d.id === last.id })))
+        setDefaultDeviceId(last.id)
+      } catch (e) {
+        console.warn('[AudioDevice] auto-reconnect failed:', e)
+      }
+    })()
+  }, [pb.nowPlaying?.id, defaultDeviceId])
 
   // ── DJ Mode (Spotify-style AI DJ) ──
   const [djModeActive, setDjModeActive] = useState(false)
