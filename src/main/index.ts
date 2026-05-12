@@ -938,6 +938,14 @@ ipcMain.handle('check-ipod-mounted', async () => {
 
 ipcMain.handle('eject-ipod', async () => {
   try {
+    // Probe disk if module-level state is stale. Other handlers
+    // (readIpodDatabase, check-ipod-mounted) already do this. Without
+    // the probe, eject silently refused any time state desynced from
+    // disk reality — e.g. after sleep/wake or a sync remount.
+    if (!detectedIpodMount) {
+      detectedIpodMount = await findIpodMount()
+      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
+    }
     if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
     await ejectVolume(detectedIpodMount)
     detectedIpodMount = null

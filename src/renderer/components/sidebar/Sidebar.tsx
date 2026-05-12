@@ -6,6 +6,7 @@ import AlbumArtPanel from './AlbumArtPanel'
 import ContextMenu from '../ContextMenu'
 import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId } from '../../types'
+import { setNotice } from '../../activity'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
   songs: <SongsIcon />,
@@ -325,7 +326,18 @@ export default function Sidebar() {
               >
                 <span className="sidebar-item-icon"><IpodIcon /></span>
                 <span className="sidebar-item-label">{ipodName}</span>
-                <button className="sidebar-eject-btn" title="Eject" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectIpod().then(() => window.dispatchEvent(new Event('jaketunes-ipod-ejected'))) }}><EjectIcon /></button>
+                <button className="sidebar-eject-btn" title="Eject" onClick={async (e) => {
+                  e.stopPropagation()
+                  const r = await window.electronAPI.ejectIpod()
+                  if (r.ok) {
+                    window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
+                  } else {
+                    // Common cause: a track from the iPod is currently playing,
+                    // so diskutil refuses with "Resource busy". User sees the
+                    // actual reason instead of the button silently doing nothing.
+                    setNotice(`Eject failed: ${r.error || 'unknown error'}`, { kind: 'error', durationMs: 6000 })
+                  }
+                }}><EjectIcon /></button>
               </li>
             )}
             {cdMounted && (
