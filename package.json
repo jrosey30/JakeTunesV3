@@ -1,7 +1,7 @@
 {
   "name": "JakeTunes",
   "productName": "JakeTunes",
-  "version": "4.4.13",
+  "version": "4.4.14",
   "description": "iTunes 8 replica — 2008 visuals, 2026 brain",
   "author": "Jacob Rosenbaum",
   "main": "out/main/index.js",
@@ -87,6 +87,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "chokidar": "^3.6.0",
     "dotenv": "^17.4.2",
     "electron-updater": "^6.8.3",
     "howler": "^2.2.4",

@@ -323,6 +323,29 @@ export function attachClipToBroadcast(audio: HTMLAudioElement): void {
   }
 }
 
+/** 4.4.14: detach a clip from the broadcast chain mid-play.
+ *  attachClipToBroadcast / attachAnnouncerToBroadcast register
+ *  'ended'/'error' listeners that disconnect on natural end. If a
+ *  caller cancels mid-play (DJ Mode cancel, manual track skip during
+ *  DJ TTS), the audio is paused but 'ended' does NOT fire — the source
+ *  node stays connected to preamp / broadcastFx, accumulating in the
+ *  graph over a session. Same Airfoil-rattle pattern as 4.4.6, just
+ *  for the cancel side. Call this BEFORE nulling out the audio ref
+ *  in any cancel path that pauses-and-discards a clip element. */
+export function detachClipFromBroadcast(audio: HTMLAudioElement | null): void {
+  if (!audio) return
+  const src = boundSources.get(audio)
+  if (!src) return
+  try { src.disconnect() } catch { /* already disconnected / ctx closed */ }
+  // Unlike detachHowlFromEq (which keeps the WeakMap entry because
+  // Howler reuses HTMLAudio elements from a pool), one-shot TTS clips
+  // are created fresh per utterance and never re-bound, so we delete
+  // the entry here. The WeakMap would GC it anyway when the audio
+  // element is collected; deleting eagerly just frees the source node
+  // reference now.
+  boundSources.delete(audio)
+}
+
 // ── 4.3.3: Announcer broadcast-FX chain ───────────────────────────────
 // A separate sub-chain for the [ANNOUNCER] voice so station-ID drops
 // sound like a real radio station ID instead of a TTS line. Heavy

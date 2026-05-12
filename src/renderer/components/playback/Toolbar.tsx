@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
-import { attachClipToBroadcast, attachAnnouncerToBroadcast, startRecording, stopRecording } from '../../audio/eq'
+import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
 import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } from '../../audio/stingers'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
@@ -180,8 +180,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   useEffect(() => {
     const handler = () => {
       djCancelledRef.current = true
+      // 4.4.14: invalidate any in-flight startDjSet run so a stale
+      // IPC response can't proceed after cancel.
+      djModeGenerationRef.current += 1
       setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
+        // 4.4.14: disconnect the broadcast source BEFORE nulling.
+        // pause() doesn't fire 'ended', so attachClipToBroadcast's
+        // cleanup never runs — the source node stays summed into
+        // preamp and accumulates over a session (4.4.6 rattle class).
+        detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
         setVolume(savedVolumeRef.current)
@@ -641,6 +649,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (djActive || autoDj) {
       djCancelledRef.current = true
       if (djAudioRef.current) {
+        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
+        detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
         setVolume(savedVolumeRef.current)
@@ -997,6 +1007,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djModeTheme, setDjModeTheme] = useState('')
   const djRecentIds = useRef<number[]>([])
   const djCancelledRef = useRef(false)
+  // 4.4.14: generation counter for startDjSet runs. Bumped on every
+  // cancel and at the start of every new run; in-flight awaits in
+  // startDjSet capture the generation at start and bail when it
+  // changes. Fixes the rapid-toggle race where toggling off→on within
+  // 500ms while musicmanDjSet/musicmanSpeak was in flight let the
+  // STALE response proceed to dispatch state changes (because the
+  // re-click reset djCancelledRef to false before the old IPC
+  // resolved). See docs/dj-mode-cancel-audit.md.
+  const djModeGenerationRef = useRef(0)
 
   // Broadcast DJ Mode state to sidebar button
   useEffect(() => {
@@ -1006,6 +1025,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   }, [djModeActive])
 
   const startDjSet = useCallback(async () => {
+    // 4.4.14: each run captures its own generation. Cancel bumps the
+    // global counter so a stale in-flight response can detect it's no
+    // longer the current run and bail without touching state.
+    const myGen = ++djModeGenerationRef.current
+    const isStale = () => djModeGenerationRef.current !== myGen
     setDjModeLoading(true)
     setDjActive(true)
     setDjLoading(true)
@@ -1019,8 +1043,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       }))
       const result = await window.electronAPI.musicmanDjSet(compact, djRecentIds.current)
 
-      // Bail out if DJ was cancelled while we were waiting for API
-      if (djCancelledRef.current) return
+      // Bail out if DJ was cancelled while we were waiting for API,
+      // or if a newer startDjSet run has superseded us (rapid toggle).
+      if (djCancelledRef.current || isStale()) return
 
       if (!result.ok || !result.trackIds || result.trackIds.length === 0) {
         console.error('[DJ Mode] Failed to get set:', result.error)
@@ -1056,8 +1081,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         // through Stephen's voice instead of Music Man's.
         const tts = await window.electronAPI.musicmanSpeak(result.intro, false, DJ_HANDS_VOICE_ID)
 
-        // Bail out if cancelled during TTS
-        if (djCancelledRef.current) return
+        // Bail out if cancelled during TTS, or superseded by a newer run.
+        if (djCancelledRef.current || isStale()) return
 
         setDjLoading(false)
         if (tts.ok && tts.audio) {
@@ -1089,8 +1114,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         setDjLoading(false)
       }
 
-      // Bail out if cancelled during intro playback
-      if (djCancelledRef.current) return
+      // Bail out if cancelled during intro playback, or superseded.
+      if (djCancelledRef.current || isStale()) return
 
       // Start playing the DJ set with auto-DJ transitions enabled
       setAutoDj(true)
@@ -1118,12 +1143,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (djModeActive) {
       // Stop DJ mode — kill everything immediately
       djCancelledRef.current = true
+      // 4.4.14: invalidate any in-flight startDjSet so a stale IPC
+      // response can't proceed (rapid off-then-on within 500ms).
+      djModeGenerationRef.current += 1
       setDjModeActive(false)
       setDjModeLoading(false)
       setDjModeTheme('')
       setAutoDj(false)
       setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
+        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
+        detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
       }
