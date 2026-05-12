@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -97,6 +98,8 @@ export default function SongsView() {
 
   const sorted = useSortedTracks(lib.tracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
   const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(sorted.length, 19)
+  // 4.4.13: restore scroll position when the user returns to Songs.
+  useScrollPersistence('songs', containerRef)
 
   const handleSort = useCallback((col: string) => {
     if (col === 'playing' || col === 'time') return

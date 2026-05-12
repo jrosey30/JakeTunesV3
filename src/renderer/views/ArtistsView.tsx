@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useCynthia } from '../context/CynthiaContext'
@@ -203,6 +204,7 @@ export default function ArtistsView() {
   // the new track, and scroll the artist row into view. Same idle-gate
   // pattern as SongsView.
   const viewRootRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('artists', viewRootRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000

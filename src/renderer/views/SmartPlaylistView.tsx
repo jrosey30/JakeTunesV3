@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast } from '../audio/eq'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
@@ -452,6 +453,8 @@ export default function SmartPlaylistView() {
   // scroll the now-playing row into view. Programmatic scrolls don't
   // count as user activity (200ms grace window after our scrollTop write).
   const songsBodyRef = useRef<HTMLDivElement | null>(null)
+  // 4.4.13: per-smart-playlist scroll persistence within the session.
+  useScrollPersistence(`smart-playlist:${libState.activeSmartPlaylist}`, songsBodyRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000

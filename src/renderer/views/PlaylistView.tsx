@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useCynthia } from '../context/CynthiaContext'
@@ -68,6 +69,9 @@ export default function PlaylistView() {
   // Auto-follow now-playing (4.0). Mirror of SongsView pattern; suppressed
   // when user has scrolled in the last 5s.
   const songsBodyRef = useRef<HTMLDivElement | null>(null)
+  // 4.4.13: per-playlist scroll persistence. Switching A→B→A restores A's
+  // scroll position from where the user left it.
+  useScrollPersistence(`playlist:${state.activePlaylistId}`, songsBodyRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000

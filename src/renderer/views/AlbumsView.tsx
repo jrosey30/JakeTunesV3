@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -289,6 +290,7 @@ export default function AlbumsView() {
   // click/scroll/wheel inside the view; programmatic scrolls within
   // 200ms of isAutoScrollAtRef are not counted as activity.
   const viewRootRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('albums', viewRootRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
