@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
+import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
 import AlbumArtPanel from './AlbumArtPanel'
@@ -184,6 +185,7 @@ function CdIcon() {
 
 export default function Sidebar() {
   const { state, dispatch } = useLibrary()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const [ipodMounted, setIpodMounted] = useState(false)
   const [ipodName, setIpodName] = useState('iPod')
   const [cdMounted, setCdMounted] = useState(false)
@@ -328,13 +330,20 @@ export default function Sidebar() {
                 <span className="sidebar-item-label">{ipodName}</span>
                 <button className="sidebar-eject-btn" title="Eject" onClick={async (e) => {
                   e.stopPropagation()
+                  // If we're playing a track from the iPod, the file handle
+                  // would prevent diskutil eject from succeeding. STOP unloads
+                  // the Howl which closes the ipod-audio:// streaming read.
+                  // 500ms is comfortably more than the unload takes locally
+                  // and shorter than the user's perceptible delay budget.
+                  const playingFromIpod = pb.isPlaying && pb.nowPlaying?.path?.startsWith('iPod_Control:')
+                  if (playingFromIpod) {
+                    pbDispatch({ type: 'STOP' })
+                    await new Promise((resolve) => setTimeout(resolve, 500))
+                  }
                   const r = await window.electronAPI.ejectIpod()
                   if (r.ok) {
                     window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
                   } else {
-                    // Common cause: a track from the iPod is currently playing,
-                    // so diskutil refuses with "Resource busy". User sees the
-                    // actual reason instead of the button silently doing nothing.
                     setNotice(`Eject failed: ${r.error || 'unknown error'}`, { kind: 'error', durationMs: 6000 })
                   }
                 }}><EjectIcon /></button>
