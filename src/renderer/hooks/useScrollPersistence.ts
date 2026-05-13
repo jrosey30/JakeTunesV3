@@ -34,7 +34,12 @@
 
 import { useEffect, useLayoutEffect } from 'react'
 
-const scrollCache = new Map<string, number>()
+interface ScrollPosition {
+  top: number
+  left: number
+}
+
+const scrollCache = new Map<string, ScrollPosition>()
 
 /**
  * 4.4.22: read the cached scrollTop for a key without subscribing.
@@ -49,26 +54,41 @@ const scrollCache = new Map<string, number>()
  * element — both share the same cache map.
  */
 export function getSavedScrollTop(key: string): number {
-  return scrollCache.get(key) ?? 0
+  return scrollCache.get(key)?.top ?? 0
+}
+
+/** 4.4.23: same as getSavedScrollTop but for horizontal axis. Needed
+ *  for Home view's card rows where the meaningful scroll axis is X. */
+export function getSavedScrollLeft(key: string): number {
+  return scrollCache.get(key)?.left ?? 0
 }
 
 export function useScrollPersistence(
   key: string,
   containerRef: React.RefObject<HTMLElement | null>
 ): void {
-  // Restore BEFORE paint so the user never sees scrollTop=0 flash.
+  // Restore BEFORE paint so the user never sees scroll-position-0 flash.
+  // 4.4.23: now persists BOTH axes — Home view's `.home-card-row` scrolls
+  // horizontally, AlbumsView's grid scrolls vertically, both shapes use
+  // this hook. Setting scrollLeft on a non-horizontal scroller is a
+  // harmless no-op (clamps to 0).
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
     const saved = scrollCache.get(key)
-    if (saved !== undefined) el.scrollTop = saved
+    if (saved !== undefined) {
+      el.scrollTop = saved.top
+      el.scrollLeft = saved.left
+    }
   }, [key])
 
-  // Track every scroll into the cache (passive, doesn't block paint).
+  // Track every scroll (passive — doesn't block paint).
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const handler = () => { scrollCache.set(key, el.scrollTop) }
+    const handler = () => {
+      scrollCache.set(key, { top: el.scrollTop, left: el.scrollLeft })
+    }
     el.addEventListener('scroll', handler, { passive: true })
     return () => el.removeEventListener('scroll', handler)
   }, [key])

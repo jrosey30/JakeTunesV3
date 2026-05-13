@@ -55,9 +55,20 @@ export default function HomeView() {
   const { playTrack } = useAudio()
 
   // 4.4.21 polish: persist scroll position across view switches (4.4.13 hook).
-  // The scrollable element is .home-view itself.
+  // The scrollable element is .home-view itself (vertical), but the
+  // *important* scroll on this view is the HORIZONTAL scroll inside each
+  // card row — 4.4.23 widens useScrollPersistence to handle both axes,
+  // and we wire one hook call per scrollable element below.
   const rootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home', rootRef)
+
+  // 4.4.23: per-row horizontal scroll persistence. Scrolling right
+  // through Recently Added then bouncing to Songs and back used to
+  // reset both rows to leftmost; not anymore.
+  const recentRowRef = useRef<HTMLDivElement>(null)
+  const artistsRowRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('home-row-recent', recentRowRef)
+  useScrollPersistence('home-row-artists', artistsRowRef)
 
   // 4.4.21 polish: brief flash on the clicked card so the click feels
   // acknowledged. Identified by album key; cleared after 380ms.
@@ -190,7 +201,7 @@ export default function HomeView() {
         {recentAlbums.length === 0 ? (
           <div className="home-empty">No tracks imported yet. Drop a folder onto JakeTunes to start.</div>
         ) : (
-          <div className="home-card-row" role="list">
+          <div className="home-card-row" role="list" ref={recentRowRef}>
             {recentAlbums.map((card) => {
               const hash = artHashForKey(card.key)
               const flashing = flashedKey === card.key
@@ -247,7 +258,7 @@ export default function HomeView() {
               See All
             </button>
           </div>
-          <div className="home-card-row home-card-row--artists" role="list">
+          <div className="home-card-row home-card-row--artists" role="list" ref={artistsRowRef}>
             {topArtists.map((card) => {
               const hash = artHashForKey(card.firstAlbumKey)
               return (
