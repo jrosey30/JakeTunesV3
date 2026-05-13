@@ -45,16 +45,25 @@ interface UseElasticOverscrollOptions {
   axis?: 'x' | 'y'
   /**
    * How much of each wheel delta to apply as visual translation.
-   * 0 = no effect, 1 = 1:1 (very loose). Default 0.35 — feels like
-   * macOS Music app's horizontal rows.
+   * 0 = no effect, 1 = 1:1 (very loose). Default 0.18.
+   *
+   * 4.4.26: tightened from 0.35 → 0.18. The original 0.35 felt "sooooo
+   * stretchy" (Jake) — too generous on each wheel tick. 0.18 reads as a
+   * brief acknowledgment of the boundary rather than a stretch effect
+   * you'd photograph. Matches macOS Music app's subtle horizontal rows.
    */
   damping?: number
-  /** Spring-back animation duration in ms. Default 360 (matches Music). */
+  /** Spring-back animation duration in ms. Default 320. */
   springMs?: number
   /**
-   * Maximum overscroll offset in px. Default: 40% of the container's
-   * relevant dimension. Lower values feel tighter; higher feels more
-   * elastic.
+   * Maximum overscroll offset in px. Default: 12% of the container's
+   * relevant dimension.
+   *
+   * 4.4.26: tightened from 40% → 12%. 40% allowed a flick to pull the
+   * content nearly halfway off-screen, which is much more than what
+   * Apple ships. 12% is roughly "an album-cover's worth of stretch"
+   * on a typical 800px tall container — visible enough to register,
+   * short enough not to read as a bug.
    */
   cap?: number
 }
@@ -63,7 +72,7 @@ export function useElasticOverscroll(
   ref: React.RefObject<HTMLElement | null>,
   options: UseElasticOverscrollOptions = {},
 ): void {
-  const { axis = 'y', damping = 0.35, springMs = 360, cap } = options
+  const { axis = 'y', damping = 0.18, springMs = 320, cap } = options
 
   useEffect(() => {
     const el = ref.current
@@ -132,13 +141,19 @@ export function useElasticOverscroll(
       target.style.transition = 'none'
 
       const dimension = axis === 'x' ? el.clientWidth : el.clientHeight
-      const maxOver = cap ?? dimension * 0.4
+      const maxOver = cap ?? dimension * 0.12
 
       // Logarithmic resistance: the further out you push, the more of
       // each delta is absorbed. Matches iOS feel where the last 10% of
       // overscroll requires a lot more force than the first 10%.
+      //
+      // 4.4.26: was `1 - resistance * 0.7` — even at the cap, 30% of
+      // each wheel tick still got through, which let a fast flick punch
+      // visibly past the cap. `1 - resistance` fully tapers to zero at
+      // the cap, so the stretch can't overshoot regardless of flick
+      // speed.
       const resistance = Math.min(1, Math.abs(overscroll) / maxOver)
-      const effectiveDelta = delta * damping * (1 - resistance * 0.7)
+      const effectiveDelta = delta * damping * (1 - resistance)
 
       overscroll -= effectiveDelta
       // Clamp to ±maxOver.
