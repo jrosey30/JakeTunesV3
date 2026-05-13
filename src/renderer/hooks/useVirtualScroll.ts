@@ -9,9 +9,23 @@ interface VirtualScrollResult {
   onScroll: () => void
 }
 
-export function useVirtualScroll(itemCount: number, itemHeight: number, buffer = 10): VirtualScrollResult {
+export function useVirtualScroll(
+  itemCount: number,
+  itemHeight: number,
+  buffer = 10,
+  /**
+   * 4.4.22: optional seed for the internal scrollTop state. Pair with
+   * `useScrollPersistence(key, containerRef)` on the same element and
+   * pass `getSavedScrollTop(key)` here so the first render computes
+   * the correct startIndex/endIndex from the persisted position.
+   * Without this, the DOM scrolls to the saved offset (via
+   * useScrollPersistence's useLayoutEffect) but the virtual viewport
+   * shows blank space until a scroll event propagates back into React.
+   */
+  initialScrollTop = 0,
+): VirtualScrollResult {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [scrollTop, setScrollTop] = useState(0)
+  const [scrollTop, setScrollTop] = useState(initialScrollTop)
   const [containerHeight, setContainerHeight] = useState(600)
 
   useEffect(() => {

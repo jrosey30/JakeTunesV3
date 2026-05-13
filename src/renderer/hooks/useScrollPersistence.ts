@@ -36,6 +36,22 @@ import { useEffect, useLayoutEffect } from 'react'
 
 const scrollCache = new Map<string, number>()
 
+/**
+ * 4.4.22: read the cached scrollTop for a key without subscribing.
+ * Lets virtualized lists seed their internal scroll state on mount
+ * BEFORE first render — without this, the DOM scrolls to the saved
+ * position via useScrollPersistence's useLayoutEffect, but the
+ * virtual viewport still has internal scrollTop=0 and renders rows
+ * from the top; the user sees blank space at the saved scroll
+ * position until a real scroll event propagates back into React.
+ *
+ * Pair with useScrollPersistence(key, ref) on the same scrollable
+ * element — both share the same cache map.
+ */
+export function getSavedScrollTop(key: string): number {
+  return scrollCache.get(key) ?? 0
+}
+
 export function useScrollPersistence(
   key: string,
   containerRef: React.RefObject<HTMLElement | null>

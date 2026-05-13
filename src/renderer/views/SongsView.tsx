@@ -3,7 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
-import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -97,8 +97,13 @@ export default function SongsView() {
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
 
   const sorted = useSortedTracks(lib.tracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
-  const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(sorted.length, 19)
-  // 4.4.13: restore scroll position when the user returns to Songs.
+  // 4.4.22: seed useVirtualScroll's internal scrollTop from the persisted
+  // value so the FIRST render computes startIndex/endIndex correctly.
+  // Pair with useScrollPersistence(key, containerRef) which then keeps
+  // both DOM scrollTop and the cache in sync.
+  const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(
+    sorted.length, 19, 10, getSavedScrollTop('songs'),
+  )
   useScrollPersistence('songs', containerRef)
 
   const handleSort = useCallback((col: string) => {
