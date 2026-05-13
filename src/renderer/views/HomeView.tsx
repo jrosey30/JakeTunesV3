@@ -22,9 +22,10 @@
  * separate state.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useRef, useState, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import type { Track } from '../types'
 import '../styles/home.css'
 
@@ -52,6 +53,21 @@ interface ArtistCard {
 export default function HomeView() {
   const { state: lib, dispatch } = useLibrary()
   const { playTrack } = useAudio()
+
+  // 4.4.21 polish: persist scroll position across view switches (4.4.13 hook).
+  // The scrollable element is .home-view itself.
+  const rootRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('home', rootRef)
+
+  // 4.4.21 polish: brief flash on the clicked card so the click feels
+  // acknowledged. Identified by album key; cleared after 380ms.
+  const [flashedKey, setFlashedKey] = useState<string | null>(null)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flashCard = useCallback((key: string) => {
+    setFlashedKey(key)
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    flashTimerRef.current = setTimeout(() => setFlashedKey(null), 380)
+  }, [])
 
   // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
   const recentAlbums = useMemo((): AlbumCard[] => {
@@ -142,11 +158,12 @@ export default function HomeView() {
 
   const playAlbum = (card: AlbumCard) => {
     if (card.tracks.length === 0) return
+    flashCard(card.key)
     playTrack(card.tracks[0], card.tracks, 0)
   }
 
   return (
-    <div className="home-view">
+    <div className="home-view" ref={rootRef}>
       <div className="home-header">
         <h1 className="home-title">JakeTunes</h1>
         <p className="home-subtitle">
@@ -176,21 +193,27 @@ export default function HomeView() {
           <div className="home-card-row" role="list">
             {recentAlbums.map((card) => {
               const hash = artHashForKey(card.key)
+              const flashing = flashedKey === card.key
               return (
                 <div
                   key={card.key}
-                  className="home-album-card"
+                  className={`home-album-card${flashing ? ' is-playing-flash' : ''}`}
                   role="listitem"
                   onClick={() => playAlbum(card)}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     dispatch({ type: 'SET_VIEW', view: 'albums' })
                   }}
-                  title={`${card.artist} — ${card.album}\nDouble-click or single-click plays. Right-click jumps to Albums view.`}
+                  title={`${card.artist} — ${card.album}\nClick plays. Right-click jumps to Albums view.`}
                 >
                   <div className="home-album-art">
                     {hash ? (
-                      <img src={`album-art://${hash}.jpg`} alt={card.album} draggable={false} />
+                      <img
+                        src={`album-art://${hash}.jpg`}
+                        alt={card.album}
+                        draggable={false}
+                        onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+                      />
                     ) : (
                       <div className="home-album-art-placeholder">
                         <svg width="32" height="32" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
@@ -237,7 +260,12 @@ export default function HomeView() {
                 >
                   <div className="home-artist-art">
                     {hash ? (
-                      <img src={`album-art://${hash}.jpg`} alt={card.name} draggable={false} />
+                      <img
+                        src={`album-art://${hash}.jpg`}
+                        alt={card.name}
+                        draggable={false}
+                        onLoad={(e) => e.currentTarget.classList.add('home-artist-art-loaded')}
+                      />
                     ) : (
                       <div className="home-artist-art-placeholder">
                         {card.name.split(/\s+/).slice(0, 2).map(w => w.charAt(0).toUpperCase()).join('')}
