@@ -26,6 +26,7 @@ import { useMemo, useRef, useState, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useElasticOverscroll } from '../hooks/useElasticOverscroll'
 import type { Track } from '../types'
 import '../styles/home.css'
 
@@ -69,6 +70,13 @@ export default function HomeView() {
   const artistsRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-recent', recentRowRef)
   useScrollPersistence('home-row-artists', artistsRowRef)
+
+  // 4.4.25: iOS-style elastic rubber-band bounce when the user
+  // wheel-scrolls past the start/end of each card row. Horizontal axis.
+  useElasticOverscroll(recentRowRef, { axis: 'x' })
+  useElasticOverscroll(artistsRowRef, { axis: 'x' })
+  // Home root has vertical scroll (when content overflows the window).
+  useElasticOverscroll(rootRef, { axis: 'y' })
 
   // 4.4.21 polish: brief flash on the clicked card so the click feels
   // acknowledged. Identified by album key; cleared after 380ms.
