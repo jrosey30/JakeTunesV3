@@ -58,6 +58,10 @@
   overflow-x: auto;
   user-select: none;
   -webkit-user-select: none;
+  /* 4.4.35 smoother scroll: GPU layer for the virtualized list so
+     each scroll frame doesn't trigger a parent reflow. */
+  will-change: scroll-position;
+  overscroll-behavior: contain;
 }
 
 .songs-row {

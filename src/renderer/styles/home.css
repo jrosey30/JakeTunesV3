@@ -7,6 +7,11 @@
   overflow-y: auto;
   padding: 24px 0 32px 0;
   background: var(--main-bg, #ffffff);
+  /* 4.4.35 smoother scroll: hint the compositor that this element
+     is scrolled often, so it gets its own GPU layer and each scroll
+     frame doesn't repaint the page-level background or trigger
+     parent reflow. */
+  will-change: scroll-position;
 }
 
 /* 4.4.29: welcoming header — bigger title, subtle gradient backdrop,
@@ -281,6 +286,13 @@
   overflow-y: visible;            /* shadows aren't clipped vertically */
   scroll-padding: 28px;
   scrollbar-width: thin;          /* Firefox */
+  /* 4.4.35 smoother scroll: GPU-layer + contain horizontal overscroll
+     so a trackpad flick doesn't try to vertical-scroll the parent
+     mid-flick (that chain-handoff causes the visible "stutter").
+     Native macOS bounce still works because overscroll-behavior:
+     contain only blocks the chain, not the bounce itself. */
+  will-change: scroll-position;
+  overscroll-behavior-x: contain;
 }
 .home-card-row::-webkit-scrollbar {
   height: 6px;
@@ -664,9 +676,14 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   color: #fff;
-  background: rgba(0, 0, 0, 0.65);
+  /* 4.4.35: dropped `backdrop-filter: blur(4px)` — it forced the
+     browser to re-blur the pixels behind every visible badge on
+     every scroll frame, and with up to 20 upcoming cards in the row
+     plus another vertical scroll happening above, that's a real
+     hit. Solid background at higher opacity reads the same visually
+     and is essentially free to paint. */
+  background: rgba(0, 0, 0, 0.7);
   border-radius: 3px;
-  backdrop-filter: blur(4px);
 }
 
 /* ── 4.4.28: Notable Releases card (Pitchfork BNA, cover-led) ─────────── */

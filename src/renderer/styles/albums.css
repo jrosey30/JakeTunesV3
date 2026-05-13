@@ -3,6 +3,10 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  /* 4.4.35 smoother scroll: GPU layer + contain overscroll so a
+     trackpad flick doesn't chain to the parent. */
+  will-change: scroll-position;
+  overscroll-behavior: contain;
 }
 
 .albums-grid {
