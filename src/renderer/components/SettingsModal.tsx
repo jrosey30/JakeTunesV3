@@ -44,8 +44,18 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   const [tab, setTab] = useState<Tab>('Playback')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 4.4.13: resolved default path (~/Music2/_inbox) used as the placeholder
+  // for the inbox folder input. Comes from main since renderer doesn't
+  // know the user's homedir without a separate IPC.
+  const [defaultInboxPath, setDefaultInboxPath] = useState<string>('')
 
   useEffect(() => { setDraft(initial) }, [initial])
+
+  useEffect(() => {
+    window.electronAPI.getDefaultInboxPath?.().then(r => {
+      if (r?.ok && r.path) setDefaultInboxPath(r.path)
+    }).catch(() => { /* fall back to empty placeholder */ })
+  }, [])
 
   const handleSave = async () => {
     setSaving(true)
@@ -287,6 +297,46 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <p className="imp-help" style={{ marginTop: 10 }}>
                 Applied when you drag-drop or use Import. Existing tracks aren't re-encoded.
               </p>
+
+              {/* 4.4.13 — Inbox auto-import. Lets users point Qobuz (or any
+                  other downloader) at a folder and have JakeTunes pick up
+                  new files automatically, eliminating the manual drag step. */}
+              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.inbox.enabled}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    inbox: { ...draft.inbox, enabled: e.target.checked },
+                  })}
+                />
+                <span>Auto-import from inbox folder</span>
+              </label>
+
+              <div style={{ opacity: draft.inbox.enabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#3a3a3a', marginBottom: 4 }}>
+                  Inbox folder
+                </label>
+                <input
+                  type="text"
+                  value={draft.inbox.path}
+                  placeholder={defaultInboxPath || '~/Music2/_inbox'}
+                  disabled={!draft.inbox.enabled}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    inbox: { ...draft.inbox, path: e.target.value },
+                  })}
+                  style={{ width: '100%', padding: 6, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                />
+                <p className="imp-help" style={{ marginTop: 8 }}>
+                  Any audio file dropped here (or downloaded into it by Qobuz Downloader) gets
+                  imported automatically using your default format above. The original is deleted
+                  after a successful import — the iPod_Control copy is the canonical one. Leave
+                  blank to use {defaultInboxPath || '~/Music2/_inbox'}.
+                </p>
+              </div>
             </>
           )}
 

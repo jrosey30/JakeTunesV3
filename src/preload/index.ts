@@ -260,6 +260,41 @@ const electronAPI = {
     ipcRenderer.on('library-external-change', handler)
     return () => { ipcRenderer.removeListener('library-external-change', handler) }
   },
+  // 4.4.13 — Inbox auto-import. Main-side chokidar watches a folder
+  // (default ~/Music2/_inbox) and emits `inbox-files-detected` with a
+  // batched array of audio file paths whenever new files appear. App.tsx
+  // subscribes once on mount and calls the same enqueueFiles() that
+  // drag-and-drop uses, with deleteSourceOnSuccess set so the queue
+  // worker removes each file from the inbox after a successful import.
+  onInboxFilesDetected: (callback: (paths: string[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, paths: string[]) => callback(paths)
+    ipcRenderer.on('inbox-files-detected', handler)
+    return () => { ipcRenderer.removeListener('inbox-files-detected', handler) }
+  },
+  // Called by the import queue worker after a successful (or dupe-skipped)
+  // import of an inbox file. Main-side delete is path-gated to the
+  // currently-watched inbox, so even a confused renderer can't ask main
+  // to rm an arbitrary file.
+  deleteInboxSource: (filePath: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('delete-inbox-source', filePath),
+  // SettingsModal uses this to show the resolved default path (~/Music2/_inbox)
+  // as a placeholder when the user hasn't picked a custom location yet.
+  getDefaultInboxPath: (): Promise<{ ok: boolean; path: string }> =>
+    ipcRenderer.invoke('get-default-inbox-path'),
+  // 4.4.18 — Library sync orchestrator status. Main fires this after
+  // each sync run (post-import / post-metadata-edit / post-playlist /
+  // 10-min safety-net tick). App.tsx maps the result to a setNotice
+  // call so the user sees outcomes in NowPlaying's LCD-pill mode 4.
+  onLibrarySyncStatus: (callback: (status: {
+    ok: boolean
+    reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
+    error?: string
+    durationMs?: number
+  }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof callback>[0]) => callback(status)
+    ipcRenderer.on('library-sync-status', handler)
+    return () => { ipcRenderer.removeListener('library-sync-status', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

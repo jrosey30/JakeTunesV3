@@ -189,6 +189,14 @@ export interface AppSettings {
     aiHost: 'mm' | 'megan'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
   }
   eq: EqSettings   // 10-band parametric EQ (4.0 §6.5)
+  // 4.4.13 — Inbox auto-import. Main-side chokidar watches `path` and
+  // forwards new audio files to the renderer queue. Source files are
+  // deleted after successful import (the iPod_Control copy is the
+  // canonical version). Empty `path` falls back to ~/Music2/_inbox.
+  inbox: {
+    enabled: boolean
+    path: string
+  }
 }
 
 // EQ default is duplicated from audio/eq.ts::DEFAULT_EQ rather than
@@ -206,6 +214,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     preset: 'Flat',
   },
+  // Default-on with empty path → main resolves to ~/Music2/_inbox.
+  inbox: { enabled: true, path: '' },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
@@ -299,6 +309,17 @@ declare global {
       onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
+      // 4.4.13 — Inbox auto-import (Qobuz → JakeTunes pipeline).
+      onInboxFilesDetected: (callback: (paths: string[]) => void) => () => void
+      deleteInboxSource: (filePath: string) => Promise<{ ok: boolean; error?: string }>
+      getDefaultInboxPath: () => Promise<{ ok: boolean; path: string }>
+      // 4.4.18 — Library sync orchestrator status (laptop → homemini).
+      onLibrarySyncStatus: (callback: (status: {
+        ok: boolean
+        reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
+        error?: string
+        durationMs?: number
+      }) => void) => () => void
     }
   }
 }

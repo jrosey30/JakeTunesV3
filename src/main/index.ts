@@ -36,6 +36,18 @@ import {
   extensionForFormat,
   type AudioFormat,
 } from './platform'
+import {
+  configureInboxWatcher,
+  startOrReconfigureInboxWatcher,
+  stopInboxWatcher,
+  deleteInboxSource,
+  getDefaultInboxPath,
+  type InboxConfig,
+} from './inbox-watcher'
+import {
+  startSyncOrchestrator,
+  triggerSync,
+} from './sync-orchestrator'
 
 const isDev = !app.isPackaged
 
@@ -574,10 +586,42 @@ ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>
     // pick up the new value without an app restart.
     const ai = (settings.ai as { aiHost?: 'mm' | 'megan' } | undefined)
     cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
+    // 4.4.13: reconfigure the inbox watcher on every save. Idempotent
+    // when nothing changed; instant pickup of toggle/path edits without
+    // an app restart. Errors are non-fatal — the save itself succeeded,
+    // so we return ok regardless and log the reconfigure failure.
+    try {
+      const inboxRaw = settings.inbox as { enabled?: boolean; path?: string } | undefined
+      const inboxConfig: InboxConfig = {
+        enabled: inboxRaw?.enabled !== false,         // default ON
+        path: typeof inboxRaw?.path === 'string' ? inboxRaw.path : '',
+      }
+      const result = await startOrReconfigureInboxWatcher(inboxConfig)
+      if (!result.ok) {
+        console.warn('[save-app-settings] inbox watcher reconfigure failed:', result.error)
+      }
+    } catch (err) {
+      console.warn('[save-app-settings] inbox watcher reconfigure threw:', err)
+    }
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
+})
+
+// 4.4.13 — Renderer's import queue calls this after a successful (or
+// dupe-skipped) import of a file that came from the inbox auto-import.
+// The watcher module path-gates the delete to its own watched directory
+// — even a corrupted/spoofed renderer can't ask main to rm an arbitrary file.
+ipcMain.handle('delete-inbox-source', async (_e, filePath: string) => {
+  return deleteInboxSource(filePath)
+})
+
+// SettingsModal queries this to populate the placeholder for the inbox
+// path input — so users see the resolved ~/Music2/_inbox path even when
+// they haven't picked a custom location yet.
+ipcMain.handle('get-default-inbox-path', async () => {
+  return { ok: true, path: getDefaultInboxPath() }
 })
 
 // Async read used by handlers that need to gate behavior on a setting
@@ -2407,6 +2451,14 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
     }
   }
 
+  // 4.4.18: fire the multi-device sync after every successful import.
+  // Debounced 30 sec inside the orchestrator so an album of 12 tracks
+  // (whether dropped via Finder drag, the inbox-watcher, or anything
+  // else) coalesces into ONE sync, not 12.
+  if (r.ok && r.track) {
+    triggerSync('import')
+  }
+
   return r
 })
 
@@ -2549,6 +2601,13 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
         error: r.error,
       })
     }
+  }
+
+  // 4.4.18: post-batch sync. One trigger per multi-file import batch
+  // (the orchestrator's debounce also handles the case where this fires
+  // alongside per-file import-track triggers).
+  if (imported.length > 0) {
+    triggerSync('import')
   }
 
   return { ok: true, tracks: imported, skippedDupes, artwork }
@@ -5082,6 +5141,9 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
     }
     return overrides
   })
+  // 4.4.18: metadata edits are a sync trigger — change a track's artist
+  // on laptop, homemini reflects it within ~30 sec.
+  triggerSync('metadata-edit')
   return { ok: true }
 })
 
@@ -5122,6 +5184,13 @@ ipcMain.handle('load-playlists', async () => {
 ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
   await mkdir(join(app.getPath('userData')), { recursive: true })
   await writeFile(getPlaylistsPath(), JSON.stringify(playlists, null, 2), 'utf-8')
+  // 4.4.18: playlist edits also propagate. library.json itself doesn't
+  // include playlists (separate file), but the sync script's safety-net
+  // restart of homemini's JakeTunes picks them up alongside any
+  // library.json change. If only playlists changed, the script no-ops
+  // on library.json (mtime-based) and just runs the music rsync —
+  // which is also a near no-op when nothing in audio files changed.
+  triggerSync('playlist')
   return { ok: true }
 })
 
@@ -6169,6 +6238,38 @@ app.whenReady().then(async () => {
   // createWindow so mainWindow is defined when the watcher emits.
   startLibraryWatcher()
 
+  // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
+  // audio files (Qobuz downloads, manual drops, etc.) and forwards them
+  // to the same renderer import queue drag-and-drop uses. Default-on;
+  // user toggles via Preferences → Library. Configured AFTER createWindow
+  // so the watcher's webContents.send has a window to target.
+  configureInboxWatcher(() => mainWindow)
+  try {
+    const settings = await readAppSettingsAsync()
+    const inboxRaw = settings?.inbox as { enabled?: boolean; path?: string } | undefined
+    const inboxConfig: InboxConfig = {
+      enabled: inboxRaw?.enabled !== false,         // default ON if not set
+      path: typeof inboxRaw?.path === 'string' ? inboxRaw.path : '',
+    }
+    const r = await startOrReconfigureInboxWatcher(inboxConfig)
+    if (!r.ok) {
+      console.warn('[inbox-watcher] startup failed:', r.error, '(resolved path:', r.path, ')')
+    } else {
+      console.log(`[inbox-watcher] startup: enabled=${inboxConfig.enabled} path=${r.path}`)
+    }
+  } catch (err) {
+    console.warn('[inbox-watcher] startup threw:', err)
+  }
+
+  // 4.4.18: Library sync orchestrator. Replaces the broken launchd
+  // agent (Sequoia TCC blocks network-volume access from launchd
+  // domain). JakeTunes' main process inherits the user's GUI session
+  // permissions, so the same shell script that fails under launchd
+  // works fine here. Triggers wired in the import-track /
+  // import-tracks / save-metadata-override / save-playlists handlers
+  // above; safety net fires every 10 min.
+  startSyncOrchestrator(() => mainWindow)
+
   // Auto-update: check for updates in production
   if (!isDev) {
     autoUpdater.autoDownload = true
@@ -6189,7 +6290,22 @@ app.whenReady().then(async () => {
           buttons: ['Restart Now', 'Later'],
           defaultId: 0,
         }).then(({ response }) => {
-          if (response === 0) autoUpdater.quitAndInstall()
+          if (response === 0) {
+            if (mainWindow) mainWindow.webContents.send('update-status', { status: 'installing', version: info.version })
+            // On macOS, calling quitAndInstall directly from the dialog
+            // promise callback can occasionally no-op (app neither quits
+            // nor relaunches). Defer to the next tick and pass explicit
+            // args so restart-after-install is unambiguous.
+            setImmediate(() => {
+              try {
+                autoUpdater.quitAndInstall(false, true)
+              } catch (err) {
+                console.error('quitAndInstall failed, forcing relaunch fallback:', err)
+                app.relaunch()
+                app.exit(0)
+              }
+            })
+          }
         })
       }
     })
@@ -6207,4 +6323,11 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// 4.4.13: stop the inbox watcher cleanly on quit. Chokidar holds native
+// fs handles + a polling fallback timer; without close() the process
+// hangs for a few seconds before Electron force-kills it.
+app.on('before-quit', () => {
+  void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
 })

@@ -18,6 +18,7 @@ import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
 import { setCrossfadeSettings } from './hooks/useAudio'
 import { setEqSettings } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
+import { setNotice } from './activity'
 import './styles/variables.css'
 import './styles/reset.css'
 import './styles/app.css'
@@ -50,11 +51,61 @@ function AppInner() {
         sync:      { ...DEFAULT_APP_SETTINGS.sync,      ...(raw.sync || {}) },
         ai:        { ...DEFAULT_APP_SETTINGS.ai,        ...(raw.ai || {}) },
         eq:        { ...DEFAULT_APP_SETTINGS.eq,        ...(raw.eq || {}) },
+        inbox:     { ...DEFAULT_APP_SETTINGS.inbox,     ...(raw.inbox || {}) },
       }
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
       setEqSettings(merged.eq)
     })
+  }, [])
+
+  // 4.4.13: Inbox auto-import subscription. Main-side chokidar watches
+  // ~/Music2/_inbox (or wherever the user pointed it) and fires this
+  // event with a batched array of newly-arrived audio file paths. We
+  // route them through the EXACT same enqueueFiles() drag-and-drop uses
+  // — full per-file queue state, dupe detection, retry — and set
+  // deleteSourceOnSuccess so each file gets removed from the inbox once
+  // its iPod_Control copy is in place. Format is left undefined so the
+  // main-side import-track handler falls back to the user's
+  // AppSettings.library.defaultImportFormat. Subscription is always-on;
+  // the watcher itself is the on/off gate via Settings.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onInboxFilesDetected((paths) => {
+      if (!paths || paths.length === 0) return
+      void enqueueFiles(paths, undefined, { deleteSourceOnSuccess: true })
+    })
+    return cleanup
+  }, [])
+
+  // 4.4.18: Library sync orchestrator status. Surface success/failure
+  // of laptop → homemini sync via the LCD-pill notice (4.4.12). Only
+  // surface FAILURES on success because the safety-net tick fires
+  // every 10 min and we don't want a "synced ok" popup that often;
+  // the user only needs to know when something's actually broken.
+  // Exception: post-import sync success IS surfaced so the user gets
+  // the "boom, it's on homemini" feeling after a new import.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onLibrarySyncStatus((status) => {
+      if (!status.ok) {
+        setNotice(
+          status.error
+            ? `Couldn't sync to homemini: ${status.error}`
+            : "Couldn't sync to homemini.",
+          { kind: 'error', durationMs: 6000 },
+        )
+        return
+      }
+      // OK path — only chirp on import/metadata-edit/playlist triggers.
+      // safety-net silent (10 min noise = bad UX).
+      if (status.reason === 'import') {
+        setNotice('Synced new imports to homemini.', { kind: 'info', durationMs: 4000 })
+      } else if (status.reason === 'metadata-edit') {
+        setNotice('Synced edits to homemini.', { kind: 'info', durationMs: 3000 })
+      } else if (status.reason === 'playlist') {
+        setNotice('Synced playlists to homemini.', { kind: 'info', durationMs: 3000 })
+      }
+    })
+    return cleanup
   }, [])
 
   // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches

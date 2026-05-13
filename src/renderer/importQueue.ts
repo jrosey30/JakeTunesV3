@@ -44,6 +44,16 @@ export interface QueueItem {
   error?: string
   /** Wall-clock when added (for stable ordering). */
   addedAt: number
+  /**
+   * 4.4.13 — If true, the worker calls window.electronAPI.deleteInboxSource(srcPath)
+   * after a successful import OR a dupe-skip. Used by the inbox auto-import
+   * (main/inbox-watcher.ts) to keep the inbox empty as imports complete.
+   * Main-side delete is path-gated to the watched inbox so this can't be
+   * abused into deleting arbitrary files.
+   * Failed imports do NOT trigger the delete — the source has to stay so
+   * the user can retry.
+   */
+  deleteSourceOnSuccess?: boolean
 }
 
 interface QueueState {
@@ -111,8 +121,17 @@ function nextUid(): string {
  * (so we expand a dropped album folder into its individual tracks).
  * Duplicates already in the queue (by srcPath) are filtered out so a
  * re-drop of the same files doesn't double-enqueue.
+ *
+ * `opts.deleteSourceOnSuccess`: 4.4.13 inbox auto-import. The worker
+ * deletes srcPath via the main-side IPC `delete-inbox-source` after a
+ * successful import (or dupe-skip). Drag-drop callers omit this flag so
+ * user files remain untouched after import.
  */
-export async function enqueueFiles(paths: string[], format?: string): Promise<number> {
+export async function enqueueFiles(
+  paths: string[],
+  format?: string,
+  opts?: { deleteSourceOnSuccess?: boolean },
+): Promise<number> {
   if (!paths.length) return 0
   const resolved = await window.electronAPI.importResolvePaths(paths)
   const audio = resolved.ok && resolved.paths ? resolved.paths : []
@@ -128,6 +147,7 @@ export async function enqueueFiles(paths: string[], format?: string): Promise<nu
       srcPath: p,
       status: 'pending',
       addedAt: now,
+      deleteSourceOnSuccess: opts?.deleteSourceOnSuccess,
     })
   }
   if (!newItems.length) return 0
@@ -276,6 +296,15 @@ async function runWorker(): Promise<void> {
         for (const fn of trackHandlers) {
           try { fn(track, res.artwork) } catch { /* handler crash shouldn't kill the worker */ }
         }
+        // 4.4.13 — Inbox auto-import. Successfully transcoded into
+        // iPod_Control; the source FLAC in ~/Music2/_inbox is now
+        // redundant. Main-side delete is path-gated to the watched inbox
+        // so a confused queue can't be tricked into rm'ing user files.
+        // Cleanup failure is swallowed — the import succeeded, no need
+        // to surface a phantom error.
+        if (next.deleteSourceOnSuccess) {
+          try { await window.electronAPI.deleteInboxSource(next.srcPath) } catch { /* best-effort */ }
+        }
       } else if (res.ok && res.dupe) {
         state = {
           ...state,
@@ -287,6 +316,12 @@ async function runWorker(): Promise<void> {
         }
         // Roll back the id we reserved — nothing landed in the library.
         nextLibraryId = Math.min(nextLibraryId, id)
+        // 4.4.13 — Inbox auto-import. Library already has this track;
+        // the source in the inbox is still pure dead weight whether
+        // the import was fresh or a dupe-skip. Clear it.
+        if (next.deleteSourceOnSuccess) {
+          try { await window.electronAPI.deleteInboxSource(next.srcPath) } catch { /* best-effort */ }
+        }
       } else {
         state = {
           ...state,
@@ -296,6 +331,8 @@ async function runWorker(): Promise<void> {
         }
         // Same — id wasn't consumed.
         nextLibraryId = Math.min(nextLibraryId, id)
+        // Failed import: keep the source. User can retry from the queue
+        // panel and the file needs to still exist for that to work.
       }
       notify()
     }
