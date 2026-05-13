@@ -326,6 +326,8 @@ declare global {
       openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
       // 4.4.29 — Brooklyn weather for the Home view greeting.
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
+      // 4.4.32 — Bandsintown tour dates for top library artists.
+      getTourDates: () => Promise<{ ok: boolean; dates: TourDate[] }>
     }
   }
 }
@@ -339,4 +341,14 @@ export interface MusicNewsItem {
   pubDate: string
   imageUrl?: string
   isReleaseReview: boolean
+}
+
+// 4.4.32 — Tour date shape from Bandsintown.
+export interface TourDate {
+  artist: string
+  date: string         // ISO
+  venue: string
+  city: string         // "Brooklyn, NY"
+  url: string
+  imageUrl?: string
 }

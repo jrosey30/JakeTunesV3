@@ -312,6 +312,12 @@ const electronAPI = {
   // configured; renderer should fall back to a date-only header.
   getBrooklynWeather: (): Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }> =>
     ipcRenderer.invoke('get-brooklyn-weather'),
+
+  // 4.4.32 — Tour dates per Bandsintown for the user's top library
+  // artists. First call on a cold cache takes a few seconds; subsequent
+  // calls within 24h return instantly from main-side cache.
+  getTourDates: (): Promise<{ ok: boolean; dates: Array<{ artist: string; date: string; venue: string; city: string; url: string; imageUrl?: string }> }> =>
+    ipcRenderer.invoke('get-tour-dates'),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

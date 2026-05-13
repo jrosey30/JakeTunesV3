@@ -7,6 +7,7 @@ import {
   getWikidataArtist, formatWikidataForPrompt,
   getMusicBrainzReleaseMbid, getCoverArtUrlByMbid,
   getMusicNews, getNotableReleases, type MusicNewsItem,
+  getTourDatesForArtists, type TourDate,
 } from './external'
 import {
   appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
@@ -623,6 +624,37 @@ ipcMain.handle('delete-inbox-source', async (_e, filePath: string) => {
 // they haven't picked a custom location yet.
 ipcMain.handle('get-default-inbox-path', async () => {
   return { ok: true, path: getDefaultInboxPath() }
+})
+
+// 4.4.32 — Tour dates per Bandsintown for the user's top library
+// artists. Picks top 60 artists by aggregate playCount (with a +1
+// baseline so library artists with no play count still register),
+// throttles to 8 concurrent Bandsintown requests in `external.ts`,
+// caches results 24h. Returns up to 60 upcoming events sorted by
+// date ascending. Cold-cache call may take ~3-8 sec for a fresh
+// library; warm cache is instant.
+ipcMain.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDate[] }> => {
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
+    if (!raw) return { ok: true, dates: [] }
+    const lib = JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string; playCount?: number }> }
+    const tracks = lib.tracks || []
+    const byArtist = new Map<string, number>()
+    for (const t of tracks) {
+      const a = (t.albumArtist || t.artist || '').trim()
+      if (!a || a.toLowerCase() === 'unknown artist') continue
+      byArtist.set(a, (byArtist.get(a) || 0) + (Number(t.playCount) || 0) + 1)
+    }
+    const topArtists = Array.from(byArtist.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 60)
+      .map(([a]) => a)
+    const dates = await getTourDatesForArtists(topArtists)
+    return { ok: true, dates: dates.slice(0, 60) }
+  } catch (err) {
+    console.warn('[get-tour-dates] failed:', err)
+    return { ok: true, dates: [] }
+  }
 })
 
 // 4.4.29 — Brooklyn weather for the Home header greeting. Cached

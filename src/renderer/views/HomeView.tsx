@@ -27,7 +27,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
-import type { Track, MusicNewsItem } from '../types'
+import type { Track, MusicNewsItem, TourDate } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -92,15 +92,19 @@ export default function HomeView() {
   // "still loading"; [] means "loaded but empty".
   const [news, setNews] = useState<MusicNewsItem[] | null>(null)
   const [releases, setReleases] = useState<MusicNewsItem[] | null>(null)
+  const [tourDates, setTourDates] = useState<TourDate[] | null>(null)
   const newsRowRef = useRef<HTMLDivElement>(null)
   const releasesRowRef = useRef<HTMLDivElement>(null)
+  const tourDatesRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-news', newsRowRef)
   useScrollPersistence('home-row-releases', releasesRowRef)
+  useScrollPersistence('home-row-tours', tourDatesRowRef)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
+        // News + releases are short RSS fetches — fire in parallel.
         const [n, r] = await Promise.all([
           window.electronAPI.getMusicNews(),
           window.electronAPI.getNotableReleases(),
@@ -112,6 +116,19 @@ export default function HomeView() {
         if (cancelled) return
         setNews([])
         setReleases([])
+      }
+    })()
+    // 4.4.32: tour dates run separately because the cold-cache call
+    // takes ~3-8 sec (Bandsintown queries up to 60 artists, throttled
+    // 8-concurrent in main). Don't block the news/releases UI on it.
+    void (async () => {
+      try {
+        const t = await window.electronAPI.getTourDates()
+        if (cancelled) return
+        setTourDates(t.ok ? t.dates : [])
+      } catch {
+        if (cancelled) return
+        setTourDates([])
       }
     })()
     return () => { cancelled = true }
@@ -453,6 +470,42 @@ export default function HomeView() {
                   <div className="home-artist-info">
                     <div className="home-artist-name">{card.name}</div>
                     <div className="home-artist-plays">{card.totalPlays.toLocaleString()} plays</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── 4.4.32: Tour Dates (Bandsintown, 100% library-personalized) ──── */}
+      {tourDates !== null && tourDates.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">Coming to a Stage Near You</h2>
+            <span className="home-section-source">via Bandsintown · your library's artists</span>
+          </div>
+          <div className="home-card-row" role="list" ref={tourDatesRowRef}>
+            {tourDates.slice(0, 20).map((ev, i) => {
+              const d = new Date(ev.date)
+              const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+              const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : ''
+              return (
+                <div
+                  key={`${ev.url}-${i}`}
+                  className="home-tour-card"
+                  role="listitem"
+                  onClick={() => ev.url && openLink(ev.url)}
+                  title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
+                >
+                  <div className="home-tour-date">
+                    <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
+                    <div className="home-tour-date-day">{d.getDate()}</div>
+                  </div>
+                  <div className="home-tour-info">
+                    <div className="home-tour-artist">{ev.artist}</div>
+                    <div className="home-tour-venue">{ev.venue}</div>
+                    <div className="home-tour-city">{ev.city}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
                   </div>
                 </div>
               )

@@ -257,6 +257,37 @@ function parsePubDate(itemXml: string): string {
   return parsed.toISOString()
 }
 
+// 4.4.32: gossip filter for news headlines. Even Pitchfork News and
+// Stereogum's music category publish a lot of "X reacts to Y" / "X
+// responds to Z" / "Watch X react" content that reads as celebrity
+// drama, not music news. Drop items whose titles match any pattern.
+// The patterns are intentionally narrow — they target specific
+// drama-coverage phrasing, not real music news that incidentally
+// mentions any of these words. False negatives (gossip slipping
+// through) are OK; false positives (real music news being filtered)
+// are not.
+const GOSSIP_PATTERNS: RegExp[] = [
+  /\breact(?:s|ed|ing)?\s+to\b/i,           // "Artist Reacts To X"
+  /\bresponds?\s+to\b/i,                     // "Artist Responds To X"
+  /\baddresses?\s+(?:the\s+)?(?:rumors?|controversy|backlash|criticism)\b/i,
+  /\bfires?\s+back\b/i,
+  /\bclap[\s-]?back\b/i,
+  /\bcalls?\s+out\b/i,                       // "X Calls Out Y"
+  /\bslam(?:s|med|ming)?\b/i,                // "X Slams Y" (clickbait phrasing)
+  /\bdrag(?:s|ged|ging)?\s+(?:on|over|for)\b/i,
+  /\broast(?:s|ed|ing)?\b/i,                 // "X Roasts Y"
+  /\bbeef\s+with\b/i,                        // "Beef With"
+  /\bfeud(?:s|ing)?\b/i,
+  /\bjokes?\s+(?:about|that)\b.*\b(?:Disney|Trump|GOP|politics|political)\b/i,
+  /\bdating\s+rumors?\b/i,
+  /\bsplit(?:s|ting)?\s+with\b/i,            // celebrity-split clickbait
+  /\bweighs?\s+in\s+on\b/i,                  // "X Weighs In On Y" (commentary, not news)
+]
+
+function isGossip(title: string): boolean {
+  return GOSSIP_PATTERNS.some(p => p.test(title))
+}
+
 async function fetchStructuredFeed(url: string, source: string, isReleaseReview: boolean): Promise<MusicNewsItem[]> {
   try {
     const res = await fetch(url, {
@@ -276,6 +307,10 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
       const title = decodeEntities(rawTitle).replace(/\s+/g, ' ').slice(0, 240)
       const link = linkMatch?.[1]?.trim() || ''
       if (!title || !link) continue
+      // 4.4.32: drop gossip headlines. Skip release reviews from the
+      // filter (Pitchfork BNA shouldn't get filtered — those are real
+      // album release announcements regardless of phrasing).
+      if (!isReleaseReview && isGossip(title)) continue
       items.push({
         title,
         link,
@@ -512,4 +547,107 @@ export async function getMusicBrainzReleaseMbid(artist: string, album: string): 
   } catch {
     return null
   }
+}
+
+// ───────────────────────────── 4.4.32: Bandsintown ─────────────────────────────
+// Tour dates per artist. No API key required — the Discovery API
+// accepts a free-form `app_id` string for attribution. Reasonable
+// non-commercial use is allowed per their TOS. Per-artist 24h cache;
+// aggregate cache keyed by the artist-set hash (so a stable top-N
+// list returns instantly until library or top order changes).
+//
+// Why Bandsintown and not Songkick: Bandsintown's free tier is more
+// permissive and the data quality is good for indie/alt acts which
+// dominate Jake's library.
+
+export interface TourDate {
+  /** Artist name as queried (matches the input list, not BIT's normalization). */
+  artist: string
+  /** Event datetime ISO. */
+  date: string
+  /** Display venue name. */
+  venue: string
+  /** "Brooklyn, NY" / "London, UK" — best-effort city + region. */
+  city: string
+  /** Bandsintown event page URL. */
+  url: string
+  /** Optional artist thumbnail (square, often Spotify-sourced). */
+  imageUrl?: string
+}
+
+const BANDSINTOWN_APP_ID = 'jaketunes-desktop'
+const bandsintownPerArtistCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
+const bandsintownAggregateCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
+
+interface BitEvent {
+  datetime?: string
+  url?: string
+  venue?: { name?: string; city?: string; region?: string; country?: string }
+  artist?: { thumb_url?: string; image_url?: string }
+}
+
+export async function getBandsintownEventsForArtist(artist: string): Promise<TourDate[]> {
+  const cached = bandsintownPerArtistCache.get(artist)
+  if (cached) return cached
+  try {
+    const url = `https://rest.bandsintown.com/artists/${encodeURIComponent(artist)}/events?app_id=${encodeURIComponent(BANDSINTOWN_APP_ID)}`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'JakeTunes/4.4', Accept: 'application/json' },
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) {
+      // Treat 404 / 403 / 5xx as "no events", cache the empty result
+      // so we don't hammer for every poll cycle.
+      bandsintownPerArtistCache.set(artist, [])
+      return []
+    }
+    const body = await res.json()
+    if (!Array.isArray(body)) {
+      bandsintownPerArtistCache.set(artist, [])
+      return []
+    }
+    const data = body as BitEvent[]
+    const now = Date.now()
+    const events: TourDate[] = []
+    for (const ev of data) {
+      if (!ev.datetime || !ev.venue) continue
+      const ts = new Date(ev.datetime).getTime()
+      if (isNaN(ts) || ts < now) continue
+      const city = [ev.venue.city, ev.venue.region || ev.venue.country].filter(Boolean).join(', ')
+      events.push({
+        artist,
+        date: new Date(ts).toISOString(),
+        venue: ev.venue.name || '',
+        city,
+        url: ev.url || '',
+        imageUrl: ev.artist?.thumb_url || ev.artist?.image_url,
+      })
+    }
+    bandsintownPerArtistCache.set(artist, events)
+    return events
+  } catch {
+    bandsintownPerArtistCache.set(artist, [])
+    return []
+  }
+}
+
+/** Fan out across the user's top artists, throttled to 8 concurrent
+ *  requests so we don't trip rate limits even on a fresh library
+ *  with 100+ unique artists. Returns events sorted by datetime asc. */
+export async function getTourDatesForArtists(artists: string[]): Promise<TourDate[]> {
+  const slice = artists.slice(0, 60)
+  const aggregateKey = slice.slice().sort().join('||')
+  const cached = bandsintownAggregateCache.get(aggregateKey)
+  if (cached) return cached
+
+  const CONCURRENCY = 8
+  const results: TourDate[][] = []
+  for (let i = 0; i < slice.length; i += CONCURRENCY) {
+    const batch = slice.slice(i, i + CONCURRENCY)
+    const batchResults = await Promise.all(batch.map(getBandsintownEventsForArtist))
+    results.push(...batchResults)
+  }
+  const flat = results.flat().sort((a, b) => a.date.localeCompare(b.date))
+  bandsintownAggregateCache.set(aggregateKey, flat)
+  return flat
 }
