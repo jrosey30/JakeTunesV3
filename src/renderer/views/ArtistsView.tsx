@@ -308,41 +308,80 @@ export default function ArtistsView() {
             <div className="artist-albums-grid">
               {artist.albums.map((album) => {
                 const albumKey = `${artist.name}::${album.name}`
+                const isExpanded = expandedAlbums.has(albumKey)
+                // 4.4.37: look up real album art instead of always
+                // rendering a placeholder. Try the artist as-typed
+                // first; fall back to lowercased artist or albumArtist
+                // from any track on the album.
+                const artworkLookup = (() => {
+                  const albumFolded = album.name.toLowerCase().trim()
+                  const candidates = new Set<string>()
+                  candidates.add(artist.name.toLowerCase().trim())
+                  for (const t of album.tracks) {
+                    if (t.artist) candidates.add(t.artist.toLowerCase().trim())
+                    if (t.albumArtist) candidates.add(t.albumArtist.toLowerCase().trim())
+                  }
+                  for (const a of candidates) {
+                    const k = `${a}|||${albumFolded}`
+                    if (lib.artworkMap[k]) return lib.artworkMap[k]
+                  }
+                  return undefined
+                })()
                 return (
-                  <div key={albumKey} className="artist-album-card">
+                  <div key={albumKey} className={`artist-album-card ${isExpanded ? 'artist-album-card--expanded' : ''}`}>
                     <div className="artist-album-art" onClick={() => toggleAlbum(albumKey)}>
-                      <div className="artist-album-placeholder">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="#bbb">
-                          <circle cx="12" cy="12" r="10" fill="none" stroke="#bbb" strokeWidth="1" />
-                          <circle cx="12" cy="12" r="3" fill="none" stroke="#bbb" strokeWidth="1" />
-                        </svg>
-                      </div>
+                      {artworkLookup ? (
+                        <img
+                          src={`album-art://${artworkLookup}.jpg`}
+                          alt={album.name}
+                          className="artist-album-art-img"
+                          draggable={false}
+                        />
+                      ) : (
+                        <div className="artist-album-placeholder">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="#bbb">
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="#bbb" strokeWidth="1" />
+                            <circle cx="12" cy="12" r="3" fill="none" stroke="#bbb" strokeWidth="1" />
+                          </svg>
+                        </div>
+                      )}
                     </div>
-                    <div className="artist-album-title">{album.name}</div>
-                    <div className="artist-album-count">{album.tracks.length} tracks</div>
-                    {expandedAlbums.has(albumKey) && (
-                      <div className="artist-album-tracklist">
-                        {album.tracks.map((track) => {
-                          const isPlaying = pb.nowPlaying?.id === track.id
-                          return (
-                            <div
-                              key={track.id}
-                              className={`artist-track-row ${isPlaying ? 'artist-track-row--playing' : ''}`}
-                              onDoubleClick={() => playTrack(track, album.tracks, album.tracks.indexOf(track))}
-                              onContextMenu={(e) => handleContextMenu(e, track, album.tracks, album.tracks.indexOf(track))}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify([track.id]))
-                                e.dataTransfer.effectAllowed = 'copy'
-                              }}
-                            >
-                              <span className="artist-track-icon">{isPlaying && <SpeakerPlayingIcon />}</span>
-                              <span className="artist-track-title">{track.title}</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
+                    {/* 4.4.37: when expanded, title + tracklist live inside
+                        an info column NEXT TO the art (flex layout). When
+                        collapsed, they stack BELOW the art (grid layout). */}
+                    <div className="artist-album-info">
+                      <div className="artist-album-title">{album.name}</div>
+                      <div className="artist-album-count">{album.tracks.length} track{album.tracks.length === 1 ? '' : 's'}</div>
+                      {isExpanded && (
+                        <div className="artist-album-tracklist">
+                          {album.tracks.map((track, idx) => {
+                            const isPlaying = pb.nowPlaying?.id === track.id
+                            const durMs = Number(track.duration) || 0
+                            const mins = Math.floor(durMs / 60000)
+                            const secs = Math.floor((durMs % 60000) / 1000)
+                            const durLabel = durMs ? `${mins}:${secs.toString().padStart(2, '0')}` : ''
+                            return (
+                              <div
+                                key={track.id}
+                                className={`artist-track-row ${isPlaying ? 'artist-track-row--playing' : ''}`}
+                                onDoubleClick={() => playTrack(track, album.tracks, album.tracks.indexOf(track))}
+                                onContextMenu={(e) => handleContextMenu(e, track, album.tracks, album.tracks.indexOf(track))}
+                                draggable
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify([track.id]))
+                                  e.dataTransfer.effectAllowed = 'copy'
+                                }}
+                              >
+                                <span className="artist-track-icon">{isPlaying && <SpeakerPlayingIcon />}</span>
+                                <span className="artist-track-num">{track.trackNumber || idx + 1}</span>
+                                <span className="artist-track-title">{track.title}</span>
+                                <span className="artist-track-time">{durLabel}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )
               })}
