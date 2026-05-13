@@ -293,23 +293,34 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
 
 /** Combined structured fetch across all the RSS feeds. One-hour cache.
  *
- * 4.4.29: curated source list. Dropped Stereogum's main news feed
- * (clickbait-heavy — "Netflix Roasted Kevin Hart…" etc.). Replaced
- * with higher-signal sources: Pitchfork features (long-form), NPR's
- * All Songs Considered, Aquarium Drunkard (deep indie). Kept The
- * Quietus (UK underground/electronic). Pitchfork Best New Albums
- * still drives the "New This Week" section. */
+ * 4.4.30: News-feed-focused source list. The 4.4.29 swap traded
+ * Stereogum-news clickbait for higher-quality sources, but the
+ * replacements (NPR Music, Aquarium Drunkard, Pitchfork Features,
+ * The Quietus) are mostly long-form criticism / curated reissue
+ * blog posts / Tiny Desk announcements — high-signal, but not what
+ * a normal person would call "music news." Swap to dedicated news
+ * RSS feeds that publish actual artist/release/tour announcements:
+ *
+ *   - Pitchfork News        — separate from Pitchfork Features
+ *   - Stereogum New Music   — release/single announcements, not the
+ *                             main feed that has the clickbait
+ *   - Brooklyn Vegan        — tour + release news, indie/rock heavy
+ *   - Consequence           — broad music news
+ *
+ * Pitchfork "Best New Albums" still drives the cover-led "New This
+ * Week" releases row — that section's content is correct, only the
+ * news row needed the fix. */
 async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
   const cached = newsCache.get('all')
   if (cached) return cached
   const sources: { name: string; url: string; isReleaseReview: boolean }[] = [
-    // Notable Releases (cover-led card row on Home)
-    { name: 'Pitchfork',         url: 'https://pitchfork.com/rss/reviews/best/albums/', isReleaseReview: true },
-    // Music News (text-led card row on Home)
-    { name: 'Pitchfork',         url: 'https://pitchfork.com/rss/features/',            isReleaseReview: false },
-    { name: 'NPR Music',         url: 'https://feeds.npr.org/1039/rss.xml',             isReleaseReview: false },
-    { name: 'The Quietus',       url: 'https://thequietus.com/feed/',                   isReleaseReview: false },
-    { name: 'Aquarium Drunkard', url: 'https://aquariumdrunkard.com/feed/',             isReleaseReview: false },
+    // Notable Releases (cover-led card row on Home — already correct)
+    { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/reviews/best/albums/',         isReleaseReview: true },
+    // Music News (text-led card row on Home — 4.4.30 swap)
+    { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/news/',                        isReleaseReview: false },
+    { name: 'Stereogum',       url: 'https://www.stereogum.com/category/new-music/feed/',     isReleaseReview: false },
+    { name: 'Brooklyn Vegan',  url: 'https://www.brooklynvegan.com/feed/',                    isReleaseReview: false },
+    { name: 'Consequence',     url: 'https://consequence.net/feed/',                          isReleaseReview: false },
   ]
   const results = await Promise.all(
     sources.map(s => fetchStructuredFeed(s.url, s.name, s.isReleaseReview))

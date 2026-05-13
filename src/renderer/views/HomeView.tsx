@@ -450,12 +450,18 @@ export default function HomeView() {
         </section>
       )}
 
-      {/* ── 4.4.28: Music News (Stereogum + The Quietus) ─────────────────── */}
+      {/* ── 4.4.28 / 4.4.30: Music News (Pitchfork / Stereogum / BV / Consequence) ── */}
       {news !== null && news.length > 0 && (
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Music News</h2>
-            <span className="home-section-source">via Stereogum, The Quietus</span>
+            <span className="home-section-source">
+              {/* 4.4.30: derive source list from actual items so the
+                  attribution stays in sync if the upstream feed mix
+                  ever changes again. Cap to 4 names so the header
+                  doesn't wrap on smaller windows. */}
+              via {Array.from(new Set(news.map(n => n.source))).slice(0, 4).join(', ')}
+            </span>
           </div>
           <div className="home-card-row" role="list" ref={newsRowRef}>
             {news.map((item) => (
