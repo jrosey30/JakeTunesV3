@@ -89,13 +89,24 @@
 }
 
 /* ── Album card ───────────────────────────────────────────────────────── */
+/* 4.4.20 width-pinning fix: `flex: 0 0 156px` alone is NOT enough to keep
+   the card at 156px when a long album title like "Herb Alpert Presents
+   Sergio Mendes & Brasil '66" is inside. The reason: nested flex items
+   default to `min-width: auto`, so a `white-space: nowrap` title pushes
+   its parent (and grandparent, and the card) wider than the flex basis.
+   Setting explicit width + max-width on the card AND min-width:0 on
+   every text descendant in the column makes `text-overflow: ellipsis`
+   actually kick in. */
 .home-album-card {
   flex: 0 0 156px;
+  width: 156px;
+  max-width: 156px;
   display: flex;
   flex-direction: column;
   cursor: pointer;
   scroll-snap-align: start;
   transition: transform 120ms ease;
+  box-sizing: border-box;
 }
 .home-album-card:hover {
   transform: translateY(-2px);
@@ -111,6 +122,7 @@
   overflow: hidden;
   background: #e8e6e0;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
 }
 .home-album-art img {
   width: 100%;
@@ -130,9 +142,16 @@
 .home-album-info {
   margin-top: 8px;
   padding: 0 2px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;        /* extra belt: long titles can't push width */
 }
 .home-album-title {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
@@ -141,6 +160,9 @@
   text-overflow: ellipsis;
 }
 .home-album-artist {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-size: 11.5px;
   color: var(--text-secondary, #666);
   white-space: nowrap;
@@ -157,6 +179,8 @@
 
 .home-artist-card {
   flex: 0 0 96px;
+  width: 96px;
+  max-width: 96px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -164,6 +188,7 @@
   cursor: pointer;
   scroll-snap-align: start;
   transition: transform 120ms ease;
+  box-sizing: border-box;
 }
 .home-artist-card:hover {
   transform: translateY(-2px);
@@ -201,9 +226,15 @@
 .home-artist-info {
   margin-top: 8px;
   width: 96px;
+  max-width: 96px;
   min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .home-artist-name {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
@@ -212,6 +243,7 @@
   text-overflow: ellipsis;
 }
 .home-artist-plays {
+  width: 100%;
   font-size: 10.5px;
   color: var(--text-secondary, #888);
   margin-top: 1px;
