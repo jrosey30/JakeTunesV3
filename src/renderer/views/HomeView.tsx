@@ -297,6 +297,92 @@ export default function HomeView() {
       .slice(0, 12)
   }, [lib.tracks])
 
+  // ── 4.4.33: Featured Album — "Today's Pick" hero. Date-seeded so the
+  // same album shows all day, rotates to a different one tomorrow.
+  // Picks from the user's top 50 by aggregate play count (filters out
+  // the long tail of single-track no-name imports). Falls back to top
+  // by newestAdded if the library has no play history yet. ──────────
+  const featuredAlbum = useMemo(() => {
+    interface AlbumStat extends AlbumCard {
+      totalPlays: number
+    }
+    const map = new Map<string, AlbumStat>()
+    for (const t of lib.tracks) {
+      const artist = t.albumArtist || t.artist || 'Unknown Artist'
+      const album = t.album || 'Unknown Album'
+      const artistFolded = artist.toLowerCase().trim()
+      const albumFolded = album.toLowerCase().trim()
+      const key = `${artistFolded}|||${albumFolded}`
+      let stat = map.get(key)
+      if (!stat) {
+        stat = {
+          key,
+          artist,
+          artistFolded,
+          album,
+          year: t.year || '',
+          tracks: [],
+          newestAdded: t.dateAdded || '',
+          totalPlays: 0,
+        }
+        map.set(key, stat)
+      }
+      stat.tracks.push(t)
+      stat.totalPlays += Number(t.playCount) || 0
+      if (t.dateAdded && t.dateAdded > stat.newestAdded) stat.newestAdded = t.dateAdded
+      if (!stat.year && t.year) stat.year = t.year
+    }
+    const candidates = Array.from(map.values())
+    if (candidates.length === 0) return null
+    // Try top-50 by play count first; if all zeros, fall back to recency.
+    candidates.sort((a, b) => b.totalPlays - a.totalPlays || b.newestAdded.localeCompare(a.newestAdded))
+    const pool = candidates.slice(0, 50)
+    // Day-of-year seed: floor(now / 86400 sec). Same value all day,
+    // different next day — gives a curated daily-pick feel without
+    // any randomness that resets on a re-render.
+    const day = Math.floor(Date.now() / 86_400_000)
+    return pool[day % pool.length]
+  }, [lib.tracks])
+
+  const playFeatured = useCallback(() => {
+    if (!featuredAlbum || featuredAlbum.tracks.length === 0) return
+    // Reuse the existing album-play machinery (sorts by disc/track no.).
+    const sorted = [...featuredAlbum.tracks].sort((a, b) => {
+      const da = Number(a.discNumber) || 1, db = Number(b.discNumber) || 1
+      if (da !== db) return da - db
+      const ta = Number(a.trackNumber) || 0, tb = Number(b.trackNumber) || 0
+      return ta - tb
+    })
+    flashCard(featuredAlbum.key)
+    playTrack(sorted[0], sorted, 0)
+  }, [featuredAlbum, playTrack, flashCard])
+
+  // ── 4.4.33: quick lifetime stats for the strip under the hero. All
+  // derived from lib.tracks — no extra IPC, recomputes on import. ───
+  const stats = useMemo(() => {
+    let totalPlays = 0
+    let totalDurationMs = 0
+    const byArtist = new Map<string, number>()
+    const byGenre = new Map<string, number>()
+    for (const t of lib.tracks) {
+      const plays = Number(t.playCount) || 0
+      totalPlays += plays
+      totalDurationMs += Number(t.duration) || 0
+      const artist = t.albumArtist || t.artist
+      if (artist) byArtist.set(artist, (byArtist.get(artist) || 0) + plays + 1)
+      if (t.genre) byGenre.set(t.genre, (byGenre.get(t.genre) || 0) + plays + 1)
+    }
+    const topArtist = Array.from(byArtist.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+    const topGenre = Array.from(byGenre.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+    const totalHours = totalDurationMs / 3_600_000
+    const hoursLabel =
+      totalHours >= 1000 ? `${(totalHours / 1000).toFixed(1)}k hrs` :
+      totalHours >= 100  ? `${Math.round(totalHours)} hrs` :
+      totalHours >= 10   ? `${totalHours.toFixed(1)} hrs` :
+                           `${totalHours.toFixed(1)} hrs`
+    return { totalPlays, hoursLabel, topArtist, topGenre }
+  }, [lib.tracks])
+
   // ── Top Artists: aggregate by artist, sort by total play count ────────
   const topArtists = useMemo((): ArtistCard[] => {
     const map = new Map<string, ArtistCard>()
@@ -362,6 +448,92 @@ export default function HomeView() {
           )}
         </p>
       </div>
+
+      {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
+      {featuredAlbum && (
+        <section className="home-featured">
+          <div
+            className="home-featured-art"
+            onClick={playFeatured}
+            role="button"
+            tabIndex={0}
+            title={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
+          >
+            {artHashForKey(featuredAlbum.key) ? (
+              <img
+                src={`album-art://${artHashForKey(featuredAlbum.key)}.jpg`}
+                alt={featuredAlbum.album}
+                draggable={false}
+                onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+              />
+            ) : (
+              <div className="home-album-art-placeholder home-featured-art-placeholder">
+                <svg width="48" height="48" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
+                  <circle cx="20" cy="20" r="18" />
+                  <circle cx="20" cy="20" r="6" />
+                  <circle cx="20" cy="20" r="2" fill="#999" />
+                </svg>
+              </div>
+            )}
+            <div className="home-featured-play-overlay" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="#fff">
+                <path d="M10 7v18l16-9z" />
+              </svg>
+            </div>
+          </div>
+          <div className="home-featured-info">
+            <div className="home-featured-label">Today's pick from your library</div>
+            <h2 className="home-featured-title">{featuredAlbum.album}</h2>
+            <div className="home-featured-artist">{featuredAlbum.artist}</div>
+            <div className="home-featured-meta">
+              {featuredAlbum.tracks.length} track{featuredAlbum.tracks.length === 1 ? '' : 's'}
+              {featuredAlbum.year && <> · {featuredAlbum.year}</>}
+              {featuredAlbum.totalPlays > 0 && <> · {featuredAlbum.totalPlays.toLocaleString()} play{featuredAlbum.totalPlays === 1 ? '' : 's'}</>}
+            </div>
+            <div className="home-featured-actions">
+              <button className="home-featured-btn home-featured-btn--primary" onClick={playFeatured}>
+                <svg width="12" height="12" viewBox="0 0 32 32" fill="currentColor"><path d="M10 7v18l16-9z" /></svg>
+                Play Album
+              </button>
+              <button
+                className="home-featured-btn"
+                onClick={() => {
+                  requestDrillIn('artist', featuredAlbum.artist)
+                  dispatch({ type: 'SET_VIEW', view: 'artists' })
+                }}
+              >
+                More from {featuredAlbum.artist.length > 22 ? `${featuredAlbum.artist.slice(0, 22)}…` : featuredAlbum.artist}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ── 4.4.33: Quick stats strip — total plays, library duration, top artist, top genre ── */}
+      {lib.tracks.length > 0 && (
+        <section className="home-stats">
+          <div className="home-stat">
+            <div className="home-stat-value">{stats.totalPlays.toLocaleString()}</div>
+            <div className="home-stat-label">Total Plays</div>
+          </div>
+          <div className="home-stat">
+            <div className="home-stat-value">{stats.hoursLabel}</div>
+            <div className="home-stat-label">In Your Library</div>
+          </div>
+          {stats.topArtist && (
+            <div className="home-stat">
+              <div className="home-stat-value" title={stats.topArtist}>{stats.topArtist}</div>
+              <div className="home-stat-label">Top Artist</div>
+            </div>
+          )}
+          {stats.topGenre && (
+            <div className="home-stat">
+              <div className="home-stat-value" title={stats.topGenre}>{stats.topGenre}</div>
+              <div className="home-stat-label">Top Genre</div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── Recently Added ───────────────────────────────────────────────── */}
       <section className="home-section">
