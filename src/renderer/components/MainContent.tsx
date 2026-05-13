@@ -1,4 +1,5 @@
 import { useLibrary } from '../context/LibraryContext'
+import HomeView from '../views/HomeView'
 import SongsView from '../views/SongsView'
 import ArtistsView from '../views/ArtistsView'
 import AlbumsView from '../views/AlbumsView'
@@ -13,6 +14,7 @@ export default function MainContent() {
   const { state } = useLibrary()
 
   switch (state.currentView) {
+    case 'home': return <HomeView />
     case 'songs': return <SongsView />
     case 'artists': return <ArtistsView />
     case 'albums': return <AlbumsView />

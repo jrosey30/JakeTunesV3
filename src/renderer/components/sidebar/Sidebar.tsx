@@ -10,6 +10,7 @@ import type { ViewName, SmartPlaylistId } from '../../types'
 import { setNotice } from '../../activity'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
+  home: <HomeIcon />,
   songs: <SongsIcon />,
   artists: <ArtistsIcon />,
   albums: <AlbumsIcon />,
@@ -17,6 +18,9 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
+  // 4.4.19: Home/Dashboard. Surfaces Recently Added + Top Artists,
+  // future ships add Listening Stats / Picks / Music News / Bandsintown.
+  { label: 'Home', view: 'home' },
   { label: 'Songs', view: 'songs' },
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
@@ -54,6 +58,17 @@ const ICON_BLUE   = '#4a7fbf'   // Songs / Albums (Music)
 const ICON_PURPLE = '#a557a6'   // Artists (person silhouette)
 const ICON_GREEN  = '#5b9b54'   // Genres (category grid)
 const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
+const ICON_HOME_ORANGE = '#d77b27'  // 4.4.19: Home — warm color, distinct from the cooler library icons.
+
+function HomeIcon() {
+  // Simple gable-roof house silhouette — instantly readable at 12 px,
+  // doesn't fight the existing library icon set.
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill={ICON_HOME_ORANGE}>
+      <path d="M6 1.2 1 5.4V10.5a.6.6 0 0 0 .6.6h2.6V7.6h3.6V11.1h2.6a.6.6 0 0 0 .6-.6V5.4Z" />
+    </svg>
+  )
+}
 
 function SongsIcon() {
   return (
