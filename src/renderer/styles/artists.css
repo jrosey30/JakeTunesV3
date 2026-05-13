@@ -12,6 +12,8 @@
   cursor: pointer;
   border-bottom: 1px solid #eee;
   user-select: none;
+  /* 4.4.24: smoother hover/selection transition. */
+  transition: background-color 90ms ease-out;
 }
 
 .artist-row:hover { background: rgba(0,0,0,0.03); }

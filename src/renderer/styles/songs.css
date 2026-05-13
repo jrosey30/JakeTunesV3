@@ -69,6 +69,10 @@
   border-bottom: 1px solid transparent;
   user-select: none;
   -webkit-user-select: none;
+  /* 4.4.24: soften the hover / selection bg change so it eases in
+     instead of snapping. 90ms is fast enough that nothing feels
+     delayed; long enough that you can perceive it as a transition. */
+  transition: background-color 90ms ease-out;
 }
 
 /* Cool blue-tint alternating row (iTunes 8). The previous warm

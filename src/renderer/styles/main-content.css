@@ -1,0 +1,34 @@
+/* 4.4.24: subtle fade-in on view switch.
+
+   The wrapper uses `display: contents` so it's invisible in the box
+   model — children's `height: 100%`, flex behavior, etc. flow through
+   to the parent as if the wrapper weren't there. But the wrapper is
+   still a React element with a `key`, so it re-mounts on every view
+   change, triggering the CSS animation.
+
+   140ms is short enough that the transition feels responsive (not
+   waiting), long enough that it reads as motion (not a hard cut).
+
+   `display: contents` doesn't propagate animations to children, so we
+   apply the fade to a generic descendant selector. Each view's root
+   class fades; their internal animations (Home card stagger, etc.)
+   layer on top. */
+
+.main-content-view {
+  display: contents;
+}
+
+.main-content-view > * {
+  animation: view-mount-fade 140ms ease-out;
+}
+
+@keyframes view-mount-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-content-view > * {
+    animation: none;
+  }
+}
