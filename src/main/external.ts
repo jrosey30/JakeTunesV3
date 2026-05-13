@@ -651,3 +651,135 @@ export async function getTourDatesForArtists(artists: string[]): Promise<TourDat
   bandsintownAggregateCache.set(aggregateKey, flat)
   return flat
 }
+
+// ───────────────────── 4.4.34: MusicBrainz upcoming releases ─────────────────────
+// "Albums by artists in your library that haven't come out yet."
+// MusicBrainz has a release-group catalog with `first-release-date`
+// fields; we query for groups where the date is in the future, scoped
+// to the artist names in the user's library.
+//
+// Rate limiting: MB allows ~50 requests / 10 sec per IP if the
+// User-Agent is set with contact info. Per-artist queries would be
+// 60 reqs for a top-60 library; instead we batch artists into
+// Lucene-OR groups of 25, total ~3 queries. Fast enough that the
+// IPC can run inline without a background prefetch.
+//
+// Cover art: Cover Art Archive serves by release-group MBID at
+// `https://coverartarchive.org/release-group/{mbid}/front-250`.
+// Returns 404 for unreleased items without uploaded art; the renderer
+// has an onError handler that swaps to a placeholder.
+//
+// Data quality caveat: MusicBrainz coverage for upcoming releases is
+// uneven. Major labels register early; smaller indies often add the
+// release only after it drops. We surface whatever we get and let the
+// section gracefully hide if zero results.
+
+export interface UpcomingRelease {
+  /** Album / release group title. */
+  title: string
+  /** Display artist name (from MB's primary artist-credit). */
+  artist: string
+  /** ISO-ish date. May be partial (`2026`, `2026-09`, `2026-09-15`). */
+  releaseDate: string
+  /** MusicBrainz release-group MBID. */
+  mbid: string
+  /** Cover Art Archive URL, fallback handled by renderer onError. */
+  coverUrl: string
+}
+
+const upcomingAggregateCache = makeCache<UpcomingRelease[]>(24 * 60 * 60 * 1000)  // 24h
+
+// Lucene reserves: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+// We're already quoting the value, so we only need to escape `\` and `"`.
+function escapeLuceneValue(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease[]> {
+  if (artists.length === 0) return []
+  const today = new Date().toISOString().split('T')[0]
+  const clauses = artists.map(a => `artist:"${escapeLuceneValue(a)}"`).join(' OR ')
+  const q = `(${clauses}) AND firstreleasedate:[${today} TO 2099-12-31]`
+  const url = `https://musicbrainz.org/ws/2/release-group/?query=${encodeURIComponent(q)}&fmt=json&limit=50`
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'JakeTunes/4.4 ( jakerosenbaum30@gmail.com )',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return []
+    const data = await res.json() as {
+      'release-groups'?: Array<{
+        id?: string
+        title?: string
+        'first-release-date'?: string
+        'primary-type'?: string
+        'artist-credit'?: Array<{ name?: string; artist?: { name?: string } }>
+      }>
+    }
+    const groups = data['release-groups'] || []
+    const now = new Date()
+    const items: UpcomingRelease[] = []
+    for (const g of groups) {
+      if (!g['first-release-date']) continue
+      // Skip non-album types (singles, EPs, compilations are noisy)
+      // — actually allow them: a single from a favorite artist is
+      // still newsworthy. Filter only Other / Audiobook / Spokenword.
+      const ptype = (g['primary-type'] || '').toLowerCase()
+      if (ptype === 'other' || ptype === 'audiobook' || ptype === 'spokenword') continue
+      // Parse partial dates conservatively: floor to start of period.
+      const dateStr = g['first-release-date']
+      const parsed = new Date(
+        dateStr.length === 4 ? `${dateStr}-12-31` :
+        dateStr.length === 7 ? `${dateStr}-28`     :
+                               dateStr
+      )
+      if (isNaN(parsed.getTime()) || parsed < now) continue
+      const credit = g['artist-credit']?.[0]
+      const artist = credit?.name || credit?.artist?.name || ''
+      const mbid = g.id || ''
+      if (!mbid || !artist || !g.title) continue
+      items.push({
+        title: g.title,
+        artist,
+        releaseDate: dateStr,
+        mbid,
+        coverUrl: `https://coverartarchive.org/release-group/${mbid}/front-250`,
+      })
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+export async function getUpcomingReleasesForArtists(artists: string[]): Promise<UpcomingRelease[]> {
+  const slice = artists.slice(0, 60)
+  const aggregateKey = slice.slice().sort().join('||')
+  const cached = upcomingAggregateCache.get(aggregateKey)
+  if (cached) return cached
+
+  // Batch into groups of 25 to stay under MB's URL-length sweet spot
+  // (≈400-600 chars per query at avg 20-char artist names).
+  const BATCH = 25
+  const batches: string[][] = []
+  for (let i = 0; i < slice.length; i += BATCH) {
+    batches.push(slice.slice(i, i + BATCH))
+  }
+  // Run batches in parallel — MB allows multiple concurrent requests
+  // from a single IP as long as we stay within ~50 / 10 sec total.
+  // Three batches in parallel is well under the limit.
+  const results = await Promise.all(batches.map(fetchUpcomingForBatch))
+  // Dedupe by MBID (same release-group can match multiple artist
+  // OR clauses if an artist is in the artist-credit chain).
+  const byMbid = new Map<string, UpcomingRelease>()
+  for (const r of results.flat()) {
+    if (!byMbid.has(r.mbid)) byMbid.set(r.mbid, r)
+  }
+  const flat = Array.from(byMbid.values())
+    .sort((a, b) => a.releaseDate.localeCompare(b.releaseDate))
+  upcomingAggregateCache.set(aggregateKey, flat)
+  return flat
+}

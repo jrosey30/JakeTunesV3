@@ -27,7 +27,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
-import type { Track, MusicNewsItem, TourDate } from '../types'
+import type { Track, MusicNewsItem, TourDate, UpcomingRelease } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -93,12 +93,15 @@ export default function HomeView() {
   const [news, setNews] = useState<MusicNewsItem[] | null>(null)
   const [releases, setReleases] = useState<MusicNewsItem[] | null>(null)
   const [tourDates, setTourDates] = useState<TourDate[] | null>(null)
+  const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(null)
   const newsRowRef = useRef<HTMLDivElement>(null)
   const releasesRowRef = useRef<HTMLDivElement>(null)
   const tourDatesRowRef = useRef<HTMLDivElement>(null)
+  const upcomingRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-news', newsRowRef)
   useScrollPersistence('home-row-releases', releasesRowRef)
   useScrollPersistence('home-row-tours', tourDatesRowRef)
+  useScrollPersistence('home-row-upcoming', upcomingRowRef)
 
   useEffect(() => {
     let cancelled = false
@@ -129,6 +132,18 @@ export default function HomeView() {
       } catch {
         if (cancelled) return
         setTourDates([])
+      }
+    })()
+    // 4.4.34: upcoming releases also runs separately. MusicBrainz
+    // batched-OR queries take ~2-4 sec on cold cache; instant after.
+    void (async () => {
+      try {
+        const u = await window.electronAPI.getUpcomingReleasesPersonal()
+        if (cancelled) return
+        setUpcoming(u.ok ? u.items : [])
+      } catch {
+        if (cancelled) return
+        setUpcoming([])
       }
     })()
     return () => { cancelled = true }
@@ -193,6 +208,23 @@ export default function HomeView() {
   const openLink = useCallback((url: string) => {
     void window.electronAPI.openExternalUrl(url)
   }, [])
+
+  // 4.4.34: format a partial MusicBrainz release date as friendly future-tense
+  // ("Sep 15", "September 2026", "2027").
+  const formatUpcomingDate = (raw: string): string => {
+    if (!raw) return 'TBA'
+    if (raw.length === 4) return raw                                    // "2027"
+    if (raw.length === 7) {
+      const [y, m] = raw.split('-')
+      const d = new Date(Number(y), Number(m) - 1, 1)
+      return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+    }
+    const d = new Date(raw)
+    if (isNaN(d.getTime())) return raw
+    const sameYear = d.getFullYear() === new Date().getFullYear()
+    return d.toLocaleDateString(undefined,
+      sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' })
+  }
 
   // "2 days ago" / "today" / "Apr 14" — short, friendly relative date.
   const formatDate = (iso: string): string => {
@@ -682,6 +714,47 @@ export default function HomeView() {
                 </div>
               )
             })}
+          </div>
+        </section>
+      )}
+
+      {/* ── 4.4.34: Upcoming Releases (MusicBrainz, library-personalized) ── */}
+      {upcoming !== null && upcoming.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">On the Horizon</h2>
+            <span className="home-section-source">via MusicBrainz · upcoming albums from your artists</span>
+          </div>
+          <div className="home-card-row" role="list" ref={upcomingRowRef}>
+            {upcoming.map((item, i) => (
+              <div
+                key={`${item.mbid}-${i}`}
+                className="home-upcoming-card"
+                role="listitem"
+                onClick={() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`)}
+                title={`${item.title} — ${item.artist}\nReleases ${formatUpcomingDate(item.releaseDate)}\nOpen on MusicBrainz`}
+              >
+                <div className="home-upcoming-art">
+                  <img
+                    src={item.coverUrl}
+                    alt={item.title}
+                    draggable={false}
+                    onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                  />
+                  <div className="home-upcoming-art-fallback" aria-hidden="true">
+                    {item.title.charAt(0).toUpperCase() || '?'}
+                  </div>
+                  <div className="home-upcoming-date-badge">
+                    {formatUpcomingDate(item.releaseDate)}
+                  </div>
+                </div>
+                <div className="home-album-info">
+                  <div className="home-album-title">{item.title}</div>
+                  <div className="home-album-artist">{item.artist}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}

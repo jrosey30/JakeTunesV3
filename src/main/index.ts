@@ -8,6 +8,7 @@ import {
   getMusicBrainzReleaseMbid, getCoverArtUrlByMbid,
   getMusicNews, getNotableReleases, type MusicNewsItem,
   getTourDatesForArtists, type TourDate,
+  getUpcomingReleasesForArtists, type UpcomingRelease,
 } from './external'
 import {
   appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
@@ -633,6 +634,34 @@ ipcMain.handle('get-default-inbox-path', async () => {
 // caches results 24h. Returns up to 60 upcoming events sorted by
 // date ascending. Cold-cache call may take ~3-8 sec for a fresh
 // library; warm cache is instant.
+// 4.4.34 — Upcoming releases that haven't come out yet. Same top-60
+// library artists as the tour-dates query. MusicBrainz batched-OR
+// queries (3 reqs total for 60 artists) so this resolves in a few
+// seconds even on cold cache; aggregate result cached 24h.
+ipcMain.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean; items: UpcomingRelease[] }> => {
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
+    if (!raw) return { ok: true, items: [] }
+    const lib = JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string; playCount?: number }> }
+    const tracks = lib.tracks || []
+    const byArtist = new Map<string, number>()
+    for (const t of tracks) {
+      const a = (t.albumArtist || t.artist || '').trim()
+      if (!a || a.toLowerCase() === 'unknown artist') continue
+      byArtist.set(a, (byArtist.get(a) || 0) + (Number(t.playCount) || 0) + 1)
+    }
+    const topArtists = Array.from(byArtist.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 60)
+      .map(([a]) => a)
+    const items = await getUpcomingReleasesForArtists(topArtists)
+    return { ok: true, items: items.slice(0, 20) }
+  } catch (err) {
+    console.warn('[get-upcoming-releases-personal] failed:', err)
+    return { ok: true, items: [] }
+  }
+})
+
 ipcMain.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDate[] }> => {
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)

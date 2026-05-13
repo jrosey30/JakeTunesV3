@@ -594,6 +594,81 @@
   opacity: 0.7;
 }
 
+/* ── 4.4.34: Upcoming Release card (MusicBrainz, library-personalized) ─
+   Cover-led like the Notable Releases card, but with a date badge
+   overlay on the bottom-left of the art ("Sep 15", "Oct 2026") so the
+   "haven't come out yet" framing is obvious at a glance. Image errors
+   fall back to a big-letter placeholder behind the img element (the
+   img sets display:none on error so the placeholder shows through). */
+.home-upcoming-card {
+  flex: 0 0 156px;
+  width: 156px;
+  max-width: 156px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  box-sizing: border-box;
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-upcoming-card .home-upcoming-art {
+  position: relative;
+  width: 156px;
+  height: 156px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #d8d2c0 0%, #b5ab8e 100%);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.home-upcoming-card:hover .home-upcoming-art {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+  transform: scale(1.02);
+}
+.home-upcoming-card:active .home-upcoming-art {
+  transform: scale(0.985);
+}
+.home-upcoming-art img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-upcoming-art img.home-album-art-loaded {
+  opacity: 1;
+}
+.home-upcoming-art-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: -0.02em;
+  /* Sits behind the img (z-index: 0 default); when the img errors and
+     sets display:none, this becomes visible. */
+}
+.home-upcoming-date-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 3px;
+  backdrop-filter: blur(4px);
+}
+
 /* ── 4.4.28: Notable Releases card (Pitchfork BNA, cover-led) ─────────── */
 .home-release-card {
   flex: 0 0 156px;

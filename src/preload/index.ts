@@ -318,6 +318,13 @@ const electronAPI = {
   // calls within 24h return instantly from main-side cache.
   getTourDates: (): Promise<{ ok: boolean; dates: Array<{ artist: string; date: string; venue: string; city: string; url: string; imageUrl?: string }> }> =>
     ipcRenderer.invoke('get-tour-dates'),
+
+  // 4.4.34 — Upcoming releases (not yet out) for the user's top library
+  // artists, via MusicBrainz release-group queries. Batched 25-OR
+  // clauses per request so 60 artists = ~3 requests. 24h aggregate
+  // cache in main; cold call ~2-4 sec.
+  getUpcomingReleasesPersonal: (): Promise<{ ok: boolean; items: Array<{ title: string; artist: string; releaseDate: string; mbid: string; coverUrl: string }> }> =>
+    ipcRenderer.invoke('get-upcoming-releases-personal'),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

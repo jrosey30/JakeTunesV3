@@ -328,6 +328,9 @@ declare global {
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
       // 4.4.32 — Bandsintown tour dates for top library artists.
       getTourDates: () => Promise<{ ok: boolean; dates: TourDate[] }>
+      // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
+      // library artists.
+      getUpcomingReleasesPersonal: () => Promise<{ ok: boolean; items: UpcomingRelease[] }>
     }
   }
 }
@@ -351,4 +354,14 @@ export interface TourDate {
   city: string         // "Brooklyn, NY"
   url: string
   imageUrl?: string
+}
+
+// 4.4.34 — Upcoming-release shape from MusicBrainz.
+export interface UpcomingRelease {
+  title: string
+  artist: string
+  /** May be partial: "2026", "2026-09", "2026-09-15" */
+  releaseDate: string
+  mbid: string
+  coverUrl: string
 }
