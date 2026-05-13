@@ -351,7 +351,37 @@ export default function ArtistsView() {
                         collapsed, they stack BELOW the art (grid layout). */}
                     <div className="artist-album-info">
                       <div className="artist-album-title">{album.name}</div>
-                      <div className="artist-album-count">{album.tracks.length} track{album.tracks.length === 1 ? '' : 's'}</div>
+                      {isExpanded ? (
+                        <>
+                          {/* 4.4.38: real metadata strip when expanded —
+                              year · songs · total time · plays. */}
+                          {(() => {
+                            const totalMs = album.tracks.reduce((sum, t) => sum + (Number(t.duration) || 0), 0)
+                            const totalMin = Math.round(totalMs / 60000)
+                            const yearStr = album.tracks.find(t => t.year)?.year
+                            const totalPlays = album.tracks.reduce((sum, t) => sum + (Number(t.playCount) || 0), 0)
+                            const parts: string[] = []
+                            if (yearStr) parts.push(String(yearStr))
+                            parts.push(`${album.tracks.length} song${album.tracks.length === 1 ? '' : 's'}`)
+                            if (totalMin > 0) parts.push(`${totalMin} min`)
+                            if (totalPlays > 0) parts.push(`${totalPlays.toLocaleString()} play${totalPlays === 1 ? '' : 's'}`)
+                            return <div className="artist-album-meta">{parts.join(' · ')}</div>
+                          })()}
+                          <button
+                            className="artist-album-play"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (album.tracks.length > 0) playTrack(album.tracks[0], album.tracks, 0)
+                            }}
+                            title="Play this album from the top"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 32 32" fill="currentColor"><path d="M10 7v18l16-9z" /></svg>
+                            Play Album
+                          </button>
+                        </>
+                      ) : (
+                        <div className="artist-album-count">{album.tracks.length} track{album.tracks.length === 1 ? '' : 's'}</div>
+                      )}
                       {isExpanded && (
                         <div className="artist-album-tracklist">
                           {album.tracks.map((track, idx) => {

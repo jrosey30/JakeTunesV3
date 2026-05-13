@@ -66,21 +66,30 @@
   text-align: center;
 }
 
-/* 4.4.37: when expanded, break out of the 120px grid column and span
-   the full row width. Flex layout: cover on the left (fixed 140px),
-   info column (title + tracklist) on the right. iTunes 8 album-detail
-   feel — way better than the previous "stuff the tracklist into a
-   120px column" layout which truncated every song title. */
+/* 4.4.37 / 4.4.38: when expanded, break out of the 120px grid column
+   and span the full row width. Flex layout: cover on the left (now
+   180px in 4.4.38, was 140px), info column (title + meta + tracklist)
+   on the right. 4.4.38 polish: subtle warm-cool gradient backdrop
+   matching the Home Featured Album hero, stronger border, prominent
+   drop shadow on the cover, animated fade-in on expand. */
 .artist-album-card--expanded {
   grid-column: 1 / -1;
   display: flex;
-  gap: 16px;
+  gap: 22px;
   text-align: left;
-  background: #fff;
-  border: 1px solid #d8d8d8;
-  border-radius: 6px;
-  padding: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: linear-gradient(135deg, rgba(215, 123, 39, 0.06) 0%, rgba(74, 144, 217, 0.04) 100%);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  /* 4.4.38: smooth open animation so the card doesn't just appear
+     hard. Pairs with the tracklist's own slide-in below. */
+  animation: artist-album-expand 320ms cubic-bezier(0.2, 0.65, 0.3, 1);
+}
+
+@keyframes artist-album-expand {
+  from { opacity: 0.5; transform: scale(0.985); }
+  to   { opacity: 1;   transform: scale(1); }
 }
 
 .artist-album-art {
@@ -96,10 +105,20 @@
   transition: transform 0.15s, box-shadow 0.15s;
 }
 .artist-album-card--expanded .artist-album-art {
-  flex: 0 0 140px;
-  width: 140px;
-  height: 140px;
+  flex: 0 0 180px;
+  width: 180px;
+  height: 180px;
   align-self: flex-start;
+  /* 4.4.38: pronounced drop shadow so the cover has depth, like
+     iTunes 8's album-detail and the Home Featured Album hero. */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  border-radius: 5px;
+}
+.artist-album-card--expanded .artist-album-art:hover {
+  /* override the default translateY hover when in expanded mode —
+     keep the card stationary, just deepen the shadow. */
+  transform: none;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
 .artist-album-art:hover {
@@ -140,17 +159,51 @@
   text-overflow: ellipsis;
 }
 .artist-album-card--expanded .artist-album-title {
-  font-size: 15px;
+  font-size: 22px;
+  font-weight: 700;
   margin-top: 0;
+  margin-bottom: 4px;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
 }
 
 .artist-album-count {
   font-size: var(--font-timestamp);
   color: var(--text-dim);
 }
-.artist-album-card--expanded .artist-album-count {
-  font-size: 11px;
-  margin-bottom: 8px;
+
+/* 4.4.38: expanded metadata strip — "2013 · 13 songs · 45 min · 47 plays" */
+.artist-album-meta {
+  font-size: 12px;
+  color: var(--text-dim, #888);
+  margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 4.4.38: Play Album CTA. Orange gradient matches the Home Featured
+   Album primary button so the visual language stays consistent. */
+.artist-album-play {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(180deg, #d77b27 0%, #b56419 100%);
+  border: 1px solid #a05512;
+  border-radius: 5px;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(180, 90, 20, 0.25);
+  margin-bottom: 12px;
+  transition: background 140ms ease, transform 140ms ease;
+}
+.artist-album-play:hover {
+  background: linear-gradient(180deg, #e08530 0%, #c06d1f 100%);
+}
+.artist-album-play:active {
+  transform: scale(0.98);
 }
 
 /* Tracklist inside album */
@@ -182,10 +235,20 @@
 
 .artist-track-row:hover { background: rgba(0,0,0,0.04); }
 
-/* Now-playing indicator only — the SpeakerPlayingIcon shows in the
- * left cell. No row fill. */
+/* 4.4.38: now-playing row gets a subtle warm accent + bold title.
+ * Uses inset box-shadow (not border-left) so the grid columns
+ * don't shift between playing/non-playing rows. */
+.artist-track-row--playing {
+  background: linear-gradient(90deg, rgba(215, 123, 39, 0.10), rgba(215, 123, 39, 0.02) 60%);
+  box-shadow: inset 2px 0 0 #d77b27;
+}
 .artist-track-row--playing .artist-track-title {
   font-weight: 700;
+  color: #b56419;
+}
+.artist-track-row--playing .artist-track-num,
+.artist-track-row--playing .artist-track-time {
+  color: rgba(181, 100, 25, 0.7);
 }
 
 .artist-track-icon {
