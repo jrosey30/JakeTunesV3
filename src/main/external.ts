@@ -320,7 +320,10 @@ async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
     { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/news/',                        isReleaseReview: false },
     { name: 'Stereogum',       url: 'https://www.stereogum.com/category/new-music/feed/',     isReleaseReview: false },
     { name: 'Brooklyn Vegan',  url: 'https://www.brooklynvegan.com/feed/',                    isReleaseReview: false },
-    { name: 'Consequence',     url: 'https://consequence.net/feed/',                          isReleaseReview: false },
+    // 4.4.31: swapped from main /feed/ which includes TV/celebrity
+    // (Pete Davidson roast, Kimmel political jokes) to the
+    // music-only category.
+    { name: 'Consequence',     url: 'https://consequence.net/category/music/feed/',           isReleaseReview: false },
   ]
   const results = await Promise.all(
     sources.map(s => fetchStructuredFeed(s.url, s.name, s.isReleaseReview))

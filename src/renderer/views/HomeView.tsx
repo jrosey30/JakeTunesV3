@@ -117,6 +117,62 @@ export default function HomeView() {
     return () => { cancelled = true }
   }, [])
 
+  // 4.4.31: 70/30 personalization. Items whose headlines mention an
+  // artist in your library are surfaced first (~70% of the row); the
+  // rest fills with universal music news. Matching is case-insensitive
+  // word-boundary against the user's top 200 artists by playCount.
+  // Artist names shorter than 3 chars are skipped to avoid junk
+  // matches ("Of Mice & Men" headline matching "Of" the band, etc.).
+  const personalizedNews = useMemo(() => {
+    if (!news) return null
+    if (news.length === 0) return []
+
+    // Build the artist set: top 200 by aggregate playCount. Using
+    // play count (not just presence) so the bias is toward artists
+    // Jake actually listens to, not every obscure artist whose name
+    // happens to appear in a track tag.
+    const byArtist = new Map<string, number>()
+    for (const t of lib.tracks) {
+      const a = t.albumArtist || t.artist
+      if (!a) continue
+      const folded = a.toLowerCase().trim()
+      if (folded.length < 3) continue
+      byArtist.set(folded, (byArtist.get(folded) || 0) + (Number(t.playCount) || 0) + 1)
+      // The "+ 1" gives every artist with even ONE track a baseline so
+      // unplayed library entries still count as "library-relevant"
+      // (just ranked below played ones).
+    }
+    const topArtists = Array.from(byArtist.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 200)
+      .map(([a]) => a)
+
+    // Pre-compile regexes once. Word-boundary + escape special chars.
+    const patterns = topArtists.map(a => {
+      const escaped = a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return new RegExp(`\\b${escaped}\\b`, 'i')
+    })
+
+    const relevant: typeof news = []
+    const universal: typeof news = []
+    for (const item of news) {
+      const matched = patterns.some(re => re.test(item.title))
+      if (matched) relevant.push(item)
+      else universal.push(item)
+    }
+
+    // 70/30 split, total ~10 items. If relevant is short, top up from
+    // universal. If relevant is plentiful, hold to 70% so the user
+    // still sees some "what's happening generally" alongside their own
+    // bubble.
+    const total = 10
+    const targetRelevant = Math.ceil(total * 0.7)
+    const out = [...relevant.slice(0, targetRelevant)]
+    const remaining = total - out.length
+    out.push(...universal.slice(0, remaining))
+    return out
+  }, [news, lib.tracks])
+
   const openLink = useCallback((url: string) => {
     void window.electronAPI.openExternalUrl(url)
   }, [])
@@ -450,8 +506,8 @@ export default function HomeView() {
         </section>
       )}
 
-      {/* ── 4.4.28 / 4.4.30: Music News (Pitchfork / Stereogum / BV / Consequence) ── */}
-      {news !== null && news.length > 0 && (
+      {/* ── 4.4.28 / 4.4.30 / 4.4.31: Music News, 70/30 personalized ─────── */}
+      {personalizedNews !== null && personalizedNews.length > 0 && (
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Music News</h2>
@@ -460,11 +516,11 @@ export default function HomeView() {
                   attribution stays in sync if the upstream feed mix
                   ever changes again. Cap to 4 names so the header
                   doesn't wrap on smaller windows. */}
-              via {Array.from(new Set(news.map(n => n.source))).slice(0, 4).join(', ')}
+              via {Array.from(new Set(personalizedNews.map(n => n.source))).slice(0, 4).join(', ')}
             </span>
           </div>
           <div className="home-card-row" role="list" ref={newsRowRef}>
-            {news.map((item) => (
+            {personalizedNews.map((item) => (
               <div
                 key={item.link}
                 className="home-news-card"
