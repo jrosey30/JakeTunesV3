@@ -43,8 +43,15 @@ import { join } from 'path'
 import type { BrowserWindow } from 'electron'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
-const DEBOUNCE_MS = 30_000              // coalesce album-sized bursts (1.5s inbox batch + 28.5s safety margin)
-const SAFETY_NET_INTERVAL_MS = 600_000  // 10 min — catches manual library edits / external rewrites
+// 4.4.36: dropped debounce 30 → 5 sec. The 30-sec window was meant to
+// coalesce 12 import-track triggers from an album into one sync, but
+// the single-flight gate already does that (the second trigger queues
+// for after the first finishes). 5 sec is enough to cover the
+// inbox-watcher's 1.5-sec batch debounce + a small margin, and makes
+// "instant" feel possible — paired with --quick mode rsync, the whole
+// chain runs in 10-15 sec for a typical album drop.
+const DEBOUNCE_MS = 5_000
+const SAFETY_NET_INTERVAL_MS = 600_000  // 10 min — full sync, catches deletes / out-of-band edits
 const RUN_TIMEOUT_MS = 600_000          // kill a hung sync after 10 min
 
 export type SyncReason =
@@ -71,8 +78,20 @@ function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string;
     const startedAt = Date.now()
     let timedOut = false
 
-    console.log(`[sync-orchestrator] starting sync (reason=${reason})`)
-    const child = spawn('/bin/bash', [SYNC_SCRIPT], {
+    // 4.4.36: --quick mode for the cheap, high-frequency triggers
+    // (import / metadata-edit / playlist). It scans only files
+    // modified in the last 10 min, skipping the rsync stat-walk over
+    // the full 73GB library — cuts sync from ~5 min to ~15 sec for
+    // a typical album drop. The 10-min safety-net tick uses FULL
+    // mode (rsync --delete) to catch tombstones and out-of-band
+    // edits. Manual invocations also use full mode (assume the user
+    // wants a thorough sync).
+    const useQuickMode = reason === 'import' || reason === 'metadata-edit' || reason === 'playlist'
+    const args = [SYNC_SCRIPT]
+    if (useQuickMode) args.push('--quick')
+
+    console.log(`[sync-orchestrator] starting sync (reason=${reason}, mode=${useQuickMode ? 'quick' : 'full'})`)
+    const child = spawn('/bin/bash', args, {
       detached: false,
       stdio: 'ignore',
     })
