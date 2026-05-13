@@ -625,11 +625,25 @@ ipcMain.handle('get-default-inbox-path', async () => {
   return { ok: true, path: getDefaultInboxPath() }
 })
 
+// 4.4.29 — Brooklyn weather for the Home header greeting. Cached
+// 10 min in external.ts (already there for the Music Man prompt).
+// Returns null if no API key is set; renderer should render the
+// header without weather in that case.
+ipcMain.handle('get-brooklyn-weather', async (): Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }> => {
+  try {
+    const w = await getBrooklynWeather()
+    return { ok: true, weather: w }
+  } catch (err) {
+    console.warn('[get-brooklyn-weather] failed:', err)
+    return { ok: true, weather: null }
+  }
+})
+
 // 4.4.28 — Home view: music news + notable releases.
 // Both back-ends are in src/main/external.ts and share a single
-// one-hour parsed cache across the 3 RSS feeds (Pitchfork BNA,
-// Stereogum, The Quietus), so even though HomeView calls both
-// handlers, there's only ONE network round-trip per hour.
+// one-hour parsed cache across all 5 RSS feeds (4.4.29 swap), so
+// even though HomeView calls both handlers, there's only ONE
+// network round-trip per hour.
 ipcMain.handle('get-music-news', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
   try {
     const items = await getMusicNews()

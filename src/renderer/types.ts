@@ -324,6 +324,8 @@ declare global {
       getMusicNews: () => Promise<{ ok: boolean; items: MusicNewsItem[] }>
       getNotableReleases: () => Promise<{ ok: boolean; items: MusicNewsItem[] }>
       openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
+      // 4.4.29 — Brooklyn weather for the Home view greeting.
+      getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
     }
   }
 }

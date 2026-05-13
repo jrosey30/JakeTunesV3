@@ -9,24 +9,54 @@
   background: var(--main-bg, #ffffff);
 }
 
+/* 4.4.29: welcoming header — bigger title, subtle gradient backdrop,
+   date + weather row, library stats. Replaces the bare "JakeTunes ·
+   N tracks" line that felt like a debug printout. */
 .home-header {
-  padding: 0 28px 20px 28px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  margin-bottom: 24px;
+  padding: 32px 28px 24px 28px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  margin-bottom: 28px;
+  background: linear-gradient(180deg, rgba(255, 232, 196, 0.18) 0%, rgba(255, 255, 255, 0) 100%);
 }
 
 .home-title {
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 600;
-  margin: 0 0 4px 0;
+  margin: 0 0 8px 0;
   color: var(--text-primary, #1a1a1a);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.home-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-primary, #2a2a2a);
+}
+
+.home-meta-date {
+  font-weight: 500;
+}
+
+.home-meta-weather {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary, #666);
+}
+
+.home-meta-weather-icon {
+  font-size: 14px;
+  color: #d77b27;          /* matches the Home icon orange in the sidebar */
 }
 
 .home-subtitle {
   margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary, #666);
+  font-size: 12px;
+  color: var(--text-secondary, #888);
 }
 
 .home-section {

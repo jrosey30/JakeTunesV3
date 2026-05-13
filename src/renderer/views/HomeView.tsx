@@ -134,6 +134,48 @@ export default function HomeView() {
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 
+  // 4.4.29: welcoming header — time-of-day greeting, today's date,
+  // Brooklyn weather (when the API key's configured), and a friendly
+  // library-stats line. The greeting cycles by hour to feel less
+  // robotic across a long listening day.
+  const [weather, setWeather] = useState<{ tempF: number; condition: string; description: string } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void window.electronAPI.getBrooklynWeather().then(r => {
+      if (!cancelled && r.ok) setWeather(r.weather)
+    }).catch(() => { /* fall through to date-only header */ })
+    return () => { cancelled = true }
+  }, [])
+
+  const greeting = useMemo(() => {
+    const h = new Date().getHours()
+    if (h < 5)  return 'Up late'
+    if (h < 12) return 'Good morning'
+    if (h < 17) return 'Good afternoon'
+    if (h < 22) return 'Good evening'
+    return 'Up late'
+  }, [])
+
+  const todayPretty = useMemo(() => {
+    return new Date().toLocaleDateString(undefined, {
+      weekday: 'long', month: 'long', day: 'numeric',
+    })
+  }, [])
+
+  // A weather glyph that fits the iTunes-era aesthetic — small SVG icon,
+  // not an emoji (emojis feel out of place in the iTunes 8 look).
+  const weatherIcon = useMemo(() => {
+    if (!weather) return null
+    const cond = (weather.condition || '').toLowerCase()
+    if (cond.includes('clear')) return '☀'
+    if (cond.includes('cloud')) return '☁'
+    if (cond.includes('rain') || cond.includes('drizzle')) return '☂'
+    if (cond.includes('snow')) return '❄'
+    if (cond.includes('thunder')) return '⚡'
+    if (cond.includes('mist') || cond.includes('fog') || cond.includes('haze')) return '≋'
+    return '·'
+  }, [weather])
+
   // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
   const recentAlbums = useMemo((): AlbumCard[] => {
     const map = new Map<string, AlbumCard>()
@@ -230,9 +272,18 @@ export default function HomeView() {
   return (
     <div className="home-view" ref={rootRef}>
       <div className="home-header">
-        <h1 className="home-title">JakeTunes</h1>
+        <h1 className="home-title">{greeting}, Jake.</h1>
+        <div className="home-meta">
+          <span className="home-meta-date">{todayPretty}</span>
+          {weather && (
+            <span className="home-meta-weather" title={weather.description}>
+              <span className="home-meta-weather-icon" aria-hidden="true">{weatherIcon}</span>
+              {Math.round(weather.tempF)}°{' '}{weather.description.replace(/^\w/, c => c.toUpperCase())}
+            </span>
+          )}
+        </div>
         <p className="home-subtitle">
-          {lib.tracks.length.toLocaleString()} tracks
+          {lib.tracks.length.toLocaleString()} tracks in your library
           {recentAlbums.length > 0 && (
             <> · last import {new Date(recentAlbums[0].newestAdded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</>
           )}

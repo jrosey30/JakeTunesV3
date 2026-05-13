@@ -209,6 +209,23 @@ export interface MusicNewsItem {
 
 const newsCache = makeCache<MusicNewsItem[]>(60 * 60 * 1000)  // 1 hour
 
+// 4.4.29: RSS feeds embed HTML entities in <title> CDATA. The previous
+// parser passed `&#8220;`, `&#8217;`, `&amp;` etc through verbatim,
+// which rendered as literal "&#8220;" in the UI. This decoder handles
+// the common cases: named entities, decimal numeric, hex numeric.
+function decodeEntities(str: string): string {
+  if (!str) return ''
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+}
+
 // Extract a best-guess image URL from an RSS item body. Tries (in order):
 //   <media:content url="…" />
 //   <media:thumbnail url="…" />
@@ -253,7 +270,10 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
     for (const item of matches.slice(0, 12)) {
       const titleMatch = item.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i)
       const linkMatch = item.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i)
-      const title = titleMatch?.[1]?.trim().replace(/\s+/g, ' ').slice(0, 240) || ''
+      // 4.4.29: decode HTML entities in the title (RSS feeds embed
+      // curly quotes, apostrophes, ampersands as &#8220; etc.).
+      const rawTitle = titleMatch?.[1]?.trim() || ''
+      const title = decodeEntities(rawTitle).replace(/\s+/g, ' ').slice(0, 240)
       const link = linkMatch?.[1]?.trim() || ''
       if (!title || !link) continue
       items.push({
@@ -271,14 +291,25 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
   }
 }
 
-/** Combined structured fetch across all 3 RSS feeds. One-hour cache. */
+/** Combined structured fetch across all the RSS feeds. One-hour cache.
+ *
+ * 4.4.29: curated source list. Dropped Stereogum's main news feed
+ * (clickbait-heavy — "Netflix Roasted Kevin Hart…" etc.). Replaced
+ * with higher-signal sources: Pitchfork features (long-form), NPR's
+ * All Songs Considered, Aquarium Drunkard (deep indie). Kept The
+ * Quietus (UK underground/electronic). Pitchfork Best New Albums
+ * still drives the "New This Week" section. */
 async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
   const cached = newsCache.get('all')
   if (cached) return cached
   const sources: { name: string; url: string; isReleaseReview: boolean }[] = [
-    { name: 'Pitchfork',   url: 'https://pitchfork.com/rss/reviews/best/albums/', isReleaseReview: true },
-    { name: 'Stereogum',   url: 'https://www.stereogum.com/category/news/feed/',  isReleaseReview: false },
-    { name: 'The Quietus', url: 'https://thequietus.com/feed/',                   isReleaseReview: false },
+    // Notable Releases (cover-led card row on Home)
+    { name: 'Pitchfork',         url: 'https://pitchfork.com/rss/reviews/best/albums/', isReleaseReview: true },
+    // Music News (text-led card row on Home)
+    { name: 'Pitchfork',         url: 'https://pitchfork.com/rss/features/',            isReleaseReview: false },
+    { name: 'NPR Music',         url: 'https://feeds.npr.org/1039/rss.xml',             isReleaseReview: false },
+    { name: 'The Quietus',       url: 'https://thequietus.com/feed/',                   isReleaseReview: false },
+    { name: 'Aquarium Drunkard', url: 'https://aquariumdrunkard.com/feed/',             isReleaseReview: false },
   ]
   const results = await Promise.all(
     sources.map(s => fetchStructuredFeed(s.url, s.name, s.isReleaseReview))

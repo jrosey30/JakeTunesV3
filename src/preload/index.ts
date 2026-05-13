@@ -306,6 +306,12 @@ const electronAPI = {
     ipcRenderer.invoke('get-notable-releases'),
   openExternalUrl: (url: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('open-external-url', url),
+
+  // 4.4.29 — Brooklyn weather for the Home view greeting (10-min cache
+  // in main). Returns null weather if the OPENWEATHER_API_KEY isn't
+  // configured; renderer should fall back to a date-only header.
+  getBrooklynWeather: (): Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }> =>
+    ipcRenderer.invoke('get-brooklyn-weather'),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
