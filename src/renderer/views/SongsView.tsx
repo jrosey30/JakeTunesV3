@@ -4,7 +4,6 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
-import { useElasticOverscroll } from '../hooks/useElasticOverscroll'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -106,9 +105,8 @@ export default function SongsView() {
     sorted.length, 19, 10, getSavedScrollTop('songs'),
   )
   useScrollPersistence('songs', containerRef)
-  // 4.4.25: iOS-style elastic bounce when scrolling past the top/bottom
-  // of the songs list. Vertical axis.
-  useElasticOverscroll(containerRef, { axis: 'y' })
+  // 4.4.27: removed useElasticOverscroll — let macOS provide the
+  // native bounce instead of a JS approximation.
 
   const handleSort = useCallback((col: string) => {
     if (col === 'playing' || col === 'time') return

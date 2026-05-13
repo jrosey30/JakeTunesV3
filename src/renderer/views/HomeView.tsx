@@ -26,7 +26,7 @@ import { useMemo, useRef, useState, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { useElasticOverscroll } from '../hooks/useElasticOverscroll'
+import { requestDrillIn } from '../utils/drillIn'
 import type { Track } from '../types'
 import '../styles/home.css'
 
@@ -71,12 +71,11 @@ export default function HomeView() {
   useScrollPersistence('home-row-recent', recentRowRef)
   useScrollPersistence('home-row-artists', artistsRowRef)
 
-  // 4.4.25: iOS-style elastic rubber-band bounce when the user
-  // wheel-scrolls past the start/end of each card row. Horizontal axis.
-  useElasticOverscroll(recentRowRef, { axis: 'x' })
-  useElasticOverscroll(artistsRowRef, { axis: 'x' })
-  // Home root has vertical scroll (when content overflows the window).
-  useElasticOverscroll(rootRef, { axis: 'y' })
+  // 4.4.27: removed the JS-based useElasticOverscroll calls — the
+  // implementation was fighting Chromium's native macOS bounce
+  // (because the hook set `overscroll-behavior: contain` to avoid
+  // double-bouncing). Native bounce is what we actually want; let it
+  // through.
 
   // 4.4.21 polish: brief flash on the clicked card so the click feels
   // acknowledged. Identified by album key; cleared after 380ms.
@@ -274,7 +273,13 @@ export default function HomeView() {
                   key={card.nameFolded}
                   className="home-artist-card"
                   role="listitem"
-                  onClick={() => dispatch({ type: 'SET_VIEW', view: 'artists' })}
+                  onClick={() => {
+                    // 4.4.27: drill into THIS artist, not the generic
+                    // Artists view. ArtistsView consumes the request
+                    // on mount and expands + scrolls to the artist.
+                    requestDrillIn('artist', card.name)
+                    dispatch({ type: 'SET_VIEW', view: 'artists' })
+                  }}
                   title={`${card.name}\n${card.totalPlays.toLocaleString()} plays across ${card.trackCount} track${card.trackCount === 1 ? '' : 's'}`}
                 >
                   <div className="home-artist-art">

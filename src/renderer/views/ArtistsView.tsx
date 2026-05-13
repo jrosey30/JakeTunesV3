@@ -3,7 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { useElasticOverscroll } from '../hooks/useElasticOverscroll'
+import { consumeDrillIn } from '../utils/drillIn'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useCynthia } from '../context/CynthiaContext'
@@ -206,7 +206,6 @@ export default function ArtistsView() {
   // pattern as SongsView.
   const viewRootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('artists', viewRootRef)
-  useElasticOverscroll(viewRootRef, { axis: 'y' })  // 4.4.25
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -246,6 +245,42 @@ export default function ArtistsView() {
       if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' })
     })
   }, [pb.nowPlaying?.id, lib.currentView, filteredArtists])
+
+  // 4.4.27: drill-in from another view (e.g. clicking an artist card on
+  // Home). Consume on mount; if a target name is queued, expand that
+  // artist and scroll their row into view.
+  //
+  // Name matching: HomeView keys cards by `t.albumArtist || t.artist`,
+  // ArtistsView groups by `t.artist` only. They match for 95%+ of music
+  // where the two fields agree. For the remainder (collaboration
+  // singles where albumArtist != artist), we fall back to a
+  // case-insensitive search before giving up.
+  useEffect(() => {
+    const requested = consumeDrillIn('artist')
+    if (!requested) return
+    // Find a matching artist in the grouped list. Prefer exact match;
+    // fall back to case-insensitive; give up if neither matches.
+    const exact = filteredArtists.find(a => a.name === requested)
+    const ci = exact || filteredArtists.find(
+      a => a.name.toLowerCase() === requested.toLowerCase()
+    )
+    if (!ci) return
+    const matchedName = ci.name
+    isAutoScrollAtRef.current = Date.now()
+    setExpanded(prev => {
+      if (prev.has(matchedName)) return prev
+      const next = new Set(prev)
+      next.add(matchedName)
+      return next
+    })
+    requestAnimationFrame(() => {
+      const root = viewRootRef.current
+      if (!root) return
+      const row = root.querySelector(`[data-artist-name="${CSS.escape(matchedName)}"]`) as HTMLElement | null
+      if (row) row.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div

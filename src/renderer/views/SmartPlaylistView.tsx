@@ -3,7 +3,6 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { useElasticOverscroll } from '../hooks/useElasticOverscroll'
 import { attachClipToBroadcast } from '../audio/eq'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
@@ -456,8 +455,6 @@ export default function SmartPlaylistView() {
   const songsBodyRef = useRef<HTMLDivElement | null>(null)
   // 4.4.13: per-smart-playlist scroll persistence within the session.
   useScrollPersistence(`smart-playlist:${libState.activeSmartPlaylist}`, songsBodyRef)
-  // 4.4.25: elastic rubber-band bounce at scroll boundaries.
-  useElasticOverscroll(songsBodyRef, { axis: 'y' })
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
