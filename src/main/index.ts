@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell } from 'electron'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -6,6 +6,7 @@ import {
   getDiscogsReleaseInfo, formatDiscogsForPrompt,
   getWikidataArtist, formatWikidataForPrompt,
   getMusicBrainzReleaseMbid, getCoverArtUrlByMbid,
+  getMusicNews, getNotableReleases, type MusicNewsItem,
 } from './external'
 import {
   appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
@@ -622,6 +623,46 @@ ipcMain.handle('delete-inbox-source', async (_e, filePath: string) => {
 // they haven't picked a custom location yet.
 ipcMain.handle('get-default-inbox-path', async () => {
   return { ok: true, path: getDefaultInboxPath() }
+})
+
+// 4.4.28 — Home view: music news + notable releases.
+// Both back-ends are in src/main/external.ts and share a single
+// one-hour parsed cache across the 3 RSS feeds (Pitchfork BNA,
+// Stereogum, The Quietus), so even though HomeView calls both
+// handlers, there's only ONE network round-trip per hour.
+ipcMain.handle('get-music-news', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
+  try {
+    const items = await getMusicNews()
+    return { ok: true, items }
+  } catch (err) {
+    console.warn('[get-music-news] failed:', err)
+    return { ok: true, items: [] }
+  }
+})
+ipcMain.handle('get-notable-releases', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
+  try {
+    const items = await getNotableReleases()
+    return { ok: true, items }
+  } catch (err) {
+    console.warn('[get-notable-releases] failed:', err)
+    return { ok: true, items: [] }
+  }
+})
+
+// 4.4.28 — Open an http(s) URL in the user's default browser.
+// Required because <a target="_blank"> inside Electron renders inside
+// the same window otherwise. Allowlisted to http/https schemes so a
+// corrupted renderer can't ask main to `open` arbitrary file:// or
+// custom-scheme URLs.
+ipcMain.handle('open-external-url', async (_e, url: string): Promise<{ ok: boolean; error?: string }> => {
+  if (typeof url !== 'string') return { ok: false, error: 'invalid url' }
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'only http(s) urls allowed' }
+  try {
+    await shell.openExternal(url)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 })
 
 // Async read used by handlers that need to gate behavior on a setting

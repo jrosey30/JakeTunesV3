@@ -22,12 +22,12 @@
  * separate state.
  */
 
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
-import type { Track } from '../types'
+import type { Track, MusicNewsItem } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -86,6 +86,53 @@ export default function HomeView() {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
     flashTimerRef.current = setTimeout(() => setFlashedKey(null), 380)
   }, [])
+
+  // 4.4.28: Music News + Notable Releases. Both back-ends share a 1-hour
+  // cache in main, so the parallel fetch here is cheap. Null means
+  // "still loading"; [] means "loaded but empty".
+  const [news, setNews] = useState<MusicNewsItem[] | null>(null)
+  const [releases, setReleases] = useState<MusicNewsItem[] | null>(null)
+  const newsRowRef = useRef<HTMLDivElement>(null)
+  const releasesRowRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('home-row-news', newsRowRef)
+  useScrollPersistence('home-row-releases', releasesRowRef)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [n, r] = await Promise.all([
+          window.electronAPI.getMusicNews(),
+          window.electronAPI.getNotableReleases(),
+        ])
+        if (cancelled) return
+        setNews(n.ok ? n.items : [])
+        setReleases(r.ok ? r.items : [])
+      } catch {
+        if (cancelled) return
+        setNews([])
+        setReleases([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const openLink = useCallback((url: string) => {
+    void window.electronAPI.openExternalUrl(url)
+  }, [])
+
+  // "2 days ago" / "today" / "Apr 14" — short, friendly relative date.
+  const formatDate = (iso: string): string => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return ''
+    const diffMs = Date.now() - d.getTime()
+    const diffH = diffMs / (1000 * 60 * 60)
+    if (diffH < 24) return 'today'
+    if (diffH < 48) return 'yesterday'
+    if (diffH < 24 * 7) return `${Math.floor(diffH / 24)} days ago`
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
 
   // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
   const recentAlbums = useMemo((): AlbumCard[] => {
@@ -303,6 +350,86 @@ export default function HomeView() {
                 </div>
               )
             })}
+          </div>
+        </section>
+      )}
+
+      {/* ── 4.4.28: Notable Releases (Pitchfork Best New Albums) ─────────── */}
+      {releases !== null && releases.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">New This Week</h2>
+            <span className="home-section-source">via Pitchfork</span>
+          </div>
+          <div className="home-card-row" role="list" ref={releasesRowRef}>
+            {releases.map((item) => (
+              <div
+                key={item.link}
+                className="home-release-card"
+                role="listitem"
+                onClick={() => openLink(item.link)}
+                title={`${item.title}\nOpen review in browser`}
+              >
+                <div className="home-release-art">
+                  {item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      draggable={false}
+                      onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                    />
+                  ) : (
+                    <div className="home-album-art-placeholder">
+                      <svg width="32" height="32" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
+                        <circle cx="20" cy="20" r="18" />
+                        <circle cx="20" cy="20" r="6" />
+                        <circle cx="20" cy="20" r="2" fill="#999" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+                <div className="home-album-info">
+                  <div className="home-album-title">{item.title}</div>
+                  <div className="home-album-artist">{formatDate(item.pubDate)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── 4.4.28: Music News (Stereogum + The Quietus) ─────────────────── */}
+      {news !== null && news.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">Music News</h2>
+            <span className="home-section-source">via Stereogum, The Quietus</span>
+          </div>
+          <div className="home-card-row" role="list" ref={newsRowRef}>
+            {news.map((item) => (
+              <div
+                key={item.link}
+                className="home-news-card"
+                role="listitem"
+                onClick={() => openLink(item.link)}
+                title={`${item.title}\nOpen in browser`}
+              >
+                {item.imageUrl && (
+                  <div className="home-news-art">
+                    <img
+                      src={item.imageUrl}
+                      alt=""
+                      draggable={false}
+                      onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+                      onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none' }}
+                    />
+                  </div>
+                )}
+                <div className="home-news-meta">{item.source} · {formatDate(item.pubDate)}</div>
+                <div className="home-news-title">{item.title}</div>
+              </div>
+            ))}
           </div>
         </section>
       )}

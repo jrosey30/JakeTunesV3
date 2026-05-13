@@ -187,6 +187,121 @@ export function formatReviewsForPrompt(items: string[]): string {
   return `Recent music press headlines (use ONE of these as a reaction hook if it fits, otherwise ignore):\n${items.map(i => '  - ' + i).join('\n')}`
 }
 
+// ─────── 4.4.28: structured RSS for the Home view (News + Releases) ───────
+// The above getRecentReviews() returns "[Source] Title" strings for Music
+// Man's prompt context. The Home view needs more — clickable links, dates,
+// and (where available) hero images for the Notable Releases cards. So we
+// parse the same feeds again with a richer extractor and cache the parsed
+// objects for one hour. The two surfaces share the underlying network
+// fetches via a single combined parser; only the OUTPUT shape differs.
+
+export interface MusicNewsItem {
+  title: string
+  link: string
+  source: string         // 'Pitchfork' | 'Stereogum' | 'The Quietus'
+  pubDate: string        // ISO; '' if unparseable
+  imageUrl?: string      // best-effort cover/feature image
+  /** True for the Pitchfork Best New Albums feed — these items are
+   *  surfaced on Home's "Notable Releases" row; everything else
+   *  shows under "Music News". */
+  isReleaseReview: boolean
+}
+
+const newsCache = makeCache<MusicNewsItem[]>(60 * 60 * 1000)  // 1 hour
+
+// Extract a best-guess image URL from an RSS item body. Tries (in order):
+//   <media:content url="…" />
+//   <media:thumbnail url="…" />
+//   <enclosure url="…" type="image/…" />
+//   <img src="…" /> inside <content:encoded> or <description>
+function extractImageUrl(itemXml: string): string | undefined {
+  const mediaContent = itemXml.match(/<media:content[^>]*url=["']([^"']+\.(?:jpe?g|png|webp)[^"']*)["']/i)
+  if (mediaContent) return mediaContent[1]
+  const mediaThumb = itemXml.match(/<media:thumbnail[^>]*url=["']([^"']+)["']/i)
+  if (mediaThumb) return mediaThumb[1]
+  const enclosure = itemXml.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*type=["']image/i)
+  if (enclosure) return enclosure[1]
+  // Look inside <content:encoded> or <description> for first <img>.
+  const bodyMatch = itemXml.match(/<(?:content:encoded|description)>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/(?:content:encoded|description)>/i)
+  if (bodyMatch) {
+    const imgMatch = bodyMatch[1].match(/<img[^>]*src=["']([^"']+)["']/i)
+    if (imgMatch) return imgMatch[1]
+  }
+  return undefined
+}
+
+function parsePubDate(itemXml: string): string {
+  const m = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)
+    || itemXml.match(/<updated>([\s\S]*?)<\/updated>/i)
+    || itemXml.match(/<dc:date>([\s\S]*?)<\/dc:date>/i)
+  if (!m) return ''
+  const parsed = new Date(m[1].trim())
+  if (isNaN(parsed.getTime())) return ''
+  return parsed.toISOString()
+}
+
+async function fetchStructuredFeed(url: string, source: string, isReleaseReview: boolean): Promise<MusicNewsItem[]> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'JakeTunes/4.4' },
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) return []
+    const xml = await res.text()
+    const items: MusicNewsItem[] = []
+    const matches = xml.match(/<item[\s\S]*?<\/item>/gi) || []
+    for (const item of matches.slice(0, 12)) {
+      const titleMatch = item.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i)
+      const linkMatch = item.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i)
+      const title = titleMatch?.[1]?.trim().replace(/\s+/g, ' ').slice(0, 240) || ''
+      const link = linkMatch?.[1]?.trim() || ''
+      if (!title || !link) continue
+      items.push({
+        title,
+        link,
+        source,
+        pubDate: parsePubDate(item),
+        imageUrl: extractImageUrl(item),
+        isReleaseReview,
+      })
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+/** Combined structured fetch across all 3 RSS feeds. One-hour cache. */
+async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
+  const cached = newsCache.get('all')
+  if (cached) return cached
+  const sources: { name: string; url: string; isReleaseReview: boolean }[] = [
+    { name: 'Pitchfork',   url: 'https://pitchfork.com/rss/reviews/best/albums/', isReleaseReview: true },
+    { name: 'Stereogum',   url: 'https://www.stereogum.com/category/news/feed/',  isReleaseReview: false },
+    { name: 'The Quietus', url: 'https://thequietus.com/feed/',                   isReleaseReview: false },
+  ]
+  const results = await Promise.all(
+    sources.map(s => fetchStructuredFeed(s.url, s.name, s.isReleaseReview))
+  )
+  const flat = results.flat().sort((a, b) => b.pubDate.localeCompare(a.pubDate))
+  newsCache.set('all', flat)
+  return flat
+}
+
+/** Music news items for the Home view — Stereogum + Quietus, newest first. */
+export async function getMusicNews(): Promise<MusicNewsItem[]> {
+  const all = await getStructuredFeeds()
+  return all.filter(i => !i.isReleaseReview).slice(0, 12)
+}
+
+/** Notable releases for the Home view — Pitchfork "Best New Albums",
+ *  newest first. Each item is a recent album that Pitchfork flagged as
+ *  noteworthy; the link goes to the review. Suitable as cover-led cards. */
+export async function getNotableReleases(): Promise<MusicNewsItem[]> {
+  const all = await getStructuredFeeds()
+  return all.filter(i => i.isReleaseReview).slice(0, 10)
+}
+
 // ───────────────────────────── Discogs ─────────────────────────────
 // Lookup release / master detail for a given artist + album. Used to
 // drop pressing detail into MM's lane without us having to fabricate

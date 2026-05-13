@@ -295,6 +295,17 @@ const electronAPI = {
     ipcRenderer.on('library-sync-status', handler)
     return () => { ipcRenderer.removeListener('library-sync-status', handler) }
   },
+
+  // 4.4.28 — Home view: structured music news + notable releases from
+  // the existing RSS infrastructure (Pitchfork BNA / Stereogum /
+  // The Quietus). Both share a one-hour parsed cache in main, so
+  // calling both from HomeView is one network round-trip per hour.
+  getMusicNews: (): Promise<{ ok: boolean; items: Array<{ title: string; link: string; source: string; pubDate: string; imageUrl?: string; isReleaseReview: boolean }> }> =>
+    ipcRenderer.invoke('get-music-news'),
+  getNotableReleases: (): Promise<{ ok: boolean; items: Array<{ title: string; link: string; source: string; pubDate: string; imageUrl?: string; isReleaseReview: boolean }> }> =>
+    ipcRenderer.invoke('get-notable-releases'),
+  openExternalUrl: (url: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('open-external-url', url),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

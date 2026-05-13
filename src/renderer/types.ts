@@ -320,6 +320,21 @@ declare global {
         error?: string
         durationMs?: number
       }) => void) => () => void
+      // 4.4.28 — Home view: music news + notable releases.
+      getMusicNews: () => Promise<{ ok: boolean; items: MusicNewsItem[] }>
+      getNotableReleases: () => Promise<{ ok: boolean; items: MusicNewsItem[] }>
+      openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
     }
   }
+}
+
+// 4.4.28 — News item shape for Home view's News and Releases sections.
+// Mirrors src/main/external.ts MusicNewsItem.
+export interface MusicNewsItem {
+  title: string
+  link: string
+  source: string
+  pubDate: string
+  imageUrl?: string
+  isReleaseReview: boolean
 }
