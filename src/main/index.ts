@@ -6374,6 +6374,62 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
   }
 })
 
+// 4.4.51: microphone-activity watcher for the auto-route-on-call
+// feature. The renderer ARMS this (set-call-watch true) only while
+// music is playing AND the call-route setting is on; main then polls
+// `audio_helper mic-status` every ~3s and fires `call-state-changed`
+// on each true↔false flip. The renderer reacts by routing JakeTunes'
+// OWN audio output (AudioContext.setSinkId) to the configured speaker
+// — the system default output is never touched, so a Teams/Zoom call
+// keeps using whatever the OS has it on. Gated-polling (not always-on)
+// mirrors the 4.4.15 output-device-disconnect watcher.
+let callWatchTimer: ReturnType<typeof setInterval> | null = null
+let lastMicActive: boolean | null = null
+
+async function pollMicStatus(): Promise<void> {
+  const relPath = audioHelperRelPath()
+  if (!relPath) return
+  const helperPath = join(
+    app.isPackaged ? process.resourcesPath : app.getAppPath(),
+    relPath
+  )
+  try {
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const execP = promisify(execFile)
+    const { stdout } = await execP(helperPath, ['mic-status'], { timeout: 4000 })
+    const parsed = JSON.parse(stdout) as { ok?: boolean; micActive?: boolean }
+    const active = !!parsed.micActive
+    if (lastMicActive === null) {
+      // First reading establishes the baseline. If the mic is ALREADY
+      // active when we arm (music started during a call), fire once so
+      // the renderer routes immediately — otherwise stay quiet.
+      lastMicActive = active
+      if (active) mainWindow?.webContents.send('call-state-changed', { onCall: true })
+      return
+    }
+    if (active !== lastMicActive) {
+      lastMicActive = active
+      mainWindow?.webContents.send('call-state-changed', { onCall: active })
+    }
+  } catch {
+    // mic-status failed (helper missing / timeout) — stay quiet, retry next tick.
+  }
+}
+
+ipcMain.handle('set-call-watch', (_e, armed: boolean) => {
+  if (armed) {
+    if (callWatchTimer) return { ok: true }
+    lastMicActive = null               // re-baseline on (re)arm
+    void pollMicStatus()               // immediate first read
+    callWatchTimer = setInterval(() => { void pollMicStatus() }, 3000)
+  } else {
+    if (callWatchTimer) { clearInterval(callWatchTimer); callWatchTimer = null }
+    lastMicActive = null
+  }
+  return { ok: true }
+})
+
 app.whenReady().then(async () => {
   // 4.2.5: bootstrap the cached host preference so the very first
   // prompt build of the session picks the user's chosen persona,

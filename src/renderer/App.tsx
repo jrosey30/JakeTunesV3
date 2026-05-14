@@ -18,7 +18,7 @@ import StatusBar from './components/chrome/StatusBar'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
 import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
 import { setCrossfadeSettings } from './hooks/useAudio'
-import { setEqSettings } from './audio/eq'
+import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
 import './styles/variables.css'
@@ -64,6 +64,7 @@ function AppInner() {
         ai:        { ...DEFAULT_APP_SETTINGS.ai,        ...(raw.ai || {}) },
         eq:        { ...DEFAULT_APP_SETTINGS.eq,        ...(raw.eq || {}) },
         inbox:     { ...DEFAULT_APP_SETTINGS.inbox,     ...(raw.inbox || {}) },
+        audio:     { ...DEFAULT_APP_SETTINGS.audio,     ...(raw.audio || {}) },
       }
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
@@ -88,6 +89,60 @@ function AppInner() {
     })
     return cleanup
   }, [])
+
+  // 4.4.51: auto-route-on-call. While the call-route setting is on AND
+  // music is playing, arm main's mic-activity watcher. When a call
+  // starts (the mic goes live — Teams/Zoom/etc. all grab it), route
+  // JakeTunes' OWN audio output to the configured speaker via
+  // AudioContext.setSinkId — the macOS system default is never touched,
+  // so the call app keeps using whatever the OS has it on. Route back
+  // when the call ends. Solves "I don't want to pause music every time
+  // I hop on a Teams call" without the AirPlay-latency problem of
+  // playing to two devices at once (it's always one device at a time).
+  useEffect(() => {
+    const cfg = appSettings.audio
+    if (!cfg?.callRouteEnabled || !cfg.callRouteDeviceLabel || !pbState.isPlaying) {
+      window.electronAPI.setCallWatch(false)
+      return
+    }
+    window.electronAPI.setCallWatch(true)
+    let savedSink = ''
+    let routed = false
+    const cleanup = window.electronAPI.onCallStateChanged(async ({ onCall }) => {
+      try {
+        if (onCall && !routed) {
+          // Resolve the configured device's Web Audio sink id. We store
+          // the device by NAME (Web Audio ids churn across sessions) and
+          // match it against enumerateDevices() at route time.
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          const target = devices.find(d => d.kind === 'audiooutput' && d.label === cfg.callRouteDeviceLabel)
+          if (!target) {
+            setNotice(`Call started — couldn't find "${cfg.callRouteDeviceLabel}" to move music to.`, { kind: 'error', durationMs: 6000 })
+            return
+          }
+          savedSink = getAudioOutputSink()
+          const ok = await setAudioOutputSink(target.deviceId)
+          if (ok) {
+            routed = true
+            setNotice(`On a call — music moved to ${cfg.callRouteDeviceLabel}.`, { kind: 'info', durationMs: 4000 })
+          } else {
+            setNotice("Call started — couldn't move music (this runtime can't per-app route).", { kind: 'error', durationMs: 6000 })
+          }
+        } else if (!onCall && routed) {
+          await setAudioOutputSink(savedSink)
+          routed = false
+          setNotice('Call ended — music back on your speakers.', { kind: 'info', durationMs: 3000 })
+        }
+      } catch { /* best-effort routing — never throw into the IPC handler */ }
+    })
+    return () => {
+      cleanup()
+      window.electronAPI.setCallWatch(false)
+      // Disabling / unmounting mid-route: put the sink back so we don't
+      // leave music stranded on the call speaker.
+      if (routed) void setAudioOutputSink(savedSink)
+    }
+  }, [appSettings.audio?.callRouteEnabled, appSettings.audio?.callRouteDeviceLabel, pbState.isPlaying])
 
   // 4.4.18: Library sync orchestrator status. Surface success/failure
   // of laptop → homemini sync via the LCD-pill notice (4.4.12). Only

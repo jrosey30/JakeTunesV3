@@ -21,13 +21,25 @@ interface Props {
   onSaved: (next: AppSettings) => void
 }
 
-type Tab = 'Playback' | 'EQ' | 'Library' | 'Sync' | 'AI'
-const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'AI']
+type Tab = 'Playback' | 'EQ' | 'Library' | 'Sync' | 'Audio' | 'AI'
+const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'Audio', 'AI']
 
 // Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
 // 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
 function bandLabel(hz: number): string {
   return hz >= 1000 ? `${hz / 1000}k` : String(hz)
+}
+
+// 4.4.51: short transport suffix for the call-route speaker picker, so
+// the user can tell an AirPlay speaker apart from a Bluetooth one at a
+// glance. Empty string for built-in / unknown — no suffix needed.
+function transportHint(transport: string): string {
+  switch (transport) {
+    case 'airplay':   return ' · AirPlay'
+    case 'bluetooth': return ' · Bluetooth'
+    case 'usb':       return ' · USB'
+    default:          return ''
+  }
 }
 
 const FORMAT_OPTIONS: { value: ImportFormatChoice; label: string }[] = [
@@ -48,6 +60,12 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   // for the inbox folder input. Comes from main since renderer doesn't
   // know the user's homedir without a separate IPC.
   const [defaultInboxPath, setDefaultInboxPath] = useState<string>('')
+  // 4.4.51: audio output devices for the call-route speaker picker. The
+  // call-route feature moves music to a chosen speaker (e.g. an AirPlay
+  // device) when a call grabs the mic, then restores it on hang-up.
+  const [audioDevices, setAudioDevices] = useState<
+    { id: number; name: string; transport: string; isDefault: boolean }[]
+  >([])
 
   useEffect(() => { setDraft(initial) }, [initial])
 
@@ -55,6 +73,12 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
     window.electronAPI.getDefaultInboxPath?.().then(r => {
       if (r?.ok && r.path) setDefaultInboxPath(r.path)
     }).catch(() => { /* fall back to empty placeholder */ })
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI.listAudioDevices?.().then(r => {
+      if (r?.ok && Array.isArray(r.devices)) setAudioDevices(r.devices)
+    }).catch(() => { /* leave empty; UI still shows the saved label */ })
   }, [])
 
   const handleSave = async () => {
@@ -367,6 +391,67 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <p className="imp-help" style={{ marginTop: 10 }}>
                 When off, both flows still work — they just require an explicit click. Turn on for set-and-forget syncing.
               </p>
+            </>
+          )}
+
+          {tab === 'Audio' && (
+            <>
+              {/* 4.4.51 — Auto-move music to another speaker during calls.
+                  When a Teams/Zoom/FaceTime call grabs the mic, JakeTunes
+                  shifts its own audio to the chosen speaker so you don't
+                  have to pause; on hang-up it restores the previous output.
+                  Per-app routing — the call itself stays on your normal
+                  device. */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.audio.callRouteEnabled}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    audio: { ...draft.audio, callRouteEnabled: e.target.checked },
+                  })}
+                />
+                <span>Move music to another speaker during calls</span>
+              </label>
+
+              <div style={{ opacity: draft.audio.callRouteEnabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#3a3a3a', marginBottom: 4 }}>
+                  Speaker to use during calls
+                </label>
+                <select
+                  value={draft.audio.callRouteDeviceLabel}
+                  disabled={!draft.audio.callRouteEnabled}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    audio: { ...draft.audio, callRouteDeviceLabel: e.target.value },
+                  })}
+                  style={{ width: '100%', padding: 6, fontSize: 13 }}
+                >
+                  <option value="">— Select a speaker —</option>
+                  {audioDevices
+                    .filter(d => d.transport !== 'builtin')
+                    .map(d => (
+                      <option key={d.id} value={d.name}>
+                        {d.name}{transportHint(d.transport)}
+                      </option>
+                    ))}
+                  {draft.audio.callRouteDeviceLabel &&
+                    !audioDevices.some(d => d.name === draft.audio.callRouteDeviceLabel) && (
+                      <option value={draft.audio.callRouteDeviceLabel}>
+                        {draft.audio.callRouteDeviceLabel} (not connected)
+                      </option>
+                    )}
+                </select>
+                <p className="imp-help" style={{ marginTop: 8 }}>
+                  When a call starts (your mic goes live), music jumps to this speaker so the
+                  call audio has your built-in output to itself. Music returns to your normal
+                  output when the call ends.
+                </p>
+                <p className="imp-help" style={{ marginTop: 4, fontSize: 10, color: '#888' }}>
+                  AirPlay speakers have a built-in ~2-second delay — that's a property of AirPlay
+                  itself, not JakeTunes. Bluetooth or a wired/USB speaker switches instantly.
+                </p>
+              </div>
             </>
           )}
 

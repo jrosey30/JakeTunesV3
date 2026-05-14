@@ -201,6 +201,49 @@ export function setEqSettings(next: EqSettings): void {
   }
 }
 
+// ── 4.4.51: per-app output routing ───────────────────────────────────
+// Everything JakeTunes plays — music (MediaElementSource), TTS clips,
+// stingers — flows through this one `audioContext` and out its
+// destination. `AudioContext.setSinkId()` (Chrome/Electron 110+) lets
+// us point that destination at a SPECIFIC device WITHOUT touching the
+// macOS system default — so the auto-route-on-call feature can move
+// music to an AirPlay speaker while a Teams call keeps using whatever
+// the OS output is set to. `sinkId` is a navigator.mediaDevices
+// deviceId; '' means "follow the system default."
+//
+// Cast because the TS 5.3 lib.dom typings predate AudioContext.setSinkId.
+type SinkCapableContext = AudioContext & {
+  setSinkId?: (id: string) => Promise<void>
+  sinkId?: string
+}
+
+/** The device JakeTunes' audio is currently routed to ('' = system
+ *  default). Used to remember where to route BACK after a call ends. */
+export function getAudioOutputSink(): string {
+  if (!audioContext) return ''
+  const ctx = audioContext as SinkCapableContext
+  return typeof ctx.sinkId === 'string' ? ctx.sinkId : ''
+}
+
+/** Route the whole app's audio output to `sinkId` ('' = system
+ *  default). No-op (with a warning) if the runtime predates setSinkId
+ *  or no AudioContext exists yet. */
+export async function setAudioOutputSink(sinkId: string): Promise<boolean> {
+  if (!audioContext) return false
+  const ctx = audioContext as SinkCapableContext
+  if (typeof ctx.setSinkId !== 'function') {
+    console.warn('[eq] AudioContext.setSinkId unavailable in this runtime — cannot per-app route')
+    return false
+  }
+  try {
+    await ctx.setSinkId(sinkId)
+    return true
+  } catch (err) {
+    console.warn('[eq] setSinkId failed:', err)
+    return false
+  }
+}
+
 /** 4.4.8: detach a Howl's HTMLAudio element from the EQ chain. Called
  *  immediately before .unload() so the MediaElementSource node it owns
  *  is removed from the graph instead of dangling there until GC.

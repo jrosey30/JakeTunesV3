@@ -228,6 +228,16 @@ const electronAPI = {
     ipcRenderer.invoke('list-audio-devices'),
   setAudioDevice: (deviceId: number): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('set-audio-device', deviceId),
+  // 4.4.51 — auto-route-on-call. Renderer arms the mic-activity watcher
+  // while music is playing + the feature is on; main polls and fires
+  // call-state-changed on each mic on↔off flip.
+  setCallWatch: (armed: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('set-call-watch', armed),
+  onCallStateChanged: (callback: (state: { onCall: boolean }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: { onCall: boolean }) => callback(state)
+    ipcRenderer.on('call-state-changed', handler)
+    return () => { ipcRenderer.removeListener('call-state-changed', handler) }
+  },
   // iPod Classic ALAC compatibility (File → Library → Fix iPod Compatibility…)
   alacCompatScan: (): Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }> =>
     ipcRenderer.invoke('alac-compat-scan'),

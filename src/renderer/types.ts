@@ -197,6 +197,16 @@ export interface AppSettings {
     enabled: boolean
     path: string
   }
+  // 4.4.51 — auto-route-on-call. When `callRouteEnabled` is on and music
+  // is playing, JakeTunes watches the mic; when a call starts it routes
+  // its OWN audio output (AudioContext.setSinkId — system default
+  // untouched) to the device named in `callRouteDeviceLabel`, then
+  // routes back when the call ends. Stored by device NAME because
+  // Web Audio deviceIds are unstable across sessions/replug.
+  audio: {
+    callRouteEnabled: boolean
+    callRouteDeviceLabel: string   // '' = not configured yet
+  }
 }
 
 // EQ default is duplicated from audio/eq.ts::DEFAULT_EQ rather than
@@ -216,6 +226,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   },
   // Default-on with empty path → main resolves to ~/Music2/_inbox.
   inbox: { enabled: true, path: '' },
+  // Off until the user picks a speaker in Preferences → Audio.
+  audio: { callRouteEnabled: false, callRouteDeviceLabel: '' },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
@@ -304,6 +316,8 @@ declare global {
       openSoundSettings: () => Promise<void>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
+      setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>
+      onCallStateChanged: (callback: (state: { onCall: boolean }) => void) => () => void
       alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>
       alacCompatFix: () => Promise<{ ok: boolean; error?: string; summary?: string }>
       onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
