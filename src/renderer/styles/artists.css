@@ -10,28 +10,47 @@
 .artist-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
+  gap: 12px;
+  /* 4.4.40: slightly more padding to breathe around the bigger avatars. */
+  padding: 8px 14px;
   cursor: pointer;
   border-bottom: 1px solid #eee;
   user-select: none;
   /* 4.4.24: smoother hover/selection transition. */
-  transition: background-color 90ms ease-out;
+  transition: background-color 120ms ease-out;
 }
 
-.artist-row:hover { background: rgba(0,0,0,0.03); }
+.artist-row:hover { background: rgba(0,0,0,0.035); }
 
 .artist-avatar {
-  width: 28px;
-  height: 28px;
+  /* 4.4.40: bumped 28px → 38px so real artist photos read clearly,
+   * and the colored-initial fallback feels less cramped. */
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* 4.4.40: photo-backed avatar. The img element replaces the colored
+ * initials disc entirely. object-fit: cover crops anything non-square.
+ */
+.artist-avatar--photo {
+  object-fit: cover;
+  background: #ddd;  /* shows during the image-fetch flicker */
+  animation: artist-avatar-in 260ms ease-out;
+}
+
+@keyframes artist-avatar-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1);    }
 }
 
 .artist-name {
@@ -46,11 +65,14 @@
 }
 
 .artist-chevron {
-  transition: transform 0.15s;
+  /* 4.4.40: longer ease (200ms) so the chevron's rotation reads as
+   * deliberate at the same time the expanded panel grows in. */
+  transition: transform 200ms cubic-bezier(0.2, 0.65, 0.3, 1);
   flex-shrink: 0;
+  opacity: 0.55;
 }
 
-.artist-chevron.open { transform: rotate(90deg); }
+.artist-chevron.open { transform: rotate(90deg); opacity: 0.85; }
 
 /* Album grid inside expanded artist */
 .artist-albums-grid {
@@ -66,30 +88,47 @@
   text-align: center;
 }
 
-/* 4.4.37 / 4.4.38: when expanded, break out of the 120px grid column
-   and span the full row width. Flex layout: cover on the left (now
-   180px in 4.4.38, was 140px), info column (title + meta + tracklist)
-   on the right. 4.4.38 polish: subtle warm-cool gradient backdrop
-   matching the Home Featured Album hero, stronger border, prominent
-   drop shadow on the cover, animated fade-in on expand. */
+/* 4.4.40: expanded-card layout is now CSS grid with named areas.
+ *
+ * The 4.4.37/38 design used flex: [cover 180px] | [info+tracklist 1fr].
+ * That left a huge empty void below the cover when the tracklist was
+ * longer than 180px tall (every album with >7 tracks). Now:
+ *
+ *    ┌──────────┬───────────────────────────┐
+ *    │  cover   │   title                   │   "header" row
+ *    │  220×220 │   year · songs · min …   │
+ *    │          │   [▶ Play Album]          │
+ *    ├──────────┴───────────────────────────┤
+ *    │   tracklist (full card width)        │   "tracklist" row,
+ *    │   1  …          2  …                 │   auto-2-column when
+ *    │   3  …          4  …                 │   the album is tall
+ *    └──────────────────────────────────────┘
+ *
+ * Subtle warm-cool gradient backdrop (matches Home Featured Album hero
+ * + 4.4.38 carry-over), shadow, border. The whole card eases in via
+ * `artist-album-expand`. The tracklist itself slides in slightly
+ * delayed so the cover lands first — feels more deliberate.
+ */
 .artist-album-card--expanded {
   grid-column: 1 / -1;
-  display: flex;
-  gap: 22px;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-areas:
+    "art   info"
+    "tracks tracks";
+  gap: 18px 24px;
   text-align: left;
   background: linear-gradient(135deg, rgba(215, 123, 39, 0.06) 0%, rgba(74, 144, 217, 0.04) 100%);
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  /* 4.4.38: smooth open animation so the card doesn't just appear
-     hard. Pairs with the tracklist's own slide-in below. */
-  animation: artist-album-expand 320ms cubic-bezier(0.2, 0.65, 0.3, 1);
+  border-radius: 10px;
+  padding: 22px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  animation: artist-album-expand 360ms cubic-bezier(0.2, 0.65, 0.3, 1);
 }
 
 @keyframes artist-album-expand {
-  from { opacity: 0.5; transform: scale(0.985); }
-  to   { opacity: 1;   transform: scale(1); }
+  from { opacity: 0;   transform: translateY(-4px) scale(0.985); }
+  to   { opacity: 1;   transform: translateY(0)    scale(1);     }
 }
 
 .artist-album-art {
@@ -105,14 +144,14 @@
   transition: transform 0.15s, box-shadow 0.15s;
 }
 .artist-album-card--expanded .artist-album-art {
-  flex: 0 0 180px;
-  width: 180px;
-  height: 180px;
-  align-self: flex-start;
+  /* 4.4.40: grid area + matching size to the 220px column. */
+  grid-area: art;
+  width: 220px;
+  height: 220px;
   /* 4.4.38: pronounced drop shadow so the cover has depth, like
      iTunes 8's album-detail and the Home Featured Album hero. */
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-  border-radius: 5px;
+  border-radius: 6px;
 }
 .artist-album-card--expanded .artist-album-art:hover {
   /* override the default translateY hover when in expanded mode —
@@ -147,7 +186,17 @@
   min-width: 0;
 }
 .artist-album-card--expanded .artist-album-info {
-  flex: 1;
+  /* 4.4.40: grid area + vertical layout so title + meta + Play Album
+   * stack naturally. justify-content: center vertically centers the
+   * info block against the 220px cover so we don't have title clipped
+   * to the top with empty space below the Play button. */
+  grid-area: info;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 0;
 }
 
 .artist-album-title {
@@ -159,12 +208,16 @@
   text-overflow: ellipsis;
 }
 .artist-album-card--expanded .artist-album-title {
-  font-size: 22px;
+  /* 4.4.40: bigger title now that the info column has more breathing
+   * room. Wraps naturally on long names instead of being clipped. */
+  font-size: 26px;
   font-weight: 700;
-  margin-top: 0;
-  margin-bottom: 4px;
-  letter-spacing: -0.015em;
-  line-height: 1.15;
+  margin: 0;
+  letter-spacing: -0.018em;
+  line-height: 1.12;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .artist-album-count {
@@ -172,38 +225,42 @@
   color: var(--text-dim);
 }
 
-/* 4.4.38: expanded metadata strip — "2013 · 13 songs · 45 min · 47 plays" */
+/* 4.4.38 / 4.4.40 — expanded metadata strip. Slight color bump so it
+ * doesn't disappear against the warm gradient backdrop. Margin lives
+ * on the info column's gap now (4.4.40), so this is just font + color. */
 .artist-album-meta {
-  font-size: 12px;
-  color: var(--text-dim, #888);
-  margin-bottom: 12px;
+  font-size: 12.5px;
+  color: rgba(0, 0, 0, 0.55);
   font-variant-numeric: tabular-nums;
+  margin: 0;
 }
 
-/* 4.4.38: Play Album CTA. Orange gradient matches the Home Featured
-   Album primary button so the visual language stays consistent. */
+/* 4.4.38 / 4.4.40 — Play Album CTA. Orange gradient matches the Home
+ * Featured Album primary button so the visual language stays consistent.
+ * Margin removed in 4.4.40 — info column's flex `gap` handles spacing. */
 .artist-album-play {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  font-size: 12px;
+  gap: 7px;
+  padding: 8px 16px;
+  margin-top: 4px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #fff;
   background: linear-gradient(180deg, #d77b27 0%, #b56419 100%);
   border: 1px solid #a05512;
-  border-radius: 5px;
+  border-radius: 6px;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(180, 90, 20, 0.25);
-  margin-bottom: 12px;
-  transition: background 140ms ease, transform 140ms ease;
+  box-shadow: 0 2px 5px rgba(180, 90, 20, 0.28);
+  transition: background 140ms ease, transform 90ms ease, box-shadow 140ms ease;
 }
 .artist-album-play:hover {
   background: linear-gradient(180deg, #e08530 0%, #c06d1f 100%);
+  box-shadow: 0 3px 8px rgba(180, 90, 20, 0.35);
 }
 .artist-album-play:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 /* Tracklist inside album */
@@ -213,10 +270,40 @@
   border-top: 1px solid #e8e8e8;
   padding-top: 6px;
 }
+
+/* 4.4.40: in expanded cards the tracklist gets its own grid area
+ * spanning both columns, sits below a subtle warm-tinted divider,
+ * and slides in slightly delayed so the cover + info land first.
+ */
 .artist-album-card--expanded .artist-album-tracklist {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
+  grid-area: tracks;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  animation: artist-tracklist-in 380ms cubic-bezier(0.2, 0.65, 0.3, 1) 80ms both;
+}
+
+@keyframes artist-tracklist-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* 4.4.40: tall albums (>10 tracks) flow into 2 columns. column-count
+ * is the right primitive here because each track-row uses its own
+ * internal grid for [icon] [num] [title] [time]; break-inside: avoid
+ * keeps a row from being split mid-column. column-gap matches the
+ * grid gap above so the rhythm reads consistent.
+ */
+.artist-album-card--tall .artist-album-tracklist {
+  column-count: 2;
+  column-gap: 32px;
+  column-rule: 1px solid rgba(0, 0, 0, 0.05);
+}
+.artist-album-card--tall .artist-track-row {
+  break-inside: avoid;
+  /* Tiny top margin so the first row in column 2 doesn't sit flush
+   * against the divider line. */
+  margin-top: 1px;
 }
 
 /* 4.4.37: proper grid track row — icon · # · title · time.

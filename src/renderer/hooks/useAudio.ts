@@ -344,9 +344,21 @@ export function useAudio() {
     // playing. While the new Howl is still loading at the start of a
     // crossfade, fall back to the OUTGOING howl — the user is still
     // hearing it, so the bar should keep advancing through its tail.
+    //
+    // 4.4.40 fallback: Howler's `.playing()` can return `false` even
+    // when the underlying HTMLAudioElement is producing sound — happens
+    // after pool reuse (4.4.9) or after Core Audio renegotiates the
+    // output device mid-track (4.4.15). When that happens, React state
+    // (`stateRef.current.isPlaying`) still correctly says we're playing,
+    // but the position bar froze at 0:00 / -0:00 because no dispatch
+    // ever fired. Last-resort: if React thinks we're playing and a
+    // sharedHowl exists, dispatch position from it even if .playing()
+    // is lying. seek() reads the underlying audio element directly so
+    // it returns the true position even when .playing() is wrong.
     const positionHowl =
       (sharedHowl && sharedHowl.playing()) ? sharedHowl :
       (outgoingHowl && outgoingHowl.playing()) ? outgoingHowl :
+      (sharedHowl && stateRef.current.isPlaying) ? sharedHowl :
       null
     if (positionHowl) {
       // Throttle SET_POSITION dispatch to 10Hz. The rAF loop fires at

@@ -686,6 +686,21 @@ ipcMain.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDat
   }
 })
 
+// 4.4.40 — Per-artist photo fetch for the Artists view. Single artist
+// per call; the renderer batches at 6 concurrent. Disk cache is 30 days
+// (hit + miss tombstone), single-flight per slug, all handled inside
+// getArtistImage. Always succeeds (returns slug: null on failure) so the
+// renderer doesn't need try/catch on every call.
+ipcMain.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boolean; slug: string | null }> => {
+  try {
+    const slug = await getArtistImage(artist)
+    return { ok: true, slug }
+  } catch (err) {
+    console.warn('[get-artist-image] failed for', artist, err)
+    return { ok: true, slug: null }
+  }
+})
+
 // 4.4.29 — Brooklyn weather for the Home header greeting. Cached
 // 10 min in external.ts (already there for the Music Man prompt).
 // Returns null if no API key is set; renderer should render the
@@ -2754,6 +2769,113 @@ function getArtworkIndexPath(): string {
   return join(getArtworkDir(), 'index.json')
 }
 
+// 4.4.40: artist photo cache helpers. Photos come from Bandsintown's
+// /artists/{name} endpoint (free, app_id auth only). Each artist's photo
+// is saved as `${slug}.jpg` and `${slug}.miss` is the tombstone file
+// written when Bandsintown has no photo / 404'd — prevents re-querying
+// every launch for artists they don't index. Both kinds expire after
+// 30 days so labels that get added later eventually surface.
+function getArtistImageDir(): string {
+  return join(app.getPath('userData'), 'artist-images')
+}
+
+const ARTIST_IMAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000  // 30 days
+const ARTIST_IMAGE_IN_FLIGHT = new Map<string, Promise<string | null>>()
+
+function artistSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')   // strip combining marks
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+    || 'unknown'
+}
+
+/** Resolve a Bandsintown artist photo to a local slug. Returns null
+ *  if the artist isn't on Bandsintown or the fetch failed. Idempotent;
+ *  single-flight per slug; 30-day disk cache (hit + miss). */
+async function getArtistImage(artist: string): Promise<string | null> {
+  const slug = artistSlug(artist)
+  if (!slug || slug === 'unknown') return null
+
+  // Single-flight: collapse concurrent calls for the same artist into
+  // one network request.
+  const existing = ARTIST_IMAGE_IN_FLIGHT.get(slug)
+  if (existing) return existing
+
+  const task = (async () => {
+    const dir = getArtistImageDir()
+    const jpg = join(dir, `${slug}.jpg`)
+    const miss = join(dir, `${slug}.miss`)
+    await mkdir(dir, { recursive: true }).catch(() => {})
+
+    // Disk-cache HIT path. If the .jpg exists and is fresh, return slug.
+    try {
+      const st = await stat(jpg)
+      if (Date.now() - st.mtimeMs < ARTIST_IMAGE_MAX_AGE_MS) return slug
+    } catch { /* doesn't exist — fall through */ }
+    // Disk-cache MISS tombstone. Don't hammer Bandsintown for artists
+    // they don't have until the tombstone expires.
+    try {
+      const st = await stat(miss)
+      if (Date.now() - st.mtimeMs < ARTIST_IMAGE_MAX_AGE_MS) return null
+    } catch { /* doesn't exist — fall through */ }
+
+    try {
+      const url = `https://rest.bandsintown.com/artists/${encodeURIComponent(artist)}?app_id=jaketunes-desktop`
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'JakeTunes/4.4', Accept: 'application/json' },
+        signal: AbortSignal.timeout(7000),
+      })
+      if (!res.ok) {
+        await writeFile(miss, '').catch(() => {})
+        return null
+      }
+      const body = await res.json() as { image_url?: string; thumb_url?: string }
+      const imgUrl = body.image_url || body.thumb_url
+      if (!imgUrl) {
+        await writeFile(miss, '').catch(() => {})
+        return null
+      }
+      // Skip Bandsintown's "no photo available" placeholder.
+      if (imgUrl.includes('bandsintown-no-image') || imgUrl.includes('placeholder')) {
+        await writeFile(miss, '').catch(() => {})
+        return null
+      }
+      const imgRes = await fetch(imgUrl, {
+        headers: { 'User-Agent': 'JakeTunes/4.4' },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!imgRes.ok) {
+        await writeFile(miss, '').catch(() => {})
+        return null
+      }
+      const buf = Buffer.from(await imgRes.arrayBuffer())
+      if (buf.length < 200) {
+        // suspiciously small — probably an error pixel, not a real photo
+        await writeFile(miss, '').catch(() => {})
+        return null
+      }
+      await writeFile(jpg, buf)
+      // Clear any stale tombstone so the next probe sees the hit.
+      await unlink(miss).catch(() => {})
+      return slug
+    } catch {
+      await writeFile(miss, '').catch(() => {})
+      return null
+    }
+  })()
+
+  ARTIST_IMAGE_IN_FLIGHT.set(slug, task)
+  try {
+    return await task
+  } finally {
+    ARTIST_IMAGE_IN_FLIGHT.delete(slug)
+  }
+}
+
 function artworkHash(artist: string, album: string): string {
   return createHash('md5').update(`${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`).digest('hex')
 }
@@ -2900,7 +3022,9 @@ async function extractAndSaveEmbeddedArtwork(
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'ipod-audio', privileges: { stream: true, bypassCSP: true, supportFetchAPI: true } },
-  { scheme: 'album-art', privileges: { bypassCSP: true, supportFetchAPI: true } }
+  { scheme: 'album-art', privileges: { bypassCSP: true, supportFetchAPI: true } },
+  // 4.4.40 — Bandsintown artist photos for the Artists view.
+  { scheme: 'artist-image', privileges: { bypassCSP: true, supportFetchAPI: true } }
 ])
 
 // ElevenLabs TTS
@@ -6009,6 +6133,32 @@ app.whenReady().then(async () => {
         status: 404,
         headers: { 'Cache-Control': 'no-store' },
       })
+    }
+  })
+
+  // 4.4.40 — Serve cached artist photos. URLs look like
+  // `artist-image://{slug}.jpg`. The slug is already filename-safe
+  // (artistSlug strips everything except [a-z0-9-]) so we just read
+  // from disk; no traversal possible.
+  protocol.handle('artist-image', async (request) => {
+    const url = request.url.replace('artist-image://', '')
+    const raw = decodeURIComponent(url.split('?')[0].replace('.jpg', ''))
+    const slug = raw.replace(/[^a-z0-9-]/g, '')
+    if (!slug) {
+      return new Response('Bad slug', { status: 400 })
+    }
+    const filePath = join(getArtistImageDir(), `${slug}.jpg`)
+    try {
+      const data = await readFile(filePath)
+      return new Response(data as unknown as BodyInit, {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          // Long cache — slug is unique per artist; disk-side TTL handles refresh
+          'Cache-Control': 'public, max-age=604800',
+        },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
     }
   })
 

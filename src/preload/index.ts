@@ -325,6 +325,14 @@ const electronAPI = {
   // cache in main; cold call ~2-4 sec.
   getUpcomingReleasesPersonal: (): Promise<{ ok: boolean; items: Array<{ title: string; artist: string; releaseDate: string; mbid: string; coverUrl: string }> }> =>
     ipcRenderer.invoke('get-upcoming-releases-personal'),
+
+  // 4.4.40 — Per-artist photo via Bandsintown, with 30-day disk cache
+  // (hit + miss tombstone) and single-flight gating in main. Returns
+  // { ok: true, slug: '<slug>' | null }. The renderer loads photos via
+  // the artist-image:// custom protocol scheme; this IPC just kicks
+  // the fetch + tells the renderer when a slug is ready to render.
+  getArtistImage: (artist: string): Promise<{ ok: boolean; slug: string | null }> =>
+    ipcRenderer.invoke('get-artist-image', artist),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
