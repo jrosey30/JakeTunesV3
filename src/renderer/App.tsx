@@ -29,7 +29,7 @@ import './styles/sidebar.css'
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { togglePlayPause, nextTrack, prevTrack, setVolume, stopPlayback } = useAudio()
+  const { togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback } = useAudio()
   const { state: pbState } = usePlayback()
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
@@ -143,6 +143,73 @@ function AppInner() {
       if (routed) void setAudioOutputSink(savedSink)
     }
   }, [appSettings.audio?.callRouteEnabled, appSettings.audio?.callRouteDeviceLabel, pbState.isPlaying])
+
+  // 4.4.53: macOS "Now Playing" integration. Without this the Control
+  // Center / lock-screen widget just shows the app name ("JakeTunes
+  // V3") — Chromium surfaces the <audio> element to the OS but has no
+  // track metadata to hand it. MediaSession is the bridge.
+  //
+  // (1) Metadata — title / artist / album / artwork, refreshed on every
+  // track change. Artwork reuses the album-art:// protocol with the
+  // same key scheme AlbumArtPanel uses (`${artist}|||${album}`, lower).
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const np = pbState.nowPlaying
+    if (!np) {
+      navigator.mediaSession.metadata = null
+      return
+    }
+    const artKey = `${(np.artist || '').toLowerCase().trim()}|||${(np.album || '').toLowerCase().trim()}`
+    const artHash = libState.artworkMap[artKey]
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: np.title || 'Unknown Track',
+      artist: np.artist || 'Unknown Artist',
+      album: np.album || '',
+      artwork: artHash
+        ? [{ src: `album-art://${artHash}.jpg`, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    })
+  }, [pbState.nowPlaying, libState.artworkMap])
+
+  // (2) Transport controls — route the widget's buttons back into
+  // JakeTunes' own playback logic. togglePlayPause already branches on
+  // play/pause state, so it's correct for both actions. seek() takes a
+  // 0-1 fraction; the OS hands us absolute seconds.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const ms = navigator.mediaSession
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { ms.setActionHandler(action, handler) } catch { /* action unsupported in this runtime */ }
+    }
+    set('play', () => togglePlayPause())
+    set('pause', () => togglePlayPause())
+    set('previoustrack', () => prevTrack())
+    set('nexttrack', () => nextTrack())
+    set('seekto', (details) => {
+      if (details.seekTime != null && pbState.duration > 0) {
+        seek(details.seekTime / pbState.duration)
+      }
+    })
+    return () => {
+      for (const a of ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto'] as MediaSessionAction[]) {
+        set(a, null)
+      }
+    }
+  }, [togglePlayPause, nextTrack, prevTrack, seek, pbState.duration])
+
+  // (3) Keep the widget's play/pause indicator + scrubber in sync.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = pbState.nowPlaying
+      ? (pbState.isPlaying ? 'playing' : 'paused')
+      : 'none'
+    const { position, duration } = pbState
+    if (duration > 0 && position >= 0 && position <= duration) {
+      try {
+        navigator.mediaSession.setPositionState({ duration, position, playbackRate: 1 })
+      } catch { /* setPositionState rejects odd values — ignore */ }
+    }
+  }, [pbState.isPlaying, pbState.position, pbState.duration, pbState.nowPlaying])
 
   // 4.4.18: Library sync orchestrator status. Surface success/failure
   // of laptop → homemini sync via the LCD-pill notice (4.4.12). Only
