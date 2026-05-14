@@ -4780,6 +4780,220 @@ Rules:
   }
 })
 
+// ── 4.4.48: Weekly picks cache + variety enforcement ──────────────────
+//
+// Two long-standing bugs this fixes — both reported by Jake more than
+// once ("there is absolutely no variety", "it feels like it is
+// resetting a lot").
+//
+//  (1) RESETTING. Before 4.4.48 the ONLY weekly cache for picks lived in
+//      the renderer's localStorage — per-device, per-component-mount,
+//      bypassed on any miss (corrupt entry, fresh install, second
+//      device, app-data wipe, a navigate-away mid-generation). A miss
+//      meant a fresh Claude call → a completely different 25-track
+//      list. So picks "reset" far more often than the intended
+//      Friday-to-Friday cadence. Fix: a main-process picks-cache.json
+//      in userData — the single authoritative weekly cache. Once a
+//      persona's picks are generated for a given week, every call that
+//      week returns the SAME list with no Claude hit. Survives app
+//      restarts, reinstalls, and renderer churn.
+//
+//  (2) NO VARIETY. The picks prompt asks for "each artist at most
+//      once," but the model reliably ignores it and returns album
+//      blocks (4 Talking Heads, 4 Steely Dan, ...). enforcePicksVariety
+//      does NOT trust the model: it round-robin-interleaves the model's
+//      picks so no artist clusters, caps each artist, and backfills
+//      from the wider library (genre-matched, fresh artists) when the
+//      cap leaves the list short. The personas keep their distinct
+//      lanes (that part works); this fixes the within-lane sameness.
+
+interface CachedPicksEntry {
+  weekStart: string   // YYYY-MM-DD of the Friday that starts the week
+  name: string
+  commentary: string
+  trackIds: number[]
+}
+
+function getPicksCachePath(): string {
+  return join(app.getPath('userData'), 'picks-cache.json')
+}
+
+/** YYYY-MM-DD of the Friday that starts the current Fri→Thu week
+ *  (local time). Same value for any moment within that window — so
+ *  equality on it means "still this week's picks." Mirrors the
+ *  renderer's getWeekStartFriday so both sides agree on week boundaries. */
+function weekStartFridayISO(d: Date = new Date()): string {
+  const r = new Date(d)
+  const daysSinceFriday = (r.getDay() - 5 + 7) % 7   // getDay: 0=Sun … 5=Fri
+  r.setDate(r.getDate() - daysSinceFriday)
+  r.setHours(0, 0, 0, 0)
+  const y = r.getFullYear()
+  const m = String(r.getMonth() + 1).padStart(2, '0')
+  const dd = String(r.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+async function loadPicksCache(): Promise<Record<string, CachedPicksEntry>> {
+  try {
+    const raw = await readFile(getPicksCachePath(), 'utf-8')
+    const parsed = JSON.parse(raw)
+    return (parsed && typeof parsed === 'object') ? parsed : {}
+  } catch {
+    return {}   // missing / corrupt → empty cache, regenerate
+  }
+}
+
+async function savePicksCacheEntry(persona: string, entry: CachedPicksEntry): Promise<void> {
+  try {
+    const cache = await loadPicksCache()
+    cache[persona] = entry
+    await writeFile(getPicksCachePath(), JSON.stringify(cache, null, 2))
+  } catch (err) {
+    console.warn('[picks-cache] write failed:', err)
+  }
+}
+
+type PicksTrack = { id: number; title: string; artist: string; album: string; genre: string; year: string | number }
+
+/** Don't trust the model's artist spread. Round-robin-interleave its
+ *  picks so no artist clusters, cap each artist at CAP, then backfill
+ *  from the wider library (genre-matched, artists not yet used) if the
+ *  cap left the list short. Guarantees `target` IDs whenever the
+ *  library can supply them — relaxing the cap only as a last resort. */
+function enforcePicksVariety(modelTrackIds: number[], tracks: PicksTrack[], target: number): number[] {
+  const byId = new Map<number, PicksTrack>(tracks.map(t => [t.id, t]))
+  const artistOf = (id: number) => (byId.get(id)?.artist || 'Unknown').toLowerCase().trim()
+  const CAP = 2   // at most 2 tracks per artist before backfill kicks in
+
+  // Group the model's valid, de-duped picks by artist, preserving the
+  // order the model chose within each artist.
+  const modelByArtist = new Map<string, number[]>()
+  const seenModel = new Set<number>()
+  for (const id of modelTrackIds) {
+    if (!byId.has(id) || seenModel.has(id)) continue
+    seenModel.add(id)
+    const a = artistOf(id)
+    if (!modelByArtist.has(a)) modelByArtist.set(a, [])
+    modelByArtist.get(a)!.push(id)
+  }
+
+  const out: number[] = []
+  const perArtist = new Map<string, number>()
+  const take = (id: number) => {
+    out.push(id)
+    const a = artistOf(id)
+    perArtist.set(a, (perArtist.get(a) || 0) + 1)
+  }
+
+  // Pass 1 — round-robin the model's picks, capped at CAP per artist.
+  // This is what de-clusters "4 Talking Heads in a row" into a spread.
+  {
+    const queues = Array.from(modelByArtist.values()).map(q => [...q])
+    let progress = true
+    while (out.length < target && progress) {
+      progress = false
+      for (const q of queues) {
+        if (out.length >= target) break
+        if (q.length === 0) continue
+        if ((perArtist.get(artistOf(q[0])) || 0) >= CAP) continue
+        take(q.shift()!)
+        progress = true
+      }
+    }
+  }
+
+  // Pass 2 — backfill from the wider library if the cap left us short.
+  // Match the genres the picks already use (keeps it roughly in-lane
+  // without hardcoding persona→genre maps), prefer artists not yet
+  // represented, round-robin so the backfill is varied too.
+  if (out.length < target) {
+    const usedGenres = new Set<string>()
+    for (const id of out) {
+      const g = (byId.get(id)?.genre || '').toLowerCase().trim()
+      if (g) usedGenres.add(g)
+    }
+    const usedIds = new Set(out)
+    const backfillByArtist = new Map<string, number[]>()
+    for (const t of tracks) {
+      if (usedIds.has(t.id)) continue
+      const g = (t.genre || '').toLowerCase().trim()
+      if (usedGenres.size > 0 && g && !usedGenres.has(g)) continue
+      const a = (t.artist || 'Unknown').toLowerCase().trim()
+      if (!backfillByArtist.has(a)) backfillByArtist.set(a, [])
+      backfillByArtist.get(a)!.push(t.id)
+    }
+    const fresh = Array.from(backfillByArtist.entries()).filter(([a]) => !perArtist.has(a)).map(([, q]) => [...q])
+    const rest  = Array.from(backfillByArtist.entries()).filter(([a]) =>  perArtist.has(a)).map(([, q]) => [...q])
+    for (const pool of [fresh, rest]) {
+      let progress = true
+      while (out.length < target && progress) {
+        progress = false
+        for (const q of pool) {
+          if (out.length >= target) break
+          if (q.length === 0) continue
+          if ((perArtist.get(artistOf(q[0])) || 0) >= CAP) continue
+          take(q.shift()!)
+          progress = true
+        }
+      }
+    }
+  }
+
+  // Pass 3 — last resort for an artist-thin library: relax the cap and
+  // take whatever's left (model's leftovers first, then any library
+  // track) so we still hit `target`. A slightly-clustered full list
+  // beats a short one.
+  if (out.length < target) {
+    const usedIds = new Set(out)
+    const leftover = [
+      ...modelTrackIds.filter(id => byId.has(id) && !usedIds.has(id)),
+      ...tracks.map(t => t.id).filter(id => !usedIds.has(id)),
+    ]
+    for (const id of leftover) {
+      if (out.length >= target) break
+      if (usedIds.has(id)) continue
+      usedIds.add(id)
+      out.push(id)
+    }
+  }
+
+  return out.slice(0, target)
+}
+
+/** Shared weekly-cache + variety wrapper for all three persona pickers.
+ *  `generate` runs the persona-specific Claude call and returns the raw
+ *  { name, commentary, trackIds }. This wrapper owns the weekly-cache
+ *  check, the variety pass, and persisting the result — so the three
+ *  IPC handlers stay thin and can never drift on caching behavior. */
+async function getOrGeneratePicks(
+  persona: 'mm' | 'megan' | 'djhands',
+  tracks: PicksTrack[],
+  force: boolean,
+  generate: () => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>,
+): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> {
+  const currentWeek = weekStartFridayISO()
+  if (!force) {
+    const cache = await loadPicksCache()
+    const hit = cache[persona]
+    if (hit && hit.weekStart === currentWeek && Array.isArray(hit.trackIds) && hit.trackIds.length > 0) {
+      // Same week → return the EXACT same list, no Claude call. This is
+      // the "stop resetting" fix.
+      return { ok: true, name: hit.name, commentary: hit.commentary, trackIds: hit.trackIds }
+    }
+  }
+  const raw = await generate()
+  if (!raw.ok || !raw.trackIds || raw.trackIds.length === 0) return raw
+  const varied = enforcePicksVariety(raw.trackIds, tracks, 25)
+  const entry: CachedPicksEntry = {
+    weekStart: currentWeek,
+    name: raw.name || '',
+    commentary: raw.commentary || '',
+    trackIds: varied,
+  }
+  await savePicksCacheEntry(persona, entry)
+  return { ok: true, name: entry.name, commentary: entry.commentary, trackIds: entry.trackIds }
+}
+
 // Music Man daily picks
 // 4.2.18: Picks are now WEEKLY — 25 tracks each, reset every Friday. The
 // week-of framing replaces the "today's vibe" framing and makes the
@@ -4839,10 +5053,30 @@ You PICK from the canon and the deep-dives. You don't chase contemporary buzz.`
 
 ${laneRules}
 
-Your picks should be shaped by:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THE #1 RULE — ARTIST VARIETY. READ THIS BEFORE YOU PICK ANYTHING.
+A weekly rotation is a SPREAD, not a stack of albums. Aim for
+${opts.trackCount} DIFFERENT artists — one track each. If the library is
+thin in your lane, an artist may appear TWICE, never more.
+
+  ✗ WRONG (this is the bug being fixed): 4 Talking Heads, then 3 Lou
+    Reed, then 4 Steely Dan, then 4 Bowie. That is FOUR ALBUMS, not a
+    rotation. It is lazy and it is exactly what you must NOT do.
+  ✓ RIGHT: Talking Heads, Lou Reed, Steely Dan, Bowie, the Who,
+    Television, Roxy Music, Coltrane, Joni Mitchell, … — each artist
+    appearing once, the whole ${opts.trackCount} reading like a great
+    radio hour where every song is a different world.
+
+Before you return the JSON: count your artists. If any artist appears
+3+ times, you have failed the assignment — go back and swap them out
+for other artists in your lane. (The app also enforces this after the
+fact, but a list that needs heavy enforcement isn't really your taste.)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Your picks should also be shaped by:
 - The week itself — the season, weather, news, cultural moments, anniversaries of famous albums/events landing in this 7-day window
 - Your obsession-of-the-week — what you've been chewing on lately, in character
-- Variety across the week — these will be on rotation for 7 days, so build a list that holds up across morning coffee, afternoon work, evening wind-down
+- Pacing across the week — these will be on rotation for 7 days, so build a list that holds up across morning coffee, afternoon work, evening wind-down
 
 LIBRARY-AWARE FALLBACK: if the user's library doesn't have ${opts.trackCount} tracks in your strict lane, take what's CLOSEST to your lane — but stay AS FAR AS POSSIBLE from the other two personas' territory. You MUST return EXACTLY ${opts.trackCount} tracks. If you genuinely can't find ${opts.trackCount} in-lane, acknowledge it in the commentary ("Library was thin in my territory this week — these are the closest matches.").
 
@@ -4852,40 +5086,44 @@ Return ONLY a JSON object (no markdown, no code fences):
 Rules:
 - ONLY use track IDs from the provided library
 - EXACTLY ${opts.trackCount} track IDs in trackIds
-- ★ MIX UP THE ARTISTS ★ Each artist appears AT MOST ONCE across the ${opts.trackCount} picks. Aim for ${opts.trackCount} distinct artists. If the library can't support that, ONE artist may repeat — never more. Three is a bug.
+- ★ ARTIST VARIETY (see the box above) — aim for ${opts.trackCount} distinct artists, max TWO per artist, NEVER three
 - Reference the actual week (season / current moment / mood) so the list feels of-this-week, not generic
 - Stay deeply in character — your fixed opinions show up in the picks themselves, not just the commentary`
 }
 
-ipcMain.handle('musicman-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
-  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
-  const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'mm' })
-  // Force MM persona regardless of the user's default-host preference —
-  // the user explicitly asked for Music Man's list under his name.
-  const systemPrompt = MUSIC_MAN_CORE + '\n\n' + picksInstructions
-  const chart = await getLastFmNyChart()
-  const chartLine = formatLastFmChartForPrompt(chart)
-  const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\nWeek context — ${chartLine} (Use this only as a 'what's the cultural moment' anchor — DO NOT pick from this list unless it's already in my library.)` : ''}`
+// 4.4.48: thin handler — getOrGeneratePicks owns the weekly cache +
+// variety pass. `force` (from the Regenerate button) bypasses the cache.
+ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+  return getOrGeneratePicks('mm', tracks, !!force, async () => {
+    const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+    const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'mm' })
+    // Force MM persona regardless of the user's default-host preference —
+    // the user explicitly asked for Music Man's list under his name.
+    const systemPrompt = MUSIC_MAN_CORE + '\n\n' + picksInstructions
+    const chart = await getLastFmNyChart()
+    const chartLine = formatLastFmChartForPrompt(chart)
+    const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\nWeek context — ${chartLine} (Use this only as a 'what's the cultural moment' anchor — DO NOT pick from this list unless it's already in my library.)` : ''}`
 
-  try {
-    const response = await claudeCall('musicman-picks', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userContent }]
-    })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
-      if (parsed.commentary) noteMusicManUtterance('picks', parsed.commentary)
-      return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+    try {
+      const response = await claudeCall('musicman-picks', {
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }]
+      })
+      const text = response.content[0].type === 'text' ? response.content[0].text : ''
+      const jsonMatch = text.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        if (parsed.commentary) noteMusicManUtterance('picks', parsed.commentary)
+        return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+      }
+      return { ok: false, error: 'Could not parse picks' }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, error: msg }
     }
-    return { ok: false, error: 'Could not parse picks' }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, error: msg }
-  }
+  })
 })
 
 // Megan's weekly picks — same structure as MM picks but uses MEGAN_CORE
@@ -4893,38 +5131,41 @@ ipcMain.handle('musicman-picks', async (_event, tracks: { id: number; title: str
 // cold, LCD Soundsystem unimpressive, Phoebe Bridgers' Stranger in the
 // Alps over Punisher, etc.) shape what gets selected and how the
 // commentary reads. 25 tracks, weekly Friday-to-Friday rotation.
-ipcMain.handle('megan-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
-  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
-  const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
-  const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
-  const [chart, reviews] = await Promise.all([getLastFmNyChart(), getRecentReviews()])
-  const chartLine = formatLastFmChartForPrompt(chart)
-  const reviewsBlock = formatReviewsForPrompt(reviews)
-  const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine}` : ''}${reviewsBlock ? `\n\n${reviewsBlock}\n\n(The press headlines are reaction context for the COMMENTARY — Megan can roast a Pitchfork take while she explains the picks. Do NOT pick tracks from these — pick only from MY library.)` : ''}`
+ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+  return getOrGeneratePicks('megan', tracks, !!force, async () => {
+    const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+    const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
+    const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
+    const [chart, reviews] = await Promise.all([getLastFmNyChart(), getRecentReviews()])
+    const chartLine = formatLastFmChartForPrompt(chart)
+    const reviewsBlock = formatReviewsForPrompt(reviews)
+    const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine}` : ''}${reviewsBlock ? `\n\n${reviewsBlock}\n\n(The press headlines are reaction context for the COMMENTARY — Megan can roast a Pitchfork take while she explains the picks. Do NOT pick tracks from these — pick only from MY library.)` : ''}`
 
-  try {
-    const response = await claudeCall('megan-picks', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userContent }]
-    })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
-      return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+    try {
+      const response = await claudeCall('megan-picks', {
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }]
+      })
+      const text = response.content[0].type === 'text' ? response.content[0].text : ''
+      const jsonMatch = text.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+      }
+      return { ok: false, error: 'Could not parse picks' }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, error: msg }
     }
-    return { ok: false, error: 'Could not parse picks' }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, error: msg }
-  }
+  })
 })
 
 // DJ Hands' weekly picks — beats / electronic / hip-hop forward. Same
 // 25-track Friday-to-Friday weekly rotation as MM and Megan.
-ipcMain.handle('dj-hands-picks', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+ipcMain.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ return getOrGeneratePicks('djhands', tracks, !!force, async () => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
   // Use the shared scaffolding but override the persona-name reference to
   // "DJ Hands" — buildPicksInstructions's persona arg only knows mm/megan,
@@ -4970,10 +5211,18 @@ You MUST return EXACTLY 25 tracks. If after exhausting tier 5 you still can't fi
 Return ONLY a JSON object (no markdown, no code fences):
 {"name":"creative weekly rotation name in Stephen Hands' voice — short, hype, party-forward (NOT cerebral)","commentary":"1-2 sentences max in DJ Stephen Hands' voice. He is NOT a man of many words. NO long explanations, NO genre-historian talk. Examples: 'Dance floor week. If it doesn't knock, it's not in here.' OR 'Library leans rock so I had to dig — these are the ones with pulse.' One thought, maybe two. STOP.","trackIds":[array of exactly 25 track ID numbers]}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THE #1 RULE — ARTIST VARIETY. A set is a SPREAD, not a stack of albums.
+  ✗ WRONG: 4 from one artist, then 4 from the next. That's lazy.
+  ✓ RIGHT: 25 different artists, one banger each — a real DJ set where
+    every track is a different record.
+Max TWO per artist, NEVER three. Count before you return.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Rules:
 - ONLY use track IDs from the provided library
 - EXACTLY 25 track IDs (use the fallback tiers above to get there)
-- ★ MIX UP THE ARTISTS ★ Each artist appears AT MOST ONCE across the 25 picks. Aim for 25 distinct artists. If the library can't support 25 distinct, ONE artist may repeat — never more. Count before returning.
+- ★ ARTIST VARIETY (see the box above) — aim for 25 distinct artists, max TWO per artist, NEVER three
 - Commentary: 1-2 sentences. STOP.`
 
   const systemPrompt = DJ_HANDS_CORE + '\n\n' + picksInstructions
@@ -4999,6 +5248,7 @@ Rules:
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, error: msg }
   }
+ })
 })
 
 // Music Man recommendations

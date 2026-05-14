@@ -40,12 +40,15 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-dj-set', tracks, recentIds),
   musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
     ipcRenderer.invoke('musicman-playlist', mood, tracks),
-  musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
-    ipcRenderer.invoke('musicman-picks', tracks),
-  meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
-    ipcRenderer.invoke('megan-picks', tracks),
-  djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
-    ipcRenderer.invoke('dj-hands-picks', tracks),
+  // 4.4.48: optional `force` bypasses the main-process weekly cache
+  // (the Regenerate button passes it). Omitted/false → main returns
+  // this week's cached picks with no Claude call.
+  musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
+    ipcRenderer.invoke('musicman-picks', tracks, force),
+  meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
+    ipcRenderer.invoke('megan-picks', tracks, force),
+  djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
+    ipcRenderer.invoke('dj-hands-picks', tracks, force),
   saveRecordingMp3: (audioBytes: Uint8Array, mimeType: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }> =>
     ipcRenderer.invoke('save-recording-mp3', audioBytes, mimeType),
   musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; issues?: unknown[]; error?: string }> =>

@@ -41,7 +41,17 @@ interface PicksData {
   commentary: string
   trackIds: number[]
   date: string
+  /** 4.4.48 schema stamp. Bumped when picks generation changes shape
+   *  (e.g. 4.4.48 added main-process variety enforcement). A cached
+   *  entry with a mismatched/absent `v` is treated as stale so the
+   *  pre-4.4.48 *clustered* localStorage caches get thrown out and
+   *  regenerated once — through main, which now de-clusters them. */
+  v?: number
 }
+
+// Bump this whenever picks output should be considered incompatible
+// with what an older build cached. 4.4.48: variety enforcement landed.
+const PICKS_SCHEMA_V = 2
 
 // 4.2.18: Picks are weekly now, Friday-to-Friday. Returns the most
 // recent Friday at midnight local — same value for any time within the
@@ -110,6 +120,10 @@ export default function SmartPlaylistView() {
       const raw = localStorage.getItem(storageKey)
       if (!raw) return null
       const saved = JSON.parse(raw) as PicksData
+      // 4.4.48: drop caches from an older picks schema (pre-variety-
+      // enforcement) so the user gets a de-clustered list right away
+      // instead of staring at the old album-blocks until Friday.
+      if (saved.v !== PICKS_SCHEMA_V) return null
       const savedWeek = getWeekStartFriday(new Date(saved.date)).getTime()
       const currentWeek = getWeekStartFriday(new Date()).getTime()
       if (savedWeek === currentWeek) return saved
@@ -140,6 +154,9 @@ export default function SmartPlaylistView() {
     picksConfig?.kind === 'megan'   ? meganRequestedRef :
     picksConfig?.kind === 'djhands' ? djHandsRequestedRef :
     mmRequestedRef
+  // 4.4.48: set true by the Regenerate button so the next generation
+  // pass tells main to bypass its weekly cache (a true fresh pull).
+  const forcePicksRef = useRef(false)
 
   // Persist whichever picks set just changed.
   useEffect(() => {
@@ -163,8 +180,14 @@ export default function SmartPlaylistView() {
       id: t.id, title: t.title, artist: t.artist,
       album: t.album, genre: t.genre, year: t.year
     }))
+    // 4.4.48: consume the force flag set by the Regenerate button. main
+    // bypasses its weekly cache when force is true; otherwise it returns
+    // this week's cached set (no Claude call) — that's the "stop
+    // resetting" fix on the renderer side.
+    const force = forcePicksRef.current
+    forcePicksRef.current = false
     const apiCall = window.electronAPI[picksConfig.apiCall]
-    apiCall(compactTracks).then((result) => {
+    apiCall(compactTracks, force).then((result) => {
       if (result.ok && result.trackIds) {
         const fallbackName =
           picksConfig.kind === 'megan'   ? "Megan's Picks" :
@@ -175,6 +198,7 @@ export default function SmartPlaylistView() {
           commentary: result.commentary || '',
           trackIds: result.trackIds,
           date: new Date().toISOString(),
+          v: PICKS_SCHEMA_V,
         })
       }
       setPicksLoading(false)
@@ -630,6 +654,10 @@ export default function SmartPlaylistView() {
                 // 4.4.2: force a fresh pull. Clears the cached picks
                 // and the per-persona "have we already requested?"
                 // flag so the generation effect re-fires immediately.
+                // 4.4.48: also set forcePicksRef so the effect tells
+                // main to bypass BOTH the renderer cache AND main's
+                // weekly cache — a true fresh rotation, not a re-read.
+                forcePicksRef.current = true
                 if (picksConfig?.kind === 'mm')      { setMmPicks(null);     mmRequestedRef.current = false }
                 if (picksConfig?.kind === 'megan')   { setMeganPicks(null);  meganRequestedRef.current = false }
                 if (picksConfig?.kind === 'djhands') { setDjHandsPicks(null);djHandsRequestedRef.current = false }
