@@ -243,6 +243,8 @@ declare global {
       musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
+      // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
+      getActiveHost: () => Promise<'mm' | 'megan'>
       musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
       musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>

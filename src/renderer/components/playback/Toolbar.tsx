@@ -69,6 +69,22 @@ function AirPlayIcon({ active }: { active?: boolean }) {
   )
 }
 
+// 4.4.52: who the toolbar speech bubble can attribute. The mic button
+// speaks as the chosen host (Music Man or Megan); DJ Mode is Stephen
+// Hands. Each gets its own name, loading verb, and (via the matching
+// `data-speaker` attribute → toolbar.css) its own colour palette.
+type BubbleSpeaker = 'mm' | 'megan' | 'djhands'
+const BUBBLE_SPEAKER_LABEL: Record<BubbleSpeaker, string> = {
+  mm: 'The Music Man',
+  megan: 'Megan',
+  djhands: 'Stephen Hands',
+}
+const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
+  mm: 'is listening',
+  megan: 'is weighing in',
+  djhands: 'is on the decks',
+}
+
 export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean }) {
   const { state: pb } = usePlayback()
   const { state: lib } = useLibrary()
@@ -118,10 +134,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djLoading, setDjLoading] = useState(false)
   const [showBubble, setShowBubble] = useState(true)
   // 4.4.49: who the speech bubble is currently attributing. The mic
-  // button is the Music Man; DJ Mode is Stephen Hands. Was hardcoded
-  // to "The Music Man" — so DJ Mode commentary showed up under the
-  // wrong name. The bubble label + loading verb both read from this.
-  const [djSpeaker, setDjSpeaker] = useState<'mm' | 'djhands'>('mm')
+  // button is the chosen host (Music Man or Megan — 4.4.52); DJ Mode
+  // is Stephen Hands. Was hardcoded to "The Music Man" — so DJ Mode
+  // commentary showed up under the wrong name. The bubble label, the
+  // loading verb, and the colour palette all read from this.
+  const [djSpeaker, setDjSpeaker] = useState<BubbleSpeaker>('mm')
   const [djExiting, setDjExiting] = useState(false)
   const savedVolumeRef = useRef(0.8)
   const djAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -673,7 +690,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
-    setDjSpeaker('mm')   // 4.4.49: the mic button is the Music Man
+    // 4.4.52: the mic button speaks as the user's CHOSEN host — the
+    // Music Man or Megan. buildMusicManPrompt() swaps persona on the
+    // aiHost setting, so the bubble must follow. Was hardcoded 'mm',
+    // which mis-attributed every comment when Megan was the host.
+    const micHost = await window.electronAPI.getActiveHost()
+    setDjSpeaker(micHost === 'megan' ? 'megan' : 'mm')
     savedVolumeRef.current = pb.volume
 
     try {
@@ -1395,19 +1417,20 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             </span>
           )}
           {showBubble && !radioMode && (djLoading || djText) && (
-            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
-              {/* 4.4.49: attribute the bubble to whoever's actually
-                  speaking — Stephen Hands in DJ Mode, the Music Man on
-                  a mic-button comment. Loading verb fits the speaker
-                  too (a DJ is "on the decks," not "listening"). */}
+            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`} data-speaker={djSpeaker}>
+              {/* 4.4.49 + 4.4.52: attribute the bubble to whoever's
+                  actually speaking — Stephen Hands in DJ Mode, the
+                  chosen host (Music Man or Megan) on a mic comment.
+                  Name, loading verb, AND colour (via data-speaker)
+                  all key off djSpeaker. */}
               {djLoading ? (
                 <>
-                  <span className="dj-bubble-label">{djSpeaker === 'djhands' ? 'Stephen Hands' : 'The Music Man'}</span>{' '}
-                  <span className="dj-loading-dots">{djSpeaker === 'djhands' ? 'is on the decks' : 'is listening'}</span>
+                  <span className="dj-bubble-label">{BUBBLE_SPEAKER_LABEL[djSpeaker]}</span>{' '}
+                  <span className="dj-loading-dots">{BUBBLE_SPEAKER_VERB[djSpeaker]}</span>
                 </>
               ) : (
                 <>
-                  <span className="dj-bubble-label">{djSpeaker === 'djhands' ? 'Stephen Hands:' : 'The Music Man:'}</span> {djText}
+                  <span className="dj-bubble-label">{BUBBLE_SPEAKER_LABEL[djSpeaker]}:</span> {djText}
                 </>
               )}
             </div>

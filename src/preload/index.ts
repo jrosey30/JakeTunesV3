@@ -19,6 +19,11 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }> =>
     ipcRenderer.invoke('musicman-dj', track, nextTrack, persona),
+  // 4.4.52: which persona the mic button speaks as right now ('mm' or
+  // 'megan') — the toolbar speech bubble reads this to attribute and
+  // colour itself correctly.
+  getActiveHost: (): Promise<'mm' | 'megan'> =>
+    ipcRenderer.invoke('get-active-host'),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.

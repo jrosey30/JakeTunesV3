@@ -779,6 +779,12 @@ function readActiveHostSync(): 'mm' | 'megan' {
   return cachedActiveHost
 }
 
+// 4.4.52: expose the active host to the renderer so the toolbar speech
+// bubble can attribute a mic-button comment to the RIGHT persona — the
+// mic button routes through buildMusicManPrompt(), which swaps to
+// Megan when she's the chosen host, so the bubble must follow.
+ipcMain.handle('get-active-host', () => readActiveHostSync())
+
 // Update the Claude daily ceiling immediately (mirrors what's saved in
 // app-settings.json). The wrapper at top of file reads claudeStats so
 // we update that in-memory and on disk.
