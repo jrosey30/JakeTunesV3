@@ -38,6 +38,7 @@
  */
 
 import { spawn } from 'child_process'
+import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
@@ -171,6 +172,14 @@ async function flushDebounce(): Promise<void> {
  *   - 'manual' — explicit user action
  */
 export function triggerSync(reason: SyncReason): void {
+  // 4.4.59: the homemini sync is MacBook-only infrastructure — it needs
+  // ~/bin/jaketunes-homemini-sync.sh and the Synology/Tailscale setup
+  // behind it. On any other install (workmini, homemini itself, a fresh
+  // machine) that script isn't there, so spawning bash on it just exits
+  // 127. Skip silently — a JakeTunes deployment that isn't the
+  // canonical sync source shouldn't sync, and definitely shouldn't
+  // surface an error Notice for not doing so.
+  if (!existsSync(SYNC_SCRIPT)) return
   pendingReason = reason
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(flushDebounce, DEBOUNCE_MS)
@@ -184,6 +193,14 @@ export function triggerSync(reason: SyncReason): void {
  */
 export function startSyncOrchestrator(windowAccessor: () => BrowserWindow | null): void {
   getWindow = windowAccessor
+  // 4.4.59: only run the homemini sync on a machine actually set up for
+  // it — the canonical-source MacBook, which has the sync script. On
+  // every other install the script is absent; don't start the
+  // safety-net timer at all, so it never fires a doomed sync (exit 127).
+  if (!existsSync(SYNC_SCRIPT)) {
+    console.log(`[sync-orchestrator] sync script not found (${SYNC_SCRIPT}) — homemini sync disabled on this machine`)
+    return
+  }
   if (safetyNetTimer) clearInterval(safetyNetTimer)
   safetyNetTimer = setInterval(() => {
     triggerSync('safety-net')
