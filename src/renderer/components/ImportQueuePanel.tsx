@@ -136,7 +136,13 @@ function QueueList() {
             </>
           )}
           {it.status === 'dupe' && it.dupe && (
-            <span className="iq-item-dupe">already in library</span>
+            <span className="iq-item-dupe">
+              {/* 4.4.42: empty matchedTitle means we routed an ENOENT
+                  failure to dupe ("source no longer present"). Otherwise
+                  it's a real already-in-library hit. Different copy
+                  but same visual treatment — soft skip, not red error. */}
+              {it.dupe.matchedTitle ? 'already in library' : 'source no longer present'}
+            </span>
           )}
           {(it.status === 'done' || it.status === 'failed' || it.status === 'dupe') && (
             <button className="iq-item-btn iq-item-btn--remove" onClick={() => removeItem(it.uid)} title="Remove">×</button>

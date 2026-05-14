@@ -806,6 +806,14 @@ function AppInner() {
           />
         )}
       </div>
+      {/* 4.4.42: import queue moved out of the floating bottom-right
+          overlay into its own grid row, docked above the status bar.
+          When the queue is empty the panel returns null and the row
+          collapses to 0 height — same UX outcome as before, no
+          modality, never covers content. */}
+      <div className="imports-area">
+        <ImportQueuePanel />
+      </div>
       <div className="statusbar-area">
         <StatusBar />
       </div>
@@ -814,7 +822,6 @@ function AppInner() {
           <div className="app-drop-message">Drop to import</div>
         </div>
       )}
-      <ImportQueuePanel />
     </div>
   )
 }

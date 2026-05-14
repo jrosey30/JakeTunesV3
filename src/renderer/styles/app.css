@@ -224,17 +224,37 @@
 }
 
 /* ── Main shell ── */
+/* 4.4.42: extra "imports" grid row above the status bar. When the
+ * import queue is empty the inner panel returns null and the row
+ * naturally collapses to 0 height; when there are items, the row
+ * grows to the panel's intrinsic size (32px collapsed → ~360px
+ * expanded). No layout shift cost in the empty case.
+ */
 .app-shell {
   display: grid;
-  grid-template-rows: var(--titlebar-height) var(--toolbar-height) 1fr var(--statusbar-height);
+  grid-template-rows: var(--titlebar-height) var(--toolbar-height) 1fr auto var(--statusbar-height);
   grid-template-columns: 170px 1fr;
   grid-template-areas:
     "titlebar  titlebar"
     "toolbar   toolbar"
     "sidebar   content"
+    "imports   imports"
     "statusbar statusbar";
   height: 100vh;
   background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+}
+
+.imports-area {
+  grid-area: imports;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Top divider mirrors the statusbar's top edge so the docked panel
+   * reads as a chrome layer, not floating in space. */
+  border-top: 1px solid rgba(0, 0, 0, 0.18);
+}
+.imports-area:empty {
+  display: none;
 }
 
 .titlebar {

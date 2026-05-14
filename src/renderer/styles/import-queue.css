@@ -1,25 +1,29 @@
-/* Floating import-queue dock — bottom-right of the app shell. Sits
- * above the status bar and out of the way of the playback controls.
- * Dark slate with the same chrome vocabulary as the rest of the app. */
-
+/* 4.4.42: Docked import-queue strip. Lives in the .imports-area grid
+ * row above the status bar — used to be a floating overlay anchored
+ * bottom-right which Jake called out as "a pop up window." Now in-flow,
+ * never covers content. Collapsed = full-width 32px strip; expanded =
+ * grows upward via the auto-sized grid row to ~360px max.
+ *
+ * Dark slate color kept — visual distinction from the chrome above so
+ * imports remain attention-getting without being modal. Rounded corners
+ * dropped (chrome edges); box-shadow dropped (no longer floating).
+ */
 .iq-dock {
-  position: fixed;
-  right: 14px;
-  bottom: 38px;             /* clear the status bar (~24px tall) */
-  width: 360px;
+  width: 100%;
   background: #2c2f33;
-  border: 1px solid #1a1c1f;
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   font-size: 11px;
   color: #ddd;
-  z-index: 1100;
   overflow: hidden;
   user-select: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  animation: iq-dock-in 240ms ease-out;
 }
 
-.iq-dock--expanded {
-  width: 420px;
+@keyframes iq-dock-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
 }
 
 .iq-summary {
@@ -59,9 +63,13 @@
 .iq-summary-toggle { color: #888; font-size: 10px; }
 
 .iq-body {
-  max-height: 360px;
+  /* 4.4.42: cap body height so the panel doesn't eat the whole viewport
+   * on a 500-item import. Inner list scrolls. */
+  max-height: 320px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid #1a1c1f;
 }
 
 .iq-current {

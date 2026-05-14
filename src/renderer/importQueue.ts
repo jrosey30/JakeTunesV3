@@ -323,11 +323,29 @@ async function runWorker(): Promise<void> {
           try { await window.electronAPI.deleteInboxSource(next.srcPath) } catch { /* best-effort */ }
         }
       } else {
+        // 4.4.42: distinguish "source file disappeared" from real failures.
+        // Jake's screenshot showed a wall of red "Error: ENOENT" entries
+        // for tracks that had actually imported fine — these almost always
+        // come from a race between the chokidar inbox watcher and a
+        // drag-drop hitting the same paths, OR from a previous successful
+        // run where deleteInboxSource removed the file. The track is
+        // already in the library, so a red error with a Retry button
+        // (that will never work — the file is gone) is misleading.
+        //
+        // If the error is ENOENT, mark the item as a soft skip
+        // ("source no longer present — likely already imported") instead
+        // of a red failure. Real failures (permission, conversion, etc.)
+        // still surface as red with a Retry.
+        const isEnoent = /ENOENT/i.test(res.error || '')
         state = {
           ...state,
-          items: state.items.map(i =>
-            i.uid === next.uid ? { ...i, status: 'failed', error: res.error || 'Import failed' } : i
-          ),
+          items: state.items.map(i => {
+            if (i.uid !== next.uid) return i
+            if (isEnoent) {
+              return { ...i, status: 'dupe', dupe: { matchedTitle: '', matchedArtist: '' } }
+            }
+            return { ...i, status: 'failed', error: res.error || 'Import failed' }
+          }),
         }
         // Same — id wasn't consumed.
         nextLibraryId = Math.min(nextLibraryId, id)
