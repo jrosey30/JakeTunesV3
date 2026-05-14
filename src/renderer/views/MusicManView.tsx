@@ -1000,9 +1000,9 @@ export default function MusicManView() {
                         {rec.artUrl ? (
                           <img src={rec.artUrl} alt={rec.title} className="musicman-rec-art-img" />
                         ) : (
-                          <svg width="28" height="28" viewBox="0 0 28 28" fill="#c87828" opacity="0.4">
-                            <circle cx="14" cy="14" r="12" fill="none" stroke="#c87828" strokeWidth="1" />
-                            <circle cx="14" cy="14" r="4" fill="none" stroke="#c87828" strokeWidth="1" />
+                          <svg width="28" height="28" viewBox="0 0 28 28" fill="#bb4308" opacity="0.4">
+                            <circle cx="14" cy="14" r="12" fill="none" stroke="#bb4308" strokeWidth="1" />
+                            <circle cx="14" cy="14" r="4" fill="none" stroke="#bb4308" strokeWidth="1" />
                           </svg>
                         )}
                       </div>

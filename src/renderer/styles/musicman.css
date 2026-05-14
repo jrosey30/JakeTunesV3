@@ -12,7 +12,7 @@
   gap: 14px;
   align-items: center;
   padding: 20px 24px 16px;
-  border-bottom: 1px solid rgba(200,120,40,0.2);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.2);
 }
 
 .musicman-avatar {
@@ -66,11 +66,11 @@
   justify-content: center;
   color: #6a5a40;
   background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(200,120,40,0.2);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.2);
   transition: all 0.15s;
 }
 
-.musicman-voice-toggle:hover { color: #a89878; border-color: rgba(200,120,40,0.4); }
+.musicman-voice-toggle:hover { color: #a89878; border-color: rgba(var(--brand-orange-rgb),0.4); }
 .musicman-voice-toggle--on { color: var(--musicman-accent); border-color: var(--musicman-accent); }
 
 /* Tabs */
@@ -117,7 +117,7 @@
 .musicman-chat-history {
   width: 200px;
   flex-shrink: 0;
-  border-right: 1px solid rgba(200,120,40,0.15);
+  border-right: 1px solid rgba(var(--brand-orange-rgb),0.15);
   display: flex;
   flex-direction: column;
   margin-right: 16px;
@@ -128,13 +128,13 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--musicman-accent);
-  border-bottom: 1px solid rgba(200,120,40,0.12);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.12);
   text-align: left;
   transition: background 0.15s;
 }
 
 .musicman-chat-new:hover {
-  background: rgba(200,120,40,0.1);
+  background: rgba(var(--brand-orange-rgb),0.1);
 }
 
 .musicman-chat-history-list {
@@ -152,11 +152,11 @@
 }
 
 .musicman-chat-history-item:hover {
-  background: rgba(200,120,40,0.08);
+  background: rgba(var(--brand-orange-rgb),0.08);
 }
 
 .musicman-chat-history-item--active {
-  background: rgba(200,120,40,0.15);
+  background: rgba(var(--brand-orange-rgb),0.15);
 }
 
 .musicman-chat-history-title {
@@ -219,8 +219,8 @@
 }
 
 .musicman-chat-msg--user {
-  background: rgba(200,120,40,0.15);
-  border: 1px solid rgba(200,120,40,0.25);
+  background: rgba(var(--brand-orange-rgb),0.15);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.25);
   border-radius: 8px;
   padding: 8px 12px;
   color: #f0e0c0;
@@ -251,7 +251,7 @@
 .musicman-chat-input {
   flex: 1;
   background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(200,120,40,0.3);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.3);
   border-radius: 6px;
   padding: 12px 16px;
   color: #e8dcc8;
@@ -297,7 +297,7 @@
 
 .musicman-recs-refresh {
   background: none;
-  border: 1px solid rgba(200,120,40,0.3);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.3);
   border-radius: 4px;
   color: #a89878;
   cursor: pointer;
@@ -329,17 +329,17 @@
   gap: 12px;
   padding: 12px 14px;
   background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(200,120,40,0.15);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.15);
   border-radius: 6px;
   transition: border-color 0.15s;
 }
 
-.musicman-rec-card:hover { border-color: rgba(200,120,40,0.4); }
+.musicman-rec-card:hover { border-color: rgba(var(--brand-orange-rgb),0.4); }
 
 .musicman-rec-art {
   width: 56px;
   height: 56px;
-  background: rgba(200,120,40,0.1);
+  background: rgba(var(--brand-orange-rgb),0.1);
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -382,7 +382,7 @@
   font-size: 8px;
   color: #8a7a60;
   padding: 1px 6px;
-  border: 1px solid rgba(200,120,40,0.2);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.2);
   border-radius: 3px;
 }
 
@@ -448,7 +448,7 @@
 .musicman-rec-btn--preview {
   background: rgba(255,255,255,0.08);
   color: #c8b898;
-  border: 1px solid rgba(200,120,40,0.2);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.2);
 }
 
 /* Placeholder tabs */
@@ -503,7 +503,7 @@
   font-weight: 700;
   font-size: 12px;
   border-radius: 4px;
-  border: 1px solid rgba(200,120,40,0.3);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.3);
   transition: all 0.15s;
   min-height: 28px;
 }
@@ -617,14 +617,14 @@
   border-radius: 50%;
   color: #8a7a60;
   background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(200,120,40,0.2);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.2);
   transition: all 0.15s;
   margin-top: 4px;
 }
 
 .musicman-speak-btn:hover {
   color: var(--musicman-accent);
-  border-color: rgba(200,120,40,0.4);
+  border-color: rgba(var(--brand-orange-rgb),0.4);
 }
 
 .musicman-speak-btn--active {
@@ -656,7 +656,7 @@
 .musicman-metadata-rescan {
   font-size: 11px;
   color: #8a7a60;
-  border: 1px solid rgba(200,120,40,0.2);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.2);
   border-radius: 4px;
   padding: 3px 10px;
   background: rgba(255,255,255,0.05);
@@ -665,7 +665,7 @@
 
 .musicman-metadata-rescan:hover {
   color: var(--musicman-accent);
-  border-color: rgba(200,120,40,0.4);
+  border-color: rgba(var(--brand-orange-rgb),0.4);
 }
 
 .musicman-metadata-issues {
@@ -679,12 +679,12 @@
 .musicman-metadata-issue {
   padding: 12px 14px;
   background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(200,120,40,0.15);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.15);
   border-radius: 6px;
   transition: border-color 0.15s;
 }
 
-.musicman-metadata-issue:hover { border-color: rgba(200,120,40,0.3); }
+.musicman-metadata-issue:hover { border-color: rgba(var(--brand-orange-rgb),0.3); }
 
 .musicman-metadata-issue--fixed {
   opacity: 0.5;
@@ -708,7 +708,7 @@
 }
 
 .musicman-metadata-type--misspelling { background: #c0392b; color: #fff; }
-.musicman-metadata-type--inconsistent { background: #e67e22; color: #fff; }
+.musicman-metadata-type--inconsistent { background: var(--brand-orange); color: #fff; }
 .musicman-metadata-type--generic { background: #7f8c8d; color: #fff; }
 .musicman-metadata-type--missing { background: #8e44ad; color: #fff; }
 .musicman-metadata-type--genre { background: #2980b9; color: #fff; }
@@ -782,7 +782,7 @@
   font-size: 10px;
   color: #8a7a60;
   background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(200,120,40,0.12);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.12);
   border-radius: 3px;
   padding: 1px 6px;
   white-space: nowrap;
@@ -792,7 +792,7 @@
 }
 
 .musicman-metadata-track-tag--alt {
-  border-color: rgba(200,120,40,0.25);
+  border-color: rgba(var(--brand-orange-rgb),0.25);
 }
 
 .musicman-metadata-track-more {
@@ -900,7 +900,7 @@
 .playlist-view-commentary--musicman {
   background: #2a1e10;
   color: #c8b898;
-  border-bottom-color: rgba(200,120,40,0.2);
+  border-bottom-color: rgba(var(--brand-orange-rgb),0.2);
 }
 
 /* Megan picks — same dark commentary tone but in her teal/blue palette
@@ -1055,7 +1055,7 @@
 
 .musicman-artwork-progress {
   height: 3px;
-  background: rgba(200,120,40,0.15);
+  background: rgba(var(--brand-orange-rgb),0.15);
   border-radius: 2px;
   margin-bottom: 12px;
   overflow: hidden;
@@ -1090,7 +1090,7 @@
   border-radius: 4px;
   overflow: hidden;
   position: relative;
-  border: 1px solid rgba(200,120,40,0.1);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.1);
 }
 
 .musicman-artwork-img img {
@@ -1105,7 +1105,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(200,120,40,0.05);
+  background: rgba(var(--brand-orange-rgb),0.05);
 }
 
 .musicman-artwork-fetch-btn {
@@ -1178,8 +1178,8 @@
 
 .musicman-org-stat {
   flex: 1;
-  background: rgba(200,120,40,0.08);
-  border: 1px solid rgba(200,120,40,0.15);
+  background: rgba(var(--brand-orange-rgb),0.08);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.15);
   border-radius: 8px;
   padding: 14px 12px;
   text-align: center;
@@ -1202,7 +1202,7 @@
 
 .musicman-org-section {
   margin-bottom: 6px;
-  border: 1px solid rgba(200,120,40,0.1);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.1);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -1216,12 +1216,12 @@
   font-size: 13px;
   font-weight: 600;
   color: #c8b898;
-  background: rgba(200,120,40,0.06);
+  background: rgba(var(--brand-orange-rgb),0.06);
   transition: background 0.15s;
 }
 
 .musicman-org-section-header:hover {
-  background: rgba(200,120,40,0.12);
+  background: rgba(var(--brand-orange-rgb),0.12);
 }
 
 .musicman-org-toggle {
@@ -1260,14 +1260,14 @@
 .musicman-org-bar-track {
   flex: 1;
   height: 14px;
-  background: rgba(200,120,40,0.08);
+  background: rgba(var(--brand-orange-rgb),0.08);
   border-radius: 3px;
   overflow: hidden;
 }
 
 .musicman-org-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, rgba(200,120,40,0.5), var(--musicman-accent));
+  background: linear-gradient(90deg, rgba(var(--brand-orange-rgb), 0.5), var(--musicman-accent));
   border-radius: 3px;
   min-width: 2px;
   transition: width 0.3s ease;
@@ -1297,7 +1297,7 @@
 .musicman-org-dupe-group {
   margin-bottom: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(200,120,40,0.08);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.08);
 }
 
 .musicman-org-dupe-group:last-child {
@@ -1367,7 +1367,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(200,120,40,0.06);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.06);
 }
 
 .musicman-org-missing-row:last-child {
@@ -1433,7 +1433,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
-  border-bottom: 1px solid rgba(200,120,40,0.1);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.1);
   gap: 10px;
 }
 .musicman-org-merge-row:last-child {
@@ -1484,7 +1484,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 5px 8px;
-  border-bottom: 1px solid rgba(200,120,40,0.1);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.1);
   gap: 10px;
 }
 .musicman-org-fill-row:last-child {
@@ -1531,7 +1531,7 @@
 .musicman-org-rename-btn {
   opacity: 0;
   background: none;
-  border: 1px solid rgba(200,120,40,0.3);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.3);
   border-radius: 3px;
   color: #a89878;
   cursor: pointer;
@@ -1571,7 +1571,7 @@
 /* Organize — Editable merge target input */
 .musicman-org-merge-target-input {
   background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(200,120,40,0.4);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.4);
   border-radius: 3px;
   color: #e8d8b8;
   font-size: 12px;
@@ -1583,7 +1583,7 @@
 }
 .musicman-org-merge-target-input:focus {
   border-color: var(--musicman-accent);
-  box-shadow: 0 0 0 1px rgba(200,120,40,0.3);
+  box-shadow: 0 0 0 1px rgba(var(--brand-orange-rgb),0.3);
 }
 
 /* Organize — Manual genre fill rows */
@@ -1592,7 +1592,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
-  border-bottom: 1px solid rgba(200,120,40,0.1);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.1);
   gap: 10px;
 }
 .musicman-org-manual-row:last-child {
@@ -1639,7 +1639,7 @@
   gap: 12px;
   padding: 16px;
   background: rgba(255,255,255,0.025);
-  border: 1px solid rgba(200,120,40,0.2);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.2);
   border-radius: 8px;
   margin-bottom: 20px;
 }
@@ -1656,7 +1656,7 @@
 }
 .musicman-restore-divider {
   height: 1px;
-  background: rgba(200,120,40,0.15);
+  background: rgba(var(--brand-orange-rgb),0.15);
   margin: 12px 0 20px;
 }
 .musicman-restore-error {
@@ -1688,7 +1688,7 @@
   flex-direction: column;
   gap: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(200,120,40,0.1);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb),0.1);
 }
 .musicman-restore-stats {
   display: flex;
@@ -1698,7 +1698,7 @@
   color: #b5a890;
 }
 .musicman-restore-stats strong { color: var(--musicman-accent); }
-.musicman-restore-flagged strong { color: #e67e22; }
+.musicman-restore-flagged strong { color: var(--brand-orange); }
 .musicman-restore-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1714,7 +1714,7 @@
 }
 .musicman-restore-group {
   background: rgba(255,255,255,0.02);
-  border: 1px solid rgba(200,120,40,0.1);
+  border: 1px solid rgba(var(--brand-orange-rgb),0.1);
   border-radius: 4px;
 }
 .musicman-restore-group-header {
@@ -1751,7 +1751,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 4px 12px 12px 36px;
-  border-top: 1px solid rgba(200,120,40,0.1);
+  border-top: 1px solid rgba(var(--brand-orange-rgb),0.1);
 }
 .musicman-restore-track {
   display: flex;
@@ -1813,12 +1813,12 @@
 .musicman-restore-flagged-section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid rgba(230,126,34,0.2);
+  border-top: 1px solid rgba(var(--brand-orange-rgb),0.2);
 }
 .musicman-restore-flagged-section h4 {
   margin: 0 0 4px 0;
   font-size: 12px;
-  color: #e67e22;
+  color: var(--brand-orange);
 }
 .musicman-restore-flagged-hint {
   margin: 0 0 8px 0;
@@ -1838,7 +1838,7 @@
   gap: 8px;
   font-size: 11px;
   padding: 4px 8px;
-  background: rgba(230,126,34,0.05);
+  background: rgba(var(--brand-orange-rgb),0.05);
   border-radius: 3px;
 }
 .musicman-restore-flagged-tag {
@@ -1847,7 +1847,7 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 2px 6px;
-  background: rgba(230,126,34,0.3);
+  background: rgba(var(--brand-orange-rgb),0.3);
   color: #fff;
   border-radius: 3px;
   flex-shrink: 0;

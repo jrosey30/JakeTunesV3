@@ -25,7 +25,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
   { label: 'Genres', view: 'genres' },
-  { label: 'The Music Man', view: 'musicman', highlight: '#c87828' },
+  { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
 
 // 4.4.0: split into two sections so the WJLR Picks panel stands out as
@@ -58,7 +58,9 @@ const ICON_BLUE   = '#4a7fbf'   // Songs / Albums (Music)
 const ICON_PURPLE = '#a557a6'   // Artists (person silhouette)
 const ICON_GREEN  = '#5b9b54'   // Genres (category grid)
 const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
-const ICON_HOME_ORANGE = '#d77b27'  // 4.4.19: Home — warm color, distinct from the cooler library icons.
+// 4.4.47: the brand orange, sampled from the app logo (#bb4308). Used
+// for the Home icon and the Music Man sidebar entry's icon + highlight.
+const ICON_HOME_ORANGE = '#bb4308'  // Home — warm color, distinct from the cooler library icons.
 
 function HomeIcon() {
   // Simple gable-roof house silhouette — instantly readable at 12 px,
@@ -135,11 +137,11 @@ function MusicManPicksIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       {/* Vinyl record */}
-      <circle cx="6" cy="6" r="5" stroke="#c87828" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#c87828" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#c87828" />
+      <circle cx="6" cy="6" r="5" stroke="#bb4308" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#bb4308" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#bb4308" />
       {/* Sparkle */}
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#c87828" />
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#bb4308" />
     </svg>
   )
 }

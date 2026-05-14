@@ -38,7 +38,7 @@
   position: absolute;
   inset: -10%;
   background:
-    radial-gradient(circle at 78% 78%, rgba(215, 123, 39, 0.20) 0%, rgba(215, 123, 39, 0) 45%),
+    radial-gradient(circle at 78% 78%, rgba(var(--brand-orange-rgb), 0.20) 0%, rgba(var(--brand-orange-rgb), 0) 45%),
     radial-gradient(circle at 22% 18%, rgba(74, 144, 217, 0.16) 0%, rgba(74, 144, 217, 0) 50%);
   pointer-events: none;
   filter: blur(20px);
@@ -77,10 +77,12 @@
 .app-splash-eq-bar {
   width: 5px;
   height: 100%;
-  background: linear-gradient(180deg, #f5b074 0%, #d77b27 55%, #a85510 100%);
+  /* 4.4.47: EQ-bar gradient rebased on the brand orange (#bb4308) —
+     light top → canonical mid → dark bottom. */
+  background: linear-gradient(180deg, var(--brand-orange-light) 0%, var(--brand-orange) 55%, var(--brand-orange-dark) 100%);
   border-radius: 2px;
   transform-origin: bottom;
-  box-shadow: 0 0 12px rgba(215, 123, 39, 0.45);
+  box-shadow: 0 0 12px rgba(var(--brand-orange-rgb), 0.45);
   animation: splash-eq-pulse 0.82s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
 }
 
@@ -114,11 +116,13 @@
 
 .app-splash-greeting {
   font-size: 15px;
-  color: rgba(240, 165, 90, 0.95);
+  /* 4.4.47: brand orange. Uses the -light shade so it reads cleanly
+     against the dark navy splash backdrop. */
+  color: var(--brand-orange-light);
   margin-top: 30px;
   font-weight: 600;
   letter-spacing: -0.008em;
-  text-shadow: 0 1px 14px rgba(215, 123, 39, 0.25);
+  text-shadow: 0 1px 14px rgba(var(--brand-orange-rgb), 0.25);
 }
 
 /* Slim track + shimmering fill. Width is set inline from JS (rAF). The
@@ -137,17 +141,20 @@
 
 .app-splash-progress-fill {
   height: 100%;
+  /* 4.4.47: shimmer rebased on the brand orange — canonical edges, a
+     light-orange shoulder, and a warm cream peak ("light passing
+     across" the brand-orange bar). */
   background:
     linear-gradient(90deg,
-      rgba(215, 123, 39, 0.85) 0%,
-      rgba(245, 176, 116, 1)  45%,
-      rgba(255, 215, 170, 1)  50%,
-      rgba(245, 176, 116, 1)  55%,
-      rgba(215, 123, 39, 0.85) 100%
+      rgba(var(--brand-orange-rgb), 0.85) 0%,
+      var(--brand-orange-light)  45%,
+      var(--brand-cream)         50%,
+      var(--brand-orange-light)  55%,
+      rgba(var(--brand-orange-rgb), 0.85) 100%
     );
   background-size: 220% 100%;
   border-radius: 999px;
-  box-shadow: 0 0 14px rgba(215, 123, 39, 0.55);
+  box-shadow: 0 0 14px rgba(var(--brand-orange-rgb), 0.55);
   transition: width 220ms ease-out;
   animation: splash-progress-shimmer 1.5s linear infinite;
 }
