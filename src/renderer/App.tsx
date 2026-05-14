@@ -150,8 +150,14 @@ function AppInner() {
   // track metadata to hand it. MediaSession is the bridge.
   //
   // (1) Metadata — title / artist / album / artwork, refreshed on every
-  // track change. Artwork reuses the album-art:// protocol with the
-  // same key scheme AlbumArtPanel uses (`${artist}|||${album}`, lower).
+  // track change. Title/artist/album are set immediately; artwork is
+  // fetched and upgraded in asynchronously.
+  //
+  // 4.4.54: MediaSession will NOT load a custom-scheme (album-art://)
+  // URL as artwork — even though the scheme is registered with
+  // supportFetchAPI. So we fetch the image ourselves and hand it a
+  // blob: URL, which Chromium's media layer does accept. Key scheme
+  // matches AlbumArtPanel (`${artist}|||${album}`, lowercased).
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     const np = pbState.nowPlaying
@@ -159,16 +165,34 @@ function AppInner() {
       navigator.mediaSession.metadata = null
       return
     }
+    let blobUrl: string | null = null
+    let cancelled = false
+    const apply = (artwork: MediaImage[]) => {
+      if (cancelled) return
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: np.title || 'Unknown Track',
+        artist: np.artist || 'Unknown Artist',
+        album: np.album || '',
+        artwork,
+      })
+    }
+    apply([]) // show title/artist/album immediately; art upgrades below
     const artKey = `${(np.artist || '').toLowerCase().trim()}|||${(np.album || '').toLowerCase().trim()}`
     const artHash = libState.artworkMap[artKey]
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: np.title || 'Unknown Track',
-      artist: np.artist || 'Unknown Artist',
-      album: np.album || '',
-      artwork: artHash
-        ? [{ src: `album-art://${artHash}.jpg`, sizes: '512x512', type: 'image/jpeg' }]
-        : [],
-    })
+    if (artHash) {
+      fetch(`album-art://${artHash}.jpg`)
+        .then(r => (r.ok ? r.blob() : Promise.reject(new Error('artwork not found'))))
+        .then(blob => {
+          if (cancelled) return
+          blobUrl = URL.createObjectURL(blob)
+          apply([{ src: blobUrl, sizes: '512x512', type: 'image/jpeg' }])
+        })
+        .catch(() => { /* no cached cover — metadata already set without art */ })
+    }
+    return () => {
+      cancelled = true
+      if (blobUrl) URL.revokeObjectURL(blobUrl)
+    }
   }, [pbState.nowPlaying, libState.artworkMap])
 
   // (2) Transport controls — route the widget's buttons back into
