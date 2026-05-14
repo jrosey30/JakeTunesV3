@@ -16,6 +16,7 @@ import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
+import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
 import { setCrossfadeSettings } from './hooks/useAudio'
 import { setEqSettings } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
@@ -132,7 +133,17 @@ function AppInner() {
       if (!settings.sync.autoSyncOnConnect) return
       const lib = libStateRef.current
       if (lib.tracks.length === 0) return
-      const playlists = (lib.playlists || []).filter((p: import('./types').Playlist) => !p.id.startsWith('ipod-'))
+      // 4.4.46: auto-sync now ships the SAME playlist set the manual
+      // Device-view "Sync" button does — the user's regular playlists
+      // PLUS the four built-in smart playlists (Recently Added,
+      // Recently Played, Top 25, My Top Rated), freshly evaluated.
+      // Before this, auto-sync passed only `lib.playlists` filtered to
+      // non-iPod entries — so plugging the iPod in and letting it
+      // auto-sync silently dropped every built-in smart playlist. The
+      // iTunesDB writer takes whatever it's handed as THE complete
+      // playlist set, so `buildSmartPlaylistsForSync` returns regular
+      // playlists too (kept as-is) — they are NOT dropped.
+      const playlists = buildSmartPlaylistsForSync(lib.tracks, lib.playlists || [])
       window.electronAPI.syncToIpod(lib.tracks, playlists).catch((err) => {
         console.warn('[auto-sync] failed:', err)
       })

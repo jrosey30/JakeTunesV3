@@ -4,6 +4,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast } from '../audio/eq'
+import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -189,55 +190,31 @@ export default function SmartPlaylistView() {
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
 
-    switch (playlistId) {
-      case 'recently-added': {
-        return [...libState.tracks]
-          .filter(t => t.dateAdded)
-          .sort((a, b) => (b.dateAdded || '').localeCompare(a.dateAdded || ''))
-          .slice(0, 50)
-      }
-      case 'recently-played': {
-        const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-        return pbState.recentlyPlayed
-          .map(id => trackMap.get(id))
-          .filter((t): t is Track => t !== undefined)
-      }
-      case 'top-25': {
-        return [...libState.tracks]
-          .filter(t => t.playCount > 0)
-          .sort((a, b) => b.playCount - a.playCount)
-          .slice(0, 25)
-      }
-      case 'top-rated': {
-        // Use actual ratings if available, fall back to play count + recency
-        const rated = [...libState.tracks].filter(t => t.rating > 0)
-        if (rated.length > 0) {
-          return rated
-            .sort((a, b) => b.rating - a.rating || b.playCount - a.playCount)
-            .slice(0, 50)
-        }
-        return [...libState.tracks]
-          .filter(t => t.playCount > 0)
-          .sort((a, b) => {
-            const scoreA = a.playCount * 2 + (a.dateAdded ? new Date(a.dateAdded).getTime() / 1e12 : 0)
-            const scoreB = b.playCount * 2 + (b.dateAdded ? new Date(b.dateAdded).getTime() / 1e12 : 0)
-            return scoreB - scoreA
-          })
-          .slice(0, 50)
-      }
-      case 'musicman-picks':
-      case 'megan-picks':
-      case 'dj-hands-picks': {
-        if (!picks) return []
-        const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-        return picks.trackIds
-          .map(id => trackMap.get(id))
-          .filter((t): t is Track => t !== undefined)
-      }
-      default:
-        return []
+    // 4.4.46: the four built-in smart playlists are now evaluated by
+    // the SHARED `evaluateSmartPlaylist` (src/renderer/utils/smartPlaylists.ts)
+    // — the exact same function the iPod-sync path uses. Before this,
+    // this view and the sync path had divergent copies (different
+    // counts; Recently Played wasn't synced at all). One definition,
+    // two consumers — they can't drift again.
+    //
+    // Recently Played is now `Track.lastPlayedAt`-backed (persistent,
+    // survives restarts, syncs to the iPod) rather than the old
+    // in-memory `pbState.recentlyPlayed` session list.
+    if (
+      playlistId === 'musicman-picks' ||
+      playlistId === 'megan-picks' ||
+      playlistId === 'dj-hands-picks'
+    ) {
+      // AI picks need the async-fetched `picks` payload — not part of
+      // the shared evaluator (which is pure over the library).
+      if (!picks) return []
+      const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
+      return picks.trackIds
+        .map(id => trackMap.get(id))
+        .filter((t): t is Track => t !== undefined)
     }
-  }, [playlistId, libState.tracks, pbState.recentlyPlayed, picks])
+    return evaluateSmartPlaylist(playlistId, libState.tracks)
+  }, [playlistId, libState.tracks, picks])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
