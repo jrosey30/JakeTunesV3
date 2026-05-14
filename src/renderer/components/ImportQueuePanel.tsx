@@ -135,13 +135,28 @@ function QueueList() {
               <button className="iq-item-btn" onClick={() => retryFailed(it.uid)}>Retry</button>
             </>
           )}
-          {it.status === 'dupe' && it.dupe && (
+          {it.status === 'dupe' && (
             <span className="iq-item-dupe">
-              {/* 4.4.42: empty matchedTitle means we routed an ENOENT
-                  failure to dupe ("source no longer present"). Otherwise
-                  it's a real already-in-library hit. Different copy
-                  but same visual treatment — soft skip, not red error. */}
-              {it.dupe.matchedTitle ? 'already in library' : 'source no longer present'}
+              {/* 4.4.44: explicit per-reason copy. All three are soft
+                  skips (gray, no Retry) but each tells the user a
+                  different — and accurate — story:
+                    in-library       → main-side fingerprint match
+                    already-imported → re-enqueue of a path handled
+                                       earlier this session (the track
+                                       IS in the library, from the
+                                       first pass — NOT an error)
+                    source-gone      → ENOENT with no session record
+                  Falls back on the legacy matchedTitle check for any
+                  pre-4.4.44 item shapes still in a long-lived queue. */}
+              {it.dupeReason === 'already-imported'
+                ? 'already imported'
+                : it.dupeReason === 'source-gone'
+                  ? 'source no longer present'
+                  : it.dupeReason === 'in-library'
+                    ? 'already in library'
+                    : it.dupe?.matchedTitle
+                      ? 'already in library'
+                      : 'already imported'}
             </span>
           )}
           {(it.status === 'done' || it.status === 'failed' || it.status === 'dupe') && (
