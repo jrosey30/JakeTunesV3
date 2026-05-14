@@ -102,10 +102,15 @@
   border-radius: 20px;
   border: 1px solid var(--pill-border);
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.5);
-  /* Asymmetric padding: extra room on the right reserves space for
-   * the vertically-centered mini waveform visualizer (36 px wide at
-   * right:10) so the title and scrubber don't bleed into it. */
-  padding: 4px 56px 4px 16px;
+  /* 4.4.43: symmetric 22px padding now that the right-side mini
+   * visualizer is gone (removed in 4.4.41). Before this fix the pill
+   * had `4px 56px 4px 16px` — the 56px right padding was reserving
+   * space for the 36px-wide visualizer, which left the centered
+   * title visibly shifted left of true center once the visualizer
+   * stopped rendering. 22px clears the .np-cycle-btn on the left
+   * (at left:8px width:14px = ends at 22px) when it appears in
+   * activity modes; matching it on the right keeps centering exact. */
+  padding: 4px 22px;
   display: flex;
   flex-direction: column;
   justify-content: center;
