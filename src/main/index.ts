@@ -2927,6 +2927,43 @@ async function saveArtworkIndex(index: Record<string, string>): Promise<void> {
   return job
 }
 
+// 4.4.57 — user-uploaded artwork is sacred: once the user sets their
+// own cover for an album, NOTHING auto-fetches over it (not the online
+// fetcher, not embedded-art extraction, not even a forced re-fetch).
+// Tracked in a separate locks file (key = `${artist}|||${album}`,
+// lowercased) so the index format stays untouched. set-custom-artwork
+// adds a lock; remove-artwork clears it; every auto-fetch path checks it.
+function getArtworkLocksPath(): string {
+  return join(getArtworkDir(), 'user-locked.json')
+}
+async function loadArtworkLocks(): Promise<Set<string>> {
+  try {
+    const data = await readFile(getArtworkLocksPath(), 'utf-8')
+    const arr = JSON.parse(data)
+    return new Set(Array.isArray(arr) ? (arr as string[]) : [])
+  } catch {
+    return new Set()
+  }
+}
+let artworkLockWriteChain: Promise<void> = Promise.resolve()
+async function setArtworkLock(key: string, locked: boolean): Promise<void> {
+  const job = artworkLockWriteChain.then(async () => {
+    const locks = await loadArtworkLocks()
+    if (locked) locks.add(key)
+    else locks.delete(key)
+    await mkdir(getArtworkDir(), { recursive: true })
+    const locksPath = getArtworkLocksPath()
+    const tmpPath = `${locksPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
+    await writeFile(tmpPath, JSON.stringify([...locks], null, 2), 'utf-8')
+    const { rename } = await import('fs/promises')
+    await rename(tmpPath, locksPath)
+  }).catch((err) => {
+    console.warn('[artwork-locks] serialized write failed:', err instanceof Error ? err.message : err)
+  })
+  artworkLockWriteChain = job
+  return job
+}
+
 // 4.4.12: helper that takes the music-metadata parse result + the
 // destination artist/album and saves the embedded front cover into
 // the artwork directory using the SAME conventions as set-custom-artwork
@@ -5757,34 +5794,49 @@ ipcMain.handle('get-claude-stats', async () => {
   }
 })
 
-// Deezer album art search (shared by artwork fetcher and recommendations)
+// Normalize an artist/album string for strict matching: drop edition
+// parens/brackets, a leading "the", and collapse whitespace.
+function normalizeArtTerm(s: string): string {
+  return s.toLowerCase()
+    .replace(/\s*\(.*?\)\s*/g, ' ')
+    .replace(/\s*\[.*?\]\s*/g, ' ')
+    .replace(/^the\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Deezer album art search (shared by artwork fetcher and recommendations).
+//
+// 4.4.57 — STRICT matching. Rule: "auto-fetched art must be completely
+// accurate, or nothing." The old scoring accepted an album-title match
+// even when the artist was completely wrong — an exact album-title hit
+// scored 20, the pass threshold was 8 — so every "Greatest Hits" /
+// "Live" / short common title pulled some random artist's cover. Now
+// the artist must match EXACTLY and the album must match exactly (after
+// normalization) or be a clean prefix either way. Anything less → null
+// → the caller shows a placeholder instead of a wrong cover.
 async function searchDeezerArt(query: string, artistLower: string, albumLower: string): Promise<string | null> {
   const res = await fetch(`https://api.deezer.com/search/album?q=${encodeURIComponent(query)}&limit=10`)
   if (!res.ok) return null
   const data = await res.json() as { data?: { title?: string; artist?: { name?: string }; cover_xl?: string }[] }
   if (!data.data || data.data.length === 0) return null
 
-  let bestScore = 0
-  let bestUrl: string | null = null
+  const wantArtist = normalizeArtTerm(artistLower)
+  const wantAlbum = normalizeArtTerm(albumLower)
+
   for (const r of data.data) {
-    const rArtist = (r.artist?.name || '').toLowerCase()
-    const rAlbum = (r.title || '').toLowerCase()
-      .replace(/\s*\(.*?\)\s*/g, '').replace(/\s*\[.*?\]\s*/g, '').trim()
-    let score = 0
-
-    if (rAlbum === albumLower) score += 20
-    else if (rAlbum.startsWith(albumLower) || albumLower.startsWith(rAlbum)) score += 12
-    else if (rAlbum.includes(albumLower) || albumLower.includes(rAlbum)) score += 8
-
-    if (rArtist === artistLower) score += 10
-    else if (rArtist.includes(artistLower) || artistLower.includes(rArtist)) score += 5
-
-    if (score > bestScore && r.cover_xl) {
-      bestScore = score
-      bestUrl = r.cover_xl
-    }
+    if (!r.cover_xl) continue
+    const rArtist = normalizeArtTerm(r.artist?.name || '')
+    const rAlbum = normalizeArtTerm(r.title || '')
+    // Artist MUST match exactly — a wrong artist is a wrong cover, period.
+    if (rArtist !== wantArtist) continue
+    // Album: exact, or a clean prefix either way (covers an edition
+    // suffix the paren/bracket strip didn't catch).
+    const albumOk = rAlbum === wantAlbum
+      || (wantAlbum.length >= 3 && (rAlbum.startsWith(wantAlbum) || wantAlbum.startsWith(rAlbum)))
+    if (albumOk) return r.cover_xl
   }
-  return bestScore >= 8 ? bestUrl : null
+  return null
 }
 
 // Album artwork
@@ -5796,6 +5848,15 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
   const filePath = join(dir, `${hash}.jpg`)
 
   const index = await loadArtworkIndex()
+
+  // 4.4.57 — user-uploaded artwork is sacred. If the user has locked
+  // this album's art (via set-custom-artwork), NEVER overwrite it — not
+  // on an auto-fetch, not even on a forced re-fetch. To replace it the
+  // user must explicitly remove it first (remove-artwork clears the lock).
+  const locks = await loadArtworkLocks()
+  if (locks.has(key)) {
+    return { ok: true, key, hash: index[key] || hash }
+  }
 
   // Use cached version unless force re-fetch
   if (index[key] && !force) {
@@ -5872,6 +5933,10 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
     const index = await loadArtworkIndex()
     index[key] = versionedHash
     await saveArtworkIndex(index)
+    // 4.4.57 — the user chose this cover: lock it so no auto-fetch path
+    // (online fetcher, embedded-art extraction, forced re-fetch) ever
+    // overwrites it.
+    await setArtworkLock(key, true)
     return { ok: true, key, hash: versionedHash }
   } catch (err) {
     return { ok: false, error: String(err) }
@@ -5988,6 +6053,9 @@ ipcMain.handle('remove-artwork', async (_event, artist: string, album: string) =
     const index = await loadArtworkIndex()
     delete index[key]
     await saveArtworkIndex(index)
+    // 4.4.57 — removing the art also clears any user-lock, so the user
+    // can auto-fetch fresh art for this album again.
+    await setArtworkLock(key, false)
     return { ok: true, key }
   } catch (err) {
     return { ok: false, error: String(err) }

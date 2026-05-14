@@ -533,17 +533,38 @@ export async function getMusicBrainzReleaseMbid(artist: string, album: string): 
   if (cached !== null) return cached
   try {
     const q = `artist:"${artist.replace(/"/g, '\\"')}" AND release:"${album.replace(/"/g, '\\"')}"`
-    const url = `https://musicbrainz.org/ws/2/release?query=${encodeURIComponent(q)}&fmt=json&limit=1`
+    const url = `https://musicbrainz.org/ws/2/release?query=${encodeURIComponent(q)}&fmt=json&limit=5`
     const res = await fetch(url, {
       headers: { 'User-Agent': 'JakeTunes/4.3' },
       signal: AbortSignal.timeout(7000),
     })
     if (!res.ok) { mbidCache.set(cacheKey, null); return null }
-    type MbRes = { releases?: { id?: string }[] }
-    const data = await res.json() as MbRes
-    const id = data.releases?.[0]?.id || null
-    mbidCache.set(cacheKey, id)
-    return id
+    type MbRelease = { id?: string; title?: string; 'artist-credit'?: { name?: string }[] }
+    const data = await res.json() as { releases?: MbRelease[] }
+    // 4.4.57 — STRICT verification. MusicBrainz search is fuzzy; taking
+    // releases[0] blindly returns a wrong release for common album
+    // titles. Confirm a result's title AND artist-credit actually match
+    // what we asked for before trusting its MBID. No confident match →
+    // null (the caller falls through to the strict Deezer search, then
+    // to no-art).
+    const norm = (s: string) => s.toLowerCase()
+      .replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s*\[.*?\]\s*/g, ' ')
+      .replace(/^the\s+/, '').replace(/\s+/g, ' ').trim()
+    const wantArtist = norm(artist)
+    const wantAlbum = norm(album)
+    for (const rel of data.releases || []) {
+      if (!rel.id) continue
+      const relAlbum = norm(rel.title || '')
+      const relArtist = norm((rel['artist-credit'] || []).map(c => c.name || '').join(' '))
+      const albumOk = relAlbum === wantAlbum
+        || (wantAlbum.length >= 3 && (relAlbum.startsWith(wantAlbum) || wantAlbum.startsWith(relAlbum)))
+      if (relArtist === wantArtist && albumOk) {
+        mbidCache.set(cacheKey, rel.id)
+        return rel.id
+      }
+    }
+    mbidCache.set(cacheKey, null)
+    return null
   } catch {
     return null
   }
