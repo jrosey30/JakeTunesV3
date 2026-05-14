@@ -10,6 +10,10 @@ interface PlaybackState {
   repeat: RepeatMode
   shuffle: boolean
   queue: Track[]
+  // 4.4.56: snapshot of the queue's natural order, captured when
+  // shuffle is turned ON, so turning it OFF can honestly restore that
+  // order. null whenever there's nothing to restore to.
+  originalQueue: Track[] | null
   queueIndex: number
   recentlyPlayed: number[]
   shuffleHistory: number[]
@@ -45,6 +49,7 @@ const initialState: PlaybackState = {
   repeat: 'off',
   shuffle: false,
   queue: [],
+  originalQueue: null,
   queueIndex: -1,
   recentlyPlayed: [],
   shuffleHistory: []
@@ -67,7 +72,10 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         queue: action.queue ?? state.queue,
         queueIndex: action.queueIndex ?? state.queueIndex,
         recentlyPlayed: rp,
-        shuffleHistory: sh
+        shuffleHistory: sh,
+        // A fresh play context (new queue passed in) invalidates any
+        // pre-shuffle snapshot — it belonged to the previous queue.
+        originalQueue: action.queue ? null : state.originalQueue,
       }
     }
     case 'PAUSE':
@@ -86,15 +94,40 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
       return { ...state, repeat: action.mode }
     case 'TOGGLE_SHUFFLE': {
       const newShuffle = !state.shuffle
-      // When turning shuffle ON, Fisher-Yates the upcoming queue so the
-      // visible Up Next list reflects the new playback order. Past tracks
-      // (queueIndex and earlier) stay put — they're history. Without this,
-      // shuffle was just a flag that picked random tracks per natural-end
-      // while the displayed Up Next stayed unchanged — looked like
-      // "skipping lots of songs in the queue."
       if (!newShuffle) {
-        return { ...state, shuffle: false, shuffleHistory: [] }
+        // 4.4.56: turning shuffle OFF honestly restores the queue's
+        // natural order. Before, it just flipped the flag and left the
+        // queue scrambled — "shuffle off" but the Up Next list (and the
+        // actual playback order) stayed shuffled. Now we replay the
+        // snapshot taken when shuffle went on: keep its original order,
+        // drop tracks removed since, append tracks added while shuffled,
+        // and re-point queueIndex at whatever's playing now so playback
+        // continues seamlessly.
+        if (!state.originalQueue) {
+          return { ...state, shuffle: false, shuffleHistory: [] }
+        }
+        const currentIds = new Set(state.queue.map(t => t.id))
+        const restored = state.originalQueue.filter(t => currentIds.has(t.id))
+        const restoredIds = new Set(restored.map(t => t.id))
+        for (const t of state.queue) {
+          if (!restoredIds.has(t.id)) restored.push(t)
+        }
+        const np = state.nowPlaying
+        let idx = np ? restored.indexOf(np) : -1
+        if (idx < 0 && np) idx = restored.findIndex(t => t.id === np.id)
+        return {
+          ...state,
+          shuffle: false,
+          shuffleHistory: [],
+          queue: restored,
+          queueIndex: idx >= 0 ? idx : Math.min(state.queueIndex, restored.length - 1),
+          originalQueue: null,
+        }
       }
+      // Turning shuffle ON — snapshot the natural order first so OFF can
+      // restore it, then Fisher-Yates the upcoming queue so the visible
+      // Up Next list reflects the new playback order. Past tracks
+      // (queueIndex and earlier) stay put — they're history.
       const upcoming = state.queue.slice(state.queueIndex + 1)
       for (let i = upcoming.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1))
@@ -104,6 +137,7 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         ...state,
         shuffle: true,
         shuffleHistory: [],
+        originalQueue: [...state.queue],
         queue: [...state.queue.slice(0, state.queueIndex + 1), ...upcoming],
       }
     }
