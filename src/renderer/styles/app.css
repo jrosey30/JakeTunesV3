@@ -1,44 +1,191 @@
-/* ── Splash screen ── */
+/* ── Splash screen (4.4.39) ──
+ * Dark navy radial-gradient backdrop with two slow-drifting warm/cool
+ * glows. Centered content: pulsing EQ bars, big gradient-text wordmark,
+ * time-of-day greeting in warm orange, shimmering progress bar, cycling
+ * status text. Same color story as Home Featured Album hero (4.4.33) +
+ * ArtistsView expanded card (4.4.38) so it reads as the same app.
+ *
+ * -webkit-app-region: drag keeps the splash window-draggable. Pointer
+ * events are off on the decorative bg-glow so dragging works edge-to-edge.
+ */
 .app-splash {
+  position: relative;
   height: 100vh;
+  width: 100vw;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, #e0e0e0, #c8c8c8);
+  overflow: hidden;
+  background: radial-gradient(ellipse at 30% 25%, #1a2240 0%, #0b1024 55%, #04060f 100%);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
   -webkit-app-region: drag;
   user-select: none;
   -webkit-user-select: none;
+  animation: splash-screen-in 360ms ease-out;
+}
+
+@keyframes splash-screen-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Two soft color glows that slowly drift — gives the backdrop life
+ * without being distracting. Orange in the bottom-right, blue in the
+ * upper-left, both well below the content's contrast level.
+ */
+.app-splash-bg-glow {
+  position: absolute;
+  inset: -10%;
+  background:
+    radial-gradient(circle at 78% 78%, rgba(215, 123, 39, 0.20) 0%, rgba(215, 123, 39, 0) 45%),
+    radial-gradient(circle at 22% 18%, rgba(74, 144, 217, 0.16) 0%, rgba(74, 144, 217, 0) 50%);
+  pointer-events: none;
+  filter: blur(20px);
+  animation: splash-bg-drift 9s ease-in-out infinite alternate;
+}
+
+@keyframes splash-bg-drift {
+  from { transform: translate(0, 0)        scale(1);    opacity: 0.85; }
+  to   { transform: translate(28px, -16px) scale(1.06); opacity: 1;    }
 }
 
 .app-splash-inner {
+  position: relative;
+  z-index: 1;
   text-align: center;
-  animation: splash-fade-in 0.5s ease-out;
+  animation: splash-content-in 720ms cubic-bezier(0.2, 0.65, 0.3, 1);
 }
 
-.app-splash-icon {
-  width: 96px;
-  height: 96px;
-  border-radius: 20px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  margin-bottom: 16px;
+@keyframes splash-content-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0);    }
 }
 
-.app-splash-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: #333;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+/* Pulsing EQ bars. Each bar gets a staggered animation-delay (set
+ * inline in JSX) so the row moves like real audio levels, not a chorus.
+ */
+.app-splash-eq {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 5px;
+  height: 52px;
+  margin-bottom: 28px;
 }
 
-.app-splash-sub {
-  font-size: 12px;
-  color: #888;
-  margin-top: 6px;
+.app-splash-eq-bar {
+  width: 5px;
+  height: 100%;
+  background: linear-gradient(180deg, #f5b074 0%, #d77b27 55%, #a85510 100%);
+  border-radius: 2px;
+  transform-origin: bottom;
+  box-shadow: 0 0 12px rgba(215, 123, 39, 0.45);
+  animation: splash-eq-pulse 0.82s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
 }
 
-@keyframes splash-fade-in {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+@keyframes splash-eq-pulse {
+  from { transform: scaleY(0.22); opacity: 0.55; }
+  to   { transform: scaleY(1);    opacity: 1;    }
+}
+
+/* Wordmark — big, gradient-clipped text. The subtle glow underneath
+ * comes from the bg-glow drifting behind it.
+ */
+.app-splash-wordmark {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: -0.028em;
+  line-height: 1;
+  background: linear-gradient(180deg, #ffffff 0%, #d6dde8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 2px 24px rgba(255, 255, 255, 0.04);
+}
+
+.app-splash-tagline {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.62);
+  margin-top: 10px;
+  letter-spacing: 0.012em;
+}
+
+.app-splash-greeting {
+  font-size: 15px;
+  color: rgba(240, 165, 90, 0.95);
+  margin-top: 30px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  text-shadow: 0 1px 14px rgba(215, 123, 39, 0.25);
+}
+
+/* Slim track + shimmering fill. Width is set inline from JS (rAF). The
+ * shimmer comes from animating background-position on the fill — looks
+ * like light passing across.
+ */
+.app-splash-progress {
+  width: 260px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  margin: 24px auto 0;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+.app-splash-progress-fill {
+  height: 100%;
+  background:
+    linear-gradient(90deg,
+      rgba(215, 123, 39, 0.85) 0%,
+      rgba(245, 176, 116, 1)  45%,
+      rgba(255, 215, 170, 1)  50%,
+      rgba(245, 176, 116, 1)  55%,
+      rgba(215, 123, 39, 0.85) 100%
+    );
+  background-size: 220% 100%;
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(215, 123, 39, 0.55);
+  transition: width 220ms ease-out;
+  animation: splash-progress-shimmer 1.5s linear infinite;
+}
+
+@keyframes splash-progress-shimmer {
+  from { background-position: 220% 0; }
+  to   { background-position: 0       0; }
+}
+
+.app-splash-status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  min-height: 14px;
+  font-variant-numeric: tabular-nums;
+  /* re-trigger fade on text swap so the cycling reads as deliberate */
+  animation: splash-status-fade 480ms ease;
+}
+
+@keyframes splash-status-fade {
+  from { opacity: 0;   transform: translateY(2px); }
+  to   { opacity: 0.5; transform: translateY(0);   }
+}
+
+/* Honor user motion preferences — kill the drifting bg + EQ pulse,
+ * keep the static layout so it still looks polished. */
+@media (prefers-reduced-motion: reduce) {
+  .app-splash,
+  .app-splash-bg-glow,
+  .app-splash-inner,
+  .app-splash-eq-bar,
+  .app-splash-progress-fill,
+  .app-splash-status {
+    animation: none !important;
+  }
+  .app-splash-eq-bar { transform: scaleY(0.6); }
 }
 
 /* ── Drop overlay ── */

@@ -6,6 +6,7 @@ import { useAudio } from './hooks/useAudio'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
+import SplashScreen from './components/SplashScreen'
 import QueuePanel from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
@@ -38,6 +39,16 @@ function AppInner() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [uiReady, setUiReady] = useState(false)
+  // 4.4.39: minimum splash display time. Even on a warm cache where the
+  // library Promise.all settles in <500ms, we hold the splash for ≥1400ms
+  // so the wordmark/greeting/EQ-bars actually get to land — otherwise
+  // it's a strobe. App becomes interactive only when BOTH the library is
+  // loaded AND the min-time has elapsed.
+  const [splashMinElapsed, setSplashMinElapsed] = useState(false)
+  useEffect(() => {
+    const t = window.setTimeout(() => setSplashMinElapsed(true), 1400)
+    return () => window.clearTimeout(t)
+  }, [])
 
   // Load persisted settings once on mount and push to the audio layer.
   useEffect(() => {
@@ -690,16 +701,12 @@ function AppInner() {
     }
   }, [])
 
-  if (!uiReady) {
-    return (
-      <div className="app-splash">
-        <div className="app-splash-inner">
-          <img src={new URL('./assets/musicman-avatar.png', import.meta.url).href} className="app-splash-icon" alt="" />
-          <div className="app-splash-title">JakeTunes</div>
-          <div className="app-splash-sub">Loading library...</div>
-        </div>
-      </div>
-    )
+  // 4.4.39: hold splash until BOTH library is loaded AND minimum display
+  // time has elapsed. Pass isReady so the splash can pop progress to 100%
+  // + status to "Ready." once the data side has resolved but before the
+  // min-time releases — gives a satisfying finish frame instead of a snap.
+  if (!uiReady || !splashMinElapsed) {
+    return <SplashScreen isReady={uiReady} />
   }
 
   return (
