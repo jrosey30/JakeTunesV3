@@ -2992,6 +2992,7 @@ async function extractAndSaveEmbeddedArtwork(
   pictures: ParsedPicture[] | undefined,
   artist: string,
   album: string,
+  opts?: { force?: boolean },
 ): Promise<{ key: string; hash: string } | null> {
   if (!pictures || pictures.length === 0) return null
   const cleanArtist = (artist || '').trim()
@@ -3005,11 +3006,19 @@ async function extractAndSaveEmbeddedArtwork(
   if (!pic || !pic.data || pic.data.byteLength === 0) return null
 
   const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
-  // IDENTITY GATE: don't overwrite existing entries. The user's manually
-  // set art always wins over embedded art (also: a second import of the
-  // same album shouldn't re-version a stable on-disk cover).
-  const existingIndex = await loadArtworkIndex()
-  if (existingIndex[key]) return null
+  const force = opts?.force === true
+  // 4.4.57 — user-uploaded art is sacred: NEVER overwrite a locked key,
+  // not even in force/reverify mode.
+  if ((await loadArtworkLocks()).has(key)) return null
+  // IDENTITY GATE: in normal mode, don't overwrite an existing entry —
+  // a re-import shouldn't re-version a stable cover. In force mode (the
+  // 4.4.58 reverify cleanup) we DELIBERATELY overwrite, to scrub the
+  // wrong covers the old loose online matcher cached — the user-lock
+  // check above still protects hand-picked art.
+  if (!force) {
+    const existingIndex = await loadArtworkIndex()
+    if (existingIndex[key]) return null
+  }
 
   const hash = artworkHash(cleanArtist, cleanAlbum)
   const dir = getArtworkDir()
@@ -3054,9 +3063,9 @@ async function extractAndSaveEmbeddedArtwork(
   // Single-flight save — won't race against concurrent imports / fetches /
   // set-custom-artwork callers.
   const index = await loadArtworkIndex()
-  // Re-check inside the load — another concurrent extractor or a manual
-  // Add Artwork could have raced us between our first check and now.
-  if (!index[key]) {
+  // Normal mode re-checks (concurrent-import race guard); force mode
+  // overwrites deliberately — that's the whole point of the cleanup.
+  if (force || !index[key]) {
     index[key] = versionedHash
     await saveArtworkIndex(index)
   }
@@ -5963,29 +5972,45 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
 function getArtworkBackfillMarkerPath(): string {
   return join(app.getPath('userData'), 'artwork-backfill-done')
 }
+// 4.4.58 — second one-shot marker for the artwork reverify/cleanup pass
+// (force-replace every non-user-locked album's cover with its file's
+// own embedded art, scrubbing the wrong covers the old loose online
+// matcher cached). Separate marker so it runs once even on installs
+// where the original embedded backfill already completed.
+function getArtworkReverifyMarkerPath(): string {
+  return join(app.getPath('userData'), 'artwork-reverify-done')
+}
+async function markerExists(p: string): Promise<boolean> {
+  try { await stat(p); return true } catch { return false }
+}
 ipcMain.handle('artwork-backfill-status', async () => {
-  try {
-    await stat(getArtworkBackfillMarkerPath())
-    return { ok: true, done: true }
-  } catch {
-    return { ok: true, done: false }
-  }
+  // "done" only when BOTH one-shots have run — so a 4.4.58+ launch
+  // re-enters backfill-embedded-artwork to run the reverify pass.
+  const done = (await markerExists(getArtworkBackfillMarkerPath()))
+    && (await markerExists(getArtworkReverifyMarkerPath()))
+  return { ok: true, done }
 })
 ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
   // resolve iPod-style colon paths to absolute file paths
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
-
-  // Load the index once up-front so we can skip tracks whose albums
-  // already have art (without hammering loadArtworkIndex per-track).
-  const existingIndex = await loadArtworkIndex()
-  const seenKeys = new Set<string>(Object.keys(existingIndex))
-
   const results: Array<{ key: string; hash: string }> = []
-  let processed = 0
-  const total = tracks.length
 
-  try {
+  // One extraction pass over the library.
+  //  • normal (force=false): seed seenKeys from the existing index so
+  //    albums that already have art are skipped — pure pre-4.4.12
+  //    embedded backfill.
+  //  • reverify (force=true): seenKeys starts empty so every album is
+  //    re-parsed, and extractAndSaveEmbeddedArtwork OVERWRITES the index
+  //    with the file's own embedded cover — the 4.4.58 cleanup that
+  //    scrubs the wrong covers the old loose online matcher cached.
+  //    User-locked albums are still skipped (inside extractAndSave…).
+  const runPass = async (force: boolean): Promise<void> => {
+    const seenKeys = force
+      ? new Set<string>()
+      : new Set<string>(Object.keys(await loadArtworkIndex()))
+    let processed = 0
+    const total = tracks.length
     const mm = await import('music-metadata')
     for (const t of tracks) {
       processed++
@@ -5993,10 +6018,9 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
       const cleanAlbum = (t.album || '').trim()
       if (!cleanArtist || !cleanAlbum) continue
       const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
-      // Identity gate: already covered (either pre-existing index entry
-      // OR we wrote it earlier in this same backfill batch).
+      // Dedupe parseFile work per album within this pass.
       if (seenKeys.has(key)) continue
-      seenKeys.add(key)  // claim the slot so a later track on the same album doesn't duplicate parseFile work
+      seenKeys.add(key)
 
       // Resolve to absolute path. The colon-format path lives in
       // library.json; the underlying file lives in MUSIC_DIR.
@@ -6010,35 +6034,50 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
           metadata.common.picture as ParsedPicture[] | undefined,
           cleanArtist,
           cleanAlbum,
+          { force },
         )
         if (result) results.push(result)
       } catch (err) {
         // parseFile can fail on weird codecs / inaccessible files.
-        // Backfill is best-effort — log and move on; never block.
+        // Best-effort — log and move on; never block.
         console.warn(`[artwork-backfill] parseFile failed for ${abs}:`, err instanceof Error ? err.message : err)
       }
 
-      // Progress + cooperative yield. Matches the "playback wins resource
-      // fights" rule from 4.0.10 — give the audio decoder a thread tick
-      // between every parseFile.
+      // Progress + cooperative yield — give the audio decoder a thread
+      // tick between every parseFile (the 4.0.10 "playback wins" rule).
       if (processed % 25 === 0) {
         mainWindow?.webContents.send('artwork-backfill-progress', { processed, total })
       }
       await new Promise(resolve => setImmediate(resolve))
     }
+  }
+
+  const writeMarker = async (markerPath: string): Promise<void> => {
+    try {
+      await mkdir(app.getPath('userData'), { recursive: true })
+      await writeFile(markerPath, `done ${new Date().toISOString()}\n`, 'utf-8')
+    } catch (err) {
+      console.warn('[artwork-backfill] failed to write marker (will re-run next launch):', err instanceof Error ? err.message : err)
+    }
+  }
+
+  try {
+    // Pass 1 — original embedded backfill for pre-4.4.12 imports. One-shot.
+    if (!(await markerExists(getArtworkBackfillMarkerPath()))) {
+      await runPass(false)
+      await writeMarker(getArtworkBackfillMarkerPath())
+    }
+    // Pass 2 — 4.4.58 reverify: force-replace every non-user-locked
+    // album's cover with its file's own (accurate) embedded art. One-shot.
+    if (!(await markerExists(getArtworkReverifyMarkerPath()))) {
+      await runPass(true)
+      await writeMarker(getArtworkReverifyMarkerPath())
+    }
   } catch (err) {
     return { ok: false, error: String(err), artwork: results }
   }
 
-  // Mark backfill done so it never runs again on this install.
-  try {
-    await mkdir(app.getPath('userData'), { recursive: true })
-    await writeFile(getArtworkBackfillMarkerPath(), `done ${new Date().toISOString()}\n`, 'utf-8')
-  } catch (err) {
-    console.warn('[artwork-backfill] failed to write marker (will re-run next launch):', err instanceof Error ? err.message : err)
-  }
-
-  mainWindow?.webContents.send('artwork-backfill-progress', { processed, total })
+  mainWindow?.webContents.send('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
   return { ok: true, artwork: results }
 })
 
