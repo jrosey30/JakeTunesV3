@@ -3152,8 +3152,19 @@ ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: str
   // AI-DJ between-track commentary) routes through Stephen Hands —
   // brief, party-first, beats-forward.
   const isStephen = persona === 'stephen'
+  // 4.4.49: when Stephen is running a DJ-Mode transition (isStephen +
+  // nextTrack), he also CALLS the transition style — talk / scratch /
+  // cut — so "scratches only when appropriate" is HIS judgment, not a
+  // random roll. The handler parses the TRANSITION: line off the end.
+  const stephenTransition = isStephen && !!nextTrack
   const djInstructions = isStephen
-    ? `${nextTrack ? "You're transitioning between songs on a continuous DJ set you're running." : 'A track is on.'} Give a Stephen Hands DJ comment — 1-2 SENTENCES MAX. Pure Stephen voice: party-first, beats-forward, brief. No historian lectures, no Music Man framing. Examples of the right length: "That joint runs hot. Next up — drum programming on this one is unreal. Lock in." OR "Real quick — switching gears. Patrick Adams sample on the next one. Trust me."`
+    ? `${nextTrack ? "You're transitioning between songs on a continuous DJ set you're running." : 'A track is on.'} Give a Stephen Hands DJ comment — 1-2 SENTENCES MAX. Pure Stephen voice: party-first, beats-forward, brief. No historian lectures, no Music Man framing. Examples of the right length: "That joint runs hot. Next up — drum programming on this one is unreal. Lock in." OR "Real quick — switching gears. Patrick Adams sample on the next one. Trust me."${stephenTransition ? `
+
+After your comment, on a NEW LINE, declare the transition you're running into the next track — exactly one of:
+TRANSITION: talk    — your comment plays in the gap, then the next track drops. This is the DEFAULT. Use it for MOST transitions.
+TRANSITION: scratch — a turntable scratch punches the change, then your comment, then the drop. Use ONLY when it genuinely fits: a hard genre or energy flip, a hype peak, dropping into something with a serious beat. A scratch on a mellow, introspective, or singer-songwriter transition is WRONG. Scratch is a spice — rare, earned, never a default.
+TRANSITION: cut     — slam straight into the next track. No scratch, minimal-to-no talk. Use for back-to-back bangers that just need the energy to keep rolling.
+Pick the ONE that actually serves THIS specific transition. If you're unsure, it's 'talk'.` : ''}`
     : `${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} Give a brief, punchy DJ-style comment. This will be SPOKEN ALOUD, so keep it to 2-3 sentences max.
 
 Be unpredictable — sometimes drop a verified fun fact, sometimes your arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes praise an underrated aspect. Keep it conversational and natural — you're talking between songs like a real DJ.
@@ -3183,9 +3194,17 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
       system: djPrompt,
       messages: [{ role: 'user', content: userMessage }]
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    let text = response.content[0].type === 'text' ? response.content[0].text : ''
+    // 4.4.49: parse Stephen's transition call off the end (DJ Mode only)
+    // and strip it from the spoken text so it never gets read aloud.
+    let transition: 'talk' | 'scratch' | 'cut' = 'talk'
+    if (stephenTransition) {
+      const m = text.match(/TRANSITION:\s*(talk|scratch|cut)/i)
+      if (m) transition = m[1].toLowerCase() as 'talk' | 'scratch' | 'cut'
+      text = text.replace(/\n*\s*TRANSITION:\s*(talk|scratch|cut)\s*/i, '').trim()
+    }
     if (text) noteMusicManUtterance('dj', text)
-    return { ok: true, text }
+    return { ok: true, text, transition }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, text: `Error: ${msg}` }

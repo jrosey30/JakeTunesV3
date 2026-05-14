@@ -117,6 +117,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djText, setDjText] = useState('')
   const [djLoading, setDjLoading] = useState(false)
   const [showBubble, setShowBubble] = useState(true)
+  // 4.4.49: who the speech bubble is currently attributing. The mic
+  // button is the Music Man; DJ Mode is Stephen Hands. Was hardcoded
+  // to "The Music Man" — so DJ Mode commentary showed up under the
+  // wrong name. The bubble label + loading verb both read from this.
+  const [djSpeaker, setDjSpeaker] = useState<'mm' | 'djhands'>('mm')
   const [djExiting, setDjExiting] = useState(false)
   const savedVolumeRef = useRef(0.8)
   const djAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -668,6 +673,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
+    setDjSpeaker('mm')   // 4.4.49: the mic button is the Music Man
     savedVolumeRef.current = pb.volume
 
     try {
@@ -741,6 +747,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjActive(true)
       setDjLoading(true)
       setDjText('')
+      // 4.4.49: the bubble only renders in !radioMode — i.e. DJ Mode,
+      // which is Stephen Hands' lane. Attribute it to him.
+      setDjSpeaker('djhands')
 
       // Helper: play an array of {speaker, line, audioData} segments
       // over the next track at ducked volume — real-radio-DJ style.
@@ -927,9 +936,29 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             'stephen',
           )
           if (result.ok && result.text) {
+            // 4.4.49: Stephen calls the transition style. 'cut' = slam
+            // straight into the next track, no talk. 'scratch' = a
+            // turntable scratch punches the change, then his line.
+            // 'talk' (default) = his line plays in the gap as before.
+            const transition = result.transition || 'talk'
+            if (transition === 'cut') {
+              setDjLoading(false)
+              setDjActive(false)
+              setDjText('')
+              isFadedRef.current = false
+              setVolume(savedVolumeRef.current)
+              playTrack(nextTrack, queue, nextIdx, true)
+              return
+            }
             const tts = await window.electronAPI.musicmanSpeak(result.text, false, DJ_HANDS_VOICE_ID)
             setDjLoading(false)
             if (tts.ok && tts.audio) {
+              if (transition === 'scratch') {
+                // Punch the seam with the scratch, let it ride, THEN
+                // his line + the drop (playSegmentSequence).
+                const scratchDur = playStinger('scratch')
+                await new Promise(r => setTimeout(r, scratchDur * 1000))
+              }
               await playSegmentSequence([{ speaker: 'djhands', line: result.text, audioData: tts.audio }], result.text)
               return
             }
@@ -1362,14 +1391,18 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           )}
           {showBubble && !radioMode && (djLoading || djText) && (
             <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
+              {/* 4.4.49: attribute the bubble to whoever's actually
+                  speaking — Stephen Hands in DJ Mode, the Music Man on
+                  a mic-button comment. Loading verb fits the speaker
+                  too (a DJ is "on the decks," not "listening"). */}
               {djLoading ? (
                 <>
-                  <span className="dj-bubble-label">The Music Man</span>{' '}
-                  <span className="dj-loading-dots">is listening</span>
+                  <span className="dj-bubble-label">{djSpeaker === 'djhands' ? 'Stephen Hands' : 'The Music Man'}</span>{' '}
+                  <span className="dj-loading-dots">{djSpeaker === 'djhands' ? 'is on the decks' : 'is listening'}</span>
                 </>
               ) : (
                 <>
-                  <span className="dj-bubble-label">The Music Man:</span> {djText}
+                  <span className="dj-bubble-label">{djSpeaker === 'djhands' ? 'Stephen Hands:' : 'The Music Man:'}</span> {djText}
                 </>
               )}
             </div>
