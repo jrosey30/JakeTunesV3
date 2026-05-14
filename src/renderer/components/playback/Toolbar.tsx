@@ -1167,6 +1167,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
+    // 4.4.50: the DJ SET INTRO is Stephen Hands too — this was the path
+    // 4.4.49 missed (it fixed the mic button + the between-track
+    // transition handler, but the set-intro still left djSpeaker as
+    // whatever it was, so the intro bubble showed "The Music Man").
+    setDjSpeaker('djhands')
     savedVolumeRef.current = pb.volume
 
     try {
