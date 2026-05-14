@@ -200,7 +200,13 @@ export default function NowPlaying() {
       )}
       {effectiveMode === 'playing' && track ? (
         <>
-          <MiniVisualizer active={state.isPlaying} />
+          {/* 4.4.41: MiniVisualizer removed. Jake: "get rid of the
+              visualizer on the far right it is useless and kills
+              battery". The rAF loop computed RMS from the audio
+              waveform every frame — ~60fps continuously while
+              playing — which kept the renderer's compositor busy
+              for a 60×8px squiggle nobody used. Component definition
+              kept above in case it gets revived; just not rendered. */}
           <div className="now-playing-info">
             <span className="now-playing-title">{track.title}</span>
             <span className="now-playing-sep"> — </span>

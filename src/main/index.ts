@@ -3777,6 +3777,29 @@ function buildTasteProfile(): string {
     lines.push(`Frequently skipped artists: ${skippedArtists.map(([a, n]) => `${a} (${n} skips)`).join(', ')}`)
   }
 
+  // 4.4.41: surface SPECIFIC recent skips. The artist-level rollup above
+  // hides the "Jake skipped this exact track 5 times" signal — and Jake
+  // explicitly asked for this: "music man should know that if i have no
+  // plays on a song....that doesnt mean i didnt skip it." Each recent
+  // skip is a track the user heard at least partially and chose to bail
+  // on. Dedup by (title|artist) so the same song getting skipped 4 times
+  // in one session doesn't fill the slot.
+  if (p.recentSkips.length > 0) {
+    const seen = new Set<string>()
+    const skipsUnique: typeof p.recentSkips = []
+    for (const s of p.recentSkips) {
+      const key = `${s.title}|${s.artist}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      skipsUnique.push(s)
+      if (skipsUnique.length >= 10) break
+    }
+    if (skipsUnique.length > 0) {
+      const list = skipsUnique.map(s => `"${s.title}" by ${s.artist}`).join(', ')
+      lines.push(`Recently skipped tracks (the user heard each of these and chose to skip): ${list}`)
+    }
+  }
+
   // Top albums — dedup to one-per-artist so a single obsession doesn't
   // take over multiple slots (e.g. James Brown appearing as top artist
   // AND three of their albums being in the top-albums list).
@@ -3838,6 +3861,15 @@ function buildTasteProfile(): string {
     lines.push(`\nPhysical record collection (Discogs): ${discogsCollection}`)
     lines.push(`This tells you what they care about enough to own on vinyl/CD. Use this for deeper recommendations and conversation.`)
   }
+
+  // 4.4.41 — explicit reasoning rule. Without this, Picks and observations
+  // would treat playCount == 0 as "unfamiliar" and surface tracks the user
+  // has heard and skipped multiple times as "discoveries." Jake: "music man
+  // should know that if i have no plays on a song....that doesnt mean i
+  // didnt skip it."
+  lines.push(
+    `\nIMPORTANT RULE: A track with playCount == 0 does NOT mean the user is unfamiliar with it. Check the skip lists above first — if a track or artist is in "Frequently skipped" or "Recently skipped," the user has heard it and chose to skip. Do not surface those as discoveries or recommendations. True engagement = plays minus ~half the skips, not plays alone.`
+  )
 
   return lines.join('\n')
 }

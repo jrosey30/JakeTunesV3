@@ -333,17 +333,72 @@ function AppInner() {
           }
         }).catch(() => {})
       }
-      // Build library summary for Music Man
-      const artists: Record<string, number> = {}
+      // 4.4.41: Music Man library summary now includes skipCount signals.
+      // Jake: "music man should know that if i have no plays on a song....
+      // that doesnt mean i didnt skip it." Previously the context was just
+      // top artists by track count + top genres — Music Man had no way to
+      // tell the difference between "Jake never heard this" and "Jake
+      // skipped this every time it came on." Both showed playCount: 0.
+      //
+      // New profile dimensions:
+      //   • topArtistsByTracks  — what's in the library (catalog signal)
+      //   • topArtistsByPlays   — what Jake actually engages with
+      //   • topArtistsBySkips   — what Jake actively rejects
+      //   • heardButSkipped     — artists with skips>0 AND plays==0
+      //                           ("Jake's heard it; he just doesn't want it")
+      //   • activeDislikeTracks — specific tracks with skipCount≥3 AND
+      //                           playCount==0 (a strong "don't recommend")
+      //
+      // Plus an explicit NOTE telling Music Man not to treat playCount==0
+      // as "unfamiliar" without checking the skip signals.
+      const artistsByTracks: Record<string, number> = {}
+      const artistsByPlays: Record<string, number> = {}
+      const artistsBySkips: Record<string, number> = {}
+      const heardButSkipped = new Set<string>()
+      const activeDislikeTracks: string[] = []
       const genres: Record<string, number> = {}
       for (const t of tracks) {
-        if (t.artist) artists[t.artist] = (artists[t.artist] || 0) + 1
+        const a = t.artist
+        const plays = Number((t as { playCount?: number }).playCount) || 0
+        const skips = Number((t as { skipCount?: number }).skipCount) || 0
+        if (a) {
+          artistsByTracks[a] = (artistsByTracks[a] || 0) + 1
+          artistsByPlays[a] = (artistsByPlays[a] || 0) + plays
+          artistsBySkips[a] = (artistsBySkips[a] || 0) + skips
+          if (skips > 0 && plays === 0) heardButSkipped.add(a)
+        }
         if (t.genre) genres[t.genre] = (genres[t.genre] || 0) + 1
+        if (skips >= 3 && plays === 0 && t.title) {
+          activeDislikeTracks.push(`"${t.title}" by ${a || 'Unknown'}`)
+        }
       }
-      const topArtists = Object.entries(artists).sort((a, b) => b[1] - a[1]).slice(0, 50).map(([name, count]) => `${name} (${count})`).join(', ')
-      const topGenres = Object.entries(genres).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([name, count]) => `${name} (${count})`).join(', ')
-      const ctx = `${tracks.length} total tracks.\nTop artists: ${topArtists}\nTop genres: ${topGenres}`
-      window.electronAPI.setLibraryContext(ctx)
+      const fmtPairs = (rec: Record<string, number>, n: number) =>
+        Object.entries(rec)
+          .filter(([, c]) => c > 0)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, n)
+          .map(([name, c]) => `${name} (${c})`)
+          .join(', ')
+      const topByTracks = fmtPairs(artistsByTracks, 50)
+      const topByPlays = fmtPairs(artistsByPlays, 30)
+      const topBySkips = fmtPairs(artistsBySkips, 20)
+      const heardSkippedList = Array.from(heardButSkipped).sort().slice(0, 30).join(', ')
+      const dislikedTracksList = activeDislikeTracks.slice(0, 30).join(', ')
+      const topGenres = fmtPairs(genres, 20)
+
+      const ctxParts: string[] = [
+        `${tracks.length} total tracks.`,
+        `Top artists by track count: ${topByTracks}`,
+        `Top genres: ${topGenres}`,
+      ]
+      if (topByPlays) ctxParts.push(`Most-played artists (engagement signal — total playCount across their tracks): ${topByPlays}`)
+      if (topBySkips) ctxParts.push(`Most-skipped artists (rejection signal — total skipCount across their tracks): ${topBySkips}`)
+      if (heardSkippedList) ctxParts.push(`Heard-but-skipped artists (skipCount > 0, playCount == 0 — the user has heard them and chosen NOT to play through): ${heardSkippedList}`)
+      if (dislikedTracksList) ctxParts.push(`Specific actively-rejected tracks (skipped ≥3 times AND never played through): ${dislikedTracksList}`)
+      ctxParts.push(
+        `IMPORTANT REASONING NOTE: A track with playCount == 0 is NOT necessarily unfamiliar to the user. Always check skipCount first. If a track or artist appears in the "Heard-but-skipped" or "actively-rejected" lists above, the user has heard it and chosen to skip — do not surface it as a "discovery" or "you should try this." The true preference signal is roughly (playCount − 0.5 × skipCount), not playCount alone.`
+      )
+      window.electronAPI.setLibraryContext(ctxParts.join('\n'))
     }).catch((err) => {
       console.error('Failed to load tracks:', err)
     })
