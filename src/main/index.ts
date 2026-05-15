@@ -347,15 +347,40 @@ function getAudioAnalysisScriptPath(): string {
 function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
   return new Promise((resolve) => {
     const scriptPath = getAudioAnalysisScriptPath()
-    const py = spawn(PYTHON_CMD, [scriptPath, absPath])
+    // Explicit stdio: never inherit the parent's stdin (we don't write
+    // to the python process; closing its stdin frees us from having to
+    // think about backpressure). stdout + stderr are piped to in-memory
+    // buffers we read after close — never piped to anything that
+    // requires the Electron main thread to drain, so an event-loop
+    // stall in main can't backpressure librosa.
+    const py = spawn(PYTHON_CMD, [scriptPath, absPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let stdout = ''
     let stderr = ''
+    let killed = false
+    // Brief 010 Phase 1: 90s hard timeout. librosa shouldn't exceed
+    // ~60s on any reasonable file; 90s leaves headroom for slow disk
+    // reads (iPod-USB) but bounds runaways so one hung file can't
+    // jam the queue indefinitely. SIGKILL because a hung librosa is
+    // already lost — graceful shutdown is not a thing for analysis.
+    const timeoutMs = 90_000
+    const killTimer = setTimeout(() => {
+      killed = true
+      try { py.kill('SIGKILL') } catch { /* already exited */ }
+    }, timeoutMs)
     py.stdout.on('data', (chunk) => { stdout += String(chunk) })
     py.stderr.on('data', (chunk) => { stderr += String(chunk) })
     py.on('error', (err) => {
+      clearTimeout(killTimer)
       resolve({ ok: false, error: `spawn failed: ${err.message}` })
     })
     py.on('close', () => {
+      clearTimeout(killTimer)
+      if (killed) {
+        resolve({ ok: false, error: `analysis timed out after ${timeoutMs / 1000}s` })
+        return
+      }
       const trimmed = stdout.trim()
       if (!trimmed) {
         resolve({ ok: false, error: stderr.trim().split('\n').pop() || 'no output from audio_analysis.py' })
