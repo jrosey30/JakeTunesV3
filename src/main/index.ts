@@ -280,6 +280,49 @@ interface AudioAnalysisJob {
 const audioAnalysisQueue: AudioAnalysisJob[] = []
 let audioAnalysisRunning = false
 
+// Brief 010 Phase 2: queue persistence. Survives app restart so a
+// 6000+ track backfill doesn't lose progress when the user quits.
+// Atomic write (tmp + rename) on every queue mutation; the in-memory
+// queue is canonical, disk is a recovery backstop.
+const audioAnalysisQueuePath = (): string =>
+  join(app.getPath('userData'), 'audio-analysis-queue.json')
+
+async function persistQueue(): Promise<void> {
+  try {
+    const path = audioAnalysisQueuePath()
+    await mkdir(app.getPath('userData'), { recursive: true })
+    const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
+    await writeFile(tmp, JSON.stringify(audioAnalysisQueue, null, 2), 'utf-8')
+    const { rename } = await import('fs/promises')
+    await rename(tmp, path)
+  } catch (err) {
+    console.warn('[audio-analysis] queue persist failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+async function loadQueueFromDisk(): Promise<void> {
+  try {
+    const data = await readFile(audioAnalysisQueuePath(), 'utf-8')
+    const parsed = JSON.parse(data)
+    if (Array.isArray(parsed)) {
+      audioAnalysisQueue.length = 0
+      for (const j of parsed) {
+        if (j && typeof j.trackId === 'number' && typeof j.path === 'string' && typeof j.fingerprint === 'string') {
+          audioAnalysisQueue.push(j as AudioAnalysisJob)
+        }
+      }
+      if (audioAnalysisQueue.length > 0) {
+        console.log(`[audio-analysis] restored ${audioAnalysisQueue.length} queued jobs from disk`)
+      }
+    }
+  } catch (err) {
+    // File may not exist (first run) or be corrupt — start empty.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn('[audio-analysis] queue load failed:', err instanceof Error ? err.message : err)
+    }
+  }
+}
+
 // Renderer pings this when isPlaying changes so background workers
 // (audio analysis, ALAC prewarm) can yield while playback is live.
 // Files live on the iPod (USB-mounted), so a librosa scan or ffmpeg
@@ -517,24 +560,38 @@ async function audioAnalysisWorker(): Promise<void> {
       } catch (err) {
         console.warn(`[audio-analysis] job error for ${job.trackId}:`, err instanceof Error ? err.message : err)
       }
+      // Brief 010: persist after each completion so a restart doesn't
+      // re-run already-processed jobs. processAudioAnalysisJob has
+      // already written the audioAnalysisAt sentinel; this just trims
+      // the in-flight queue file to match.
+      void persistQueue()
     }
   } finally {
     audioAnalysisRunning = false
   }
 }
 
-function enqueueAudioAnalysis(_job: AudioAnalysisJob): void {
-  // 4.2.12: librosa worker disabled. The 5-sec debounce in
-  // audioAnalysisWorker was supposed to keep it off the main thread
-  // during playback, but the user kept reproducing the 29-second
-  // mid-track audio death — and that 29s window matches the tail of a
-  // librosa job that started during a brief gate-open. Until we have a
-  // properly-isolated worker pipeline (or the analysis lives in its
-  // own subprocess that can't fight the audio decoder), the recommend
-  // engine stays disabled. Calls are still made but no-op so we don't
-  // have to rip out every callsite.
+function enqueueAudioAnalysis(job: AudioAnalysisJob): void {
+  // Brief 010: re-enabled with subprocess hardening (Phase 1) and
+  // queue persistence (Phase 2). The 4.2.12 disable predated proper
+  // isolation — librosa now runs in its own subprocess via spawn()
+  // with explicit stdio + a 90s timeout, and audioAnalysisWorker's
+  // 5-second playback debounce prevents starting a new job inside
+  // a brief gate-open window. De-dupe by trackId so re-queueing on
+  // app restart (or a backfill click on an already-queued track) is
+  // a no-op.
+  if (audioAnalysisQueue.some(j => j.trackId === job.trackId)) return
+  audioAnalysisQueue.push(job)
+  void persistQueue()
+  kickAudioAnalysisWorker()
 }
-// Kept around in case we re-enable: void audioAnalysisWorker()
+
+// Brief 010: kicker is a thin wrapper — the worker itself guards
+// re-entry via audioAnalysisRunning, so kicker just fires void without
+// any extra checks. Same shape every callsite uses.
+function kickAudioAnalysisWorker(): void {
+  void audioAnalysisWorker()
+}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -6719,6 +6776,14 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn('[launch] version-change cache purge failed (non-fatal):', err)
   }
+
+  // Brief 010: restore any queued audio-analysis jobs from disk, then
+  // kick the worker. If queue is empty, kicker is a no-op (worker
+  // exits immediately on empty queue). If non-empty, worker drains as
+  // soon as playback is inactive (the 5-second debounce inside the
+  // worker itself handles the gate).
+  await loadQueueFromDisk()
+  kickAudioAnalysisWorker()
 
   // Load listener profile for Music Man
   loadListenerProfile()
