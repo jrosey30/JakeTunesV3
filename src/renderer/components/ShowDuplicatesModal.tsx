@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
 import { Track } from '../types'
 import '../styles/import-convert.css'
@@ -25,7 +25,7 @@ interface DupGroup {
  * per the postmortem rule (destructive ops may not gate on text match
  * alone). The user picks which copies to remove; nothing is auto-deleted.
  *
- * "Not a duplicate" dismissals: persisted in localStorage as a map of
+ * "Not a duplicate" dismissals: persisted in ui-state.json as a map of
  * group-key → member-id signature. The signature pins each dismissal to
  * the *exact set of tracks* that was reviewed — if a new track later
  * joins the group (e.g. a fresh import), the signature no longer matches
@@ -79,39 +79,45 @@ function memberSig(members: Track[]): string {
 
 const DISMISSED_KEY = 'jaketunes:dup-dismissed-v1'
 
-function loadDismissed(): Map<string, string> {
-  try {
-    const raw = localStorage.getItem(DISMISSED_KEY)
-    if (!raw) return new Map()
-    const obj = JSON.parse(raw)
-    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return new Map()
-    const out = new Map<string, string>()
-    for (const [k, v] of Object.entries(obj)) {
-      if (typeof k === 'string' && typeof v === 'string') out.set(k, v)
-    }
-    return out
-  } catch {
-    return new Map()
-  }
-}
-
-function saveDismissed(map: Map<string, string>) {
-  try {
-    localStorage.setItem(
-      DISMISSED_KEY,
-      JSON.stringify(Object.fromEntries(map))
-    )
-  } catch {
-    // localStorage write failures (quota, private mode) are non-fatal —
-    // the dismissal still works for the current session, it just won't
-    // survive a restart.
-  }
-}
-
 export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props) {
   const [pendingDelete, setPendingDelete] = useState<Track | null>(null)
-  const [dismissed, setDismissed] = useState<Map<string, string>>(() => loadDismissed())
+  const [dismissed, setDismissed] = useState<Map<string, string>>(new Map())
+  const [dismissedLoaded, setDismissedLoaded] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
+
+  // Renderer localStorage is unreliable in Electron; use ui-state IPC.
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled || !r.ok || !r.state) return
+      const raw = (r.state as Record<string, unknown>)[DISMISSED_KEY]
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+      const next = new Map<string, string>()
+      for (const [k, v] of Object.entries(raw)) {
+        if (typeof k === 'string' && typeof v === 'string') next.set(k, v)
+      }
+      setDismissed(next)
+    }).catch(() => {
+      // Non-fatal — modal still works for this session.
+    }).finally(() => {
+      if (!cancelled) setDismissedLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!dismissedLoaded) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({
+        ...existing,
+        [DISMISSED_KEY]: Object.fromEntries(dismissed),
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [dismissed, dismissedLoaded])
 
   const allGroups = useMemo<DupGroup[]>(() => {
     const map = new Map<string, Track[]>()
@@ -164,7 +170,6 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
     setDismissed((prev) => {
       const next = new Map(prev)
       next.set(g.key, memberSig(g.members))
-      saveDismissed(next)
       return next
     })
   }
@@ -172,7 +177,6 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
     setDismissed((prev) => {
       const next = new Map(prev)
       next.delete(g.key)
-      saveDismissed(next)
       return next
     })
   }

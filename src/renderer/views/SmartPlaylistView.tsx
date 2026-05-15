@@ -78,6 +78,19 @@ function picksConfigForId(id: string | null): { kind: PicksKind; storageKey: str
   return null
 }
 
+const MUSICMAN_PICKS_UI_KEY = 'musicmanPicks'
+
+function isSameCalendarDay(isoDate: string): boolean {
+  const savedDate = new Date(isoDate)
+  if (Number.isNaN(savedDate.getTime())) return false
+  const now = new Date()
+  return (
+    savedDate.getFullYear() === now.getFullYear() &&
+    savedDate.getMonth() === now.getMonth() &&
+    savedDate.getDate() === now.getDate()
+  )
+}
+
 interface ColDef {
   key: string
   label: string
@@ -115,25 +128,17 @@ export default function SmartPlaylistView() {
   // invalidate or overwrite either set.
   const picksConfig = picksConfigForId(playlistId)
 
-  function loadCachedPicks(storageKey: string): PicksData | null {
-    try {
-      const raw = localStorage.getItem(storageKey)
-      if (!raw) return null
-      const saved = JSON.parse(raw) as PicksData
-      // 4.4.48: drop caches from an older picks schema (pre-variety-
-      // enforcement) so the user gets a de-clustered list right away
-      // instead of staring at the old album-blocks until Friday.
-      if (saved.v !== PICKS_SCHEMA_V) return null
-      const savedWeek = getWeekStartFriday(new Date(saved.date)).getTime()
-      const currentWeek = getWeekStartFriday(new Date()).getTime()
-      if (savedWeek === currentWeek) return saved
-    } catch { /* ignore */ }
-    return null
-  }
-
-  const [mmPicks, setMmPicks]             = useState<PicksData | null>(() => loadCachedPicks('musicman-picks'))
-  const [meganPicks, setMeganPicks]       = useState<PicksData | null>(() => loadCachedPicks('megan-picks'))
-  const [djHandsPicks, setDjHandsPicks]   = useState<PicksData | null>(() => loadCachedPicks('dj-hands-picks'))
+  // Per-persona picks state. Persisted via main's ui-state IPC, not
+  // renderer localStorage (CLAUDE.md ban; localStorage is unreliable in
+  // Electron). All three personas hydrate from a single ui-state read
+  // in the load effect below. Initialized to null; the load effect
+  // populates them async, and the save effects are gated on
+  // picksStateLoaded so they can't fire before hydration and clobber
+  // persisted state with null defaults.
+  const [mmPicks, setMmPicks]             = useState<PicksData | null>(null)
+  const [meganPicks, setMeganPicks]       = useState<PicksData | null>(null)
+  const [djHandsPicks, setDjHandsPicks]   = useState<PicksData | null>(null)
+  const [picksStateLoaded, setPicksStateLoaded] = useState(false)
   const picks =
     picksConfig?.kind === 'megan'   ? meganPicks :
     picksConfig?.kind === 'djhands' ? djHandsPicks :
@@ -146,10 +151,12 @@ export default function SmartPlaylistView() {
 
   const [picksLoading, setPicksLoading] = useState(false)
   // Track per-persona "have we already kicked off generation this session"
-  // so re-renders don't re-fire the IPC. Reset on persona change.
-  const mmRequestedRef      = useRef(!!mmPicks)
-  const meganRequestedRef   = useRef(!!meganPicks)
-  const djHandsRequestedRef = useRef(!!djHandsPicks)
+  // so re-renders don't re-fire the IPC. Reset on persona change. The
+  // hydration effect below sets these true for any persona with a
+  // fresh-enough cached set, so generation is skipped on mount.
+  const mmRequestedRef      = useRef(false)
+  const meganRequestedRef   = useRef(false)
+  const djHandsRequestedRef = useRef(false)
   const requestedRef =
     picksConfig?.kind === 'megan'   ? meganRequestedRef :
     picksConfig?.kind === 'djhands' ? djHandsRequestedRef :
@@ -158,19 +165,85 @@ export default function SmartPlaylistView() {
   // pass tells main to bypass its weekly cache (a true fresh pull).
   const forcePicksRef = useRef(false)
 
-  // Persist whichever picks set just changed.
+  // Hydrate all three persona picks from ui-state on mount. One IPC read,
+  // three persona slots. Per-persona staleness check is the same weekly
+  // Friday-to-Friday window plus the 4.4.48 schema-version stamp the file
+  // already uses.
   useEffect(() => {
-    if (mmPicks) localStorage.setItem('musicman-picks', JSON.stringify(mmPicks))
-  }, [mmPicks])
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled || !r.ok || !r.state) return
+      const state = r.state as Record<string, unknown>
+      const tryHydrate = (
+        key: string,
+        setter: (p: PicksData) => void,
+        reqRef: React.MutableRefObject<boolean>,
+      ) => {
+        const raw = state[key]
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+        const saved = raw as PicksData
+        if (saved.v !== PICKS_SCHEMA_V) return
+        if (
+          typeof saved.name !== 'string' ||
+          typeof saved.commentary !== 'string' ||
+          !Array.isArray(saved.trackIds) ||
+          typeof saved.date !== 'string'
+        ) return
+        if (!saved.trackIds.every((id) => typeof id === 'number')) return
+        const savedWeek = getWeekStartFriday(new Date(saved.date)).getTime()
+        const currentWeek = getWeekStartFriday(new Date()).getTime()
+        if (savedWeek !== currentWeek) return
+        setter(saved)
+        reqRef.current = true
+      }
+      tryHydrate('musicman-picks', setMmPicks, mmRequestedRef)
+      tryHydrate('megan-picks', setMeganPicks, meganRequestedRef)
+      tryHydrate('dj-hands-picks', setDjHandsPicks, djHandsRequestedRef)
+    }).catch(() => {
+      // Non-fatal — picks regenerate for this session.
+    }).finally(() => {
+      if (!cancelled) setPicksStateLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Persist each persona's picks to ui-state when they change. Each save
+  // effect is gated by picksStateLoaded so the save can't fire before
+  // hydration completes and clobber persisted state with null defaults.
   useEffect(() => {
-    if (meganPicks) localStorage.setItem('megan-picks', JSON.stringify(meganPicks))
-  }, [meganPicks])
+    if (!picksStateLoaded || !mmPicks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, 'musicman-picks': mmPicks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [mmPicks, picksStateLoaded])
   useEffect(() => {
-    if (djHandsPicks) localStorage.setItem('dj-hands-picks', JSON.stringify(djHandsPicks))
-  }, [djHandsPicks])
+    if (!picksStateLoaded || !meganPicks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, 'megan-picks': meganPicks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [meganPicks, picksStateLoaded])
+  useEffect(() => {
+    if (!picksStateLoaded || !djHandsPicks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, 'dj-hands-picks': djHandsPicks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [djHandsPicks, picksStateLoaded])
 
   // Generate this persona's picks if we don't have a fresh cached set.
   useEffect(() => {
+    if (!picksStateLoaded) return
     if (!picksConfig || libState.tracks.length === 0) return
     if (picks || requestedRef.current) return
 
@@ -209,7 +282,7 @@ export default function SmartPlaylistView() {
   // playlistId in the dep list is sufficient — adding the others would re-run
   // on every render since they're freshly computed each pass.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlistId, libState.tracks, picks])
+  }, [playlistId, libState.tracks, picks, picksStateLoaded])
 
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
