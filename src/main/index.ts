@@ -2992,7 +2992,6 @@ async function extractAndSaveEmbeddedArtwork(
   pictures: ParsedPicture[] | undefined,
   artist: string,
   album: string,
-  opts?: { force?: boolean },
 ): Promise<{ key: string; hash: string } | null> {
   if (!pictures || pictures.length === 0) return null
   const cleanArtist = (artist || '').trim()
@@ -3006,19 +3005,14 @@ async function extractAndSaveEmbeddedArtwork(
   if (!pic || !pic.data || pic.data.byteLength === 0) return null
 
   const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
-  const force = opts?.force === true
-  // 4.4.57 — user-uploaded art is sacred: NEVER overwrite a locked key,
-  // not even in force/reverify mode.
+  // 4.4.57 — user-uploaded art is sacred: NEVER overwrite a locked key.
   if ((await loadArtworkLocks()).has(key)) return null
-  // IDENTITY GATE: in normal mode, don't overwrite an existing entry —
-  // a re-import shouldn't re-version a stable cover. In force mode (the
-  // 4.4.58 reverify cleanup) we DELIBERATELY overwrite, to scrub the
-  // wrong covers the old loose online matcher cached — the user-lock
-  // check above still protects hand-picked art.
-  if (!force) {
-    const existingIndex = await loadArtworkIndex()
-    if (existingIndex[key]) return null
-  }
+  // IDENTITY GATE: never overwrite an existing index entry — a re-import
+  // shouldn't re-version a stable cover, and an album that already has
+  // art (user-set or otherwise) is left exactly as-is. Gated on
+  // `if (!index[key])`, not on text comparison.
+  const existingIndex = await loadArtworkIndex()
+  if (existingIndex[key]) return null
 
   const hash = artworkHash(cleanArtist, cleanAlbum)
   const dir = getArtworkDir()
@@ -3061,11 +3055,10 @@ async function extractAndSaveEmbeddedArtwork(
   // cache-busts when the same key+hash gets a fresher file.
   const versionedHash = `${hash}_${Date.now()}`
   // Single-flight save — won't race against concurrent imports / fetches /
-  // set-custom-artwork callers.
+  // set-custom-artwork callers. Re-check the index (concurrent-import
+  // race guard) before writing — never overwrite an existing entry.
   const index = await loadArtworkIndex()
-  // Normal mode re-checks (concurrent-import race guard); force mode
-  // overwrites deliberately — that's the whole point of the cleanup.
-  if (force || !index[key]) {
+  if (!index[key]) {
     index[key] = versionedHash
     await saveArtworkIndex(index)
   }
@@ -5972,22 +5965,12 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
 function getArtworkBackfillMarkerPath(): string {
   return join(app.getPath('userData'), 'artwork-backfill-done')
 }
-// 4.4.58 — second one-shot marker for the artwork reverify/cleanup pass
-// (force-replace every non-user-locked album's cover with its file's
-// own embedded art, scrubbing the wrong covers the old loose online
-// matcher cached). Separate marker so it runs once even on installs
-// where the original embedded backfill already completed.
-function getArtworkReverifyMarkerPath(): string {
-  return join(app.getPath('userData'), 'artwork-reverify-done')
-}
 async function markerExists(p: string): Promise<boolean> {
   try { await stat(p); return true } catch { return false }
 }
 ipcMain.handle('artwork-backfill-status', async () => {
-  // "done" only when BOTH one-shots have run — so a 4.4.58+ launch
-  // re-enters backfill-embedded-artwork to run the reverify pass.
-  const done = (await markerExists(getArtworkBackfillMarkerPath()))
-    && (await markerExists(getArtworkReverifyMarkerPath()))
+  // "done" once the one-shot pre-4.4.12 embedded backfill has run.
+  const done = await markerExists(getArtworkBackfillMarkerPath())
   return { ok: true, done }
 })
 ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
@@ -5996,19 +5979,13 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
   const pathSep = IS_WINDOWS ? '\\' : '/'
   const results: Array<{ key: string; hash: string }> = []
 
-  // One extraction pass over the library.
-  //  • normal (force=false): seed seenKeys from the existing index so
-  //    albums that already have art are skipped — pure pre-4.4.12
-  //    embedded backfill.
-  //  • reverify (force=true): seenKeys starts empty so every album is
-  //    re-parsed, and extractAndSaveEmbeddedArtwork OVERWRITES the index
-  //    with the file's own embedded cover — the 4.4.58 cleanup that
-  //    scrubs the wrong covers the old loose online matcher cached.
-  //    User-locked albums are still skipped (inside extractAndSave…).
-  const runPass = async (force: boolean): Promise<void> => {
-    const seenKeys = force
-      ? new Set<string>()
-      : new Set<string>(Object.keys(await loadArtworkIndex()))
+  // One extraction pass over the library: seed seenKeys from the existing
+  // index so albums that already have art are skipped — pure pre-4.4.12
+  // embedded backfill. extractAndSaveEmbeddedArtwork's identity gate and
+  // user-lock check keep this strictly non-destructive: it only fills in
+  // albums that have no art at all, and never overwrites.
+  const runPass = async (): Promise<void> => {
+    const seenKeys = new Set<string>(Object.keys(await loadArtworkIndex()))
     let processed = 0
     const total = tracks.length
     const mm = await import('music-metadata')
@@ -6034,7 +6011,6 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
           metadata.common.picture as ParsedPicture[] | undefined,
           cleanArtist,
           cleanAlbum,
-          { force },
         )
         if (result) results.push(result)
       } catch (err) {
@@ -6064,14 +6040,8 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
   try {
     // Pass 1 — original embedded backfill for pre-4.4.12 imports. One-shot.
     if (!(await markerExists(getArtworkBackfillMarkerPath()))) {
-      await runPass(false)
+      await runPass()
       await writeMarker(getArtworkBackfillMarkerPath())
-    }
-    // Pass 2 — 4.4.58 reverify: force-replace every non-user-locked
-    // album's cover with its file's own (accurate) embedded art. One-shot.
-    if (!(await markerExists(getArtworkReverifyMarkerPath()))) {
-      await runPass(true)
-      await writeMarker(getArtworkReverifyMarkerPath())
     }
   } catch (err) {
     return { ok: false, error: String(err), artwork: results }
