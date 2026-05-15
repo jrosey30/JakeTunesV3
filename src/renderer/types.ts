@@ -207,6 +207,17 @@ export interface AppSettings {
     callRouteEnabled: boolean
     callRouteDeviceLabel: string   // '' = not configured yet
   }
+  // Mobile export — fires after every save-library when snapshotExportPath
+  // is set. Set via File → Library → Export Snapshot for Mobile…
+  // (the menu item also runs a one-shot export on first selection).
+  // Path is an absolute filesystem path; `null` = export disabled.
+  // The user typically points this at a folder that lives on their
+  // NAS-synced share (e.g. ~/Synology/music/.jaketunes/library.json
+  // or a mounted SMB share). The desktop is path-agnostic — the
+  // exporter just writes wherever told.
+  mobile: {
+    snapshotExportPath: string | null
+  }
 }
 
 // EQ default is duplicated from audio/eq.ts::DEFAULT_EQ rather than
@@ -228,6 +239,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   inbox: { enabled: true, path: '' },
   // Off until the user picks a speaker in Preferences → Audio.
   audio: { callRouteEnabled: false, callRouteDeviceLabel: '' },
+  mobile: { snapshotExportPath: null },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
@@ -278,6 +290,14 @@ declare global {
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
       saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
+      exportLibrarySnapshot: (payload: { tracks: unknown[]; playlists: unknown[] }) => Promise<{
+        ok: boolean
+        canceled?: boolean
+        path?: string
+        trackCount?: number
+        bytes?: number
+        error?: string
+      }>
       setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
