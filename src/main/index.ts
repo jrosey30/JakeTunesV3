@@ -565,6 +565,12 @@ async function audioAnalysisWorker(): Promise<void> {
       // already written the audioAnalysisAt sentinel; this just trims
       // the in-flight queue file to match.
       void persistQueue()
+      // Brief 010 Phase 3: notify the renderer so the MusicManView
+      // backfill UI counter updates after each track. mainWindow may
+      // be null during very early startup or on shutdown, so guard.
+      mainWindow?.webContents.send('audio-analysis:progress', {
+        remaining: audioAnalysisQueue.length,
+      })
     }
   } finally {
     audioAnalysisRunning = false

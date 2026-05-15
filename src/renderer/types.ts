@@ -288,6 +288,8 @@ declare global {
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
+      // Brief 010 Phase 3: audio-analysis worker progress subscription.
+      onAudioAnalysisProgress: (callback: (p: { remaining: number }) => void) => () => void
       loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
       saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
       exportLibrarySnapshot: (payload: { tracks: unknown[]; playlists: unknown[] }) => Promise<{

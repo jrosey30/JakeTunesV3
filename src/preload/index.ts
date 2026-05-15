@@ -119,6 +119,14 @@ const electronAPI = {
     ipcRenderer.invoke('get-claude-stats'),
   analyzeTrack: (trackId: number, colonPath: string, fingerprint: string): Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }> =>
     ipcRenderer.invoke('analyze-track', trackId, colonPath, fingerprint),
+  // Brief 010 Phase 3: subscribe to worker progress. Fires once per
+  // completed job with the current remaining count. Returns an
+  // unsubscribe function (caller calls it on unmount).
+  onAudioAnalysisProgress: (callback: (p: { remaining: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: { remaining: number }) => callback(p)
+    ipcRenderer.on('audio-analysis:progress', handler)
+    return () => { ipcRenderer.removeListener('audio-analysis:progress', handler) }
+  },
   loadAppSettings: (): Promise<{ ok: boolean; settings: Record<string, unknown> | null }> =>
     ipcRenderer.invoke('load-app-settings'),
   saveAppSettings: (settings: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
