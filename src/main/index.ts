@@ -2259,11 +2259,96 @@ ipcMain.handle('alac-compat-fix', async () => {
 })
 
 // ── Import tracks from dropped files ──
-// Music library storage — check ~/Music2/JakeTunesLibrary (legacy) then ~/Music/JakeTunesLibrary
-import { existsSync } from 'fs'
+// Music library storage — Brief 011b three-tier resolution:
+//   1. library.musicRoot in app-settings.json (explicit override wins absolutely)
+//   2. If both legacy ~/Music2 and default ~/Music candidates exist, pick the
+//      richer one by populated F00–F49 subdirectory count (mtime as tiebreak)
+//   3. Single- or no-candidate fallback (default path if nothing exists)
+//
+// The hand-fix history: pre-Brief-011b this was an `existsSync(LEGACY) ? LEGACY
+// : DEFAULT` ternary that broke on workmini today — `~/Music2/JakeTunesLibrary`
+// existed as a stale legacy folder while the canonical fresh library lived at
+// `~/Music/JakeTunesLibrary`. The auto-detect picked the stale one and recent
+// imports became silent + 0:00/0:00. Resolution now runs once at app.whenReady;
+// MUSIC_DIR is a `let` initialised to the default so module-load reads see a
+// sensible value before resolution completes.
+import { existsSync, statSync } from 'fs'
 const LEGACY_MUSIC_DIR = join(process.env.HOME || '', 'Music2/JakeTunesLibrary/iPod_Control/Music')
 const DEFAULT_MUSIC_DIR = join(app.getPath('music'), 'JakeTunesLibrary/iPod_Control/Music')
-const MUSIC_DIR = existsSync(LEGACY_MUSIC_DIR) ? LEGACY_MUSIC_DIR : DEFAULT_MUSIC_DIR
+let MUSIC_DIR: string = DEFAULT_MUSIC_DIR
+
+// Count populated F00–F49 directories under an iPod-style music root. A real
+// library has most/all 50; stale folders typically have fewer. Used as the
+// auto-detect tiebreaker when both candidates exist.
+function countFDirs(musicDir: string): number {
+  if (!existsSync(musicDir)) return -1
+  let count = 0
+  for (let i = 0; i < 50; i++) {
+    const fName = `F${String(i).padStart(2, '0')}`
+    if (existsSync(join(musicDir, fName))) count++
+  }
+  return count
+}
+
+async function resolveMusicDir(): Promise<string> {
+  // Tier 1: explicit setting wins absolutely. The deploy script writes this
+  // on every fresh deploy so the stale-legacy bug is impossible on machines
+  // we deploy to.
+  try {
+    const settings = await readAppSettingsAsync()
+    const lib = (settings?.library ?? null) as { musicRoot?: string } | null
+    if (lib?.musicRoot && typeof lib.musicRoot === 'string') {
+      const explicit = join(lib.musicRoot, 'iPod_Control/Music')
+      if (existsSync(explicit)) {
+        console.log(`[library] using explicit musicRoot from app-settings: ${explicit}`)
+        return explicit
+      }
+      console.warn(`[library] explicit musicRoot setting "${lib.musicRoot}" does not exist; falling back to auto-detect`)
+    }
+  } catch (err) {
+    console.warn('[library] failed to read app-settings for musicRoot:', err)
+  }
+
+  // Tier 2: both candidates exist → pick the richer one.
+  const legacyExists = existsSync(LEGACY_MUSIC_DIR)
+  const defaultExists = existsSync(DEFAULT_MUSIC_DIR)
+  if (legacyExists && defaultExists) {
+    const legacyCount = countFDirs(LEGACY_MUSIC_DIR)
+    const defaultCount = countFDirs(DEFAULT_MUSIC_DIR)
+    console.log(`[library] both candidates exist: legacy=${legacyCount} F-dirs, default=${defaultCount} F-dirs`)
+    if (defaultCount > legacyCount) {
+      console.log(`[library] default wins by F-count: ${DEFAULT_MUSIC_DIR}`)
+      return DEFAULT_MUSIC_DIR
+    }
+    if (legacyCount > defaultCount) {
+      console.log(`[library] legacy wins by F-count: ${LEGACY_MUSIC_DIR}`)
+      return LEGACY_MUSIC_DIR
+    }
+    // Tie on F-count → mtime tiebreak.
+    try {
+      const legacyMtime = statSync(LEGACY_MUSIC_DIR).mtimeMs
+      const defaultMtime = statSync(DEFAULT_MUSIC_DIR).mtimeMs
+      const winner = defaultMtime > legacyMtime ? DEFAULT_MUSIC_DIR : LEGACY_MUSIC_DIR
+      console.log(`[library] F-count tie; mtime tiebreak picks: ${winner}`)
+      return winner
+    } catch (err) {
+      console.warn('[library] mtime tiebreak failed; defaulting to default-path:', err)
+      return DEFAULT_MUSIC_DIR
+    }
+  }
+
+  // Tier 3: only one candidate exists, or neither.
+  if (legacyExists) {
+    console.log(`[library] using legacy (only candidate): ${LEGACY_MUSIC_DIR}`)
+    return LEGACY_MUSIC_DIR
+  }
+  if (defaultExists) {
+    console.log(`[library] using default (only candidate): ${DEFAULT_MUSIC_DIR}`)
+    return DEFAULT_MUSIC_DIR
+  }
+  console.log(`[library] no candidate dirs exist; will use default: ${DEFAULT_MUSIC_DIR}`)
+  return DEFAULT_MUSIC_DIR
+}
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
 
@@ -6787,6 +6872,14 @@ ipcMain.handle('set-call-watch', (_e, armed: boolean) => {
 })
 
 app.whenReady().then(async () => {
+  // Brief 011b: resolve MUSIC_DIR before anything else. IPC handlers and
+  // inbox-watcher callbacks can fire as soon as the renderer attaches;
+  // they read MUSIC_DIR through closures, so the value must be correct by
+  // the time any handler runs. resolveMusicDir falls back to the default
+  // if nothing matches — it never throws.
+  MUSIC_DIR = await resolveMusicDir()
+  console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
+
   // 4.2.5: bootstrap the cached host preference so the very first
   // prompt build of the session picks the user's chosen persona,
   // not the 'mm' module-default.
