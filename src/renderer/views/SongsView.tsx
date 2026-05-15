@@ -407,7 +407,7 @@ export default function SongsView() {
   const FOLLOW_IDLE_MS = 5000
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    onScroll(e)
+    onScroll()
     // Skip activity update if this scroll was triggered by our own
     // auto-follow (within 200ms of the programmatic scrollTop write).
     if (Date.now() - isAutoScrollAtRef.current > 200) {

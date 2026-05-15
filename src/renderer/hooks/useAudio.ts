@@ -58,7 +58,7 @@ let watchdogRecoveryInFlight = false
 // Type `__audioLog()` in the dev console to dump.
 interface AudioLogEntry { t: number; ev: string; detail?: unknown }
 const audioLogBuffer: AudioLogEntry[] = []
-function logAudioEvent(ev: string, detail?: unknown) {
+export function logAudioEvent(ev: string, detail?: unknown) {
   audioLogBuffer.push({ t: Date.now(), ev, detail })
   if (audioLogBuffer.length > 50) audioLogBuffer.shift()
   // Skip the very chatty position-tick events from console output but

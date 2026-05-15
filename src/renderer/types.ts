@@ -238,6 +238,7 @@ declare global {
   interface Window {
     electronAPI: {
       loadTracks: () => Promise<{ tracks: Track[]; playlists: { name: string; trackIds: number[] }[] }>
+      getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string }>
@@ -333,6 +334,11 @@ declare global {
       alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>
       alacCompatFix: () => Promise<{ ok: boolean; error?: string; summary?: string }>
       onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
+      // 4.1 Library Maintenance: ALAC play-cache management (replaces launch-time prewarm)
+      prepareAlacCache: () => Promise<{ ok: boolean; processed?: number; transcoded?: number; total?: number; cancelled?: boolean; error?: string }>
+      cancelAlacCache: () => void
+      onPrepareAlacCacheProgress: (callback: (p: { processed: number; transcoded: number; total: number; title: string; artist: string }) => void) => () => void
+      pruneAlacCache: () => Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; error?: string }>
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
       // 4.4.13 — Inbox auto-import (Qobuz → JakeTunes pipeline).

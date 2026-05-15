@@ -18,6 +18,7 @@
  * a WeakMap keyed by the audio element so we don't double-bind.
  */
 import { Howl, Howler } from 'howler'
+import { logAudioEvent } from '../hooks/useAudio'
 
 export const EQ_BAND_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] as const
 export const EQ_BAND_COUNT = EQ_BAND_FREQUENCIES.length
