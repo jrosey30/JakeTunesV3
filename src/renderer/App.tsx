@@ -784,6 +784,45 @@ function AppInner() {
             })
           break
         }
+        case 'apply-mobile-overrides': {
+          // Two-step: pick file, then apply. Identity-gated on
+          // audioFingerprint per the postmortem rule (see
+          // src/main/library-overrides.ts). On success the renderer
+          // dispatches the merged tracks and fires save-library so
+          // library.json AND the auto-snapshot both reflect the
+          // applied counts.
+          void (async () => {
+            const pick = await window.electronAPI.mobileOverridesPickFile()
+            if (pick.canceled || !pick.path) return
+            const lib = libStateRef.current
+            const result = await window.electronAPI.mobileOverridesApply({
+              path: pick.path,
+              tracks: lib.tracks,
+            })
+            if (!result.ok) {
+              console.warn(`[overrides] apply failed: ${result.error}`)
+              return
+            }
+            console.log(
+              `[overrides] applied ${result.applied}/${result.overrideCount} from device ${result.deviceId} (exported ${result.exportedAt})`,
+            )
+            if (result.discarded && result.discarded.length > 0) {
+              console.warn('[overrides] discarded entries:', result.discarded)
+            }
+            if (result.tracks && result.applied && result.applied > 0) {
+              const merged = result.tracks as import('./types').Track[]
+              dispatch({ type: 'SET_TRACKS', tracks: merged })
+              // Persist immediately so the snapshot exporter (auto-fired
+              // from save-library) reflects the merged counts on the
+              // next mobile fetch.
+              const playlists = (lib.playlists || []).filter(
+                (p: import('./types').Playlist) => !p.id.startsWith('ipod-'),
+              )
+              await window.electronAPI.saveLibrary(merged, playlists)
+            }
+          })()
+          break
+        }
       }
     })
     // Main process watches library.json on disk and fires this when

@@ -56,6 +56,11 @@ import {
   type SnapshotTrack,
   type SnapshotPlaylist,
 } from './library-snapshot'
+import {
+  applyOverrides,
+  readOverridesQueueFile,
+  type MergeableTrack,
+} from './library-overrides'
 
 const isDev = !app.isPackaged
 
@@ -933,6 +938,10 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // path (saved to app-settings.mobile.snapshotExportPath);
           // subsequent saves auto-fire from save-library.
           { label: 'Export Snapshot for Mobile…', click: () => sendMenuAction('export-mobile-snapshot') },
+          // Drain a JakeTunes Mobile overrides queue file (play counts,
+          // skips, ratings) into the desktop library. Identity-gated
+          // on audioFingerprint per the verify-repair postmortem rule.
+          { label: 'Apply Mobile Overrides…',     click: () => sendMenuAction('apply-mobile-overrides') },
           // (Removed: "Verify & Repair Library…" — the underlying tag
           // matcher had false-negative cases (e.g. file tag "Pt. 1" vs.
           // library "Part 1") that would land real tracks in the
@@ -1512,6 +1521,55 @@ ipcMain.handle('export-library-snapshot', async (_e, payload: {
     }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// Mobile → desktop overrides drain. Two-step: first the renderer asks
+// for a file picker; then it sends the chosen file path + its current
+// in-memory tracks; we read + validate the file, run the pure
+// applyOverrides, and hand back the merged tracks for the renderer to
+// dispatch. The renderer then fires save-library to persist (which
+// also auto-fires the snapshot exporter — same path everything else
+// uses).
+ipcMain.handle('mobile-overrides-pick-file', async () => {
+  const dialogOptions: Electron.OpenDialogOptions = {
+    title: 'Apply mobile overrides',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions)
+  if (result.canceled || result.filePaths.length === 0) {
+    return { ok: false, canceled: true }
+  }
+  return { ok: true, path: result.filePaths[0] }
+})
+
+ipcMain.handle('mobile-overrides-apply', async (_e, args: {
+  path: string
+  // The renderer sends its full Track[] (with title/artist/path/...
+  // alongside the MergeableTrack subset). applyOverrides is generic
+  // and spreads `{...t}` so extra fields pass through. Typed as
+  // `unknown[]` here to keep main from depending on the renderer's
+  // Track interface.
+  tracks: unknown[]
+}) => {
+  const fileResult = await readOverridesQueueFile(args.path)
+  if (!fileResult.ok) return { ok: false, error: fileResult.error }
+  const merge = applyOverrides(args.tracks as MergeableTrack[], fileResult.file.overrides)
+  return {
+    ok: true,
+    deviceId: fileResult.file.deviceId,
+    exportedAt: fileResult.file.exportedAt,
+    overrideCount: fileResult.file.overrides.length,
+    applied: merge.applied,
+    appliedTrackIds: merge.appliedTrackIds,
+    discarded: merge.discarded.map((d) => ({
+      trackId: d.override.trackId,
+      reason: d.reason,
+    })),
+    tracks: merge.tracks,
   }
 })
 

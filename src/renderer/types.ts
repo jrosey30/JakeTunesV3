@@ -298,6 +298,18 @@ declare global {
         bytes?: number
         error?: string
       }>
+      mobileOverridesPickFile: () => Promise<{ ok: boolean; canceled?: boolean; path?: string }>
+      mobileOverridesApply: (args: { path: string; tracks: unknown[] }) => Promise<{
+        ok: boolean
+        error?: string
+        deviceId?: string
+        exportedAt?: string
+        overrideCount?: number
+        applied?: number
+        appliedTrackIds?: number[]
+        discarded?: Array<{ trackId: number; reason: string }>
+        tracks?: unknown[]
+      }>
       setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
