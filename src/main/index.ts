@@ -2868,6 +2868,40 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
   return result
 })
 
+// Brief 010 Phase 4: queue-based audio analysis IPCs. The renderer
+// backfill button uses these instead of calling analyze-track per-track
+// in a renderer-side loop. The worker's playback gate (existing) + the
+// persistent queue (Phase 2) then handle pause/resume + survive-restart
+// for free. Renderer sends colon-path; main resolves to absolute path
+// using the same logic the analyze-track handler uses.
+ipcMain.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  let enqueued = 0
+  for (const j of jobs) {
+    const abs = join(LOCAL_MOUNT, j.colonPath.replace(/:/g, pathSep))
+    const before = audioAnalysisQueue.length
+    enqueueAudioAnalysis({ trackId: j.trackId, path: abs, fingerprint: j.fingerprint })
+    if (audioAnalysisQueue.length > before) enqueued++
+  }
+  return { ok: true, enqueued, totalQueued: audioAnalysisQueue.length }
+})
+
+ipcMain.handle('audio-analysis:status', async () => {
+  return {
+    ok: true,
+    queueLength: audioAnalysisQueue.length,
+    workerRunning: audioAnalysisRunning,
+    isPlaybackActive: playbackActive,
+  }
+})
+
+ipcMain.handle('audio-analysis:clear-queue', async () => {
+  audioAnalysisQueue.length = 0
+  await persistQueue()
+  return { ok: true }
+})
+
 // Resolve folders + filter to audio extensions for the renderer queue.
 // Splits a single drop into its constituent files so the queue can show
 // progress per-file rather than per-folder.

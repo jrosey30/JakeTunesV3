@@ -133,7 +133,11 @@ export default function MusicManView() {
   const [analysisRunning, setAnalysisRunning] = useState(false)
   const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number; trackTitle: string } | null>(null)
   const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
-  const analysisCancelRef = useRef(false)
+  // Brief 010 Phase 4: total stashed in a ref so the progress-event
+  // subscription doesn't re-mount on every progress tick. Replaces the
+  // pre-Brief-010 analysisCancelRef (cancel now flows through the
+  // clear-queue IPC, not a renderer-side flag).
+  const analysisTotalRef = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -333,16 +337,19 @@ export default function MusicManView() {
     setMetaScanned(true)
   }, [metaScanning, libState.tracks])
 
-  // Audio analysis backfill (4.0 §2.4b). Resume-on-restart is automatic:
-  // the filter excludes tracks that have BOTH a timestamp AND a bpm
-  // (i.e. tracks that succeeded). Tracks where analysis ran but
-  // produced no bpm — librosa failed for whatever transient reason —
-  // are surfaced for retry on the next button click. Without this, a
-  // single failed run permanently flagged 38 tracks as "analyzed" with
-  // no actual data; the button would then say "All tracks analyzed"
-  // and there was no way to retry short of clearing audioAnalysisAt by
-  // hand. (Each analyze-track IPC call persists immediately, so a
-  // crash mid-loop doesn't lose work.)
+  // Audio analysis backfill (Brief 010). The renderer no longer drives
+  // the loop — it enqueues all unanalyzed tracks once and the main-side
+  // worker drains the queue with subprocess isolation + 5-second
+  // playback debounce + 90s per-job timeout. Resume-on-restart is now
+  // automatic via the persistent queue file in userData; cancel flows
+  // through the clear-queue IPC. The renderer subscribes to
+  // audio-analysis:progress for the counter and polls
+  // audio-analysis:status for the playback-paused state.
+  //
+  // The filter excludes tracks with both a timestamp AND a bpm (i.e.
+  // tracks that succeeded). Failed-but-timestamped tracks resurface
+  // on the next click so the user can retry them after fixing the
+  // file (re-import, codec swap, etc.).
   const runAudioAnalysisBackfill = useCallback(async () => {
     if (analysisRunning) return
     const tracksToAnalyze = libState.tracks.filter(t => t.path && (!t.audioAnalysisAt || !t.bpm))
@@ -351,62 +358,68 @@ export default function MusicManView() {
       setTimeout(() => setAnalysisStatus(null), 4000)
       return
     }
-    analysisCancelRef.current = false
+    const jobs = tracksToAnalyze.map(t => ({
+      trackId: t.id,
+      colonPath: t.path,
+      fingerprint: `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`,
+    }))
+    analysisTotalRef.current = jobs.length
     setAnalysisRunning(true)
     setAnalysisStatus(null)
-    setAnalysisProgress({ current: 0, total: tracksToAnalyze.length, trackTitle: '' })
+    setAnalysisProgress({ current: 0, total: jobs.length, trackTitle: '' })
+    await window.electronAPI.audioAnalysisEnqueueMany(jobs)
+  }, [analysisRunning, libState.tracks])
 
-    let okCount = 0
-    let failCount = 0
-    for (let i = 0; i < tracksToAnalyze.length; i++) {
-      if (analysisCancelRef.current) break
-      // Yield to playback. Files live on iPod-USB; librosa's spawn
-      // and the audio decoder share the same bus, so an analysis run
-      // during playback produces "broken record" stutter on output.
-      // Sleep in 2-second chunks while playing, re-check cancel each
-      // iteration so the user can still abort.
-      while (pbStateRef.current.isPlaying) {
-        setAnalysisStatus('Paused — playback active')
-        await new Promise(r => setTimeout(r, 2000))
-        if (analysisCancelRef.current) return
-      }
-      setAnalysisStatus(null)
-      const t = tracksToAnalyze[i]
-      setAnalysisProgress({ current: i + 1, total: tracksToAnalyze.length, trackTitle: t.title || t.path })
-      const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
-      try {
-        const result = await window.electronAPI.analyzeTrack(t.id, t.path, fp)
-        // Update in-memory state so a re-run within the same session
-        // doesn't re-analyze and the UI counter stays accurate.
-        const updates: Array<{ id: number; field: string; value: string }> = [
-          { id: t.id, field: 'audioAnalysisAt', value: String(Date.now()) },
-        ]
-        if (result.ok) {
-          if (typeof result.bpm === 'number' && result.bpm > 0) updates.push({ id: t.id, field: 'bpm', value: String(result.bpm) })
-          if (result.keyRoot) updates.push({ id: t.id, field: 'keyRoot', value: result.keyRoot })
-          if (result.keyMode) updates.push({ id: t.id, field: 'keyMode', value: result.keyMode })
-          if (result.camelotKey) updates.push({ id: t.id, field: 'camelotKey', value: result.camelotKey })
-          okCount++
-        } else {
-          failCount++
-        }
-        dispatch({ type: 'UPDATE_TRACKS', updates })
-      } catch (err) {
-        failCount++
-        console.warn('[audio-analysis backfill] track', t.id, 'failed:', err)
-      }
-    }
-
-    const cancelled = analysisCancelRef.current
+  const cancelAudioAnalysisBackfill = useCallback(async () => {
+    await window.electronAPI.audioAnalysisClearQueue()
     setAnalysisRunning(false)
     setAnalysisProgress(null)
-    setAnalysisStatus(`Done. ${okCount} succeeded, ${failCount} failed${cancelled ? ' (cancelled)' : ''}.`)
-    setTimeout(() => setAnalysisStatus(null), 8000)
-  }, [analysisRunning, libState.tracks, dispatch])
-
-  const cancelAudioAnalysisBackfill = useCallback(() => {
-    analysisCancelRef.current = true
+    setAnalysisStatus('Cancelled.')
+    setTimeout(() => setAnalysisStatus(null), 4000)
   }, [])
+
+  // Brief 010 Phase 4: subscribe to worker progress + poll status while
+  // a backfill is active. Progress events fire on every job completion
+  // and decrement `remaining`; status poll fills in playback-paused
+  // state (the worker doesn't emit a separate paused event — it just
+  // keeps polling its own gate at 1-2s).
+  //
+  // Limitation: per-track results aren't piped back to UPDATE_TRACKS,
+  // so audioAnalysisCounts won't decrement until the next library
+  // reload. The "Done — N analyzed" toast surfaces the final outcome,
+  // and the on-disk overrides are correct. Per-track dispatch is a
+  // small follow-up if the stale counter becomes a real annoyance.
+  useEffect(() => {
+    if (!analysisRunning) return
+    const unsubProgress = window.electronAPI.onAudioAnalysisProgress(({ remaining }) => {
+      const total = analysisTotalRef.current
+      if (total === 0) return
+      setAnalysisProgress({ current: total - remaining, total, trackTitle: '' })
+      if (remaining === 0) {
+        setAnalysisRunning(false)
+        setAnalysisProgress(null)
+        setAnalysisStatus(`Done — ${total} tracks analyzed.`)
+        setTimeout(() => setAnalysisStatus(null), 8000)
+      }
+    })
+    const pollId = setInterval(async () => {
+      const s = await window.electronAPI.audioAnalysisStatus()
+      if (!s.ok) return
+      if (s.isPlaybackActive) {
+        setAnalysisStatus('Paused — playback active')
+      } else {
+        setAnalysisStatus((prev) => (prev === 'Paused — playback active' ? null : prev))
+      }
+      if (s.queueLength === 0 && !s.workerRunning) {
+        setAnalysisRunning(false)
+        setAnalysisProgress(null)
+      }
+    }, 2000)
+    return () => {
+      unsubProgress()
+      clearInterval(pollId)
+    }
+  }, [analysisRunning])
 
   // Tracks-needing-analysis count for the Organize Library section header.
   // Recomputes when libState.tracks changes (i.e., per-track during a

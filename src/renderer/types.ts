@@ -290,6 +290,10 @@ declare global {
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       // Brief 010 Phase 3: audio-analysis worker progress subscription.
       onAudioAnalysisProgress: (callback: (p: { remaining: number }) => void) => () => void
+      // Brief 010 Phase 4: queue-based backfill IPCs.
+      audioAnalysisEnqueueMany: (jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => Promise<{ ok: boolean; enqueued: number; totalQueued: number }>
+      audioAnalysisStatus: () => Promise<{ ok: boolean; queueLength: number; workerRunning: boolean; isPlaybackActive: boolean }>
+      audioAnalysisClearQueue: () => Promise<{ ok: boolean }>
       loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
       saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
       exportLibrarySnapshot: (payload: { tracks: unknown[]; playlists: unknown[] }) => Promise<{

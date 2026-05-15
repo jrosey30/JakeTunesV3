@@ -127,6 +127,16 @@ const electronAPI = {
     ipcRenderer.on('audio-analysis:progress', handler)
     return () => { ipcRenderer.removeListener('audio-analysis:progress', handler) }
   },
+  // Brief 010 Phase 4: queue-based backfill. Renderer sends jobs with
+  // colon-paths; main resolves to absolute paths and enqueues. Status
+  // poll fills in playback-paused state (no event for that — the worker
+  // just keeps polling its own gate).
+  audioAnalysisEnqueueMany: (jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>): Promise<{ ok: boolean; enqueued: number; totalQueued: number }> =>
+    ipcRenderer.invoke('audio-analysis:enqueue-many', jobs),
+  audioAnalysisStatus: (): Promise<{ ok: boolean; queueLength: number; workerRunning: boolean; isPlaybackActive: boolean }> =>
+    ipcRenderer.invoke('audio-analysis:status'),
+  audioAnalysisClearQueue: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('audio-analysis:clear-queue'),
   loadAppSettings: (): Promise<{ ok: boolean; settings: Record<string, unknown> | null }> =>
     ipcRenderer.invoke('load-app-settings'),
   saveAppSettings: (settings: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
