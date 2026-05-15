@@ -315,27 +315,30 @@ export function useAudio() {
         // Fade complete — promote the new track to nowPlaying. We
         // deferred this dispatch from the trigger code so the user saw
         // the old track's progress bar advance smoothly through the
-        // overlap window. Order matters: PLAY_TRACK resets position/
-        // duration to 0, so we follow it with SET_POSITION /
-        // SET_DURATION reading from the new sharedHowl to avoid a
-        // single-frame "0:00 / 0:00" flicker.
+        // overlap window. Brief 012: dispatch is now atomic — duration
+        // and position travel with PLAY_TRACK so the reducer reset
+        // can't produce a single-frame 0:00 / 0:00 flicker. Replaces
+        // the pre-Brief-012 workaround that fired SET_DURATION +
+        // SET_POSITION after PLAY_TRACK to paper over the reset.
         const pendingTrack = crossfadePendingTrack
         const pendingQueue = crossfadePendingQueue
         const pendingIdx = crossfadePendingIdx
         cleanupCrossfadeAudio()  // clears outgoing + pending state
         if (pendingTrack && pendingQueue) {
+          let crossfadeDur = 0
+          let crossfadePos = 0
+          if (sharedHowl && sharedHowl.playing()) {
+            crossfadeDur = sharedHowl.duration() || 0
+            crossfadePos = (sharedHowl.seek() as number) || 0
+          }
           dispatchRef.current({
             type: 'PLAY_TRACK',
             track: pendingTrack,
             queue: pendingQueue,
             queueIndex: pendingIdx,
+            duration: crossfadeDur,
+            position: crossfadePos,
           })
-          if (sharedHowl && sharedHowl.playing()) {
-            const newDur = sharedHowl.duration()
-            const newPos = sharedHowl.seek() as number
-            if (newDur > 0) dispatchRef.current({ type: 'SET_DURATION', duration: newDur })
-            dispatchRef.current({ type: 'SET_POSITION', position: newPos })
-          }
         }
       }
     }
@@ -746,8 +749,11 @@ export function useAudio() {
           // dispatch SET_DURATION + EQ binding manually here.
           try { next.volume(s.volume) } catch { /* ignore */ }
           attachHowlToEq(next)
-          dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+          // Brief 012: atomic dispatch — duration travels INSIDE the
+          // PLAY_TRACK action so the reducer can't clobber it back to
+          // 0 via its reset. Was the canonical 0:00 / -0:00 bug
+          // reproduction site (~50% of natural autoplay transitions).
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration() })
           // Re-anchor the position bar — the deferred SET_POSITION will
           // reach the correct value on the next rAF tick (already
           // running from the prior track).
@@ -757,13 +763,17 @@ export function useAudio() {
           // inside the last 150ms). Fall back to standard promote: wire
           // a play handler then call play() ourselves.
           next.once('play', () => {
-            dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
             attachHowlToEq(next)
             sharedRaf = requestAnimationFrame(updatePosition)
           })
           next.volume(s.volume)
           next.play()
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+          // Brief 012: pass duration through PLAY_TRACK atomically.
+          // If the howl isn't fully loaded here next.duration() may
+          // return 0 — the load-handler SET_DURATION around line 600
+          // is the fallback for that case.
+          const nextDur = next.duration() || 0
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur })
         }
         return
       }

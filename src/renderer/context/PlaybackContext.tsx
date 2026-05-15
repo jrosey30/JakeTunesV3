@@ -20,7 +20,7 @@ interface PlaybackState {
 }
 
 type PlaybackAction =
-  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean }
+  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number }
   | { type: 'PAUSE' }
   | { type: 'RESUME' }
   | { type: 'STOP' }
@@ -67,8 +67,15 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         ...state,
         nowPlaying: action.track,
         isPlaying: true,
-        position: 0,
-        duration: 0,
+        // Brief 012: read position/duration from the action if the
+        // caller has them already (autoplay paths where the new howl
+        // is already loaded). Manual clicks omit both, so they fall
+        // back to the 0-reset that gives instant visual feedback.
+        // Atomic dispatch eliminates the SET_DURATION→PLAY_TRACK race
+        // that caused intermittent 0:00 / -0:00 scrubber on gapless
+        // autoplay transitions.
+        position: action.position ?? 0,
+        duration: action.duration ?? 0,
         queue: action.queue ?? state.queue,
         queueIndex: action.queueIndex ?? state.queueIndex,
         recentlyPlayed: rp,
