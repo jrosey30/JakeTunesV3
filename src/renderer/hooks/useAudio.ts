@@ -258,7 +258,7 @@ export function useAudio() {
             try { node?.play() } catch { /* ignore */ }
             // If the kick doesn't help in another 2 ticks, hard-recover.
             if (stuckTicks >= 4 && playTrackRef.current) {
-              const cur = stateRef.current.currentTrack
+              const cur = stateRef.current.nowPlaying
               const q = stateRef.current.queue
               const qi = stateRef.current.queueIndex
               const stuckAt = pos
@@ -823,8 +823,8 @@ export function useAudio() {
     }
     // 4.0 background signal: per-track skipCount on sub-30s bail. Stronger
     // negative signal than the 80% gate; feeds recommendation filtering.
-    if (s.currentTrack && s.position < 30) {
-      const ct = s.currentTrack
+    if (s.nowPlaying && s.position < 30) {
+      const ct = s.nowPlaying
       const latest = tracksRef.current.find(tr => tr.id === ct.id)
       const newCount = (Number(latest?.skipCount ?? ct.skipCount) || 0) + 1
       const skipFp = `${(ct.title || '').toLowerCase().trim()}|${(ct.artist || '').toLowerCase().trim()}|${ct.duration || 0}`
