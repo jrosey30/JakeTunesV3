@@ -37,7 +37,7 @@ let lastPositionDispatchMs = 0
 // All dx.* logs go through console.log (not logAudioEvent) so they're
 // visible regardless of the ring-buffer skip-tick filter. Prefixed with
 // `[dx]` so they're easy to grep in the captured devtools console.
-const DIAGNOSTIC_LOGGING = false
+const DIAGNOSTIC_LOGGING = true   // Brief 015: re-enabled to capture auto-repeat-bug data (was false in 012e)
 let rafTickCount = 0
 function dx(ev: string, detail?: unknown) {
   if (!DIAGNOSTIC_LOGGING) return
@@ -738,7 +738,29 @@ export function useAudio() {
       window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
 
       const s = stateRef.current
+      // Brief 015: snapshot every state value the natural-end decision
+      // reads, plus a couple of queue spot-checks (first/last titles)
+      // to verify the queue is what we think it is.
+      if (DIAGNOSTIC_LOGGING) {
+        logAudioEvent('dx.repeat.natural-end', {
+          trackTitle: track.title,
+          trackId: track.id,
+          repeat: s.repeat,
+          queueLength: s.queue.length,
+          queueIndex: s.queueIndex,
+          autoDjMode,
+          isPlaying: s.isPlaying,
+          firstQueueTrack: s.queue[0]?.title,
+          lastQueueTrack: s.queue[s.queue.length - 1]?.title,
+        })
+      }
       if (s.repeat === 'one') {
+        if (DIAGNOSTIC_LOGGING) {
+          logAudioEvent('dx.repeat.branch.repeat-one', {
+            replayingTrack: track.title,
+            queueIndex: s.queueIndex,
+          })
+        }
         cleanupGaplessPreload()
         loadAndPlay(track, s.queue, s.queueIndex)
         return
@@ -747,6 +769,14 @@ export function useAudio() {
       // TOGGLE_SHUFFLE in PlaybackContext. Always sequential here.
       let nextIdx = s.queueIndex + 1
       if (nextIdx >= s.queue.length) {
+        if (DIAGNOSTIC_LOGGING) {
+          logAudioEvent('dx.repeat.branch.queue-exhausted', {
+            nextIdx,
+            queueLength: s.queue.length,
+            repeat: s.repeat,
+            autoDjMode,
+          })
+        }
         if (autoDjMode) {
           let handled = false
           const ackHandler = () => { handled = true }
@@ -763,6 +793,19 @@ export function useAudio() {
           dispatchRef.current({ type: 'STOP' })
           return
         }
+      }
+      if (DIAGNOSTIC_LOGGING) {
+        // sameTrack is the smoking-gun canary: if this fires with
+        // sameTrack=true, the "advance" branch is replaying the same
+        // track (queue corruption — same id at fromIdx and toIdx, or
+        // post-wrap queue collapsed to length 1).
+        logAudioEvent('dx.repeat.branch.advance', {
+          fromIdx: s.queueIndex,
+          toIdx: nextIdx,
+          fromTrack: track.title,
+          toTrack: s.queue[nextIdx]?.title,
+          sameTrack: s.queue[nextIdx]?.id === track.id,
+        })
       }
       const nextTrack = s.queue[nextIdx]
       if (!nextTrack) return

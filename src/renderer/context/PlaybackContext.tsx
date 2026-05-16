@@ -58,6 +58,18 @@ const initialState: PlaybackState = {
 function playbackReducer(state: PlaybackState, action: PlaybackAction): PlaybackState {
   switch (action.type) {
     case 'PLAY_TRACK': {
+      // Brief 015: log every PLAY_TRACK dispatch so we can see what
+      // queue gets installed and what repeat state was at that
+      // moment. If a Songs-view double-click somehow lands with
+      // newQueueLength=1 (instead of ~6195), the queue is being
+      // truncated somewhere between SongsView.playTrack and here.
+      console.log('[dx.repeat.play-track]', {
+        trackTitle: action.track.title,
+        trackId: action.track.id,
+        newQueueLength: (action.queue ?? state.queue).length,
+        newQueueIndex: action.queueIndex ?? state.queueIndex,
+        prevRepeat: state.repeat,
+      })
       const rp = [action.track.id, ...state.recentlyPlayed.filter(id => id !== action.track.id)].slice(0, 50)
       // Push current index to shuffle history when advancing forward in shuffle mode
       const sh = state.shuffle && state.queueIndex >= 0 && !action.skipHistory
@@ -98,6 +110,11 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
     case 'SET_VOLUME':
       return { ...state, volume: action.volume }
     case 'SET_REPEAT':
+      // Brief 015: log transitions so we can correlate UI state
+      // (toolbar appearance) with actual reducer state. If the toolbar
+      // ever shows "off" while state.repeat is 'one', a prior
+      // transition wasn't accompanied by a UI update — desync.
+      console.log('[dx.repeat.state-change]', { from: state.repeat, to: action.mode })
       return { ...state, repeat: action.mode }
     case 'TOGGLE_SHUFFLE': {
       const newShuffle = !state.shuffle

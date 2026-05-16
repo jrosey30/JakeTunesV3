@@ -831,7 +831,18 @@ function AppInner() {
     // external edit later.
     const reloadHandler = () => {
       window.electronAPI.loadTracks().then((r) => {
-        if (r.tracks) dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+        if (r.tracks) {
+          // Brief 015: log the reload event with track-count delta so we
+          // can correlate against natural-end timestamps. The reload
+          // handler doesn't have direct access to PlaybackContext, but
+          // a reload during playback timestamps cleanly enough to
+          // cross-reference against dx.repeat.natural-end log lines.
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'library.json changed externally, dispatching SET_TRACKS',
+            newTrackCount: r.tracks.length,
+          })
+          dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+        }
       })
     }
     const unsubExt = window.electronAPI.onLibraryExternalChange(() => {
