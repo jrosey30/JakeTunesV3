@@ -131,12 +131,17 @@ export default function MusicManView() {
   // results persist via main's analyze-track IPC. Cancel uses a ref so the
   // running loop can check it between tracks without state-closure issues.
   const [analysisRunning, setAnalysisRunning] = useState(false)
-  const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number; trackTitle: string } | null>(null)
   const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
-  // Brief 010 Phase 4: total stashed in a ref so the progress-event
-  // subscription doesn't re-mount on every progress tick. Replaces the
-  // pre-Brief-010 analysisCancelRef (cancel now flows through the
-  // clear-queue IPC, not a renderer-side flag).
+  // Brief 018: analysisProgress useState removed. The counter now derives
+  // directly from audioAnalysisCounts (a useMemo over libState.tracks),
+  // which is the authoritative state. Local-mirror state went negative
+  // on remount when the global counts had advanced past the session-
+  // local snapshot. Derived state can't go stale.
+  //
+  // analysisTotalRef is kept for the completion toast message only —
+  // it's a session-local count of "how many did I enqueue this run,"
+  // never used for any rendered counter, so the staleness bug doesn't
+  // reach it.
   const analysisTotalRef = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -366,14 +371,12 @@ export default function MusicManView() {
     analysisTotalRef.current = jobs.length
     setAnalysisRunning(true)
     setAnalysisStatus(null)
-    setAnalysisProgress({ current: 0, total: jobs.length, trackTitle: '' })
     await window.electronAPI.audioAnalysisEnqueueMany(jobs)
   }, [analysisRunning, libState.tracks])
 
   const cancelAudioAnalysisBackfill = useCallback(async () => {
     await window.electronAPI.audioAnalysisClearQueue()
     setAnalysisRunning(false)
-    setAnalysisProgress(null)
     setAnalysisStatus('Cancelled.')
     setTimeout(() => setAnalysisStatus(null), 4000)
   }, [])
@@ -409,13 +412,14 @@ export default function MusicManView() {
         if (camelotKey) updates.push({ id: trackId, field: 'camelotKey', value: camelotKey })
         dispatch({ type: 'UPDATE_TRACKS', updates })
       }
-      const total = analysisTotalRef.current
-      if (total === 0) return
-      setAnalysisProgress({ current: total - remaining, total, trackTitle: '' })
+      // Brief 018: progress-bar math removed — the counter now derives
+      // from audioAnalysisCounts. The completion toast still uses the
+      // session-local enqueue count for the "Done — N analyzed" message,
+      // which is the only place a session-local number is appropriate.
       if (remaining === 0) {
         setAnalysisRunning(false)
-        setAnalysisProgress(null)
-        setAnalysisStatus(`Done — ${total} tracks analyzed.`)
+        const sessionTotal = analysisTotalRef.current
+        setAnalysisStatus(sessionTotal > 0 ? `Done — ${sessionTotal} tracks analyzed.` : 'Done — analysis complete.')
         setTimeout(() => setAnalysisStatus(null), 8000)
       }
     })
@@ -429,7 +433,6 @@ export default function MusicManView() {
       }
       if (s.queueLength === 0 && !s.workerRunning) {
         setAnalysisRunning(false)
-        setAnalysisProgress(null)
       }
     }, 2000)
     return () => {
@@ -1202,13 +1205,18 @@ export default function MusicManView() {
                     Each track takes a few seconds. Cancel anytime; resume-on-restart picks up where you left off.
                   </p>
 
-                  {analysisRunning && analysisProgress ? (
+                  {analysisRunning ? (
                     <>
+                      {/* Brief 018: counter derives from audioAnalysisCounts
+                          (authoritative state) instead of the deleted local
+                          analysisProgress. Survives remount truthfully —
+                          can't go negative because both numerator and
+                          denominator come from the same useMemo. */}
                       <div style={{ marginTop: 12, fontSize: 13, color: '#a89878' }}>
-                        Analyzing {analysisProgress.current} of {analysisProgress.total}: <strong>{analysisProgress.trackTitle || '…'}</strong>
+                        Analyzing {audioAnalysisCounts.analyzed.toLocaleString()} of {audioAnalysisCounts.total.toLocaleString()}…
                       </div>
                       <div className="musicman-org-bar-track" style={{ marginTop: 8 }}>
-                        <div className="musicman-org-bar-fill" style={{ width: `${(analysisProgress.current / Math.max(analysisProgress.total, 1)) * 100}%` }} />
+                        <div className="musicman-org-bar-fill" style={{ width: `${(audioAnalysisCounts.analyzed / Math.max(audioAnalysisCounts.total, 1)) * 100}%` }} />
                       </div>
                       <button className="musicman-org-action-btn" onClick={cancelAudioAnalysisBackfill} style={{ marginTop: 12 }}>
                         Cancel
