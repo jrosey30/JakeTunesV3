@@ -37,7 +37,7 @@ let lastPositionDispatchMs = 0
 // All dx.* logs go through console.log (not logAudioEvent) so they're
 // visible regardless of the ring-buffer skip-tick filter. Prefixed with
 // `[dx]` so they're easy to grep in the captured devtools console.
-const DIAGNOSTIC_LOGGING = true
+const DIAGNOSTIC_LOGGING = false
 let rafTickCount = 0
 function dx(ev: string, detail?: unknown) {
   if (!DIAGNOSTIC_LOGGING) return
