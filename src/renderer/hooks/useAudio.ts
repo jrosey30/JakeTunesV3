@@ -32,6 +32,18 @@ let autoDjMode = false
 // 100ms = 10Hz UI updates, way less render-thread pressure than 60Hz.
 let lastPositionDispatchMs = 0
 
+// Brief 012c — diagnostic logging. Flip to false to silence, or delete
+// the dx.* call sites in Brief 012d once the root cause is identified.
+// All dx.* logs go through console.log (not logAudioEvent) so they're
+// visible regardless of the ring-buffer skip-tick filter. Prefixed with
+// `[dx]` so they're easy to grep in the captured devtools console.
+const DIAGNOSTIC_LOGGING = true
+let rafTickCount = 0
+function dx(ev: string, detail?: unknown) {
+  if (!DIAGNOSTIC_LOGGING) return
+  console.log('[dx]', ev, detail ?? '')
+}
+
 // Watchdog state for the "stuck audio" recovery (Airfoil hijack edge
 // case). When the underlying HTMLAudioElement gets stuck because Core
 // Audio renegotiated the output device under us, position stops
@@ -294,7 +306,24 @@ export function useAudio() {
   const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
-    if (isPaused) return
+    rafTickCount++
+    if (rafTickCount % 60 === 0) {
+      dx('raf.tick', {
+        n: rafTickCount,
+        isPaused,
+        sharedHowl: !!sharedHowl,
+        sharedHowl_playing: sharedHowl?.playing() ?? null,
+        outgoingHowl: !!outgoingHowl,
+        crossfading,
+        react_isPlaying: stateRef.current.isPlaying,
+        react_pos: stateRef.current.position,
+        react_dur: stateRef.current.duration,
+      })
+    }
+    if (isPaused) {
+      dx('raf.tick.paused-return', { n: rafTickCount })
+      return
+    }
 
     // Crossfade volume animation. Runs every tick the fade is active —
     // even before the new sharedHowl has finished loading. Without this
@@ -331,6 +360,14 @@ export function useAudio() {
             crossfadeDur = sharedHowl.duration() || 0
             crossfadePos = (sharedHowl.seek() as number) || 0
           }
+          dx('playtrack.dispatch', {
+            site: 'crossfade-complete',
+            title: pendingTrack.title,
+            duration: crossfadeDur,
+            position: crossfadePos,
+            sharedRaf,
+            isPaused,
+          })
           dispatchRef.current({
             type: 'PLAY_TRACK',
             track: pendingTrack,
@@ -363,6 +400,16 @@ export function useAudio() {
       (outgoingHowl && outgoingHowl.playing()) ? outgoingHowl :
       (sharedHowl && stateRef.current.isPlaying) ? sharedHowl :
       null
+    if (!positionHowl && rafTickCount % 60 === 0) {
+      dx('raf.posHowl-null', {
+        n: rafTickCount,
+        sharedHowl: !!sharedHowl,
+        sharedHowl_playing: sharedHowl?.playing() ?? null,
+        outgoingHowl: !!outgoingHowl,
+        outgoingHowl_playing: outgoingHowl?.playing() ?? null,
+        react_isPlaying: stateRef.current.isPlaying,
+      })
+    }
     if (positionHowl) {
       // Throttle SET_POSITION dispatch to 10Hz. The rAF loop fires at
       // 60Hz, and dispatching a React state update every frame forces
@@ -377,34 +424,46 @@ export function useAudio() {
       const now = Date.now()
       if (now - lastPositionDispatchMs >= 100) {
         const pos = positionHowl.seek() as number
-        dispatchRef.current({ type: 'SET_POSITION', position: pos })
         const dur = positionHowl.duration()
+        dx('raf.dispatch', {
+          n: rafTickCount,
+          pos,
+          dur,
+          gap_ms: now - lastPositionDispatchMs,
+          source: positionHowl === sharedHowl ? 'sharedHowl' : 'outgoingHowl',
+        })
+        dispatchRef.current({ type: 'SET_POSITION', position: pos })
         if (dur > 0) {
           dispatchRef.current({ type: 'SET_DURATION', duration: dur })
         }
         lastPositionDispatchMs = now
-
-        // 4.2.12: stuck-audio watchdog DISABLED.
-        // Was meant for Airfoil hijack edge cases — when Core Audio
-        // renegotiated the output device, position would freeze and
-        // pause/play wouldn't recover it. But the recovery path
-        // (sharedHowl?.stop() + unload() + recreate) is itself
-        // disruptive, and false positives — momentary buffer underruns,
-        // any tick where positionHowl.seek() returned the same float
-        // twice — would tear down a perfectly fine Howl and try to seek
-        // back to where we "got stuck." That seek can land in the wrong
-        // place, fail silently, or leave the new Howl loaded but not
-        // playing. Better to let the user pause/play themselves on the
-        // rare Airfoil hiccup than to have phantom kills mid-song.
-        // (Refs to the watchdog state vars are kept so any other
-        // surviving references keep type-checking; nothing reads them.)
-        void watchdogLastObservedPos
-        void watchdogLastAdvanceMs
-        void watchdogLastRecoveryMs
-        void watchdogRecoveryInFlight
-        void WATCHDOG_STUCK_THRESHOLD_MS
-        void WATCHDOG_COOLDOWN_MS
+      } else if (rafTickCount % 60 === 0) {
+        dx('raf.throttle-skip', {
+          n: rafTickCount,
+          gap_ms: now - lastPositionDispatchMs,
+        })
       }
+
+      // 4.2.12: stuck-audio watchdog DISABLED.
+      // Was meant for Airfoil hijack edge cases — when Core Audio
+      // renegotiated the output device, position would freeze and
+      // pause/play wouldn't recover it. But the recovery path
+      // (sharedHowl?.stop() + unload() + recreate) is itself
+      // disruptive, and false positives — momentary buffer underruns,
+      // any tick where positionHowl.seek() returned the same float
+      // twice — would tear down a perfectly fine Howl and try to seek
+      // back to where we "got stuck." That seek can land in the wrong
+      // place, fail silently, or leave the new Howl loaded but not
+      // playing. Better to let the user pause/play themselves on the
+      // rare Airfoil hiccup than to have phantom kills mid-song.
+      // (Refs to the watchdog state vars are kept so any other
+      // surviving references keep type-checking; nothing reads them.)
+      void watchdogLastObservedPos
+      void watchdogLastAdvanceMs
+      void watchdogLastRecoveryMs
+      void watchdogRecoveryInFlight
+      void WATCHDOG_STUCK_THRESHOLD_MS
+      void WATCHDOG_COOLDOWN_MS
     }
 
     // Gapless preload + crossfade trigger only run when sharedHowl is
@@ -531,6 +590,18 @@ export function useAudio() {
       (outgoingHowl && outgoingHowl.playing())
     if (stillActive) {
       sharedRaf = requestAnimationFrame(updatePosition)
+    } else {
+      // rAF death — the loop is about to stop ticking entirely. If the
+      // user-perceived state is "playing" this is highly suspicious.
+      dx('raf.NOT-rescheduled', {
+        n: rafTickCount,
+        sharedHowl: !!sharedHowl,
+        isPaused,
+        crossfading,
+        outgoingHowl: !!outgoingHowl,
+        outgoingHowl_playing: outgoingHowl?.playing() ?? null,
+        react_isPlaying: stateRef.current.isPlaying,
+      })
     }
   }, [])
 
@@ -601,6 +672,7 @@ export function useAudio() {
           return
         }
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
+        dx('raf.reschedule', { site: 'howl.onplay', title: track.title, isPaused })
         sharedRaf = requestAnimationFrame(updatePosition)
       },
       onplayerror: (_id: number, err: unknown) => {
@@ -753,17 +825,32 @@ export function useAudio() {
           // PLAY_TRACK action so the reducer can't clobber it back to
           // 0 via its reset. Was the canonical 0:00 / -0:00 bug
           // reproduction site (~50% of natural autoplay transitions).
+          dx('playtrack.dispatch', {
+            site: 'gapless-prewarm',
+            title: nt.title,
+            duration: next.duration(),
+            position: 0,
+            sharedRaf,
+            isPaused,
+            sharedHowl_playing: next.playing(),
+          })
           dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration(), position: 0 })
           // Re-anchor the position bar — the deferred SET_POSITION will
           // reach the correct value on the next rAF tick (already
           // running from the prior track).
-          if (!sharedRaf) sharedRaf = requestAnimationFrame(updatePosition)
+          if (!sharedRaf) {
+            dx('raf.reschedule', { site: 'gapless-prewarm-restart' })
+            sharedRaf = requestAnimationFrame(updatePosition)
+          } else {
+            dx('raf.already-scheduled', { site: 'gapless-prewarm', sharedRaf })
+          }
         } else {
           // Pre-warm didn't fire (very short track, or rAF hadn't ticked
           // inside the last 150ms). Fall back to standard promote: wire
           // a play handler then call play() ourselves.
           next.once('play', () => {
             attachHowlToEq(next)
+            dx('raf.reschedule', { site: 'standard-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
           })
           next.volume(s.volume)
@@ -773,6 +860,14 @@ export function useAudio() {
           // return 0 — the load-handler SET_DURATION around line 600
           // is the fallback for that case.
           const nextDur = next.duration() || 0
+          dx('playtrack.dispatch', {
+            site: 'standard-promote',
+            title: nt.title,
+            duration: nextDur,
+            position: 0,
+            sharedRaf,
+            isPaused,
+          })
           dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: 0 })
         }
         return
@@ -780,6 +875,12 @@ export function useAudio() {
 
       // Standard advance — preload didn't match (or wasn't ready).
       cleanupGaplessPreload()
+      dx('playtrack.dispatch', {
+        site: 'standard-advance',
+        title: nextTrack.title,
+        sharedRaf,
+        isPaused,
+      })
       dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
       loadAndPlay(nextTrack, s.queue, nextIdx)
     }
@@ -799,6 +900,13 @@ export function useAudio() {
     }
     const q = queue ?? stateRef.current.queue
     const qi = queueIndex ?? 0
+    dx('playtrack.dispatch', {
+      site: 'manual',
+      title: track.title,
+      sharedRaf,
+      isPaused,
+      djTransition: !!djTransition,
+    })
     dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi })
     loadAndPlay(track, q, qi)
   }, [loadAndPlay])
@@ -868,6 +976,12 @@ export function useAudio() {
       dispatchRef.current({ type: 'SET_SHUFFLE_HISTORY', history })
       const track = s.queue[prevIdx]
       if (track) {
+        dx('playtrack.dispatch', {
+          site: 'prev-shuffle',
+          title: track.title,
+          sharedRaf,
+          isPaused,
+        })
         dispatchRef.current({ type: 'PLAY_TRACK', track, queue: s.queue, queueIndex: prevIdx, skipHistory: true })
         loadAndPlay(track, s.queue, prevIdx)
       }
@@ -892,6 +1006,7 @@ export function useAudio() {
       // drag-to value. Otherwise the bar can sit at the drag-to
       // value for up to 100ms while the gate re-opens. Sub-perceptual
       // gap usually but worth the one extra dispatch.
+      dx('throttle.reset', { site: 'seek', pos })
       lastPositionDispatchMs = 0
     }
   }, [])
