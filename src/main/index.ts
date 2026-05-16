@@ -396,7 +396,7 @@ function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
     // buffers we read after close — never piped to anything that
     // requires the Electron main thread to drain, so an event-loop
     // stall in main can't backpressure librosa.
-    const py = spawn(PYTHON_CMD, [scriptPath, absPath], {
+    const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, absPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -504,6 +504,15 @@ async function persistOverrideFields(
 }
 
 async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
+  // Brief 010b: skip job entirely when no librosa-equipped Python was
+  // found at startup. Writing the audioAnalysisAt sentinel here would
+  // mask the failure as "analyzed, just no data" and prevent the user
+  // from re-running once librosa is installed. Loud-skip means the
+  // track stays unanalyzed and the next backfill attempt can pick it up.
+  if (!PYTHON_CMD) {
+    console.warn(`[audio-analysis] ${job.trackId} skipped — no Python with librosa available (see [python] log on startup)`)
+    return
+  }
   const result = await runAudioAnalysisScript(job.path)
   const fields: Record<string, string> = {
     audioAnalysisAt: String(Date.now()),
@@ -1263,7 +1272,7 @@ async function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknow
   const ipodDbPath = join(detectedIpodMount, 'iPod_Control', 'iTunes', 'iTunesDB')
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return new Promise((resolve, reject) => {
-    const py = spawn(PYTHON_CMD, [scriptPath, '--json', ipodDbPath])
+    const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, '--json', ipodDbPath])
     py.on('error', (err: Error) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         reject(new Error(PYTHON_INSTALL_HINT))
@@ -1433,7 +1442,7 @@ function scheduleDbRebuild(deletedPaths: string[]) {
       try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
       const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
       await new Promise<void>((resolve, reject) => {
-        const py = spawn(PYTHON_CMD, [scriptPath, '--write', ipodDb])
+        const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, '--write', ipodDb])
         py.on('error', reject)
         py.on('close', (code) => code === 0 ? resolve() : reject(new Error(`db_reader exit ${code}`)))
         // EPIPE-safe stdin write. If the Python child dies before we
@@ -1950,7 +1959,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     try {
       const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
       const read = await new Promise<string>((resolve, reject) => {
-        const py = spawn(PYTHON_CMD, [tagReaderScript])
+        const py = spawn(PYTHON_CMD ?? 'python3', [tagReaderScript])
         let stdout = ''
         let stderr = ''
         py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
@@ -2084,7 +2093,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return await new Promise((resolve) => {
     const input = JSON.stringify({ tracks, playlists })
-    const py = spawn(PYTHON_CMD, [scriptPath, '--write', ipodDb])
+    const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, '--write', ipodDb])
     py.on('error', (err: Error) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         resolve({ ok: false, error: PYTHON_INSTALL_HINT, copied, copyErrors })
@@ -2205,7 +2214,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
 ipcMain.handle('alac-compat-scan', async () => {
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
   return await new Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>((resolve) => {
-    const py = spawn(PYTHON_CMD, [script])
+    const py = spawn(PYTHON_CMD ?? 'python3', [script])
     let stdout = ''
     let stderr = ''
     py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
@@ -2227,7 +2236,7 @@ ipcMain.handle('alac-compat-scan', async () => {
 ipcMain.handle('alac-compat-fix', async () => {
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
   return await new Promise<{ ok: boolean; error?: string; summary?: string }>((resolve) => {
-    const py = spawn(PYTHON_CMD, [script, '--apply'])
+    const py = spawn(PYTHON_CMD ?? 'python3', [script, '--apply'])
     let stdout = ''
     let stderr = ''
     py.stdout.on('data', (d: Buffer) => {
@@ -2932,6 +2941,14 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
 // library.json); main resolves to an absolute path because renderer
 // doesn't know LOCAL_MOUNT.
 ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, fingerprint: string) => {
+  // Brief 010b: same null guard as processAudioAnalysisJob — skip
+  // entirely (no sentinel write) when no librosa-equipped Python was
+  // found at startup, so the failure is surfaced loud and the track
+  // remains a candidate for re-analysis after the user fixes Python.
+  if (!PYTHON_CMD) {
+    console.warn(`[audio-analysis] analyze-track ${trackId} skipped — no Python with librosa available`)
+    return { ok: false, error: 'no Python with librosa available; check startup logs' }
+  }
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
   const absPath = join(LOCAL_MOUNT, colonPath.replace(/:/g, pathSep))

@@ -4,7 +4,7 @@
 
 import { join } from 'path'
 import { readdir, stat } from 'fs/promises'
-import { execFile } from 'child_process'
+import { execFile, execSync } from 'child_process'
 import { promisify } from 'util'
 
 const execP = promisify(execFile)
@@ -12,11 +12,88 @@ const execP = promisify(execFile)
 export const IS_MAC = process.platform === 'darwin'
 export const IS_WINDOWS = process.platform === 'win32'
 
+// ────────────────────────────────────────────────────────────────────
+// Python resolution (Brief 010b)
+//
+// The installed/packaged Electron app inherits a minimal PATH from
+// Finder/Launchpad — typically just /usr/bin:/bin:/usr/sbin:/sbin —
+// which doesn't include /opt/homebrew/bin. Spawning a bare "python3"
+// therefore lands on the first python3 in that minimal PATH (Apple's
+// system Python if any), which may or may not have librosa accessible.
+//
+// In dev mode (`npm run dev`), the terminal's full PATH is inherited
+// so /opt/homebrew/bin/python3 (the brew install that has librosa via
+// pip) is used and audio analysis works. Same code path, different
+// runtime environment → silent failure in production.
+//
+// Fix: at startup, try a prioritized list of candidate absolute paths,
+// pick the first whose `import librosa` succeeds, cache it. If none
+// work, PYTHON_CMD is null and the audio analysis worker skips the
+// job loud (no timestamp sentinel) instead of writing empty data.
+//
+// Non-audio-analysis consumers (mutagen tag writer, iPod DB scripts,
+// salvage scripts) don't require librosa. They use `PYTHON_CMD ?? 'python3'`
+// so they keep working with whatever Python the resolved path picks up
+// (or the bare fallback, matching pre-010b behavior).
+// ────────────────────────────────────────────────────────────────────
+
+const PYTHON_CANDIDATES_MAC = [
+  '/opt/homebrew/bin/python3',  // Apple Silicon Homebrew
+  '/usr/local/bin/python3',     // Intel Homebrew or python.org
+  '/usr/bin/python3',           // macOS system Python (Xcode-bundled)
+]
+
+function tryPython(cmd: string): { ok: boolean; version?: string; error?: string } {
+  try {
+    const output = execSync(`${cmd} -c "import librosa; print(librosa.__version__)"`, {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+    return { ok: true, version: output }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+function resolvePythonCmd(): string | null {
+  // Windows: skip detection — librosa-on-Windows isn't a supported
+  // workflow yet, and the existing 'python' (or py.exe) PATH lookup
+  // continues to work for the non-librosa consumers.
+  if (IS_WINDOWS) return 'python'
+
+  for (const candidate of PYTHON_CANDIDATES_MAC) {
+    const result = tryPython(candidate)
+    if (result.ok) {
+      console.log(`[python] Resolved PYTHON_CMD to: ${candidate} (librosa: ${result.version})`)
+      return candidate
+    }
+  }
+  // Last resort: whatever PATH resolves. Mostly useful in dev mode
+  // where the terminal PATH has /opt/homebrew/bin — production
+  // launchd PATH almost never reaches this branch usefully.
+  const fallback = tryPython('python3')
+  if (fallback.ok) {
+    console.log(`[python] Resolved PYTHON_CMD to: python3 (PATH lookup, librosa: ${fallback.version})`)
+    return 'python3'
+  }
+  console.error('[python] ERROR: no Python with librosa found in any candidate. Audio analysis disabled.')
+  console.error('[python] Tried:', PYTHON_CANDIDATES_MAC.concat(['python3 (PATH)']).join(', '))
+  return null
+}
+
 /**
- * Name of the Python executable on this platform.
- * macOS/Linux use "python3", Windows uses "python" (py.exe also works).
+ * Absolute path to the Python interpreter to use for spawned scripts,
+ * or null if no librosa-equipped Python was found on this machine.
+ *
+ * Audio-analysis sites MUST null-check before spawning — null means
+ * "skip the job, don't write the sentinel."
+ *
+ * Non-librosa sites (mutagen tag readers/writers, iPod DB scripts)
+ * should fall back to a bare `'python3'` when this is null:
+ *     spawn(PYTHON_CMD ?? 'python3', [...])
  */
-export const PYTHON_CMD = IS_WINDOWS ? 'python' : 'python3'
+export const PYTHON_CMD: string | null = resolvePythonCmd()
 
 /**
  * Human-readable message shown when Python is missing, directing the
@@ -252,7 +329,9 @@ async function embedTags(path: string, tags: AudioTags): Promise<void> {
   const { spawn } = await import('child_process')
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_writer.py')
   await new Promise<void>((resolve) => {
-    const py = spawn(PYTHON_CMD, [script, path])
+    // embedTags only needs mutagen, not librosa, so we fall back to
+    // a bare 'python3' if the librosa-aware resolver returned null.
+    const py = spawn(PYTHON_CMD ?? 'python3', [script, path])
     let stderr = ''
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     py.on('error', (err) => {
