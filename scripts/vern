@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# vern — JakeTunes diagnostic capture, v0.1
+# Brief 017. Foundation for diagnostic capture tooling.
+# Outputs a single markdown file to ~/JakeTunesV3/diagnostics/.
+#
+# Usage:
+#   ./scripts/vern                      # capture with no context note
+#   ./scripts/vern "scrubber bug back"  # capture with a context note
+#
+# The output is a single .md file the user uploads to the AI advisor
+# instead of running 20+ grep/sed/cat commands manually.
+
+set -euo pipefail
+
+# Resolve repo root. Prefer git, fall back to script-relative path so
+# vern still works in a worktree where .git is a file pointer.
+if REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  :
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
+cd "$REPO_ROOT"
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+ISO_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+OUTPUT="${REPO_ROOT}/diagnostics/vern-${TIMESTAMP}.md"
+NOTE="${1:-}"
+
+mkdir -p "$(dirname "$OUTPUT")"
+
+# 24-hour marker for `find -newer`. macOS `date -v-1d` builds the mtime
+# directly; if it ever fails, fall back to leaving the marker at "now"
+# (find returns no results — empty section, not an error).
+TMPMARKER="$(mktemp -t vern-marker.XXXXXX)"
+if ! touch -t "$(date -v-1d +%Y%m%d%H%M.%S 2>/dev/null)" "$TMPMARKER" 2>/dev/null; then
+  : > "$TMPMARKER"
+fi
+trap 'rm -f "$TMPMARKER"' EXIT
+
+# Helper: run a command with a 30s timeout when `timeout`/`gtimeout` is
+# available. Otherwise just run it (long commands are rare enough that
+# the rare hang is acceptable for v0).
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  elif command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
+{
+  # ── Section 1: Header ───────────────────────────────────────────────
+  echo "# vern capture — ${ISO_TIMESTAMP}"
+  echo
+  echo "**Generated:** ${ISO_TIMESTAMP}"
+  echo "**Repo:** ${REPO_ROOT}"
+  if [ -n "$NOTE" ]; then
+    echo "**Note:** ${NOTE}"
+  else
+    echo "**Note:** (none)"
+  fi
+  echo
+
+  # ── Section 2: Repo state ───────────────────────────────────────────
+  echo "## Repo state"
+  echo
+  echo "**Current branch:** $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(not a git repo)')"
+  echo
+  echo "**Last 10 commits:**"
+  echo
+  echo '```'
+  git log --oneline -10 2>/dev/null || echo "(no git history)"
+  echo '```'
+  echo
+  echo "**Working tree status:**"
+  echo
+  STATUS_OUTPUT="$(git status --short 2>/dev/null || true)"
+  if [ -z "$STATUS_OUTPUT" ]; then
+    echo "clean"
+  else
+    echo '```'
+    echo "$STATUS_OUTPUT"
+    echo '```'
+  fi
+  echo
+  echo "**Files modified in the last 24 hours (tracked + untracked, excluding node_modules / .git / release / diagnostics):**"
+  echo
+  echo '```'
+  command find . -type f -newer "$TMPMARKER" \
+    -not -path './node_modules/*' \
+    -not -path './.git/*' \
+    -not -path './release/*' \
+    -not -path './diagnostics/*' \
+    -not -path './out/*' \
+    -not -path './dist/*' \
+    2>/dev/null | head -30 || echo "(none)"
+  echo '```'
+  echo
+
+  # ── Section 3: Build health ─────────────────────────────────────────
+  echo "## Build health"
+  echo
+
+  # Version from package.json
+  VERSION="(unknown)"
+  if [ -f "package.json" ]; then
+    if command -v node >/dev/null 2>&1; then
+      VERSION="$(node -p "require('./package.json').version" 2>/dev/null || echo '(unknown)')"
+    else
+      VERSION="$(command grep -E '"version"[[:space:]]*:' package.json | head -1 | command sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || echo '(unknown)')"
+    fi
+  fi
+  echo "**Version:** ${VERSION}"
+  echo
+
+  # tsc web project. Capturing grep output to a variable + branching on
+  # emptiness instead of piping `grep | wc -l`: with `set -o pipefail`
+  # an empty-match grep exits 1, which previously killed the script
+  # mid-section. The `|| true` swallows that exit so 0-error cases work.
+  echo "**TypeScript errors (web project):**"
+  echo
+  TSC_WEB_OUTPUT="$(run_with_timeout 30 npx tsc --noEmit --project tsconfig.web.json 2>&1 || true)"
+  TSC_WEB_ERRORS="$(printf '%s\n' "$TSC_WEB_OUTPUT" | command grep 'error TS' 2>/dev/null || true)"
+  if [ -z "$TSC_WEB_ERRORS" ]; then
+    TSC_WEB_COUNT=0
+  else
+    TSC_WEB_COUNT="$(printf '%s\n' "$TSC_WEB_ERRORS" | wc -l | tr -d ' ')"
+  fi
+  echo "Error count: ${TSC_WEB_COUNT}"
+  if [ "${TSC_WEB_COUNT}" -gt 0 ]; then
+    echo
+    echo '```'
+    printf '%s\n' "$TSC_WEB_ERRORS" | head -20
+    echo '```'
+  fi
+  echo
+
+  # tsc node project (same pattern as web)
+  echo "**TypeScript errors (node project):**"
+  echo
+  TSC_NODE_OUTPUT="$(run_with_timeout 30 npx tsc --noEmit --project tsconfig.node.json 2>&1 || true)"
+  TSC_NODE_ERRORS="$(printf '%s\n' "$TSC_NODE_OUTPUT" | command grep 'error TS' 2>/dev/null || true)"
+  if [ -z "$TSC_NODE_ERRORS" ]; then
+    TSC_NODE_COUNT=0
+  else
+    TSC_NODE_COUNT="$(printf '%s\n' "$TSC_NODE_ERRORS" | wc -l | tr -d ' ')"
+  fi
+  echo "Error count: ${TSC_NODE_COUNT}"
+  if [ "${TSC_NODE_COUNT}" -gt 0 ]; then
+    echo
+    echo '```'
+    printf '%s\n' "$TSC_NODE_ERRORS" | head -20
+    echo '```'
+  fi
+  echo
+
+  # ── Section 4: Code structure ───────────────────────────────────────
+  echo "## Code structure"
+  echo
+  echo "**Tree of src/ (2 levels deep):**"
+  echo
+  echo '```'
+  if command -v tree >/dev/null 2>&1; then
+    tree -L 2 src/ 2>/dev/null || echo "(tree failed)"
+  else
+    # Fallback: directory listing two levels deep, sorted, with a leading marker
+    command find src -maxdepth 2 -type d 2>/dev/null | sort | command sed 's|[^/]*/|  |g' || echo "(find failed)"
+  fi
+  echo '```'
+  echo
+  echo "**Largest 10 source files (by line count):**"
+  echo
+  echo '```'
+  command find src -type f \( -name '*.ts' -o -name '*.tsx' \) 2>/dev/null \
+    | xargs wc -l 2>/dev/null \
+    | sort -rn \
+    | head -11 \
+    || echo "(wc failed)"
+  echo '```'
+  echo
+
+  # ── Section 5: Recent activity ──────────────────────────────────────
+  echo "## Recent activity"
+  echo
+  echo "**Recently modified source files (last 5 within 24h):**"
+  echo
+  echo '```'
+  command find src -type f -newer "$TMPMARKER" 2>/dev/null | head -5 || echo "(none)"
+  echo '```'
+  echo
+  echo "**Most recent Dr. Claude brief:**"
+  echo
+  LATEST_BRIEF="$(ls -t "Dr. Claude/"*.md 2>/dev/null | head -1 || true)"
+  if [ -n "$LATEST_BRIEF" ]; then
+    echo "Path: \`${LATEST_BRIEF}\`"
+    echo
+    echo "First 50 lines:"
+    echo
+    echo '```'
+    head -50 "$LATEST_BRIEF" 2>/dev/null || echo "(unreadable)"
+    echo '```'
+  else
+    echo "(no Dr. Claude briefs found)"
+  fi
+  echo
+  echo "**Last test run:**"
+  echo
+  if [ -f ".last-test-output" ]; then
+    echo '```'
+    cat .last-test-output
+    echo '```'
+  else
+    echo "(no cached test output — forward-compat for when test runs get auto-captured)"
+  fi
+  echo
+
+  # ── Footer ──────────────────────────────────────────────────────────
+  echo "---"
+  echo
+  echo "*vern v0.1 — Brief 017 — \`~/JakeTunesV3/scripts/vern\`*"
+  echo
+  echo "To add a context note to future captures: \`./scripts/vern \"your note here\"\`"
+} > "$OUTPUT"
+
+echo "vern: wrote ${OUTPUT}"
+echo "vern: $(wc -l < "$OUTPUT" | tr -d ' ') lines, $(wc -c < "$OUTPUT" | tr -d ' ') bytes"
