@@ -1544,6 +1544,19 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     const tmp = LIBRARY_PATH + '.partial.json'
     await writeFile(tmp, JSON.stringify(library, null, 2))
     const { rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
+    // Brief 016: pre-stamp lastSelfWriteMtimeMs BEFORE the rename so the
+    // fsWatch handler (which fires synchronously with the rename) reads
+    // a fresh value when it compares mtimes. Previously the stamp landed
+    // AFTER the await stat below, but fsWatch's own async stat() could
+    // resolve first and observe lastSelfWriteMtimeMs as 0 (or a stale
+    // value), produce the `self 0` smoking-gun in the logs, and dispatch
+    // library-external-change for what was really our own write.
+    //
+    // The post-rename stat below still runs to refine the value to the
+    // actual on-disk mtime — both writes stay within the watcher's
+    // 2-second skip window, so a small Date.now() vs. stat.mtimeMs drift
+    // doesn't matter.
+    lastSelfWriteMtimeMs = Date.now()
     await renameFS(tmp, LIBRARY_PATH)
     try {
       const s = await stat(LIBRARY_PATH)

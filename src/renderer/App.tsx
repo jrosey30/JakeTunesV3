@@ -273,6 +273,15 @@ function AppInner() {
   appSettingsRef.current = appSettings
   const libStateRef = useRef(libState)
   libStateRef.current = libState
+  // Brief 016: playback state ref so closures (the library-external-change
+  // reload handler in particular) can read the currently playing track id
+  // without staleness. The reload handler protects the playing track's
+  // libState entry from being overwritten during playback — otherwise the
+  // overwrite cascades into UI desync (stale now-playing title, frozen
+  // scrubber) because the playback engine has the source of truth for
+  // that track's playback state.
+  const pbStateRef = useRef(pbState)
+  pbStateRef.current = pbState
   useEffect(() => {
     const onIpodMounted = () => {
       const settings = appSettingsRef.current
@@ -831,18 +840,109 @@ function AppInner() {
     // external edit later.
     const reloadHandler = () => {
       window.electronAPI.loadTracks().then((r) => {
-        if (r.tracks) {
-          // Brief 015: log the reload event with track-count delta so we
-          // can correlate against natural-end timestamps. The reload
-          // handler doesn't have direct access to PlaybackContext, but
-          // a reload during playback timestamps cleanly enough to
-          // cross-reference against dx.repeat.natural-end log lines.
+        if (!r.tracks) return
+        // Brief 016: compute a diff against the current in-memory library
+        // and dispatch a partial UPDATE_TRACKS for small changes instead
+        // of a full SET_TRACKS that replaces the entire 6195-element
+        // array. Full replacement cascades through every memo and view
+        // watching libState.tracks, clobbering playback UI state (stale
+        // now-playing title, frozen scrubber) — that was the proximate
+        // cause of the "auto-repeat" symptom Brief 015 instrumented.
+        //
+        // The currently playing track is never overwritten during
+        // playback — the audio engine has the source of truth for that
+        // track's playback state.
+        const currentTracks = libStateRef.current.tracks
+        const newTracks = r.tracks
+        const nowPlayingId = pbStateRef.current.nowPlaying?.id
+
+        // Large structural change → fall back to SET_TRACKS so things
+        // like fresh imports or iPod-sync arrivals work as before.
+        if (newTracks.length !== currentTracks.length) {
           console.log('[dx.repeat.lib-reload]', {
-            message: 'library.json changed externally, dispatching SET_TRACKS',
-            newTrackCount: r.tracks.length,
+            message: 'track count changed, dispatching SET_TRACKS',
+            oldCount: currentTracks.length,
+            newCount: newTracks.length,
+            protectedNowPlaying: nowPlayingId,
           })
-          dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+          dispatch({ type: 'SET_TRACKS', tracks: newTracks })
+          return
         }
+
+        // Same count → compute per-field diff.
+        const currentById = new Map(currentTracks.map(t => [t.id, t]))
+        const changed: Array<{ id: number; field: string; value: string | boolean }> = []
+        let needFullReload = false
+        for (const newTrack of newTracks) {
+          const oldTrack = currentById.get(newTrack.id)
+          if (!oldTrack) {
+            // Same total count but a new id appeared — id set is
+            // disjoint, partial merge isn't safe. Fall back to full.
+            needFullReload = true
+            break
+          }
+          // Protect the currently playing track entirely.
+          if (nowPlayingId !== undefined && newTrack.id === nowPlayingId) continue
+          const keys = new Set([
+            ...Object.keys(oldTrack as unknown as Record<string, unknown>),
+            ...Object.keys(newTrack as unknown as Record<string, unknown>),
+          ])
+          for (const key of keys) {
+            const oldVal = (oldTrack as unknown as Record<string, unknown>)[key]
+            const newVal = (newTrack as unknown as Record<string, unknown>)[key]
+            if (oldVal === newVal) continue
+            // UPDATE_TRACKS values are string | boolean; coerce numeric
+            // and undefined uniformly. Functions/objects aren't valid
+            // track fields, so skipping them is safe.
+            if (typeof newVal === 'boolean') {
+              changed.push({ id: newTrack.id, field: key, value: newVal })
+            } else if (newVal === undefined || newVal === null) {
+              changed.push({ id: newTrack.id, field: key, value: '' })
+            } else if (typeof newVal === 'string' || typeof newVal === 'number') {
+              changed.push({ id: newTrack.id, field: key, value: String(newVal) })
+            }
+            // arrays/objects skipped — Track has none of those today
+          }
+        }
+
+        if (needFullReload) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'disjoint id set, falling back to SET_TRACKS',
+            count: newTracks.length,
+            protectedNowPlaying: nowPlayingId,
+          })
+          dispatch({ type: 'SET_TRACKS', tracks: newTracks })
+          return
+        }
+
+        if (changed.length === 0) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'no detectable diff, skipping dispatch',
+            protectedNowPlaying: nowPlayingId,
+          })
+          return
+        }
+
+        // Threshold: huge diffs are cheaper as a single SET_TRACKS
+        // dispatch. 200 was chosen as the rough boundary between
+        // "incremental analysis result" (1–10 fields) and "large
+        // external rewrite" (hundreds of fields).
+        if (changed.length > 200) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'large diff, falling back to SET_TRACKS',
+            changedFields: changed.length,
+            protectedNowPlaying: nowPlayingId,
+          })
+          dispatch({ type: 'SET_TRACKS', tracks: newTracks })
+          return
+        }
+
+        console.log('[dx.repeat.lib-reload]', {
+          message: 'dispatching partial UPDATE_TRACKS',
+          changedFields: changed.length,
+          protectedNowPlaying: nowPlayingId,
+        })
+        dispatch({ type: 'UPDATE_TRACKS', updates: changed })
       })
     }
     const unsubExt = window.electronAPI.onLibraryExternalChange(() => {
