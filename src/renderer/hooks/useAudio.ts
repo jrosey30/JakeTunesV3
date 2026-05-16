@@ -835,15 +835,17 @@ export function useAudio() {
             sharedHowl_playing: next.playing(),
           })
           dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration(), position: 0 })
-          // Re-anchor the position bar — the deferred SET_POSITION will
-          // reach the correct value on the next rAF tick (already
-          // running from the prior track).
-          if (!sharedRaf) {
-            dx('raf.reschedule', { site: 'gapless-prewarm-restart' })
-            sharedRaf = requestAnimationFrame(updatePosition)
-          } else {
-            dx('raf.already-scheduled', { site: 'gapless-prewarm', sharedRaf })
-          }
+          // Brief 012d: previous code was `if (!sharedRaf) sharedRaf = ...`
+          // which silently failed because sharedRaf still holds the prior
+          // track's pending handle. That pending tick fires once on the new
+          // track's context, stillActive returns false, the loop exits
+          // without rescheduling, and SET_POSITION dispatches stop forever
+          // until the next transition restarts rAF. Always cancel and
+          // re-arm — same pattern used by standard promote and initial
+          // creation sites.
+          dx('raf.gapless-prewarm-rearm', { site: 'gapless-prewarm', oldSharedRaf: sharedRaf })
+          cancelAnimationFrame(sharedRaf)
+          sharedRaf = requestAnimationFrame(updatePosition)
         } else {
           // Pre-warm didn't fire (very short track, or rAF hadn't ticked
           // inside the last 150ms). Fall back to standard promote: wire
