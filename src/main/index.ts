@@ -503,7 +503,21 @@ async function persistOverrideFields(
   })
 }
 
-async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
+// Brief 014a: per-track payload propagated up to the worker so the
+// audio-analysis:progress event can carry full result data to the
+// renderer. null means "skipped" (no librosa) — caller emits only
+// `remaining` in that case.
+interface AudioAnalysisDispatch {
+  trackId: number
+  audioAnalysisAt: number
+  bpm: number | null
+  keyRoot: string | null
+  keyMode: 'major' | 'minor' | '' | null
+  camelotKey: string | null
+  ok: boolean
+}
+
+async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<AudioAnalysisDispatch | null> {
   // Brief 010b: skip job entirely when no librosa-equipped Python was
   // found at startup. Writing the audioAnalysisAt sentinel here would
   // mask the failure as "analyzed, just no data" and prevent the user
@@ -511,11 +525,12 @@ async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
   // track stays unanalyzed and the next backfill attempt can pick it up.
   if (!PYTHON_CMD) {
     console.warn(`[audio-analysis] ${job.trackId} skipped — no Python with librosa available (see [python] log on startup)`)
-    return
+    return null
   }
   const result = await runAudioAnalysisScript(job.path)
+  const audioAnalysisAt = Date.now()
   const fields: Record<string, string> = {
-    audioAnalysisAt: String(Date.now()),
+    audioAnalysisAt: String(audioAnalysisAt),
   }
   if (result.ok) {
     if (typeof result.bpm === 'number' && result.bpm > 0) fields.bpm = String(result.bpm)
@@ -530,6 +545,15 @@ async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<void> {
     await persistOverrideFields(job.trackId, fields, job.fingerprint)
   } catch (err) {
     console.warn(`[audio-analysis] persist failed for ${job.trackId}:`, err instanceof Error ? err.message : err)
+  }
+  return {
+    trackId: job.trackId,
+    audioAnalysisAt,
+    bpm: result.ok && typeof result.bpm === 'number' && result.bpm > 0 ? result.bpm : null,
+    keyRoot: result.ok ? (result.keyRoot ?? null) : null,
+    keyMode: result.ok ? (result.keyMode ?? null) : null,
+    camelotKey: result.ok ? (result.camelotKey ?? null) : null,
+    ok: result.ok,
   }
 }
 
@@ -564,8 +588,9 @@ async function audioAnalysisWorker(): Promise<void> {
         break
       }
       const job = audioAnalysisQueue.shift()!
+      let dispatch: AudioAnalysisDispatch | null = null
       try {
-        await processAudioAnalysisJob(job)
+        dispatch = await processAudioAnalysisJob(job)
       } catch (err) {
         console.warn(`[audio-analysis] job error for ${job.trackId}:`, err instanceof Error ? err.message : err)
       }
@@ -574,11 +599,24 @@ async function audioAnalysisWorker(): Promise<void> {
       // already written the audioAnalysisAt sentinel; this just trims
       // the in-flight queue file to match.
       void persistQueue()
-      // Brief 010 Phase 3: notify the renderer so the MusicManView
-      // backfill UI counter updates after each track. mainWindow may
-      // be null during very early startup or on shutdown, so guard.
+      // Brief 010 Phase 3 + Brief 014a: notify the renderer so the
+      // MusicManView backfill UI counter updates after each track AND
+      // libState.tracks gets the new analysis fields. The dispatch object
+      // is null when the job was skipped (no librosa); in that case we
+      // send only `remaining` so the counter still ticks past the
+      // skipped slot. mainWindow may be null during very early startup
+      // or on shutdown, so guard.
       mainWindow?.webContents.send('audio-analysis:progress', {
         remaining: audioAnalysisQueue.length,
+        ...(dispatch ? {
+          trackId: dispatch.trackId,
+          audioAnalysisAt: dispatch.audioAnalysisAt,
+          bpm: dispatch.bpm,
+          keyRoot: dispatch.keyRoot,
+          keyMode: dispatch.keyMode,
+          camelotKey: dispatch.camelotKey,
+          ok: dispatch.ok,
+        } : {}),
       })
     }
   } finally {

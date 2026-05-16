@@ -378,20 +378,37 @@ export default function MusicManView() {
     setTimeout(() => setAnalysisStatus(null), 4000)
   }, [])
 
-  // Brief 010 Phase 4: subscribe to worker progress + poll status while
-  // a backfill is active. Progress events fire on every job completion
-  // and decrement `remaining`; status poll fills in playback-paused
+  // Brief 010 Phase 4 + Brief 014a: subscribe to worker progress and
+  // pipe per-track results into libState. Progress events fire on
+  // every job completion with `remaining` (drives the counter) AND
+  // the new analysis fields (drive an UPDATE_TRACKS dispatch). The
+  // audioAnalysisCounts memo below recomputes in real time as the
+  // library state changes. Status poll fills in playback-paused
   // state (the worker doesn't emit a separate paused event — it just
   // keeps polling its own gate at 1-2s).
-  //
-  // Limitation: per-track results aren't piped back to UPDATE_TRACKS,
-  // so audioAnalysisCounts won't decrement until the next library
-  // reload. The "Done — N analyzed" toast surfaces the final outcome,
-  // and the on-disk overrides are correct. Per-track dispatch is a
-  // small follow-up if the stale counter becomes a real annoyance.
   useEffect(() => {
     if (!analysisRunning) return
-    const unsubProgress = window.electronAPI.onAudioAnalysisProgress(({ remaining }) => {
+    const unsubProgress = window.electronAPI.onAudioAnalysisProgress((payload) => {
+      const { remaining, trackId, audioAnalysisAt, bpm, keyRoot, keyMode, camelotKey } = payload
+      // Brief 014a: dispatch per-track UPDATE_TRACKS so the
+      // audioAnalysisCounts memo recomputes immediately. The reducer
+      // partial-merges per field, so multiple { id, field, value }
+      // entries for the same id update multiple fields on one track.
+      // bpm/audioAnalysisAt are coerced to number via NUMERIC_FIELDS.
+      // null bpm means librosa failed — we still write
+      // audioAnalysisAt (matches the on-disk override sentinel) and
+      // skip the bpm/key writes so the memo's `if (t.audioAnalysisAt
+      // && t.bpm)` gate treats it as "tried but unsuccessful."
+      if (typeof trackId === 'number' && typeof audioAnalysisAt === 'number') {
+        const updates: { id: number; field: string; value: string | boolean }[] = [
+          { id: trackId, field: 'audioAnalysisAt', value: String(audioAnalysisAt) },
+        ]
+        if (typeof bpm === 'number' && bpm > 0) updates.push({ id: trackId, field: 'bpm', value: String(bpm) })
+        if (keyRoot) updates.push({ id: trackId, field: 'keyRoot', value: keyRoot })
+        if (keyMode) updates.push({ id: trackId, field: 'keyMode', value: keyMode })
+        if (camelotKey) updates.push({ id: trackId, field: 'camelotKey', value: camelotKey })
+        dispatch({ type: 'UPDATE_TRACKS', updates })
+      }
       const total = analysisTotalRef.current
       if (total === 0) return
       setAnalysisProgress({ current: total - remaining, total, trackTitle: '' })
@@ -419,7 +436,7 @@ export default function MusicManView() {
       unsubProgress()
       clearInterval(pollId)
     }
-  }, [analysisRunning])
+  }, [analysisRunning, dispatch])
 
   // Tracks-needing-analysis count for the Organize Library section header.
   // Recomputes when libState.tracks changes (i.e., per-track during a

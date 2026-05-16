@@ -119,11 +119,32 @@ const electronAPI = {
     ipcRenderer.invoke('get-claude-stats'),
   analyzeTrack: (trackId: number, colonPath: string, fingerprint: string): Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }> =>
     ipcRenderer.invoke('analyze-track', trackId, colonPath, fingerprint),
-  // Brief 010 Phase 3: subscribe to worker progress. Fires once per
-  // completed job with the current remaining count. Returns an
-  // unsubscribe function (caller calls it on unmount).
-  onAudioAnalysisProgress: (callback: (p: { remaining: number }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, p: { remaining: number }) => callback(p)
+  // Brief 010 Phase 3 + Brief 014a: subscribe to worker progress. Fires
+  // once per completed job with the current remaining count AND the
+  // per-track analysis result so the renderer can dispatch UPDATE_TRACKS
+  // and the audioAnalysisCounts memo recomputes in real time. The
+  // per-track fields are optional — a job skipped at the librosa gate
+  // emits only `remaining`. Returns an unsubscribe function.
+  onAudioAnalysisProgress: (callback: (p: {
+    remaining: number
+    trackId?: number
+    audioAnalysisAt?: number
+    bpm?: number | null
+    keyRoot?: string | null
+    keyMode?: 'major' | 'minor' | '' | null
+    camelotKey?: string | null
+    ok?: boolean
+  }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: {
+      remaining: number
+      trackId?: number
+      audioAnalysisAt?: number
+      bpm?: number | null
+      keyRoot?: string | null
+      keyMode?: 'major' | 'minor' | '' | null
+      camelotKey?: string | null
+      ok?: boolean
+    }) => callback(p)
     ipcRenderer.on('audio-analysis:progress', handler)
     return () => { ipcRenderer.removeListener('audio-analysis:progress', handler) }
   },

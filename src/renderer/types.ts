@@ -288,8 +288,19 @@ declare global {
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
-      // Brief 010 Phase 3: audio-analysis worker progress subscription.
-      onAudioAnalysisProgress: (callback: (p: { remaining: number }) => void) => () => void
+      // Brief 010 Phase 3 + Brief 014a: audio-analysis worker progress
+      // subscription. Per-track fields are populated on completed jobs;
+      // a skipped-no-librosa emission carries only `remaining`.
+      onAudioAnalysisProgress: (callback: (p: {
+        remaining: number
+        trackId?: number
+        audioAnalysisAt?: number
+        bpm?: number | null
+        keyRoot?: string | null
+        keyMode?: 'major' | 'minor' | '' | null
+        camelotKey?: string | null
+        ok?: boolean
+      }) => void) => () => void
       // Brief 010 Phase 4: queue-based backfill IPCs.
       audioAnalysisEnqueueMany: (jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => Promise<{ ok: boolean; enqueued: number; totalQueued: number }>
       audioAnalysisStatus: () => Promise<{ ok: boolean; queueLength: number; workerRunning: boolean; isPlaybackActive: boolean }>
