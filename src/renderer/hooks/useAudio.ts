@@ -753,7 +753,7 @@ export function useAudio() {
           // PLAY_TRACK action so the reducer can't clobber it back to
           // 0 via its reset. Was the canonical 0:00 / -0:00 bug
           // reproduction site (~50% of natural autoplay transitions).
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration() })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration(), position: 0 })
           // Re-anchor the position bar — the deferred SET_POSITION will
           // reach the correct value on the next rAF tick (already
           // running from the prior track).
@@ -773,7 +773,7 @@ export function useAudio() {
           // return 0 — the load-handler SET_DURATION around line 600
           // is the fallback for that case.
           const nextDur = next.duration() || 0
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: 0 })
         }
         return
       }
