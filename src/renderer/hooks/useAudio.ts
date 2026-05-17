@@ -319,7 +319,11 @@ export function useAudio() {
   // circular useCallback dep cycles back through loadAndPlay (which
   // itself depends on updatePosition).
   const startCrossfadeRef = useRef<((track: Track, queue: Track[], queueIndex: number) => void) | null>(null)
-  const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }) => void) | null>(null)
+  // Brief 015d: 4th arg `freshQueueIndex` lets the caller pin the
+  // just-dispatched queueIndex into the onend closure, sidestepping
+  // stateRef.current staleness on long-playing tracks. Optional —
+  // legacy callers without the arg fall back to stateRef.current.
+  const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }, freshQueueIndex?: number) => void) | null>(null)
   // playTrackRef lets the stuck-audio watchdog (inside updatePosition)
   // recover by re-loading the current track. updatePosition is defined
   // first, so this ref is the cycle-breaker.
@@ -721,7 +725,12 @@ export function useAudio() {
       },
       onend: () => {
         logAudioEvent('howl.onend', { title: track.title })
-        runNaturalEndRef.current?.(track, howl, endedHolder)
+        // Brief 015d: capture loadAndPlay's `queueIndex` parameter into
+        // this closure so runNaturalEnd uses the value that was actually
+        // dispatched as PLAY_TRACK.queueIndex when this Howl was set up,
+        // not whatever stateRef.current.queueIndex happens to be 75+
+        // seconds later when the track ends naturally.
+        runNaturalEndRef.current?.(track, howl, endedHolder, queueIndex)
       },
       onloaderror: (_id: number, err: unknown) => {
         logAudioEvent('howl.onloaderror', { err: String(err), url: url.slice(0, 80) })
@@ -738,13 +747,14 @@ export function useAudio() {
   // advance logic) can share it. Body extracted from the prior inline
   // onend so we can reuse it from the gapless promote path below.
   useEffect(() => {
-    runNaturalEndRef.current = (track, howl, endedHolder) => {
-      // Brief 015c: entry log captures the EXACT stateRef snapshot at
-      // the moment runNaturalEnd starts executing. Compare against the
-      // most recent [dx.repeat.snapshot.changed] log — if they differ
-      // for queueIndex/nowPlayingId, stateRef is stale and we've found
-      // the bug class. The stateRef snapshot here is what the rest of
-      // the function will actually USE for its branching decisions.
+    runNaturalEndRef.current = (track, howl, endedHolder, freshQueueIndex) => {
+      // Brief 015c+015d: entry log captures BOTH the stateRef snapshot
+      // (what the function would have used pre-015d) AND the freshly-
+      // passed queueIndex (what 015d threads through the closure from
+      // the promote/load site that dispatched PLAY_TRACK). If those
+      // values DIFFER, stateRef was stale and 015d caught the bug.
+      // Cross-reference against the most recent [dx.repeat.snapshot.
+      // changed] log to triage other staleness sites.
       if (DIAGNOSTIC_LOGGING) {
         const rs = stateRef.current
         console.log('[dx.repeat.naturalEnd.enter]', {
@@ -752,6 +762,7 @@ export function useAudio() {
           trackBeingEnded: { id: track.id, title: track.title },
           endedHolderAlreadyV: endedHolder.v,
           howlMatchesShared: sharedHowl === howl,
+          freshQueueIndex: freshQueueIndex ?? null,
           stateRefSnapshot: {
             queueIndex: rs.queueIndex,
             queueLength: rs.queue.length,
@@ -788,16 +799,33 @@ export function useAudio() {
       window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
 
       const s = stateRef.current
+      // Brief 015d: prefer the queueIndex captured at the moment the
+      // onend handler was wired (passed through the closure from the
+      // promote/load site that dispatched PLAY_TRACK) over
+      // stateRef.current.queueIndex. stateRef freshness is tied to
+      // useAudio's render cycle — long-playing tracks with no UI
+      // interaction between dispatch and natural-end leave stateRef
+      // pointing at a pre-dispatch snapshot. Reproduction: "Everyone
+      // Has AIDS" repeated 3x on Team America soundtrack 2026-05-17
+      // because s.queueIndex read 12 while the reducer state was 13.
+      // s.repeat / s.queue / s.isPlaying are NOT staleness-sensitive
+      // in the same way and continue to read from stateRef.
+      const currentQueueIndex = freshQueueIndex ?? s.queueIndex
       // Brief 015: snapshot every state value the natural-end decision
       // reads, plus a couple of queue spot-checks (first/last titles)
       // to verify the queue is what we think it is.
+      // Brief 015d: also emit `stateRefQueueIndex` alongside the
+      // (now-fresh) `queueIndex` so post-fix captures show whether
+      // the bug WOULD have fired and the freshQueueIndex caught it.
       if (DIAGNOSTIC_LOGGING) {
         logAudioEvent('dx.repeat.natural-end', {
           trackTitle: track.title,
           trackId: track.id,
           repeat: s.repeat,
           queueLength: s.queue.length,
-          queueIndex: s.queueIndex,
+          queueIndex: currentQueueIndex,
+          stateRefQueueIndex: s.queueIndex,
+          freshQueueIndexUsed: freshQueueIndex !== undefined,
           autoDjMode,
           isPlaying: s.isPlaying,
           firstQueueTrack: s.queue[0]?.title,
@@ -808,17 +836,17 @@ export function useAudio() {
         if (DIAGNOSTIC_LOGGING) {
           logAudioEvent('dx.repeat.branch.repeat-one', {
             replayingTrack: track.title,
-            queueIndex: s.queueIndex,
+            queueIndex: currentQueueIndex,
           })
         }
         cleanupGaplessPreload()
-        loadAndPlay(track, s.queue, s.queueIndex)
+        loadAndPlay(track, s.queue, currentQueueIndex)
         if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'repeat-one', ts: Date.now() })
         return
       }
       // Shuffle is queue-order-baked, not per-track-random — see
       // TOGGLE_SHUFFLE in PlaybackContext. Always sequential here.
-      let nextIdx = s.queueIndex + 1
+      let nextIdx = currentQueueIndex + 1
       if (nextIdx >= s.queue.length) {
         if (DIAGNOSTIC_LOGGING) {
           logAudioEvent('dx.repeat.branch.queue-exhausted', {
@@ -852,10 +880,14 @@ export function useAudio() {
       if (DIAGNOSTIC_LOGGING) {
         // sameTrack is the smoking-gun canary: if this fires with
         // sameTrack=true, the "advance" branch is replaying the same
-        // track (queue corruption — same id at fromIdx and toIdx, or
-        // post-wrap queue collapsed to length 1).
+        // track. Brief 015d: fromIdx now reports the fresh value used
+        // for the decision; stateRefFromIdx shows what stateRef would
+        // have returned. If they differ but sameTrack=false → 015d
+        // caught a stale read. If sameTrack=true with fresh value →
+        // a different bug (real queue corruption, not staleness).
         logAudioEvent('dx.repeat.branch.advance', {
-          fromIdx: s.queueIndex,
+          fromIdx: currentQueueIndex,
+          stateRefFromIdx: s.queueIndex,
           toIdx: nextIdx,
           fromTrack: track.title,
           toTrack: s.queue[nextIdx]?.title,
@@ -906,8 +938,17 @@ export function useAudio() {
         // Wire up the preloaded Howl's lifecycle (it was created without
         // these handlers in the preload step).
         const nextEndedHolder = { v: false }
+        // Brief 015d: pin `ni` (the queueIndex about to be dispatched
+        // for this promoted track) into the onend closure. When this
+        // track ends naturally — possibly minutes later, after zero
+        // intervening renders refreshed stateRef.current — runNaturalEnd
+        // gets the right queueIndex via this parameter instead of the
+        // stale stateRef. THIS is the confirmed Team-America-soundtrack
+        // reproduction site; the other onend wiring in loadAndPlay
+        // gets the same treatment for symmetry / defense in depth.
+        const promotedQueueIndex = ni
         next.once('end', () => {
-          runNaturalEndRef.current?.(nt, next, nextEndedHolder)
+          runNaturalEndRef.current?.(nt, next, nextEndedHolder, promotedQueueIndex)
         })
         // REMOVED in 4.0.12: the matching auto-resume handler on the
         // gapless-promoted Howl. Same feedback-loop reason as the main
