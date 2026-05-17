@@ -778,6 +778,15 @@ export default function SmartPlaylistView() {
           </button>
         </div>
       )}
+      {/* Brief 026: wrap .songs-header + .songs-body in a .songs-view
+          flex column so the CSS that gives them a shared horizontal
+          scroll context applies here too. SongsView and PlaylistView
+          already had this wrapper; SmartPlaylistView was the outlier
+          rendering both as direct children of .playlist-view, which
+          left header column labels desynced from row cells under
+          horizontal scroll. Same { flex: 1, minHeight: 0 } sizing as
+          PlaylistView's existing wrapper at line 533. */}
+      <div className="songs-view" style={{ flex: 1, minHeight: 0 }}>
       <div
         className="songs-header"
         style={{ gridTemplateColumns: gridTemplate }}
@@ -868,6 +877,7 @@ export default function SmartPlaylistView() {
           )
         })}
       </div>
+      </div> {/* Brief 026: close the wrapping .songs-view div opened above the .songs-header */}
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x}
