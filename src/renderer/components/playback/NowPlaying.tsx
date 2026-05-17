@@ -215,12 +215,25 @@ export default function NowPlaying() {
             {track.album && <span className="now-playing-album">{track.album}</span>}
           </div>
           <div className="scrubber-row">
-            <span className="scrubber-time">{formatTime(state.position)}</span>
+            {/* Brief 025: floor position + duration ONCE, then compute
+                remaining as their integer difference, so the count-up and
+                countdown labels never drift apart by the ~half-second
+                rounding asymmetry. Pre-fix: formatTime(position) floored
+                position, formatTime(duration - position) floored AFTER
+                subtraction — e.g. position=4.6 / duration=75.4 produced
+                "0:04" + "-1:10" while the actual duration read as 1:15.
+                Fix keeps position + |remaining| === floor(duration) at
+                every render. Math.max(0, ...) clamps the countdown to
+                -0:00 when position briefly overshoots duration near
+                track end. Strictly read-only; the scrubber drag-logic
+                seam (handleMouseDown, barRef) on the next line is
+                untouched per the do-not-touch list. */}
+            <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
             <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
               <div className="scrubber-fill" style={{ width: `${progress}%` }} />
               <div className="scrubber-knob" style={{ left: `${progress}%` }} />
             </div>
-            <span className="scrubber-time">-{formatTime(state.duration - state.position)}</span>
+            <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(state.duration) - Math.floor(state.position)))}</span>
           </div>
         </>
       ) : effectiveMode === 'sync' && syn ? (
