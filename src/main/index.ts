@@ -61,6 +61,17 @@ import {
   readOverridesQueueFile,
   type MergeableTrack,
 } from './library-overrides'
+// Brief 020: tag write-back (overrides → embedded file tags so Plex
+// sees user edits). Pairs with metadata-overrides.json — overrides
+// remain the authoritative source; this module pushes them downstream.
+import {
+  WRITABLE_FIELDS,
+  writeTagsToFile,
+  writeTagsBatch,
+  colonPathToAbsolute,
+  augmentPairFields,
+  type TagWriteRequest,
+} from './tag-writer'
 
 const isDev = !app.isPackaged
 
@@ -6156,7 +6167,155 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   // 4.4.18: metadata edits are a sync trigger — change a track's artist
   // on laptop, homemini reflects it within ~30 sec.
   triggerSync('metadata-edit')
+
+  // Brief 020: write user-facing override fields into the audio file's
+  // embedded tags so Plex (which reads tags directly, not our override
+  // layer) sees the corrected value on its next scan. Fire-and-forget —
+  // the override layer is the authoritative source; failing to write
+  // the tag is a downstream propagation miss, not a correctness bug.
+  // Skipped for analysis fields (bpm/keyRoot/etc.) and stats
+  // (playCount/lastPlayedAt/skipCount) per WRITABLE_FIELDS gate.
+  if (WRITABLE_FIELDS.has(field)) {
+    void (async () => {
+      try {
+        const raw = await readFile(LIBRARY_PATH, 'utf-8')
+        const lib = JSON.parse(raw) as { tracks?: Array<Record<string, unknown>> }
+        const track = (lib.tracks || []).find(t => t.id === trackId)
+        if (!track) return
+        const colonPath = String(track.path || '')
+        if (!colonPath) return
+        // Fingerprint guard — same identity-gate the renderer uses
+        // when applying overrides. If the track at this ID no longer
+        // matches the fingerprint the override was saved with, don't
+        // touch the file (different track, would write wrong tag).
+        if (fingerprint) {
+          const trackFp = `${String(track.title || '').toLowerCase().trim()}|${String(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
+          if (trackFp !== fingerprint) {
+            console.warn(`[tag-writeback] skipped trackId=${trackId} field=${field} — fingerprint mismatch (track identity changed)`)
+            return
+          }
+        }
+        const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
+        const overrides = augmentPairFields(field, value, track)
+        const result = await writeTagsToFile({ audioFilePath: absPath, overrides })
+        if (result.ok && result.fieldsWritten.length > 0) {
+          console.log(`[tag-writeback] ${trackId} ${field}=${value} → ${absPath}${result.sidecarBackup ? ' (backed up)' : ''}`)
+        } else if (!result.ok) {
+          console.warn(`[tag-writeback] ${trackId} ${field} failed: ${result.error}`)
+        }
+      } catch (err) {
+        console.warn(`[tag-writeback] hook error for trackId=${trackId} field=${field}:`, err instanceof Error ? err.message : err)
+      }
+    })()
+  }
+
   return { ok: true }
+})
+
+// Brief 020: batch backfill — push every existing override's writable
+// fields into the corresponding audio files. Invoked from the
+// "Library → Apply Overrides to Files…" menu after the user confirms.
+//
+// Process:
+//   1. Read library.json + metadata-overrides.json from disk
+//   2. For each override entry: validate fingerprint match against
+//      the current library track; if mismatched, skip (track identity
+//      changed). For each WRITABLE_FIELDS value present, build the
+//      payload (with pair augmentation for trackNumber/discNumber).
+//   3. Hand the list to writeTagsBatch which chunks at concurrency=8
+//      and emits progress events.
+//   4. Progress events relay to the renderer via
+//      'tag-writeback:progress' so the UI can show a live counter.
+//
+// Returns a summary the renderer can show in the result toast/dialog.
+ipcMain.handle('apply-overrides-batch', async (event) => {
+  try {
+    const [libRaw, ovrRaw] = await Promise.all([
+      readFile(LIBRARY_PATH, 'utf-8'),
+      readFile(getOverridesPath(), 'utf-8').catch(() => '{}'),
+    ])
+    const lib = JSON.parse(libRaw) as { tracks?: Array<Record<string, unknown>> }
+    const overrides = JSON.parse(ovrRaw) as Record<string, { fp?: string; fields?: Record<string, string> }>
+    const tracksById = new Map<number, Record<string, unknown>>()
+    for (const t of lib.tracks || []) {
+      if (typeof t.id === 'number') tracksById.set(t.id, t)
+    }
+
+    // Build the work list. Skip entries with:
+    //   - no matching track in library
+    //   - fingerprint mismatch (track identity changed since override)
+    //   - no writable fields (analysis-only entries are the bulk
+    //     of metadata-overrides.json; nothing to push to files)
+    const requests: TagWriteRequest[] = []
+    let skippedNoTrack = 0
+    let skippedFpMismatch = 0
+    let skippedNoWritable = 0
+    for (const [keyStr, entry] of Object.entries(overrides)) {
+      const trackId = Number(keyStr)
+      if (!Number.isFinite(trackId)) continue
+      const track = tracksById.get(trackId)
+      if (!track) { skippedNoTrack++; continue }
+      const fields = entry?.fields || {}
+      // Filter to writable fields, augment pairs.
+      const writable: Record<string, string | number> = {}
+      for (const [fname, fval] of Object.entries(fields)) {
+        if (WRITABLE_FIELDS.has(fname) && fval !== undefined && fval !== null && fval !== '') {
+          writable[fname] = fval
+        }
+      }
+      if (Object.keys(writable).length === 0) { skippedNoWritable++; continue }
+      // Pair augmentation — preserve N/M format for trackNumber+trackCount
+      // and discNumber+discCount when only one side is in overrides.
+      if (writable.trackNumber && !writable.trackCount && track.trackCount) {
+        writable.trackCount = String(track.trackCount)
+      }
+      if (writable.discNumber && !writable.discCount && track.discCount) {
+        writable.discCount = String(track.discCount)
+      }
+      // Fingerprint guard
+      const trackFp = `${String(track.title || '').toLowerCase().trim()}|${String(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
+      if (entry.fp && entry.fp !== trackFp) {
+        skippedFpMismatch++
+        continue
+      }
+      const colonPath = String(track.path || '')
+      if (!colonPath) { skippedNoTrack++; continue }
+      const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
+      requests.push({ audioFilePath: absPath, overrides: writable })
+    }
+
+    console.log(`[tag-writeback] batch: ${requests.length} files to update (skipped: ${skippedNoTrack} no-track, ${skippedFpMismatch} fp-mismatch, ${skippedNoWritable} no-writable)`)
+
+    const result = await writeTagsBatch(requests, (p) => {
+      // Relay progress to the renderer for the live counter. Best-
+      // effort — webContents may be null during shutdown / blur.
+      try {
+        event.sender.send('tag-writeback:progress', p)
+      } catch { /* ignore */ }
+    })
+
+    return {
+      ok: true,
+      total: result.total,
+      succeeded: result.succeeded,
+      failed: result.failed,
+      skippedNoTrack,
+      skippedFpMismatch,
+      skippedNoWritable,
+      // Don't ship the full per-file results array (could be 6k entries) —
+      // the summary is enough for the UI. First 10 failures are useful
+      // for diagnosis though.
+      failures: result.results
+        .filter(r => !r.ok)
+        .slice(0, 10)
+        .map(r => ({ filePath: r.filePath, error: r.error })),
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
 })
 
 // Chat history persistence

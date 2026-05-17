@@ -342,6 +342,21 @@ declare global {
       artworkBackfillStatus: () => Promise<{ ok: boolean; done: boolean }>
       backfillEmbeddedArtwork: (tracks: Array<{ path: string; artist: string; album: string }>) => Promise<{ ok: boolean; artwork?: Array<{ key: string; hash: string }>; error?: string }>
       onArtworkBackfillProgress: (callback: (progress: { processed: number; total: number }) => void) => () => void
+      // Brief 020: tag write-back batch + progress subscription. Per-edit
+      // write-back fires automatically in save-metadata-override; only
+      // the batch + progress need a renderer-side surface.
+      applyOverridesBatch: () => Promise<{
+        ok: boolean
+        total?: number
+        succeeded?: number
+        failed?: number
+        skippedNoTrack?: number
+        skippedFpMismatch?: number
+        skippedNoWritable?: number
+        failures?: Array<{ filePath: string; error?: string }>
+        error?: string
+      }>
+      onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => () => void
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>

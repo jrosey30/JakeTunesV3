@@ -253,6 +253,28 @@ const electronAPI = {
     ipcRenderer.on('artwork-backfill-progress', handler)
     return () => { ipcRenderer.removeListener('artwork-backfill-progress', handler) }
   },
+  // Brief 020: batch backfill of writable overrides into embedded file
+  // tags so Plex sees user edits. Invoked from the
+  // "Library → Apply Overrides to Files…" menu. Per-edit write-back
+  // happens automatically inside save-metadata-override; no renderer-
+  // side IPC for that case.
+  applyOverridesBatch: (): Promise<{
+    ok: boolean
+    total?: number
+    succeeded?: number
+    failed?: number
+    skippedNoTrack?: number
+    skippedFpMismatch?: number
+    skippedNoWritable?: number
+    failures?: Array<{ filePath: string; error?: string }>
+    error?: string
+  }> =>
+    ipcRenderer.invoke('apply-overrides-batch'),
+  onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => callback(p)
+    ipcRenderer.on('tag-writeback:progress', handler)
+    return () => { ipcRenderer.removeListener('tag-writeback:progress', handler) }
+  },
   // Resolve folders + glob filtering on the main side; renderer only
   // ever sees individual audio file paths in the queue.
   importResolvePaths: (paths: string[]): Promise<{ ok: boolean; paths?: string[]; error?: string }> =>
