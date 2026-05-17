@@ -15,6 +15,7 @@ import PlayCacheModal from './components/PlayCacheModal'
 import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
+import ConfirmDialog from './components/ConfirmDialog'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
 import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
 import { setCrossfadeSettings } from './hooks/useAudio'
@@ -38,6 +39,13 @@ function AppInner() {
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Brief 020: tag write-back batch UI state. Two phases:
+  //   - applyOverridesConfirmOpen → confirm modal
+  //   - applyOverridesProgress != null → in-flight modal (counter + bar)
+  //   - applyOverridesResult != null → result summary modal
+  const [applyOverridesConfirmOpen, setApplyOverridesConfirmOpen] = useState(false)
+  const [applyOverridesProgress, setApplyOverridesProgress] = useState<{ done: number; total: number; succeeded: number; failed: number } | null>(null)
+  const [applyOverridesResult, setApplyOverridesResult] = useState<{ total: number; succeeded: number; failed: number; skippedNoTrack: number; skippedFpMismatch: number; skippedNoWritable: number; failures: Array<{ filePath: string; error?: string }> } | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [uiReady, setUiReady] = useState(false)
   // 4.4.39: minimum splash display time. Even on a warm cache where the
@@ -832,6 +840,15 @@ function AppInner() {
           })()
           break
         }
+        case 'apply-overrides-to-files': {
+          // Brief 020 batch backfill — push every writable override
+          // (~1.6k entries at ship time) into the corresponding audio
+          // file's embedded tags so Plex sees the corrected metadata.
+          // Just opens the confirm; the actual run happens after
+          // onConfirm in the ConfirmDialog renders below.
+          setApplyOverridesConfirmOpen(true)
+          break
+        }
       }
     })
     // Main process watches library.json on disk and fires this when
@@ -1137,6 +1154,108 @@ function AppInner() {
             tracks={libState.tracks}
             onClose={() => setShowDuplicatesOpen(false)}
             onDelete={(id) => dispatch({ type: 'DELETE_TRACKS', ids: [id] })}
+          />
+        )}
+        {/* Brief 020: Apply-Overrides-to-Files three-phase modal flow.
+            Confirm → progress → result. Each phase shares the
+            ConfirmDialog styling for visual consistency; progress is
+            a custom inline modal since ConfirmDialog assumes buttoned
+            interaction and the in-flight phase has nothing to click. */}
+        {applyOverridesConfirmOpen && (
+          <ConfirmDialog
+            message="Apply JakeTunes overrides to audio files?"
+            detail="This writes your edited metadata (title, artist, album, genre, year, track/disc numbers) into the audio files' embedded tags. Plex will pick up the corrected values on its next scan. Each file's original tags are backed up to a sidecar (<path>.original-tags.json) before any change — reversible. Analysis fields (BPM, key) and listener stats stay JakeTunes-only and are NOT written."
+            confirmLabel="Apply Overrides"
+            cancelLabel="Cancel"
+            destructive={false}
+            onCancel={() => setApplyOverridesConfirmOpen(false)}
+            onConfirm={() => {
+              setApplyOverridesConfirmOpen(false)
+              setApplyOverridesProgress({ done: 0, total: 0, succeeded: 0, failed: 0 })
+              const unsub = window.electronAPI.onTagWritebackProgress((p) => {
+                setApplyOverridesProgress(p)
+              })
+              void (async () => {
+                try {
+                  const r = await window.electronAPI.applyOverridesBatch()
+                  unsub()
+                  setApplyOverridesProgress(null)
+                  if (r.ok) {
+                    setApplyOverridesResult({
+                      total: r.total ?? 0,
+                      succeeded: r.succeeded ?? 0,
+                      failed: r.failed ?? 0,
+                      skippedNoTrack: r.skippedNoTrack ?? 0,
+                      skippedFpMismatch: r.skippedFpMismatch ?? 0,
+                      skippedNoWritable: r.skippedNoWritable ?? 0,
+                      failures: r.failures ?? [],
+                    })
+                  } else {
+                    setApplyOverridesResult({
+                      total: 0, succeeded: 0, failed: 0,
+                      skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
+                      failures: [{ filePath: '(batch error)', error: r.error }],
+                    })
+                  }
+                } catch (err) {
+                  unsub()
+                  setApplyOverridesProgress(null)
+                  setApplyOverridesResult({
+                    total: 0, succeeded: 0, failed: 0,
+                    skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
+                    failures: [{ filePath: '(client error)', error: err instanceof Error ? err.message : String(err) }],
+                  })
+                }
+              })()
+            }}
+          />
+        )}
+        {applyOverridesProgress && (
+          <div className="confirm-overlay">
+            <div className="confirm-dialog">
+              <div className="confirm-message">Applying overrides to files…</div>
+              <div className="confirm-detail">
+                {applyOverridesProgress.total === 0
+                  ? 'Preparing…'
+                  : `${applyOverridesProgress.done.toLocaleString()} of ${applyOverridesProgress.total.toLocaleString()} files (${applyOverridesProgress.succeeded.toLocaleString()} written, ${applyOverridesProgress.failed.toLocaleString()} failed)`}
+              </div>
+              <div style={{
+                marginTop: 12,
+                height: 6,
+                background: '#2a2a2a',
+                borderRadius: 3,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${applyOverridesProgress.total > 0 ? (applyOverridesProgress.done / applyOverridesProgress.total) * 100 : 0}%`,
+                  background: '#e0812e',
+                  transition: 'width 200ms ease-out',
+                }} />
+              </div>
+            </div>
+          </div>
+        )}
+        {applyOverridesResult && (
+          <ConfirmDialog
+            message={
+              applyOverridesResult.failed > 0
+                ? `Wrote tags to ${applyOverridesResult.succeeded.toLocaleString()} files; ${applyOverridesResult.failed.toLocaleString()} failed.`
+                : `Wrote tags to ${applyOverridesResult.succeeded.toLocaleString()} files.`
+            }
+            detail={
+              `Skipped: ${applyOverridesResult.skippedNoTrack.toLocaleString()} missing-track, ` +
+              `${applyOverridesResult.skippedFpMismatch.toLocaleString()} fingerprint-mismatch, ` +
+              `${applyOverridesResult.skippedNoWritable.toLocaleString()} analysis-only.` +
+              (applyOverridesResult.failures.length > 0
+                ? `\n\nFirst failures:\n${applyOverridesResult.failures.slice(0, 5).map(f => `• ${f.filePath.split('/').pop()}: ${f.error || 'unknown'}`).join('\n')}`
+                : '')
+            }
+            confirmLabel="Close"
+            cancelLabel="Close"
+            destructive={false}
+            onCancel={() => setApplyOverridesResult(null)}
+            onConfirm={() => setApplyOverridesResult(null)}
           />
         )}
       </div>

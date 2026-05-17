@@ -1088,6 +1088,15 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // skips, ratings) into the desktop library. Identity-gated
           // on audioFingerprint per the verify-repair postmortem rule.
           { label: 'Apply Mobile Overrides…',     click: () => sendMenuAction('apply-mobile-overrides') },
+          { type: 'separator' },
+          // Brief 020: push the user-edited override fields (title, artist,
+          // album, genre, year, track/disc numbers) into the audio files'
+          // embedded tags so Plex sees the corrected metadata on its next
+          // scan. Per-edit write-back fires automatically inside
+          // save-metadata-override; this menu item is the one-shot
+          // backfill for the ~1.6k existing writable overrides that
+          // accumulated before the per-edit hook existed.
+          { label: 'Apply Overrides to Files…',  click: () => sendMenuAction('apply-overrides-to-files') },
           // (Removed: "Verify & Repair Library…" — the underlying tag
           // matcher had false-negative cases (e.g. file tag "Pt. 1" vs.
           // library "Part 1") that would land real tracks in the
