@@ -77,6 +77,22 @@
      instead of snapping. 90ms is fast enough that nothing feels
      delayed; long enough that you can perceive it as a transition. */
   transition: background-color 90ms ease-out;
+  /* Brief 024: row container sizes to the sum of grid track widths,
+     not the parent wrapper's constrained visible width. Without this,
+     the row's box stops at songs-body's visible width while the grid
+     CHILDREN (cells, sized by explicit colWidths) overflow past it.
+     Result: alternating-row and selection-highlight backgrounds were
+     clipped at ~the Year column boundary; cells past that point
+     rendered against the parent wrapper instead of the row, looking
+     blank on selected rows and breaking zebra striping on every row.
+     `min-width: max-content` lets the row grow to its intrinsic grid
+     width while still filling extra space when the window is wider
+     than the column sum. .songs-body's overflow-x: auto handles the
+     horizontal scroll exactly as before — the row container now
+     scrolls with its cells instead of staying put. Also fixes the
+     identical bug in PlaylistView and SmartPlaylistView, which both
+     reuse this row class. */
+  min-width: max-content;
 }
 
 /* Cool blue-tint alternating row (iTunes 8). The previous warm
