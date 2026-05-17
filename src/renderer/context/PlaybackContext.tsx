@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, ReactNode } from 'react'
+import { createContext, useContext, useReducer, useEffect, useRef, ReactNode } from 'react'
 import { Track, RepeatMode } from '../types'
 
 interface PlaybackState {
@@ -265,13 +265,90 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
   }
 }
 
+// Brief 015c: wrap playbackReducer so we can see EVERY reducer
+// invocation — including ones triggered by dispatch paths the
+// existing per-case dx.repeat.* logs don't cover (any action that
+// touches queueIndex/queue length/nowPlaying but isn't PLAY_TRACK
+// or SET_REPEAT). Hunting an auto-repeat bug whose smoking-gun
+// observation (sameTrack=true at advance) means queueIndex was
+// reset between PLAY_TRACK and the next natural-end with no
+// existing log capturing the reset.
+function loggingReducer(prevState: PlaybackState, action: PlaybackAction): PlaybackState {
+  const nextState = playbackReducer(prevState, action)
+  const queueIdxChanged = prevState.queueIndex !== nextState.queueIndex
+  const queueLenChanged = prevState.queue.length !== nextState.queue.length
+  const trackChanged = prevState.nowPlaying?.id !== nextState.nowPlaying?.id
+  if (queueIdxChanged || queueLenChanged || trackChanged) {
+    console.log('[dx.repeat.reducer.call]', {
+      src: 'loggingReducer',
+      actionType: action.type,
+      prev: {
+        queueIndex: prevState.queueIndex,
+        queueLength: prevState.queue.length,
+        nowPlayingId: prevState.nowPlaying?.id ?? null,
+        nowPlayingTitle: prevState.nowPlaying?.title ?? null,
+      },
+      next: {
+        queueIndex: nextState.queueIndex,
+        queueLength: nextState.queue.length,
+        nowPlayingId: nextState.nowPlaying?.id ?? null,
+        nowPlayingTitle: nextState.nowPlaying?.title ?? null,
+      },
+      queueIdxChanged,
+      queueLenChanged,
+      trackChanged,
+    })
+  }
+  return nextState
+}
+
 const PlaybackContext = createContext<{
   state: PlaybackState
   dispatch: React.Dispatch<PlaybackAction>
 } | null>(null)
 
 export function PlaybackProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(playbackReducer, initialState)
+  const [state, dispatch] = useReducer(loggingReducer, initialState)
+
+  // Brief 015c: every render, compare current state to the previous
+  // snapshot. If queueIndex/queue.length/nowPlaying changed without a
+  // matching loggingReducer call also logging the same change, we have
+  // evidence of state mutation outside the reducer (or a provider re-
+  // mount that reset state). No dependency array on purpose — runs on
+  // every render so we see every shape change.
+  const prevSnapshotRef = useRef<{
+    queueIndex: number
+    queueLength: number
+    nowPlayingId: number | null
+    ts: number
+  } | null>(null)
+  useEffect(() => {
+    const snapshot = {
+      queueIndex: state.queueIndex,
+      queueLength: state.queue.length,
+      nowPlayingId: state.nowPlaying?.id ?? null,
+      ts: Date.now(),
+    }
+    const prev = prevSnapshotRef.current
+    if (prev) {
+      const idxChanged = prev.queueIndex !== snapshot.queueIndex
+      const lenChanged = prev.queueLength !== snapshot.queueLength
+      const trackChanged = prev.nowPlayingId !== snapshot.nowPlayingId
+      if (idxChanged || lenChanged || trackChanged) {
+        console.log('[dx.repeat.snapshot.changed]', {
+          src: 'renderSnapshotEffect',
+          deltaMs: snapshot.ts - prev.ts,
+          prev,
+          next: snapshot,
+          idxChanged,
+          lenChanged,
+          trackChanged,
+        })
+      }
+    }
+    prevSnapshotRef.current = snapshot
+  })
+
   return (
     <PlaybackContext.Provider value={{ state, dispatch }}>
       {children}

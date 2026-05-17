@@ -208,6 +208,26 @@ export function useAudio() {
   const tracksRef = useRef(libState.tracks)
   tracksRef.current = libState.tracks
 
+  // Brief 015c: track dispatchRef freshness. useReducer's dispatch is
+  // referentially stable, so this useEffect should fire exactly ONCE
+  // per mount of useAudio. If we ever see two or more before an auto-
+  // repeat bug fires, useAudio has remounted (e.g., PlaybackProvider
+  // remounted underneath us) and there's a stale dispatchRef
+  // somewhere capturing the prior cycle's dispatch function. The
+  // mountId counter makes "I have N copies of useAudio in flight"
+  // obvious in a single log line.
+  const mountIdRef = useRef<number>(0)
+  useEffect(() => {
+    mountIdRef.current = (mountIdRef.current || 0) + 1
+    if (DIAGNOSTIC_LOGGING) {
+      console.log('[dx.repeat.dispatchref.update]', {
+        src: 'useAudio.dispatchRefEffect',
+        mountInvocation: mountIdRef.current,
+        ts: Date.now(),
+      })
+    }
+  }, [dispatch])
+
   // Notify main when isPlaying changes so background workers (audio
   // analysis, ALAC prewarm — both heavy I/O on iPod-USB sources) can
   // yield while playback is live. Fire-and-forget IPC — preload
@@ -719,9 +739,39 @@ export function useAudio() {
   // onend so we can reuse it from the gapless promote path below.
   useEffect(() => {
     runNaturalEndRef.current = (track, howl, endedHolder) => {
-      if (endedHolder.v) return
+      // Brief 015c: entry log captures the EXACT stateRef snapshot at
+      // the moment runNaturalEnd starts executing. Compare against the
+      // most recent [dx.repeat.snapshot.changed] log — if they differ
+      // for queueIndex/nowPlayingId, stateRef is stale and we've found
+      // the bug class. The stateRef snapshot here is what the rest of
+      // the function will actually USE for its branching decisions.
+      if (DIAGNOSTIC_LOGGING) {
+        const rs = stateRef.current
+        console.log('[dx.repeat.naturalEnd.enter]', {
+          src: 'runNaturalEnd',
+          trackBeingEnded: { id: track.id, title: track.title },
+          endedHolderAlreadyV: endedHolder.v,
+          howlMatchesShared: sharedHowl === howl,
+          stateRefSnapshot: {
+            queueIndex: rs.queueIndex,
+            queueLength: rs.queue.length,
+            nowPlayingId: rs.nowPlaying?.id ?? null,
+            nowPlayingTitle: rs.nowPlaying?.title ?? null,
+            isPlaying: rs.isPlaying,
+            repeat: rs.repeat,
+          },
+          ts: Date.now(),
+        })
+      }
+      if (endedHolder.v) {
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'endedHolder-already-v', ts: Date.now() })
+        return
+      }
       endedHolder.v = true
-      if (sharedHowl !== howl) return
+      if (sharedHowl !== howl) {
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'howl-not-shared', ts: Date.now() })
+        return
+      }
       cancelAnimationFrame(sharedRaf)
 
       // Increment play count (look up latest count from tracks ref)
@@ -763,6 +813,7 @@ export function useAudio() {
         }
         cleanupGaplessPreload()
         loadAndPlay(track, s.queue, s.queueIndex)
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'repeat-one', ts: Date.now() })
         return
       }
       // Shuffle is queue-order-baked, not per-track-random — see
@@ -783,7 +834,10 @@ export function useAudio() {
           window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
           window.dispatchEvent(new Event('musicman-dj-set-ended'))
           window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
-          if (handled) return
+          if (handled) {
+            if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'dj-set-ended-handled', ts: Date.now() })
+            return
+          }
           console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
           autoDjMode = false
         }
@@ -791,6 +845,7 @@ export function useAudio() {
         else {
           cleanupGaplessPreload()
           dispatchRef.current({ type: 'STOP' })
+          if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'stop-end-of-queue', ts: Date.now() })
           return
         }
       }
@@ -808,7 +863,10 @@ export function useAudio() {
         })
       }
       const nextTrack = s.queue[nextIdx]
-      if (!nextTrack) return
+      if (!nextTrack) {
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'no-next-track', nextIdx, ts: Date.now() })
+        return
+      }
       if (autoDjMode) {
         let handled = false
         const ackHandler = () => { handled = true }
@@ -817,7 +875,10 @@ export function useAudio() {
           detail: { prevTrack: track, nextTrack, nextIdx, queue: s.queue }
         }))
         window.removeEventListener('musicman-dj-transition-ack', ackHandler)
-        if (handled) return
+        if (handled) {
+          if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'dj-transition-handled', ts: Date.now() })
+          return
+        }
         console.warn('[Audio] DJ transition not handled, forcing autoDjMode off')
         autoDjMode = false
       }
@@ -915,6 +976,7 @@ export function useAudio() {
           })
           dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: 0 })
         }
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'gapless-promote', nextIdx, ts: Date.now() })
         return
       }
 
@@ -928,6 +990,7 @@ export function useAudio() {
       })
       dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
       loadAndPlay(nextTrack, s.queue, nextIdx)
+      if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'standard-advance', nextIdx, ts: Date.now() })
     }
   }, [loadAndPlay, updatePosition])
 
