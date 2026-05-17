@@ -37,7 +37,7 @@ let lastPositionDispatchMs = 0
 // All dx.* logs go through console.log (not logAudioEvent) so they're
 // visible regardless of the ring-buffer skip-tick filter. Prefixed with
 // `[dx]` so they're easy to grep in the captured devtools console.
-const DIAGNOSTIC_LOGGING = true   // Brief 015: re-enabled to capture auto-repeat-bug data (was false in 012e)
+const DIAGNOSTIC_LOGGING = false  // Brief 015e: silenced after 015d fix verified through real listening sessions. Flip back to true and rebuild if a future bug needs the dx.* instrumentation.
 let rafTickCount = 0
 function dx(ev: string, detail?: unknown) {
   if (!DIAGNOSTIC_LOGGING) return
