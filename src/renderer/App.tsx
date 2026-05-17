@@ -780,66 +780,9 @@ function AppInner() {
         case 'prune-alac-cache':    setPlayCacheMode('prune'); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
         case 'open-preferences':    setSettingsOpen(true); break
-        case 'export-mobile-snapshot': {
-          // Read latest library state via ref (closure captured stale
-          // libState on first render). Strip iPod-only playlists —
-          // those are reconstructed from the device on next sync, not
-          // something mobile should see.
-          const lib = libStateRef.current
-          const playlists = (lib.playlists || []).filter(
-            (p: import('./types').Playlist) => !p.id.startsWith('ipod-'),
-          )
-          window.electronAPI
-            .exportLibrarySnapshot({ tracks: lib.tracks, playlists })
-            .then((r) => {
-              if (r.canceled) return
-              if (r.ok) {
-                console.log(`[snapshot] wrote ${r.trackCount} tracks (${r.bytes} B) to ${r.path}`)
-              } else {
-                console.warn(`[snapshot] export failed: ${r.error}`)
-              }
-            })
-          break
-        }
-        case 'apply-mobile-overrides': {
-          // Two-step: pick file, then apply. Identity-gated on
-          // audioFingerprint per the postmortem rule (see
-          // src/main/library-overrides.ts). On success the renderer
-          // dispatches the merged tracks and fires save-library so
-          // library.json AND the auto-snapshot both reflect the
-          // applied counts.
-          void (async () => {
-            const pick = await window.electronAPI.mobileOverridesPickFile()
-            if (pick.canceled || !pick.path) return
-            const lib = libStateRef.current
-            const result = await window.electronAPI.mobileOverridesApply({
-              path: pick.path,
-              tracks: lib.tracks,
-            })
-            if (!result.ok) {
-              console.warn(`[overrides] apply failed: ${result.error}`)
-              return
-            }
-            console.log(
-              `[overrides] applied ${result.applied}/${result.overrideCount} from device ${result.deviceId} (exported ${result.exportedAt})`,
-            )
-            if (result.discarded && result.discarded.length > 0) {
-              console.warn('[overrides] discarded entries:', result.discarded)
-            }
-            if (result.tracks && result.applied && result.applied > 0) {
-              const merged = result.tracks as import('./types').Track[]
-              dispatch({ type: 'SET_TRACKS', tracks: merged })
-              // Persist immediately so the snapshot exporter (auto-fired
-              // from save-library) reflects the merged counts on the
-              // next mobile fetch.
-              const playlists = (lib.playlists || []).filter(
-                (p: import('./types').Playlist) => !p.id.startsWith('ipod-'),
-              )
-              await window.electronAPI.saveLibrary(merged, playlists)
-            }
-          })()
-          break
-        }
+        // Brief 023: 'export-mobile-snapshot' and 'apply-mobile-overrides'
+        // removed — vestigial mobile-sync feature that never shipped.
+        // Tag write-back (Brief 020) is the path Plex/mobile consume now.
         case 'apply-overrides-to-files': {
           // Brief 020 batch backfill — push every writable override
           // (~1.6k entries at ship time) into the corresponding audio
