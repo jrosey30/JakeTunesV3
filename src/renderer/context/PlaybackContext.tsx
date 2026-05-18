@@ -75,6 +75,45 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
       const sh = state.shuffle && state.queueIndex >= 0 && !action.skipHistory
         ? [...state.shuffleHistory, state.queueIndex]
         : action.skipHistory ? state.shuffleHistory : state.shuffleHistory
+      // Brief 030: when shuffle is ON and a fresh queue arrives,
+      // shuffle the upcoming portion of that queue immediately.
+      // Without this, a user who toggles shuffle ON before pressing
+      // play (or who plays a track from a different view while
+      // shuffle is on) gets the new queue in natural order — the
+      // shuffle flag is true but the queue isn't shuffled. The
+      // TOGGLE_SHUFFLE reducer ran against the previous (possibly
+      // empty) queue and couldn't anticipate the new one. We
+      // shuffle here at the PLAY_TRACK seam because this is where
+      // the fresh queue is first known.
+      //
+      // Same Fisher-Yates pattern as TOGGLE_SHUFFLE: shuffle the
+      // tracks after the just-played one; keep the just-played
+      // track + any history (tracks before queueIndex) in their
+      // natural positions. Snapshot the natural-order action.queue
+      // into originalQueue so a future "shuffle off" can honestly
+      // restore. See TOGGLE_SHUFFLE for the matching pattern.
+      let resolvedQueue: Track[] = action.queue ?? state.queue
+      let resolvedOriginalQueue: Track[] | null
+      if (action.queue) {
+        if (state.shuffle) {
+          const newIndex = action.queueIndex ?? 0
+          const beforeAndCurrent = action.queue.slice(0, newIndex + 1)
+          const upcoming = action.queue.slice(newIndex + 1)
+          for (let i = upcoming.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1))
+            ;[upcoming[i], upcoming[j]] = [upcoming[j], upcoming[i]]
+          }
+          resolvedQueue = [...beforeAndCurrent, ...upcoming]
+          resolvedOriginalQueue = [...action.queue]
+        } else {
+          // Fresh queue, shuffle off — natural order, no snapshot needed.
+          resolvedOriginalQueue = null
+        }
+      } else {
+        // No fresh queue — preserve existing state for both.
+        resolvedOriginalQueue = state.originalQueue
+      }
+
       return {
         ...state,
         nowPlaying: action.track,
@@ -88,13 +127,11 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         // autoplay transitions.
         position: action.position ?? 0,
         duration: action.duration ?? 0,
-        queue: action.queue ?? state.queue,
+        queue: resolvedQueue,
         queueIndex: action.queueIndex ?? state.queueIndex,
         recentlyPlayed: rp,
         shuffleHistory: sh,
-        // A fresh play context (new queue passed in) invalidates any
-        // pre-shuffle snapshot — it belonged to the previous queue.
-        originalQueue: action.queue ? null : state.originalQueue,
+        originalQueue: resolvedOriginalQueue,
       }
     }
     case 'PAUSE':
