@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# vern — JakeTunes diagnostic capture, v0.1
-# Brief 017. Foundation for diagnostic capture tooling.
-# Outputs a single markdown file to ~/JakeTunesV3/diagnostics/.
+# vern — JakeTunes diagnostic capture, v0.5
+# Brief 017 (v0.1), Brief 027 (v0.5). Foundation for diagnostic
+# capture tooling. Outputs a single markdown file to
+# ~/JakeTunesV3/diagnostics/.
+#
+# Captures recent Claude Code actions, repo state, build health, code
+# structure, recent activity, and multi-vantage network reachability.
 #
 # Usage:
 #   ./scripts/vern                      # capture with no context note
 #   ./scripts/vern "scrubber bug back"  # capture with a context note
 #
 # The output is a single .md file the user uploads to the AI advisor
-# instead of running 20+ grep/sed/cat commands manually.
+# instead of running 20+ grep/sed/cat/curl commands manually.
 
 set -euo pipefail
 
@@ -53,6 +57,55 @@ run_with_timeout() {
   fi
 }
 
+# Brief 027: network reachability probes. 5s per-probe timeout — vern
+# is meant to be fast read-of-state, a 30s probe defeats the purpose.
+# Each probe echoes a one-line result and returns 0/1 so callers can
+# track ✓/✗ in parallel shell variables for the interpretation phase.
+
+# HTTP probe via curl. Returns 0 on 200 OK, 1 otherwise.
+probe_http() {
+  local label="$1"
+  local url="$2"
+  local body http_code curl_rc
+  body=$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "${url}" 2>&1) || curl_rc=$?
+  curl_rc="${curl_rc:-0}"
+  http_code="${body}"
+  if [ "${curl_rc}" -eq 0 ] && [ "${http_code}" = "200" ]; then
+    echo "${label}: ✓ (200 OK)"
+    return 0
+  elif [ "${curl_rc}" -eq 28 ]; then
+    echo "${label}: ✗ TIMEOUT (>5s)"
+  elif [ "${curl_rc}" -eq 7 ]; then
+    echo "${label}: ✗ CONNECTION REFUSED"
+  elif [ "${curl_rc}" -eq 6 ]; then
+    echo "${label}: ✗ COULD NOT RESOLVE HOST"
+  else
+    echo "${label}: ✗ (curl exit ${curl_rc}, http ${http_code:-?})"
+  fi
+  return 1
+}
+
+# SSH reachability probe. Returns 0 if the remote echoes 'ok'.
+probe_ssh() {
+  local label="$1"
+  local target="$2"
+  local result ssh_rc
+  result=$(ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${target}" 'echo ok' 2>&1) || ssh_rc=$?
+  ssh_rc="${ssh_rc:-0}"
+  if [ "${ssh_rc}" -eq 0 ] && printf '%s' "${result}" | tail -1 | grep -q "^ok$"; then
+    echo "${label}: ✓"
+    return 0
+  else
+    # Compress the (potentially multi-line) ssh error into one
+    # readable line — keeps the markdown clean and the interpretation
+    # grep simple.
+    local trimmed
+    trimmed=$(printf '%s' "${result}" | tr '\n' ' ' | sed -E 's/  +/ /g' | cut -c1-140)
+    echo "${label}: ✗ (${trimmed})"
+    return 1
+  fi
+}
+
 {
   # ── Section 1: Header ───────────────────────────────────────────────
   echo "# vern capture — ${ISO_TIMESTAMP}"
@@ -63,6 +116,40 @@ run_with_timeout() {
     echo "**Note:** ${NOTE}"
   else
     echo "**Note:** (none)"
+  fi
+  echo
+
+  # ── Section 1b: Recent Claude Code Actions (Brief 027) ──────────────
+  # Top-of-output by design — the most common diagnostic failure is
+  # theorizing about state that was already changed. Surfacing recent
+  # commits + modified files + uncommitted state HERE means the first
+  # thing the advisor sees is "what was just done." There's deliberate
+  # redundancy with the next "Repo state" section, which lists the same
+  # 10 commits in a slightly different format — kept additive per the
+  # brief, prominence matters more than dedup.
+  echo "## Recent Claude Code Actions (last 10 commits + uncommitted state)"
+  echo
+  echo "### Last 10 commits"
+  echo
+  echo '```'
+  git log --oneline -10 2>/dev/null || echo "(no git history available)"
+  echo '```'
+  echo
+  echo "### Files modified in last 10 commits (most recent first)"
+  echo
+  echo '```'
+  git log --name-only --pretty=format:"--- %h %s (%ar)" -10 2>/dev/null | head -100 || echo "(no git history available)"
+  echo '```'
+  echo
+  echo "### Currently uncommitted changes"
+  echo
+  UNCOMMITTED_TOP="$(git status --short 2>/dev/null || true)"
+  if [ -z "$UNCOMMITTED_TOP" ]; then
+    echo "Working tree clean."
+  else
+    echo '```'
+    echo "$UNCOMMITTED_TOP"
+    echo '```'
   fi
   echo
 
@@ -219,10 +306,85 @@ run_with_timeout() {
   fi
   echo
 
+  # ── Section 6: Network State (Brief 027) ────────────────────────────
+  # Multi-vantage reachability — Mac → NAS, Mac → Mini (SSH + backend
+  # HTTP), Tailscale status. The pure value-add over "I could run curl
+  # myself" is the interpretation block below: raw exit codes get
+  # collapsed into a one-line asymmetry summary so the advisor sees the
+  # pattern instantly. Each probe has a 5s timeout — vern is fast read-
+  # of-state, never a 30s wait. Everything degrades gracefully if curl
+  # / ssh / tailscale are missing.
+  echo "## Network State (multi-vantage reachability)"
+  echo
+  echo '```'
+
+  # Track results in parallel variables so the interpretation phase
+  # below doesn't have to re-parse the rendered output.
+  NAS_SSH_OK=0
+  MINI_SSH_OK=0
+  MINI_HTTP_OK=0
+  LOCAL_HTTP_OK=0
+
+  if command -v ssh > /dev/null 2>&1; then
+    if probe_ssh "Mac → NAS (jakerosenbaum@ds225) via SSH" "jakerosenbaum@ds225"; then
+      NAS_SSH_OK=1
+    fi
+    if probe_ssh "Mac → Mini (homemini) via SSH" "homemini"; then
+      MINI_SSH_OK=1
+    fi
+  else
+    echo "Mac → NAS / Mini via SSH: SKIPPED (ssh not in PATH)"
+  fi
+
+  if command -v curl > /dev/null 2>&1; then
+    if probe_http "Mac → Mini backend (http://homemini:3000/health)" "http://homemini:3000/health"; then
+      MINI_HTTP_OK=1
+    fi
+    if probe_http "Mac → localhost backend (http://localhost:3000/health)" "http://localhost:3000/health"; then
+      LOCAL_HTTP_OK=1
+    fi
+  else
+    echo "Mac → Mini / localhost backend HTTP: SKIPPED (curl not in PATH)"
+  fi
+
+  echo
+  if command -v tailscale > /dev/null 2>&1; then
+    echo "Tailscale status:"
+    tailscale status 2>&1 | head -10
+  else
+    echo "Tailscale CLI not available (skipping tailscale status)"
+  fi
+  echo '```'
+  echo
+
+  # Asymmetry interpretation — the actual value-add over raw curl.
+  # Reads the parallel ✓/✗ vars set above and emits one of a handful
+  # of common-pattern summaries. More nuanced cases ("only specific
+  # endpoints hang") would need deeper probes; v0.5 is intentionally
+  # broad-strokes.
+  echo "### Interpretation"
+  echo
+  if [ "${NAS_SSH_OK}" -eq 1 ] && [ "${MINI_SSH_OK}" -eq 1 ] && [ "${MINI_HTTP_OK}" -eq 1 ]; then
+    echo "All vantage points reachable. No asymmetry detected."
+  elif [ "${NAS_SSH_OK}" -eq 1 ] && [ "${MINI_SSH_OK}" -eq 1 ] && [ "${MINI_HTTP_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Mini reachable via SSH but backend HTTP unreachable. Likely: backend process down (check launchd on Mini), backend port not listening on :3000, or backend bound to a different host/port."
+  elif [ "${NAS_SSH_OK}" -eq 1 ] && [ "${MINI_SSH_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: NAS reachable but Mini unreachable entirely. Likely: Mini-side Tailscale wedge, Mini offline, or Mini SSH config issue."
+  elif [ "${NAS_SSH_OK}" -eq 0 ] && [ "${MINI_SSH_OK}" -eq 0 ]; then
+    echo "**Both NAS and Mini unreachable.** Likely: local network issue, Tailscale down on this Mac, or both targets simultaneously offline (less likely)."
+  else
+    echo "Partial reachability detected. Review individual probe results above to identify the asymmetry."
+  fi
+  if [ "${LOCAL_HTTP_OK}" -eq 1 ]; then
+    echo
+    echo "(Local backend on http://localhost:3000 is also reachable — a dev server is running.)"
+  fi
+  echo
+
   # ── Footer ──────────────────────────────────────────────────────────
   echo "---"
   echo
-  echo "*vern v0.1 — Brief 017 — \`~/JakeTunesV3/scripts/vern\`*"
+  echo "*vern v0.5 — Briefs 017 + 027 — \`~/JakeTunesV3/scripts/vern\`*"
   echo
   echo "To add a context note to future captures: \`./scripts/vern \"your note here\"\`"
 } > "$OUTPUT"
