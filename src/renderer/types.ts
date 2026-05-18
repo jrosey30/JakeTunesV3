@@ -328,10 +328,14 @@ declare global {
         skippedNoTrack?: number
         skippedFpMismatch?: number
         skippedNoWritable?: number
+        fileSizesRefreshed?: number
         failures?: Array<{ filePath: string; error?: string }>
         error?: string
       }>
       onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => () => void
+      // Brief 016 commit 2: full-library fileSize refresh + progress.
+      refreshFileSizes: () => Promise<{ ok: boolean; refreshed?: number; error?: string }>
+      onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => () => void
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>

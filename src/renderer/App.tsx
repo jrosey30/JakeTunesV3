@@ -46,6 +46,11 @@ function AppInner() {
   const [applyOverridesConfirmOpen, setApplyOverridesConfirmOpen] = useState(false)
   const [applyOverridesProgress, setApplyOverridesProgress] = useState<{ done: number; total: number; succeeded: number; failed: number } | null>(null)
   const [applyOverridesResult, setApplyOverridesResult] = useState<{ total: number; succeeded: number; failed: number; skippedNoTrack: number; skippedFpMismatch: number; skippedNoWritable: number; failures: Array<{ filePath: string; error?: string }> } | null>(null)
+  // Brief 016 commit 2: refresh-file-sizes UI state — same three-phase
+  // confirm/progress/result pattern as Brief 020's apply-overrides flow.
+  const [refreshSizesConfirmOpen, setRefreshSizesConfirmOpen] = useState(false)
+  const [refreshSizesProgress, setRefreshSizesProgress] = useState<{ scanned: number; refreshed: number; total: number } | null>(null)
+  const [refreshSizesResult, setRefreshSizesResult] = useState<{ refreshed: number; error?: string } | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [uiReady, setUiReady] = useState(false)
   // 4.4.39: minimum splash display time. Even on a warm cache where the
@@ -792,6 +797,15 @@ function AppInner() {
           setApplyOverridesConfirmOpen(true)
           break
         }
+        case 'refresh-file-sizes': {
+          // Brief 016 commit 2 retrofit — walk every track, stat the
+          // on-disk file, update library.json.fileSize when stale.
+          // Eliminates the ~30% fileSize drift Matt's mobile probe v2
+          // flagged. Confirm-then-run pattern, identical shape to the
+          // apply-overrides flow above.
+          setRefreshSizesConfirmOpen(true)
+          break
+        }
       }
     })
     // Main process watches library.json on disk and fires this when
@@ -1199,6 +1213,91 @@ function AppInner() {
             destructive={false}
             onCancel={() => setApplyOverridesResult(null)}
             onConfirm={() => setApplyOverridesResult(null)}
+          />
+        )}
+        {/* Brief 016 commit 2: three-phase Refresh File Sizes flow.
+            Same shape as the Brief 020 Apply-Overrides flow above —
+            ConfirmDialog → inline progress modal → ConfirmDialog
+            result summary. Reuses the .confirm-overlay / .confirm-
+            dialog CSS classes plus the brand-orange progress bar. */}
+        {refreshSizesConfirmOpen && (
+          <ConfirmDialog
+            message="Refresh library.json file sizes from disk?"
+            detail="Walks every track in your library, stats the actual audio file, and updates library.json's cached fileSize when it differs. Audio files themselves are NOT modified. Fixes a known ~30% fileSize drift that prevents mobile (Plex via JakeTunes Mobile) from validating tracks correctly."
+            confirmLabel="Refresh Sizes"
+            cancelLabel="Cancel"
+            destructive={false}
+            onCancel={() => setRefreshSizesConfirmOpen(false)}
+            onConfirm={() => {
+              setRefreshSizesConfirmOpen(false)
+              setRefreshSizesProgress({ scanned: 0, refreshed: 0, total: 0 })
+              const unsub = window.electronAPI.onRefreshFileSizesProgress((p) => {
+                setRefreshSizesProgress(p)
+              })
+              void (async () => {
+                try {
+                  const r = await window.electronAPI.refreshFileSizes()
+                  unsub()
+                  setRefreshSizesProgress(null)
+                  if (r.ok) {
+                    setRefreshSizesResult({ refreshed: r.refreshed ?? 0 })
+                  } else {
+                    setRefreshSizesResult({ refreshed: 0, error: r.error })
+                  }
+                } catch (err) {
+                  unsub()
+                  setRefreshSizesProgress(null)
+                  setRefreshSizesResult({ refreshed: 0, error: err instanceof Error ? err.message : String(err) })
+                }
+              })()
+            }}
+          />
+        )}
+        {refreshSizesProgress && (
+          <div className="confirm-overlay">
+            <div className="confirm-dialog">
+              <div className="confirm-message">Refreshing file sizes…</div>
+              <div className="confirm-detail">
+                {refreshSizesProgress.total === 0
+                  ? 'Preparing…'
+                  : `Scanned ${refreshSizesProgress.scanned.toLocaleString()} of ${refreshSizesProgress.total.toLocaleString()} (${refreshSizesProgress.refreshed.toLocaleString()} refreshed so far)`}
+              </div>
+              <div style={{
+                marginTop: 12,
+                height: 6,
+                background: '#2a2a2a',
+                borderRadius: 3,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${refreshSizesProgress.total > 0 ? (refreshSizesProgress.scanned / refreshSizesProgress.total) * 100 : 0}%`,
+                  background: '#e0812e',
+                  transition: 'width 200ms ease-out',
+                }} />
+              </div>
+            </div>
+          </div>
+        )}
+        {refreshSizesResult && (
+          <ConfirmDialog
+            message={
+              refreshSizesResult.error
+                ? 'Refresh failed.'
+                : `Refreshed fileSize on ${refreshSizesResult.refreshed.toLocaleString()} tracks.`
+            }
+            detail={
+              refreshSizesResult.error
+                ? refreshSizesResult.error
+                : (refreshSizesResult.refreshed === 0
+                    ? 'No drift found. library.json fileSize already matched disk for every track.'
+                    : 'library.json has been updated. The next sync will propagate the corrected sizes to Mini.')
+            }
+            confirmLabel="Close"
+            cancelLabel="Close"
+            destructive={false}
+            onCancel={() => setRefreshSizesResult(null)}
+            onConfirm={() => setRefreshSizesResult(null)}
           />
         )}
       </div>

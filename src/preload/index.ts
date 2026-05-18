@@ -236,6 +236,7 @@ const electronAPI = {
     skippedNoTrack?: number
     skippedFpMismatch?: number
     skippedNoWritable?: number
+    fileSizesRefreshed?: number
     failures?: Array<{ filePath: string; error?: string }>
     error?: string
   }> =>
@@ -244,6 +245,18 @@ const electronAPI = {
     const handler = (_event: Electron.IpcRendererEvent, p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => callback(p)
     ipcRenderer.on('tag-writeback:progress', handler)
     return () => { ipcRenderer.removeListener('tag-writeback:progress', handler) }
+  },
+  // Brief 016 commit 2: full-library fileSize refresh. Walks every
+  // track, stats the on-disk file, updates library.json.fileSize if
+  // it differs from the cached value. Use case is one-shot retrofit
+  // of pre-existing drift (Brief 016 diagnostic found 29.7% of tracks
+  // had stale fileSize, likely from a historical re-encode pass).
+  refreshFileSizes: (): Promise<{ ok: boolean; refreshed?: number; error?: string }> =>
+    ipcRenderer.invoke('refresh-file-sizes'),
+  onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: { scanned: number; refreshed: number; total: number }) => callback(p)
+    ipcRenderer.on('refresh-file-sizes:progress', handler)
+    return () => { ipcRenderer.removeListener('refresh-file-sizes:progress', handler) }
   },
   // Resolve folders + glob filtering on the main side; renderer only
   // ever sees individual audio file paths in the queue.
