@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Brief 029 — Nightly auto-deploy of JakeTunes to workmini.
+
+        Runs ~/bin/jaketunes-workmini-nightly.sh at 3:00 AM daily.
+        The wrapper script invokes the existing deploy script with
+        the standard arguments (jacobrosenbaum --with-env) and logs
+        to ~/Library/Logs/JakeTunes/workmini-nightly.log.
+
+        Note on macOS Sequoia network-volume restriction:
+          The disabled com.jaketunes.sync.plist tombstone documents
+          that launchd-spawned processes can't access /Volumes/...
+          mounted shares. This restriction does NOT apply here — the
+          workmini deploy talks to workmini directly over Tailscale
+          SSH, not via a mounted network volume.
+
+        Install:
+          cp Dr.\ Claude/scripts/com.jaketunes.workmini-nightly.plist \
+             ~/Library/LaunchAgents/
+          launchctl load ~/Library/LaunchAgents/com.jaketunes.workmini-nightly.plist
+
+        To unload (disable):
+          launchctl unload ~/Library/LaunchAgents/com.jaketunes.workmini-nightly.plist
+
+        To trigger immediately (the falsifiable launchd-context test):
+          launchctl start com.jaketunes.workmini-nightly
+          tail -50 ~/Library/Logs/JakeTunes/workmini-nightly.log
+    -->
+    <key>Label</key>
+    <string>com.jaketunes.workmini-nightly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jacobrosenbaum/bin/jaketunes-workmini-nightly.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!--
+        RunAtLoad: false. We don't want this to fire the moment
+        launchctl load runs — that would surprise the user with a
+        deploy. They get to test deliberately via `launchctl start`.
+    -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!--
+        StandardOutPath/StandardErrorPath would be redundant since the
+        wrapper redirects both into the log file itself, but we set
+        them here as a safety net in case the wrapper fails before
+        its redirection takes effect.
+    -->
+    <key>StandardOutPath</key>
+    <string>/Users/jacobrosenbaum/Library/Logs/JakeTunes/workmini-nightly-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jacobrosenbaum/Library/Logs/JakeTunes/workmini-nightly-launchd.log</string>
+</dict>
+</plist>
