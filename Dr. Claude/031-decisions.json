@@ -1,0 +1,116 @@
+{
+  "approved": false,
+  "generatedAt": "2026-05-18T23:34:13.521188+00:00",
+  "sourceLibraryHash": "f09a454a0ed27d424f75173a648b7283994058b605f865c9f108f82c50b0f6e6",
+  "sourceLibraryMtime": "2026-05-18T23:26:33.892812+00:00",
+  "note": "Brief 031 Phase 2 \u2014 review and edit, then set \"approved\": true. Phase 3 reads only `approved`, `variants[*].canonical`, `collabs[*].split`. Set canonical to null to skip a variant group. Remove a collab entry or set its split to null to skip splitting it. Add entries for partial-match edge cases (see audit.md) if you want them split.",
+  "variants": {
+    "blink 182": {
+      "canonical": "Blink-182",
+      "variants": [
+        "Blink-182",
+        "blink-182"
+      ],
+      "variantCounts": {
+        "Blink-182": 67,
+        "blink-182": 15
+      },
+      "trackCount": 82,
+      "notes": ""
+    },
+    "queens of the stone age": {
+      "canonical": "Queens Of The Stone Age",
+      "variants": [
+        "Queens Of The Stone Age",
+        "Queens of the Stone Age"
+      ],
+      "variantCounts": {
+        "Queens Of The Stone Age": 37,
+        "Queens of the Stone Age": 1
+      },
+      "trackCount": 38,
+      "notes": ""
+    },
+    "jkriv": {
+      "canonical": "JKriv",
+      "variants": [
+        "JKriv",
+        "Jkriv"
+      ],
+      "variantCounts": {
+        "JKriv": 5,
+        "Jkriv": 4
+      },
+      "trackCount": 9,
+      "notes": ""
+    },
+    "deadmau5": {
+      "canonical": "Deadmau5",
+      "variants": [
+        "Deadmau5",
+        "deadmau5"
+      ],
+      "variantCounts": {
+        "Deadmau5": 3,
+        "deadmau5": 2
+      },
+      "trackCount": 5,
+      "notes": ""
+    },
+    "the school of rock": {
+      "canonical": "The School Of Rock",
+      "variants": [
+        "The School Of Rock",
+        "The School of Rock"
+      ],
+      "variantCounts": {
+        "The School Of Rock": 1,
+        "The School of Rock": 1
+      },
+      "trackCount": 2,
+      "notes": ""
+    }
+  },
+  "collabs": {
+    "JAY-Z & Linkin Park": {
+      "split": [
+        "JAY-Z",
+        "Linkin Park"
+      ],
+      "trackCount": 6,
+      "notes": ""
+    },
+    "2Pac & The Notorious B.I.G.": {
+      "split": [
+        "2Pac",
+        "The Notorious B.I.G."
+      ],
+      "trackCount": 1,
+      "notes": ""
+    },
+    "David Guetta featuring Kid Cudi": {
+      "split": [
+        "David Guetta",
+        "Kid Cudi"
+      ],
+      "trackCount": 1,
+      "notes": ""
+    },
+    "Eminem & Dr. Dre": {
+      "split": [
+        "Eminem",
+        "Dr. Dre"
+      ],
+      "trackCount": 1,
+      "notes": ""
+    },
+    "Jack White & Alicia Keys": {
+      "split": [
+        "Jack White",
+        "Alicia Keys"
+      ],
+      "trackCount": 1,
+      "notes": ""
+    }
+  }
+}
