@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# vern — JakeTunes diagnostic capture, v0.5
-# Brief 017 (v0.1), Brief 027 (v0.5). Foundation for diagnostic
-# capture tooling. Outputs a single markdown file to
+# vern — JakeTunes diagnostic capture, v0.6
+# Brief 017 (v0.1), Brief 027 (v0.5), Brief 028 (v0.6). Foundation
+# for diagnostic capture tooling. Outputs a single markdown file to
 # ~/JakeTunesV3/diagnostics/.
 #
 # Captures recent Claude Code actions, repo state, build health, code
-# structure, recent activity, and multi-vantage network reachability.
+# structure, recent activity, and multi-vantage network reachability
+# (full backend endpoint matrix: /healthz, /api/tracks list, single-
+# track lookup, audio HEAD).
 #
 # Usage:
 #   ./scripts/vern                      # capture with no context note
@@ -68,6 +70,32 @@ probe_http() {
   local url="$2"
   local body http_code curl_rc
   body=$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "${url}" 2>&1) || curl_rc=$?
+  curl_rc="${curl_rc:-0}"
+  http_code="${body}"
+  if [ "${curl_rc}" -eq 0 ] && [ "${http_code}" = "200" ]; then
+    echo "${label}: ✓ (200 OK)"
+    return 0
+  elif [ "${curl_rc}" -eq 28 ]; then
+    echo "${label}: ✗ TIMEOUT (>5s)"
+  elif [ "${curl_rc}" -eq 7 ]; then
+    echo "${label}: ✗ CONNECTION REFUSED"
+  elif [ "${curl_rc}" -eq 6 ]; then
+    echo "${label}: ✗ COULD NOT RESOLVE HOST"
+  else
+    echo "${label}: ✗ (curl exit ${curl_rc}, http ${http_code:-?})"
+  fi
+  return 1
+}
+
+# Brief 028: HEAD probe — same shape as probe_http but uses curl -I so
+# we only fetch headers. Used for binary endpoints like /audio/:id where
+# a GET would stream the whole file (wasteful and slow). The iOS app
+# already uses HEAD on the audio path for its skip-record logic.
+probe_http_head() {
+  local label="$1"
+  local url="$2"
+  local body http_code curl_rc
+  body=$(curl -sS -I -o /dev/null -m 5 -w "%{http_code}" "${url}" 2>&1) || curl_rc=$?
   curl_rc="${curl_rc:-0}"
   http_code="${body}"
   if [ "${curl_rc}" -eq 0 ] && [ "${http_code}" = "200" ]; then
@@ -306,14 +334,23 @@ probe_ssh() {
   fi
   echo
 
-  # ── Section 6: Network State (Brief 027) ────────────────────────────
-  # Multi-vantage reachability — Mac → NAS, Mac → Mini (SSH + backend
-  # HTTP), Tailscale status. The pure value-add over "I could run curl
-  # myself" is the interpretation block below: raw exit codes get
-  # collapsed into a one-line asymmetry summary so the advisor sees the
-  # pattern instantly. Each probe has a 5s timeout — vern is fast read-
-  # of-state, never a 30s wait. Everything degrades gracefully if curl
-  # / ssh / tailscale are missing.
+  # ── Section 6: Network State (Brief 027 + 028) ──────────────────────
+  # Multi-vantage reachability — Mac → NAS, Mac → Mini (SSH + the four
+  # backend endpoints the iOS app depends on), Tailscale status. The
+  # pure value-add over "I could run curl myself" is the interpretation
+  # block below: raw exit codes get collapsed into a one-line asymmetry
+  # summary so the advisor sees the pattern instantly. Each probe has a
+  # 5s timeout — vern is fast read-of-state, never a 30s wait.
+  #
+  # Brief 028: probe the FULL backend surface, not just liveness. Each
+  # endpoint exercises a distinct subsystem:
+  #   /healthz                → Express alive + routing works
+  #   /api/tracks?limit=1     → library JSON read / DB / file-system
+  #   /api/tracks/125         → single-record lookup (different route
+  #                              handler than the list)
+  #   HEAD /audio/125         → SMB-to-NAS streaming path (the most
+  #                              common failure mode on this stack)
+  # Track ID 125 is the pinned known-good test target post-Mini-reboot.
   echo "## Network State (multi-vantage reachability)"
   echo
   echo '```'
@@ -322,7 +359,10 @@ probe_ssh() {
   # below doesn't have to re-parse the rendered output.
   NAS_SSH_OK=0
   MINI_SSH_OK=0
-  MINI_HTTP_OK=0
+  HEALTHZ_OK=0
+  TRACKS_LIST_OK=0
+  TRACKS_SINGLE_OK=0
+  AUDIO_OK=0
   LOCAL_HTTP_OK=0
 
   if command -v ssh > /dev/null 2>&1; then
@@ -337,14 +377,25 @@ probe_ssh() {
   fi
 
   if command -v curl > /dev/null 2>&1; then
-    if probe_http "Mac → Mini backend (http://homemini:3000/health)" "http://homemini:3000/health"; then
-      MINI_HTTP_OK=1
+    # Brief 028: full backend probe matrix
+    if probe_http "Mac → backend liveness (http://homemini:3000/healthz)" "http://homemini:3000/healthz"; then
+      HEALTHZ_OK=1
     fi
-    if probe_http "Mac → localhost backend (http://localhost:3000/health)" "http://localhost:3000/health"; then
+    if probe_http "Mac → backend library API (http://homemini:3000/api/tracks?limit=1&offset=0)" "http://homemini:3000/api/tracks?limit=1&offset=0"; then
+      TRACKS_LIST_OK=1
+    fi
+    if probe_http "Mac → backend single-track (http://homemini:3000/api/tracks/125)" "http://homemini:3000/api/tracks/125"; then
+      TRACKS_SINGLE_OK=1
+    fi
+    if probe_http_head "Mac → backend audio path (HEAD http://homemini:3000/audio/125)" "http://homemini:3000/audio/125"; then
+      AUDIO_OK=1
+    fi
+    # Local dev backend (in case the user is running one locally)
+    if probe_http "Mac → localhost backend (http://localhost:3000/healthz)" "http://localhost:3000/healthz"; then
       LOCAL_HTTP_OK=1
     fi
   else
-    echo "Mac → Mini / localhost backend HTTP: SKIPPED (curl not in PATH)"
+    echo "Backend HTTP probes: SKIPPED (curl not in PATH)"
   fi
 
   echo
@@ -357,21 +408,26 @@ probe_ssh() {
   echo '```'
   echo
 
-  # Asymmetry interpretation — the actual value-add over raw curl.
-  # Reads the parallel ✓/✗ vars set above and emits one of a handful
-  # of common-pattern summaries. More nuanced cases ("only specific
-  # endpoints hang") would need deeper probes; v0.5 is intentionally
-  # broad-strokes.
+  # Brief 028: sharper asymmetry interpretation. Four backend probes
+  # let us distinguish five distinct failure modes by order — most-
+  # specific cases first, so the right line fires even when multiple
+  # conditions are technically true.
   echo "### Interpretation"
   echo
-  if [ "${NAS_SSH_OK}" -eq 1 ] && [ "${MINI_SSH_OK}" -eq 1 ] && [ "${MINI_HTTP_OK}" -eq 1 ]; then
-    echo "All vantage points reachable. No asymmetry detected."
-  elif [ "${NAS_SSH_OK}" -eq 1 ] && [ "${MINI_SSH_OK}" -eq 1 ] && [ "${MINI_HTTP_OK}" -eq 0 ]; then
-    echo "**ASYMMETRY**: Mini reachable via SSH but backend HTTP unreachable. Likely: backend process down (check launchd on Mini), backend port not listening on :3000, or backend bound to a different host/port."
-  elif [ "${NAS_SSH_OK}" -eq 1 ] && [ "${MINI_SSH_OK}" -eq 0 ]; then
-    echo "**ASYMMETRY**: NAS reachable but Mini unreachable entirely. Likely: Mini-side Tailscale wedge, Mini offline, or Mini SSH config issue."
+  if [ "${HEALTHZ_OK}" -eq 1 ] && [ "${TRACKS_LIST_OK}" -eq 1 ] && [ "${TRACKS_SINGLE_OK}" -eq 1 ] && [ "${AUDIO_OK}" -eq 1 ]; then
+    echo "All backend subsystems healthy. No asymmetry detected."
   elif [ "${NAS_SSH_OK}" -eq 0 ] && [ "${MINI_SSH_OK}" -eq 0 ]; then
     echo "**Both NAS and Mini unreachable.** Likely: local network issue, Tailscale down on this Mac, or both targets simultaneously offline (less likely)."
+  elif [ "${MINI_SSH_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: NAS reachable but Mini unreachable entirely. Likely: Mini-side Tailscale wedge, Mini offline, or Mini SSH config issue."
+  elif [ "${HEALTHZ_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Mini reachable via SSH but backend /healthz unreachable. Likely: backend process not running, port not listening on :3000, or backend bound to different host/port. Check launchd on Mini."
+  elif [ "${HEALTHZ_OK}" -eq 1 ] && [ "${TRACKS_LIST_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Backend alive but library API failing. Likely: route handler error, library.json read failure, or DB issue. Check backend logs on Mini."
+  elif [ "${TRACKS_LIST_OK}" -eq 1 ] && [ "${TRACKS_SINGLE_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Library list endpoint works but single-track lookup fails. Likely: track ID 125 unavailable (deleted? reassigned?), or single-track route handler bug. Verify the test ID still exists."
+  elif [ "${TRACKS_SINGLE_OK}" -eq 1 ] && [ "${AUDIO_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Library API works but audio streaming path fails. Likely: SMB-to-NAS file read bottleneck, NAS unreachable from Mini, or audio route handler bug. This is the highest-signal asymmetry — investigate Mini's NAS mount state first."
   else
     echo "Partial reachability detected. Review individual probe results above to identify the asymmetry."
   fi
@@ -384,7 +440,7 @@ probe_ssh() {
   # ── Footer ──────────────────────────────────────────────────────────
   echo "---"
   echo
-  echo "*vern v0.5 — Briefs 017 + 027 — \`~/JakeTunesV3/scripts/vern\`*"
+  echo "*vern v0.6 — Briefs 017 + 027 + 028 — \`~/JakeTunesV3/scripts/vern\`*"
   echo
   echo "To add a context note to future captures: \`./scripts/vern \"your note here\"\`"
 } > "$OUTPUT"
