@@ -48,6 +48,24 @@
 
 set -uo pipefail
 
+# Brief 016: propagate SIGTERM/SIGINT to any in-flight rsync child.
+# The JS orchestrator (4.4.18 sync-orchestrator.ts) now kills the
+# whole process group on timeout, which already covers this for
+# orchestrator-triggered runs. This trap adds belt-and-suspenders
+# coverage for manual `kill <bash-pid>` from a shell context where
+# the JS-side group-kill doesn't apply.
+#
+# `pkill -P $$ rsync` targets only rsync processes whose direct
+# parent is this bash script — cleaner than `kill 0` which would
+# signal every process in the current process group (including
+# bash itself, with potential re-entry weirdness). The 2>/dev/null
+# and `|| true` keep the trap quiet when there's nothing to kill.
+cleanup_children() {
+  pkill -P $$ rsync 2>/dev/null || true
+  exit 143  # 128 + SIGTERM, conventional shell exit for term-by-signal
+}
+trap cleanup_children TERM INT
+
 LOG=/tmp/jaketunes-sync.log
 LOCK=/tmp/jaketunes-sync.lock
 LIBRARY_ROOT="${JT_LIBRARY_ROOT:-$HOME/Music2/JakeTunesLibrary}"

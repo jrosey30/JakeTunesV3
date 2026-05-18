@@ -92,14 +92,55 @@ function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string;
     if (useQuickMode) args.push('--quick')
 
     console.log(`[sync-orchestrator] starting sync (reason=${reason}, mode=${useQuickMode ? 'quick' : 'full'})`)
+    // Brief 016: spawn with detached: true so the bash child becomes the
+    // leader of a new process group. rsync (and any other descendant)
+    // inherits the same PGID. When the timeout below fires, we can
+    // signal the whole group via `kill -PGID` and reliably take down
+    // rsync along with bash. Pre-fix, child.kill('SIGTERM') only hit
+    // bash, which doesn't propagate to its rsync children — rsyncs
+    // stuck on SMB orphaned to launchd and accumulated indefinitely
+    // (prior session observed 41 stalled rsyncs on the MacBook, oldest
+    // 13+ minutes old).
+    //
+    // detached: true creates the group but does NOT detach the child
+    // from the parent's lifecycle — we don't call child.unref(), so
+    // the orchestrator still tracks exit normally and the bash process
+    // dies if the orchestrator does.
     const child = spawn('/bin/bash', args, {
-      detached: false,
+      detached: true,
       stdio: 'ignore',
     })
 
     const killTimer = setTimeout(() => {
       timedOut = true
-      try { child.kill('SIGTERM') } catch { /* already exited */ }
+      // Brief 016: kill the entire process group, not just bash.
+      // Negative pid signals the whole group (POSIX kill(2) semantics:
+      // a negative pid arg signals every process in the group whose
+      // PGID equals |pid|). The optional-chain + try-catch covers the
+      // edge cases where child.pid is undefined (spawn failed) or the
+      // group already exited.
+      try {
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, 'SIGTERM')
+        } else {
+          child.kill('SIGTERM')
+        }
+      } catch {
+        try { child.kill('SIGTERM') } catch { /* already exited */ }
+      }
+      // Brief 016 belt-and-suspenders: if SIGTERM doesn't take within
+      // 10 sec, escalate to SIGKILL on the group. rsync stuck in an
+      // uninterruptible SMB syscall (state 'U' in ps) may not respect
+      // TERM, and we observed in-flight bash+rsync pairs surviving
+      // long past the 10-min timeout in production — strongly
+      // suggesting the SIGTERM path alone is unreliable here.
+      setTimeout(() => {
+        try {
+          if (child.pid !== undefined) {
+            process.kill(-child.pid, 'SIGKILL')
+          }
+        } catch { /* already gone */ }
+      }, 10_000)
     }, RUN_TIMEOUT_MS)
 
     child.on('exit', (code, signal) => {
