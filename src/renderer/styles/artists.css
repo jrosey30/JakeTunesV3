@@ -378,37 +378,36 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Brief 032: animated accordion expansion for artist and album content.
-   Uses the grid-template-rows: 0fr → 1fr technique to animate from
-   collapsed (height 0) to expanded (natural content height) without
-   a fixed max-height cap or JavaScript height measurement.
+/* Brief 032c: animated accordion expansion for artist and album content.
+   Switched from grid-template-rows to max-height because
+   grid-template-rows triggers grid layout recalc on every animation
+   frame. With ~50K React elements in the DOM (artists/albums kept
+   resident for fast scroll), that layout cost exceeded the per-frame
+   budget by ~60x — DevTools Performance showed a 991ms frame mid-
+   animation and sustained dropped-frame jank, even after Brief 032b
+   removed the conflicting keyframes.
 
-   The wrapper is the grid container; the inner div has overflow:
-   hidden + min-height: 0 to clip content during the transition.
-   min-height: 0 is required — without it, the grid item's natural
-   minimum height (which depends on content) prevents the grid
-   container from collapsing to 0fr.
+   max-height doesn't trigger parent layout, animates cheaply at
+   scale, and is the standard accordion solution. The 8000px cap is
+   generous enough that no real content hits it (tallest album is
+   ~50 tracks ≈ 1,800px; entire artist grid stays well under 8000px
+   because accordion mode limits us to one expanded album).
 
-   Modern Chromium (Electron 30+) supports this natively. No fallback
-   needed; legacy browsers are out of scope. */
+   200ms ease-out, symmetric expand/collapse — same timing as
+   Brief 032b. Bump the cap if future content ever clips. */
 .artist-content-wrapper,
 .album-content-wrapper {
-  display: grid;
-  grid-template-rows: 0fr;
-  /* Brief 032b: 250ms → 200ms. With the two conflicting keyframes
-     removed, the wrapper transition is the single source of
-     animation timing; 200ms reads as snappy-but-visible without
-     feeling rushed. Symmetric expand and collapse. */
-  transition: grid-template-rows 200ms ease-out;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 200ms ease-out;
 }
 
 .artist-content-wrapper.is-expanded,
 .album-content-wrapper.is-expanded {
-  grid-template-rows: 1fr;
+  max-height: 8000px;
 }
 
 .artist-content-inner,
 .album-content-inner {
   overflow: hidden;
-  min-height: 0;
 }
