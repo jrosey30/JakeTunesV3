@@ -38,8 +38,11 @@ export default function ArtistsView() {
   const { openCynthia } = useCynthia()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [expandedAlbums, setExpandedAlbums] = useState<Set<string>>(new Set())
+  // Brief 032: accordion mode — only one artist and one album expanded
+  // at a time. Was Set<string> for multi-expand; the multi-expand UX
+  // accumulated stacked tracklists and became visually messy.
+  const [expandedArtist, setExpandedArtist] = useState<string | null>(null)
+  const [expandedAlbum, setExpandedAlbum] = useState<string | null>(null)
   // 4.4.40: artist photo cache. Key = artist name, value = slug ('found'),
   // null ('no image available, don't retry'), or absent (haven't fetched).
   // Fetches are batched and rate-limited via the IPC handler in main.
@@ -102,21 +105,18 @@ export default function ArtistsView() {
   }, [artists, effectiveQuery])
 
   const toggleArtist = useCallback((name: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
-      return next
-    })
+    // Brief 032 Decision 4: clicking a different artist collapses the
+    // previous one AND resets the album state — reopening an artist
+    // starts with no album expanded. Clicking the same artist again
+    // collapses it (sets to null).
+    setExpandedArtist(prev => prev === name ? null : name)
+    setExpandedAlbum(null)
   }, [])
 
   const toggleAlbum = useCallback((key: string) => {
-    setExpandedAlbums(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+    // Brief 032 Decision 6: clicking the currently-expanded album
+    // collapses it; clicking a different album switches to it.
+    setExpandedAlbum(prev => prev === key ? null : key)
   }, [])
 
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, tracks: Track[], idx: number) => {
@@ -245,18 +245,12 @@ export default function ArtistsView() {
     const exists = filteredArtists.some(a => a.name === artistName)
     if (!exists) return
     isAutoScrollAtRef.current = Date.now()
-    setExpanded(prev => {
-      if (prev.has(artistName)) return prev
-      const next = new Set(prev)
-      next.add(artistName)
-      return next
-    })
-    setExpandedAlbums(prev => {
-      if (prev.has(albumKey)) return prev
-      const next = new Set(prev)
-      next.add(albumKey)
-      return next
-    })
+    // Brief 032: with single-value state, just set the expanded artist
+    // and album directly. Decision 5: auto-expand-on-track-play behavior
+    // preserved — it now sets both fields to the playing track's
+    // artist + album instead of adding to two sets.
+    setExpandedArtist(artistName)
+    setExpandedAlbum(albumKey)
     requestAnimationFrame(() => {
       const root = viewRootRef.current
       if (!root) return
@@ -330,12 +324,10 @@ export default function ArtistsView() {
     if (!ci) return
     const matchedName = ci.name
     isAutoScrollAtRef.current = Date.now()
-    setExpanded(prev => {
-      if (prev.has(matchedName)) return prev
-      const next = new Set(prev)
-      next.add(matchedName)
-      return next
-    })
+    // Brief 032: single-value state — set directly. Decision 5:
+    // HomeView → ArtistsView nav-handoff behavior preserved.
+    setExpandedArtist(matchedName)
+    setExpandedAlbum(null)
     requestAnimationFrame(() => {
       const root = viewRootRef.current
       if (!root) return
@@ -381,16 +373,21 @@ export default function ArtistsView() {
             })()}
             <span className="artist-name">{artist.name}</span>
             <span className="artist-count">{artist.tracks.length} songs</span>
-            <svg className={`artist-chevron ${expanded.has(artist.name) ? 'open' : ''}`} width="10" height="10" viewBox="0 0 10 10" fill="#999">
+            <svg className={`artist-chevron ${expandedArtist === artist.name ? 'open' : ''}`} width="10" height="10" viewBox="0 0 10 10" fill="#999">
               <path d="M3 1l5 4-5 4z" />
             </svg>
           </div>
 
-          {expanded.has(artist.name) && (
+          {/* Brief 032: keep the albums grid in the DOM at all times so
+              the wrapper can animate grid-template-rows 0fr → 1fr on
+              expand/collapse. Conditional class on the wrapper, not
+              conditional rendering. */}
+          <div className={`artist-content-wrapper ${expandedArtist === artist.name ? 'is-expanded' : ''}`}>
+            <div className="artist-content-inner">
             <div className="artist-albums-grid">
               {artist.albums.map((album) => {
                 const albumKey = `${artist.name}::${album.name}`
-                const isExpanded = expandedAlbums.has(albumKey)
+                const isExpanded = expandedAlbum === albumKey
                 // 4.4.37: look up real album art instead of always
                 // rendering a placeholder. Try the artist as-typed
                 // first; fall back to lowercased artist or albumArtist
@@ -479,40 +476,46 @@ export default function ArtistsView() {
                     {/* 4.4.40: tracklist as a SIBLING of art + info (not a
                         child of info) so the CSS grid can put it on its own
                         row spanning both columns. */}
-                    {isExpanded && (
-                      <div className="artist-album-tracklist">
-                        {album.tracks.map((track, idx) => {
-                          const isPlaying = pb.nowPlaying?.id === track.id
-                          const durMs = Number(track.duration) || 0
-                          const mins = Math.floor(durMs / 60000)
-                          const secs = Math.floor((durMs % 60000) / 1000)
-                          const durLabel = durMs ? `${mins}:${secs.toString().padStart(2, '0')}` : ''
-                          return (
-                            <div
-                              key={track.id}
-                              className={`artist-track-row ${isPlaying ? 'artist-track-row--playing' : ''}`}
-                              onDoubleClick={() => playTrack(track, album.tracks, album.tracks.indexOf(track), undefined, true)}
-                              onContextMenu={(e) => handleContextMenu(e, track, album.tracks, album.tracks.indexOf(track))}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify([track.id]))
-                                e.dataTransfer.effectAllowed = 'copy'
-                              }}
-                            >
-                              <span className="artist-track-icon">{isPlaying && <SpeakerPlayingIcon />}</span>
-                              <span className="artist-track-num">{track.trackNumber || idx + 1}</span>
-                              <span className="artist-track-title">{track.title}</span>
-                              <span className="artist-track-time">{durLabel}</span>
-                            </div>
-                          )
-                        })}
+                    {/* Brief 032: tracklist stays in DOM at all times so
+                        the album-content-wrapper can animate its height
+                        on expand/collapse. */}
+                    <div className={`album-content-wrapper ${isExpanded ? 'is-expanded' : ''}`}>
+                      <div className="album-content-inner">
+                        <div className="artist-album-tracklist">
+                          {album.tracks.map((track, idx) => {
+                            const isPlaying = pb.nowPlaying?.id === track.id
+                            const durMs = Number(track.duration) || 0
+                            const mins = Math.floor(durMs / 60000)
+                            const secs = Math.floor((durMs % 60000) / 1000)
+                            const durLabel = durMs ? `${mins}:${secs.toString().padStart(2, '0')}` : ''
+                            return (
+                              <div
+                                key={track.id}
+                                className={`artist-track-row ${isPlaying ? 'artist-track-row--playing' : ''}`}
+                                onDoubleClick={() => playTrack(track, album.tracks, album.tracks.indexOf(track), undefined, true)}
+                                onContextMenu={(e) => handleContextMenu(e, track, album.tracks, album.tracks.indexOf(track))}
+                                draggable
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify([track.id]))
+                                  e.dataTransfer.effectAllowed = 'copy'
+                                }}
+                              >
+                                <span className="artist-track-icon">{isPlaying && <SpeakerPlayingIcon />}</span>
+                                <span className="artist-track-num">{track.trackNumber || idx + 1}</span>
+                                <span className="artist-track-title">{track.title}</span>
+                                <span className="artist-track-time">{durLabel}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
-                    )}
+                    </div>
                   </div>
                 )
               })}
             </div>
-          )}
+            </div>
+          </div>
         </div>
       ))}
       {ctxMenu && (

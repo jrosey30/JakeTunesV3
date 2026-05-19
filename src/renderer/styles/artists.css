@@ -279,9 +279,17 @@
 /* 4.4.40: in expanded cards the tracklist gets its own grid area
  * spanning both columns, sits below a subtle warm-tinted divider,
  * and slides in slightly delayed so the cover + info land first.
+ *
+ * Brief 032: grid-area moved onto the wrapper (.album-content-wrapper)
+ * so the wrapper sits in the named area; the tracklist inside keeps
+ * its visual styling. The keyframe animation also moves to the
+ * tracklist child of the wrapper so the slide+opacity overlap with
+ * the wrapper's height transition on expand.
  */
-.artist-album-card--expanded .artist-album-tracklist {
+.artist-album-card--expanded .album-content-wrapper {
   grid-area: tracks;
+}
+.artist-album-card--expanded .artist-album-tracklist {
   margin-top: 4px;
   padding-top: 12px;
   border-top: 1px solid rgba(0, 0, 0, 0.08);
@@ -372,4 +380,35 @@
   color: var(--text-dim, #999);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Brief 032: animated accordion expansion for artist and album content.
+   Uses the grid-template-rows: 0fr → 1fr technique to animate from
+   collapsed (height 0) to expanded (natural content height) without
+   a fixed max-height cap or JavaScript height measurement.
+
+   The wrapper is the grid container; the inner div has overflow:
+   hidden + min-height: 0 to clip content during the transition.
+   min-height: 0 is required — without it, the grid item's natural
+   minimum height (which depends on content) prevents the grid
+   container from collapsing to 0fr.
+
+   Modern Chromium (Electron 30+) supports this natively. No fallback
+   needed; legacy browsers are out of scope. */
+.artist-content-wrapper,
+.album-content-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 250ms ease-out;
+}
+
+.artist-content-wrapper.is-expanded,
+.album-content-wrapper.is-expanded {
+  grid-template-rows: 1fr;
+}
+
+.artist-content-inner,
+.album-content-inner {
+  overflow: hidden;
+  min-height: 0;
 }
