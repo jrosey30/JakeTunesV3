@@ -399,12 +399,11 @@
 .album-content-wrapper {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 200ms ease-out;
 }
 
 .artist-content-wrapper.is-expanded,
 .album-content-wrapper.is-expanded {
-  max-height: 8000px;
+  max-height: none;
 }
 
 .artist-content-inner,
