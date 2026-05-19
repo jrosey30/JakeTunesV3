@@ -1,12 +1,12 @@
 {
-  "approved": false,
+  "approved": true,
   "generatedAt": "2026-05-18T23:34:13.521188+00:00",
   "sourceLibraryHash": "f09a454a0ed27d424f75173a648b7283994058b605f865c9f108f82c50b0f6e6",
   "sourceLibraryMtime": "2026-05-18T23:26:33.892812+00:00",
-  "note": "Brief 031 Phase 2 \u2014 review and edit, then set \"approved\": true. Phase 3 reads only `approved`, `variants[*].canonical`, `collabs[*].split`. Set canonical to null to skip a variant group. Remove a collab entry or set its split to null to skip splitting it. Add entries for partial-match edge cases (see audit.md) if you want them split.",
+  "note": "Brief 031 Phase 2 reviewed and approved.",
   "variants": {
     "blink 182": {
-      "canonical": "Blink-182",
+      "canonical": "blink-182",
       "variants": [
         "Blink-182",
         "blink-182"
@@ -16,7 +16,7 @@
         "blink-182": 15
       },
       "trackCount": 82,
-      "notes": ""
+      "notes": "Phase 2: lowercase stylization"
     },
     "queens of the stone age": {
       "canonical": "Queens Of The Stone Age",
@@ -45,7 +45,7 @@
       "notes": ""
     },
     "deadmau5": {
-      "canonical": "Deadmau5",
+      "canonical": "deadmau5",
       "variants": [
         "Deadmau5",
         "deadmau5"
@@ -55,7 +55,7 @@
         "deadmau5": 2
       },
       "trackCount": 5,
-      "notes": ""
+      "notes": "Phase 2: lowercase stylization"
     },
     "the school of rock": {
       "canonical": "The School Of Rock",
@@ -69,6 +69,17 @@
       },
       "trackCount": 2,
       "notes": ""
+    },
+    "iggy the stooges": {
+      "canonical": "The Stooges",
+      "variants": [
+        "Iggy & The Stooges"
+      ],
+      "variantCounts": {
+        "Iggy & The Stooges": 8
+      },
+      "trackCount": 8,
+      "notes": "Phase 2 manual: merge into The Stooges. Iggy Pop solo separate."
     }
   },
   "collabs": {
@@ -111,6 +122,14 @@
       ],
       "trackCount": 1,
       "notes": ""
+    },
+    "Skrillex & Diplo": {
+      "split": [
+        "Skrillex",
+        "Diplo"
+      ],
+      "trackCount": 9,
+      "notes": "Phase 2 manual: edge case from audit."
     }
   }
 }

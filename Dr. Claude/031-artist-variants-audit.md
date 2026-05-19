@@ -1,9 +1,9 @@
 # Brief 031 — Artist Variants Audit
 
-**Generated:** 2026-05-18T23:34:13.521188+00:00
+**Generated:** 2026-05-19T00:19:39.695923+00:00
 **Source:** `/Users/jacobrosenbaum/Library/Application Support/JakeTunes/library.json`
-**mtime:** 2026-05-18T23:26:33.892812+00:00
-**sha256:** `f09a454a0ed27d424f75173a648b7283994058b605f865c9f108f82c50b0f6e6`
+**mtime:** 2026-05-19T00:13:03.076164+00:00
+**sha256:** `9bca5a6e2d52c187c8cf8abb62b087ab64a25e5e9fdb08a4a2f501997792cb98`
 
 **Total tracks:** 6,432
 **Total distinct artist strings:** 836
