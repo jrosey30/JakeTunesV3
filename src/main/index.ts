@@ -2755,6 +2755,14 @@ async function importOneFile(
       dateAdded: trackTime.toISOString(),
       fileSize: fileStats.size,
       rating: 0,
+      // Brief 031 Phase 4b: default contributingArtists to [artist]
+      // for newly-imported tracks. Collab splits are applied by the
+      // one-shot apply-collabs script (Phase 4a) — the indexer doesn't
+      // know about decisions.json. A future tag-aware import path
+      // could detect "X feat. Y" patterns at import time, but for now
+      // imports default to sole-artist and the user can re-run the
+      // apply script if they import a new collab worth splitting.
+      contributingArtists: [common.artist || ''],
       ...(audioFingerprint ? { audioFingerprint } : {}),
     }
 
@@ -6913,6 +6921,10 @@ ipcMain.handle('rip-cd-tracks', async (_e,
         dateAdded: cdTrackTime.toISOString(),
         fileSize: fileStats.size,
         rating: 0,
+        // Brief 031 Phase 4b: same default as the file-import path —
+        // newly-ripped CD tracks land with [artist] as their
+        // contributingArtists. Collab splits stay one-shot.
+        contributingArtists: [metadata.artist || ''],
       })
 
       // Send per-track progress to renderer, including the just-imported

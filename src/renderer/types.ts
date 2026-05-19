@@ -16,6 +16,19 @@ export interface Track {
   discCount: number | string
   fileSize: number
   rating: number
+  // Brief 031 Phase 4: derived from `artist` and the approved
+  // collab-split map. For sole-artist tracks: [artist]. For tracks
+  // whose `artist` field is a collab string (e.g., "JAY-Z & Linkin
+  // Park"): the array of contributing canonical artists (e.g.,
+  // ["JAY-Z", "Linkin Park"]). Renderer (ArtistsView, GenresView,
+  // SongsView's Artist Radio) filters tracks by
+  // `contributingArtists.includes(X)` rather than `artist === X` so
+  // a collab track surfaces on every contributing artist's page.
+  // Optional in the type so legacy tracks from iPod sync or pre-
+  // Brief-031 library.json files still typecheck — the fallback
+  // pattern `(t.contributingArtists ?? [t.artist]).includes(X)`
+  // makes the field defensive at every read site.
+  contributingArtists?: string[]
   // Identity-based per-file fingerprint set at import time. Used by the
   // silent post-sync verifier (main/index.ts::verifyAndHealTracks) to
   // detect cross-linked paths without text matching.

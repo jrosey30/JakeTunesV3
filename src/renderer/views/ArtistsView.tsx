@@ -53,9 +53,22 @@ export default function ArtistsView() {
   const artists = useMemo((): ArtistGroup[] => {
     const map = new Map<string, Track[]>()
     for (const t of lib.tracks) {
-      const name = t.artist || 'Unknown Artist'
-      if (!map.has(name)) map.set(name, [])
-      map.get(name)!.push(t)
+      // Brief 031 Phase 4c: fan out each track across every artist
+      // listed in contributingArtists, not just t.artist. For sole-
+      // artist tracks, contributingArtists is [artist] so behavior is
+      // unchanged. For collab tracks (e.g., "JAY-Z & Linkin Park"
+      // with contributingArtists ["JAY-Z", "Linkin Park"]), the
+      // track is added to BOTH artist groups. Fallback to [t.artist]
+      // protects against legacy tracks that lack the field (iPod-
+      // sync imports pre-Phase-4, defensive).
+      const contributors = (t.contributingArtists && t.contributingArtists.length > 0)
+        ? t.contributingArtists
+        : [t.artist || 'Unknown Artist']
+      for (const raw of contributors) {
+        const name = raw || 'Unknown Artist'
+        if (!map.has(name)) map.set(name, [])
+        map.get(name)!.push(t)
+      }
     }
     return Array.from(map.entries())
       .sort(([a], [b]) => a.localeCompare(b))

@@ -218,9 +218,39 @@ export default function SongsView() {
     // Artist Radio: filter library by this song's artist, dispatch to
     // Toolbar so it shuffles + starts Radio Mode focused on that artist.
     // Toolbar listens on 'jaketunes-start-artist-radio'.
+    //
+    // Brief 031 Phase 4c: match by contributingArtists overlap. For a
+    // sole-artist source track ("Lou Reed") this reduces to the
+    // previous behavior — any track contributing to "Lou Reed" gets
+    // included. For a collab source track ("JAY-Z & Linkin Park"
+    // with contributingArtists ["JAY-Z", "Linkin Park"]), Artist
+    // Radio expands to every track involving either canonical
+    // contributor — better UX than matching only the literal
+    // "JAY-Z & Linkin Park" string (which would have returned just
+    // the same 6 collab tracks). Case-insensitive match preserves
+    // the prior tolerance for casing differences.
+    //
+    // trackArtist stays as the displayed menu-label string (the
+    // right-clicked track's `artist` field is what the user sees,
+    // so that's what reads naturally in "Start X Radio").
     const trackArtist = (track.artist || '').trim()
-    const artistTracks = trackArtist
-      ? lib.tracks.filter(t => (t.artist || '').trim().toLowerCase() === trackArtist.toLowerCase())
+    const sourceContribs = (
+      track.contributingArtists && track.contributingArtists.length > 0
+        ? track.contributingArtists
+        : [trackArtist]
+    )
+      .map(s => (s || '').trim().toLowerCase())
+      .filter(s => s.length > 0)
+    const artistTracks = sourceContribs.length
+      ? lib.tracks.filter(t => {
+          const candidates = (t.contributingArtists && t.contributingArtists.length > 0
+            ? t.contributingArtists
+            : [(t.artist || '').trim()]
+          )
+            .map(s => (s || '').trim().toLowerCase())
+            .filter(s => s.length > 0)
+          return candidates.some(c => sourceContribs.includes(c))
+        })
       : []
 
     return [

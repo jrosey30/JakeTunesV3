@@ -41,7 +41,13 @@ export default function GenresView() {
 
   const filteredByArtist = useMemo(() => {
     if (!selectedArtist) return filteredByGenre
-    return filteredByGenre.filter(t => t.artist === selectedArtist)
+    // Brief 031 Phase 4c: filter by contributingArtists so a collab
+    // track appears under every contributing artist's drill-down,
+    // not just whichever name happens to be in track.artist.
+    // Fallback to [t.artist] for legacy tracks lacking the field.
+    return filteredByGenre.filter(t =>
+      (t.contributingArtists ?? [t.artist]).includes(selectedArtist)
+    )
   }, [filteredByGenre, selectedArtist])
 
   const albums = useMemo(() => {
