@@ -20,7 +20,7 @@ interface PlaybackState {
 }
 
 type PlaybackAction =
-  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number }
+  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number; freshContext?: boolean }
   | { type: 'PAUSE' }
   | { type: 'RESUME' }
   | { type: 'STOP' }
@@ -75,39 +75,46 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
       const sh = state.shuffle && state.queueIndex >= 0 && !action.skipHistory
         ? [...state.shuffleHistory, state.queueIndex]
         : action.skipHistory ? state.shuffleHistory : state.shuffleHistory
-      // Brief 030 / Brief 030b: when shuffle is ON and a fresh queue
-      // arrives, build a new queue with the clicked track at position
-      // 0 and every OTHER track in the source queue shuffled and
-      // appended. queueIndex resets to 0.
+      // Brief 030c: distinguish fresh play context from queue
+      // navigation.
+      // - freshContext === true: user clicked a track in a view,
+      //   Shuffle All button, etc. In shuffle mode, rebuild queue
+      //   from scratch (Brief 030b pattern).
+      // - freshContext !== true (default): nextTrack/prevTrack/
+      //   autoplay advance — preserve the existing queue, just
+      //   update queueIndex.
       //
-      // Brief 030 (original fix) preserved slice(0, queueIndex+1) as
-      // queue history when shuffle was on — total queue length came
-      // out right but Up Next was (length - clickPosition - 1)
-      // instead of (length - 1), because Up Next renders
-      // slice(queueIndex+1) and the "history" before the clicked
-      // track counted toward queue length but not toward upcoming.
-      // The user's mental model is "shuffle = this track now, then
-      // random from the whole library" — no "history before the
-      // clicked position" exists when the user explicitly picks a
-      // track to start a shuffle session. Brief 030b rebuilds the
-      // queue accordingly.
+      // Brief 030b shipped without this distinction. nextTrack
+      // passes state.queue verbatim (for continuity reasons),
+      // which the reducer treated as "fresh queue, rebuild" and
+      // reset queueIndex to 0 on every Next press. Result: Up Next
+      // count never decremented in shuffle, and Previous couldn't
+      // navigate because shuffleHistory only saw queueIndex=0
+      // each time.
       //
-      // Snapshot the natural-order action.queue into originalQueue
-      // so a future "shuffle off" can honestly restore via
-      // TOGGLE_SHUFFLE's Brief 4.4.56 path.
-      let resolvedQueue: Track[] = action.queue ?? state.queue
-      let resolvedOriginalQueue: Track[] | null
+      // Brief 030 / 030b context (preserved here): the user's
+      // mental model is "shuffle = this track now, then random
+      // from the whole library" — no "history before the clicked
+      // position" exists when the user explicitly picks a track
+      // to start a shuffle session. So on a fresh shuffle play
+      // the clicked track lands at position 0 and the rest of the
+      // source queue is shuffled and tacked on. We also snapshot
+      // the natural-order action.queue into originalQueue so a
+      // future "shuffle off" can restore via TOGGLE_SHUFFLE's
+      // Brief 4.4.56 path.
+      let resolvedQueue: Track[] = state.queue
+      let resolvedOriginalQueue: Track[] | null = state.originalQueue
       let resolvedQueueIndex: number = action.queueIndex ?? state.queueIndex
       if (action.queue) {
-        if (state.shuffle) {
+        if (state.shuffle && action.freshContext === true) {
+          // Fresh shuffle play: clicked track to position 0, all
+          // other tracks shuffled and tacked on. Brief 030b pattern.
           const sourceIndex = action.queueIndex ?? 0
           const clickedTrack = action.queue[sourceIndex]
-          // Every track EXCEPT the clicked one.
           const others = [
             ...action.queue.slice(0, sourceIndex),
             ...action.queue.slice(sourceIndex + 1),
           ]
-          // Fisher-Yates shuffle of the others.
           for (let i = others.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1))
             ;[others[i], others[j]] = [others[j], others[i]]
@@ -115,15 +122,23 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
           resolvedQueue = [clickedTrack, ...others]
           resolvedOriginalQueue = [...action.queue]
           resolvedQueueIndex = 0  // clicked track sits at position 0 of the new queue
+        } else if (state.shuffle) {
+          // Shuffle mode, queue navigation (nextTrack/prevTrack/
+          // autoplay). Preserve existing queue + originalQueue;
+          // just update queueIndex from the action.
+          resolvedQueue = state.queue
+          resolvedQueueIndex = action.queueIndex ?? state.queueIndex
+          resolvedOriginalQueue = state.originalQueue
         } else {
-          // Fresh queue, shuffle off — natural order, no snapshot needed.
-          // queueIndex stays at action.queueIndex (click position in the view).
+          // Non-shuffle: assign new queue verbatim, no snapshot.
+          // queueIndex stays at action.queueIndex (click position
+          // in the view, or autoplay advance).
+          resolvedQueue = action.queue
+          resolvedQueueIndex = action.queueIndex ?? state.queueIndex
           resolvedOriginalQueue = null
         }
-      } else {
-        // No fresh queue — preserve existing state for both.
-        resolvedOriginalQueue = state.originalQueue
       }
+      // else: no action.queue — keep defaults (state.queue, etc.)
 
       return {
         ...state,

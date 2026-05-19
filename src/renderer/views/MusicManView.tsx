@@ -1122,7 +1122,7 @@ export default function MusicManView() {
                       className="musicman-playlist-play-all"
                       onClick={() => {
                         if (playlistResult.tracks.length > 0) {
-                          playTrack(playlistResult.tracks[0], playlistResult.tracks, 0)
+                          playTrack(playlistResult.tracks[0], playlistResult.tracks, 0, undefined, true)
                         }
                       }}
                     >
@@ -1145,7 +1145,7 @@ export default function MusicManView() {
                     <div
                       key={track.id}
                       className="musicman-playlist-track"
-                      onDoubleClick={() => playTrack(track, playlistResult.tracks, i)}
+                      onDoubleClick={() => playTrack(track, playlistResult.tracks, i, undefined, true)}
                     >
                       <span className="musicman-playlist-num">{i + 1}</span>
                       <span className="musicman-playlist-title">{track.title}</span>

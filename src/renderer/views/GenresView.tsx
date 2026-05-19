@@ -107,7 +107,7 @@ export default function GenresView() {
       },
     ] : []
     return [
-      { label: `Play "${track.title}"`, onClick: () => playTrack(track, filteredTracks, idx) },
+      { label: `Play "${track.title}"`, onClick: () => playTrack(track, filteredTracks, idx, undefined, true) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
@@ -237,7 +237,7 @@ export default function GenresView() {
               key={track.id}
               data-track-id={track.id}
               className={`genres-track-row ${i % 2 ? 'genres-track-row--alt' : ''} ${isPlaying ? 'genres-track-row--playing' : ''}`}
-              onDoubleClick={() => playTrack(track, filteredTracks, i)}
+              onDoubleClick={() => playTrack(track, filteredTracks, i, undefined, true)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}
               draggable
               onDragStart={(e) => {

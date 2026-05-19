@@ -386,7 +386,7 @@ export default function HomeView() {
       return ta - tb
     })
     flashCard(featuredAlbum.key)
-    playTrack(sorted[0], sorted, 0)
+    playTrack(sorted[0], sorted, 0, undefined, true)
   }, [featuredAlbum, playTrack, flashCard])
 
   // ── 4.4.33: quick lifetime stats for the strip under the hero. All
@@ -457,7 +457,7 @@ export default function HomeView() {
   const playAlbum = (card: AlbumCard) => {
     if (card.tracks.length === 0) return
     flashCard(card.key)
-    playTrack(card.tracks[0], card.tracks, 0)
+    playTrack(card.tracks[0], card.tracks, 0, undefined, true)
   }
 
   return (

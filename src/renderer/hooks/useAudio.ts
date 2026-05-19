@@ -327,7 +327,7 @@ export function useAudio() {
   // playTrackRef lets the stuck-audio watchdog (inside updatePosition)
   // recover by re-loading the current track. updatePosition is defined
   // first, so this ref is the cycle-breaker.
-  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => void) | null>(null)
+  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
     rafTickCount++
@@ -1043,7 +1043,7 @@ export function useAudio() {
     }
   }, [loadAndPlay])
 
-  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => {
+  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => {
     if (autoDjMode && !djTransition) {
       window.dispatchEvent(new Event('musicman-dj-cancel'))
     }
@@ -1055,8 +1055,14 @@ export function useAudio() {
       sharedRaf,
       isPaused,
       djTransition: !!djTransition,
+      freshContext: !!freshContext,
     })
-    dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi })
+    // Brief 030c: pass freshContext through. View-side callers
+    // (SongsView, Toolbar Shuffle All, etc.) pass true. nextTrack/
+    // prevTrack pass false (default) — they're queue navigation,
+    // and the reducer must NOT rebuild the shuffle queue on those
+    // dispatches or queueIndex resets to 0 every Next press.
+    dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi, freshContext })
     loadAndPlay(track, q, qi)
   }, [loadAndPlay])
 
@@ -1112,12 +1118,9 @@ export function useAudio() {
   const prevTrack = useCallback(() => {
     const s = stateRef.current
     if (s.queue.length === 0) return
-    // If more than 3 seconds in, restart current track
-    if (s.position > 3 && sharedHowl) {
-      sharedHowl.seek(0)
-      dispatchRef.current({ type: 'SET_POSITION', position: 0 })
-      return
-    }
+    // Brief 030c: 3-second-guard removed. Previous always navigates
+    // to the previous track. Restart-current-song UX moved to the
+    // progress bar (seek to 0); two controls, two actions.
     // In shuffle mode, go back through shuffle history
     if (s.shuffle && s.shuffleHistory.length > 0) {
       const history = [...s.shuffleHistory]

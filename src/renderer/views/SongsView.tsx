@@ -117,7 +117,7 @@ export default function SongsView() {
   const handleDoubleClick = useCallback((idx: number) => {
     window.getSelection()?.removeAllRanges()
     const track = sorted[idx]
-    if (track) playTrack(track, sorted, idx)
+    if (track) playTrack(track, sorted, idx, undefined, true)
   }, [sorted, playTrack])
 
   const lastClickedIdx = useRef<number>(-1)
@@ -254,7 +254,7 @@ export default function SongsView() {
       : []
 
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx) },
+      { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx, undefined, true) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
@@ -514,7 +514,7 @@ export default function SongsView() {
         const track = idx >= 0 ? sorted[idx] : null
         if (track) {
           e.preventDefault()
-          playTrack(track, sorted, idx)
+          playTrack(track, sorted, idx, undefined, true)
         }
         return
       }

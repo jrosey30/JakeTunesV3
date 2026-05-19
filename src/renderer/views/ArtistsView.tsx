@@ -156,7 +156,7 @@ export default function ArtistsView() {
     const albumLabel = `${track.albumArtist || track.artist} — ${track.album}`
 
     return [
-      { label: `Play "${track.title}"`, onClick: () => playTrack(track, tracks, idx) },
+      { label: `Play "${track.title}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
@@ -464,7 +464,7 @@ export default function ArtistsView() {
                             className="artist-album-play"
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (album.tracks.length > 0) playTrack(album.tracks[0], album.tracks, 0)
+                              if (album.tracks.length > 0) playTrack(album.tracks[0], album.tracks, 0, undefined, true)
                             }}
                             title="Play this album from the top"
                           >
@@ -491,7 +491,7 @@ export default function ArtistsView() {
                             <div
                               key={track.id}
                               className={`artist-track-row ${isPlaying ? 'artist-track-row--playing' : ''}`}
-                              onDoubleClick={() => playTrack(track, album.tracks, album.tracks.indexOf(track))}
+                              onDoubleClick={() => playTrack(track, album.tracks, album.tracks.indexOf(track), undefined, true)}
                               onContextMenu={(e) => handleContextMenu(e, track, album.tracks, album.tracks.indexOf(track))}
                               draggable
                               onDragStart={(e) => {

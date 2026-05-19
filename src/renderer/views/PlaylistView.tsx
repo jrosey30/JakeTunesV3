@@ -438,7 +438,7 @@ export default function PlaylistView() {
     ] : []
 
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, sortedTracks, idx) },
+      { label: `Play "${label}"`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
@@ -514,7 +514,7 @@ export default function PlaylistView() {
           <button
             className="playlist-view-play"
             onClick={() => {
-              if (sortedTracks.length > 0) playTrack(sortedTracks[0], sortedTracks, 0)
+              if (sortedTracks.length > 0) playTrack(sortedTracks[0], sortedTracks, 0, undefined, true)
             }}
           >
             Play All
@@ -565,7 +565,7 @@ export default function PlaylistView() {
                 className={`songs-row ${i % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${dragOverIdx === i ? 'playlist-view-track--dragover' : ''}`}
                 style={{ gridTemplateColumns: gridTemplate }}
                 onClick={(e) => handleClick(track, i, e)}
-                onDoubleClick={() => playTrack(track, sortedTracks, i)}
+                onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
                 onContextMenu={(e) => handleContextMenu(e, track, i)}
                 draggable
                 onDragStart={(e) => {

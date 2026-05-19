@@ -199,7 +199,7 @@ export default function AlbumsView() {
     const albumLabel = `${track.albumArtist || track.artist} — ${track.album}`
 
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx) },
+      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: sel }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: sel }) },
@@ -417,7 +417,7 @@ export default function AlbumsView() {
                               <div
                                 className={`album-detail-row ${isPlaying ? 'album-detail-row--playing' : ''} ${isTrackSelected ? 'album-detail-row--selected' : ''} ${currentRowIdx % 2 ? 'album-detail-row--alt' : ''}`}
                                 onClick={(e) => handleTrackClick(track, i, selectedAlbum.tracks, e)}
-                                onDoubleClick={() => playTrack(track, selectedAlbum.tracks, i)}
+                                onDoubleClick={() => playTrack(track, selectedAlbum.tracks, i, undefined, true)}
                                 onContextMenu={(e) => {
                                   if (!selectedTrackIds.has(track.id)) {
                                     setSelectedTrackIds(new Set([track.id]))

@@ -406,7 +406,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     // and MM/Megan never come back between songs. The user reported
     // exactly this: "they speak once and then they don't come in and
     // out." This is the kick that started turning the radio off.
-    playTrack(firstTrack, shuffled, 0, true)
+    playTrack(firstTrack, shuffled, 0, true, true)
   }, [radioMode, lib.tracks, playTrack, stopPlayback])
 
   // "Start Artist Radio" — dispatched from any view's right-click menu
@@ -419,7 +419,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const { tracks } = (e as CustomEvent).detail as { tracks: typeof lib.tracks; label?: string }
       if (!tracks || tracks.length === 0) return
       const shuffled = [...tracks].sort(() => Math.random() - 0.5)
-      playTrack(shuffled[0], shuffled, 0, false)
+      playTrack(shuffled[0], shuffled, 0, false, true)
       setAutoDj(false)
       setRadioMode(true)
       radioCacheRef.current.clear()
@@ -1281,7 +1281,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setAutoDj(true)
       setDjActive(false)
       setDjModeLoading(false)
-      playTrack(setTracks[0], setTracks, 0, true)
+      playTrack(setTracks[0], setTracks, 0, true, true)
 
       // Fade out the intro text after a few seconds
       setTimeout(() => {

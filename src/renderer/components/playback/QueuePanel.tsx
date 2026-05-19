@@ -96,7 +96,7 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
         newQueue = [...state.queue, ...tracks]
         startIndex = state.queue.length
       }
-      playTrack(tracks[0], newQueue, startIndex)
+      playTrack(tracks[0], newQueue, startIndex, undefined, true)
       setDropIndex(null)
       return
     }
@@ -168,7 +168,7 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
                 className="queue-item"
                 draggable
                 onDragStart={(e) => handleItemDragStart(e, i)}
-                onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i)}
+                onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i, undefined, true)}
                 onDragOver={(e) => handleItemDragOver(e, i)}
               >
                 <div className="queue-item-num">{i + 1}</div>

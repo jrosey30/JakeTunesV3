@@ -635,7 +635,7 @@ export default function SmartPlaylistView() {
     ] : []
 
     return [
-      { label: `Play`, onClick: () => playTrack(track, sortedTracks, idx) },
+      { label: `Play`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
@@ -759,7 +759,7 @@ export default function SmartPlaylistView() {
           {sortedTracks.length > 0 && (
             <button
               className="playlist-view-play"
-              onClick={() => playTrack(sortedTracks[0], sortedTracks, 0)}
+              onClick={() => playTrack(sortedTracks[0], sortedTracks, 0, undefined, true)}
             >
               Play All
             </button>
@@ -821,7 +821,7 @@ export default function SmartPlaylistView() {
               className={`songs-row ${i % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''}`}
               style={{ gridTemplateColumns: gridTemplate }}
               onClick={(e) => handleClick(track, i, e)}
-              onDoubleClick={() => playTrack(track, sortedTracks, i)}
+              onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}
               draggable
               onDragStart={(e) => {
