@@ -1213,8 +1213,8 @@ function AppInner() {
                 ? `\n\nFirst failures:\n${applyOverridesResult.failures.slice(0, 5).map(f => `• ${f.filePath.split('/').pop()}: ${f.error || 'unknown'}`).join('\n')}`
                 : '')
             }
-            confirmLabel="Close"
-            cancelLabel="Close"
+            confirmLabel="Done"
+            hideCancel
             destructive={false}
             onCancel={() => setApplyOverridesResult(null)}
             onConfirm={() => setApplyOverridesResult(null)}
@@ -1298,8 +1298,8 @@ function AppInner() {
                     ? 'No drift found. library.json fileSize already matched disk for every track.'
                     : 'library.json has been updated. The next sync will propagate the corrected sizes to Mini.')
             }
-            confirmLabel="Close"
-            cancelLabel="Close"
+            confirmLabel="Done"
+            hideCancel
             destructive={false}
             onCancel={() => setRefreshSizesResult(null)}
             onConfirm={() => setRefreshSizesResult(null)}
