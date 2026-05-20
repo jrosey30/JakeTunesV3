@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -10,6 +11,7 @@ import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { Track } from '../types'
+import { setNotice } from '../activity'
 import '../styles/albums.css'
 
 interface Album {
@@ -155,11 +157,25 @@ export default function AlbumsView() {
         onClick: async () => {
           const file = await window.electronAPI.chooseArtworkFile()
           if (!file.ok || !file.path) return
+          let failed = 0
+          let lastErr = ''
           for (const { artist, album } of artPairs.values()) {
             const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
             if (result.ok && result.key && result.hash) {
               libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+            } else {
+              failed += 1
+              lastErr = result.error || ''
             }
+          }
+          // 4.4.12: surface failures so the user knows the save didn't stick.
+          if (failed > 0) {
+            setNotice(
+              failed === 1
+                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
+                : `Couldn't save artwork for ${failed} albums.`,
+              { kind: 'error' }
+            )
           }
         },
       },
@@ -183,7 +199,7 @@ export default function AlbumsView() {
     const albumLabel = `${track.albumArtist || track.artist} — ${track.album}`
 
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx) },
+      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: sel }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: sel }) },
@@ -239,6 +255,10 @@ export default function AlbumsView() {
         libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [libDispatch]
@@ -270,6 +290,7 @@ export default function AlbumsView() {
   // click/scroll/wheel inside the view; programmatic scrolls within
   // 200ms of isAutoScrollAtRef are not counted as activity.
   const viewRootRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('albums', viewRootRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -396,7 +417,7 @@ export default function AlbumsView() {
                               <div
                                 className={`album-detail-row ${isPlaying ? 'album-detail-row--playing' : ''} ${isTrackSelected ? 'album-detail-row--selected' : ''} ${currentRowIdx % 2 ? 'album-detail-row--alt' : ''}`}
                                 onClick={(e) => handleTrackClick(track, i, selectedAlbum.tracks, e)}
-                                onDoubleClick={() => playTrack(track, selectedAlbum.tracks, i)}
+                                onDoubleClick={() => playTrack(track, selectedAlbum.tracks, i, undefined, true)}
                                 onContextMenu={(e) => {
                                   if (!selectedTrackIds.has(track.id)) {
                                     setSelectedTrackIds(new Set([track.id]))

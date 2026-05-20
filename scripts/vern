@@ -1,0 +1,449 @@
+#!/usr/bin/env bash
+# vern — JakeTunes diagnostic capture, v0.6
+# Brief 017 (v0.1), Brief 027 (v0.5), Brief 028 (v0.6). Foundation
+# for diagnostic capture tooling. Outputs a single markdown file to
+# ~/JakeTunesV3/diagnostics/.
+#
+# Captures recent Claude Code actions, repo state, build health, code
+# structure, recent activity, and multi-vantage network reachability
+# (full backend endpoint matrix: /healthz, /api/tracks list, single-
+# track lookup, audio HEAD).
+#
+# Usage:
+#   ./scripts/vern                      # capture with no context note
+#   ./scripts/vern "scrubber bug back"  # capture with a context note
+#
+# The output is a single .md file the user uploads to the AI advisor
+# instead of running 20+ grep/sed/cat/curl commands manually.
+
+set -euo pipefail
+
+# Resolve repo root. Prefer git, fall back to script-relative path so
+# vern still works in a worktree where .git is a file pointer.
+if REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  :
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
+cd "$REPO_ROOT"
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+ISO_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+OUTPUT="${REPO_ROOT}/diagnostics/vern-${TIMESTAMP}.md"
+NOTE="${1:-}"
+
+mkdir -p "$(dirname "$OUTPUT")"
+
+# 24-hour marker for `find -newer`. macOS `date -v-1d` builds the mtime
+# directly; if it ever fails, fall back to leaving the marker at "now"
+# (find returns no results — empty section, not an error).
+TMPMARKER="$(mktemp -t vern-marker.XXXXXX)"
+if ! touch -t "$(date -v-1d +%Y%m%d%H%M.%S 2>/dev/null)" "$TMPMARKER" 2>/dev/null; then
+  : > "$TMPMARKER"
+fi
+trap 'rm -f "$TMPMARKER"' EXIT
+
+# Helper: run a command with a 30s timeout when `timeout`/`gtimeout` is
+# available. Otherwise just run it (long commands are rare enough that
+# the rare hang is acceptable for v0).
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  elif command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
+# Brief 027: network reachability probes. 5s per-probe timeout — vern
+# is meant to be fast read-of-state, a 30s probe defeats the purpose.
+# Each probe echoes a one-line result and returns 0/1 so callers can
+# track ✓/✗ in parallel shell variables for the interpretation phase.
+
+# HTTP probe via curl. Returns 0 on 200 OK, 1 otherwise.
+probe_http() {
+  local label="$1"
+  local url="$2"
+  local body http_code curl_rc
+  body=$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "${url}" 2>&1) || curl_rc=$?
+  curl_rc="${curl_rc:-0}"
+  http_code="${body}"
+  if [ "${curl_rc}" -eq 0 ] && [ "${http_code}" = "200" ]; then
+    echo "${label}: ✓ (200 OK)"
+    return 0
+  elif [ "${curl_rc}" -eq 28 ]; then
+    echo "${label}: ✗ TIMEOUT (>5s)"
+  elif [ "${curl_rc}" -eq 7 ]; then
+    echo "${label}: ✗ CONNECTION REFUSED"
+  elif [ "${curl_rc}" -eq 6 ]; then
+    echo "${label}: ✗ COULD NOT RESOLVE HOST"
+  else
+    echo "${label}: ✗ (curl exit ${curl_rc}, http ${http_code:-?})"
+  fi
+  return 1
+}
+
+# Brief 028: HEAD probe — same shape as probe_http but uses curl -I so
+# we only fetch headers. Used for binary endpoints like /audio/:id where
+# a GET would stream the whole file (wasteful and slow). The iOS app
+# already uses HEAD on the audio path for its skip-record logic.
+probe_http_head() {
+  local label="$1"
+  local url="$2"
+  local body http_code curl_rc
+  body=$(curl -sS -I -o /dev/null -m 5 -w "%{http_code}" "${url}" 2>&1) || curl_rc=$?
+  curl_rc="${curl_rc:-0}"
+  http_code="${body}"
+  if [ "${curl_rc}" -eq 0 ] && [ "${http_code}" = "200" ]; then
+    echo "${label}: ✓ (200 OK)"
+    return 0
+  elif [ "${curl_rc}" -eq 28 ]; then
+    echo "${label}: ✗ TIMEOUT (>5s)"
+  elif [ "${curl_rc}" -eq 7 ]; then
+    echo "${label}: ✗ CONNECTION REFUSED"
+  elif [ "${curl_rc}" -eq 6 ]; then
+    echo "${label}: ✗ COULD NOT RESOLVE HOST"
+  else
+    echo "${label}: ✗ (curl exit ${curl_rc}, http ${http_code:-?})"
+  fi
+  return 1
+}
+
+# SSH reachability probe. Returns 0 if the remote echoes 'ok'.
+probe_ssh() {
+  local label="$1"
+  local target="$2"
+  local result ssh_rc
+  result=$(ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${target}" 'echo ok' 2>&1) || ssh_rc=$?
+  ssh_rc="${ssh_rc:-0}"
+  if [ "${ssh_rc}" -eq 0 ] && printf '%s' "${result}" | tail -1 | grep -q "^ok$"; then
+    echo "${label}: ✓"
+    return 0
+  else
+    # Compress the (potentially multi-line) ssh error into one
+    # readable line — keeps the markdown clean and the interpretation
+    # grep simple.
+    local trimmed
+    trimmed=$(printf '%s' "${result}" | tr '\n' ' ' | sed -E 's/  +/ /g' | cut -c1-140)
+    echo "${label}: ✗ (${trimmed})"
+    return 1
+  fi
+}
+
+{
+  # ── Section 1: Header ───────────────────────────────────────────────
+  echo "# vern capture — ${ISO_TIMESTAMP}"
+  echo
+  echo "**Generated:** ${ISO_TIMESTAMP}"
+  echo "**Repo:** ${REPO_ROOT}"
+  if [ -n "$NOTE" ]; then
+    echo "**Note:** ${NOTE}"
+  else
+    echo "**Note:** (none)"
+  fi
+  echo
+
+  # ── Section 1b: Recent Claude Code Actions (Brief 027) ──────────────
+  # Top-of-output by design — the most common diagnostic failure is
+  # theorizing about state that was already changed. Surfacing recent
+  # commits + modified files + uncommitted state HERE means the first
+  # thing the advisor sees is "what was just done." There's deliberate
+  # redundancy with the next "Repo state" section, which lists the same
+  # 10 commits in a slightly different format — kept additive per the
+  # brief, prominence matters more than dedup.
+  echo "## Recent Claude Code Actions (last 10 commits + uncommitted state)"
+  echo
+  echo "### Last 10 commits"
+  echo
+  echo '```'
+  git log --oneline -10 2>/dev/null || echo "(no git history available)"
+  echo '```'
+  echo
+  echo "### Files modified in last 10 commits (most recent first)"
+  echo
+  echo '```'
+  git log --name-only --pretty=format:"--- %h %s (%ar)" -10 2>/dev/null | head -100 || echo "(no git history available)"
+  echo '```'
+  echo
+  echo "### Currently uncommitted changes"
+  echo
+  UNCOMMITTED_TOP="$(git status --short 2>/dev/null || true)"
+  if [ -z "$UNCOMMITTED_TOP" ]; then
+    echo "Working tree clean."
+  else
+    echo '```'
+    echo "$UNCOMMITTED_TOP"
+    echo '```'
+  fi
+  echo
+
+  # ── Section 2: Repo state ───────────────────────────────────────────
+  echo "## Repo state"
+  echo
+  echo "**Current branch:** $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(not a git repo)')"
+  echo
+  echo "**Last 10 commits:**"
+  echo
+  echo '```'
+  git log --oneline -10 2>/dev/null || echo "(no git history)"
+  echo '```'
+  echo
+  echo "**Working tree status:**"
+  echo
+  STATUS_OUTPUT="$(git status --short 2>/dev/null || true)"
+  if [ -z "$STATUS_OUTPUT" ]; then
+    echo "clean"
+  else
+    echo '```'
+    echo "$STATUS_OUTPUT"
+    echo '```'
+  fi
+  echo
+  echo "**Files modified in the last 24 hours (tracked + untracked, excluding node_modules / .git / release / diagnostics):**"
+  echo
+  echo '```'
+  command find . -type f -newer "$TMPMARKER" \
+    -not -path './node_modules/*' \
+    -not -path './.git/*' \
+    -not -path './release/*' \
+    -not -path './diagnostics/*' \
+    -not -path './out/*' \
+    -not -path './dist/*' \
+    2>/dev/null | head -30 || echo "(none)"
+  echo '```'
+  echo
+
+  # ── Section 3: Build health ─────────────────────────────────────────
+  echo "## Build health"
+  echo
+
+  # Version from package.json
+  VERSION="(unknown)"
+  if [ -f "package.json" ]; then
+    if command -v node >/dev/null 2>&1; then
+      VERSION="$(node -p "require('./package.json').version" 2>/dev/null || echo '(unknown)')"
+    else
+      VERSION="$(command grep -E '"version"[[:space:]]*:' package.json | head -1 | command sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || echo '(unknown)')"
+    fi
+  fi
+  echo "**Version:** ${VERSION}"
+  echo
+
+  # tsc web project. Capturing grep output to a variable + branching on
+  # emptiness instead of piping `grep | wc -l`: with `set -o pipefail`
+  # an empty-match grep exits 1, which previously killed the script
+  # mid-section. The `|| true` swallows that exit so 0-error cases work.
+  echo "**TypeScript errors (web project):**"
+  echo
+  TSC_WEB_OUTPUT="$(run_with_timeout 30 npx tsc --noEmit --project tsconfig.web.json 2>&1 || true)"
+  TSC_WEB_ERRORS="$(printf '%s\n' "$TSC_WEB_OUTPUT" | command grep 'error TS' 2>/dev/null || true)"
+  if [ -z "$TSC_WEB_ERRORS" ]; then
+    TSC_WEB_COUNT=0
+  else
+    TSC_WEB_COUNT="$(printf '%s\n' "$TSC_WEB_ERRORS" | wc -l | tr -d ' ')"
+  fi
+  echo "Error count: ${TSC_WEB_COUNT}"
+  if [ "${TSC_WEB_COUNT}" -gt 0 ]; then
+    echo
+    echo '```'
+    printf '%s\n' "$TSC_WEB_ERRORS" | head -20
+    echo '```'
+  fi
+  echo
+
+  # tsc node project (same pattern as web)
+  echo "**TypeScript errors (node project):**"
+  echo
+  TSC_NODE_OUTPUT="$(run_with_timeout 30 npx tsc --noEmit --project tsconfig.node.json 2>&1 || true)"
+  TSC_NODE_ERRORS="$(printf '%s\n' "$TSC_NODE_OUTPUT" | command grep 'error TS' 2>/dev/null || true)"
+  if [ -z "$TSC_NODE_ERRORS" ]; then
+    TSC_NODE_COUNT=0
+  else
+    TSC_NODE_COUNT="$(printf '%s\n' "$TSC_NODE_ERRORS" | wc -l | tr -d ' ')"
+  fi
+  echo "Error count: ${TSC_NODE_COUNT}"
+  if [ "${TSC_NODE_COUNT}" -gt 0 ]; then
+    echo
+    echo '```'
+    printf '%s\n' "$TSC_NODE_ERRORS" | head -20
+    echo '```'
+  fi
+  echo
+
+  # ── Section 4: Code structure ───────────────────────────────────────
+  echo "## Code structure"
+  echo
+  echo "**Tree of src/ (2 levels deep):**"
+  echo
+  echo '```'
+  if command -v tree >/dev/null 2>&1; then
+    tree -L 2 src/ 2>/dev/null || echo "(tree failed)"
+  else
+    # Fallback: directory listing two levels deep, sorted, with a leading marker
+    command find src -maxdepth 2 -type d 2>/dev/null | sort | command sed 's|[^/]*/|  |g' || echo "(find failed)"
+  fi
+  echo '```'
+  echo
+  echo "**Largest 10 source files (by line count):**"
+  echo
+  echo '```'
+  command find src -type f \( -name '*.ts' -o -name '*.tsx' \) 2>/dev/null \
+    | xargs wc -l 2>/dev/null \
+    | sort -rn \
+    | head -11 \
+    || echo "(wc failed)"
+  echo '```'
+  echo
+
+  # ── Section 5: Recent activity ──────────────────────────────────────
+  echo "## Recent activity"
+  echo
+  echo "**Recently modified source files (last 5 within 24h):**"
+  echo
+  echo '```'
+  command find src -type f -newer "$TMPMARKER" 2>/dev/null | head -5 || echo "(none)"
+  echo '```'
+  echo
+  echo "**Most recent Dr. Claude brief:**"
+  echo
+  LATEST_BRIEF="$(ls -t "Dr. Claude/"*.md 2>/dev/null | head -1 || true)"
+  if [ -n "$LATEST_BRIEF" ]; then
+    echo "Path: \`${LATEST_BRIEF}\`"
+    echo
+    echo "First 50 lines:"
+    echo
+    echo '```'
+    head -50 "$LATEST_BRIEF" 2>/dev/null || echo "(unreadable)"
+    echo '```'
+  else
+    echo "(no Dr. Claude briefs found)"
+  fi
+  echo
+  echo "**Last test run:**"
+  echo
+  if [ -f ".last-test-output" ]; then
+    echo '```'
+    cat .last-test-output
+    echo '```'
+  else
+    echo "(no cached test output — forward-compat for when test runs get auto-captured)"
+  fi
+  echo
+
+  # ── Section 6: Network State (Brief 027 + 028) ──────────────────────
+  # Multi-vantage reachability — Mac → NAS, Mac → Mini (SSH + the four
+  # backend endpoints the iOS app depends on), Tailscale status. The
+  # pure value-add over "I could run curl myself" is the interpretation
+  # block below: raw exit codes get collapsed into a one-line asymmetry
+  # summary so the advisor sees the pattern instantly. Each probe has a
+  # 5s timeout — vern is fast read-of-state, never a 30s wait.
+  #
+  # Brief 028: probe the FULL backend surface, not just liveness. Each
+  # endpoint exercises a distinct subsystem:
+  #   /healthz                → Express alive + routing works
+  #   /api/tracks?limit=1     → library JSON read / DB / file-system
+  #   /api/tracks/125         → single-record lookup (different route
+  #                              handler than the list)
+  #   HEAD /audio/125         → SMB-to-NAS streaming path (the most
+  #                              common failure mode on this stack)
+  # Track ID 125 is the pinned known-good test target post-Mini-reboot.
+  echo "## Network State (multi-vantage reachability)"
+  echo
+  echo '```'
+
+  # Track results in parallel variables so the interpretation phase
+  # below doesn't have to re-parse the rendered output.
+  NAS_SSH_OK=0
+  MINI_SSH_OK=0
+  HEALTHZ_OK=0
+  TRACKS_LIST_OK=0
+  TRACKS_SINGLE_OK=0
+  AUDIO_OK=0
+  LOCAL_HTTP_OK=0
+
+  if command -v ssh > /dev/null 2>&1; then
+    if probe_ssh "Mac → NAS (jakerosenbaum@ds225) via SSH" "jakerosenbaum@ds225"; then
+      NAS_SSH_OK=1
+    fi
+    if probe_ssh "Mac → Mini (homemini) via SSH" "homemini"; then
+      MINI_SSH_OK=1
+    fi
+  else
+    echo "Mac → NAS / Mini via SSH: SKIPPED (ssh not in PATH)"
+  fi
+
+  if command -v curl > /dev/null 2>&1; then
+    # Brief 028: full backend probe matrix
+    if probe_http "Mac → backend liveness (http://homemini:3000/healthz)" "http://homemini:3000/healthz"; then
+      HEALTHZ_OK=1
+    fi
+    if probe_http "Mac → backend library API (http://homemini:3000/api/tracks?limit=1&offset=0)" "http://homemini:3000/api/tracks?limit=1&offset=0"; then
+      TRACKS_LIST_OK=1
+    fi
+    if probe_http "Mac → backend single-track (http://homemini:3000/api/tracks/125)" "http://homemini:3000/api/tracks/125"; then
+      TRACKS_SINGLE_OK=1
+    fi
+    if probe_http_head "Mac → backend audio path (HEAD http://homemini:3000/audio/125)" "http://homemini:3000/audio/125"; then
+      AUDIO_OK=1
+    fi
+    # Local dev backend (in case the user is running one locally)
+    if probe_http "Mac → localhost backend (http://localhost:3000/healthz)" "http://localhost:3000/healthz"; then
+      LOCAL_HTTP_OK=1
+    fi
+  else
+    echo "Backend HTTP probes: SKIPPED (curl not in PATH)"
+  fi
+
+  echo
+  if command -v tailscale > /dev/null 2>&1; then
+    echo "Tailscale status:"
+    tailscale status 2>&1 | head -10
+  else
+    echo "Tailscale CLI not available (skipping tailscale status)"
+  fi
+  echo '```'
+  echo
+
+  # Brief 028: sharper asymmetry interpretation. Four backend probes
+  # let us distinguish five distinct failure modes by order — most-
+  # specific cases first, so the right line fires even when multiple
+  # conditions are technically true.
+  echo "### Interpretation"
+  echo
+  if [ "${HEALTHZ_OK}" -eq 1 ] && [ "${TRACKS_LIST_OK}" -eq 1 ] && [ "${TRACKS_SINGLE_OK}" -eq 1 ] && [ "${AUDIO_OK}" -eq 1 ]; then
+    echo "All backend subsystems healthy. No asymmetry detected."
+  elif [ "${NAS_SSH_OK}" -eq 0 ] && [ "${MINI_SSH_OK}" -eq 0 ]; then
+    echo "**Both NAS and Mini unreachable.** Likely: local network issue, Tailscale down on this Mac, or both targets simultaneously offline (less likely)."
+  elif [ "${MINI_SSH_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: NAS reachable but Mini unreachable entirely. Likely: Mini-side Tailscale wedge, Mini offline, or Mini SSH config issue."
+  elif [ "${HEALTHZ_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Mini reachable via SSH but backend /healthz unreachable. Likely: backend process not running, port not listening on :3000, or backend bound to different host/port. Check launchd on Mini."
+  elif [ "${HEALTHZ_OK}" -eq 1 ] && [ "${TRACKS_LIST_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Backend alive but library API failing. Likely: route handler error, library.json read failure, or DB issue. Check backend logs on Mini."
+  elif [ "${TRACKS_LIST_OK}" -eq 1 ] && [ "${TRACKS_SINGLE_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Library list endpoint works but single-track lookup fails. Likely: track ID 125 unavailable (deleted? reassigned?), or single-track route handler bug. Verify the test ID still exists."
+  elif [ "${TRACKS_SINGLE_OK}" -eq 1 ] && [ "${AUDIO_OK}" -eq 0 ]; then
+    echo "**ASYMMETRY**: Library API works but audio streaming path fails. Likely: SMB-to-NAS file read bottleneck, NAS unreachable from Mini, or audio route handler bug. This is the highest-signal asymmetry — investigate Mini's NAS mount state first."
+  else
+    echo "Partial reachability detected. Review individual probe results above to identify the asymmetry."
+  fi
+  if [ "${LOCAL_HTTP_OK}" -eq 1 ]; then
+    echo
+    echo "(Local backend on http://localhost:3000 is also reachable — a dev server is running.)"
+  fi
+  echo
+
+  # ── Footer ──────────────────────────────────────────────────────────
+  echo "---"
+  echo
+  echo "*vern v0.6 — Briefs 017 + 027 + 028 — \`~/JakeTunesV3/scripts/vern\`*"
+  echo
+  echo "To add a context note to future captures: \`./scripts/vern \"your note here\"\`"
+} > "$OUTPUT"
+
+echo "vern: wrote ${OUTPUT}"
+echo "vern: $(wc -l < "$OUTPUT" | tr -d ' ') lines, $(wc -c < "$OUTPUT" | tr -d ' ') bytes"

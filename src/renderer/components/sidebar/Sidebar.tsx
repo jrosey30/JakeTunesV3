@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
+import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
 import AlbumArtPanel from './AlbumArtPanel'
 import ContextMenu from '../ContextMenu'
 import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId } from '../../types'
+import { setNotice } from '../../activity'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
+  home: <HomeIcon />,
   songs: <SongsIcon />,
   artists: <ArtistsIcon />,
   albums: <AlbumsIcon />,
@@ -15,11 +18,14 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
+  // 4.4.19: Home/Dashboard. Surfaces Recently Added + Top Artists,
+  // future ships add Listening Stats / Picks / Music News / Bandsintown.
+  { label: 'Home', view: 'home' },
   { label: 'Songs', view: 'songs' },
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
   { label: 'Genres', view: 'genres' },
-  { label: 'The Music Man', view: 'musicman', highlight: '#c87828' },
+  { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
 
 // 4.4.0: split into two sections so the WJLR Picks panel stands out as
@@ -52,6 +58,19 @@ const ICON_BLUE   = '#4a7fbf'   // Songs / Albums (Music)
 const ICON_PURPLE = '#a557a6'   // Artists (person silhouette)
 const ICON_GREEN  = '#5b9b54'   // Genres (category grid)
 const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
+// 4.4.47: the brand orange, sampled from the app logo (#bb4308). Used
+// for the Home icon and the Music Man sidebar entry's icon + highlight.
+const ICON_HOME_ORANGE = '#bb4308'  // Home — warm color, distinct from the cooler library icons.
+
+function HomeIcon() {
+  // Simple gable-roof house silhouette — instantly readable at 12 px,
+  // doesn't fight the existing library icon set.
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill={ICON_HOME_ORANGE}>
+      <path d="M6 1.2 1 5.4V10.5a.6.6 0 0 0 .6.6h2.6V7.6h3.6V11.1h2.6a.6.6 0 0 0 .6-.6V5.4Z" />
+    </svg>
+  )
+}
 
 function SongsIcon() {
   return (
@@ -118,11 +137,11 @@ function MusicManPicksIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       {/* Vinyl record */}
-      <circle cx="6" cy="6" r="5" stroke="#c87828" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#c87828" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#c87828" />
+      <circle cx="6" cy="6" r="5" stroke="#bb4308" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#bb4308" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#bb4308" />
       {/* Sparkle */}
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#c87828" />
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#bb4308" />
     </svg>
   )
 }
@@ -183,6 +202,7 @@ function CdIcon() {
 
 export default function Sidebar() {
   const { state, dispatch } = useLibrary()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const [ipodMounted, setIpodMounted] = useState(false)
   const [ipodName, setIpodName] = useState('iPod')
   const [cdMounted, setCdMounted] = useState(false)
@@ -325,7 +345,25 @@ export default function Sidebar() {
               >
                 <span className="sidebar-item-icon"><IpodIcon /></span>
                 <span className="sidebar-item-label">{ipodName}</span>
-                <button className="sidebar-eject-btn" title="Eject" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectIpod().then(() => window.dispatchEvent(new Event('jaketunes-ipod-ejected'))) }}><EjectIcon /></button>
+                <button className="sidebar-eject-btn" title="Eject" onClick={async (e) => {
+                  e.stopPropagation()
+                  // If we're playing a track from the iPod, the file handle
+                  // would prevent diskutil eject from succeeding. STOP unloads
+                  // the Howl which closes the ipod-audio:// streaming read.
+                  // 500ms is comfortably more than the unload takes locally
+                  // and shorter than the user's perceptible delay budget.
+                  const playingFromIpod = pb.isPlaying && pb.nowPlaying?.path?.startsWith('iPod_Control:')
+                  if (playingFromIpod) {
+                    pbDispatch({ type: 'STOP' })
+                    await new Promise((resolve) => setTimeout(resolve, 500))
+                  }
+                  const r = await window.electronAPI.ejectIpod()
+                  if (r.ok) {
+                    window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
+                  } else {
+                    setNotice(`Eject failed: ${r.error || 'unknown error'}`, { kind: 'error', durationMs: 6000 })
+                  }
+                }}><EjectIcon /></button>
               </li>
             )}
             {cdMounted && (

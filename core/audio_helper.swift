@@ -72,6 +72,46 @@ func getDefaultOutputDevice() -> AudioDeviceID {
     return deviceId
 }
 
+// 4.4.51: the default INPUT device — used by `mic-status` to detect
+// when the user is on a call (Teams/Zoom/etc. all grab the mic).
+func getDefaultInputDevice() -> AudioDeviceID {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var deviceId: AudioDeviceID = 0
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceId)
+    return deviceId
+}
+
+// Is ANY process on the system currently running (using) this device?
+// CoreAudio's kAudioDevicePropertyDeviceIsRunningSomewhere — for the
+// default input device this is effectively "is the microphone live,"
+// which is the signal JakeTunes uses to detect "user is on a call."
+func isDeviceRunningSomewhere(_ id: AudioDeviceID) -> Bool {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var running: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(id, &address, 0, nil, &size, &running)
+    if status != noErr { return false }
+    return running != 0
+}
+
+// Print whether the microphone is currently in use. JakeTunes polls
+// this to auto-route music off the computer speakers when a call
+// starts (so the call can have the speakers) and back when it ends.
+func micStatus() {
+    let inputId = getDefaultInputDevice()
+    let active = inputId != 0 && isDeviceRunningSomewhere(inputId)
+    print("{\"ok\":true,\"micActive\":\(active ? "true" : "false")}")
+}
+
 func listDevices() {
     var address = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
@@ -127,7 +167,7 @@ func setDefaultDevice(_ deviceId: UInt32) {
 // Main
 let args = CommandLine.arguments
 if args.count < 2 {
-    print("Usage: audio_helper list | set <deviceId>")
+    print("Usage: audio_helper list | set <deviceId> | mic-status")
     exit(1)
 }
 
@@ -140,7 +180,9 @@ case "set":
         exit(1)
     }
     setDefaultDevice(id)
+case "mic-status":
+    micStatus()
 default:
-    print("Usage: audio_helper list | set <deviceId>")
+    print("Usage: audio_helper list | set <deviceId> | mic-status")
     exit(1)
 }

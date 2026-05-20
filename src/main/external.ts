@@ -187,6 +187,201 @@ export function formatReviewsForPrompt(items: string[]): string {
   return `Recent music press headlines (use ONE of these as a reaction hook if it fits, otherwise ignore):\n${items.map(i => '  - ' + i).join('\n')}`
 }
 
+// ─────── 4.4.28: structured RSS for the Home view (News + Releases) ───────
+// The above getRecentReviews() returns "[Source] Title" strings for Music
+// Man's prompt context. The Home view needs more — clickable links, dates,
+// and (where available) hero images for the Notable Releases cards. So we
+// parse the same feeds again with a richer extractor and cache the parsed
+// objects for one hour. The two surfaces share the underlying network
+// fetches via a single combined parser; only the OUTPUT shape differs.
+
+export interface MusicNewsItem {
+  title: string
+  link: string
+  source: string         // 'Pitchfork' | 'Stereogum' | 'The Quietus'
+  pubDate: string        // ISO; '' if unparseable
+  imageUrl?: string      // best-effort cover/feature image
+  /** True for the Pitchfork Best New Albums feed — these items are
+   *  surfaced on Home's "Notable Releases" row; everything else
+   *  shows under "Music News". */
+  isReleaseReview: boolean
+}
+
+const newsCache = makeCache<MusicNewsItem[]>(60 * 60 * 1000)  // 1 hour
+
+// 4.4.29: RSS feeds embed HTML entities in <title> CDATA. The previous
+// parser passed `&#8220;`, `&#8217;`, `&amp;` etc through verbatim,
+// which rendered as literal "&#8220;" in the UI. This decoder handles
+// the common cases: named entities, decimal numeric, hex numeric.
+function decodeEntities(str: string): string {
+  if (!str) return ''
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+}
+
+// Extract a best-guess image URL from an RSS item body. Tries (in order):
+//   <media:content url="…" />
+//   <media:thumbnail url="…" />
+//   <enclosure url="…" type="image/…" />
+//   <img src="…" /> inside <content:encoded> or <description>
+function extractImageUrl(itemXml: string): string | undefined {
+  const mediaContent = itemXml.match(/<media:content[^>]*url=["']([^"']+\.(?:jpe?g|png|webp)[^"']*)["']/i)
+  if (mediaContent) return mediaContent[1]
+  const mediaThumb = itemXml.match(/<media:thumbnail[^>]*url=["']([^"']+)["']/i)
+  if (mediaThumb) return mediaThumb[1]
+  const enclosure = itemXml.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*type=["']image/i)
+  if (enclosure) return enclosure[1]
+  // Look inside <content:encoded> or <description> for first <img>.
+  const bodyMatch = itemXml.match(/<(?:content:encoded|description)>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/(?:content:encoded|description)>/i)
+  if (bodyMatch) {
+    const imgMatch = bodyMatch[1].match(/<img[^>]*src=["']([^"']+)["']/i)
+    if (imgMatch) return imgMatch[1]
+  }
+  return undefined
+}
+
+function parsePubDate(itemXml: string): string {
+  const m = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)
+    || itemXml.match(/<updated>([\s\S]*?)<\/updated>/i)
+    || itemXml.match(/<dc:date>([\s\S]*?)<\/dc:date>/i)
+  if (!m) return ''
+  const parsed = new Date(m[1].trim())
+  if (isNaN(parsed.getTime())) return ''
+  return parsed.toISOString()
+}
+
+// 4.4.32: gossip filter for news headlines. Even Pitchfork News and
+// Stereogum's music category publish a lot of "X reacts to Y" / "X
+// responds to Z" / "Watch X react" content that reads as celebrity
+// drama, not music news. Drop items whose titles match any pattern.
+// The patterns are intentionally narrow — they target specific
+// drama-coverage phrasing, not real music news that incidentally
+// mentions any of these words. False negatives (gossip slipping
+// through) are OK; false positives (real music news being filtered)
+// are not.
+const GOSSIP_PATTERNS: RegExp[] = [
+  /\breact(?:s|ed|ing)?\s+to\b/i,           // "Artist Reacts To X"
+  /\bresponds?\s+to\b/i,                     // "Artist Responds To X"
+  /\baddresses?\s+(?:the\s+)?(?:rumors?|controversy|backlash|criticism)\b/i,
+  /\bfires?\s+back\b/i,
+  /\bclap[\s-]?back\b/i,
+  /\bcalls?\s+out\b/i,                       // "X Calls Out Y"
+  /\bslam(?:s|med|ming)?\b/i,                // "X Slams Y" (clickbait phrasing)
+  /\bdrag(?:s|ged|ging)?\s+(?:on|over|for)\b/i,
+  /\broast(?:s|ed|ing)?\b/i,                 // "X Roasts Y"
+  /\bbeef\s+with\b/i,                        // "Beef With"
+  /\bfeud(?:s|ing)?\b/i,
+  /\bjokes?\s+(?:about|that)\b.*\b(?:Disney|Trump|GOP|politics|political)\b/i,
+  /\bdating\s+rumors?\b/i,
+  /\bsplit(?:s|ting)?\s+with\b/i,            // celebrity-split clickbait
+  /\bweighs?\s+in\s+on\b/i,                  // "X Weighs In On Y" (commentary, not news)
+]
+
+function isGossip(title: string): boolean {
+  return GOSSIP_PATTERNS.some(p => p.test(title))
+}
+
+async function fetchStructuredFeed(url: string, source: string, isReleaseReview: boolean): Promise<MusicNewsItem[]> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'JakeTunes/4.4' },
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) return []
+    const xml = await res.text()
+    const items: MusicNewsItem[] = []
+    const matches = xml.match(/<item[\s\S]*?<\/item>/gi) || []
+    for (const item of matches.slice(0, 12)) {
+      const titleMatch = item.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i)
+      const linkMatch = item.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i)
+      // 4.4.29: decode HTML entities in the title (RSS feeds embed
+      // curly quotes, apostrophes, ampersands as &#8220; etc.).
+      const rawTitle = titleMatch?.[1]?.trim() || ''
+      const title = decodeEntities(rawTitle).replace(/\s+/g, ' ').slice(0, 240)
+      const link = linkMatch?.[1]?.trim() || ''
+      if (!title || !link) continue
+      // 4.4.32: drop gossip headlines. Skip release reviews from the
+      // filter (Pitchfork BNA shouldn't get filtered — those are real
+      // album release announcements regardless of phrasing).
+      if (!isReleaseReview && isGossip(title)) continue
+      items.push({
+        title,
+        link,
+        source,
+        pubDate: parsePubDate(item),
+        imageUrl: extractImageUrl(item),
+        isReleaseReview,
+      })
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+/** Combined structured fetch across all the RSS feeds. One-hour cache.
+ *
+ * 4.4.30: News-feed-focused source list. The 4.4.29 swap traded
+ * Stereogum-news clickbait for higher-quality sources, but the
+ * replacements (NPR Music, Aquarium Drunkard, Pitchfork Features,
+ * The Quietus) are mostly long-form criticism / curated reissue
+ * blog posts / Tiny Desk announcements — high-signal, but not what
+ * a normal person would call "music news." Swap to dedicated news
+ * RSS feeds that publish actual artist/release/tour announcements:
+ *
+ *   - Pitchfork News        — separate from Pitchfork Features
+ *   - Stereogum New Music   — release/single announcements, not the
+ *                             main feed that has the clickbait
+ *   - Brooklyn Vegan        — tour + release news, indie/rock heavy
+ *   - Consequence           — broad music news
+ *
+ * Pitchfork "Best New Albums" still drives the cover-led "New This
+ * Week" releases row — that section's content is correct, only the
+ * news row needed the fix. */
+async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
+  const cached = newsCache.get('all')
+  if (cached) return cached
+  const sources: { name: string; url: string; isReleaseReview: boolean }[] = [
+    // Notable Releases (cover-led card row on Home — already correct)
+    { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/reviews/best/albums/',         isReleaseReview: true },
+    // Music News (text-led card row on Home — 4.4.30 swap)
+    { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/news/',                        isReleaseReview: false },
+    { name: 'Stereogum',       url: 'https://www.stereogum.com/category/new-music/feed/',     isReleaseReview: false },
+    { name: 'Brooklyn Vegan',  url: 'https://www.brooklynvegan.com/feed/',                    isReleaseReview: false },
+    // 4.4.31: swapped from main /feed/ which includes TV/celebrity
+    // (Pete Davidson roast, Kimmel political jokes) to the
+    // music-only category.
+    { name: 'Consequence',     url: 'https://consequence.net/category/music/feed/',           isReleaseReview: false },
+  ]
+  const results = await Promise.all(
+    sources.map(s => fetchStructuredFeed(s.url, s.name, s.isReleaseReview))
+  )
+  const flat = results.flat().sort((a, b) => b.pubDate.localeCompare(a.pubDate))
+  newsCache.set('all', flat)
+  return flat
+}
+
+/** Music news items for the Home view — Stereogum + Quietus, newest first. */
+export async function getMusicNews(): Promise<MusicNewsItem[]> {
+  const all = await getStructuredFeeds()
+  return all.filter(i => !i.isReleaseReview).slice(0, 12)
+}
+
+/** Notable releases for the Home view — Pitchfork "Best New Albums",
+ *  newest first. Each item is a recent album that Pitchfork flagged as
+ *  noteworthy; the link goes to the review. Suitable as cover-led cards. */
+export async function getNotableReleases(): Promise<MusicNewsItem[]> {
+  const all = await getStructuredFeeds()
+  return all.filter(i => i.isReleaseReview).slice(0, 10)
+}
+
 // ───────────────────────────── Discogs ─────────────────────────────
 // Lookup release / master detail for a given artist + album. Used to
 // drop pressing detail into MM's lane without us having to fabricate
@@ -338,18 +533,274 @@ export async function getMusicBrainzReleaseMbid(artist: string, album: string): 
   if (cached !== null) return cached
   try {
     const q = `artist:"${artist.replace(/"/g, '\\"')}" AND release:"${album.replace(/"/g, '\\"')}"`
-    const url = `https://musicbrainz.org/ws/2/release?query=${encodeURIComponent(q)}&fmt=json&limit=1`
+    const url = `https://musicbrainz.org/ws/2/release?query=${encodeURIComponent(q)}&fmt=json&limit=5`
     const res = await fetch(url, {
       headers: { 'User-Agent': 'JakeTunes/4.3' },
       signal: AbortSignal.timeout(7000),
     })
     if (!res.ok) { mbidCache.set(cacheKey, null); return null }
-    type MbRes = { releases?: { id?: string }[] }
-    const data = await res.json() as MbRes
-    const id = data.releases?.[0]?.id || null
-    mbidCache.set(cacheKey, id)
-    return id
+    type MbRelease = { id?: string; title?: string; 'artist-credit'?: { name?: string }[] }
+    const data = await res.json() as { releases?: MbRelease[] }
+    // 4.4.57 — STRICT verification. MusicBrainz search is fuzzy; taking
+    // releases[0] blindly returns a wrong release for common album
+    // titles. Confirm a result's title AND artist-credit actually match
+    // what we asked for before trusting its MBID. No confident match →
+    // null (the caller falls through to the strict Deezer search, then
+    // to no-art).
+    const norm = (s: string) => s.toLowerCase()
+      .replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s*\[.*?\]\s*/g, ' ')
+      .replace(/^the\s+/, '').replace(/\s+/g, ' ').trim()
+    const wantArtist = norm(artist)
+    const wantAlbum = norm(album)
+    for (const rel of data.releases || []) {
+      if (!rel.id) continue
+      const relAlbum = norm(rel.title || '')
+      const relArtist = norm((rel['artist-credit'] || []).map(c => c.name || '').join(' '))
+      const albumOk = relAlbum === wantAlbum
+        || (wantAlbum.length >= 3 && (relAlbum.startsWith(wantAlbum) || wantAlbum.startsWith(relAlbum)))
+      if (relArtist === wantArtist && albumOk) {
+        mbidCache.set(cacheKey, rel.id)
+        return rel.id
+      }
+    }
+    mbidCache.set(cacheKey, null)
+    return null
   } catch {
     return null
   }
+}
+
+// ───────────────────────────── 4.4.32: Bandsintown ─────────────────────────────
+// Tour dates per artist. No API key required — the Discovery API
+// accepts a free-form `app_id` string for attribution. Reasonable
+// non-commercial use is allowed per their TOS. Per-artist 24h cache;
+// aggregate cache keyed by the artist-set hash (so a stable top-N
+// list returns instantly until library or top order changes).
+//
+// Why Bandsintown and not Songkick: Bandsintown's free tier is more
+// permissive and the data quality is good for indie/alt acts which
+// dominate Jake's library.
+
+export interface TourDate {
+  /** Artist name as queried (matches the input list, not BIT's normalization). */
+  artist: string
+  /** Event datetime ISO. */
+  date: string
+  /** Display venue name. */
+  venue: string
+  /** "Brooklyn, NY" / "London, UK" — best-effort city + region. */
+  city: string
+  /** Bandsintown event page URL. */
+  url: string
+  /** Optional artist thumbnail (square, often Spotify-sourced). */
+  imageUrl?: string
+}
+
+const BANDSINTOWN_APP_ID = 'jaketunes-desktop'
+const bandsintownPerArtistCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
+const bandsintownAggregateCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
+
+interface BitEvent {
+  datetime?: string
+  url?: string
+  venue?: { name?: string; city?: string; region?: string; country?: string }
+  artist?: { thumb_url?: string; image_url?: string }
+}
+
+export async function getBandsintownEventsForArtist(artist: string): Promise<TourDate[]> {
+  const cached = bandsintownPerArtistCache.get(artist)
+  if (cached) return cached
+  try {
+    const url = `https://rest.bandsintown.com/artists/${encodeURIComponent(artist)}/events?app_id=${encodeURIComponent(BANDSINTOWN_APP_ID)}`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'JakeTunes/4.4', Accept: 'application/json' },
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) {
+      // Treat 404 / 403 / 5xx as "no events", cache the empty result
+      // so we don't hammer for every poll cycle.
+      bandsintownPerArtistCache.set(artist, [])
+      return []
+    }
+    const body = await res.json()
+    if (!Array.isArray(body)) {
+      bandsintownPerArtistCache.set(artist, [])
+      return []
+    }
+    const data = body as BitEvent[]
+    const now = Date.now()
+    const events: TourDate[] = []
+    for (const ev of data) {
+      if (!ev.datetime || !ev.venue) continue
+      const ts = new Date(ev.datetime).getTime()
+      if (isNaN(ts) || ts < now) continue
+      const city = [ev.venue.city, ev.venue.region || ev.venue.country].filter(Boolean).join(', ')
+      events.push({
+        artist,
+        date: new Date(ts).toISOString(),
+        venue: ev.venue.name || '',
+        city,
+        url: ev.url || '',
+        imageUrl: ev.artist?.thumb_url || ev.artist?.image_url,
+      })
+    }
+    bandsintownPerArtistCache.set(artist, events)
+    return events
+  } catch {
+    bandsintownPerArtistCache.set(artist, [])
+    return []
+  }
+}
+
+/** Fan out across the user's top artists, throttled to 8 concurrent
+ *  requests so we don't trip rate limits even on a fresh library
+ *  with 100+ unique artists. Returns events sorted by datetime asc. */
+export async function getTourDatesForArtists(artists: string[]): Promise<TourDate[]> {
+  const slice = artists.slice(0, 60)
+  const aggregateKey = slice.slice().sort().join('||')
+  const cached = bandsintownAggregateCache.get(aggregateKey)
+  if (cached) return cached
+
+  const CONCURRENCY = 8
+  const results: TourDate[][] = []
+  for (let i = 0; i < slice.length; i += CONCURRENCY) {
+    const batch = slice.slice(i, i + CONCURRENCY)
+    const batchResults = await Promise.all(batch.map(getBandsintownEventsForArtist))
+    results.push(...batchResults)
+  }
+  const flat = results.flat().sort((a, b) => a.date.localeCompare(b.date))
+  bandsintownAggregateCache.set(aggregateKey, flat)
+  return flat
+}
+
+// ───────────────────── 4.4.34: MusicBrainz upcoming releases ─────────────────────
+// "Albums by artists in your library that haven't come out yet."
+// MusicBrainz has a release-group catalog with `first-release-date`
+// fields; we query for groups where the date is in the future, scoped
+// to the artist names in the user's library.
+//
+// Rate limiting: MB allows ~50 requests / 10 sec per IP if the
+// User-Agent is set with contact info. Per-artist queries would be
+// 60 reqs for a top-60 library; instead we batch artists into
+// Lucene-OR groups of 25, total ~3 queries. Fast enough that the
+// IPC can run inline without a background prefetch.
+//
+// Cover art: Cover Art Archive serves by release-group MBID at
+// `https://coverartarchive.org/release-group/{mbid}/front-250`.
+// Returns 404 for unreleased items without uploaded art; the renderer
+// has an onError handler that swaps to a placeholder.
+//
+// Data quality caveat: MusicBrainz coverage for upcoming releases is
+// uneven. Major labels register early; smaller indies often add the
+// release only after it drops. We surface whatever we get and let the
+// section gracefully hide if zero results.
+
+export interface UpcomingRelease {
+  /** Album / release group title. */
+  title: string
+  /** Display artist name (from MB's primary artist-credit). */
+  artist: string
+  /** ISO-ish date. May be partial (`2026`, `2026-09`, `2026-09-15`). */
+  releaseDate: string
+  /** MusicBrainz release-group MBID. */
+  mbid: string
+  /** Cover Art Archive URL, fallback handled by renderer onError. */
+  coverUrl: string
+}
+
+const upcomingAggregateCache = makeCache<UpcomingRelease[]>(24 * 60 * 60 * 1000)  // 24h
+
+// Lucene reserves: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+// We're already quoting the value, so we only need to escape `\` and `"`.
+function escapeLuceneValue(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease[]> {
+  if (artists.length === 0) return []
+  const today = new Date().toISOString().split('T')[0]
+  const clauses = artists.map(a => `artist:"${escapeLuceneValue(a)}"`).join(' OR ')
+  const q = `(${clauses}) AND firstreleasedate:[${today} TO 2099-12-31]`
+  const url = `https://musicbrainz.org/ws/2/release-group/?query=${encodeURIComponent(q)}&fmt=json&limit=50`
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'JakeTunes/4.4 ( jakerosenbaum30@gmail.com )',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return []
+    const data = await res.json() as {
+      'release-groups'?: Array<{
+        id?: string
+        title?: string
+        'first-release-date'?: string
+        'primary-type'?: string
+        'artist-credit'?: Array<{ name?: string; artist?: { name?: string } }>
+      }>
+    }
+    const groups = data['release-groups'] || []
+    const now = new Date()
+    const items: UpcomingRelease[] = []
+    for (const g of groups) {
+      if (!g['first-release-date']) continue
+      // Skip non-album types (singles, EPs, compilations are noisy)
+      // — actually allow them: a single from a favorite artist is
+      // still newsworthy. Filter only Other / Audiobook / Spokenword.
+      const ptype = (g['primary-type'] || '').toLowerCase()
+      if (ptype === 'other' || ptype === 'audiobook' || ptype === 'spokenword') continue
+      // Parse partial dates conservatively: floor to start of period.
+      const dateStr = g['first-release-date']
+      const parsed = new Date(
+        dateStr.length === 4 ? `${dateStr}-12-31` :
+        dateStr.length === 7 ? `${dateStr}-28`     :
+                               dateStr
+      )
+      if (isNaN(parsed.getTime()) || parsed < now) continue
+      const credit = g['artist-credit']?.[0]
+      const artist = credit?.name || credit?.artist?.name || ''
+      const mbid = g.id || ''
+      if (!mbid || !artist || !g.title) continue
+      items.push({
+        title: g.title,
+        artist,
+        releaseDate: dateStr,
+        mbid,
+        coverUrl: `https://coverartarchive.org/release-group/${mbid}/front-250`,
+      })
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+export async function getUpcomingReleasesForArtists(artists: string[]): Promise<UpcomingRelease[]> {
+  const slice = artists.slice(0, 60)
+  const aggregateKey = slice.slice().sort().join('||')
+  const cached = upcomingAggregateCache.get(aggregateKey)
+  if (cached) return cached
+
+  // Batch into groups of 25 to stay under MB's URL-length sweet spot
+  // (≈400-600 chars per query at avg 20-char artist names).
+  const BATCH = 25
+  const batches: string[][] = []
+  for (let i = 0; i < slice.length; i += BATCH) {
+    batches.push(slice.slice(i, i + BATCH))
+  }
+  // Run batches in parallel — MB allows multiple concurrent requests
+  // from a single IP as long as we stay within ~50 / 10 sec total.
+  // Three batches in parallel is well under the limit.
+  const results = await Promise.all(batches.map(fetchUpcomingForBatch))
+  // Dedupe by MBID (same release-group can match multiple artist
+  // OR clauses if an artist is in the artist-credit chain).
+  const byMbid = new Map<string, UpcomingRelease>()
+  for (const r of results.flat()) {
+    if (!byMbid.has(r.mbid)) byMbid.set(r.mbid, r)
+  }
+  const flat = Array.from(byMbid.values())
+    .sort((a, b) => a.releaseDate.localeCompare(b.releaseDate))
+  upcomingAggregateCache.set(aggregateKey, flat)
+  return flat
 }

@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
+import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -12,6 +13,7 @@ import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import type { SortColumn, Track } from '../types'
+import { setNotice } from '../activity'
 import '../styles/songs.css'
 
 function formatDuration(ms: number): string {
@@ -95,7 +97,16 @@ export default function SongsView() {
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
 
   const sorted = useSortedTracks(lib.tracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
-  const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(sorted.length, 19)
+  // 4.4.22: seed useVirtualScroll's internal scrollTop from the persisted
+  // value so the FIRST render computes startIndex/endIndex correctly.
+  // Pair with useScrollPersistence(key, containerRef) which then keeps
+  // both DOM scrollTop and the cache in sync.
+  const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(
+    sorted.length, 19, 10, getSavedScrollTop('songs'),
+  )
+  useScrollPersistence('songs', containerRef)
+  // 4.4.27: removed useElasticOverscroll — let macOS provide the
+  // native bounce instead of a JS approximation.
 
   const handleSort = useCallback((col: string) => {
     if (col === 'playing' || col === 'time') return
@@ -106,7 +117,7 @@ export default function SongsView() {
   const handleDoubleClick = useCallback((idx: number) => {
     window.getSelection()?.removeAllRanges()
     const track = sorted[idx]
-    if (track) playTrack(track, sorted, idx)
+    if (track) playTrack(track, sorted, idx, undefined, true)
   }, [sorted, playTrack])
 
   const lastClickedIdx = useRef<number>(-1)
@@ -169,11 +180,25 @@ export default function SongsView() {
         onClick: async () => {
           const file = await window.electronAPI.chooseArtworkFile()
           if (!file.ok || !file.path) return
+          let failed = 0
+          let lastErr = ''
           for (const { artist, album } of artPairs.values()) {
             const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
             if (result.ok && result.key && result.hash) {
               libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+            } else {
+              failed += 1
+              lastErr = result.error || ''
             }
+          }
+          // 4.4.12: surface failures so the user knows the save didn't stick.
+          if (failed > 0) {
+            setNotice(
+              failed === 1
+                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
+                : `Couldn't save artwork for ${failed} albums.`,
+              { kind: 'error' }
+            )
           }
         },
       },
@@ -193,13 +218,43 @@ export default function SongsView() {
     // Artist Radio: filter library by this song's artist, dispatch to
     // Toolbar so it shuffles + starts Radio Mode focused on that artist.
     // Toolbar listens on 'jaketunes-start-artist-radio'.
+    //
+    // Brief 031 Phase 4c: match by contributingArtists overlap. For a
+    // sole-artist source track ("Lou Reed") this reduces to the
+    // previous behavior — any track contributing to "Lou Reed" gets
+    // included. For a collab source track ("JAY-Z & Linkin Park"
+    // with contributingArtists ["JAY-Z", "Linkin Park"]), Artist
+    // Radio expands to every track involving either canonical
+    // contributor — better UX than matching only the literal
+    // "JAY-Z & Linkin Park" string (which would have returned just
+    // the same 6 collab tracks). Case-insensitive match preserves
+    // the prior tolerance for casing differences.
+    //
+    // trackArtist stays as the displayed menu-label string (the
+    // right-clicked track's `artist` field is what the user sees,
+    // so that's what reads naturally in "Start X Radio").
     const trackArtist = (track.artist || '').trim()
-    const artistTracks = trackArtist
-      ? lib.tracks.filter(t => (t.artist || '').trim().toLowerCase() === trackArtist.toLowerCase())
+    const sourceContribs = (
+      track.contributingArtists && track.contributingArtists.length > 0
+        ? track.contributingArtists
+        : [trackArtist]
+    )
+      .map(s => (s || '').trim().toLowerCase())
+      .filter(s => s.length > 0)
+    const artistTracks = sourceContribs.length
+      ? lib.tracks.filter(t => {
+          const candidates = (t.contributingArtists && t.contributingArtists.length > 0
+            ? t.contributingArtists
+            : [(t.artist || '').trim()]
+          )
+            .map(s => (s || '').trim().toLowerCase())
+            .filter(s => s.length > 0)
+          return candidates.some(c => sourceContribs.includes(c))
+        })
       : []
 
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx) },
+      { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx, undefined, true) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
@@ -324,6 +379,10 @@ export default function SongsView() {
         libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [libDispatch]
@@ -378,7 +437,7 @@ export default function SongsView() {
   const FOLLOW_IDLE_MS = 5000
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    onScroll(e)
+    onScroll()
     // Skip activity update if this scroll was triggered by our own
     // auto-follow (within 200ms of the programmatic scrollTop write).
     if (Date.now() - isAutoScrollAtRef.current > 200) {
@@ -455,7 +514,7 @@ export default function SongsView() {
         const track = idx >= 0 ? sorted[idx] : null
         if (track) {
           e.preventDefault()
-          playTrack(track, sorted, idx)
+          playTrack(track, sorted, idx, undefined, true)
         }
         return
       }

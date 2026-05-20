@@ -97,7 +97,12 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
       // path rewrites, etc.) can fire UPDATE_TRACKS with the natural value
       // type and the reducer coerces. audioMissing is the only boolean today;
       // everything else is either a numeric metadata field or a string.
-      const NUMERIC_FIELDS = new Set(['year', 'trackNumber', 'trackCount', 'discNumber', 'discCount', 'playCount', 'rating', 'duration', 'fileSize'])
+      // Brief 014a: bpm and audioAnalysisAt added so the per-track
+      // audio-analysis:progress dispatch coerces values to numbers,
+      // matching the Track interface (bpm: number, audioAnalysisAt: number).
+      // The audioAnalysisCounts memo in MusicManView relies on bpm being
+      // truthy-as-number (0 = unanalyzed) for its analyzed-count gate.
+      const NUMERIC_FIELDS = new Set(['year', 'trackNumber', 'trackCount', 'discNumber', 'discCount', 'playCount', 'rating', 'duration', 'fileSize', 'bpm', 'audioAnalysisAt'])
       const BOOLEAN_FIELDS = new Set(['audioMissing'])
       const updateMap = new Map<number, { field: string; value: string | boolean }[]>()
       for (const u of action.updates) {

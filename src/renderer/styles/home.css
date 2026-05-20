@@ -1,0 +1,821 @@
+/* 4.4.19 — Home / Dashboard view. Card-based, horizontal-scroll
+   sections. Visual language matches the iTunes 8 era: soft drop
+   shadows, plenty of whitespace, no harsh borders. */
+
+.home-view {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 0 32px 0;
+  background: var(--main-bg, #ffffff);
+  /* 4.4.35 smoother scroll: hint the compositor that this element
+     is scrolled often, so it gets its own GPU layer and each scroll
+     frame doesn't repaint the page-level background or trigger
+     parent reflow. */
+  will-change: scroll-position;
+}
+
+/* 4.4.29: welcoming header — bigger title, subtle gradient backdrop,
+   date + weather row, library stats. Replaces the bare "JakeTunes ·
+   N tracks" line that felt like a debug printout. */
+.home-header {
+  padding: 32px 28px 24px 28px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  margin-bottom: 28px;
+  background: linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.18) 0%, rgba(255, 255, 255, 0) 100%);
+}
+
+.home-title {
+  font-size: 34px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: var(--text-primary, #1a1a1a);
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.home-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-primary, #2a2a2a);
+}
+
+.home-meta-date {
+  font-weight: 500;
+}
+
+.home-meta-weather {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary, #666);
+}
+
+.home-meta-weather-icon {
+  font-size: 14px;
+  color: var(--brand-orange);   /* matches the Home icon orange in the sidebar */
+}
+
+.home-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+/* ── 4.4.33: Featured Album hero ─────────────────────────────────────── */
+.home-featured {
+  margin: 0 28px 28px 28px;
+  padding: 20px;
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  background: linear-gradient(135deg, rgba(var(--brand-orange-rgb), 0.07) 0%, rgba(74, 144, 217, 0.07) 100%);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  animation: home-card-in 320ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+
+.home-featured-art {
+  position: relative;
+  flex: 0 0 220px;
+  width: 220px;
+  height: 220px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e8e6e0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  transition: transform 220ms cubic-bezier(0.2, 0.65, 0.3, 1), box-shadow 220ms ease;
+}
+.home-featured-art:hover {
+  transform: scale(1.015);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+.home-featured-art:hover .home-featured-play-overlay {
+  opacity: 1;
+}
+.home-featured-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-featured-art img.home-album-art-loaded {
+  opacity: 1;
+}
+.home-featured-art-placeholder {
+  background: linear-gradient(180deg, #f0eee8 0%, #d0c8b0 100%);
+}
+.home-featured-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  transition: opacity 180ms ease;
+  pointer-events: none;
+}
+
+.home-featured-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.home-featured-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--brand-orange);
+  margin-bottom: 6px;
+}
+.home-featured-title {
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  color: var(--text-primary, #1a1a1a);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-featured-artist {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary, #2a2a2a);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-featured-meta {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  margin-bottom: 14px;
+}
+.home-featured-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.home-featured-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary, #1a1a1a);
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 140ms ease, transform 140ms ease;
+}
+.home-featured-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+.home-featured-btn:active {
+  transform: scale(0.98);
+}
+.home-featured-btn--primary {
+  /* 4.4.47: brand-orange gradient, cream text — the logo's pairing
+     (off-white note on the orange icon). Hover lightens the whole
+     gradient uniformly via brightness() so there's no parallel hover
+     literal to drift out of sync. */
+  background: linear-gradient(180deg, var(--brand-orange-light) 0%, var(--brand-orange-dark) 100%);
+  color: var(--brand-cream);
+  border-color: var(--brand-orange-border);
+  box-shadow: 0 2px 4px rgba(var(--brand-orange-rgb), 0.28);
+}
+.home-featured-btn--primary:hover {
+  filter: brightness(1.12);
+}
+
+/* ── 4.4.33: Quick Stats strip ───────────────────────────────────────── */
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 0 28px 32px 28px;
+  animation: home-card-in 360ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-stat {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  padding: 14px 16px;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.home-stat:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
+.home-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary, #1a1a1a);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+}
+.home-stat-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #888);
+  margin-top: 4px;
+}
+
+.home-section {
+  margin-bottom: 36px;
+}
+
+.home-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 28px 12px 28px;
+}
+
+.home-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary, #1a1a1a);
+}
+
+.home-section-more {
+  background: none;
+  border: 0;
+  font-size: 12px;
+  color: var(--accent, #3a72c4);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.home-section-more:hover {
+  background: rgba(58, 114, 196, 0.08);
+}
+
+.home-empty {
+  padding: 24px 28px;
+  color: var(--text-secondary, #888);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ── Horizontal card row (used by both Recently Added and Top Artists) ── */
+/* 4.4.21 polish: dropped scroll-snap. With short rows of cards, snap
+   was over-eager — flicking the trackpad would jerk you to the next
+   card boundary instead of letting you scroll a few pixels. Free
+   scroll matches iTunes 11+ / Apple Music feel. */
+.home-card-row {
+  display: flex;
+  gap: 16px;
+  padding: 4px 28px 8px 28px;
+  overflow-x: auto;
+  overflow-y: visible;            /* shadows aren't clipped vertically */
+  scroll-padding: 28px;
+  scrollbar-width: thin;          /* Firefox */
+  /* 4.4.35 smoother scroll: GPU-layer + contain horizontal overscroll
+     so a trackpad flick doesn't try to vertical-scroll the parent
+     mid-flick (that chain-handoff causes the visible "stutter").
+     Native macOS bounce still works because overscroll-behavior:
+     contain only blocks the chain, not the bounce itself. */
+  will-change: scroll-position;
+  overscroll-behavior-x: contain;
+}
+.home-card-row::-webkit-scrollbar {
+  height: 6px;
+}
+.home-card-row::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.14);
+  border-radius: 3px;
+}
+.home-card-row::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+.home-card-row::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Album card ───────────────────────────────────────────────────────── */
+/* 4.4.20 width-pinning fix: `flex: 0 0 156px` alone is NOT enough to keep
+   the card at 156px when a long album title like "Herb Alpert Presents
+   Sergio Mendes & Brasil '66" is inside. The reason: nested flex items
+   default to `min-width: auto`, so a `white-space: nowrap` title pushes
+   its parent (and grandparent, and the card) wider than the flex basis.
+   Setting explicit width + max-width on the card AND min-width:0 on
+   every text descendant in the column makes `text-overflow: ellipsis`
+   actually kick in. */
+.home-album-card {
+  flex: 0 0 156px;
+  width: 156px;
+  max-width: 156px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  box-sizing: border-box;
+  /* 4.4.21: dropped translateY hover (caused scroll jitter), softer
+     180ms transition on the art's shadow + scale for a calmer lift. */
+  /* 4.4.24: stagger-fade in on mount — each card animates a few ms
+     after the previous one. Feels alive instead of "boom they're all
+     here." See the nth-child rules below. */
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-album-card .home-album-art {
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.home-album-card:hover .home-album-art {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+  transform: scale(1.02);
+}
+.home-album-card:active .home-album-art {
+  transform: scale(0.985);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+.home-album-card.is-playing-flash .home-album-art {
+  /* 4.4.21: brief acknowledgment ring on click-to-play. Class added
+     synchronously, removed 380ms later by HomeView. */
+  box-shadow: 0 0 0 2px rgba(58, 114, 196, 0.85), 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.home-album-art {
+  width: 156px;
+  height: 156px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e8e6e0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+}
+.home-album-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* 4.4.21: image fade-in (avoids pop-in when art-cache misses or the
+     album-art:// scheme handler is slow on first paint). Starts at 0,
+     `onLoad` in JSX flips to 1. */
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-album-art img.home-album-art-loaded {
+  opacity: 1;
+}
+.home-album-art-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #f0eee8 0%, #e0dcd2 100%);
+}
+
+.home-album-info {
+  margin-top: 8px;
+  padding: 0 2px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;        /* extra belt: long titles can't push width */
+}
+.home-album-title {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 13px;             /* 4.4.21: integer for crisp hinting */
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-album-artist {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 12px;             /* 4.4.21: integer */
+  line-height: 1.3;
+  color: var(--text-secondary, #666);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* ── Artist card (smaller, circular art) ──────────────────────────────── */
+.home-card-row--artists {
+  /* slightly tighter gap since artists cards are smaller */
+  gap: 14px;
+}
+
+.home-artist-card {
+  flex: 0 0 96px;
+  width: 96px;
+  max-width: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  cursor: pointer;
+  box-sizing: border-box;
+  /* 4.4.24: stagger-fade in on mount, same animation as album cards. */
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-artist-card .home-artist-art {
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.home-artist-card:hover .home-artist-art {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+  transform: scale(1.04);
+}
+.home-artist-card:active .home-artist-art {
+  transform: scale(0.97);
+}
+.home-artist-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-artist-art img.home-artist-art-loaded {
+  opacity: 1;
+}
+
+.home-artist-art {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;        /* iTunes 11+ rendering for artist circles */
+  overflow: hidden;
+  background: #e8e6e0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.home-artist-art-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 600;
+  color: #888;
+  background: linear-gradient(180deg, #f0eee8 0%, #e0dcd2 100%);
+}
+
+.home-artist-info {
+  margin-top: 8px;
+  width: 96px;
+  max-width: 96px;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.home-artist-name {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-artist-plays {
+  width: 100%;
+  font-size: 11px;             /* 4.4.21: integer for crisp hinting */
+  line-height: 1.3;
+  color: var(--text-secondary, #888);
+  margin-top: 2px;
+}
+
+.home-section-source {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  font-style: italic;
+}
+
+/* ── 4.4.32: Tour Date card (Bandsintown, library-personalized) ──────── */
+/* Visual language: tear-off concert ticket. Big date stamp on the
+   left (MAY / 22), artist + venue + city on the right. Distinct from
+   the album/release/news cards so the row reads at a glance as
+   "stuff happening live, not articles." */
+.home-tour-card {
+  flex: 0 0 240px;
+  width: 240px;
+  max-width: 240px;
+  display: flex;
+  align-items: stretch;
+  cursor: pointer;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+  transition:
+    box-shadow 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
+    transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
+    background-color 120ms ease-out;
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-tour-card:hover {
+  background: #fafbff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.10);
+  transform: translateY(-1px);
+}
+.home-tour-card:active {
+  transform: translateY(0);
+}
+
+.home-tour-date {
+  flex: 0 0 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 4px;
+  background: linear-gradient(180deg, #f6f0e2 0%, #ede2c8 100%);
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  color: #3a2e10;
+}
+.home-tour-date-month {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: var(--brand-orange);   /* brand orange */
+}
+.home-tour-date-day {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+.home-tour-info {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.home-tour-artist {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-tour-venue {
+  font-size: 11.5px;
+  color: var(--text-primary, #444);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-tour-city {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-tour-year {
+  opacity: 0.7;
+}
+
+/* ── 4.4.34: Upcoming Release card (MusicBrainz, library-personalized) ─
+   Cover-led like the Notable Releases card, but with a date badge
+   overlay on the bottom-left of the art ("Sep 15", "Oct 2026") so the
+   "haven't come out yet" framing is obvious at a glance. Image errors
+   fall back to a big-letter placeholder behind the img element (the
+   img sets display:none on error so the placeholder shows through). */
+.home-upcoming-card {
+  flex: 0 0 156px;
+  width: 156px;
+  max-width: 156px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  box-sizing: border-box;
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-upcoming-card .home-upcoming-art {
+  position: relative;
+  width: 156px;
+  height: 156px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #d8d2c0 0%, #b5ab8e 100%);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.home-upcoming-card:hover .home-upcoming-art {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+  transform: scale(1.02);
+}
+.home-upcoming-card:active .home-upcoming-art {
+  transform: scale(0.985);
+}
+.home-upcoming-art img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-upcoming-art img.home-album-art-loaded {
+  opacity: 1;
+}
+.home-upcoming-art-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: -0.02em;
+  /* Sits behind the img (z-index: 0 default); when the img errors and
+     sets display:none, this becomes visible. */
+}
+.home-upcoming-date-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  /* 4.4.35: dropped `backdrop-filter: blur(4px)` — it forced the
+     browser to re-blur the pixels behind every visible badge on
+     every scroll frame, and with up to 20 upcoming cards in the row
+     plus another vertical scroll happening above, that's a real
+     hit. Solid background at higher opacity reads the same visually
+     and is essentially free to paint. */
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 3px;
+}
+
+/* ── 4.4.28: Notable Releases card (Pitchfork BNA, cover-led) ─────────── */
+.home-release-card {
+  flex: 0 0 156px;
+  width: 156px;
+  max-width: 156px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  box-sizing: border-box;
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-release-card .home-release-art {
+  width: 156px;
+  height: 156px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e8e6e0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.home-release-card:hover .home-release-art {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+  transform: scale(1.02);
+}
+.home-release-card:active .home-release-art {
+  transform: scale(0.985);
+}
+.home-release-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-release-art img.home-album-art-loaded {
+  opacity: 1;
+}
+
+/* ── 4.4.28: Music News card (text-led, with optional small thumbnail) ── */
+.home-news-card {
+  flex: 0 0 220px;
+  width: 220px;
+  max-width: 220px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 6px;
+  transition: background-color 140ms ease-out, transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1);
+  animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-news-card:hover {
+  background: rgba(74, 144, 217, 0.07);
+  transform: translateY(-1px);
+}
+.home-news-card:active {
+  transform: translateY(0);
+}
+.home-news-art {
+  width: 100%;
+  height: 100px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e8e6e0;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.home-news-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.home-news-art img.home-album-art-loaded {
+  opacity: 1;
+}
+.home-news-meta {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary, #888);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.home-news-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  line-height: 1.35;
+  /* Clamp to 4 lines so cards stay roughly the same height. */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 4.4.24: stagger-fade-in keyframe + per-card delays. Each card lands
+   ~28ms after the previous one — under 12 cards the whole row is
+   in place in <340ms, fast enough to feel snappy, slow enough to be
+   perceived as deliberate motion rather than a hard cut. */
+@keyframes home-card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.home-card-row > *:nth-child(1)  { animation-delay:   0ms; }
+.home-card-row > *:nth-child(2)  { animation-delay:  28ms; }
+.home-card-row > *:nth-child(3)  { animation-delay:  56ms; }
+.home-card-row > *:nth-child(4)  { animation-delay:  84ms; }
+.home-card-row > *:nth-child(5)  { animation-delay: 112ms; }
+.home-card-row > *:nth-child(6)  { animation-delay: 140ms; }
+.home-card-row > *:nth-child(7)  { animation-delay: 168ms; }
+.home-card-row > *:nth-child(8)  { animation-delay: 196ms; }
+.home-card-row > *:nth-child(9)  { animation-delay: 224ms; }
+.home-card-row > *:nth-child(10) { animation-delay: 252ms; }
+.home-card-row > *:nth-child(11) { animation-delay: 280ms; }
+.home-card-row > *:nth-child(12) { animation-delay: 308ms; }
+/* Respect users who turn down motion in System Settings. */
+@media (prefers-reduced-motion: reduce) {
+  .home-album-card,
+  .home-artist-card {
+    animation: none;
+  }
+}

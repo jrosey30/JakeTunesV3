@@ -32,6 +32,18 @@ let autoDjMode = false
 // 100ms = 10Hz UI updates, way less render-thread pressure than 60Hz.
 let lastPositionDispatchMs = 0
 
+// Brief 012c — diagnostic logging. Flip to false to silence, or delete
+// the dx.* call sites in Brief 012d once the root cause is identified.
+// All dx.* logs go through console.log (not logAudioEvent) so they're
+// visible regardless of the ring-buffer skip-tick filter. Prefixed with
+// `[dx]` so they're easy to grep in the captured devtools console.
+const DIAGNOSTIC_LOGGING = false  // Brief 015e: silenced after 015d fix verified through real listening sessions. Flip back to true and rebuild if a future bug needs the dx.* instrumentation.
+let rafTickCount = 0
+function dx(ev: string, detail?: unknown) {
+  if (!DIAGNOSTIC_LOGGING) return
+  console.log('[dx]', ev, detail ?? '')
+}
+
 // Watchdog state for the "stuck audio" recovery (Airfoil hijack edge
 // case). When the underlying HTMLAudioElement gets stuck because Core
 // Audio renegotiated the output device under us, position stops
@@ -58,7 +70,7 @@ let watchdogRecoveryInFlight = false
 // Type `__audioLog()` in the dev console to dump.
 interface AudioLogEntry { t: number; ev: string; detail?: unknown }
 const audioLogBuffer: AudioLogEntry[] = []
-function logAudioEvent(ev: string, detail?: unknown) {
+export function logAudioEvent(ev: string, detail?: unknown) {
   audioLogBuffer.push({ t: Date.now(), ev, detail })
   if (audioLogBuffer.length > 50) audioLogBuffer.shift()
   // Skip the very chatty position-tick events from console output but
@@ -184,7 +196,7 @@ function cleanupGaplessPreload() {
 }
 
 
-export function useAudio() {
+export function useAudio(opts?: { primary?: boolean }) {
   const { state, dispatch } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
   const dispatchRef = useRef(dispatch)
@@ -195,6 +207,26 @@ export function useAudio() {
   libDispatchRef.current = libDispatch
   const tracksRef = useRef(libState.tracks)
   tracksRef.current = libState.tracks
+
+  // Brief 015c: track dispatchRef freshness. useReducer's dispatch is
+  // referentially stable, so this useEffect should fire exactly ONCE
+  // per mount of useAudio. If we ever see two or more before an auto-
+  // repeat bug fires, useAudio has remounted (e.g., PlaybackProvider
+  // remounted underneath us) and there's a stale dispatchRef
+  // somewhere capturing the prior cycle's dispatch function. The
+  // mountId counter makes "I have N copies of useAudio in flight"
+  // obvious in a single log line.
+  const mountIdRef = useRef<number>(0)
+  useEffect(() => {
+    mountIdRef.current = (mountIdRef.current || 0) + 1
+    if (DIAGNOSTIC_LOGGING) {
+      console.log('[dx.repeat.dispatchref.update]', {
+        src: 'useAudio.dispatchRefEffect',
+        mountInvocation: mountIdRef.current,
+        ts: Date.now(),
+      })
+    }
+  }, [dispatch])
 
   // Notify main when isPlaying changes so background workers (audio
   // analysis, ALAC prewarm — both heavy I/O on iPod-USB sources) can
@@ -217,6 +249,18 @@ export function useAudio() {
   //      .play() on the underlying HTMLAudio element. That's enough to
   //      kick a stalled element off its frozen tick in many cases.
   useEffect(() => {
+    // Brief 033c: only the App-level instance (passed { primary: true })
+    // runs the heartbeat. useAudio() is consumed by ~7 mounted components
+    // at once (App + transport chrome + always-mounted MusicManView +
+    // the active view); without this gate each instance spun up its own
+    // 2s interval, so the diagnostic buffer logged 7 heartbeats per cycle
+    // AND 7 independent recovery loops raced on the single shared Howl
+    // (overlapping stop/unload/reload). App.tsx never unmounts, so making
+    // it the sole owner avoids both the duplication and Option A's
+    // ownership-handoff stall (a transient view winning the claim then
+    // unmounting on navigation). The interval's own cleanup is unchanged
+    // and still correct.
+    if (!opts?.primary) return
     if (!state.isPlaying) return
     let lastPos = -1
     let stuckTicks = 0
@@ -258,7 +302,7 @@ export function useAudio() {
             try { node?.play() } catch { /* ignore */ }
             // If the kick doesn't help in another 2 ticks, hard-recover.
             if (stuckTicks >= 4 && playTrackRef.current) {
-              const cur = stateRef.current.currentTrack
+              const cur = stateRef.current.nowPlaying
               const q = stateRef.current.queue
               const qi = stateRef.current.queueIndex
               const stuckAt = pos
@@ -281,20 +325,41 @@ export function useAudio() {
       } catch { /* ignore */ }
     }, 2000)
     return () => window.clearInterval(id)
-  }, [state.isPlaying])
+  }, [state.isPlaying, opts?.primary])
 
   // Held by refs so updatePosition can call them without forming
   // circular useCallback dep cycles back through loadAndPlay (which
   // itself depends on updatePosition).
   const startCrossfadeRef = useRef<((track: Track, queue: Track[], queueIndex: number) => void) | null>(null)
-  const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }) => void) | null>(null)
+  // Brief 015d: 4th arg `freshQueueIndex` lets the caller pin the
+  // just-dispatched queueIndex into the onend closure, sidestepping
+  // stateRef.current staleness on long-playing tracks. Optional —
+  // legacy callers without the arg fall back to stateRef.current.
+  const runNaturalEndRef = useRef<((track: Track, howl: Howl, endedHolder: { v: boolean }, freshQueueIndex?: number) => void) | null>(null)
   // playTrackRef lets the stuck-audio watchdog (inside updatePosition)
   // recover by re-loading the current track. updatePosition is defined
   // first, so this ref is the cycle-breaker.
-  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => void) | null>(null)
+  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
-    if (isPaused) return
+    rafTickCount++
+    if (rafTickCount % 60 === 0) {
+      dx('raf.tick', {
+        n: rafTickCount,
+        isPaused,
+        sharedHowl: !!sharedHowl,
+        sharedHowl_playing: sharedHowl?.playing() ?? null,
+        outgoingHowl: !!outgoingHowl,
+        crossfading,
+        react_isPlaying: stateRef.current.isPlaying,
+        react_pos: stateRef.current.position,
+        react_dur: stateRef.current.duration,
+      })
+    }
+    if (isPaused) {
+      dx('raf.tick.paused-return', { n: rafTickCount })
+      return
+    }
 
     // Crossfade volume animation. Runs every tick the fade is active —
     // even before the new sharedHowl has finished loading. Without this
@@ -315,27 +380,38 @@ export function useAudio() {
         // Fade complete — promote the new track to nowPlaying. We
         // deferred this dispatch from the trigger code so the user saw
         // the old track's progress bar advance smoothly through the
-        // overlap window. Order matters: PLAY_TRACK resets position/
-        // duration to 0, so we follow it with SET_POSITION /
-        // SET_DURATION reading from the new sharedHowl to avoid a
-        // single-frame "0:00 / 0:00" flicker.
+        // overlap window. Brief 012: dispatch is now atomic — duration
+        // and position travel with PLAY_TRACK so the reducer reset
+        // can't produce a single-frame 0:00 / 0:00 flicker. Replaces
+        // the pre-Brief-012 workaround that fired SET_DURATION +
+        // SET_POSITION after PLAY_TRACK to paper over the reset.
         const pendingTrack = crossfadePendingTrack
         const pendingQueue = crossfadePendingQueue
         const pendingIdx = crossfadePendingIdx
         cleanupCrossfadeAudio()  // clears outgoing + pending state
         if (pendingTrack && pendingQueue) {
+          let crossfadeDur = 0
+          let crossfadePos = 0
+          if (sharedHowl && sharedHowl.playing()) {
+            crossfadeDur = sharedHowl.duration() || 0
+            crossfadePos = (sharedHowl.seek() as number) || 0
+          }
+          dx('playtrack.dispatch', {
+            site: 'crossfade-complete',
+            title: pendingTrack.title,
+            duration: crossfadeDur,
+            position: crossfadePos,
+            sharedRaf,
+            isPaused,
+          })
           dispatchRef.current({
             type: 'PLAY_TRACK',
             track: pendingTrack,
             queue: pendingQueue,
             queueIndex: pendingIdx,
+            duration: crossfadeDur,
+            position: crossfadePos,
           })
-          if (sharedHowl && sharedHowl.playing()) {
-            const newDur = sharedHowl.duration()
-            const newPos = sharedHowl.seek() as number
-            if (newDur > 0) dispatchRef.current({ type: 'SET_DURATION', duration: newDur })
-            dispatchRef.current({ type: 'SET_POSITION', position: newPos })
-          }
         }
       }
     }
@@ -344,10 +420,32 @@ export function useAudio() {
     // playing. While the new Howl is still loading at the start of a
     // crossfade, fall back to the OUTGOING howl — the user is still
     // hearing it, so the bar should keep advancing through its tail.
+    //
+    // 4.4.40 fallback: Howler's `.playing()` can return `false` even
+    // when the underlying HTMLAudioElement is producing sound — happens
+    // after pool reuse (4.4.9) or after Core Audio renegotiates the
+    // output device mid-track (4.4.15). When that happens, React state
+    // (`stateRef.current.isPlaying`) still correctly says we're playing,
+    // but the position bar froze at 0:00 / -0:00 because no dispatch
+    // ever fired. Last-resort: if React thinks we're playing and a
+    // sharedHowl exists, dispatch position from it even if .playing()
+    // is lying. seek() reads the underlying audio element directly so
+    // it returns the true position even when .playing() is wrong.
     const positionHowl =
       (sharedHowl && sharedHowl.playing()) ? sharedHowl :
       (outgoingHowl && outgoingHowl.playing()) ? outgoingHowl :
+      (sharedHowl && stateRef.current.isPlaying) ? sharedHowl :
       null
+    if (!positionHowl && rafTickCount % 60 === 0) {
+      dx('raf.posHowl-null', {
+        n: rafTickCount,
+        sharedHowl: !!sharedHowl,
+        sharedHowl_playing: sharedHowl?.playing() ?? null,
+        outgoingHowl: !!outgoingHowl,
+        outgoingHowl_playing: outgoingHowl?.playing() ?? null,
+        react_isPlaying: stateRef.current.isPlaying,
+      })
+    }
     if (positionHowl) {
       // Throttle SET_POSITION dispatch to 10Hz. The rAF loop fires at
       // 60Hz, and dispatching a React state update every frame forces
@@ -362,34 +460,46 @@ export function useAudio() {
       const now = Date.now()
       if (now - lastPositionDispatchMs >= 100) {
         const pos = positionHowl.seek() as number
-        dispatchRef.current({ type: 'SET_POSITION', position: pos })
         const dur = positionHowl.duration()
+        dx('raf.dispatch', {
+          n: rafTickCount,
+          pos,
+          dur,
+          gap_ms: now - lastPositionDispatchMs,
+          source: positionHowl === sharedHowl ? 'sharedHowl' : 'outgoingHowl',
+        })
+        dispatchRef.current({ type: 'SET_POSITION', position: pos })
         if (dur > 0) {
           dispatchRef.current({ type: 'SET_DURATION', duration: dur })
         }
         lastPositionDispatchMs = now
-
-        // 4.2.12: stuck-audio watchdog DISABLED.
-        // Was meant for Airfoil hijack edge cases — when Core Audio
-        // renegotiated the output device, position would freeze and
-        // pause/play wouldn't recover it. But the recovery path
-        // (sharedHowl?.stop() + unload() + recreate) is itself
-        // disruptive, and false positives — momentary buffer underruns,
-        // any tick where positionHowl.seek() returned the same float
-        // twice — would tear down a perfectly fine Howl and try to seek
-        // back to where we "got stuck." That seek can land in the wrong
-        // place, fail silently, or leave the new Howl loaded but not
-        // playing. Better to let the user pause/play themselves on the
-        // rare Airfoil hiccup than to have phantom kills mid-song.
-        // (Refs to the watchdog state vars are kept so any other
-        // surviving references keep type-checking; nothing reads them.)
-        void watchdogLastObservedPos
-        void watchdogLastAdvanceMs
-        void watchdogLastRecoveryMs
-        void watchdogRecoveryInFlight
-        void WATCHDOG_STUCK_THRESHOLD_MS
-        void WATCHDOG_COOLDOWN_MS
+      } else if (rafTickCount % 60 === 0) {
+        dx('raf.throttle-skip', {
+          n: rafTickCount,
+          gap_ms: now - lastPositionDispatchMs,
+        })
       }
+
+      // 4.2.12: stuck-audio watchdog DISABLED.
+      // Was meant for Airfoil hijack edge cases — when Core Audio
+      // renegotiated the output device, position would freeze and
+      // pause/play wouldn't recover it. But the recovery path
+      // (sharedHowl?.stop() + unload() + recreate) is itself
+      // disruptive, and false positives — momentary buffer underruns,
+      // any tick where positionHowl.seek() returned the same float
+      // twice — would tear down a perfectly fine Howl and try to seek
+      // back to where we "got stuck." That seek can land in the wrong
+      // place, fail silently, or leave the new Howl loaded but not
+      // playing. Better to let the user pause/play themselves on the
+      // rare Airfoil hiccup than to have phantom kills mid-song.
+      // (Refs to the watchdog state vars are kept so any other
+      // surviving references keep type-checking; nothing reads them.)
+      void watchdogLastObservedPos
+      void watchdogLastAdvanceMs
+      void watchdogLastRecoveryMs
+      void watchdogRecoveryInFlight
+      void WATCHDOG_STUCK_THRESHOLD_MS
+      void WATCHDOG_COOLDOWN_MS
     }
 
     // Gapless preload + crossfade trigger only run when sharedHowl is
@@ -516,6 +626,18 @@ export function useAudio() {
       (outgoingHowl && outgoingHowl.playing())
     if (stillActive) {
       sharedRaf = requestAnimationFrame(updatePosition)
+    } else {
+      // rAF death — the loop is about to stop ticking entirely. If the
+      // user-perceived state is "playing" this is highly suspicious.
+      dx('raf.NOT-rescheduled', {
+        n: rafTickCount,
+        sharedHowl: !!sharedHowl,
+        isPaused,
+        crossfading,
+        outgoingHowl: !!outgoingHowl,
+        outgoingHowl_playing: outgoingHowl?.playing() ?? null,
+        react_isPlaying: stateRef.current.isPlaying,
+      })
     }
   }, [])
 
@@ -586,6 +708,7 @@ export function useAudio() {
           return
         }
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
+        dx('raf.reschedule', { site: 'howl.onplay', title: track.title, isPaused })
         sharedRaf = requestAnimationFrame(updatePosition)
       },
       onplayerror: (_id: number, err: unknown) => {
@@ -614,7 +737,12 @@ export function useAudio() {
       },
       onend: () => {
         logAudioEvent('howl.onend', { title: track.title })
-        runNaturalEndRef.current?.(track, howl, endedHolder)
+        // Brief 015d: capture loadAndPlay's `queueIndex` parameter into
+        // this closure so runNaturalEnd uses the value that was actually
+        // dispatched as PLAY_TRACK.queueIndex when this Howl was set up,
+        // not whatever stateRef.current.queueIndex happens to be 75+
+        // seconds later when the track ends naturally.
+        runNaturalEndRef.current?.(track, howl, endedHolder, queueIndex)
       },
       onloaderror: (_id: number, err: unknown) => {
         logAudioEvent('howl.onloaderror', { err: String(err), url: url.slice(0, 80) })
@@ -631,10 +759,42 @@ export function useAudio() {
   // advance logic) can share it. Body extracted from the prior inline
   // onend so we can reuse it from the gapless promote path below.
   useEffect(() => {
-    runNaturalEndRef.current = (track, howl, endedHolder) => {
-      if (endedHolder.v) return
+    runNaturalEndRef.current = (track, howl, endedHolder, freshQueueIndex) => {
+      // Brief 015c+015d: entry log captures BOTH the stateRef snapshot
+      // (what the function would have used pre-015d) AND the freshly-
+      // passed queueIndex (what 015d threads through the closure from
+      // the promote/load site that dispatched PLAY_TRACK). If those
+      // values DIFFER, stateRef was stale and 015d caught the bug.
+      // Cross-reference against the most recent [dx.repeat.snapshot.
+      // changed] log to triage other staleness sites.
+      if (DIAGNOSTIC_LOGGING) {
+        const rs = stateRef.current
+        console.log('[dx.repeat.naturalEnd.enter]', {
+          src: 'runNaturalEnd',
+          trackBeingEnded: { id: track.id, title: track.title },
+          endedHolderAlreadyV: endedHolder.v,
+          howlMatchesShared: sharedHowl === howl,
+          freshQueueIndex: freshQueueIndex ?? null,
+          stateRefSnapshot: {
+            queueIndex: rs.queueIndex,
+            queueLength: rs.queue.length,
+            nowPlayingId: rs.nowPlaying?.id ?? null,
+            nowPlayingTitle: rs.nowPlaying?.title ?? null,
+            isPlaying: rs.isPlaying,
+            repeat: rs.repeat,
+          },
+          ts: Date.now(),
+        })
+      }
+      if (endedHolder.v) {
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'endedHolder-already-v', ts: Date.now() })
+        return
+      }
       endedHolder.v = true
-      if (sharedHowl !== howl) return
+      if (sharedHowl !== howl) {
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'howl-not-shared', ts: Date.now() })
+        return
+      }
       cancelAnimationFrame(sharedRaf)
 
       // Increment play count (look up latest count from tracks ref)
@@ -651,22 +811,73 @@ export function useAudio() {
       window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
 
       const s = stateRef.current
+      // Brief 015d: prefer the queueIndex captured at the moment the
+      // onend handler was wired (passed through the closure from the
+      // promote/load site that dispatched PLAY_TRACK) over
+      // stateRef.current.queueIndex. stateRef freshness is tied to
+      // useAudio's render cycle — long-playing tracks with no UI
+      // interaction between dispatch and natural-end leave stateRef
+      // pointing at a pre-dispatch snapshot. Reproduction: "Everyone
+      // Has AIDS" repeated 3x on Team America soundtrack 2026-05-17
+      // because s.queueIndex read 12 while the reducer state was 13.
+      // s.repeat / s.queue / s.isPlaying are NOT staleness-sensitive
+      // in the same way and continue to read from stateRef.
+      const currentQueueIndex = freshQueueIndex ?? s.queueIndex
+      // Brief 015: snapshot every state value the natural-end decision
+      // reads, plus a couple of queue spot-checks (first/last titles)
+      // to verify the queue is what we think it is.
+      // Brief 015d: also emit `stateRefQueueIndex` alongside the
+      // (now-fresh) `queueIndex` so post-fix captures show whether
+      // the bug WOULD have fired and the freshQueueIndex caught it.
+      if (DIAGNOSTIC_LOGGING) {
+        logAudioEvent('dx.repeat.natural-end', {
+          trackTitle: track.title,
+          trackId: track.id,
+          repeat: s.repeat,
+          queueLength: s.queue.length,
+          queueIndex: currentQueueIndex,
+          stateRefQueueIndex: s.queueIndex,
+          freshQueueIndexUsed: freshQueueIndex !== undefined,
+          autoDjMode,
+          isPlaying: s.isPlaying,
+          firstQueueTrack: s.queue[0]?.title,
+          lastQueueTrack: s.queue[s.queue.length - 1]?.title,
+        })
+      }
       if (s.repeat === 'one') {
+        if (DIAGNOSTIC_LOGGING) {
+          logAudioEvent('dx.repeat.branch.repeat-one', {
+            replayingTrack: track.title,
+            queueIndex: currentQueueIndex,
+          })
+        }
         cleanupGaplessPreload()
-        loadAndPlay(track, s.queue, s.queueIndex)
+        loadAndPlay(track, s.queue, currentQueueIndex)
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'repeat-one', ts: Date.now() })
         return
       }
       // Shuffle is queue-order-baked, not per-track-random — see
       // TOGGLE_SHUFFLE in PlaybackContext. Always sequential here.
-      let nextIdx = s.queueIndex + 1
+      let nextIdx = currentQueueIndex + 1
       if (nextIdx >= s.queue.length) {
+        if (DIAGNOSTIC_LOGGING) {
+          logAudioEvent('dx.repeat.branch.queue-exhausted', {
+            nextIdx,
+            queueLength: s.queue.length,
+            repeat: s.repeat,
+            autoDjMode,
+          })
+        }
         if (autoDjMode) {
           let handled = false
           const ackHandler = () => { handled = true }
           window.addEventListener('musicman-dj-set-ended-ack', ackHandler, { once: true })
           window.dispatchEvent(new Event('musicman-dj-set-ended'))
           window.removeEventListener('musicman-dj-set-ended-ack', ackHandler)
-          if (handled) return
+          if (handled) {
+            if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'dj-set-ended-handled', ts: Date.now() })
+            return
+          }
           console.warn('[Audio] DJ set-ended not handled, forcing autoDjMode off')
           autoDjMode = false
         }
@@ -674,11 +885,32 @@ export function useAudio() {
         else {
           cleanupGaplessPreload()
           dispatchRef.current({ type: 'STOP' })
+          if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'stop-end-of-queue', ts: Date.now() })
           return
         }
       }
+      if (DIAGNOSTIC_LOGGING) {
+        // sameTrack is the smoking-gun canary: if this fires with
+        // sameTrack=true, the "advance" branch is replaying the same
+        // track. Brief 015d: fromIdx now reports the fresh value used
+        // for the decision; stateRefFromIdx shows what stateRef would
+        // have returned. If they differ but sameTrack=false → 015d
+        // caught a stale read. If sameTrack=true with fresh value →
+        // a different bug (real queue corruption, not staleness).
+        logAudioEvent('dx.repeat.branch.advance', {
+          fromIdx: currentQueueIndex,
+          stateRefFromIdx: s.queueIndex,
+          toIdx: nextIdx,
+          fromTrack: track.title,
+          toTrack: s.queue[nextIdx]?.title,
+          sameTrack: s.queue[nextIdx]?.id === track.id,
+        })
+      }
       const nextTrack = s.queue[nextIdx]
-      if (!nextTrack) return
+      if (!nextTrack) {
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'no-next-track', nextIdx, ts: Date.now() })
+        return
+      }
       if (autoDjMode) {
         let handled = false
         const ackHandler = () => { handled = true }
@@ -687,7 +919,10 @@ export function useAudio() {
           detail: { prevTrack: track, nextTrack, nextIdx, queue: s.queue }
         }))
         window.removeEventListener('musicman-dj-transition-ack', ackHandler)
-        if (handled) return
+        if (handled) {
+          if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'dj-transition-handled', ts: Date.now() })
+          return
+        }
         console.warn('[Audio] DJ transition not handled, forcing autoDjMode off')
         autoDjMode = false
       }
@@ -715,8 +950,17 @@ export function useAudio() {
         // Wire up the preloaded Howl's lifecycle (it was created without
         // these handlers in the preload step).
         const nextEndedHolder = { v: false }
+        // Brief 015d: pin `ni` (the queueIndex about to be dispatched
+        // for this promoted track) into the onend closure. When this
+        // track ends naturally — possibly minutes later, after zero
+        // intervening renders refreshed stateRef.current — runNaturalEnd
+        // gets the right queueIndex via this parameter instead of the
+        // stale stateRef. THIS is the confirmed Team-America-soundtrack
+        // reproduction site; the other onend wiring in loadAndPlay
+        // gets the same treatment for symmetry / defense in depth.
+        const promotedQueueIndex = ni
         next.once('end', () => {
-          runNaturalEndRef.current?.(nt, next, nextEndedHolder)
+          runNaturalEndRef.current?.(nt, next, nextEndedHolder, promotedQueueIndex)
         })
         // REMOVED in 4.0.12: the matching auto-resume handler on the
         // gapless-promoted Howl. Same feedback-loop reason as the main
@@ -734,32 +978,72 @@ export function useAudio() {
           // dispatch SET_DURATION + EQ binding manually here.
           try { next.volume(s.volume) } catch { /* ignore */ }
           attachHowlToEq(next)
-          dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
-          // Re-anchor the position bar — the deferred SET_POSITION will
-          // reach the correct value on the next rAF tick (already
-          // running from the prior track).
-          if (!sharedRaf) sharedRaf = requestAnimationFrame(updatePosition)
+          // Brief 012: atomic dispatch — duration travels INSIDE the
+          // PLAY_TRACK action so the reducer can't clobber it back to
+          // 0 via its reset. Was the canonical 0:00 / -0:00 bug
+          // reproduction site (~50% of natural autoplay transitions).
+          dx('playtrack.dispatch', {
+            site: 'gapless-prewarm',
+            title: nt.title,
+            duration: next.duration(),
+            position: 0,
+            sharedRaf,
+            isPaused,
+            sharedHowl_playing: next.playing(),
+          })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration(), position: 0 })
+          // Brief 012d: previous code was `if (!sharedRaf) sharedRaf = ...`
+          // which silently failed because sharedRaf still holds the prior
+          // track's pending handle. That pending tick fires once on the new
+          // track's context, stillActive returns false, the loop exits
+          // without rescheduling, and SET_POSITION dispatches stop forever
+          // until the next transition restarts rAF. Always cancel and
+          // re-arm — same pattern used by standard promote and initial
+          // creation sites.
+          dx('raf.gapless-prewarm-rearm', { site: 'gapless-prewarm', oldSharedRaf: sharedRaf })
+          cancelAnimationFrame(sharedRaf)
+          sharedRaf = requestAnimationFrame(updatePosition)
         } else {
           // Pre-warm didn't fire (very short track, or rAF hadn't ticked
           // inside the last 150ms). Fall back to standard promote: wire
           // a play handler then call play() ourselves.
           next.once('play', () => {
-            dispatchRef.current({ type: 'SET_DURATION', duration: next.duration() })
             attachHowlToEq(next)
+            dx('raf.reschedule', { site: 'standard-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
           })
           next.volume(s.volume)
           next.play()
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni })
+          // Brief 012: pass duration through PLAY_TRACK atomically.
+          // If the howl isn't fully loaded here next.duration() may
+          // return 0 — the load-handler SET_DURATION around line 600
+          // is the fallback for that case.
+          const nextDur = next.duration() || 0
+          dx('playtrack.dispatch', {
+            site: 'standard-promote',
+            title: nt.title,
+            duration: nextDur,
+            position: 0,
+            sharedRaf,
+            isPaused,
+          })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: 0 })
         }
+        if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'gapless-promote', nextIdx, ts: Date.now() })
         return
       }
 
       // Standard advance — preload didn't match (or wasn't ready).
       cleanupGaplessPreload()
+      dx('playtrack.dispatch', {
+        site: 'standard-advance',
+        title: nextTrack.title,
+        sharedRaf,
+        isPaused,
+      })
       dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
       loadAndPlay(nextTrack, s.queue, nextIdx)
+      if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'standard-advance', nextIdx, ts: Date.now() })
     }
   }, [loadAndPlay, updatePosition])
 
@@ -771,13 +1055,26 @@ export function useAudio() {
     }
   }, [loadAndPlay])
 
-  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean) => {
+  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => {
     if (autoDjMode && !djTransition) {
       window.dispatchEvent(new Event('musicman-dj-cancel'))
     }
     const q = queue ?? stateRef.current.queue
     const qi = queueIndex ?? 0
-    dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi })
+    dx('playtrack.dispatch', {
+      site: 'manual',
+      title: track.title,
+      sharedRaf,
+      isPaused,
+      djTransition: !!djTransition,
+      freshContext: !!freshContext,
+    })
+    // Brief 030c: pass freshContext through. View-side callers
+    // (SongsView, Toolbar Shuffle All, etc.) pass true. nextTrack/
+    // prevTrack pass false (default) — they're queue navigation,
+    // and the reducer must NOT rebuild the shuffle queue on those
+    // dispatches or queueIndex resets to 0 every Next press.
+    dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi, freshContext })
     loadAndPlay(track, q, qi)
   }, [loadAndPlay])
 
@@ -806,13 +1103,13 @@ export function useAudio() {
     if (s.queue.length === 0) return
     // Record skip if current song was playing and less than 80% complete
     // (artist-aggregate stats — feeds listener-profile.json for Music Man taste).
-    if (s.currentTrack && s.duration > 0 && (s.position / s.duration) < 0.8) {
-      window.electronAPI.recordSkip?.({ title: s.currentTrack.title, artist: s.currentTrack.artist })
+    if (s.nowPlaying && s.duration > 0 && (s.position / s.duration) < 0.8) {
+      window.electronAPI.recordSkip?.({ title: s.nowPlaying.title, artist: s.nowPlaying.artist })
     }
     // 4.0 background signal: per-track skipCount on sub-30s bail. Stronger
     // negative signal than the 80% gate; feeds recommendation filtering.
-    if (s.currentTrack && s.position < 30) {
-      const ct = s.currentTrack
+    if (s.nowPlaying && s.position < 30) {
+      const ct = s.nowPlaying
       const latest = tracksRef.current.find(tr => tr.id === ct.id)
       const newCount = (Number(latest?.skipCount ?? ct.skipCount) || 0) + 1
       const skipFp = `${(ct.title || '').toLowerCase().trim()}|${(ct.artist || '').toLowerCase().trim()}|${ct.duration || 0}`
@@ -833,12 +1130,9 @@ export function useAudio() {
   const prevTrack = useCallback(() => {
     const s = stateRef.current
     if (s.queue.length === 0) return
-    // If more than 3 seconds in, restart current track
-    if (s.position > 3 && sharedHowl) {
-      sharedHowl.seek(0)
-      dispatchRef.current({ type: 'SET_POSITION', position: 0 })
-      return
-    }
+    // Brief 030c: 3-second-guard removed. Previous always navigates
+    // to the previous track. Restart-current-song UX moved to the
+    // progress bar (seek to 0); two controls, two actions.
     // In shuffle mode, go back through shuffle history
     if (s.shuffle && s.shuffleHistory.length > 0) {
       const history = [...s.shuffleHistory]
@@ -846,6 +1140,12 @@ export function useAudio() {
       dispatchRef.current({ type: 'SET_SHUFFLE_HISTORY', history })
       const track = s.queue[prevIdx]
       if (track) {
+        dx('playtrack.dispatch', {
+          site: 'prev-shuffle',
+          title: track.title,
+          sharedRaf,
+          isPaused,
+        })
         dispatchRef.current({ type: 'PLAY_TRACK', track, queue: s.queue, queueIndex: prevIdx, skipHistory: true })
         loadAndPlay(track, s.queue, prevIdx)
       }
@@ -870,6 +1170,7 @@ export function useAudio() {
       // drag-to value. Otherwise the bar can sit at the drag-to
       // value for up to 100ms while the gate re-opens. Sub-perceptual
       // gap usually but worth the one extra dispatch.
+      dx('throttle.reset', { site: 'seek', pos })
       lastPositionDispatchMs = 0
     }
   }, [])

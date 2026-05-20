@@ -2,11 +2,13 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { Track } from '../types'
+import { setNotice } from '../activity'
 import '../styles/genres.css'
 
 export default function GenresView() {
@@ -39,7 +41,13 @@ export default function GenresView() {
 
   const filteredByArtist = useMemo(() => {
     if (!selectedArtist) return filteredByGenre
-    return filteredByGenre.filter(t => t.artist === selectedArtist)
+    // Brief 031 Phase 4c: filter by contributingArtists so a collab
+    // track appears under every contributing artist's drill-down,
+    // not just whichever name happens to be in track.artist.
+    // Fallback to [t.artist] for legacy tracks lacking the field.
+    return filteredByGenre.filter(t =>
+      (t.contributingArtists ?? [t.artist]).includes(selectedArtist)
+    )
   }, [filteredByGenre, selectedArtist])
 
   const albums = useMemo(() => {
@@ -82,6 +90,9 @@ export default function GenresView() {
           const result = await window.electronAPI.setCustomArtwork(track.artist, track.album, file.path)
           if (result.ok && result.key && result.hash) {
             libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+          } else {
+            // 4.4.12: surface failure (usually sips conversion).
+            setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
           }
         },
       },
@@ -96,7 +107,7 @@ export default function GenresView() {
       },
     ] : []
     return [
-      { label: `Play "${track.title}"`, onClick: () => playTrack(track, filteredTracks, idx) },
+      { label: `Play "${track.title}"`, onClick: () => playTrack(track, filteredTracks, idx, undefined, true) },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
@@ -135,6 +146,10 @@ export default function GenresView() {
         libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [libDispatch]
@@ -145,6 +160,7 @@ export default function GenresView() {
   // into the track's location and scroll its row into view. Same idle-
   // gate pattern as SongsView.
   const viewRootRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('genres', viewRootRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -221,7 +237,7 @@ export default function GenresView() {
               key={track.id}
               data-track-id={track.id}
               className={`genres-track-row ${i % 2 ? 'genres-track-row--alt' : ''} ${isPlaying ? 'genres-track-row--playing' : ''}`}
-              onDoubleClick={() => playTrack(track, filteredTracks, i)}
+              onDoubleClick={() => playTrack(track, filteredTracks, i, undefined, true)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}
               draggable
               onDragStart={(e) => {

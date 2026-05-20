@@ -102,10 +102,15 @@
   border-radius: 20px;
   border: 1px solid var(--pill-border);
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.5);
-  /* Asymmetric padding: extra room on the right reserves space for
-   * the vertically-centered mini waveform visualizer (36 px wide at
-   * right:10) so the title and scrubber don't bleed into it. */
-  padding: 4px 56px 4px 16px;
+  /* 4.4.43: symmetric 22px padding now that the right-side mini
+   * visualizer is gone (removed in 4.4.41). Before this fix the pill
+   * had `4px 56px 4px 16px` — the 56px right padding was reserving
+   * space for the 36px-wide visualizer, which left the centered
+   * title visibly shifted left of true center once the visualizer
+   * stopped rendering. 22px clears the .np-cycle-btn on the left
+   * (at left:8px width:14px = ends at 22px) when it appears in
+   * activity modes; matching it on the right keeps centering exact. */
+  padding: 4px 22px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -176,6 +181,15 @@
   font-weight: 600;
   font-style: normal;
   margin-left: 6px;
+}
+/* 4.4.12: transient notice modes (sips conversion failures, etc.).
+   Error reads red so the user notices it amid the normal CD-rip /
+   sync chatter. Info uses the default activity styling. */
+.now-playing-info--notice-error {
+  color: #a03030;
+}
+.now-playing-info--notice-info {
+  color: #4a3a18;
 }
 .activity-bar {
   flex: 1;
@@ -360,24 +374,24 @@
 .dj-mode-btn {
   width: 30px;
   height: 30px;
-  color: #e0812e;
+  color: var(--brand-orange);
   background: transparent;
-  border: 2px solid #e0812e;
+  border: 2px solid var(--brand-orange);
   border-radius: 50%;
-  box-shadow: 0 0 8px rgba(224,129,46,0.3);
+  box-shadow: 0 0 8px rgba(var(--brand-orange-rgb),0.3);
   transition: background 0.15s, box-shadow 0.15s, color 0.15s;
   position: relative;
 }
 
 .dj-mode-btn:hover {
-  background: rgba(224,129,46,0.1);
-  box-shadow: 0 0 14px rgba(224,129,46,0.45);
+  background: rgba(var(--brand-orange-rgb),0.1);
+  box-shadow: 0 0 14px rgba(var(--brand-orange-rgb),0.45);
 }
 
 .dj-mode-btn--active {
-  background: #e0812e;
+  background: var(--brand-orange);
   color: #fff;
-  box-shadow: 0 0 12px rgba(224,129,46,0.65), 0 0 28px rgba(224,129,46,0.3);
+  box-shadow: 0 0 12px rgba(var(--brand-orange-rgb),0.65), 0 0 28px rgba(var(--brand-orange-rgb),0.3);
   animation: dj-pulse 1s ease-in-out infinite;
 }
 
@@ -388,7 +402,7 @@
 .dj-btn {
   width: 30px;
   height: 30px;
-  background: #e0812e;
+  background: var(--brand-orange);
   color: #fff;
   border: none;
   border-radius: 50%;
@@ -398,7 +412,7 @@
 }
 
 .dj-btn:hover:not(:disabled) {
-  background: #e88a35;
+  background: var(--brand-orange-light);
   box-shadow: 0 1px 3px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.3);
 }
 
@@ -410,8 +424,8 @@
  * glow as the visual cue that the button has agency. */
 .dj-btn--active {
   opacity: 1;
-  color: var(--musicman-accent, #c87828);
-  box-shadow: 0 0 10px rgba(224,129,46,0.6), 0 0 18px rgba(224,129,46,0.25), 0 2px 4px rgba(0,0,0,0.2);
+  color: var(--musicman-accent, var(--brand-orange));
+  box-shadow: 0 0 10px rgba(var(--brand-orange-rgb),0.6), 0 0 18px rgba(var(--brand-orange-rgb),0.25), 0 2px 4px rgba(0,0,0,0.2);
   animation: dj-pulse 1s ease-in-out infinite;
 }
 
@@ -428,7 +442,7 @@
   right: 2px;
   font-size: 6px;
   font-weight: 800;
-  color: #c87828;
+  color: var(--brand-orange);
   line-height: 1;
 }
 
@@ -592,7 +606,7 @@
   border-radius: 50%;
   border: 2px solid transparent;
   border-top-color: var(--musicman-accent);
-  border-right-color: rgba(200,120,40,0.3);
+  border-right-color: rgba(var(--brand-orange-rgb),0.3);
   animation: dj-ring-spin 0.8s linear infinite;
   pointer-events: none;
 }
@@ -604,7 +618,7 @@
   border-radius: 50%;
   border: 2px solid transparent;
   border-top-color: var(--musicman-accent);
-  border-right-color: rgba(200,120,40,0.3);
+  border-right-color: rgba(var(--brand-orange-rgb),0.3);
   animation: dj-ring-spin 0.8s linear infinite;
   pointer-events: none;
 }
@@ -613,23 +627,45 @@
   to { transform: rotate(360deg); }
 }
 
-/* Speech bubble from mic */
+/* Speech bubble from mic.
+   4.4.52: the bubble is colour-coordinated to whoever's speaking. It
+   shows for the mic button (the Music Man OR Megan, whichever is the
+   chosen host) and for DJ Mode (Stephen Hands) — three personas, so
+   three palettes. The per-speaker `--bubble-*` locals default to the
+   Music Man and get overridden by `[data-speaker=...]` below;
+   everything that draws colour (surface, border, tail, label, loading
+   dots) reads the locals, so a speaker swap is a single attribute. */
 .dj-bubble {
+  --bubble-accent: var(--persona-mm);
+  --bubble-accent-rgb: var(--persona-mm-rgb);
+  --bubble-bg-rgb: var(--persona-mm-bg);
   position: absolute;
   top: calc(100% + 12px);
   right: -16px;
   width: 320px;
-  background: rgba(30, 20, 10, 0.97);
+  background: rgba(var(--bubble-bg-rgb), 0.97);
   color: #e8dcc8;
   font-size: 12px;
   line-height: 1.5;
   padding: 10px 14px;
   border-radius: 10px;
-  border: 1px solid rgba(200,120,40,0.35);
+  border: 1px solid rgba(var(--bubble-accent-rgb), 0.35);
   box-shadow: 0 6px 24px rgba(0,0,0,0.45);
   z-index: 1000;
   transform-origin: top right;
   animation: dj-bubble-in 0.3s ease-out;
+}
+
+.dj-bubble[data-speaker="megan"] {
+  --bubble-accent: var(--persona-megan);
+  --bubble-accent-rgb: var(--persona-megan-rgb);
+  --bubble-bg-rgb: var(--persona-megan-bg);
+}
+
+.dj-bubble[data-speaker="djhands"] {
+  --bubble-accent: var(--persona-stephen);
+  --bubble-accent-rgb: var(--persona-stephen-rgb);
+  --bubble-bg-rgb: var(--persona-stephen-bg);
 }
 
 .dj-bubble::before {
@@ -639,9 +675,9 @@
   right: 24px;
   width: 12px;
   height: 12px;
-  background: rgba(30, 20, 10, 0.97);
-  border-left: 1px solid rgba(200,120,40,0.35);
-  border-top: 1px solid rgba(200,120,40,0.35);
+  background: rgba(var(--bubble-bg-rgb), 0.97);
+  border-left: 1px solid rgba(var(--bubble-accent-rgb), 0.35);
+  border-top: 1px solid rgba(var(--bubble-accent-rgb), 0.35);
   transform: rotate(45deg);
 }
 
@@ -650,7 +686,7 @@
 }
 
 .dj-bubble-label {
-  color: #c87828;
+  color: var(--bubble-accent);
   font-weight: 700;
 }
 
@@ -665,7 +701,9 @@
 }
 
 .dj-loading-dots {
-  color: #a89878;
+  /* 4.4.52: a muted tint of the speaker's accent (was a fixed warm
+     tan that only suited the Music Man). */
+  color: rgba(var(--bubble-accent-rgb), 0.62);
   font-style: italic;
 }
 

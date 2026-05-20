@@ -40,3 +40,7 @@ __pycache__/
 
 # Electron-builder scratch
 *.blockmap
+
+# Diagnostic captures (Brief 017 — vern)
+diagnostics/*
+!diagnostics/.gitkeep

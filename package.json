@@ -1,7 +1,7 @@
 {
   "name": "JakeTunes",
   "productName": "JakeTunes",
-  "version": "4.4.11",
+  "version": "4.4.84",
   "description": "iTunes 8 replica — 2008 visuals, 2026 brain",
   "author": "Jacob Rosenbaum",
   "main": "out/main/index.js",
@@ -16,7 +16,10 @@
     "release": "electron-vite build && electron-builder --mac --publish always",
     "release:patch": "npm version patch && npm run release",
     "release:minor": "npm version minor && npm run release",
-    "release:major": "npm version major && npm run release"
+    "release:major": "npm version major && npm run release",
+    "test": "node --test --experimental-strip-types src/main/__tests__/*.test.ts",
+    "test:mobile": "node --test --experimental-strip-types mobile/src/__tests__/*.test.ts",
+    "test:all": "npm test && npm run test:mobile"
   },
   "build": {
     "appId": "com.jacobrosenbaum.jaketunes",
@@ -27,7 +30,8 @@
     "publish": {
       "provider": "github",
       "owner": "jrosey30",
-      "repo": "JakeTunesV3"
+      "repo": "JakeTunesV3",
+      "releaseType": "release"
     },
     "mac": {
       "category": "public.app-category.music",
@@ -87,6 +91,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "chokidar": "^3.6.0",
     "dotenv": "^17.4.2",
     "electron-updater": "^6.8.3",
     "howler": "^2.2.4",
@@ -104,5 +109,8 @@
     "electron-vite": "^2.0.0",
     "typescript": "^5.3.0",
     "vite": "^5.0.0"
+  },
+  "overrides": {
+    "esbuild": "^0.25.0"
   }
 }

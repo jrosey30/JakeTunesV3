@@ -2,12 +2,13 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
-import { attachClipToBroadcast, attachAnnouncerToBroadcast, startRecording, stopRecording } from '../../audio/eq'
+import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
 import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } from '../../audio/stingers'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
+import { setNotice } from '../../activity'
 
 function QueueIcon() {
   return (
@@ -68,6 +69,22 @@ function AirPlayIcon({ active }: { active?: boolean }) {
   )
 }
 
+// 4.4.52: who the toolbar speech bubble can attribute. The mic button
+// speaks as the chosen host (Music Man or Megan); DJ Mode is Stephen
+// Hands. Each gets its own name, loading verb, and (via the matching
+// `data-speaker` attribute → toolbar.css) its own colour palette.
+type BubbleSpeaker = 'mm' | 'megan' | 'djhands'
+const BUBBLE_SPEAKER_LABEL: Record<BubbleSpeaker, string> = {
+  mm: 'The Music Man',
+  megan: 'Megan',
+  djhands: 'Stephen Hands',
+}
+const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
+  mm: 'is listening',
+  megan: 'is weighing in',
+  djhands: 'is on the decks',
+}
+
 export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean }) {
   const { state: pb } = usePlayback()
   const { state: lib } = useLibrary()
@@ -116,6 +133,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djText, setDjText] = useState('')
   const [djLoading, setDjLoading] = useState(false)
   const [showBubble, setShowBubble] = useState(true)
+  // 4.4.49: who the speech bubble is currently attributing. The mic
+  // button is the chosen host (Music Man or Megan — 4.4.52); DJ Mode
+  // is Stephen Hands. Was hardcoded to "The Music Man" — so DJ Mode
+  // commentary showed up under the wrong name. The bubble label, the
+  // loading verb, and the colour palette all read from this.
+  const [djSpeaker, setDjSpeaker] = useState<BubbleSpeaker>('mm')
   const [djExiting, setDjExiting] = useState(false)
   const savedVolumeRef = useRef(0.8)
   const djAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -180,8 +203,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   useEffect(() => {
     const handler = () => {
       djCancelledRef.current = true
+      // 4.4.14: invalidate any in-flight startDjSet run so a stale
+      // IPC response can't proceed after cancel.
+      djModeGenerationRef.current += 1
       setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
+        // 4.4.14: disconnect the broadcast source BEFORE nulling.
+        // pause() doesn't fire 'ended', so attachClipToBroadcast's
+        // cleanup never runs — the source node stays summed into
+        // preamp and accumulates over a session (4.4.6 rattle class).
+        detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
         setVolume(savedVolumeRef.current)
@@ -375,7 +406,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     // and MM/Megan never come back between songs. The user reported
     // exactly this: "they speak once and then they don't come in and
     // out." This is the kick that started turning the radio off.
-    playTrack(firstTrack, shuffled, 0, true)
+    playTrack(firstTrack, shuffled, 0, true, true)
   }, [radioMode, lib.tracks, playTrack, stopPlayback])
 
   // "Start Artist Radio" — dispatched from any view's right-click menu
@@ -388,7 +419,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const { tracks } = (e as CustomEvent).detail as { tracks: typeof lib.tracks; label?: string }
       if (!tracks || tracks.length === 0) return
       const shuffled = [...tracks].sort(() => Math.random() - 0.5)
-      playTrack(shuffled[0], shuffled, 0, false)
+      playTrack(shuffled[0], shuffled, 0, false, true)
       setAutoDj(false)
       setRadioMode(true)
       radioCacheRef.current.clear()
@@ -641,6 +672,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (djActive || autoDj) {
       djCancelledRef.current = true
       if (djAudioRef.current) {
+        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
+        detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
         setVolume(savedVolumeRef.current)
@@ -657,6 +690,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
+    // 4.4.52: the mic button speaks as the user's CHOSEN host — the
+    // Music Man or Megan. buildMusicManPrompt() swaps persona on the
+    // aiHost setting, so the bubble must follow. Was hardcoded 'mm',
+    // which mis-attributed every comment when Megan was the host.
+    const micHost = await window.electronAPI.getActiveHost()
+    setDjSpeaker(micHost === 'megan' ? 'megan' : 'mm')
     savedVolumeRef.current = pb.volume
 
     try {
@@ -730,6 +769,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjActive(true)
       setDjLoading(true)
       setDjText('')
+      // 4.4.49: the bubble only renders in !radioMode — i.e. DJ Mode,
+      // which is Stephen Hands' lane. Attribute it to him.
+      setDjSpeaker('djhands')
 
       // Helper: play an array of {speaker, line, audioData} segments
       // over the next track at ducked volume — real-radio-DJ style.
@@ -916,9 +958,29 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             'stephen',
           )
           if (result.ok && result.text) {
+            // 4.4.49: Stephen calls the transition style. 'cut' = slam
+            // straight into the next track, no talk. 'scratch' = a
+            // turntable scratch punches the change, then his line.
+            // 'talk' (default) = his line plays in the gap as before.
+            const transition = result.transition || 'talk'
+            if (transition === 'cut') {
+              setDjLoading(false)
+              setDjActive(false)
+              setDjText('')
+              isFadedRef.current = false
+              setVolume(savedVolumeRef.current)
+              playTrack(nextTrack, queue, nextIdx, true)
+              return
+            }
             const tts = await window.electronAPI.musicmanSpeak(result.text, false, DJ_HANDS_VOICE_ID)
             setDjLoading(false)
             if (tts.ok && tts.audio) {
+              if (transition === 'scratch') {
+                // Punch the seam with the scratch, let it ride, THEN
+                // his line + the drop (playSegmentSequence).
+                const scratchDur = playStinger('scratch')
+                await new Promise(r => setTimeout(r, scratchDur * 1000))
+              }
               await playSegmentSequence([{ speaker: 'djhands', line: result.text, audioData: tts.audio }], result.text)
               return
             }
@@ -991,12 +1053,124 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const isExternalOutput = audioDevices.length > 0 && defaultDeviceId != null &&
     audioDevices.find(d => d.id === defaultDeviceId)?.transport !== 'builtin'
 
+  // ── 4.4.15: output-device disconnect UX ──────────────────────────────
+  // Three layers of feedback when the active AirPlay/Bluetooth/external
+  // device drops mid-playback:
+  //
+  //   (a) Poll the device list every 5 sec while playing to detect when
+  //       the active external device disappears. Notify via the existing
+  //       activity-store notice (LCD-pill mode 4 from 4.4.12).
+  //   (b) On the next track start, if the previously-active device is
+  //       back in the list, auto-switch to it. Cooldown per device id
+  //       to avoid reconnect loops on a flaky device.
+  //   (c) When the device drops, macOS Core Audio reroutes to internal
+  //       speakers automatically — surface that explicitly so the user
+  //       always knows where audio is going.
+  //
+  // Device identity = stable numeric id from the audio helper (NOT name
+  // — "Living Room" could be two different AirPlay receivers).
+  //
+  // Out of scope: Bonjour/mDNS auto-discovery, cross-launch persistence
+  // of preferred device.
+  const lastExternalDeviceRef = useRef<{ id: number; name: string } | null>(null)
+  // Per-device cooldown: deviceId -> last-attempt timestamp (ms). Skip
+  // reconnect if attempted within the last 30 sec; reset on age.
+  const reconnectAttemptedRef = useRef<Map<number, number>>(new Map())
+
+  // Track which external device the user is currently using. Whenever
+  // a non-builtin device becomes default, remember it — that's our
+  // reconnect target if it later disappears. Manual switch to builtin
+  // clears the ref (user has expressed intent to stay on internal).
+  useEffect(() => {
+    if (defaultDeviceId == null) return
+    const dev = audioDevices.find(d => d.id === defaultDeviceId)
+    if (!dev) return
+    if (dev.transport === 'builtin') {
+      lastExternalDeviceRef.current = null
+      return
+    }
+    lastExternalDeviceRef.current = { id: dev.id, name: dev.name }
+  }, [audioDevices, defaultDeviceId])
+
+  // Poll the device list every 5 sec while playing to external. Skip
+  // when paused (no point), when on builtin (only external can drop),
+  // or when the airplay menu is open (existing refreshDevices covers
+  // that window).
+  useEffect(() => {
+    if (!pb.isPlaying || !isExternalOutput || airplayOpen) return
+    const tick = async () => {
+      try {
+        const result = await window.electronAPI.listAudioDevices()
+        if (!result.ok) return
+        const last = lastExternalDeviceRef.current
+        const stillPresent = last ? result.devices.find(d => d.id === last.id) : null
+        // Update local state from the poll regardless of disconnect.
+        setAudioDevices(result.devices)
+        const def = result.devices.find(d => d.isDefault)
+        setDefaultDeviceId(def ? def.id : null)
+        // Detect disconnect: the previously-active external device is
+        // no longer in the list (Core Audio has rerouted to builtin).
+        if (last && !stillPresent) {
+          setNotice(`Output → internal speakers (${last.name} unavailable)`, {
+            kind: 'info',
+            durationMs: 6000,
+          })
+        }
+      } catch (e) {
+        console.warn('[AudioDevice] poll failed:', e)
+      }
+    }
+    const id = setInterval(tick, 5000)
+    return () => clearInterval(id)
+  }, [pb.isPlaying, isExternalOutput, airplayOpen])
+
+  // On every track start, attempt to reconnect to the previously-active
+  // external device if it's back in the list. One attempt per device id
+  // per 30-sec window — prevents reconnect-loop on a flaky receiver.
+  useEffect(() => {
+    if (!pb.nowPlaying?.id) return
+    const last = lastExternalDeviceRef.current
+    if (!last) return
+    // If we're already on this device, nothing to do.
+    if (defaultDeviceId === last.id) return
+    // Cooldown check.
+    const attemptedAt = reconnectAttemptedRef.current.get(last.id)
+    if (attemptedAt && Date.now() - attemptedAt < 30_000) return
+    ;(async () => {
+      try {
+        const list = await window.electronAPI.listAudioDevices()
+        if (!list.ok) return
+        const target = list.devices.find(d => d.id === last.id)
+        if (!target) return  // device still gone — nothing to reconnect to
+        if (target.isDefault) return  // already on it (race with system reconnect)
+        reconnectAttemptedRef.current.set(last.id, Date.now())
+        const switchResult = await window.electronAPI.setAudioDevice(last.id)
+        if (!switchResult.ok) return
+        setNotice(`Reconnected to ${last.name}`, { kind: 'info', durationMs: 4000 })
+        // Refresh local state so the AirPlay menu reflects reality next open.
+        setAudioDevices(list.devices.map(d => ({ ...d, isDefault: d.id === last.id })))
+        setDefaultDeviceId(last.id)
+      } catch (e) {
+        console.warn('[AudioDevice] auto-reconnect failed:', e)
+      }
+    })()
+  }, [pb.nowPlaying?.id, defaultDeviceId])
+
   // ── DJ Mode (Spotify-style AI DJ) ──
   const [djModeActive, setDjModeActive] = useState(false)
   const [djModeLoading, setDjModeLoading] = useState(false)
   const [djModeTheme, setDjModeTheme] = useState('')
   const djRecentIds = useRef<number[]>([])
   const djCancelledRef = useRef(false)
+  // 4.4.14: generation counter for startDjSet runs. Bumped on every
+  // cancel and at the start of every new run; in-flight awaits in
+  // startDjSet capture the generation at start and bail when it
+  // changes. Fixes the rapid-toggle race where toggling off→on within
+  // 500ms while musicmanDjSet/musicmanSpeak was in flight let the
+  // STALE response proceed to dispatch state changes (because the
+  // re-click reset djCancelledRef to false before the old IPC
+  // resolved). See docs/dj-mode-cancel-audit.md.
+  const djModeGenerationRef = useRef(0)
 
   // Broadcast DJ Mode state to sidebar button
   useEffect(() => {
@@ -1006,10 +1180,20 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   }, [djModeActive])
 
   const startDjSet = useCallback(async () => {
+    // 4.4.14: each run captures its own generation. Cancel bumps the
+    // global counter so a stale in-flight response can detect it's no
+    // longer the current run and bail without touching state.
+    const myGen = ++djModeGenerationRef.current
+    const isStale = () => djModeGenerationRef.current !== myGen
     setDjModeLoading(true)
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
+    // 4.4.50: the DJ SET INTRO is Stephen Hands too — this was the path
+    // 4.4.49 missed (it fixed the mic button + the between-track
+    // transition handler, but the set-intro still left djSpeaker as
+    // whatever it was, so the intro bubble showed "The Music Man").
+    setDjSpeaker('djhands')
     savedVolumeRef.current = pb.volume
 
     try {
@@ -1019,8 +1203,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       }))
       const result = await window.electronAPI.musicmanDjSet(compact, djRecentIds.current)
 
-      // Bail out if DJ was cancelled while we were waiting for API
-      if (djCancelledRef.current) return
+      // Bail out if DJ was cancelled while we were waiting for API,
+      // or if a newer startDjSet run has superseded us (rapid toggle).
+      if (djCancelledRef.current || isStale()) return
 
       if (!result.ok || !result.trackIds || result.trackIds.length === 0) {
         console.error('[DJ Mode] Failed to get set:', result.error)
@@ -1056,8 +1241,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         // through Stephen's voice instead of Music Man's.
         const tts = await window.electronAPI.musicmanSpeak(result.intro, false, DJ_HANDS_VOICE_ID)
 
-        // Bail out if cancelled during TTS
-        if (djCancelledRef.current) return
+        // Bail out if cancelled during TTS, or superseded by a newer run.
+        if (djCancelledRef.current || isStale()) return
 
         setDjLoading(false)
         if (tts.ok && tts.audio) {
@@ -1089,14 +1274,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         setDjLoading(false)
       }
 
-      // Bail out if cancelled during intro playback
-      if (djCancelledRef.current) return
+      // Bail out if cancelled during intro playback, or superseded.
+      if (djCancelledRef.current || isStale()) return
 
       // Start playing the DJ set with auto-DJ transitions enabled
       setAutoDj(true)
       setDjActive(false)
       setDjModeLoading(false)
-      playTrack(setTracks[0], setTracks, 0, true)
+      playTrack(setTracks[0], setTracks, 0, true, true)
 
       // Fade out the intro text after a few seconds
       setTimeout(() => {
@@ -1118,12 +1303,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (djModeActive) {
       // Stop DJ mode — kill everything immediately
       djCancelledRef.current = true
+      // 4.4.14: invalidate any in-flight startDjSet so a stale IPC
+      // response can't proceed (rapid off-then-on within 500ms).
+      djModeGenerationRef.current += 1
       setDjModeActive(false)
       setDjModeLoading(false)
       setDjModeTheme('')
       setAutoDj(false)
       setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
+        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
+        detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
       }
@@ -1227,15 +1417,20 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             </span>
           )}
           {showBubble && !radioMode && (djLoading || djText) && (
-            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`}>
+            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`} data-speaker={djSpeaker}>
+              {/* 4.4.49 + 4.4.52: attribute the bubble to whoever's
+                  actually speaking — Stephen Hands in DJ Mode, the
+                  chosen host (Music Man or Megan) on a mic comment.
+                  Name, loading verb, AND colour (via data-speaker)
+                  all key off djSpeaker. */}
               {djLoading ? (
                 <>
-                  <span className="dj-bubble-label">The Music Man</span>{' '}
-                  <span className="dj-loading-dots">is listening</span>
+                  <span className="dj-bubble-label">{BUBBLE_SPEAKER_LABEL[djSpeaker]}</span>{' '}
+                  <span className="dj-loading-dots">{BUBBLE_SPEAKER_VERB[djSpeaker]}</span>
                 </>
               ) : (
                 <>
-                  <span className="dj-bubble-label">The Music Man:</span> {djText}
+                  <span className="dj-bubble-label">{BUBBLE_SPEAKER_LABEL[djSpeaker]}:</span> {djText}
                 </>
               )}
             </div>

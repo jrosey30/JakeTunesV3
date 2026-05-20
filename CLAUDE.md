@@ -8,6 +8,23 @@ as functionality.
 
 ---
 
+## Diagnostic capture
+
+When a bug or issue needs investigation, run `./scripts/vern "brief context note"`
+from the repo root. It produces a single markdown file in `diagnostics/`
+containing repo state, build health (tsc error counts), code structure, and
+recent activity. Upload that one file to the AI advisor instead of running
+individual grep/sed/cat/git/tsc commands manually.
+
+The context note is optional — `./scripts/vern` alone works fine. Each run
+is timestamped, so multiple captures in a session don't overwrite each other.
+Diagnostics output is gitignored.
+
+See Brief 017 for the v0 design. Future versions will add dev console
+capture, screenshot integration, and live terminal tailing.
+
+---
+
 ## Platform Rules — Electron Renderer (CRITICAL)
 
 These APIs are silently blocked or broken in Electron renderer processes.

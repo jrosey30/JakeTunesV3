@@ -6,6 +6,7 @@ import { useAudio } from './hooks/useAudio'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
+import SplashScreen from './components/SplashScreen'
 import QueuePanel from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
@@ -14,10 +15,13 @@ import PlayCacheModal from './components/PlayCacheModal'
 import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
+import ConfirmDialog from './components/ConfirmDialog'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
+import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
 import { setCrossfadeSettings } from './hooks/useAudio'
-import { setEqSettings } from './audio/eq'
+import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
+import { setNotice } from './activity'
 import './styles/variables.css'
 import './styles/reset.css'
 import './styles/app.css'
@@ -26,7 +30,12 @@ import './styles/sidebar.css'
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { togglePlayPause, nextTrack, prevTrack, setVolume, stopPlayback } = useAudio()
+  // Brief 033c: App is the single "primary" useAudio consumer — it owns
+  // the heartbeat diagnostic/recovery interval. App never unmounts, so
+  // exactly one interval runs regardless of how many other components
+  // call useAudio() for accessor functions. See useAudio.ts heartbeat
+  // effect for the full rationale.
+  const { togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback } = useAudio({ primary: true })
   const { state: pbState } = usePlayback()
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
@@ -35,8 +44,30 @@ function AppInner() {
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Brief 020: tag write-back batch UI state. Two phases:
+  //   - applyOverridesConfirmOpen → confirm modal
+  //   - applyOverridesProgress != null → in-flight modal (counter + bar)
+  //   - applyOverridesResult != null → result summary modal
+  const [applyOverridesConfirmOpen, setApplyOverridesConfirmOpen] = useState(false)
+  const [applyOverridesProgress, setApplyOverridesProgress] = useState<{ done: number; total: number; succeeded: number; failed: number } | null>(null)
+  const [applyOverridesResult, setApplyOverridesResult] = useState<{ total: number; succeeded: number; failed: number; skippedNoTrack: number; skippedFpMismatch: number; skippedNoWritable: number; failures: Array<{ filePath: string; error?: string }> } | null>(null)
+  // Brief 016 commit 2: refresh-file-sizes UI state — same three-phase
+  // confirm/progress/result pattern as Brief 020's apply-overrides flow.
+  const [refreshSizesConfirmOpen, setRefreshSizesConfirmOpen] = useState(false)
+  const [refreshSizesProgress, setRefreshSizesProgress] = useState<{ scanned: number; refreshed: number; total: number } | null>(null)
+  const [refreshSizesResult, setRefreshSizesResult] = useState<{ refreshed: number; error?: string } | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [uiReady, setUiReady] = useState(false)
+  // 4.4.39: minimum splash display time. Even on a warm cache where the
+  // library Promise.all settles in <500ms, we hold the splash for ≥1400ms
+  // so the wordmark/greeting/EQ-bars actually get to land — otherwise
+  // it's a strobe. App becomes interactive only when BOTH the library is
+  // loaded AND the min-time has elapsed.
+  const [splashMinElapsed, setSplashMinElapsed] = useState(false)
+  useEffect(() => {
+    const t = window.setTimeout(() => setSplashMinElapsed(true), 1400)
+    return () => window.clearTimeout(t)
+  }, [])
 
   // Load persisted settings once on mount and push to the audio layer.
   useEffect(() => {
@@ -50,11 +81,207 @@ function AppInner() {
         sync:      { ...DEFAULT_APP_SETTINGS.sync,      ...(raw.sync || {}) },
         ai:        { ...DEFAULT_APP_SETTINGS.ai,        ...(raw.ai || {}) },
         eq:        { ...DEFAULT_APP_SETTINGS.eq,        ...(raw.eq || {}) },
+        inbox:     { ...DEFAULT_APP_SETTINGS.inbox,     ...(raw.inbox || {}) },
+        audio:     { ...DEFAULT_APP_SETTINGS.audio,     ...(raw.audio || {}) },
       }
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
       setEqSettings(merged.eq)
     })
+  }, [])
+
+  // 4.4.13: Inbox auto-import subscription. Main-side chokidar watches
+  // ~/Music2/_inbox (or wherever the user pointed it) and fires this
+  // event with a batched array of newly-arrived audio file paths. We
+  // route them through the EXACT same enqueueFiles() drag-and-drop uses
+  // — full per-file queue state, dupe detection, retry — and set
+  // deleteSourceOnSuccess so each file gets removed from the inbox once
+  // its iPod_Control copy is in place. Format is left undefined so the
+  // main-side import-track handler falls back to the user's
+  // AppSettings.library.defaultImportFormat. Subscription is always-on;
+  // the watcher itself is the on/off gate via Settings.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onInboxFilesDetected((paths) => {
+      if (!paths || paths.length === 0) return
+      void enqueueFiles(paths, undefined, { deleteSourceOnSuccess: true })
+    })
+    return cleanup
+  }, [])
+
+  // 4.4.51: auto-route-on-call. While the call-route setting is on AND
+  // music is playing, arm main's mic-activity watcher. When a call
+  // starts (the mic goes live — Teams/Zoom/etc. all grab it), route
+  // JakeTunes' OWN audio output to the configured speaker via
+  // AudioContext.setSinkId — the macOS system default is never touched,
+  // so the call app keeps using whatever the OS has it on. Route back
+  // when the call ends. Solves "I don't want to pause music every time
+  // I hop on a Teams call" without the AirPlay-latency problem of
+  // playing to two devices at once (it's always one device at a time).
+  useEffect(() => {
+    const cfg = appSettings.audio
+    if (!cfg?.callRouteEnabled || !cfg.callRouteDeviceLabel || !pbState.isPlaying) {
+      window.electronAPI.setCallWatch(false)
+      return
+    }
+    window.electronAPI.setCallWatch(true)
+    let savedSink = ''
+    let routed = false
+    const cleanup = window.electronAPI.onCallStateChanged(async ({ onCall }) => {
+      try {
+        if (onCall && !routed) {
+          // Resolve the configured device's Web Audio sink id. We store
+          // the device by NAME (Web Audio ids churn across sessions) and
+          // match it against enumerateDevices() at route time.
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          const target = devices.find(d => d.kind === 'audiooutput' && d.label === cfg.callRouteDeviceLabel)
+          if (!target) {
+            setNotice(`Call started — couldn't find "${cfg.callRouteDeviceLabel}" to move music to.`, { kind: 'error', durationMs: 6000 })
+            return
+          }
+          savedSink = getAudioOutputSink()
+          const ok = await setAudioOutputSink(target.deviceId)
+          if (ok) {
+            routed = true
+            setNotice(`On a call — music moved to ${cfg.callRouteDeviceLabel}.`, { kind: 'info', durationMs: 4000 })
+          } else {
+            setNotice("Call started — couldn't move music (this runtime can't per-app route).", { kind: 'error', durationMs: 6000 })
+          }
+        } else if (!onCall && routed) {
+          await setAudioOutputSink(savedSink)
+          routed = false
+          setNotice('Call ended — music back on your speakers.', { kind: 'info', durationMs: 3000 })
+        }
+      } catch { /* best-effort routing — never throw into the IPC handler */ }
+    })
+    return () => {
+      cleanup()
+      window.electronAPI.setCallWatch(false)
+      // Disabling / unmounting mid-route: put the sink back so we don't
+      // leave music stranded on the call speaker.
+      if (routed) void setAudioOutputSink(savedSink)
+    }
+  }, [appSettings.audio?.callRouteEnabled, appSettings.audio?.callRouteDeviceLabel, pbState.isPlaying])
+
+  // 4.4.53: macOS "Now Playing" integration. Without this the Control
+  // Center / lock-screen widget just shows the app name ("JakeTunes
+  // V3") — Chromium surfaces the <audio> element to the OS but has no
+  // track metadata to hand it. MediaSession is the bridge.
+  //
+  // (1) Metadata — title / artist / album / artwork, refreshed on every
+  // track change. Title/artist/album are set immediately; artwork is
+  // fetched and upgraded in asynchronously.
+  //
+  // 4.4.54: MediaSession will NOT load a custom-scheme (album-art://)
+  // URL as artwork — even though the scheme is registered with
+  // supportFetchAPI. So we fetch the image ourselves and hand it a
+  // blob: URL, which Chromium's media layer does accept. Key scheme
+  // matches AlbumArtPanel (`${artist}|||${album}`, lowercased).
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const np = pbState.nowPlaying
+    if (!np) {
+      navigator.mediaSession.metadata = null
+      return
+    }
+    let blobUrl: string | null = null
+    let cancelled = false
+    const apply = (artwork: MediaImage[]) => {
+      if (cancelled) return
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: np.title || 'Unknown Track',
+        artist: np.artist || 'Unknown Artist',
+        album: np.album || '',
+        artwork,
+      })
+    }
+    apply([]) // show title/artist/album immediately; art upgrades below
+    const artKey = `${(np.artist || '').toLowerCase().trim()}|||${(np.album || '').toLowerCase().trim()}`
+    const artHash = libState.artworkMap[artKey]
+    if (artHash) {
+      fetch(`album-art://${artHash}.jpg`)
+        .then(r => (r.ok ? r.blob() : Promise.reject(new Error('artwork not found'))))
+        .then(blob => {
+          if (cancelled) return
+          blobUrl = URL.createObjectURL(blob)
+          apply([{ src: blobUrl, sizes: '512x512', type: 'image/jpeg' }])
+        })
+        .catch(() => { /* no cached cover — metadata already set without art */ })
+    }
+    return () => {
+      cancelled = true
+      if (blobUrl) URL.revokeObjectURL(blobUrl)
+    }
+  }, [pbState.nowPlaying, libState.artworkMap])
+
+  // (2) Transport controls — route the widget's buttons back into
+  // JakeTunes' own playback logic. togglePlayPause already branches on
+  // play/pause state, so it's correct for both actions. seek() takes a
+  // 0-1 fraction; the OS hands us absolute seconds.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const ms = navigator.mediaSession
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try { ms.setActionHandler(action, handler) } catch { /* action unsupported in this runtime */ }
+    }
+    set('play', () => togglePlayPause())
+    set('pause', () => togglePlayPause())
+    set('previoustrack', () => prevTrack())
+    set('nexttrack', () => nextTrack())
+    set('seekto', (details) => {
+      if (details.seekTime != null && pbState.duration > 0) {
+        seek(details.seekTime / pbState.duration)
+      }
+    })
+    return () => {
+      for (const a of ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto'] as MediaSessionAction[]) {
+        set(a, null)
+      }
+    }
+  }, [togglePlayPause, nextTrack, prevTrack, seek, pbState.duration])
+
+  // (3) Keep the widget's play/pause indicator + scrubber in sync.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = pbState.nowPlaying
+      ? (pbState.isPlaying ? 'playing' : 'paused')
+      : 'none'
+    const { position, duration } = pbState
+    if (duration > 0 && position >= 0 && position <= duration) {
+      try {
+        navigator.mediaSession.setPositionState({ duration, position, playbackRate: 1 })
+      } catch { /* setPositionState rejects odd values — ignore */ }
+    }
+  }, [pbState.isPlaying, pbState.position, pbState.duration, pbState.nowPlaying])
+
+  // 4.4.18: Library sync orchestrator status. Surface success/failure
+  // of laptop → homemini sync via the LCD-pill notice (4.4.12). Only
+  // surface FAILURES on success because the safety-net tick fires
+  // every 10 min and we don't want a "synced ok" popup that often;
+  // the user only needs to know when something's actually broken.
+  // Exception: post-import sync success IS surfaced so the user gets
+  // the "boom, it's on homemini" feeling after a new import.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onLibrarySyncStatus((status) => {
+      if (!status.ok) {
+        setNotice(
+          status.error
+            ? `Couldn't sync to homemini: ${status.error}`
+            : "Couldn't sync to homemini.",
+          { kind: 'error', durationMs: 6000 },
+        )
+        return
+      }
+      // OK path — only chirp on import/metadata-edit/playlist triggers.
+      // safety-net silent (10 min noise = bad UX).
+      if (status.reason === 'import') {
+        setNotice('Synced new imports to homemini.', { kind: 'info', durationMs: 4000 })
+      } else if (status.reason === 'metadata-edit') {
+        setNotice('Synced edits to homemini.', { kind: 'info', durationMs: 3000 })
+      } else if (status.reason === 'playlist') {
+        setNotice('Synced playlists to homemini.', { kind: 'info', durationMs: 3000 })
+      }
+    })
+    return cleanup
   }, [])
 
   // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
@@ -64,13 +291,32 @@ function AppInner() {
   appSettingsRef.current = appSettings
   const libStateRef = useRef(libState)
   libStateRef.current = libState
+  // Brief 016: playback state ref so closures (the library-external-change
+  // reload handler in particular) can read the currently playing track id
+  // without staleness. The reload handler protects the playing track's
+  // libState entry from being overwritten during playback — otherwise the
+  // overwrite cascades into UI desync (stale now-playing title, frozen
+  // scrubber) because the playback engine has the source of truth for
+  // that track's playback state.
+  const pbStateRef = useRef(pbState)
+  pbStateRef.current = pbState
   useEffect(() => {
     const onIpodMounted = () => {
       const settings = appSettingsRef.current
       if (!settings.sync.autoSyncOnConnect) return
       const lib = libStateRef.current
       if (lib.tracks.length === 0) return
-      const playlists = (lib.playlists || []).filter((p: import('./types').Playlist) => !p.id.startsWith('ipod-'))
+      // 4.4.46: auto-sync now ships the SAME playlist set the manual
+      // Device-view "Sync" button does — the user's regular playlists
+      // PLUS the four built-in smart playlists (Recently Added,
+      // Recently Played, Top 25, My Top Rated), freshly evaluated.
+      // Before this, auto-sync passed only `lib.playlists` filtered to
+      // non-iPod entries — so plugging the iPod in and letting it
+      // auto-sync silently dropped every built-in smart playlist. The
+      // iTunesDB writer takes whatever it's handed as THE complete
+      // playlist set, so `buildSmartPlaylistsForSync` returns regular
+      // playlists too (kept as-is) — they are NOT dropped.
+      const playlists = buildSmartPlaylistsForSync(lib.tracks, lib.playlists || [])
       window.electronAPI.syncToIpod(lib.tracks, playlists).catch((err) => {
         console.warn('[auto-sync] failed:', err)
       })
@@ -125,11 +371,17 @@ function AppInner() {
             skippedStale++
             continue
           }
+          // The override payload is intentionally schema-loose — Cynthia
+          // and the user can edit any of Track's stringy fields and
+          // we replay them by name. Track is a closed interface so we
+          // route through `unknown` to satisfy tsc; field names are
+          // validated by Cynthia's emitter, not here.
+          const tr = t as unknown as Record<string, unknown>
           for (const [field, value] of Object.entries(entry.fields)) {
             const coerced = NUMERIC_OVERRIDE_FIELDS.has(field) && typeof value === 'string'
               ? (Number(value) || 0)
               : value
-            ;(t as Record<string, unknown>)[field] = coerced
+            tr[field] = coerced
           }
           appliedCount++
         }
@@ -202,6 +454,47 @@ function AppInner() {
           const map = r.map || {}
           dispatch({ type: 'SET_ARTWORK_MAP', map })
 
+          // 4.4.12: ONE-SHOT EMBEDDED-ART BACKFILL.
+          // Tracks imported before the import-time extractor landed (any
+          // build prior to 4.4.12) don't have their embedded covers on
+          // disk. Run a one-time pass that parseFile's every track,
+          // pulls the embedded picture, and writes it through the same
+          // (now atomic + single-flight) artwork pipeline. The backfill
+          // IPC writes a marker file when done; we check that first so
+          // we never re-run.
+          //
+          // We run this BEFORE the missing-art auto-fetch loop below so
+          // embedded-art recovery (free + offline) beats the network
+          // fetch (slow + can fail) when both could supply a cover.
+          try {
+            const status = await window.electronAPI.artworkBackfillStatus?.()
+            if (status?.ok && !status.done) {
+              const candidates = tracks
+                .filter(t => t.artist && t.album && t.path)
+                .map(t => ({ path: t.path, artist: t.artist, album: t.album }))
+              if (candidates.length > 0) {
+                const result = await window.electronAPI.backfillEmbeddedArtwork(candidates)
+                if (result?.ok && result.artwork) {
+                  for (const a of result.artwork) {
+                    dispatch({ type: 'ADD_ARTWORK', key: a.key, hash: a.hash })
+                  }
+                }
+              }
+            }
+          } catch { /* backfill best-effort; never block app launch on it */ }
+
+          // Refresh the in-memory map so the missing-art scan below sees
+          // anything the backfill just added (avoids fetching covers from
+          // the network for albums we already have embedded).
+          let postBackfillMap = map
+          try {
+            const r2 = await window.electronAPI.loadArtworkMap?.()
+            if (r2?.ok && r2.map) {
+              postBackfillMap = r2.map
+              dispatch({ type: 'SET_ARTWORK_MAP', map: r2.map })
+            }
+          } catch { /* keep original map */ }
+
           // Collect all unique artist+album pairs from the library
           const albums = new Map<string, { artist: string; album: string }>()
           for (const t of tracks) {
@@ -214,7 +507,7 @@ function AppInner() {
           // Find which albums are missing artwork
           const missing: { artist: string; album: string }[] = []
           for (const [k, v] of albums) {
-            if (!map[k]) missing.push(v)
+            if (!postBackfillMap[k]) missing.push(v)
           }
 
           if (missing.length === 0) return
@@ -230,17 +523,72 @@ function AppInner() {
           }
         }).catch(() => {})
       }
-      // Build library summary for Music Man
-      const artists: Record<string, number> = {}
+      // 4.4.41: Music Man library summary now includes skipCount signals.
+      // Jake: "music man should know that if i have no plays on a song....
+      // that doesnt mean i didnt skip it." Previously the context was just
+      // top artists by track count + top genres — Music Man had no way to
+      // tell the difference between "Jake never heard this" and "Jake
+      // skipped this every time it came on." Both showed playCount: 0.
+      //
+      // New profile dimensions:
+      //   • topArtistsByTracks  — what's in the library (catalog signal)
+      //   • topArtistsByPlays   — what Jake actually engages with
+      //   • topArtistsBySkips   — what Jake actively rejects
+      //   • heardButSkipped     — artists with skips>0 AND plays==0
+      //                           ("Jake's heard it; he just doesn't want it")
+      //   • activeDislikeTracks — specific tracks with skipCount≥3 AND
+      //                           playCount==0 (a strong "don't recommend")
+      //
+      // Plus an explicit NOTE telling Music Man not to treat playCount==0
+      // as "unfamiliar" without checking the skip signals.
+      const artistsByTracks: Record<string, number> = {}
+      const artistsByPlays: Record<string, number> = {}
+      const artistsBySkips: Record<string, number> = {}
+      const heardButSkipped = new Set<string>()
+      const activeDislikeTracks: string[] = []
       const genres: Record<string, number> = {}
       for (const t of tracks) {
-        if (t.artist) artists[t.artist] = (artists[t.artist] || 0) + 1
+        const a = t.artist
+        const plays = Number((t as { playCount?: number }).playCount) || 0
+        const skips = Number((t as { skipCount?: number }).skipCount) || 0
+        if (a) {
+          artistsByTracks[a] = (artistsByTracks[a] || 0) + 1
+          artistsByPlays[a] = (artistsByPlays[a] || 0) + plays
+          artistsBySkips[a] = (artistsBySkips[a] || 0) + skips
+          if (skips > 0 && plays === 0) heardButSkipped.add(a)
+        }
         if (t.genre) genres[t.genre] = (genres[t.genre] || 0) + 1
+        if (skips >= 3 && plays === 0 && t.title) {
+          activeDislikeTracks.push(`"${t.title}" by ${a || 'Unknown'}`)
+        }
       }
-      const topArtists = Object.entries(artists).sort((a, b) => b[1] - a[1]).slice(0, 50).map(([name, count]) => `${name} (${count})`).join(', ')
-      const topGenres = Object.entries(genres).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([name, count]) => `${name} (${count})`).join(', ')
-      const ctx = `${tracks.length} total tracks.\nTop artists: ${topArtists}\nTop genres: ${topGenres}`
-      window.electronAPI.setLibraryContext(ctx)
+      const fmtPairs = (rec: Record<string, number>, n: number) =>
+        Object.entries(rec)
+          .filter(([, c]) => c > 0)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, n)
+          .map(([name, c]) => `${name} (${c})`)
+          .join(', ')
+      const topByTracks = fmtPairs(artistsByTracks, 50)
+      const topByPlays = fmtPairs(artistsByPlays, 30)
+      const topBySkips = fmtPairs(artistsBySkips, 20)
+      const heardSkippedList = Array.from(heardButSkipped).sort().slice(0, 30).join(', ')
+      const dislikedTracksList = activeDislikeTracks.slice(0, 30).join(', ')
+      const topGenres = fmtPairs(genres, 20)
+
+      const ctxParts: string[] = [
+        `${tracks.length} total tracks.`,
+        `Top artists by track count: ${topByTracks}`,
+        `Top genres: ${topGenres}`,
+      ]
+      if (topByPlays) ctxParts.push(`Most-played artists (engagement signal — total playCount across their tracks): ${topByPlays}`)
+      if (topBySkips) ctxParts.push(`Most-skipped artists (rejection signal — total skipCount across their tracks): ${topBySkips}`)
+      if (heardSkippedList) ctxParts.push(`Heard-but-skipped artists (skipCount > 0, playCount == 0 — the user has heard them and chosen NOT to play through): ${heardSkippedList}`)
+      if (dislikedTracksList) ctxParts.push(`Specific actively-rejected tracks (skipped ≥3 times AND never played through): ${dislikedTracksList}`)
+      ctxParts.push(
+        `IMPORTANT REASONING NOTE: A track with playCount == 0 is NOT necessarily unfamiliar to the user. Always check skipCount first. If a track or artist appears in the "Heard-but-skipped" or "actively-rejected" lists above, the user has heard it and chosen to skip — do not surface it as a "discovery" or "you should try this." The true preference signal is roughly (playCount − 0.5 × skipCount), not playCount alone.`
+      )
+      window.electronAPI.setLibraryContext(ctxParts.join('\n'))
     }).catch((err) => {
       console.error('Failed to load tracks:', err)
     })
@@ -442,6 +790,27 @@ function AppInner() {
         case 'prune-alac-cache':    setPlayCacheMode('prune'); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
         case 'open-preferences':    setSettingsOpen(true); break
+        // Brief 023: 'export-mobile-snapshot' and 'apply-mobile-overrides'
+        // removed — vestigial mobile-sync feature that never shipped.
+        // Tag write-back (Brief 020) is the path Plex/mobile consume now.
+        case 'apply-overrides-to-files': {
+          // Brief 020 batch backfill — push every writable override
+          // (~1.6k entries at ship time) into the corresponding audio
+          // file's embedded tags so Plex sees the corrected metadata.
+          // Just opens the confirm; the actual run happens after
+          // onConfirm in the ConfirmDialog renders below.
+          setApplyOverridesConfirmOpen(true)
+          break
+        }
+        case 'refresh-file-sizes': {
+          // Brief 016 commit 2 retrofit — walk every track, stat the
+          // on-disk file, update library.json.fileSize when stale.
+          // Eliminates the ~30% fileSize drift Matt's mobile probe v2
+          // flagged. Confirm-then-run pattern, identical shape to the
+          // apply-overrides flow above.
+          setRefreshSizesConfirmOpen(true)
+          break
+        }
       }
     })
     // Main process watches library.json on disk and fires this when
@@ -450,7 +819,109 @@ function AppInner() {
     // external edit later.
     const reloadHandler = () => {
       window.electronAPI.loadTracks().then((r) => {
-        if (r.tracks) dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+        if (!r.tracks) return
+        // Brief 016: compute a diff against the current in-memory library
+        // and dispatch a partial UPDATE_TRACKS for small changes instead
+        // of a full SET_TRACKS that replaces the entire 6195-element
+        // array. Full replacement cascades through every memo and view
+        // watching libState.tracks, clobbering playback UI state (stale
+        // now-playing title, frozen scrubber) — that was the proximate
+        // cause of the "auto-repeat" symptom Brief 015 instrumented.
+        //
+        // The currently playing track is never overwritten during
+        // playback — the audio engine has the source of truth for that
+        // track's playback state.
+        const currentTracks = libStateRef.current.tracks
+        const newTracks = r.tracks
+        const nowPlayingId = pbStateRef.current.nowPlaying?.id
+
+        // Large structural change → fall back to SET_TRACKS so things
+        // like fresh imports or iPod-sync arrivals work as before.
+        if (newTracks.length !== currentTracks.length) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'track count changed, dispatching SET_TRACKS',
+            oldCount: currentTracks.length,
+            newCount: newTracks.length,
+            protectedNowPlaying: nowPlayingId,
+          })
+          dispatch({ type: 'SET_TRACKS', tracks: newTracks })
+          return
+        }
+
+        // Same count → compute per-field diff.
+        const currentById = new Map(currentTracks.map(t => [t.id, t]))
+        const changed: Array<{ id: number; field: string; value: string | boolean }> = []
+        let needFullReload = false
+        for (const newTrack of newTracks) {
+          const oldTrack = currentById.get(newTrack.id)
+          if (!oldTrack) {
+            // Same total count but a new id appeared — id set is
+            // disjoint, partial merge isn't safe. Fall back to full.
+            needFullReload = true
+            break
+          }
+          // Protect the currently playing track entirely.
+          if (nowPlayingId !== undefined && newTrack.id === nowPlayingId) continue
+          const keys = new Set([
+            ...Object.keys(oldTrack as unknown as Record<string, unknown>),
+            ...Object.keys(newTrack as unknown as Record<string, unknown>),
+          ])
+          for (const key of keys) {
+            const oldVal = (oldTrack as unknown as Record<string, unknown>)[key]
+            const newVal = (newTrack as unknown as Record<string, unknown>)[key]
+            if (oldVal === newVal) continue
+            // UPDATE_TRACKS values are string | boolean; coerce numeric
+            // and undefined uniformly. Functions/objects aren't valid
+            // track fields, so skipping them is safe.
+            if (typeof newVal === 'boolean') {
+              changed.push({ id: newTrack.id, field: key, value: newVal })
+            } else if (newVal === undefined || newVal === null) {
+              changed.push({ id: newTrack.id, field: key, value: '' })
+            } else if (typeof newVal === 'string' || typeof newVal === 'number') {
+              changed.push({ id: newTrack.id, field: key, value: String(newVal) })
+            }
+            // arrays/objects skipped — Track has none of those today
+          }
+        }
+
+        if (needFullReload) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'disjoint id set, falling back to SET_TRACKS',
+            count: newTracks.length,
+            protectedNowPlaying: nowPlayingId,
+          })
+          dispatch({ type: 'SET_TRACKS', tracks: newTracks })
+          return
+        }
+
+        if (changed.length === 0) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'no detectable diff, skipping dispatch',
+            protectedNowPlaying: nowPlayingId,
+          })
+          return
+        }
+
+        // Threshold: huge diffs are cheaper as a single SET_TRACKS
+        // dispatch. 200 was chosen as the rough boundary between
+        // "incremental analysis result" (1–10 fields) and "large
+        // external rewrite" (hundreds of fields).
+        if (changed.length > 200) {
+          console.log('[dx.repeat.lib-reload]', {
+            message: 'large diff, falling back to SET_TRACKS',
+            changedFields: changed.length,
+            protectedNowPlaying: nowPlayingId,
+          })
+          dispatch({ type: 'SET_TRACKS', tracks: newTracks })
+          return
+        }
+
+        console.log('[dx.repeat.lib-reload]', {
+          message: 'dispatching partial UPDATE_TRACKS',
+          changedFields: changed.length,
+          protectedNowPlaying: nowPlayingId,
+        })
+        dispatch({ type: 'UPDATE_TRACKS', updates: changed })
       })
     }
     const unsubExt = window.electronAPI.onLibraryExternalChange(() => {
@@ -553,9 +1024,16 @@ function AppInner() {
 
   // As the queue worker finishes each item, push it into the library
   // immediately. The user sees their drop landing one track at a time.
+  // 4.4.12: if the import handler extracted embedded album art, dispatch
+  // ADD_ARTWORK in the same React batch so the cover shows up alongside
+  // the track on first render (instead of one render of "no art" then a
+  // second render after a per-track IPC).
   useEffect(() => {
-    return onTrackImported((t) => {
+    return onTrackImported((t, artwork) => {
       dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
+      if (artwork) {
+        dispatch({ type: 'ADD_ARTWORK', key: artwork.key, hash: artwork.hash })
+      }
     })
   }, [dispatch])
 
@@ -591,16 +1069,12 @@ function AppInner() {
     }
   }, [])
 
-  if (!uiReady) {
-    return (
-      <div className="app-splash">
-        <div className="app-splash-inner">
-          <img src={new URL('./assets/musicman-avatar.png', import.meta.url).href} className="app-splash-icon" alt="" />
-          <div className="app-splash-title">JakeTunes</div>
-          <div className="app-splash-sub">Loading library...</div>
-        </div>
-      </div>
-    )
+  // 4.4.39: hold splash until BOTH library is loaded AND minimum display
+  // time has elapsed. Pass isReady so the splash can pop progress to 100%
+  // + status to "Ready." once the data side has resolved but before the
+  // min-time releases — gives a satisfying finish frame instead of a snap.
+  if (!uiReady || !splashMinElapsed) {
+    return <SplashScreen isReady={uiReady} />
   }
 
   return (
@@ -644,6 +1118,201 @@ function AppInner() {
             onDelete={(id) => dispatch({ type: 'DELETE_TRACKS', ids: [id] })}
           />
         )}
+        {/* Brief 020: Apply-Overrides-to-Files three-phase modal flow.
+            Confirm → progress → result. Each phase shares the
+            ConfirmDialog styling for visual consistency; progress is
+            a custom inline modal since ConfirmDialog assumes buttoned
+            interaction and the in-flight phase has nothing to click. */}
+        {applyOverridesConfirmOpen && (
+          <ConfirmDialog
+            message="Apply JakeTunes overrides to audio files?"
+            detail="This writes your edited metadata (title, artist, album, genre, year, track/disc numbers) into the audio files' embedded tags. Plex will pick up the corrected values on its next scan. Each file's original tags are backed up to a sidecar (<path>.original-tags.json) before any change — reversible. Analysis fields (BPM, key) and listener stats stay JakeTunes-only and are NOT written."
+            confirmLabel="Apply Overrides"
+            cancelLabel="Cancel"
+            destructive={false}
+            onCancel={() => setApplyOverridesConfirmOpen(false)}
+            onConfirm={() => {
+              setApplyOverridesConfirmOpen(false)
+              setApplyOverridesProgress({ done: 0, total: 0, succeeded: 0, failed: 0 })
+              const unsub = window.electronAPI.onTagWritebackProgress((p) => {
+                setApplyOverridesProgress(p)
+              })
+              void (async () => {
+                try {
+                  const r = await window.electronAPI.applyOverridesBatch()
+                  unsub()
+                  setApplyOverridesProgress(null)
+                  if (r.ok) {
+                    setApplyOverridesResult({
+                      total: r.total ?? 0,
+                      succeeded: r.succeeded ?? 0,
+                      failed: r.failed ?? 0,
+                      skippedNoTrack: r.skippedNoTrack ?? 0,
+                      skippedFpMismatch: r.skippedFpMismatch ?? 0,
+                      skippedNoWritable: r.skippedNoWritable ?? 0,
+                      failures: r.failures ?? [],
+                    })
+                  } else {
+                    setApplyOverridesResult({
+                      total: 0, succeeded: 0, failed: 0,
+                      skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
+                      failures: [{ filePath: '(batch error)', error: r.error }],
+                    })
+                  }
+                } catch (err) {
+                  unsub()
+                  setApplyOverridesProgress(null)
+                  setApplyOverridesResult({
+                    total: 0, succeeded: 0, failed: 0,
+                    skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
+                    failures: [{ filePath: '(client error)', error: err instanceof Error ? err.message : String(err) }],
+                  })
+                }
+              })()
+            }}
+          />
+        )}
+        {applyOverridesProgress && (
+          <div className="confirm-overlay">
+            <div className="confirm-dialog">
+              <div className="confirm-message">Applying overrides to files…</div>
+              <div className="confirm-detail">
+                {applyOverridesProgress.total === 0
+                  ? 'Preparing…'
+                  : `${applyOverridesProgress.done.toLocaleString()} of ${applyOverridesProgress.total.toLocaleString()} files (${applyOverridesProgress.succeeded.toLocaleString()} written, ${applyOverridesProgress.failed.toLocaleString()} failed)`}
+              </div>
+              <div style={{
+                marginTop: 12,
+                height: 6,
+                background: '#2a2a2a',
+                borderRadius: 3,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${applyOverridesProgress.total > 0 ? (applyOverridesProgress.done / applyOverridesProgress.total) * 100 : 0}%`,
+                  background: '#e0812e',
+                  transition: 'width 200ms ease-out',
+                }} />
+              </div>
+            </div>
+          </div>
+        )}
+        {applyOverridesResult && (
+          <ConfirmDialog
+            message={
+              applyOverridesResult.failed > 0
+                ? `Wrote tags to ${applyOverridesResult.succeeded.toLocaleString()} files; ${applyOverridesResult.failed.toLocaleString()} failed.`
+                : `Wrote tags to ${applyOverridesResult.succeeded.toLocaleString()} files.`
+            }
+            detail={
+              `Skipped: ${applyOverridesResult.skippedNoTrack.toLocaleString()} missing-track, ` +
+              `${applyOverridesResult.skippedFpMismatch.toLocaleString()} fingerprint-mismatch, ` +
+              `${applyOverridesResult.skippedNoWritable.toLocaleString()} analysis-only.` +
+              (applyOverridesResult.failures.length > 0
+                ? `\n\nFirst failures:\n${applyOverridesResult.failures.slice(0, 5).map(f => `• ${f.filePath.split('/').pop()}: ${f.error || 'unknown'}`).join('\n')}`
+                : '')
+            }
+            confirmLabel="Done"
+            hideCancel
+            destructive={false}
+            onCancel={() => setApplyOverridesResult(null)}
+            onConfirm={() => setApplyOverridesResult(null)}
+          />
+        )}
+        {/* Brief 016 commit 2: three-phase Refresh File Sizes flow.
+            Same shape as the Brief 020 Apply-Overrides flow above —
+            ConfirmDialog → inline progress modal → ConfirmDialog
+            result summary. Reuses the .confirm-overlay / .confirm-
+            dialog CSS classes plus the brand-orange progress bar. */}
+        {refreshSizesConfirmOpen && (
+          <ConfirmDialog
+            message="Refresh library.json file sizes from disk?"
+            detail="Walks every track in your library, stats the actual audio file, and updates library.json's cached fileSize when it differs. Audio files themselves are NOT modified. Fixes a known ~30% fileSize drift that prevents mobile (Plex via JakeTunes Mobile) from validating tracks correctly."
+            confirmLabel="Refresh Sizes"
+            cancelLabel="Cancel"
+            destructive={false}
+            onCancel={() => setRefreshSizesConfirmOpen(false)}
+            onConfirm={() => {
+              setRefreshSizesConfirmOpen(false)
+              setRefreshSizesProgress({ scanned: 0, refreshed: 0, total: 0 })
+              const unsub = window.electronAPI.onRefreshFileSizesProgress((p) => {
+                setRefreshSizesProgress(p)
+              })
+              void (async () => {
+                try {
+                  const r = await window.electronAPI.refreshFileSizes()
+                  unsub()
+                  setRefreshSizesProgress(null)
+                  if (r.ok) {
+                    setRefreshSizesResult({ refreshed: r.refreshed ?? 0 })
+                  } else {
+                    setRefreshSizesResult({ refreshed: 0, error: r.error })
+                  }
+                } catch (err) {
+                  unsub()
+                  setRefreshSizesProgress(null)
+                  setRefreshSizesResult({ refreshed: 0, error: err instanceof Error ? err.message : String(err) })
+                }
+              })()
+            }}
+          />
+        )}
+        {refreshSizesProgress && (
+          <div className="confirm-overlay">
+            <div className="confirm-dialog">
+              <div className="confirm-message">Refreshing file sizes…</div>
+              <div className="confirm-detail">
+                {refreshSizesProgress.total === 0
+                  ? 'Preparing…'
+                  : `Scanned ${refreshSizesProgress.scanned.toLocaleString()} of ${refreshSizesProgress.total.toLocaleString()} (${refreshSizesProgress.refreshed.toLocaleString()} refreshed so far)`}
+              </div>
+              <div style={{
+                marginTop: 12,
+                height: 6,
+                background: '#2a2a2a',
+                borderRadius: 3,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${refreshSizesProgress.total > 0 ? (refreshSizesProgress.scanned / refreshSizesProgress.total) * 100 : 0}%`,
+                  background: '#e0812e',
+                  transition: 'width 200ms ease-out',
+                }} />
+              </div>
+            </div>
+          </div>
+        )}
+        {refreshSizesResult && (
+          <ConfirmDialog
+            message={
+              refreshSizesResult.error
+                ? 'Refresh failed.'
+                : `Refreshed fileSize on ${refreshSizesResult.refreshed.toLocaleString()} tracks.`
+            }
+            detail={
+              refreshSizesResult.error
+                ? refreshSizesResult.error
+                : (refreshSizesResult.refreshed === 0
+                    ? 'No drift found. library.json fileSize already matched disk for every track.'
+                    : 'library.json has been updated. The next sync will propagate the corrected sizes to Mini.')
+            }
+            confirmLabel="Done"
+            hideCancel
+            destructive={false}
+            onCancel={() => setRefreshSizesResult(null)}
+            onConfirm={() => setRefreshSizesResult(null)}
+          />
+        )}
+      </div>
+      {/* 4.4.42: import queue moved out of the floating bottom-right
+          overlay into its own grid row, docked above the status bar.
+          When the queue is empty the panel returns null and the row
+          collapses to 0 height — same UX outcome as before, no
+          modality, never covers content. */}
+      <div className="imports-area">
+        <ImportQueuePanel />
       </div>
       <div className="statusbar-area">
         <StatusBar />
@@ -653,7 +1322,6 @@ function AppInner() {
           <div className="app-drop-message">Drop to import</div>
         </div>
       )}
-      <ImportQueuePanel />
     </div>
   )
 }

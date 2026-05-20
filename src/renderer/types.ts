@@ -16,6 +16,19 @@ export interface Track {
   discCount: number | string
   fileSize: number
   rating: number
+  // Brief 031 Phase 4: derived from `artist` and the approved
+  // collab-split map. For sole-artist tracks: [artist]. For tracks
+  // whose `artist` field is a collab string (e.g., "JAY-Z & Linkin
+  // Park"): the array of contributing canonical artists (e.g.,
+  // ["JAY-Z", "Linkin Park"]). Renderer (ArtistsView, GenresView,
+  // SongsView's Artist Radio) filters tracks by
+  // `contributingArtists.includes(X)` rather than `artist === X` so
+  // a collab track surfaces on every contributing artist's page.
+  // Optional in the type so legacy tracks from iPod sync or pre-
+  // Brief-031 library.json files still typecheck — the fallback
+  // pattern `(t.contributingArtists ?? [t.artist]).includes(X)`
+  // makes the field defensive at every read site.
+  contributingArtists?: string[]
   // Identity-based per-file fingerprint set at import time. Used by the
   // silent post-sync verifier (main/index.ts::verifyAndHealTracks) to
   // detect cross-linked paths without text matching.
@@ -54,7 +67,7 @@ export interface Playlist {
   commentary?: string
 }
 
-export type ViewName = 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import'
+export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import'
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -189,6 +202,29 @@ export interface AppSettings {
     aiHost: 'mm' | 'megan'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
   }
   eq: EqSettings   // 10-band parametric EQ (4.0 §6.5)
+  // 4.4.13 — Inbox auto-import. Main-side chokidar watches `path` and
+  // forwards new audio files to the renderer queue. Source files are
+  // deleted after successful import (the iPod_Control copy is the
+  // canonical version). Empty `path` falls back to ~/Music2/_inbox.
+  inbox: {
+    enabled: boolean
+    path: string
+  }
+  // 4.4.51 — auto-route-on-call. When `callRouteEnabled` is on and music
+  // is playing, JakeTunes watches the mic; when a call starts it routes
+  // its OWN audio output (AudioContext.setSinkId — system default
+  // untouched) to the device named in `callRouteDeviceLabel`, then
+  // routes back when the call ends. Stored by device NAME because
+  // Web Audio deviceIds are unstable across sessions/replug.
+  audio: {
+    callRouteEnabled: boolean
+    callRouteDeviceLabel: string   // '' = not configured yet
+  }
+  // Brief 023: removed `mobile.snapshotExportPath`. The mobile-sync
+  // feature (Export Snapshot for Mobile / Apply Mobile Overrides) is
+  // gone. Plex via Brief 020 tag write-back is the mobile path now.
+  // Old settings.json files may still have a `mobile.snapshotExportPath`
+  // key on disk; it's silently ignored — JSON tolerates extra fields.
 }
 
 // EQ default is duplicated from audio/eq.ts::DEFAULT_EQ rather than
@@ -206,6 +242,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     preset: 'Flat',
   },
+  // Default-on with empty path → main resolves to ~/Music2/_inbox.
+  inbox: { enabled: true, path: '' },
+  // Off until the user picks a speaker in Preferences → Audio.
+  audio: { callRouteEnabled: false, callRouteDeviceLabel: '' },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
@@ -216,16 +256,22 @@ declare global {
   interface Window {
     electronAPI: {
       loadTracks: () => Promise<{ tracks: Track[]; playlists: { name: string; trackIds: number[] }[] }>
+      getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
-      musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string }>
+      musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
+      // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
+      getActiveHost: () => Promise<'mm' | 'megan'>
+      // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
+      // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
+      musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>
       musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
       musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
-      musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
-      meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
-      djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       saveRecordingMp3: (audioBytes: Uint8Array, mimeType: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>
       musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; issues?: MetadataIssue[]; error?: string }>
       musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string; artUrl?: string }[]; error?: string }>
@@ -248,8 +294,27 @@ declare global {
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
+      // Brief 010 Phase 3 + Brief 014a: audio-analysis worker progress
+      // subscription. Per-track fields are populated on completed jobs;
+      // a skipped-no-librosa emission carries only `remaining`.
+      onAudioAnalysisProgress: (callback: (p: {
+        remaining: number
+        trackId?: number
+        audioAnalysisAt?: number
+        bpm?: number | null
+        keyRoot?: string | null
+        keyMode?: 'major' | 'minor' | '' | null
+        camelotKey?: string | null
+        ok?: boolean
+      }) => void) => () => void
+      // Brief 010 Phase 4: queue-based backfill IPCs.
+      audioAnalysisEnqueueMany: (jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => Promise<{ ok: boolean; enqueued: number; totalQueued: number }>
+      audioAnalysisStatus: () => Promise<{ ok: boolean; queueLength: number; workerRunning: boolean; isPlaybackActive: boolean }>
+      audioAnalysisClearQueue: () => Promise<{ ok: boolean }>
       loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
       saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
+      // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
+      // / mobileOverridesApply types — vestigial mobile-sync feature gone.
       setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
@@ -260,8 +325,30 @@ declare global {
       getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
-      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }>
-      importTrack: (srcPath: string, id: number, format?: string) => Promise<{ ok: boolean; track?: Track; dupe?: { src: string; matchedTitle: string; matchedArtist: string }; error?: string }>
+      importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }>; artwork?: Array<{ key: string; hash: string }> }>
+      importTrack: (srcPath: string, id: number, format?: string) => Promise<{ ok: boolean; track?: Track; dupe?: { src: string; matchedTitle: string; matchedArtist: string }; error?: string; artwork?: { key: string; hash: string } }>
+      artworkBackfillStatus: () => Promise<{ ok: boolean; done: boolean }>
+      backfillEmbeddedArtwork: (tracks: Array<{ path: string; artist: string; album: string }>) => Promise<{ ok: boolean; artwork?: Array<{ key: string; hash: string }>; error?: string }>
+      onArtworkBackfillProgress: (callback: (progress: { processed: number; total: number }) => void) => () => void
+      // Brief 020: tag write-back batch + progress subscription. Per-edit
+      // write-back fires automatically in save-metadata-override; only
+      // the batch + progress need a renderer-side surface.
+      applyOverridesBatch: () => Promise<{
+        ok: boolean
+        total?: number
+        succeeded?: number
+        failed?: number
+        skippedNoTrack?: number
+        skippedFpMismatch?: number
+        skippedNoWritable?: number
+        fileSizesRefreshed?: number
+        failures?: Array<{ filePath: string; error?: string }>
+        error?: string
+      }>
+      onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => () => void
+      // Brief 016 commit 2: full-library fileSize refresh + progress.
+      refreshFileSizes: () => Promise<{ ok: boolean; refreshed?: number; error?: string }>
+      onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => () => void
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>
@@ -289,13 +376,80 @@ declare global {
       onImportProgress: (callback: (progress: { current: number; total: number; title: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
+      // Music Man taste-learning telemetry. The main process records these
+      // into the listener profile; renderer fires-and-forgets, so the
+      // bridge functions are optional from the renderer's POV (preload
+      // may not have wired them in older builds — we soft-call with `?.`).
+      recordPlay?: (track: { title: string; artist: string; album: string; genre: string }) => Promise<{ ok: boolean }>
+      recordSkip?: (track: { title: string; artist: string }) => Promise<{ ok: boolean }>
+      recordRating?: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
+      setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>
+      onCallStateChanged: (callback: (state: { onCall: boolean }) => void) => () => void
       alacCompatScan: () => Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>
       alacCompatFix: () => Promise<{ ok: boolean; error?: string; summary?: string }>
       onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
+      // 4.1 Library Maintenance: ALAC play-cache management (replaces launch-time prewarm)
+      prepareAlacCache: () => Promise<{ ok: boolean; processed?: number; transcoded?: number; total?: number; cancelled?: boolean; error?: string }>
+      cancelAlacCache: () => void
+      onPrepareAlacCacheProgress: (callback: (p: { processed: number; transcoded: number; total: number; title: string; artist: string }) => void) => () => void
+      pruneAlacCache: () => Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; error?: string }>
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
+      // 4.4.13 — Inbox auto-import (Qobuz → JakeTunes pipeline).
+      onInboxFilesDetected: (callback: (paths: string[]) => void) => () => void
+      deleteInboxSource: (filePath: string) => Promise<{ ok: boolean; error?: string }>
+      getDefaultInboxPath: () => Promise<{ ok: boolean; path: string }>
+      // 4.4.18 — Library sync orchestrator status (laptop → homemini).
+      onLibrarySyncStatus: (callback: (status: {
+        ok: boolean
+        reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
+        error?: string
+        durationMs?: number
+      }) => void) => () => void
+      // 4.4.28 — Home view: music news + notable releases.
+      getMusicNews: () => Promise<{ ok: boolean; items: MusicNewsItem[] }>
+      getNotableReleases: () => Promise<{ ok: boolean; items: MusicNewsItem[] }>
+      openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
+      // 4.4.29 — Brooklyn weather for the Home view greeting.
+      getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
+      // 4.4.32 — Bandsintown tour dates for top library artists.
+      getTourDates: () => Promise<{ ok: boolean; dates: TourDate[] }>
+      // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
+      // library artists.
+      getUpcomingReleasesPersonal: () => Promise<{ ok: boolean; items: UpcomingRelease[] }>
     }
   }
+}
+
+// 4.4.28 — News item shape for Home view's News and Releases sections.
+// Mirrors src/main/external.ts MusicNewsItem.
+export interface MusicNewsItem {
+  title: string
+  link: string
+  source: string
+  pubDate: string
+  imageUrl?: string
+  isReleaseReview: boolean
+}
+
+// 4.4.32 — Tour date shape from Bandsintown.
+export interface TourDate {
+  artist: string
+  date: string         // ISO
+  venue: string
+  city: string         // "Brooklyn, NY"
+  url: string
+  imageUrl?: string
+}
+
+// 4.4.34 — Upcoming-release shape from MusicBrainz.
+export interface UpcomingRelease {
+  title: string
+  artist: string
+  /** May be partial: "2026", "2026-09", "2026-09-15" */
+  releaseDate: string
+  mbid: string
+  coverUrl: string
 }

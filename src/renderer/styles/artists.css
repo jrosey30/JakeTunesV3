@@ -2,31 +2,55 @@
   height: 100%;
   overflow-y: auto;
   padding: 0;
+  /* 4.4.35 smoother scroll: GPU layer + contain overscroll. */
+  will-change: scroll-position;
+  overscroll-behavior: contain;
 }
 
 .artist-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
+  gap: 12px;
+  /* 4.4.40: slightly more padding to breathe around the bigger avatars. */
+  padding: 8px 14px;
   cursor: pointer;
   border-bottom: 1px solid #eee;
   user-select: none;
+  /* 4.4.24: smoother hover/selection transition. */
+  transition: background-color 120ms ease-out;
 }
 
-.artist-row:hover { background: rgba(0,0,0,0.03); }
+.artist-row:hover { background: rgba(0,0,0,0.035); }
 
 .artist-avatar {
-  width: 28px;
-  height: 28px;
+  /* 4.4.40: bumped 28px → 38px so real artist photos read clearly,
+   * and the colored-initial fallback feels less cramped. */
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* 4.4.40: photo-backed avatar. The img element replaces the colored
+ * initials disc entirely. object-fit: cover crops anything non-square.
+ */
+.artist-avatar--photo {
+  object-fit: cover;
+  background: #ddd;  /* shows during the image-fetch flicker */
+  animation: artist-avatar-in 260ms ease-out;
+}
+
+@keyframes artist-avatar-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1);    }
 }
 
 .artist-name {
@@ -41,11 +65,14 @@
 }
 
 .artist-chevron {
-  transition: transform 0.15s;
+  /* 4.4.40: longer ease (200ms) so the chevron's rotation reads as
+   * deliberate at the same time the expanded panel grows in. */
+  transition: transform 200ms cubic-bezier(0.2, 0.65, 0.3, 1);
   flex-shrink: 0;
+  opacity: 0.55;
 }
 
-.artist-chevron.open { transform: rotate(90deg); }
+.artist-chevron.open { transform: rotate(90deg); opacity: 0.85; }
 
 /* Album grid inside expanded artist */
 .artist-albums-grid {
@@ -61,6 +88,47 @@
   text-align: center;
 }
 
+/* 4.4.40: expanded-card layout is now CSS grid with named areas.
+ *
+ * The 4.4.37/38 design used flex: [cover 180px] | [info+tracklist 1fr].
+ * That left a huge empty void below the cover when the tracklist was
+ * longer than 180px tall (every album with >7 tracks). Now:
+ *
+ *    ┌──────────┬───────────────────────────┐
+ *    │  cover   │   title                   │   "header" row
+ *    │  220×220 │   year · songs · min …   │
+ *    │          │   [▶ Play Album]          │
+ *    ├──────────┴───────────────────────────┤
+ *    │   tracklist (full card width)        │   "tracklist" row,
+ *    │   1  …          2  …                 │   auto-2-column when
+ *    │   3  …          4  …                 │   the album is tall
+ *    └──────────────────────────────────────┘
+ *
+ * Subtle warm-cool gradient backdrop (matches Home Featured Album hero
+ * + 4.4.38 carry-over), shadow, border. Brief 032b: the legacy
+ * artist-album-expand and artist-tracklist-in keyframes were removed —
+ * the wrapper grid-template-rows transition (defined at the bottom of
+ * this file) is now the single source of expand/collapse animation.
+ */
+.artist-album-card--expanded {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-areas:
+    "art   info"
+    "tracks tracks";
+  gap: 18px 24px;
+  text-align: left;
+  background: linear-gradient(135deg, rgba(var(--brand-orange-rgb), 0.06) 0%, rgba(74, 144, 217, 0.04) 100%);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  padding: 22px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  /* Brief 032b: removed `animation: artist-album-expand 360ms ...`
+     and its @keyframes block — was fighting Brief 032's wrapper
+     transition. Wrapper transition is the single animation source. */
+}
+
 .artist-album-art {
   width: 100%;
   aspect-ratio: 1;
@@ -70,7 +138,24 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  overflow: hidden;
   transition: transform 0.15s, box-shadow 0.15s;
+}
+.artist-album-card--expanded .artist-album-art {
+  /* 4.4.40: grid area + matching size to the 220px column. */
+  grid-area: art;
+  width: 220px;
+  height: 220px;
+  /* 4.4.38: pronounced drop shadow so the cover has depth, like
+     iTunes 8's album-detail and the Home Featured Album hero. */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+}
+.artist-album-card--expanded .artist-album-art:hover {
+  /* override the default translateY hover when in expanded mode —
+     keep the card stationary, just deepen the shadow. */
+  transform: none;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
 .artist-album-art:hover {
@@ -78,10 +163,38 @@
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 
+/* 4.4.37: actual album art (was never rendered before). */
+.artist-album-art-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .artist-album-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 4.4.37: info column wraps title + tracklist so they flex right of art. */
+.artist-album-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.artist-album-card--expanded .artist-album-info {
+  /* 4.4.40: grid area + vertical layout so title + meta + Play Album
+   * stack naturally. justify-content: center vertically centers the
+   * info block against the 220px cover so we don't have title clipped
+   * to the top with empty space below the Play button. */
+  grid-area: info;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 0;
 }
 
 .artist-album-title {
@@ -92,36 +205,146 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.artist-album-card--expanded .artist-album-title {
+  /* 4.4.40: bigger title now that the info column has more breathing
+   * room. Wraps naturally on long names instead of being clipped. */
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.018em;
+  line-height: 1.12;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
 
 .artist-album-count {
   font-size: var(--font-timestamp);
   color: var(--text-dim);
 }
 
+/* 4.4.38 / 4.4.40 — expanded metadata strip. Slight color bump so it
+ * doesn't disappear against the warm gradient backdrop. Margin lives
+ * on the info column's gap now (4.4.40), so this is just font + color. */
+.artist-album-meta {
+  font-size: 12.5px;
+  color: rgba(0, 0, 0, 0.55);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+/* 4.4.38 / 4.4.40 — Play Album CTA. Orange gradient matches the Home
+ * Featured Album primary button so the visual language stays consistent.
+ * Margin removed in 4.4.40 — info column's flex `gap` handles spacing. */
+.artist-album-play {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  /* 4.4.47: cream text on brand orange — the logo's exact pairing
+     (the off-white note sits on the orange icon). */
+  color: var(--brand-cream);
+  background: linear-gradient(180deg, var(--brand-orange-light) 0%, var(--brand-orange-dark) 100%);
+  border: 1px solid var(--brand-orange-border);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(var(--brand-orange-rgb), 0.30);
+  transition: filter 140ms ease, transform 90ms ease, box-shadow 140ms ease;
+}
+.artist-album-play:hover {
+  /* 4.4.47: hover lightens the whole gradient uniformly instead of
+     swapping to a hand-tuned hover gradient — one brand orange, no
+     parallel hover literals to drift. */
+  filter: brightness(1.12);
+  box-shadow: 0 3px 8px rgba(var(--brand-orange-rgb), 0.40);
+}
+.artist-album-play:active {
+  transform: scale(0.97);
+}
+
 /* Tracklist inside album */
 .artist-album-tracklist {
   text-align: left;
   margin-top: 6px;
-  border-top: 1px solid #ddd;
-  padding-top: 4px;
+  border-top: 1px solid #e8e8e8;
+  padding-top: 6px;
 }
 
+/* 4.4.40: in expanded cards the tracklist gets its own grid area
+ * spanning both columns, sits below a subtle warm-tinted divider,
+ * and slides in slightly delayed so the cover + info land first.
+ *
+ * Brief 032: grid-area moved onto the wrapper (.album-content-wrapper)
+ * so the wrapper sits in the named area; the tracklist inside keeps
+ * its visual styling. The keyframe animation also moves to the
+ * tracklist child of the wrapper so the slide+opacity overlap with
+ * the wrapper's height transition on expand.
+ */
+.artist-album-card--expanded .album-content-wrapper {
+  grid-area: tracks;
+}
+.artist-album-card--expanded .artist-album-tracklist {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  /* Brief 032b: removed `animation: artist-tracklist-in 380ms ...`
+     and its @keyframes block — was fighting Brief 032's wrapper
+     transition with a different duration and an 80ms delay,
+     producing the laggy feel. */
+}
+
+/* 4.4.40: tall albums (>10 tracks) flow into 2 columns. column-count
+ * is the right primitive here because each track-row uses its own
+ * internal grid for [icon] [num] [title] [time]; break-inside: avoid
+ * keeps a row from being split mid-column. column-gap matches the
+ * grid gap above so the rhythm reads consistent.
+ */
+.artist-album-card--tall .artist-album-tracklist {
+  column-count: 2;
+  column-gap: 32px;
+  column-rule: 1px solid rgba(0, 0, 0, 0.05);
+}
+.artist-album-card--tall .artist-track-row {
+  break-inside: avoid;
+  /* Tiny top margin so the first row in column 2 doesn't sit flush
+   * against the divider line. */
+  margin-top: 1px;
+}
+
+/* 4.4.37: proper grid track row — icon · # · title · time.
+   Previous flex layout couldn't align numbers/durations. */
 .artist-track-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px 28px 1fr 50px;
   align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  font-size: var(--font-label);
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 12.5px;
   cursor: default;
-  border-radius: 2px;
+  border-radius: 3px;
+  transition: background-color 90ms ease-out;
 }
 
-.artist-track-row:hover { background: rgba(0,0,0,0.05); }
+.artist-track-row:hover { background: rgba(0,0,0,0.04); }
 
-/* Now-playing indicator only — the SpeakerPlayingIcon shows in the
- * left cell. No row fill. */
+/* 4.4.38: now-playing row gets a subtle warm accent + bold title.
+ * Uses inset box-shadow (not border-left) so the grid columns
+ * don't shift between playing/non-playing rows. */
+.artist-track-row--playing {
+  background: linear-gradient(90deg, rgba(var(--brand-orange-rgb), 0.10), rgba(var(--brand-orange-rgb), 0.02) 60%);
+  box-shadow: inset 2px 0 0 var(--brand-orange);
+}
 .artist-track-row--playing .artist-track-title {
   font-weight: 700;
+  color: var(--brand-orange);
+}
+.artist-track-row--playing .artist-track-num,
+.artist-track-row--playing .artist-track-time {
+  color: rgba(var(--brand-orange-rgb), 0.7);
 }
 
 .artist-track-icon {
@@ -131,8 +354,59 @@
   align-items: center;
 }
 
+/* 4.4.37: track number cell (cell 2 of the grid). Dimmed and
+   right-aligned so the column reads as a numeric gutter. */
+.artist-track-num {
+  font-size: 11px;
+  color: var(--text-dim, #999);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .artist-track-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 4.4.37: duration cell (cell 4 of the grid). Tabular-nums so the
+   column digits align across rows. */
+.artist-track-time {
+  font-size: 11.5px;
+  color: var(--text-dim, #999);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Brief 032c: animated accordion expansion for artist and album content.
+   Switched from grid-template-rows to max-height because
+   grid-template-rows triggers grid layout recalc on every animation
+   frame. With ~50K React elements in the DOM (artists/albums kept
+   resident for fast scroll), that layout cost exceeded the per-frame
+   budget by ~60x — DevTools Performance showed a 991ms frame mid-
+   animation and sustained dropped-frame jank, even after Brief 032b
+   removed the conflicting keyframes.
+
+   max-height doesn't trigger parent layout, animates cheaply at
+   scale, and is the standard accordion solution. The 8000px cap is
+   generous enough that no real content hits it (tallest album is
+   ~50 tracks ≈ 1,800px; entire artist grid stays well under 8000px
+   because accordion mode limits us to one expanded album).
+
+   200ms ease-out, symmetric expand/collapse — same timing as
+   Brief 032b. Bump the cap if future content ever clips. */
+.artist-content-wrapper,
+.album-content-wrapper {
+  max-height: 0;
+  overflow: hidden;
+}
+
+.artist-content-wrapper.is-expanded,
+.album-content-wrapper.is-expanded {
+  max-height: none;
+}
+
+.artist-content-inner,
+.album-content-inner {
+  overflow: hidden;
 }

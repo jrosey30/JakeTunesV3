@@ -2,13 +2,16 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast } from '../audio/eq'
+import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
+import { setNotice } from '../activity'
 import '../styles/musicman.css'
 import '../styles/songs.css'
 
@@ -38,7 +41,17 @@ interface PicksData {
   commentary: string
   trackIds: number[]
   date: string
+  /** 4.4.48 schema stamp. Bumped when picks generation changes shape
+   *  (e.g. 4.4.48 added main-process variety enforcement). A cached
+   *  entry with a mismatched/absent `v` is treated as stale so the
+   *  pre-4.4.48 *clustered* localStorage caches get thrown out and
+   *  regenerated once — through main, which now de-clusters them. */
+  v?: number
 }
+
+// Bump this whenever picks output should be considered incompatible
+// with what an older build cached. 4.4.48: variety enforcement landed.
+const PICKS_SCHEMA_V = 2
 
 // 4.2.18: Picks are weekly now, Friday-to-Friday. Returns the most
 // recent Friday at midnight local — same value for any time within the
@@ -63,6 +76,19 @@ function picksConfigForId(id: string | null): { kind: PicksKind; storageKey: str
   if (id === 'megan-picks')      return { kind: 'megan',  storageKey: 'megan-picks',    apiCall: 'meganPicks' }
   if (id === 'dj-hands-picks')   return { kind: 'djhands',storageKey: 'dj-hands-picks', apiCall: 'djHandsPicks' }
   return null
+}
+
+const MUSICMAN_PICKS_UI_KEY = 'musicmanPicks'
+
+function isSameCalendarDay(isoDate: string): boolean {
+  const savedDate = new Date(isoDate)
+  if (Number.isNaN(savedDate.getTime())) return false
+  const now = new Date()
+  return (
+    savedDate.getFullYear() === now.getFullYear() &&
+    savedDate.getMonth() === now.getMonth() &&
+    savedDate.getDate() === now.getDate()
+  )
 }
 
 interface ColDef {
@@ -102,21 +128,17 @@ export default function SmartPlaylistView() {
   // invalidate or overwrite either set.
   const picksConfig = picksConfigForId(playlistId)
 
-  function loadCachedPicks(storageKey: string): PicksData | null {
-    try {
-      const raw = localStorage.getItem(storageKey)
-      if (!raw) return null
-      const saved = JSON.parse(raw) as PicksData
-      const savedWeek = getWeekStartFriday(new Date(saved.date)).getTime()
-      const currentWeek = getWeekStartFriday(new Date()).getTime()
-      if (savedWeek === currentWeek) return saved
-    } catch { /* ignore */ }
-    return null
-  }
-
-  const [mmPicks, setMmPicks]             = useState<PicksData | null>(() => loadCachedPicks('musicman-picks'))
-  const [meganPicks, setMeganPicks]       = useState<PicksData | null>(() => loadCachedPicks('megan-picks'))
-  const [djHandsPicks, setDjHandsPicks]   = useState<PicksData | null>(() => loadCachedPicks('dj-hands-picks'))
+  // Per-persona picks state. Persisted via main's ui-state IPC, not
+  // renderer localStorage (CLAUDE.md ban; localStorage is unreliable in
+  // Electron). All three personas hydrate from a single ui-state read
+  // in the load effect below. Initialized to null; the load effect
+  // populates them async, and the save effects are gated on
+  // picksStateLoaded so they can't fire before hydration and clobber
+  // persisted state with null defaults.
+  const [mmPicks, setMmPicks]             = useState<PicksData | null>(null)
+  const [meganPicks, setMeganPicks]       = useState<PicksData | null>(null)
+  const [djHandsPicks, setDjHandsPicks]   = useState<PicksData | null>(null)
+  const [picksStateLoaded, setPicksStateLoaded] = useState(false)
   const picks =
     picksConfig?.kind === 'megan'   ? meganPicks :
     picksConfig?.kind === 'djhands' ? djHandsPicks :
@@ -129,28 +151,99 @@ export default function SmartPlaylistView() {
 
   const [picksLoading, setPicksLoading] = useState(false)
   // Track per-persona "have we already kicked off generation this session"
-  // so re-renders don't re-fire the IPC. Reset on persona change.
-  const mmRequestedRef      = useRef(!!mmPicks)
-  const meganRequestedRef   = useRef(!!meganPicks)
-  const djHandsRequestedRef = useRef(!!djHandsPicks)
+  // so re-renders don't re-fire the IPC. Reset on persona change. The
+  // hydration effect below sets these true for any persona with a
+  // fresh-enough cached set, so generation is skipped on mount.
+  const mmRequestedRef      = useRef(false)
+  const meganRequestedRef   = useRef(false)
+  const djHandsRequestedRef = useRef(false)
   const requestedRef =
     picksConfig?.kind === 'megan'   ? meganRequestedRef :
     picksConfig?.kind === 'djhands' ? djHandsRequestedRef :
     mmRequestedRef
+  // 4.4.48: set true by the Regenerate button so the next generation
+  // pass tells main to bypass its weekly cache (a true fresh pull).
+  const forcePicksRef = useRef(false)
 
-  // Persist whichever picks set just changed.
+  // Hydrate all three persona picks from ui-state on mount. One IPC read,
+  // three persona slots. Per-persona staleness check is the same weekly
+  // Friday-to-Friday window plus the 4.4.48 schema-version stamp the file
+  // already uses.
   useEffect(() => {
-    if (mmPicks) localStorage.setItem('musicman-picks', JSON.stringify(mmPicks))
-  }, [mmPicks])
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled || !r.ok || !r.state) return
+      const state = r.state as Record<string, unknown>
+      const tryHydrate = (
+        key: string,
+        setter: (p: PicksData) => void,
+        reqRef: React.MutableRefObject<boolean>,
+      ) => {
+        const raw = state[key]
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+        const saved = raw as PicksData
+        if (saved.v !== PICKS_SCHEMA_V) return
+        if (
+          typeof saved.name !== 'string' ||
+          typeof saved.commentary !== 'string' ||
+          !Array.isArray(saved.trackIds) ||
+          typeof saved.date !== 'string'
+        ) return
+        if (!saved.trackIds.every((id) => typeof id === 'number')) return
+        const savedWeek = getWeekStartFriday(new Date(saved.date)).getTime()
+        const currentWeek = getWeekStartFriday(new Date()).getTime()
+        if (savedWeek !== currentWeek) return
+        setter(saved)
+        reqRef.current = true
+      }
+      tryHydrate('musicman-picks', setMmPicks, mmRequestedRef)
+      tryHydrate('megan-picks', setMeganPicks, meganRequestedRef)
+      tryHydrate('dj-hands-picks', setDjHandsPicks, djHandsRequestedRef)
+    }).catch(() => {
+      // Non-fatal — picks regenerate for this session.
+    }).finally(() => {
+      if (!cancelled) setPicksStateLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Persist each persona's picks to ui-state when they change. Each save
+  // effect is gated by picksStateLoaded so the save can't fire before
+  // hydration completes and clobber persisted state with null defaults.
   useEffect(() => {
-    if (meganPicks) localStorage.setItem('megan-picks', JSON.stringify(meganPicks))
-  }, [meganPicks])
+    if (!picksStateLoaded || !mmPicks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, 'musicman-picks': mmPicks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [mmPicks, picksStateLoaded])
   useEffect(() => {
-    if (djHandsPicks) localStorage.setItem('dj-hands-picks', JSON.stringify(djHandsPicks))
-  }, [djHandsPicks])
+    if (!picksStateLoaded || !meganPicks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, 'megan-picks': meganPicks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [meganPicks, picksStateLoaded])
+  useEffect(() => {
+    if (!picksStateLoaded || !djHandsPicks) return
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? r.state : {}
+      window.electronAPI.saveUiState({ ...existing, 'dj-hands-picks': djHandsPicks })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [djHandsPicks, picksStateLoaded])
 
   // Generate this persona's picks if we don't have a fresh cached set.
   useEffect(() => {
+    if (!picksStateLoaded) return
     if (!picksConfig || libState.tracks.length === 0) return
     if (picks || requestedRef.current) return
 
@@ -160,8 +253,14 @@ export default function SmartPlaylistView() {
       id: t.id, title: t.title, artist: t.artist,
       album: t.album, genre: t.genre, year: t.year
     }))
+    // 4.4.48: consume the force flag set by the Regenerate button. main
+    // bypasses its weekly cache when force is true; otherwise it returns
+    // this week's cached set (no Claude call) — that's the "stop
+    // resetting" fix on the renderer side.
+    const force = forcePicksRef.current
+    forcePicksRef.current = false
     const apiCall = window.electronAPI[picksConfig.apiCall]
-    apiCall(compactTracks).then((result) => {
+    apiCall(compactTracks, force).then((result) => {
       if (result.ok && result.trackIds) {
         const fallbackName =
           picksConfig.kind === 'megan'   ? "Megan's Picks" :
@@ -172,6 +271,7 @@ export default function SmartPlaylistView() {
           commentary: result.commentary || '',
           trackIds: result.trackIds,
           date: new Date().toISOString(),
+          v: PICKS_SCHEMA_V,
         })
       }
       setPicksLoading(false)
@@ -182,60 +282,36 @@ export default function SmartPlaylistView() {
   // playlistId in the dep list is sufficient — adding the others would re-run
   // on every render since they're freshly computed each pass.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlistId, libState.tracks, picks])
+  }, [playlistId, libState.tracks, picks, picksStateLoaded])
 
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
 
-    switch (playlistId) {
-      case 'recently-added': {
-        return [...libState.tracks]
-          .filter(t => t.dateAdded)
-          .sort((a, b) => (b.dateAdded || '').localeCompare(a.dateAdded || ''))
-          .slice(0, 50)
-      }
-      case 'recently-played': {
-        const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-        return pbState.recentlyPlayed
-          .map(id => trackMap.get(id))
-          .filter((t): t is Track => t !== undefined)
-      }
-      case 'top-25': {
-        return [...libState.tracks]
-          .filter(t => t.playCount > 0)
-          .sort((a, b) => b.playCount - a.playCount)
-          .slice(0, 25)
-      }
-      case 'top-rated': {
-        // Use actual ratings if available, fall back to play count + recency
-        const rated = [...libState.tracks].filter(t => t.rating > 0)
-        if (rated.length > 0) {
-          return rated
-            .sort((a, b) => b.rating - a.rating || b.playCount - a.playCount)
-            .slice(0, 50)
-        }
-        return [...libState.tracks]
-          .filter(t => t.playCount > 0)
-          .sort((a, b) => {
-            const scoreA = a.playCount * 2 + (a.dateAdded ? new Date(a.dateAdded).getTime() / 1e12 : 0)
-            const scoreB = b.playCount * 2 + (b.dateAdded ? new Date(b.dateAdded).getTime() / 1e12 : 0)
-            return scoreB - scoreA
-          })
-          .slice(0, 50)
-      }
-      case 'musicman-picks':
-      case 'megan-picks':
-      case 'dj-hands-picks': {
-        if (!picks) return []
-        const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-        return picks.trackIds
-          .map(id => trackMap.get(id))
-          .filter((t): t is Track => t !== undefined)
-      }
-      default:
-        return []
+    // 4.4.46: the four built-in smart playlists are now evaluated by
+    // the SHARED `evaluateSmartPlaylist` (src/renderer/utils/smartPlaylists.ts)
+    // — the exact same function the iPod-sync path uses. Before this,
+    // this view and the sync path had divergent copies (different
+    // counts; Recently Played wasn't synced at all). One definition,
+    // two consumers — they can't drift again.
+    //
+    // Recently Played is now `Track.lastPlayedAt`-backed (persistent,
+    // survives restarts, syncs to the iPod) rather than the old
+    // in-memory `pbState.recentlyPlayed` session list.
+    if (
+      playlistId === 'musicman-picks' ||
+      playlistId === 'megan-picks' ||
+      playlistId === 'dj-hands-picks'
+    ) {
+      // AI picks need the async-fetched `picks` payload — not part of
+      // the shared evaluator (which is pure over the library).
+      if (!picks) return []
+      const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
+      return picks.trackIds
+        .map(id => trackMap.get(id))
+        .filter((t): t is Track => t !== undefined)
     }
-  }, [playlistId, libState.tracks, pbState.recentlyPlayed, picks])
+    return evaluateSmartPlaylist(playlistId, libState.tracks)
+  }, [playlistId, libState.tracks, picks])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
@@ -407,8 +483,13 @@ export default function SmartPlaylistView() {
     if (tts.ok && tts.audio) {
       window.dispatchEvent(new Event('musicman-speaking-start'))
       await new Promise<void>(resolve => {
-        window.addEventListener('musicman-fade-ready', resolve, { once: true })
-        setTimeout(resolve, 2000)
+        // The fade handler over in Toolbar fires `musicman-fade-ready`
+        // once the volume duck is in place; we then start playback. Wrap
+        // the resolver in an EventListener-shaped function so the DOM
+        // typings accept it (resolve takes `value`, listeners take `Event`).
+        const listener: EventListener = () => resolve()
+        window.addEventListener('musicman-fade-ready', listener, { once: true })
+        setTimeout(() => resolve(), 2000)
       })
       const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
       attachClipToBroadcast(audio)
@@ -451,6 +532,8 @@ export default function SmartPlaylistView() {
   // scroll the now-playing row into view. Programmatic scrolls don't
   // count as user activity (200ms grace window after our scrollTop write).
   const songsBodyRef = useRef<HTMLDivElement | null>(null)
+  // 4.4.13: per-smart-playlist scroll persistence within the session.
+  useScrollPersistence(`smart-playlist:${libState.activeSmartPlaylist}`, songsBodyRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -516,11 +599,25 @@ export default function SmartPlaylistView() {
         onClick: async () => {
           const file = await window.electronAPI.chooseArtworkFile()
           if (!file.ok || !file.path) return
+          let failed = 0
+          let lastErr = ''
           for (const { artist, album } of artPairs.values()) {
             const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
             if (result.ok && result.key && result.hash) {
               dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+            } else {
+              failed += 1
+              lastErr = result.error || ''
             }
+          }
+          // 4.4.12: surface failures so the user knows the save didn't stick.
+          if (failed > 0) {
+            setNotice(
+              failed === 1
+                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
+                : `Couldn't save artwork for ${failed} albums.`,
+              { kind: 'error' }
+            )
           }
         },
       },
@@ -538,7 +635,7 @@ export default function SmartPlaylistView() {
     ] : []
 
     return [
-      { label: `Play`, onClick: () => playTrack(track, sortedTracks, idx) },
+      { label: `Play`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
@@ -583,6 +680,10 @@ export default function SmartPlaylistView() {
         dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [dispatch]
@@ -631,6 +732,10 @@ export default function SmartPlaylistView() {
                 // 4.4.2: force a fresh pull. Clears the cached picks
                 // and the per-persona "have we already requested?"
                 // flag so the generation effect re-fires immediately.
+                // 4.4.48: also set forcePicksRef so the effect tells
+                // main to bypass BOTH the renderer cache AND main's
+                // weekly cache — a true fresh rotation, not a re-read.
+                forcePicksRef.current = true
                 if (picksConfig?.kind === 'mm')      { setMmPicks(null);     mmRequestedRef.current = false }
                 if (picksConfig?.kind === 'megan')   { setMeganPicks(null);  meganRequestedRef.current = false }
                 if (picksConfig?.kind === 'djhands') { setDjHandsPicks(null);djHandsRequestedRef.current = false }
@@ -654,7 +759,7 @@ export default function SmartPlaylistView() {
           {sortedTracks.length > 0 && (
             <button
               className="playlist-view-play"
-              onClick={() => playTrack(sortedTracks[0], sortedTracks, 0)}
+              onClick={() => playTrack(sortedTracks[0], sortedTracks, 0, undefined, true)}
             >
               Play All
             </button>
@@ -673,6 +778,15 @@ export default function SmartPlaylistView() {
           </button>
         </div>
       )}
+      {/* Brief 026: wrap .songs-header + .songs-body in a .songs-view
+          flex column so the CSS that gives them a shared horizontal
+          scroll context applies here too. SongsView and PlaylistView
+          already had this wrapper; SmartPlaylistView was the outlier
+          rendering both as direct children of .playlist-view, which
+          left header column labels desynced from row cells under
+          horizontal scroll. Same { flex: 1, minHeight: 0 } sizing as
+          PlaylistView's existing wrapper at line 533. */}
+      <div className="songs-view" style={{ flex: 1, minHeight: 0 }}>
       <div
         className="songs-header"
         style={{ gridTemplateColumns: gridTemplate }}
@@ -707,7 +821,7 @@ export default function SmartPlaylistView() {
               className={`songs-row ${i % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''}`}
               style={{ gridTemplateColumns: gridTemplate }}
               onClick={(e) => handleClick(track, i, e)}
-              onDoubleClick={() => playTrack(track, sortedTracks, i)}
+              onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}
               draggable
               onDragStart={(e) => {
@@ -763,6 +877,7 @@ export default function SmartPlaylistView() {
           )
         })}
       </div>
+      </div> {/* Brief 026: close the wrapping .songs-view div opened above the .songs-header */}
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x}

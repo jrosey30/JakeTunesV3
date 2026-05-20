@@ -2,6 +2,16 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Brief 026: shared horizontal scroll context for .songs-header +
+     .songs-body siblings. Pre-fix, only .songs-body had overflow-x:auto,
+     so when the user horizontally scrolled the table, body cells slid
+     left but the header stayed put — column labels desynced from their
+     data. Now overflow-x lives on the flex column that holds both, so
+     header and body shift together as one unit. Vertical scroll stays
+     on .songs-body (preserves virtualization, sticky-header-by-DOM-
+     siblinghood). Applies to SongsView, PlaylistView, and SmartPlaylist-
+     View — all three wrap their header+body block in .songs-view. */
+  overflow-x: auto;
 }
 
 /* iTunes 8 column header: flat #dcdcdc with vertical column dividers
@@ -17,6 +27,13 @@
   color: #3a3a3a;
   flex-shrink: 0;
   user-select: none;
+  /* Brief 026: match .songs-row's max-content sizing (Brief 024) so
+     the header's column tracks extend the full intrinsic width and
+     scroll horizontally with .songs-body inside the shared .songs-view
+     scroll context. Without this, the header would still be clipped to
+     the visible width of .songs-view while the body extended via its
+     own row min-width:max-content, reproducing the misalignment. */
+  min-width: max-content;
 }
 
 .songs-header-cell {
@@ -55,9 +72,22 @@
 .songs-body {
   flex: 1;
   overflow-y: auto;
-  overflow-x: auto;
+  /* Brief 026: overflow-x moved to .songs-view (shared scroll context
+     with .songs-header). Horizontal overflow now bleeds out of
+     .songs-body and is caught by the .songs-view scrollbar, so the
+     header and rows scroll as one unit. */
   user-select: none;
   -webkit-user-select: none;
+  /* 4.4.35 smoother scroll: GPU layer for the virtualized list so
+     each scroll frame doesn't trigger a parent reflow. */
+  will-change: scroll-position;
+  overscroll-behavior: contain;
+  /* Brief 026: match .songs-header's max-content sizing so the body's
+     virtual-scroll wrapper extends the full intrinsic row width inside
+     the .songs-view shared scroll context. Without this, the body
+     would clip to .songs-view's visible width and rows would have a
+     different scroll geometry than the header. */
+  min-width: max-content;
 }
 
 .songs-row {
@@ -69,6 +99,26 @@
   border-bottom: 1px solid transparent;
   user-select: none;
   -webkit-user-select: none;
+  /* 4.4.24: soften the hover / selection bg change so it eases in
+     instead of snapping. 90ms is fast enough that nothing feels
+     delayed; long enough that you can perceive it as a transition. */
+  transition: background-color 90ms ease-out;
+  /* Brief 024: row container sizes to the sum of grid track widths,
+     not the parent wrapper's constrained visible width. Without this,
+     the row's box stops at songs-body's visible width while the grid
+     CHILDREN (cells, sized by explicit colWidths) overflow past it.
+     Result: alternating-row and selection-highlight backgrounds were
+     clipped at ~the Year column boundary; cells past that point
+     rendered against the parent wrapper instead of the row, looking
+     blank on selected rows and breaking zebra striping on every row.
+     `min-width: max-content` lets the row grow to its intrinsic grid
+     width while still filling extra space when the window is wider
+     than the column sum. .songs-body's overflow-x: auto handles the
+     horizontal scroll exactly as before — the row container now
+     scrolls with its cells instead of staying put. Also fixes the
+     identical bug in PlaylistView and SmartPlaylistView, which both
+     reuse this row class. */
+  min-width: max-content;
 }
 
 /* Cool blue-tint alternating row (iTunes 8). The previous warm

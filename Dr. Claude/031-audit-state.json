@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-05-19T00:19:39.695923+00:00",
+  "sourceLibraryPath": "/Users/jacobrosenbaum/Library/Application Support/JakeTunes/library.json",
+  "sourceLibraryHash": "9bca5a6e2d52c187c8cf8abb62b087ab64a25e5e9fdb08a4a2f501997792cb98",
+  "sourceLibraryMtime": "2026-05-19T00:13:03.076164+00:00",
+  "sourceLibraryMtimeRaw": 1779149583.0761635,
+  "trackCount": 6432,
+  "distinctArtistStrings": 836,
+  "variantGroupCount": 5,
+  "collabCandidateCount": 5,
+  "edgeCaseCount": 17
+}

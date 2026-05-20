@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useCynthia } from '../context/CynthiaContext'
@@ -11,6 +12,7 @@ import UndoToast from '../components/UndoToast'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
+import { setNotice } from '../activity'
 import '../styles/songs.css'
 
 function formatDuration(ms: number): string {
@@ -67,6 +69,9 @@ export default function PlaylistView() {
   // Auto-follow now-playing (4.0). Mirror of SongsView pattern; suppressed
   // when user has scrolled in the last 5s.
   const songsBodyRef = useRef<HTMLDivElement | null>(null)
+  // 4.4.13: per-playlist scroll persistence. Switching A→B→A restores A's
+  // scroll position from where the user left it.
+  useScrollPersistence(`playlist:${state.activePlaylistId}`, songsBodyRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -278,6 +283,10 @@ export default function PlaylistView() {
         dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
         return { key: result.key, hash: result.hash }
       }
+      // 4.4.12: surface failure (usually sips conversion) so the user
+      // doesn't think the art stuck just because the Get Info preview
+      // still shows it from localArtHash.
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
       return null
     },
     [dispatch]
@@ -393,11 +402,25 @@ export default function PlaylistView() {
         onClick: async () => {
           const file = await window.electronAPI.chooseArtworkFile()
           if (!file.ok || !file.path) return
+          let failed = 0
+          let lastErr = ''
           for (const { artist, album } of artPairs.values()) {
             const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
             if (result.ok && result.key && result.hash) {
               dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+            } else {
+              failed += 1
+              lastErr = result.error || ''
             }
+          }
+          // 4.4.12: surface failures so the user knows the save didn't stick.
+          if (failed > 0) {
+            setNotice(
+              failed === 1
+                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
+                : `Couldn't save artwork for ${failed} albums.`,
+              { kind: 'error' }
+            )
           }
         },
       },
@@ -415,7 +438,7 @@ export default function PlaylistView() {
     ] : []
 
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, sortedTracks, idx) },
+      { label: `Play "${label}"`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
@@ -491,7 +514,7 @@ export default function PlaylistView() {
           <button
             className="playlist-view-play"
             onClick={() => {
-              if (sortedTracks.length > 0) playTrack(sortedTracks[0], sortedTracks, 0)
+              if (sortedTracks.length > 0) playTrack(sortedTracks[0], sortedTracks, 0, undefined, true)
             }}
           >
             Play All
@@ -542,7 +565,7 @@ export default function PlaylistView() {
                 className={`songs-row ${i % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${dragOverIdx === i ? 'playlist-view-track--dragover' : ''}`}
                 style={{ gridTemplateColumns: gridTemplate }}
                 onClick={(e) => handleClick(track, i, e)}
-                onDoubleClick={() => playTrack(track, sortedTracks, i)}
+                onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
                 onContextMenu={(e) => handleContextMenu(e, track, i)}
                 draggable
                 onDragStart={(e) => {
