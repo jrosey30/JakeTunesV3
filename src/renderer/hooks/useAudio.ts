@@ -196,7 +196,7 @@ function cleanupGaplessPreload() {
 }
 
 
-export function useAudio() {
+export function useAudio(opts?: { primary?: boolean }) {
   const { state, dispatch } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
   const dispatchRef = useRef(dispatch)
@@ -249,6 +249,18 @@ export function useAudio() {
   //      .play() on the underlying HTMLAudio element. That's enough to
   //      kick a stalled element off its frozen tick in many cases.
   useEffect(() => {
+    // Brief 033c: only the App-level instance (passed { primary: true })
+    // runs the heartbeat. useAudio() is consumed by ~7 mounted components
+    // at once (App + transport chrome + always-mounted MusicManView +
+    // the active view); without this gate each instance spun up its own
+    // 2s interval, so the diagnostic buffer logged 7 heartbeats per cycle
+    // AND 7 independent recovery loops raced on the single shared Howl
+    // (overlapping stop/unload/reload). App.tsx never unmounts, so making
+    // it the sole owner avoids both the duplication and Option A's
+    // ownership-handoff stall (a transient view winning the claim then
+    // unmounting on navigation). The interval's own cleanup is unchanged
+    // and still correct.
+    if (!opts?.primary) return
     if (!state.isPlaying) return
     let lastPos = -1
     let stuckTicks = 0
@@ -313,7 +325,7 @@ export function useAudio() {
       } catch { /* ignore */ }
     }, 2000)
     return () => window.clearInterval(id)
-  }, [state.isPlaying])
+  }, [state.isPlaying, opts?.primary])
 
   // Held by refs so updatePosition can call them without forming
   // circular useCallback dep cycles back through loadAndPlay (which

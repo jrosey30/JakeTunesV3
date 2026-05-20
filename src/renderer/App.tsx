@@ -30,7 +30,12 @@ import './styles/sidebar.css'
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback } = useAudio()
+  // Brief 033c: App is the single "primary" useAudio consumer — it owns
+  // the heartbeat diagnostic/recovery interval. App never unmounts, so
+  // exactly one interval runs regardless of how many other components
+  // call useAudio() for accessor functions. See useAudio.ts heartbeat
+  // effect for the full rationale.
+  const { togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback } = useAudio({ primary: true })
   const { state: pbState } = usePlayback()
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
