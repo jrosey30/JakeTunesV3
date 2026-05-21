@@ -234,7 +234,14 @@ const electronAPI = {
     return () => { ipcRenderer.removeListener('library-external-change', handler) }
   },
 
-  // ── Bandcamp Store (Brief 036 v2.2) ──
+  // ── Bandcamp Store v4 (embedded WebContentsView lifecycle) ──
+  bandcampMount: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('bandcamp:mount', bounds),
+  bandcampResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('bandcamp:resize', bounds),
+  bandcampUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('bandcamp:unmount'),
+
+  // ── Bandcamp Store (Brief 036 v2.2) — pre-v4 IPC surface, pruned in v4/D ──
   bandcampAuthStatus: (): Promise<{ loggedIn: boolean; fanId?: number; username?: string }> =>
     ipcRenderer.invoke('bandcamp:auth-status'),
   bandcampConnect: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:connect'),

@@ -1,26 +1,22 @@
 // ════════════════════════════════════════════════════════════════════════
-//  Bandcamp Store integration — wiring (Brief 036 v2.2)
+//  Bandcamp Store integration — v4 wiring
 //
-//  Single entry point registered from src/main/index.ts. Owns: the IPC
-//  surface, the auth/checkout overlay WebContentsView (persist:bandcamp,
-//  no preload), the download-router hookup, and daily profile refresh.
+//  v4 strategy: embed bandcamp.com on the persist:bandcamp partition as
+//  a single WebContentsView. Bandcamp's own UI is the Store UI; we only
+//  intercept downloads and route them into the library via importOneFile.
 //
-//  importOneFile() lives in the 292KB main/index.ts; rather than export its
-//  internals we accept an injected `importDownloaded` bridge so this module
-//  stays decoupled and index.ts edits stay tiny.
+//  This module owns:
+//    - The embedded WebContentsView lifecycle (mount/resize/unmount IPC)
+//    - The download-router attachment on the partition's session
+//
+//  Pre-v4 scrape modules (data/, personalization/) are archived under
+//  _archive/; see Brief 036 v4 §4 Phase A.
 // ════════════════════════════════════════════════════════════════════════
 
 import { ipcMain, WebContentsView, BrowserWindow } from 'electron'
-import { BANDCAMP_PARTITION } from './data/scraper'
-import { getAlbum, search as catalogSearch, getArtistReleases } from './data/catalog-data'
-import { loadProfile, clearAll } from './personalization/profile-store'
-import { getUnified, rebuildUnified, scheduleDailyRefresh } from './personalization/refresh-scheduler'
-import { buildOwnedSets, markOwned } from './personalization/overlap-detection'
-import { readLibraryRows } from './data/library-data'
-import { rankAlbums } from './personalization/ranking'
-import { bandcampSession, checkAuth, clearSession } from './acquisition/auth'
+import { BANDCAMP_PARTITION } from './partition'
+import { bandcampSession } from './acquisition/auth'
 import { attachDownloadRouter } from './acquisition/download-router'
-import { StoreAlbum, Tier1Surface } from './types'
 
 export interface BandcampDeps {
   getMainWindow: () => BrowserWindow | null
@@ -28,203 +24,93 @@ export interface BandcampDeps {
   importDownloaded: (absPaths: string[]) => Promise<unknown[]>
 }
 
-type CheckoutOutcome = 'completed' | 'cancelled' | 'external'
+const BANDCAMP_HOME = 'https://bandcamp.com'
 
-let overlay: WebContentsView | null = null
+interface Bounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+// Module-level so the view + its loaded URL + its cookies survive sidebar
+// navigation: clicking away from Store and back resumes the same Bandcamp
+// page the user left, no reload.
+let view: WebContentsView | null = null
+let viewLoaded = false
+let attached = false
 let routerAttached = false
-// Brief 036 v3 Decision 3: bandcamp:open-checkout resolves with the buy
-// outcome when the modal closes. `pendingCheckoutResolve` is the suspended
-// resolver; `purchaseCompletedDuringSession` is flipped to true by the
-// download-router when a purchase fires while the modal is open. On close
-// we resolve 'completed' if the flag is set, else 'cancelled'. The flag is
-// the canonical signal (more reliable than URL pattern-matching on
-// Bandcamp's confirmation page, which has historically shifted).
-let pendingCheckoutResolve: ((outcome: CheckoutOutcome) => void) | null = null
-let purchaseCompletedDuringSession = false
 
-function send(deps: BandcampDeps, channel: string, payload: unknown): void {
+function ensureView(): WebContentsView {
+  if (view && !view.webContents.isDestroyed()) return view
+  // Decision 2: every secure default on. No preload — bandcamp.com content
+  // has no access to JakeTunes IPC. The persist:bandcamp partition is the
+  // same one Phase 1's auth helpers used, so any pre-existing login carries.
+  view = new WebContentsView({
+    webPreferences: {
+      partition: BANDCAMP_PARTITION,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  })
+  viewLoaded = false
+  return view
+}
+
+function attachView(deps: BandcampDeps, bounds: Bounds): void {
   const win = deps.getMainWindow()
-  if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
-}
-
-// ── auth / checkout overlay ────────────────────────────────────────────
-
-/** Centered modal bounds for checkout: max 1000×800, capped at 90% of the
- *  window so the renderer stays visible around the edges. */
-function modalBounds(win: BrowserWindow): { x: number; y: number; width: number; height: number } {
-  const b = win.getContentBounds()
-  const w = Math.min(1000, Math.floor(b.width * 0.9))
-  const h = Math.min(800, Math.floor(b.height * 0.9))
-  return {
-    x: Math.floor((b.width - w) / 2),
-    y: Math.floor((b.height - h) / 2),
-    width: w,
-    height: h,
+  if (!win || win.isDestroyed()) return
+  const v = ensureView()
+  if (!attached) {
+    win.contentView.addChildView(v)
+    attached = true
+  }
+  v.setBounds(bounds)
+  if (!viewLoaded) {
+    void v.webContents.loadURL(BANDCAMP_HOME)
+    viewLoaded = true
   }
 }
 
-function ensureOverlay(deps: BandcampDeps): WebContentsView | null {
+function detachView(deps: BandcampDeps): void {
   const win = deps.getMainWindow()
-  if (!win) return null
-  if (!overlay || overlay.webContents.isDestroyed()) {
-    overlay = new WebContentsView({
-      webPreferences: { partition: BANDCAMP_PARTITION, nodeIntegration: false, contextIsolation: true },
-    })
-    win.contentView.addChildView(overlay)
+  if (view && attached && win && !win.isDestroyed()) {
+    win.contentView.removeChildView(view)
   }
-  return overlay
+  attached = false
 }
 
-/** Login overlay: covers most of the window (multi-step login + 2FA need
- *  room), leaves a 44px top strip for the renderer-drawn close bar. */
-function showLoginOverlay(deps: BandcampDeps, url: string): void {
-  const win = deps.getMainWindow()
-  const view = ensureOverlay(deps)
-  if (!win || !view) return
-  const b = win.getContentBounds()
-  view.setBounds({ x: 0, y: 44, width: b.width, height: b.height - 44 })
-  view.webContents.loadURL(url)
-}
-
-/** Checkout overlay (Brief 036 v3 Decision 3): centered modal so the
- *  JakeTunes renderer remains visible around it. */
-function showCheckoutOverlay(deps: BandcampDeps, url: string): void {
-  const win = deps.getMainWindow()
-  const view = ensureOverlay(deps)
-  if (!win || !view) return
-  view.setBounds(modalBounds(win))
-  view.webContents.loadURL(url)
-}
-
-function hideOverlay(deps: BandcampDeps): void {
-  const win = deps.getMainWindow()
-  if (overlay && win && !win.isDestroyed()) {
-    win.contentView.removeChildView(overlay)
-  }
-  if (overlay && !overlay.webContents.isDestroyed()) overlay.webContents.close()
-  overlay = null
-  if (pendingCheckoutResolve) {
-    const outcome: CheckoutOutcome = purchaseCompletedDuringSession ? 'completed' : 'cancelled'
-    const resolve = pendingCheckoutResolve
-    pendingCheckoutResolve = null
-    purchaseCompletedDuringSession = false
-    resolve(outcome)
-  }
-}
-
-/** Poll for login completion after the user submits credentials (+2FA). */
-async function waitForLogin(timeoutMs = 150000): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const status = await checkAuth()
-    if (status.loggedIn) return true
-    await new Promise((r) => setTimeout(r, 2500))
-  }
-  return false
-}
-
-// ── candidate gathering for Tier-1 surfaces ────────────────────────────
-async function gatherFollowedReleases(limitArtists = 20): Promise<StoreAlbum[]> {
-  const profile = await loadProfile()
-  if (!profile) return []
-  const withUrls = profile.following.filter((f) => f.url).slice(0, limitArtists)
-  const out: StoreAlbum[] = []
-  for (const f of withUrls) {
-    const releases = await getArtistReleases(f.url as string)
-    for (const r of releases) { if (!r.artist) r.artist = f.name; out.push(r) }
-  }
-  return out
-}
-
-async function getSurface(name: Tier1Surface, limit: number): Promise<StoreAlbum[]> {
-  const profile = await getUnified()
-  const rows = await readLibraryRows()
-  const owned = buildOwnedSets(rows)
-  const candidates = markOwned(await gatherFollowedReleases(), owned)
-  const ranked = rankAlbums(candidates, profile, name)
-  return ranked.slice(0, limit)
-}
-
-// ── registration ───────────────────────────────────────────────────────
 export function registerBandcampIntegration(deps: BandcampDeps): void {
-  // Download interception lives on the shared bandcamp session.
+  // Download interception is attached to the partition's session once, at
+  // startup, so downloads route through importOneFile even if the user
+  // never opens the Store view in this session (paranoia: Bandcamp could
+  // open new tabs that trigger downloads outside our view).
   if (!routerAttached) {
     attachDownloadRouter(bandcampSession(), {
       importDownloaded: deps.importDownloaded,
-      onComplete: (result) => {
-        if (result.ok) purchaseCompletedDuringSession = true
-        send(deps, 'bandcamp:purchase-complete', result)
-      },
+      // Phase A keeps the v3 purchase-complete channel as a no-op subscriber
+      // target. Phase B reshapes the callback to emit bandcamp:track-imported
+      // / bandcamp:import-failed per Decision 5.
+      onComplete: () => { /* phase B */ },
     })
     routerAttached = true
   }
 
-  ipcMain.handle('bandcamp:auth-status', () => checkAuth())
-
-  ipcMain.handle('bandcamp:connect', async () => {
-    showLoginOverlay(deps, 'https://bandcamp.com/login')
-    const ok = await waitForLogin()
-    hideOverlay(deps)
-    if (ok) void rebuildUnified(true).then((u) => send(deps, 'bandcamp:profile-updated', { computedAt: u.computedAt }))
-    return { ok }
+  ipcMain.handle('bandcamp:mount', (_e, bounds: Bounds) => {
+    attachView(deps, bounds)
+    return { ok: true as const }
   })
 
-  ipcMain.handle('bandcamp:logout', async () => { await clearSession(); return { ok: true } })
-
-  ipcMain.handle('bandcamp:clear-data', async () => {
-    await clearSession()
-    await clearAll()
-    return { ok: true }
+  ipcMain.handle('bandcamp:resize', (_e, bounds: Bounds) => {
+    if (view && !view.webContents.isDestroyed() && attached) view.setBounds(bounds)
+    return { ok: true as const }
   })
 
-  ipcMain.handle('bandcamp:refresh-profile', async () => {
-    const u = await rebuildUnified(true)
-    return { ok: true, computedAt: u.computedAt }
+  ipcMain.handle('bandcamp:unmount', () => {
+    detachView(deps)
+    return { ok: true as const }
   })
-
-  ipcMain.handle('bandcamp:get-profile', () => getUnified())
-
-  ipcMain.handle('bandcamp:get-album', async (_e, url: string) => {
-    const album = await getAlbum(url)
-    if (!album) return { ok: false as const, error: 'album not found' }
-    const owned = buildOwnedSets(await readLibraryRows())
-    markOwned([album], owned)
-    return { ok: true as const, album }
-  })
-
-  ipcMain.handle('bandcamp:search', async (_e, query: string) => {
-    // Returns BandcampSearchResult[] (Brief 036 v3 Decision 1). Owned-marking
-    // and personalization re-rank are deferred — the union carries no
-    // `owned` field, and re-rank is parked per §9.
-    const results = await catalogSearch(query)
-    return { ok: true as const, results }
-  })
-
-  ipcMain.handle('bandcamp:get-surface', async (_e, name: Tier1Surface, limit = 20) => {
-    try {
-      return { ok: true as const, items: await getSurface(name, limit) }
-    } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle('bandcamp:open-checkout', (_e, url: string): Promise<{ ok: true; outcome: CheckoutOutcome }> => {
-    // Double-click safety: if a previous checkout is still pending, resolve
-    // it as cancelled before starting the new one. Without this the prior
-    // promise would never settle.
-    if (pendingCheckoutResolve) {
-      const prev = pendingCheckoutResolve
-      pendingCheckoutResolve = null
-      prev('cancelled')
-    }
-    purchaseCompletedDuringSession = false
-    showCheckoutOverlay(deps, url)
-    return new Promise<{ ok: true; outcome: CheckoutOutcome }>((resolve) => {
-      pendingCheckoutResolve = (outcome) => resolve({ ok: true, outcome })
-    })
-  })
-  ipcMain.handle('bandcamp:close-overlay', () => { hideOverlay(deps); return { ok: true } })
-
-  // Background daily refresh; the engine is created lazily on first use.
-  scheduleDailyRefresh()
 }

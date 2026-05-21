@@ -12,5 +12,6 @@
     "rootDir": "src/renderer",
     "types": ["node"]
   },
-  "include": ["src/renderer/**/*"]
+  "include": ["src/renderer/**/*"],
+  "exclude": ["**/_archive/**"]
 }

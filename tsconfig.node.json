@@ -15,5 +15,6 @@
     "src/main/**/*",
     "src/preload/**/*",
     "electron.vite.config.ts"
-  ]
+  ],
+  "exclude": ["**/_archive/**"]
 }

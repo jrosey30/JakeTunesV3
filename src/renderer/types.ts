@@ -296,7 +296,12 @@ declare global {
       onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
-      // ── Bandcamp Store (Brief 036 v2.2) ──
+      // ── Bandcamp Store v4 (embedded WebContentsView lifecycle) ──
+      bandcampMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
+      bandcampResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
+      bandcampUnmount: () => Promise<{ ok: true }>
+
+      // ── Bandcamp Store (Brief 036 v2.2) — pre-v4 IPC surface, pruned in v4/D ──
       bandcampAuthStatus: () => Promise<{ loggedIn: boolean; fanId?: number; username?: string }>
       bandcampConnect: () => Promise<{ ok: boolean }>
       bandcampLogout: () => Promise<{ ok: boolean }>
