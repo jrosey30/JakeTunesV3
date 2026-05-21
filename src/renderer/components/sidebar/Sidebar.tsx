@@ -316,6 +316,21 @@ export default function Sidebar() {
           ))}
         </SidebarSection>
 
+        <SidebarSection title="STORE">
+          <SidebarItem
+            label="Bandcamp Store"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M3 3h10l-1.2 7.5a1.5 1.5 0 0 1-1.48 1.25H5.68A1.5 1.5 0 0 1 4.2 10.5L3 3z" fill="#2c5aa0" />
+                <circle cx="6" cy="13.5" r="1" fill="#2c5aa0" />
+                <circle cx="11" cy="13.5" r="1" fill="#2c5aa0" />
+              </svg>
+            )}
+            selected={state.currentView === 'store'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
+          />
+        </SidebarSection>
+
         {(ipodMounted || cdMounted) && (
           <SidebarSection title="DEVICES">
             {ipodMounted && (

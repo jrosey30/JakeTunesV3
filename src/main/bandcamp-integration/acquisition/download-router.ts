@@ -13,8 +13,8 @@
 import { Session, DownloadItem } from 'electron'
 import { app } from 'electron'
 import { join } from 'path'
-import { mkdir, rm } from 'fs/promises'
-import { createWriteStream } from 'fs'
+import { rm } from 'fs/promises'
+import { createWriteStream, mkdirSync } from 'fs'
 import yauzl from 'yauzl'
 
 const AUDIO_EXT = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
@@ -68,21 +68,31 @@ export interface DownloadRouterDeps {
 /** Attach interception to the Bandcamp session. Idempotent per session. */
 export function attachDownloadRouter(session: Session, deps: DownloadRouterDeps): void {
   session.on('will-download', (_event, item: DownloadItem) => {
-    void handleDownload(item, deps)
-  })
-}
-
-async function handleDownload(item: DownloadItem, deps: DownloadRouterDeps): Promise<void> {
-  const dir = stagingDir()
-  try {
-    await mkdir(dir, { recursive: true })
+    // setSavePath + the done-listener MUST be attached synchronously here,
+    // before any await, or Electron pops a save dialog / the event is missed.
+    const dir = stagingDir()
+    mkdirSync(dir, { recursive: true })
     const filename = item.getFilename()
     const savePath = join(dir, filename)
     item.setSavePath(savePath)
-
-    const state: string = await new Promise((resolve) => {
+    const donePromise: Promise<string> = new Promise((resolve) => {
       item.once('done', (_e, s) => resolve(s))
     })
+    void handleDownload({ dir, filename, savePath, donePromise }, deps)
+  })
+}
+
+interface PendingDownload {
+  dir: string
+  filename: string
+  savePath: string
+  donePromise: Promise<string>
+}
+
+async function handleDownload(dl: PendingDownload, deps: DownloadRouterDeps): Promise<void> {
+  const { dir, filename, savePath, donePromise } = dl
+  try {
+    const state = await donePromise
     if (state !== 'completed') {
       deps.onComplete({ ok: false, trackCount: 0, error: `download ${state}` })
       return

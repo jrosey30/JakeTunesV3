@@ -1,0 +1,23 @@
+/* iTunes Store 2008–2010 tokens (Brief 036 v2.2). Scoped to .bandcamp-store
+   so they never leak into the iTunes-8 player chrome (variables.css). */
+.bandcamp-store {
+  --store-bg: #ffffff;
+  --store-panel: #f5f5f5;
+  --store-blue: #2c5aa0;
+  --store-blue-hover: #1e3f73;
+  --store-text: #000000;
+  --store-text-2: #6e6e6e;
+  --store-border: #cccccc;
+  --store-buy-top: #4d7fc4;
+  --store-buy-bottom: #2c5aa0;
+  --store-section-top: #f0f0f0;
+  --store-section-bottom: #dcdcdc;
+  --store-header-h: 64px;
+  --store-grid-gap: 20px;
+  --store-section-pad: 24px;
+  --store-tile: 120px;
+  --store-cover-detail: 240px;
+
+  font-family: -apple-system, BlinkMacSystemFont, "Lucida Grande", sans-serif;
+  color: var(--store-text);
+}

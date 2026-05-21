@@ -8,6 +8,7 @@ import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
 import CDImportView from '../views/CDImportView'
+import StoreView from '../views/BandcampStore'
 
 export default function MainContent() {
   const { state } = useLibrary()
@@ -22,6 +23,7 @@ export default function MainContent() {
     case 'smart-playlist': return <SmartPlaylistView />
     case 'device': return <DeviceView />
     case 'cd-import': return <CDImportView />
+    case 'store': return <StoreView />
     default: return <SongsView />
   }
 }
