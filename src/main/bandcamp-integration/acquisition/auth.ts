@@ -32,6 +32,6 @@ export async function checkAuth(): Promise<AuthStatus> {
 export async function clearSession(): Promise<void> {
   const ses = bandcampSession()
   await ses.clearStorageData({
-    storages: ['cookies', 'localstorage', 'caches', 'indexdb', 'serviceworkers'],
+    storages: ['cookies', 'localstorage', 'cachestorage', 'indexdb', 'serviceworkers'],
   })
 }

@@ -249,7 +249,7 @@ const electronAPI = {
     ipcRenderer.invoke('bandcamp:search', query),
   bandcampGetSurface: (name: string, limit?: number): Promise<{ ok: boolean; items?: unknown[]; error?: string }> =>
     ipcRenderer.invoke('bandcamp:get-surface', name, limit),
-  bandcampOpenCheckout: (url: string): Promise<{ ok: boolean }> =>
+  bandcampOpenCheckout: (url: string): Promise<{ ok: boolean; outcome: 'completed' | 'cancelled' | 'external' }> =>
     ipcRenderer.invoke('bandcamp:open-checkout', url),
   bandcampCloseOverlay: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:close-overlay'),
   onBandcampPurchaseComplete: (callback: (r: { ok: boolean; trackCount: number; error?: string }) => void) => {

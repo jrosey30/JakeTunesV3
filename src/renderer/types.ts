@@ -306,7 +306,7 @@ declare global {
       bandcampGetAlbum: (url: string) => Promise<{ ok: boolean; album?: StoreAlbumWire; error?: string }>
       bandcampSearch: (query: string) => Promise<{ ok: boolean; results?: BandcampSearchResultWire[]; error?: string }>
       bandcampGetSurface: (name: string, limit?: number) => Promise<{ ok: boolean; items?: StoreAlbumWire[]; error?: string }>
-      bandcampOpenCheckout: (url: string) => Promise<{ ok: boolean }>
+      bandcampOpenCheckout: (url: string) => Promise<{ ok: boolean; outcome: 'completed' | 'cancelled' | 'external' }>
       bandcampCloseOverlay: () => Promise<{ ok: boolean }>
       onBandcampPurchaseComplete: (callback: (r: { ok: boolean; trackCount: number; error?: string }) => void) => () => void
       onBandcampProfileUpdated: (callback: (r: { computedAt: number }) => void) => () => void

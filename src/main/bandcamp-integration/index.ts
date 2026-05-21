@@ -28,8 +28,19 @@ export interface BandcampDeps {
   importDownloaded: (absPaths: string[]) => Promise<unknown[]>
 }
 
+type CheckoutOutcome = 'completed' | 'cancelled' | 'external'
+
 let overlay: WebContentsView | null = null
 let routerAttached = false
+// Brief 036 v3 Decision 3: bandcamp:open-checkout resolves with the buy
+// outcome when the modal closes. `pendingCheckoutResolve` is the suspended
+// resolver; `purchaseCompletedDuringSession` is flipped to true by the
+// download-router when a purchase fires while the modal is open. On close
+// we resolve 'completed' if the flag is set, else 'cancelled'. The flag is
+// the canonical signal (more reliable than URL pattern-matching on
+// Bandcamp's confirmation page, which has historically shifted).
+let pendingCheckoutResolve: ((outcome: CheckoutOutcome) => void) | null = null
+let purchaseCompletedDuringSession = false
 
 function send(deps: BandcampDeps, channel: string, payload: unknown): void {
   const win = deps.getMainWindow()
@@ -37,20 +48,52 @@ function send(deps: BandcampDeps, channel: string, payload: unknown): void {
 }
 
 // ── auth / checkout overlay ────────────────────────────────────────────
-function showOverlay(deps: BandcampDeps, url: string): void {
+
+/** Centered modal bounds for checkout: max 1000×800, capped at 90% of the
+ *  window so the renderer stays visible around the edges. */
+function modalBounds(win: BrowserWindow): { x: number; y: number; width: number; height: number } {
+  const b = win.getContentBounds()
+  const w = Math.min(1000, Math.floor(b.width * 0.9))
+  const h = Math.min(800, Math.floor(b.height * 0.9))
+  return {
+    x: Math.floor((b.width - w) / 2),
+    y: Math.floor((b.height - h) / 2),
+    width: w,
+    height: h,
+  }
+}
+
+function ensureOverlay(deps: BandcampDeps): WebContentsView | null {
   const win = deps.getMainWindow()
-  if (!win) return
+  if (!win) return null
   if (!overlay || overlay.webContents.isDestroyed()) {
     overlay = new WebContentsView({
       webPreferences: { partition: BANDCAMP_PARTITION, nodeIntegration: false, contextIsolation: true },
     })
     win.contentView.addChildView(overlay)
   }
+  return overlay
+}
+
+/** Login overlay: covers most of the window (multi-step login + 2FA need
+ *  room), leaves a 44px top strip for the renderer-drawn close bar. */
+function showLoginOverlay(deps: BandcampDeps, url: string): void {
+  const win = deps.getMainWindow()
+  const view = ensureOverlay(deps)
+  if (!win || !view) return
   const b = win.getContentBounds()
-  // Leave a 44px top strip for the renderer-drawn close bar (the native
-  // view paints over the renderer, so the bar can't live behind it).
-  overlay.setBounds({ x: 0, y: 44, width: b.width, height: b.height - 44 })
-  overlay.webContents.loadURL(url)
+  view.setBounds({ x: 0, y: 44, width: b.width, height: b.height - 44 })
+  view.webContents.loadURL(url)
+}
+
+/** Checkout overlay (Brief 036 v3 Decision 3): centered modal so the
+ *  JakeTunes renderer remains visible around it. */
+function showCheckoutOverlay(deps: BandcampDeps, url: string): void {
+  const win = deps.getMainWindow()
+  const view = ensureOverlay(deps)
+  if (!win || !view) return
+  view.setBounds(modalBounds(win))
+  view.webContents.loadURL(url)
 }
 
 function hideOverlay(deps: BandcampDeps): void {
@@ -60,6 +103,13 @@ function hideOverlay(deps: BandcampDeps): void {
   }
   if (overlay && !overlay.webContents.isDestroyed()) overlay.webContents.close()
   overlay = null
+  if (pendingCheckoutResolve) {
+    const outcome: CheckoutOutcome = purchaseCompletedDuringSession ? 'completed' : 'cancelled'
+    const resolve = pendingCheckoutResolve
+    pendingCheckoutResolve = null
+    purchaseCompletedDuringSession = false
+    resolve(outcome)
+  }
 }
 
 /** Poll for login completion after the user submits credentials (+2FA). */
@@ -101,7 +151,10 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
   if (!routerAttached) {
     attachDownloadRouter(bandcampSession(), {
       importDownloaded: deps.importDownloaded,
-      onComplete: (result) => send(deps, 'bandcamp:purchase-complete', result),
+      onComplete: (result) => {
+        if (result.ok) purchaseCompletedDuringSession = true
+        send(deps, 'bandcamp:purchase-complete', result)
+      },
     })
     routerAttached = true
   }
@@ -109,7 +162,7 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
   ipcMain.handle('bandcamp:auth-status', () => checkAuth())
 
   ipcMain.handle('bandcamp:connect', async () => {
-    showOverlay(deps, 'https://bandcamp.com/login')
+    showLoginOverlay(deps, 'https://bandcamp.com/login')
     const ok = await waitForLogin()
     hideOverlay(deps)
     if (ok) void rebuildUnified(true).then((u) => send(deps, 'bandcamp:profile-updated', { computedAt: u.computedAt }))
@@ -155,7 +208,21 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
     }
   })
 
-  ipcMain.handle('bandcamp:open-checkout', (_e, url: string) => { showOverlay(deps, url); return { ok: true } })
+  ipcMain.handle('bandcamp:open-checkout', (_e, url: string): Promise<{ ok: true; outcome: CheckoutOutcome }> => {
+    // Double-click safety: if a previous checkout is still pending, resolve
+    // it as cancelled before starting the new one. Without this the prior
+    // promise would never settle.
+    if (pendingCheckoutResolve) {
+      const prev = pendingCheckoutResolve
+      pendingCheckoutResolve = null
+      prev('cancelled')
+    }
+    purchaseCompletedDuringSession = false
+    showCheckoutOverlay(deps, url)
+    return new Promise<{ ok: true; outcome: CheckoutOutcome }>((resolve) => {
+      pendingCheckoutResolve = (outcome) => resolve({ ok: true, outcome })
+    })
+  })
   ipcMain.handle('bandcamp:close-overlay', () => { hideOverlay(deps); return { ok: true } })
 
   // Background daily refresh; the engine is created lazily on first use.

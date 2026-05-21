@@ -47,6 +47,10 @@ export default function StoreView() {
   useEffect(() => {
     const off = window.electronAPI.onBandcampPurchaseComplete((r) => {
       setOverlayOpen(false)
+      // Dismiss the WebContentsView too, not just the renderer overlay bar
+      // (otherwise the modal sits orphaned after a successful purchase).
+      // hideOverlay on the main side resolves the open-checkout promise.
+      void window.electronAPI.bandcampCloseOverlay()
       setToast(r.ok ? `Added ${r.trackCount} track${r.trackCount === 1 ? '' : 's'} to your library` : `Purchase routing failed: ${r.error || 'unknown'}`)
       window.setTimeout(() => setToast(null), 6000)
     })
@@ -109,9 +113,19 @@ export default function StoreView() {
     await refreshAll()
   }, [refreshAll])
 
-  const buy = useCallback((album: StoreAlbumWire) => {
+  const buy = useCallback(async (album: StoreAlbumWire) => {
     setOverlayOpen(true)
-    void window.electronAPI.bandcampOpenCheckout(album.url)
+    // open-checkout resolves when the bounded modal closes (Brief 036 v3
+    // Decision 3). outcome: 'completed' (purchase fired), 'cancelled' (user
+    // dismissed), 'external' (fell back to system browser).
+    const res = await window.electronAPI.bandcampOpenCheckout(album.url)
+    setOverlayOpen(false)
+    if (res.outcome === 'external') {
+      setToast("Complete your purchase in your browser — your library will sync when the download finishes.")
+      window.setTimeout(() => setToast(null), 8000)
+    }
+    // 'completed' toast is already shown by the onBandcampPurchaseComplete
+    // handler above. 'cancelled' is intentionally silent.
   }, [])
 
   const closeOverlay = useCallback(() => {
