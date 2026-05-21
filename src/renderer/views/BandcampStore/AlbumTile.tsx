@@ -1,5 +1,5 @@
 import { StoreAlbumWire } from '../../types'
-import { coverUrl } from './helpers'
+import { albumArt } from './helpers'
 
 interface Props {
   album: StoreAlbumWire
@@ -7,7 +7,7 @@ interface Props {
 }
 
 export default function AlbumTile({ album, onOpen }: Props) {
-  const art = coverUrl(album.coverArtId, 9)
+  const art = albumArt(album, 9)
   return (
     <button className="bcs-tile" onClick={() => onOpen(album)} title={`${album.title} — ${album.artist}`}>
       <div className="bcs-tile-art">

@@ -1,5 +1,5 @@
 import { StoreAlbumWire } from '../../types'
-import { coverUrl } from './helpers'
+import { albumArt } from './helpers'
 import { usePreviewPlayer } from './PreviewPlayer'
 import BuyButton from './BuyButton'
 
@@ -18,7 +18,7 @@ function fmtDur(sec: number): string {
 
 export default function AlbumDetailView({ album, onBack, onBuy }: Props) {
   const { playingUrl, toggle } = usePreviewPlayer()
-  const art = coverUrl(album.coverArtId, 16)
+  const art = albumArt(album, 16)
 
   return (
     <div className="bcs-detail">

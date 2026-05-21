@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { StoreAlbumWire } from '../../types'
-import { coverUrl } from './helpers'
+import { albumArt } from './helpers'
 
 interface Props {
   items: StoreAlbumWire[]
@@ -19,7 +19,7 @@ export default function FeaturedCarousel({ items, onOpen }: Props) {
   if (items.length === 0) return null
   const safe = index % items.length
   const album = items[safe]
-  const art = coverUrl(album.coverArtId, 16)
+  const art = albumArt(album, 16)
 
   return (
     <div className="bcs-carousel">

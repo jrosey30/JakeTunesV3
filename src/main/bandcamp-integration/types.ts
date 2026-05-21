@@ -32,6 +32,10 @@ export interface StoreAlbum {
   releaseDate?: string
   /** Bandcamp art id → build cover URLs via coverArtUrl(). */
   coverArtId?: number
+  /** Pre-built CDN image URL (set by search normalizer where Bandcamp's
+   *  autocomplete endpoint hands back a complete URL). Renderer prefers
+   *  this over coverArtId-built URLs when present. */
+  imageUrl?: string
   tracks: StoreTrack[]
   price?: number
   currency?: string

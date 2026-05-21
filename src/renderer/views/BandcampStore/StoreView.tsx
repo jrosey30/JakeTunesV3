@@ -81,6 +81,7 @@ export default function StoreView() {
           artistUrl: r.artistUrl,
           tags: [],
           releaseDate: r.releaseDate,
+          imageUrl: r.imageUrl,
           tracks: [],
           currency: r.currency,
           isPurchasable: true,

@@ -335,6 +335,8 @@ export interface StoreAlbumWire {
   geo?: string
   releaseDate?: string
   coverArtId?: number
+  /** Pre-built CDN image URL; rendered in preference to coverArtId. */
+  imageUrl?: string
   tracks: StoreTrackWire[]
   price?: number
   currency?: string
