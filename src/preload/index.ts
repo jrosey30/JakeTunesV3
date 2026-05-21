@@ -233,6 +233,35 @@ const electronAPI = {
     ipcRenderer.on('library-external-change', handler)
     return () => { ipcRenderer.removeListener('library-external-change', handler) }
   },
+
+  // ── Bandcamp Store (Brief 036 v2.2) ──
+  bandcampAuthStatus: (): Promise<{ loggedIn: boolean; fanId?: number; username?: string }> =>
+    ipcRenderer.invoke('bandcamp:auth-status'),
+  bandcampConnect: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:connect'),
+  bandcampLogout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:logout'),
+  bandcampClearData: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:clear-data'),
+  bandcampRefreshProfile: (): Promise<{ ok: boolean; computedAt?: number }> =>
+    ipcRenderer.invoke('bandcamp:refresh-profile'),
+  bandcampGetProfile: (): Promise<unknown> => ipcRenderer.invoke('bandcamp:get-profile'),
+  bandcampGetAlbum: (url: string): Promise<{ ok: boolean; album?: unknown; error?: string }> =>
+    ipcRenderer.invoke('bandcamp:get-album', url),
+  bandcampSearch: (query: string): Promise<{ ok: boolean; results?: unknown[]; error?: string }> =>
+    ipcRenderer.invoke('bandcamp:search', query),
+  bandcampGetSurface: (name: string, limit?: number): Promise<{ ok: boolean; items?: unknown[]; error?: string }> =>
+    ipcRenderer.invoke('bandcamp:get-surface', name, limit),
+  bandcampOpenCheckout: (url: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('bandcamp:open-checkout', url),
+  bandcampCloseOverlay: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:close-overlay'),
+  onBandcampPurchaseComplete: (callback: (r: { ok: boolean; trackCount: number; error?: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, r: { ok: boolean; trackCount: number; error?: string }) => callback(r)
+    ipcRenderer.on('bandcamp:purchase-complete', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:purchase-complete', handler) }
+  },
+  onBandcampProfileUpdated: (callback: (r: { computedAt: number }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, r: { computedAt: number }) => callback(r)
+    ipcRenderer.on('bandcamp:profile-updated', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:profile-updated', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

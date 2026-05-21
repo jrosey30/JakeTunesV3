@@ -296,6 +296,61 @@ declare global {
       onAlacCompatProgress: (callback: (p: { current: number; total: number; file: string }) => void) => () => void
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
+      // ── Bandcamp Store (Brief 036 v2.2) ──
+      bandcampAuthStatus: () => Promise<{ loggedIn: boolean; fanId?: number; username?: string }>
+      bandcampConnect: () => Promise<{ ok: boolean }>
+      bandcampLogout: () => Promise<{ ok: boolean }>
+      bandcampClearData: () => Promise<{ ok: boolean }>
+      bandcampRefreshProfile: () => Promise<{ ok: boolean; computedAt?: number }>
+      bandcampGetProfile: () => Promise<UnifiedProfileWire | null>
+      bandcampGetAlbum: (url: string) => Promise<{ ok: boolean; album?: StoreAlbumWire; error?: string }>
+      bandcampSearch: (query: string) => Promise<{ ok: boolean; results?: StoreAlbumWire[]; error?: string }>
+      bandcampGetSurface: (name: string, limit?: number) => Promise<{ ok: boolean; items?: StoreAlbumWire[]; error?: string }>
+      bandcampOpenCheckout: (url: string) => Promise<{ ok: boolean }>
+      bandcampCloseOverlay: () => Promise<{ ok: boolean }>
+      onBandcampPurchaseComplete: (callback: (r: { ok: boolean; trackCount: number; error?: string }) => void) => () => void
+      onBandcampProfileUpdated: (callback: (r: { computedAt: number }) => void) => () => void
     }
   }
+}
+
+// Wire shapes the renderer receives from the Bandcamp integration (kept
+// loose; the authoritative definitions live in
+// src/main/bandcamp-integration/types.ts).
+export interface StoreTrackWire {
+  num: number
+  title: string
+  durationSec: number
+  previewUrl?: string
+  trackUrl?: string
+}
+export interface StoreAlbumWire {
+  id: number
+  url: string
+  title: string
+  artist: string
+  artistUrl?: string
+  tags: string[]
+  label?: string
+  geo?: string
+  releaseDate?: string
+  coverArtId?: number
+  tracks: StoreTrackWire[]
+  price?: number
+  currency?: string
+  isPurchasable: boolean
+  owned: boolean
+}
+export interface ScoredTermWire { term: string; score: number }
+export interface UnifiedProfileWire {
+  computedAt: number
+  topTags: ScoredTermWire[]
+  labelAffinity: ScoredTermWire[]
+  geoClusters: ScoredTermWire[]
+  decade: ScoredTermWire[]
+  followedArtists: string[]
+  artistStaples: { artist: string; staple: number; ownedAlbumCount: number }[]
+  ownedFingerprints: string[]
+  ownedArtistAlbum: string[]
+  sources: { library: boolean; bandcamp: boolean }
 }

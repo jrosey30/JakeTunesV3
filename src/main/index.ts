@@ -36,6 +36,7 @@ import {
   extensionForFormat,
   type AudioFormat,
 } from './platform'
+import { registerBandcampIntegration } from './bandcamp-integration'
 
 const isDev = !app.isPackaged
 
@@ -5500,6 +5501,44 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
   }
 })
 
+// ── Bandcamp Store: download → library bridge ──
+// Reuses importOneFile() (dedupe / convert / tag-embed / hashed-folder
+// placement) so Bandcamp purchases route exactly like any other import.
+// Injected into the Bandcamp integration to keep that module decoupled.
+async function nextLibraryId(): Promise<number> {
+  try {
+    const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ id?: number }> }
+    let max = 0
+    for (const t of lib.tracks || []) max = Math.max(max, Number(t.id) || 0)
+    return max + 1
+  } catch {
+    return 1
+  }
+}
+
+async function importDownloadedFiles(absPaths: string[]): Promise<Array<Record<string, unknown>>> {
+  const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
+  const settings = await readAppSettingsAsync()
+  const lib = settings?.library as { defaultImportFormat?: string } | undefined
+  const preferred = lib?.defaultImportFormat
+  const chosenFmt: AudioFormat = validFormats.includes(preferred as AudioFormat)
+    ? (preferred as AudioFormat)
+    : 'aac-256'
+  const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
+  let id = await nextLibraryId()
+  const tracks: Array<Record<string, unknown>> = []
+  for (const p of absPaths) {
+    const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints)
+    if (r.ok && r.track) {
+      tracks.push(r.track)
+      const fp = fingerprintTrack({ title: r.track.title, artist: r.track.artist, duration: r.track.duration })
+      if (fp) sessionImportedFingerprints.add(fp)
+      id = (Number(r.track.id) || id) + 1
+    }
+  }
+  return tracks
+}
+
 app.whenReady().then(async () => {
   // 4.2.5: bootstrap the cached host preference so the very first
   // prompt build of the session picks the user's chosen persona,
@@ -5904,6 +5943,14 @@ app.whenReady().then(async () => {
   // running UI instead of getting silently overwritten. Fire after
   // createWindow so mainWindow is defined when the watcher emits.
   startLibraryWatcher()
+
+  // ── Bandcamp Store integration (Brief 036 v2.2) ──
+  // Registered after createWindow so mainWindow is live for overlay views
+  // and purchase-complete events.
+  registerBandcampIntegration({
+    getMainWindow: () => mainWindow,
+    importDownloaded: importDownloadedFiles,
+  })
 
   // Auto-update: check for updates in production
   if (!isDev) {
