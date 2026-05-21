@@ -304,7 +304,7 @@ declare global {
       bandcampRefreshProfile: () => Promise<{ ok: boolean; computedAt?: number }>
       bandcampGetProfile: () => Promise<UnifiedProfileWire | null>
       bandcampGetAlbum: (url: string) => Promise<{ ok: boolean; album?: StoreAlbumWire; error?: string }>
-      bandcampSearch: (query: string) => Promise<{ ok: boolean; results?: StoreAlbumWire[]; error?: string }>
+      bandcampSearch: (query: string) => Promise<{ ok: boolean; results?: BandcampSearchResultWire[]; error?: string }>
       bandcampGetSurface: (name: string, limit?: number) => Promise<{ ok: boolean; items?: StoreAlbumWire[]; error?: string }>
       bandcampOpenCheckout: (url: string) => Promise<{ ok: boolean }>
       bandcampCloseOverlay: () => Promise<{ ok: boolean }>
@@ -341,6 +341,24 @@ export interface StoreAlbumWire {
   isPurchasable: boolean
   owned: boolean
 }
+/**
+ * Wire form of BandcampSearchResult (Brief 036 v3 Decision 1). Authoritative
+ * shape lives in src/main/bandcamp-integration/types.ts; this mirror exists
+ * so the renderer compiles without importing main-process modules.
+ */
+export type BandcampSearchResultWire =
+  | { kind: 'artist'; name: string; bandUrl: string; imageUrl?: string }
+  | {
+      kind: 'release'
+      title: string
+      artist: string
+      artistUrl: string
+      releaseUrl: string
+      imageUrl?: string
+      releaseDate?: string
+      priceCents?: number
+      currency?: string
+    }
 export interface ScoredTermWire { term: string; score: number }
 export interface UnifiedProfileWire {
   computedAt: number

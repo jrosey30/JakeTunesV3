@@ -18,7 +18,6 @@ import { getUnified, rebuildUnified, scheduleDailyRefresh } from './personalizat
 import { buildOwnedSets, markOwned } from './personalization/overlap-detection'
 import { readLibraryRows } from './data/library-data'
 import { rankAlbums } from './personalization/ranking'
-import { rerankSearch } from './personalization/recommenders/search-reranker'
 import { bandcampSession, checkAuth, clearSession } from './acquisition/auth'
 import { attachDownloadRouter } from './acquisition/download-router'
 import { StoreAlbum, Tier1Surface } from './types'
@@ -141,11 +140,11 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
   })
 
   ipcMain.handle('bandcamp:search', async (_e, query: string) => {
+    // Returns BandcampSearchResult[] (Brief 036 v3 Decision 1). Owned-marking
+    // and personalization re-rank are deferred — the union carries no
+    // `owned` field, and re-rank is parked per §9.
     const results = await catalogSearch(query)
-    const owned = buildOwnedSets(await readLibraryRows())
-    markOwned(results, owned)
-    const profile = await getUnified()
-    return { ok: true as const, results: rerankSearch(results, profile) }
+    return { ok: true as const, results }
   })
 
   ipcMain.handle('bandcamp:get-surface', async (_e, name: Tier1Surface, limit = 20) => {

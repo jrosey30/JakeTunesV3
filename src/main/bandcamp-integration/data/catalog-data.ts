@@ -7,7 +7,7 @@
 //  (the /search HTML page has no clean machine-readable form).
 // ════════════════════════════════════════════════════════════════════════
 
-import { StoreAlbum, StoreTrack } from '../types'
+import { BandcampSearchResult, StoreAlbum, StoreTrack } from '../types'
 import { exec, loadAndWait } from './scraper'
 
 /** Bandcamp cover-art URL. format 16 ≈ 700px (detail), 9 ≈ 210px (tiles). */
@@ -127,37 +127,48 @@ interface AutocompleteResult {
   name?: string
   band_name?: string
   item_url_path?: string
+  item_url_root?: string
   url?: string
+  img?: string
   img_id?: number
   art_id?: number
 }
 
 /**
- * Catalog search via the JSON autocomplete endpoint. Returns lightweight
- * album results (full track listing comes from getAlbum on click).
+ * Catalog search via the JSON autocomplete endpoint. Returns the Brief 036
+ * v3 discriminated union: bands (`type:'b'`) become `kind:'artist'`,
+ * albums (`type:'a'`) become `kind:'release'`. Tracks (`type:'t'`) are
+ * dropped — the union has no track variant and tracks are surfaced via
+ * release detail (Phase D) rather than search.
  */
-export async function search(query: string): Promise<StoreAlbum[]> {
+export async function search(query: string): Promise<BandcampSearchResult[]> {
   if (!query.trim()) return []
   await loadAndWait('https://bandcamp.com')
-  const body = JSON.stringify({ search_text: query, search_filter: 'a', full_page: false })
+  // Empty search_filter lets Bandcamp return bands + albums (+ tracks)
+  // mixed; we discriminate by `type` below. The prior 'a' filter
+  // restricted to albums and forced artists to render as releases.
+  const body = JSON.stringify({ search_text: query, search_filter: '', full_page: false })
   const res = await exec<{ auto?: { results?: AutocompleteResult[] } }>(
     `fetch('https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic',` +
     `{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},` +
     `body:${JSON.stringify(body)}}).then(r=>r.ok?r.json():null).catch(()=>null)`,
   )
   const results = res?.auto?.results || []
-  return results
-    .filter((r) => r.type === 'a' || !!r.name)
-    .map((r) => ({
-      id: Number(r.id) || 0,
-      url: r.url || (r.item_url_path ? `https://bandcamp.com${r.item_url_path}` : ''),
-      title: String(r.name || ''),
-      artist: String(r.band_name || ''),
-      tags: [],
-      tracks: [],
-      coverArtId: Number(r.img_id ?? r.art_id) || undefined,
-      isPurchasable: true,
-      owned: false,
-    }))
-    .filter((a) => a.url)
+  const out: BandcampSearchResult[] = []
+  for (const r of results) {
+    if (r.type === 'b' && r.name && r.item_url_root) {
+      out.push({ kind: 'artist', name: r.name, bandUrl: r.item_url_root, imageUrl: r.img })
+    } else if (r.type === 'a' && r.name && r.item_url_path) {
+      out.push({
+        kind: 'release',
+        title: r.name,
+        artist: String(r.band_name || ''),
+        artistUrl: r.item_url_root || '',
+        releaseUrl: r.item_url_path,
+        imageUrl: r.img,
+      })
+    }
+    // type 't' (track) intentionally dropped — see jsdoc above.
+  }
+  return out
 }

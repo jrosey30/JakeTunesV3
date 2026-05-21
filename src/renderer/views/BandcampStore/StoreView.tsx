@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { StoreAlbumWire, UnifiedProfileWire } from '../../types'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { BandcampSearchResultWire, StoreAlbumWire, UnifiedProfileWire } from '../../types'
 import StoreHeader from './StoreHeader'
 import StoreSidebar from './StoreSidebar'
 import FeaturedCarousel from './FeaturedCarousel'
@@ -17,7 +17,7 @@ export default function StoreView() {
   const [profile, setProfile] = useState<UnifiedProfileWire | null>(null)
   const [featured, setFeatured] = useState<StoreAlbumWire[]>([])
   const [newPicks, setNewPicks] = useState<StoreAlbumWire[]>([])
-  const [results, setResults] = useState<StoreAlbumWire[]>([])
+  const [results, setResults] = useState<BandcampSearchResultWire[]>([])
   const [detail, setDetail] = useState<StoreAlbumWire | null>(null)
   const [route, setRoute] = useState<Route>({ kind: 'landing' })
   const [activeTag, setActiveTag] = useState<string | null>(null)
@@ -61,6 +61,29 @@ export default function StoreView() {
     setBusy(false)
     setDetail(res.ok && res.album ? res.album : { ...album })
   }, [])
+
+  // Phase A render shim: surface only release-kind results through the
+  // existing AlbumGrid path. Artists are dropped from search visuals until
+  // Phase D introduces kind-aware tile + router branching (Decision 2).
+  const releaseResults = useMemo<StoreAlbumWire[]>(
+    () =>
+      results
+        .filter((r): r is Extract<BandcampSearchResultWire, { kind: 'release' }> => r.kind === 'release')
+        .map((r) => ({
+          id: 0,
+          url: r.releaseUrl,
+          title: r.title,
+          artist: r.artist,
+          artistUrl: r.artistUrl,
+          tags: [],
+          releaseDate: r.releaseDate,
+          tracks: [],
+          currency: r.currency,
+          isPurchasable: true,
+          owned: false,
+        })),
+    [results],
+  )
 
   const doSearch = useCallback(async (query: string) => {
     if (!query) return
@@ -118,7 +141,7 @@ export default function StoreView() {
           {route.kind === 'search' && (
             <PersonalizedSection
               title={`Results for "${route.query}"`}
-              albums={results}
+              albums={releaseResults}
               onOpen={openAlbum}
               emptyLabel={busy ? 'Searching…' : 'No results.'}
             />

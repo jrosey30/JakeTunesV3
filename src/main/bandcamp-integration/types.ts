@@ -124,3 +124,27 @@ export interface LibraryRow {
 }
 
 export type Tier1Surface = 'featured-for-you' | 'your-new-picks' | 'search-rerank'
+
+/**
+ * Discriminated union for Bandcamp catalog search results (Brief 036 v3
+ * Decision 1). Artists and releases share the search surface but render
+ * to distinct detail views (ArtistDetailView vs ReleaseDetailView). Code
+ * that branches on result kind uses `if (r.kind === 'artist')`, not duck
+ * typing on field presence.
+ *
+ * Image URLs are the absolute CDN URLs Bandcamp's autocomplete endpoint
+ * emits (`https://f4.bcbits.com/img/…`); the renderer uses them directly.
+ */
+export type BandcampSearchResult =
+  | { kind: 'artist'; name: string; bandUrl: string; imageUrl?: string }
+  | {
+      kind: 'release'
+      title: string
+      artist: string
+      artistUrl: string
+      releaseUrl: string
+      imageUrl?: string
+      releaseDate?: string
+      priceCents?: number
+      currency?: string
+    }
