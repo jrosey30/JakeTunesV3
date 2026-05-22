@@ -119,6 +119,27 @@ function AppInner() {
     })
   }, [dispatch])
 
+  // 4.4.85: Bandcamp batch imports feed the same pill the drag-drop
+  // bridge below uses. Main emits per-file events so the bar advances
+  // visibly (vs the previous "all 11 finish before any UI feedback"
+  // experience). Final running:false + zero-total clears the pill.
+  useEffect(() => {
+    return window.electronAPI.onBandcampBatchProgress((p) => {
+      if (p.total === 0) {
+        setImport(null)
+        return
+      }
+      setImport({
+        active: true,
+        current: p.current,
+        total: p.total,
+        trackTitle: p.trackTitle,
+        errors: p.errors,
+        barFraction: Math.min(1, (p.current + (p.running ? 0.5 : 0)) / p.total),
+      })
+    })
+  }, [])
+
   // Bridge the importQueue (drag-drop) state into the activity store so
   // the now-playing pill surfaces "Importing X of N" progress at the top
   // of the window — instead of (only) the bottom-corner ImportQueuePanel,

@@ -7131,15 +7131,28 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
   let id = await nextLibraryId()
   const tracks: Array<Record<string, unknown>> = []
   const alacAbsPaths: string[] = []
+  const total = absPaths.length
+  let done = 0
+  let errors = 0
   for (const p of absPaths) {
     // Per-file format resolution so a FLAC track inside an album-zip
     // becomes AAC even when the user's default is ALAC (Jake's policy).
     const chosenFmt = resolveImportFormat(p, userPreferred)
+    // 4.4.85: emit progress before each file so the now-playing pill's
+    // import mode (the same one drag-drop uses) advances visibly as the
+    // batch grinds. `running:true` triggers the +0.5 bar bump for the
+    // currently-encoding file. trackTitle uses the filename — metadata
+    // isn't parsed yet at this point.
+    const trackTitle = p.split('/').pop() || p
+    mainWindow?.webContents.send('bandcamp:batch-progress', {
+      current: done, total, trackTitle, errors, running: true,
+    })
     const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints, undefined, source)
     if (r.ok && r.track) {
       tracks.push(r.track)
       const fp = fingerprintTrack({ title: r.track.title, artist: r.track.artist, duration: r.track.duration })
       if (fp) sessionImportedFingerprints.add(fp)
+      done += 1
       id = (Number(r.track.id) || id) + 1
       if (chosenFmt === 'alac') {
         const colon = String(r.track.path || '')
@@ -7149,8 +7162,22 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
           alacAbsPaths.push(join(LOCAL_MOUNT, colon.replace(/:/g, pathSep)))
         }
       }
+    } else {
+      errors += 1
     }
   }
+  // Final progress emit so the pill shows "N of N" momentarily, then
+  // clear after a beat (matches how drag-drop fades out as importQueue
+  // empties — gives the user a satisfying "100%" tick before the pill
+  // resets to playing/idle).
+  mainWindow?.webContents.send('bandcamp:batch-progress', {
+    current: done, total, trackTitle: '', errors, running: false,
+  })
+  setTimeout(() => {
+    mainWindow?.webContents.send('bandcamp:batch-progress', {
+      current: 0, total: 0, trackTitle: '', errors: 0, running: false,
+    })
+  }, 1500)
   // Mirror the drag-drop import-track IPC (~line 2353): ALAC files MUST
   // be transcoded into the AAC play-cache at import time, because
   // Chromium's <audio> element can't decode ALAC and the protocol

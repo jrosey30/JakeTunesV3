@@ -414,6 +414,8 @@ declare global {
       // into LibraryContext; recentlyAdded.ts uses just id/title/album.
       onBandcampTrackImported: (callback: (track: Track) => void) => () => void
       onBandcampImportFailed: (callback: (reason: { filename: string; error: string }) => void) => () => void
+      // 4.4.85: per-file progress for the now-playing pill's import mode.
+      onBandcampBatchProgress: (callback: (p: { current: number; total: number; trackTitle: string; errors: number; running: boolean }) => void) => () => void
       // 4.4.13 — Inbox auto-import (Qobuz → JakeTunes pipeline).
       onInboxFilesDetected: (callback: (paths: string[]) => void) => () => void
       deleteInboxSource: (filePath: string) => Promise<{ ok: boolean; error?: string }>

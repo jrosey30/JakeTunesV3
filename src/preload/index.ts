@@ -373,6 +373,15 @@ const electronAPI = {
     ipcRenderer.on('bandcamp:import-failed', handler)
     return () => { ipcRenderer.removeListener('bandcamp:import-failed', handler) }
   },
+  // 4.4.85: per-file progress so the now-playing pill renders Bandcamp
+  // batches via the same setImport() drag-drop uses. Fires once per file
+  // (running:true) + a final running:false when the batch finishes, then
+  // a zero-total event ~1.5s later to clear the pill.
+  onBandcampBatchProgress: (callback: (p: { current: number; total: number; trackTitle: string; errors: number; running: boolean }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { current: number; total: number; trackTitle: string; errors: number; running: boolean }) => callback(p)
+    ipcRenderer.on('bandcamp:batch-progress', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:batch-progress', handler) }
+  },
 
   // 4.4.13 — Inbox auto-import. Main-side chokidar watches a folder
   // (default ~/Music2/_inbox) and emits `inbox-files-detected` with a
