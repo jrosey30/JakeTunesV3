@@ -34,6 +34,7 @@ import {
   audioHelperRelPath,
   convertAudio,
   extensionForFormat,
+  resolveImportFormat,
   type AudioFormat,
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
@@ -2323,9 +2324,12 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
       resolvedFormat = lib.defaultImportFormat
     }
   }
-  const chosenFmt: AudioFormat = validFormats.includes(resolvedFormat as AudioFormat)
+  const userPreferred: AudioFormat = validFormats.includes(resolvedFormat as AudioFormat)
     ? (resolvedFormat as AudioFormat)
     : 'aac-256'
+  // Jake's import policy: FLAC/WAV sources become AAC regardless of the
+  // user preference; ALAC stays ALAC; everything else honors preference.
+  const chosenFmt = resolveImportFormat(srcPath, userPreferred)
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
   const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints)
 
@@ -5523,7 +5527,7 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
   const settings = await readAppSettingsAsync()
   const lib = settings?.library as { defaultImportFormat?: string } | undefined
   const preferred = lib?.defaultImportFormat
-  const chosenFmt: AudioFormat = validFormats.includes(preferred as AudioFormat)
+  const userPreferred: AudioFormat = validFormats.includes(preferred as AudioFormat)
     ? (preferred as AudioFormat)
     : 'aac-256'
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
@@ -5531,6 +5535,9 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
   const tracks: Array<Record<string, unknown>> = []
   const alacAbsPaths: string[] = []
   for (const p of absPaths) {
+    // Per-file format resolution so a FLAC track inside an album-zip
+    // becomes AAC even when the user's default is ALAC (Jake's policy).
+    const chosenFmt = resolveImportFormat(p, userPreferred)
     const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints, undefined, source)
     if (r.ok && r.track) {
       tracks.push(r.track)

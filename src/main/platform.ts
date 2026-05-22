@@ -221,6 +221,30 @@ export function extensionForFormat(fmt: AudioFormat): string {
 }
 
 /**
+ * Pick the output format for an imported file given the user's preferred
+ * default. Jake's import policy (covers Bandcamp purchases, drag-drop
+ * manual uploads, anywhere):
+ *
+ *   - FLAC source -> AAC (no point keeping a lossy-of-lossless copy
+ *     when the AAC encoder is fine for everyday listening)
+ *   - WAV source  -> AAC (same reasoning, plus uncompressed sizes are
+ *     wasteful on the library disk)
+ *   - ALAC source -> ALAC (lossless stays lossless)
+ *   - everything else -> the user's preferred default unchanged
+ *
+ * The AAC variant for FLAC/WAV picks the user's preferred bitrate if
+ * they already had one (aac-128/256/320); otherwise defaults to
+ * aac-256.
+ */
+export function resolveImportFormat(srcPath: string, userPreferred: AudioFormat): AudioFormat {
+  const ext = srcPath.slice(srcPath.lastIndexOf('.')).toLowerCase()
+  if (ext === '.flac' || ext === '.wav') {
+    return userPreferred.startsWith('aac-') ? userPreferred : 'aac-256'
+  }
+  return userPreferred
+}
+
+/**
  * Metadata that can be embedded into the output file at convert time. All
  * fields are optional — only non-empty values are written.
  */
