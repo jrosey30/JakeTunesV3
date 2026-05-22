@@ -657,6 +657,14 @@ function kickAudioAnalysisWorker(): void {
 
 let mainWindow: BrowserWindow | null = null
 
+// 4.4.85: codec hint for the ipod-audio:// protocol handler so it can
+// skip the ~200-500 ms ffprobe call on every first-play. Populated from
+// library.json at app startup (loadCodecMapFromLibrary) and updated
+// inline by importOneFile on each new import. Keyed by absolute path —
+// the same form the protocol handler decodes the URL into. Missing
+// entry => legacy track (pre-4.4.85), handler falls through to ffprobe.
+const codecByAbsPath = new Map<string, string>()
+
 function sendMenuAction(action: string) {
   mainWindow?.webContents.send('menu-action', action)
 }
@@ -1357,6 +1365,31 @@ const LIBRARY_PATH = join(app.getPath('userData'), 'library.json')
 ipcMain.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
 })
+
+// 4.4.85: at app boot, read library.json and seed the codecByAbsPath map
+// from every track that has a `codec` field. Imports made before this
+// version don't have the field — those tracks fall back to the ffprobe
+// path inside the protocol handler. Idempotent; safe to call again on
+// library reload if we ever wire that.
+async function loadCodecMapFromLibrary(): Promise<void> {
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8')
+    const lib = JSON.parse(raw) as { tracks?: Array<{ path?: string; codec?: string }> }
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+    let added = 0
+    for (const t of lib.tracks || []) {
+      if (!t.path || !t.codec) continue
+      const abs = join(LOCAL_MOUNT, t.path.replace(/:/g, pathSep))
+      codecByAbsPath.set(abs, t.codec)
+      added += 1
+    }
+    console.log(`[codec-map] seeded ${added} entries from library.json`)
+  } catch (err) {
+    // Library may not exist yet (fresh install) — fine, map stays empty.
+    console.log(`[codec-map] no seed (${err instanceof Error ? err.message : String(err)})`)
+  }
+}
 
 // Single source of truth for the app version, sourced from package.json.
 // Renderer pulls this once at startup so version-display surfaces don't
@@ -2773,9 +2806,19 @@ async function importOneFile(
       // imports default to sole-artist and the user can re-run the
       // apply script if they import a new collab worth splitting.
       contributingArtists: [common.artist || ''],
+      // 4.4.85: record codec so the ipod-audio:// protocol handler can
+      // skip its ~200-500 ms ffprobe call on first-play. chosenFmt is
+      // the encoder's output format; the handler only branches on
+      // === 'alac' (cache hit) vs anything else (serve raw).
+      codec: chosenFmt,
       ...(audioFingerprint ? { audioFingerprint } : {}),
       ...(source ? { source } : {}),
     }
+
+    // 4.4.85: populate the in-memory codec map so the protocol handler
+    // gets a hit immediately for tracks imported during this session
+    // (and ahead of library.json being rewritten by save-library).
+    codecByAbsPath.set(destPath, chosenFmt)
 
     // Add this fingerprint to the set so a duplicate appearing later in
     // the same batch (or a back-to-back drop) gets caught even before
@@ -7187,6 +7230,12 @@ app.whenReady().then(async () => {
   MUSIC_DIR = await resolveMusicDir()
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
 
+  // 4.4.85: seed the codec-hint map BEFORE the ipod-audio:// protocol
+  // handler registers so the very first play in this session can use it.
+  // Depends on MUSIC_DIR (resolved just above) for the colon-path -> abs
+  // conversion.
+  await loadCodecMapFromLibrary()
+
   // 4.2.5: bootstrap the cached host preference so the very first
   // prompt build of the session picks the user's chosen persona,
   // not the 'mm' module-default.
@@ -7561,12 +7610,33 @@ app.whenReady().then(async () => {
       // fallthrough to the raw file if ffmpeg fails — playback may still
       // work for codecs Chromium does support.
       if (ext === '.m4a' || ext === '.alac' || ext === '.mp4') {
-        const srcStat = await stat(rawPath).catch(() => null)
-        if (srcStat) {
-          const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
-          if (cached) {
-            filePath = cached
-            ext = '.m4a'
+        // 4.4.85: prefer the library-side codec hint over ffprobe. AAC
+        // files were eating ~200-500 ms per first-play running ffprobe
+        // to discover they're already AAC.
+        const hint = codecByAbsPath.get(rawPath)
+        if (hint) {
+          if (hint === 'alac') {
+            const srcStat = await stat(rawPath).catch(() => null)
+            if (srcStat) {
+              const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+              if (cached) {
+                filePath = cached
+                ext = '.m4a'
+              }
+            }
+          }
+          // Non-ALAC codec hint: serve raw, no ffprobe, no transcode.
+        } else {
+          // Legacy track (no codec field on Track) — fall through to the
+          // original ffprobe path, which caches its own answer in
+          // memory for this session.
+          const srcStat = await stat(rawPath).catch(() => null)
+          if (srcStat) {
+            const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+            if (cached) {
+              filePath = cached
+              ext = '.m4a'
+            }
           }
         }
       }

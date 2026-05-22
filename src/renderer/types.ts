@@ -29,6 +29,13 @@ export interface Track {
   // pattern `(t.contributingArtists ?? [t.artist]).includes(X)`
   // makes the field defensive at every read site.
   contributingArtists?: string[]
+  // 4.4.85: codec recorded at import time so the ipod-audio:// protocol
+  // handler can skip the ~200-500 ms ffprobe call on every first-play.
+  // Value is the AudioFormat the encoder produced ('aac-256', 'alac',
+  // 'wav', etc.); protocol handler only branches on === 'alac' (cache
+  // hit) vs anything else (serve raw). Legacy tracks (pre-this-fix)
+  // have it undefined and fall through to the ffprobe path.
+  codec?: string
   // Identity-based per-file fingerprint set at import time. Used by the
   // silent post-sync verifier (main/index.ts::verifyAndHealTracks) to
   // detect cross-linked paths without text matching.
