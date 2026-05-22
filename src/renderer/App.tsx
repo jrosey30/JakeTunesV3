@@ -109,13 +109,18 @@ function AppInner() {
   useEffect(() => { initRecentlyAdded() }, [])
 
   // Mirror the drag-drop importQueue pattern (see line below): each
-  // Bandcamp purchase track produced by importOneFile lands in the
-  // library state the same way a manually-dropped file does. Without
-  // this dispatch, importOneFile copies the audio to its canonical
-  // location but the renderer never learns the track exists.
+  // Bandcamp/squid purchase track produced by importOneFile lands in
+  // the library state the same way a manually-dropped file does.
+  // Wrapped in try/catch because a 20-track squid Drake-Views import
+  // (4.5.0) crashed the renderer mid-burst with a SIGTRAP; without a
+  // catch a malformed payload would tear down the entire UI.
   useEffect(() => {
     return window.electronAPI.onBandcampTrackImported((t) => {
-      dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
+      try {
+        dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
+      } catch (err) {
+        console.error('[bandcamp:track-imported handler] crash-guard:', err, t)
+      }
     })
   }, [dispatch])
 
@@ -125,18 +130,22 @@ function AppInner() {
   // experience). Final running:false + zero-total clears the pill.
   useEffect(() => {
     return window.electronAPI.onBandcampBatchProgress((p) => {
-      if (p.total === 0) {
-        setImport(null)
-        return
+      try {
+        if (p.total === 0) {
+          setImport(null)
+          return
+        }
+        setImport({
+          active: true,
+          current: p.current,
+          total: p.total,
+          trackTitle: p.trackTitle,
+          errors: p.errors,
+          barFraction: Math.min(1, (p.current + (p.running ? 0.5 : 0)) / p.total),
+        })
+      } catch (err) {
+        console.error('[bandcamp:batch-progress handler] crash-guard:', err, p)
       }
-      setImport({
-        active: true,
-        current: p.current,
-        total: p.total,
-        trackTitle: p.trackTitle,
-        errors: p.errors,
-        barFraction: Math.min(1, (p.current + (p.running ? 0.5 : 0)) / p.total),
-      })
     })
   }, [])
 

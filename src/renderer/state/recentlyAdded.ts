@@ -150,6 +150,17 @@ let wired = false
 export function initRecentlyAdded(): void {
   if (wired) return
   wired = true
-  window.electronAPI.onBandcampTrackImported(onTrackImported)
-  window.electronAPI.onBandcampImportFailed(onImportFailed)
+  // Wrap in try/catch so a single malformed payload in a long burst
+  // (4.5.0: 20-track squid Drake-Views import SIGTRAP'd the renderer
+  // mid-stream) can't tear down the whole UI.
+  window.electronAPI.onBandcampTrackImported((t) => {
+    try { onTrackImported(t) } catch (err) {
+      console.error('[recentlyAdded:track] crash-guard:', err, t)
+    }
+  })
+  window.electronAPI.onBandcampImportFailed((r) => {
+    try { onImportFailed(r) } catch (err) {
+      console.error('[recentlyAdded:failed] crash-guard:', err, r)
+    }
+  })
 }
