@@ -38,7 +38,7 @@ const BANDCAMP_HOME = 'https://bandcamp.com'
 // session looks like an ordinary browser. The underlying Chromium is
 // real, only the identifying tokens are stripped.
 const REAL_BROWSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
 interface Bounds {
   x: number
@@ -78,6 +78,21 @@ function ensureView(): WebContentsView {
   // also pin it on this webContents in case Electron ever decouples them
   // (defaultURLChain edge cases).
   view.webContents.setUserAgent(REAL_BROWSER_UA)
+
+  // Bandcamp / Fastly will fire window.open() for the bot-detection
+  // challenge (and for any target=_blank links). Electron's default
+  // handler spawns a fresh BrowserWindow with no UA override + no
+  // visual containment — exactly the "separate popup outside JakeTunes"
+  // bug the user reported. Override: deny the popup, redirect the URL
+  // into THIS view's webContents so everything stays inside the app +
+  // benefits from the same UA + the same cookie jar.
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (view && !view.webContents.isDestroyed()) {
+      void view.webContents.loadURL(url)
+    }
+    return { action: 'deny' }
+  })
+
   viewLoaded = false
   return view
 }
