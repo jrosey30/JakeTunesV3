@@ -5529,6 +5529,7 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
   let id = await nextLibraryId()
   const tracks: Array<Record<string, unknown>> = []
+  const alacAbsPaths: string[] = []
   for (const p of absPaths) {
     const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints, undefined, source)
     if (r.ok && r.track) {
@@ -5536,7 +5537,26 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
       const fp = fingerprintTrack({ title: r.track.title, artist: r.track.artist, duration: r.track.duration })
       if (fp) sessionImportedFingerprints.add(fp)
       id = (Number(r.track.id) || id) + 1
+      if (chosenFmt === 'alac') {
+        const colon = String(r.track.path || '')
+        if (colon) {
+          const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+          const pathSep = IS_WINDOWS ? '\\' : '/'
+          alacAbsPaths.push(join(LOCAL_MOUNT, colon.replace(/:/g, pathSep)))
+        }
+      }
     }
+  }
+  // Mirror the drag-drop import-track IPC (~line 2353): ALAC files MUST
+  // be transcoded into the AAC play-cache at import time, because
+  // Chromium's <audio> element can't decode ALAC and the protocol
+  // handler serves the cached AAC mirror instead. Without this batch,
+  // first playback of any Bandcamp-imported ALAC track fails with
+  // MEDIA_ERR_SRC_NOT_SUPPORTED.
+  if (alacAbsPaths.length > 0) {
+    await prewarmAlacCache(alacAbsPaths).catch((err) => {
+      console.warn(`[bandcamp] alac cache transcode failed:`, err)
+    })
   }
   return tracks
 }
