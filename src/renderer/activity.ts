@@ -72,6 +72,17 @@ export function setSync(next: SyncActivity | null): void {
 }
 
 export function setImport(next: ImportActivity | null): void {
+  // Skip notify if nothing the pill cares about has actually changed —
+  // importQueue can fire many notifications per second during an import
+  // burst (each queue mutation), and re-rendering the pill on identical
+  // state produces visible flicker.
+  if (importing === next) return
+  if (importing && next &&
+      importing.active === next.active &&
+      importing.current === next.current &&
+      importing.total === next.total &&
+      importing.trackTitle === next.trackTitle &&
+      importing.errors === next.errors) return
   importing = next
   notify()
 }

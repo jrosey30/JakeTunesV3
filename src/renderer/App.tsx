@@ -101,9 +101,15 @@ function AppInner() {
       const items = getQueueState().items
       const active = getActiveItem()
       const trackTitle = active ? (active.srcPath.split('/').pop() || active.srcPath) : ''
+      // Bump the bar by 0.5 for the currently-running file so it advances
+      // twice per file (when start fires, again when complete fires) — the
+      // raw done count only updates once per file completion, leaving the
+      // bar frozen for 10-30 s per ALAC encode.
+      const doneCount = getDoneCount()
+      const inFlight = active && active.status === 'running' ? 0.5 : 0
       setImport({
         active: true,
-        current: getDoneCount(),
+        current: doneCount + inFlight,
         total: Math.max(1, items.length - getDupeCount()),
         trackTitle,
         errors: getFailedCount(),

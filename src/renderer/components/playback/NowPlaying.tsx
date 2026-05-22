@@ -180,8 +180,14 @@ export default function NowPlaying() {
   const effectiveMode: PillMode | null = available.length === 0 ? null :
     (available.includes(mode) ? mode : 'playing')
 
+  // Activity modes (rip / sync / import) don't render the right-side
+  // visualizer, so the playing-mode's 56px right-padding (reserved for
+  // the visualizer) leaves the content visibly left-shifted in those
+  // modes. Use a modifier so the activity layout gets symmetric padding.
+  const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import'
+
   return (
-    <div className="now-playing-pill">
+    <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''}`}>
       {showCycle && (
         <button className="np-cycle-btn" onClick={cycleMode} title="Toggle display">
           <svg width="10" height="12" viewBox="0 0 10 12" fill="none">

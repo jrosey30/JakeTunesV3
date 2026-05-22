@@ -166,7 +166,13 @@
 .np-cycle-btn:hover { opacity: 1; }
 .now-playing-pill { position: relative; }
 
-/* ── Activity state in the LCD pill (CD rip / iPod sync) ── */
+/* ── Activity state in the LCD pill (CD rip / iPod sync / drag-drop import) ── */
+/* Activity modes have no right-side visualizer, so drop the 40 px the
+ * playing-mode padding reserves for it — otherwise the text drifts
+ * left of the pill's true visual center. */
+.now-playing-pill--activity {
+  padding: 4px 16px;
+}
 .now-playing-info--activity {
   color: #4a3a18;
   font-style: italic;
