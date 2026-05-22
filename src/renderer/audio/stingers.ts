@@ -17,6 +17,7 @@ export type StingerType =
   | 'bell-hit'     // tuned resonant bell — endcap accent
   | 'sub-drop'     // sine drop — drama bed under the line
   | 'whoosh-pad'   // softer pad swell — gentler version of riser
+  | 'scratch'      // 4.4.49: turntable scratch — DJ Mode transition punch
 
 /** Total duration in seconds (so callers can wait the right amount). */
 export const STINGER_DURATIONS: Record<StingerType, number> = {
@@ -26,6 +27,7 @@ export const STINGER_DURATIONS: Record<StingerType, number> = {
   'bell-hit':    0.9,
   'sub-drop':    0.8,
   'whoosh-pad':  1.4,
+  'scratch':     0.62,
 }
 
 function destination(): { ctx: AudioContext; node: AudioNode } | null {
@@ -203,6 +205,56 @@ function playWhooshPad(): void {
   noise.stop(now + dur + 0.05)
 }
 
+// 4.4.49: turntable scratch — the "wikki-wikki" punch for DJ Mode
+// transitions. A real scratch is a sampled sound being pushed back and
+// forth under the needle while the crossfader cuts it in and out;
+// procedurally we approximate it with a bandpass-filtered sawtooth
+// (the "vox-ish" buzz of a scratched sample), its pitch ramped up-then-
+// down several times (the hand motion), gain hard-gated on each pass
+// (the crossfader cuts). Not a sampled vinyl scratch — but a clearly
+// readable scratch, and consistent with the zero-files procedural-FX
+// approach the rest of this file uses.
+function playScratch(): void {
+  const dest = destination(); if (!dest) return
+  const { ctx, node } = dest
+  const now = ctx.currentTime
+  const dur = STINGER_DURATIONS.scratch
+
+  const osc = ctx.createOscillator()
+  const bp = ctx.createBiquadFilter()
+  const gain = ctx.createGain()
+
+  osc.type = 'sawtooth'
+  bp.type = 'bandpass'
+  bp.frequency.value = 1500
+  bp.Q.value = 5
+
+  const base = 200          // low end of the scratched-sample pitch
+  const passes = 4          // four back-and-forth motions
+  const slice = dur / passes
+
+  gain.gain.setValueAtTime(0.0001, now)
+  for (let i = 0; i < passes; i++) {
+    const t0 = now + i * slice
+    // Each pass a touch tighter/faster — accelerating scratch.
+    const peak = base * (2.4 - i * 0.2)
+    osc.frequency.setValueAtTime(base, t0)
+    osc.frequency.linearRampToValueAtTime(peak, t0 + slice * 0.5)
+    osc.frequency.linearRampToValueAtTime(base, t0 + slice * 0.98)
+    // Crossfader cut: hard on for the first ~55% of the pass, hard off
+    // for the rest — that abrupt gate is what reads as "scratch" and
+    // not "siren."
+    gain.gain.setValueAtTime(0.45, t0)
+    gain.gain.setValueAtTime(0.45, t0 + slice * 0.5)
+    gain.gain.setValueAtTime(0.0001, t0 + slice * 0.55)
+  }
+  gain.gain.setValueAtTime(0.0001, now + dur)
+
+  osc.connect(bp); bp.connect(gain); gain.connect(node)
+  osc.start(now)
+  osc.stop(now + dur + 0.05)
+}
+
 /** Play a single procedural stinger. Returns its duration so callers
  *  can chain timing (await the stinger, then play the announcer line). */
 export function playStinger(type: StingerType): number {
@@ -213,6 +265,7 @@ export function playStinger(type: StingerType): number {
     case 'bell-hit':    playBellHit(); break
     case 'sub-drop':    playSubDrop(); break
     case 'whoosh-pad':  playWhooshPad(); break
+    case 'scratch':     playScratch(); break
   }
   return STINGER_DURATIONS[type]
 }

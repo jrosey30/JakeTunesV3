@@ -1,0 +1,100 @@
+{
+  "_provenance": {
+    "query": "Panic Shack",
+    "capturedAt": "2026-05-21T21:20:20.004Z",
+    "source": "Bandcamp /api/bcsearch_public_api/1/autocomplete_elastic (no-auth, direct curl)",
+    "rawResponseFile": "raw-autocomplete-response.json",
+    "transform": "catalog-data.ts search() normalizer — same logic, applied to raw response",
+    "note": "Direct API capture (curl, no Electron). In-app capture via DevTools (await window.electronAPI.bandcampSearch(\"Panic Shack\")) would round-trip through the WebContentsView session; output shape identical."
+  },
+  "totalResultsFromApi": 34,
+  "emittedByNormalizer": 10,
+  "byKind": {
+    "artist": 1,
+    "release": 9
+  },
+  "droppedByType": {
+    "track": 24,
+    "other": 0
+  },
+  "results": [
+    {
+      "kind": "artist",
+      "name": "Panic Shack",
+      "bandUrl": "https://panicshack.bandcamp.com",
+      "imageUrl": "https://f4.bcbits.com/img/0039472834_23.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "Panic Shack",
+      "artist": "Panic Shack",
+      "artistUrl": "https://panicshack.bandcamp.com",
+      "releaseUrl": "https://panicshack.bandcamp.com/album/panic-shack",
+      "imageUrl": "https://f4.bcbits.com/img/1978874780_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "Baby Shack",
+      "artist": "Panic Shack",
+      "artistUrl": "https://panicshack.bandcamp.com",
+      "releaseUrl": "https://panicshack.bandcamp.com/album/baby-shack",
+      "imageUrl": "https://f4.bcbits.com/img/0485748809_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "MD117 - FALL SHOCK \"Interior\"",
+      "artist": "Fall Shock",
+      "artistUrl": "https://manicdepressionrecords.bandcamp.com",
+      "releaseUrl": "https://manicdepressionrecords.bandcamp.com/album/md117-fall-shock-interior",
+      "imageUrl": "https://f4.bcbits.com/img/2703695485_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "MD158 - FALL SHOCK \"Universal Unit Crime\"",
+      "artist": "FALL SHOCK",
+      "artistUrl": "https://manicdepressionrecords.bandcamp.com",
+      "releaseUrl": "https://manicdepressionrecords.bandcamp.com/album/md158-fall-shock-universal-unit-crime",
+      "imageUrl": "https://f4.bcbits.com/img/3608652600_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "MD117-EP - FALL SHOCK \"Interior - Remixed\"",
+      "artist": "Fall Shock",
+      "artistUrl": "https://manicdepressionrecords.bandcamp.com",
+      "releaseUrl": "https://manicdepressionrecords.bandcamp.com/album/md117-ep-fall-shock-interior-remixed",
+      "imageUrl": "https://f4.bcbits.com/img/2428639743_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "MD117-EX - FALL SHOCK \"Interior - Extended\"",
+      "artist": "Fall Shock",
+      "artistUrl": "https://manicdepressionrecords.bandcamp.com",
+      "releaseUrl": "https://manicdepressionrecords.bandcamp.com/album/md117-ex-fall-shock-interior-extended",
+      "imageUrl": "https://f4.bcbits.com/img/1529400464_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "Global Panic / System Shock",
+      "artist": "Technikal, Pierre Pienaar, Carl Nicholson",
+      "artistUrl": "https://tidytrax.bandcamp.com",
+      "releaseUrl": "https://tidytrax.bandcamp.com/album/global-panic-system-shock",
+      "imageUrl": "https://f4.bcbits.com/img/1846008073_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "Electric Shock",
+      "artist": "PÀNIC",
+      "artistUrl": "https://panicpunks.bandcamp.com",
+      "releaseUrl": "https://panicpunks.bandcamp.com/album/electric-shock",
+      "imageUrl": "https://f4.bcbits.com/img/3742356685_3.jpg"
+    },
+    {
+      "kind": "release",
+      "title": "Manic Shark (The Early Years) EP",
+      "artist": "As You Wish",
+      "artistUrl": "https://asyouwishambient.bandcamp.com",
+      "releaseUrl": "https://asyouwishambient.bandcamp.com/album/manic-shark-the-early-years-ep",
+      "imageUrl": "https://f4.bcbits.com/img/2555007689_3.jpg"
+    }
+  ]
+}

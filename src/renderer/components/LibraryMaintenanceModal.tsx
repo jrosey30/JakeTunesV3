@@ -40,7 +40,18 @@ export default function LibraryMaintenanceModal({ mode, onClose }: Props) {
   // Initial dry-run scan.
   useEffect(() => {
     window.electronAPI.alacCompatScan().then((r) => {
-      setAlac(r)
+      // The IPC contract returns `samples: unknown[]` for forward-compat
+      // (the Python helper may add fields). Coerce to the modal's
+      // narrower shape — extra properties are discarded by the
+      // structural cast and the row renderer pulls only the fields it
+      // needs (path/bit_depth/sample_rate/title/artist).
+      const result: AlacResult = {
+        ok: r.ok,
+        count: r.count,
+        error: r.error,
+        samples: r.samples as AlacResult['samples'],
+      }
+      setAlac(result)
       setScanning(false)
       if (!r.ok) setError(r.error || 'Scan failed')
     })

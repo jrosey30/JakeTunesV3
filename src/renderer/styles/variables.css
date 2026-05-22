@@ -19,7 +19,44 @@
   --pill-bottom: #d6cdb0;
   --pill-border: #9b9682;
   --musicman-bg: #1e140a;
-  --musicman-accent: #c87828;
+
+  /* 4.4.47 — Brand palette, sampled directly from the JakeTunes app
+     logo (newjaketunes.png): the icon's orange is #bb4308, the note's
+     off-white is #faeddc. ONE canonical orange; the gradient shades +
+     button border are derived from it so every glossy iTunes-8 button
+     reads as the same hue the logo uses. Anything orange in the app
+     routes through these — never a one-off literal. */
+  --brand-orange:        #bb4308;       /* canonical: solid fills, accent text, icons */
+  --brand-orange-rgb:    187, 67, 8;    /* same value, for rgba() glows / shadows / tints */
+  --brand-orange-light:  #d6601f;       /* gradient tops + hover */
+  --brand-orange-dark:   #982f05;       /* gradient bottoms */
+  --brand-orange-border: #7f2803;       /* button borders (darkest) */
+  --brand-cream:         #faeddc;       /* the logo note's off-white */
+  --brand-cream-rgb:     250, 237, 220;
+
+  /* The Music Man view's accent is the brand orange (was a separate
+     #c87828). Kept as its own name so the dark-themed Music Man UI
+     could diverge later, but for now it IS the brand orange. */
+  --musicman-accent: var(--brand-orange);
+
+  /* 4.4.52 — Persona accent palette. Each WJLR voice gets its own
+     colour so any UI that attributes a persona (the toolbar speech
+     bubble today; room to grow later) reads at a glance who's
+     talking. The Music Man is the brand orange — warm, record-store.
+     Megan is a cool teal — the sharp critic, a deliberate contrast to
+     the Music Man's warmth. Stephen Hands is club purple — the DJ,
+     nightclub, beats-forward. `-rgb` variants feed rgba() borders /
+     glows; `-bg` is the dark surface tone for that persona's panels. */
+  --persona-mm:          var(--brand-orange);
+  --persona-mm-rgb:      var(--brand-orange-rgb);
+  --persona-mm-bg:       30, 20, 10;      /* #1e140a — matches --musicman-bg */
+  --persona-megan:       #44bdb0;         /* cool teal — the critic */
+  --persona-megan-rgb:   68, 189, 176;
+  --persona-megan-bg:    10, 26, 26;      /* dark teal-charcoal */
+  --persona-stephen:     #b170dd;         /* club purple — the DJ */
+  --persona-stephen-rgb: 177, 112, 221;
+  --persona-stephen-bg:  26, 16, 34;      /* dark purple-charcoal */
+
   --text-primary: #1a1a1a;
   --text-secondary: #666666;
   --text-dim: #999999;

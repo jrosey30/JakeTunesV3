@@ -1,0 +1,90 @@
+<!doctype html>
+<!-- THROWAWAY Phase 0 spike control panel. Local trusted page only. -->
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { --blue:#2c5aa0; --blue2:#4d7fc4; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; width: 400px; height: 100vh; overflow: hidden;
+    font: 12px -apple-system, "Lucida Grande", sans-serif;
+    background: linear-gradient(180deg,#f5f5f5,#e8e8e8);
+    color: #1a1a1a; display: flex; flex-direction: column;
+    border-right: 1px solid #ccc; user-select: none;
+  }
+  h1 { font-size: 13px; margin: 10px 12px 2px; }
+  .sub { font-size: 10px; color: #6e6e6e; margin: 0 12px 8px; }
+  .status {
+    margin: 0 12px 8px; padding: 6px 8px; font-size: 11px;
+    background: #fff; border: 1px solid #ccc; border-radius: 4px;
+    min-height: 32px; white-space: pre-wrap;
+  }
+  .goal { margin: 8px 12px 2px; font-weight: 700; font-size: 11px; color: #333; }
+  .row { display: flex; gap: 6px; margin: 4px 12px; }
+  button {
+    flex: 1; padding: 6px 8px; font: inherit; color: #fff; cursor: pointer;
+    border: 1px solid #24487e; border-radius: 5px;
+    background: linear-gradient(to bottom, var(--blue2), var(--blue));
+  }
+  button:hover { filter: brightness(1.07); }
+  button.sec { color:#222; background: linear-gradient(to bottom,#fff,#e2e2e2); border-color:#bbb; }
+  input {
+    flex: 2; padding: 5px 7px; font: inherit; border: 1px solid #bbb; border-radius: 5px; user-select: text;
+  }
+  #log {
+    flex: 1; margin: 8px 12px 12px; padding: 8px; overflow-y: auto;
+    background: #1e1e1e; color: #d4d4d4; border-radius: 4px; user-select: text;
+    font: 10.5px ui-monospace, Menlo, monospace; white-space: pre-wrap; line-height: 1.45;
+  }
+</style>
+</head>
+<body>
+  <h1>Bandcamp Phase 0 Spike</h1>
+  <div class="sub">throwaway · WebContentsView on persist:bandcamp</div>
+  <div class="status" id="status">starting…</div>
+
+  <div class="goal">Goal 1 — auth &amp; cookie persistence</div>
+  <div class="row">
+    <button id="login">Open Login</button>
+    <button id="check" class="sec">Check session</button>
+  </div>
+
+  <div class="goal">Goal 2 — profile endpoints</div>
+  <div class="row">
+    <button id="dump">Dump collection / wishlist / following</button>
+  </div>
+
+  <div class="goal">Goal 3 — purchase download (passive)</div>
+  <div class="sub">Buy a cheap/free item in the page on the right, then click its
+    download link. Interception logs below automatically.</div>
+
+  <div class="goal">Goal 4 — catalog data-tralbum</div>
+  <div class="row">
+    <input id="albumUrl" placeholder="paste a Bandcamp album URL" />
+    <button id="parse">Parse</button>
+  </div>
+
+  <div class="row">
+    <button id="openOut" class="sec">Open output folder</button>
+  </div>
+
+  <div id="log"></div>
+
+<script>
+  const { ipcRenderer } = require('electron')
+  const logEl = document.getElementById('log')
+  const statusEl = document.getElementById('status')
+  ipcRenderer.on('spike:log', (_e, line) => {
+    logEl.textContent += line + '\n'
+    logEl.scrollTop = logEl.scrollHeight
+  })
+  ipcRenderer.on('spike:status', (_e, msg) => { statusEl.textContent = msg })
+  document.getElementById('login').onclick   = () => ipcRenderer.invoke('spike:login')
+  document.getElementById('check').onclick   = () => ipcRenderer.invoke('spike:check-session')
+  document.getElementById('dump').onclick    = () => ipcRenderer.invoke('spike:dump-profile')
+  document.getElementById('parse').onclick   = () => ipcRenderer.invoke('spike:parse-album', document.getElementById('albumUrl').value.trim())
+  document.getElementById('openOut').onclick = () => ipcRenderer.invoke('spike:open-out')
+</script>
+</body>
+</html>

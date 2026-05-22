@@ -1,0 +1,25 @@
+/* Store hover/transition polish (Brief 036 v2.2). Kept light for Phase 1;
+   Phase 3 adds the full animation pass. */
+
+.bandcamp-store .bcs-tile {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.bandcamp-store .bcs-tile:hover { transform: translateY(-2px); }
+.bandcamp-store .bcs-tile:hover .bcs-tile-art {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.bandcamp-store .bcs-carousel-banner { transition: filter 0.2s ease; }
+.bandcamp-store .bcs-carousel-banner:hover { filter: brightness(1.04); }
+
+.bandcamp-store .bcs-toast { animation: bcs-toast-in 0.2s ease-out; }
+@keyframes bcs-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.bandcamp-store .bcs-detail { animation: bcs-fade-in 0.18s ease-out; }
+@keyframes bcs-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

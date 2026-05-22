@@ -18,6 +18,7 @@
  * a WeakMap keyed by the audio element so we don't double-bind.
  */
 import { Howl, Howler } from 'howler'
+import { logAudioEvent } from '../hooks/useAudio'
 
 export const EQ_BAND_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] as const
 export const EQ_BAND_COUNT = EQ_BAND_FREQUENCIES.length
@@ -201,6 +202,49 @@ export function setEqSettings(next: EqSettings): void {
   }
 }
 
+// ── 4.4.51: per-app output routing ───────────────────────────────────
+// Everything JakeTunes plays — music (MediaElementSource), TTS clips,
+// stingers — flows through this one `audioContext` and out its
+// destination. `AudioContext.setSinkId()` (Chrome/Electron 110+) lets
+// us point that destination at a SPECIFIC device WITHOUT touching the
+// macOS system default — so the auto-route-on-call feature can move
+// music to an AirPlay speaker while a Teams call keeps using whatever
+// the OS output is set to. `sinkId` is a navigator.mediaDevices
+// deviceId; '' means "follow the system default."
+//
+// Cast because the TS 5.3 lib.dom typings predate AudioContext.setSinkId.
+type SinkCapableContext = AudioContext & {
+  setSinkId?: (id: string) => Promise<void>
+  sinkId?: string
+}
+
+/** The device JakeTunes' audio is currently routed to ('' = system
+ *  default). Used to remember where to route BACK after a call ends. */
+export function getAudioOutputSink(): string {
+  if (!audioContext) return ''
+  const ctx = audioContext as SinkCapableContext
+  return typeof ctx.sinkId === 'string' ? ctx.sinkId : ''
+}
+
+/** Route the whole app's audio output to `sinkId` ('' = system
+ *  default). No-op (with a warning) if the runtime predates setSinkId
+ *  or no AudioContext exists yet. */
+export async function setAudioOutputSink(sinkId: string): Promise<boolean> {
+  if (!audioContext) return false
+  const ctx = audioContext as SinkCapableContext
+  if (typeof ctx.setSinkId !== 'function') {
+    console.warn('[eq] AudioContext.setSinkId unavailable in this runtime — cannot per-app route')
+    return false
+  }
+  try {
+    await ctx.setSinkId(sinkId)
+    return true
+  } catch (err) {
+    console.warn('[eq] setSinkId failed:', err)
+    return false
+  }
+}
+
 /** 4.4.8: detach a Howl's HTMLAudio element from the EQ chain. Called
  *  immediately before .unload() so the MediaElementSource node it owns
  *  is removed from the graph instead of dangling there until GC.
@@ -321,6 +365,29 @@ export function attachClipToBroadcast(audio: HTMLAudioElement): void {
     // path — recording just won't capture it. Better than failing.
     console.warn('[broadcast] could not bind clip:', err)
   }
+}
+
+/** 4.4.14: detach a clip from the broadcast chain mid-play.
+ *  attachClipToBroadcast / attachAnnouncerToBroadcast register
+ *  'ended'/'error' listeners that disconnect on natural end. If a
+ *  caller cancels mid-play (DJ Mode cancel, manual track skip during
+ *  DJ TTS), the audio is paused but 'ended' does NOT fire — the source
+ *  node stays connected to preamp / broadcastFx, accumulating in the
+ *  graph over a session. Same Airfoil-rattle pattern as 4.4.6, just
+ *  for the cancel side. Call this BEFORE nulling out the audio ref
+ *  in any cancel path that pauses-and-discards a clip element. */
+export function detachClipFromBroadcast(audio: HTMLAudioElement | null): void {
+  if (!audio) return
+  const src = boundSources.get(audio)
+  if (!src) return
+  try { src.disconnect() } catch { /* already disconnected / ctx closed */ }
+  // Unlike detachHowlFromEq (which keeps the WeakMap entry because
+  // Howler reuses HTMLAudio elements from a pool), one-shot TTS clips
+  // are created fresh per utterance and never re-bound, so we delete
+  // the entry here. The WeakMap would GC it anyway when the audio
+  // element is collected; deleting eagerly just frees the source node
+  // reference now.
+  boundSources.delete(audio)
 }
 
 // ── 4.3.3: Announcer broadcast-FX chain ───────────────────────────────

@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, ReactNode } from 'react'
+import { createContext, useContext, useReducer, useEffect, useRef, ReactNode } from 'react'
 import { Track, RepeatMode } from '../types'
 
 interface PlaybackState {
@@ -10,13 +10,17 @@ interface PlaybackState {
   repeat: RepeatMode
   shuffle: boolean
   queue: Track[]
+  // 4.4.56: snapshot of the queue's natural order, captured when
+  // shuffle is turned ON, so turning it OFF can honestly restore that
+  // order. null whenever there's nothing to restore to.
+  originalQueue: Track[] | null
   queueIndex: number
   recentlyPlayed: number[]
   shuffleHistory: number[]
 }
 
 type PlaybackAction =
-  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean }
+  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number; freshContext?: boolean }
   | { type: 'PAUSE' }
   | { type: 'RESUME' }
   | { type: 'STOP' }
@@ -45,6 +49,7 @@ const initialState: PlaybackState = {
   repeat: 'off',
   shuffle: false,
   queue: [],
+  originalQueue: null,
   queueIndex: -1,
   recentlyPlayed: [],
   shuffleHistory: []
@@ -53,21 +58,106 @@ const initialState: PlaybackState = {
 function playbackReducer(state: PlaybackState, action: PlaybackAction): PlaybackState {
   switch (action.type) {
     case 'PLAY_TRACK': {
+      // Brief 015: log every PLAY_TRACK dispatch so we can see what
+      // queue gets installed and what repeat state was at that
+      // moment. If a Songs-view double-click somehow lands with
+      // newQueueLength=1 (instead of ~6195), the queue is being
+      // truncated somewhere between SongsView.playTrack and here.
+      console.log('[dx.repeat.play-track]', {
+        trackTitle: action.track.title,
+        trackId: action.track.id,
+        newQueueLength: (action.queue ?? state.queue).length,
+        newQueueIndex: action.queueIndex ?? state.queueIndex,
+        prevRepeat: state.repeat,
+      })
       const rp = [action.track.id, ...state.recentlyPlayed.filter(id => id !== action.track.id)].slice(0, 50)
       // Push current index to shuffle history when advancing forward in shuffle mode
       const sh = state.shuffle && state.queueIndex >= 0 && !action.skipHistory
         ? [...state.shuffleHistory, state.queueIndex]
         : action.skipHistory ? state.shuffleHistory : state.shuffleHistory
+      // Brief 030c: distinguish fresh play context from queue
+      // navigation.
+      // - freshContext === true: user clicked a track in a view,
+      //   Shuffle All button, etc. In shuffle mode, rebuild queue
+      //   from scratch (Brief 030b pattern).
+      // - freshContext !== true (default): nextTrack/prevTrack/
+      //   autoplay advance — preserve the existing queue, just
+      //   update queueIndex.
+      //
+      // Brief 030b shipped without this distinction. nextTrack
+      // passes state.queue verbatim (for continuity reasons),
+      // which the reducer treated as "fresh queue, rebuild" and
+      // reset queueIndex to 0 on every Next press. Result: Up Next
+      // count never decremented in shuffle, and Previous couldn't
+      // navigate because shuffleHistory only saw queueIndex=0
+      // each time.
+      //
+      // Brief 030 / 030b context (preserved here): the user's
+      // mental model is "shuffle = this track now, then random
+      // from the whole library" — no "history before the clicked
+      // position" exists when the user explicitly picks a track
+      // to start a shuffle session. So on a fresh shuffle play
+      // the clicked track lands at position 0 and the rest of the
+      // source queue is shuffled and tacked on. We also snapshot
+      // the natural-order action.queue into originalQueue so a
+      // future "shuffle off" can restore via TOGGLE_SHUFFLE's
+      // Brief 4.4.56 path.
+      let resolvedQueue: Track[] = state.queue
+      let resolvedOriginalQueue: Track[] | null = state.originalQueue
+      let resolvedQueueIndex: number = action.queueIndex ?? state.queueIndex
+      if (action.queue) {
+        if (state.shuffle && action.freshContext === true) {
+          // Fresh shuffle play: clicked track to position 0, all
+          // other tracks shuffled and tacked on. Brief 030b pattern.
+          const sourceIndex = action.queueIndex ?? 0
+          const clickedTrack = action.queue[sourceIndex]
+          const others = [
+            ...action.queue.slice(0, sourceIndex),
+            ...action.queue.slice(sourceIndex + 1),
+          ]
+          for (let i = others.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1))
+            ;[others[i], others[j]] = [others[j], others[i]]
+          }
+          resolvedQueue = [clickedTrack, ...others]
+          resolvedOriginalQueue = [...action.queue]
+          resolvedQueueIndex = 0  // clicked track sits at position 0 of the new queue
+        } else if (state.shuffle) {
+          // Shuffle mode, queue navigation (nextTrack/prevTrack/
+          // autoplay). Preserve existing queue + originalQueue;
+          // just update queueIndex from the action.
+          resolvedQueue = state.queue
+          resolvedQueueIndex = action.queueIndex ?? state.queueIndex
+          resolvedOriginalQueue = state.originalQueue
+        } else {
+          // Non-shuffle: assign new queue verbatim, no snapshot.
+          // queueIndex stays at action.queueIndex (click position
+          // in the view, or autoplay advance).
+          resolvedQueue = action.queue
+          resolvedQueueIndex = action.queueIndex ?? state.queueIndex
+          resolvedOriginalQueue = null
+        }
+      }
+      // else: no action.queue — keep defaults (state.queue, etc.)
+
       return {
         ...state,
         nowPlaying: action.track,
         isPlaying: true,
-        position: 0,
-        duration: 0,
-        queue: action.queue ?? state.queue,
-        queueIndex: action.queueIndex ?? state.queueIndex,
+        // Brief 012: read position/duration from the action if the
+        // caller has them already (autoplay paths where the new howl
+        // is already loaded). Manual clicks omit both, so they fall
+        // back to the 0-reset that gives instant visual feedback.
+        // Atomic dispatch eliminates the SET_DURATION→PLAY_TRACK race
+        // that caused intermittent 0:00 / -0:00 scrubber on gapless
+        // autoplay transitions.
+        position: action.position ?? 0,
+        duration: action.duration ?? 0,
+        queue: resolvedQueue,
+        queueIndex: resolvedQueueIndex,
         recentlyPlayed: rp,
-        shuffleHistory: sh
+        shuffleHistory: sh,
+        originalQueue: resolvedOriginalQueue,
       }
     }
     case 'PAUSE':
@@ -83,18 +173,48 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
     case 'SET_VOLUME':
       return { ...state, volume: action.volume }
     case 'SET_REPEAT':
+      // Brief 015: log transitions so we can correlate UI state
+      // (toolbar appearance) with actual reducer state. If the toolbar
+      // ever shows "off" while state.repeat is 'one', a prior
+      // transition wasn't accompanied by a UI update — desync.
+      console.log('[dx.repeat.state-change]', { from: state.repeat, to: action.mode })
       return { ...state, repeat: action.mode }
     case 'TOGGLE_SHUFFLE': {
       const newShuffle = !state.shuffle
-      // When turning shuffle ON, Fisher-Yates the upcoming queue so the
-      // visible Up Next list reflects the new playback order. Past tracks
-      // (queueIndex and earlier) stay put — they're history. Without this,
-      // shuffle was just a flag that picked random tracks per natural-end
-      // while the displayed Up Next stayed unchanged — looked like
-      // "skipping lots of songs in the queue."
       if (!newShuffle) {
-        return { ...state, shuffle: false, shuffleHistory: [] }
+        // 4.4.56: turning shuffle OFF honestly restores the queue's
+        // natural order. Before, it just flipped the flag and left the
+        // queue scrambled — "shuffle off" but the Up Next list (and the
+        // actual playback order) stayed shuffled. Now we replay the
+        // snapshot taken when shuffle went on: keep its original order,
+        // drop tracks removed since, append tracks added while shuffled,
+        // and re-point queueIndex at whatever's playing now so playback
+        // continues seamlessly.
+        if (!state.originalQueue) {
+          return { ...state, shuffle: false, shuffleHistory: [] }
+        }
+        const currentIds = new Set(state.queue.map(t => t.id))
+        const restored = state.originalQueue.filter(t => currentIds.has(t.id))
+        const restoredIds = new Set(restored.map(t => t.id))
+        for (const t of state.queue) {
+          if (!restoredIds.has(t.id)) restored.push(t)
+        }
+        const np = state.nowPlaying
+        let idx = np ? restored.indexOf(np) : -1
+        if (idx < 0 && np) idx = restored.findIndex(t => t.id === np.id)
+        return {
+          ...state,
+          shuffle: false,
+          shuffleHistory: [],
+          queue: restored,
+          queueIndex: idx >= 0 ? idx : Math.min(state.queueIndex, restored.length - 1),
+          originalQueue: null,
+        }
       }
+      // Turning shuffle ON — snapshot the natural order first so OFF can
+      // restore it, then Fisher-Yates the upcoming queue so the visible
+      // Up Next list reflects the new playback order. Past tracks
+      // (queueIndex and earlier) stay put — they're history.
       const upcoming = state.queue.slice(state.queueIndex + 1)
       for (let i = upcoming.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1))
@@ -104,6 +224,7 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         ...state,
         shuffle: true,
         shuffleHistory: [],
+        originalQueue: [...state.queue],
         queue: [...state.queue.slice(0, state.queueIndex + 1), ...upcoming],
       }
     }
@@ -207,13 +328,90 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
   }
 }
 
+// Brief 015c: wrap playbackReducer so we can see EVERY reducer
+// invocation — including ones triggered by dispatch paths the
+// existing per-case dx.repeat.* logs don't cover (any action that
+// touches queueIndex/queue length/nowPlaying but isn't PLAY_TRACK
+// or SET_REPEAT). Hunting an auto-repeat bug whose smoking-gun
+// observation (sameTrack=true at advance) means queueIndex was
+// reset between PLAY_TRACK and the next natural-end with no
+// existing log capturing the reset.
+function loggingReducer(prevState: PlaybackState, action: PlaybackAction): PlaybackState {
+  const nextState = playbackReducer(prevState, action)
+  const queueIdxChanged = prevState.queueIndex !== nextState.queueIndex
+  const queueLenChanged = prevState.queue.length !== nextState.queue.length
+  const trackChanged = prevState.nowPlaying?.id !== nextState.nowPlaying?.id
+  if (queueIdxChanged || queueLenChanged || trackChanged) {
+    console.log('[dx.repeat.reducer.call]', {
+      src: 'loggingReducer',
+      actionType: action.type,
+      prev: {
+        queueIndex: prevState.queueIndex,
+        queueLength: prevState.queue.length,
+        nowPlayingId: prevState.nowPlaying?.id ?? null,
+        nowPlayingTitle: prevState.nowPlaying?.title ?? null,
+      },
+      next: {
+        queueIndex: nextState.queueIndex,
+        queueLength: nextState.queue.length,
+        nowPlayingId: nextState.nowPlaying?.id ?? null,
+        nowPlayingTitle: nextState.nowPlaying?.title ?? null,
+      },
+      queueIdxChanged,
+      queueLenChanged,
+      trackChanged,
+    })
+  }
+  return nextState
+}
+
 const PlaybackContext = createContext<{
   state: PlaybackState
   dispatch: React.Dispatch<PlaybackAction>
 } | null>(null)
 
 export function PlaybackProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(playbackReducer, initialState)
+  const [state, dispatch] = useReducer(loggingReducer, initialState)
+
+  // Brief 015c: every render, compare current state to the previous
+  // snapshot. If queueIndex/queue.length/nowPlaying changed without a
+  // matching loggingReducer call also logging the same change, we have
+  // evidence of state mutation outside the reducer (or a provider re-
+  // mount that reset state). No dependency array on purpose — runs on
+  // every render so we see every shape change.
+  const prevSnapshotRef = useRef<{
+    queueIndex: number
+    queueLength: number
+    nowPlayingId: number | null
+    ts: number
+  } | null>(null)
+  useEffect(() => {
+    const snapshot = {
+      queueIndex: state.queueIndex,
+      queueLength: state.queue.length,
+      nowPlayingId: state.nowPlaying?.id ?? null,
+      ts: Date.now(),
+    }
+    const prev = prevSnapshotRef.current
+    if (prev) {
+      const idxChanged = prev.queueIndex !== snapshot.queueIndex
+      const lenChanged = prev.queueLength !== snapshot.queueLength
+      const trackChanged = prev.nowPlayingId !== snapshot.nowPlayingId
+      if (idxChanged || lenChanged || trackChanged) {
+        console.log('[dx.repeat.snapshot.changed]', {
+          src: 'renderSnapshotEffect',
+          deltaMs: snapshot.ts - prev.ts,
+          prev,
+          next: snapshot,
+          idxChanged,
+          lenChanged,
+          trackChanged,
+        })
+      }
+    }
+    prevSnapshotRef.current = snapshot
+  })
+
   return (
     <PlaybackContext.Provider value={{ state, dispatch }}>
       {children}
