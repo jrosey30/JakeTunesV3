@@ -37,6 +37,13 @@ export default function ImportQueuePanel() {
   const dupes = getDupeCount()
   const total = queue.items.length
 
+  // The now-playing pill at the top renders the "Importing X of N"
+  // progress for drag-drop imports (App.tsx bridges importQueue into
+  // the activity store). The bottom-corner dock is now reserved for
+  // failures — that's where the retry-friendly affordances live and
+  // where the user needs to take an action. Hide silently otherwise.
+  if (failed === 0) return null
+
   return (
     <div className={`iq-dock ${expanded ? 'iq-dock--expanded' : ''}`}>
       <button

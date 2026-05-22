@@ -16,7 +16,19 @@ import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
 import BandcampImportToast from './components/BandcampImportToast'
 import { initRecentlyAdded } from './state/recentlyAdded'
-import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
+import {
+  enqueueFiles,
+  onTrackImported,
+  setNextLibraryId,
+  subscribe as subscribeImportQueue,
+  getQueueState,
+  getActiveItem,
+  getPendingCount,
+  getDoneCount,
+  getFailedCount,
+  getDupeCount,
+} from './importQueue'
+import { setImport } from './activity'
 import { setCrossfadeSettings } from './hooks/useAudio'
 import { setEqSettings } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
@@ -73,6 +85,31 @@ function AppInner() {
       dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
     })
   }, [dispatch])
+
+  // Bridge the importQueue (drag-drop) state into the activity store so
+  // the now-playing pill surfaces "Importing X of N" progress at the top
+  // of the window — instead of (only) the bottom-corner ImportQueuePanel,
+  // which is now hidden during normal progress and shows up only on
+  // failures (where retry UX matters).
+  useEffect(() => {
+    return subscribeImportQueue(() => {
+      const pending = getPendingCount()
+      if (pending === 0) {
+        setImport(null)
+        return
+      }
+      const items = getQueueState().items
+      const active = getActiveItem()
+      const trackTitle = active ? (active.srcPath.split('/').pop() || active.srcPath) : ''
+      setImport({
+        active: true,
+        current: getDoneCount(),
+        total: Math.max(1, items.length - getDupeCount()),
+        trackTitle,
+        errors: getFailedCount(),
+      })
+    })
+  }, [])
 
   // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
   // 'jaketunes-ipod-mounted' on each false→true transition; we react

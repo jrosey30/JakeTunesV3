@@ -21,8 +21,20 @@ export interface SyncActivity {
   step: string             // human-readable current step, e.g. "Copying 12 new tracks to iPod..."
 }
 
+/** Drag-drop / Bandcamp imports going through the renderer importQueue.
+ *  Separate from RipActivity (CD ripping) so concurrent flows don't clobber
+ *  each other and so the pill can label them differently. */
+export interface ImportActivity {
+  active: boolean
+  current: number          // tracks completed in this batch
+  total: number            // total tracks queued (excluding dupes)
+  trackTitle: string       // filename or title of the item currently importing
+  errors: number           // count of failed items so the pill can flag them
+}
+
 let rip: RipActivity | null = null
 let sync: SyncActivity | null = null
+let importing: ImportActivity | null = null
 
 // Bumped on every mutation. `getSnapshot` returns this number, which
 // is cheap to compare by reference in React's external-store check.
@@ -47,6 +59,7 @@ export function getSnapshot(): number {
 
 export function getRip(): RipActivity | null { return rip }
 export function getSync(): SyncActivity | null { return sync }
+export function getImport(): ImportActivity | null { return importing }
 
 export function setRip(next: RipActivity | null): void {
   rip = next
@@ -55,5 +68,10 @@ export function setRip(next: RipActivity | null): void {
 
 export function setSync(next: SyncActivity | null): void {
   sync = next
+  notify()
+}
+
+export function setImport(next: ImportActivity | null): void {
+  importing = next
   notify()
 }
