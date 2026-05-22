@@ -310,24 +310,43 @@ export default function NowPlaying() {
           </div>
         </>
       ) : effectiveMode === 'broadcast' && broadcast ? (
-        <>
-          <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast">
-            <span className="now-playing-title">{broadcast.speaker}</span>
-            <span className="now-playing-sep"> — </span>
-            <span className="now-playing-broadcast-text">
-              {broadcast.text.slice(0, broadcast.revealedChars)}
-              {broadcast.revealedChars < broadcast.text.length && <span className="np-caret" aria-hidden>▍</span>}
-            </span>
-          </div>
-          <div className="scrubber-row">
-            <div className="activity-bar">
-              <div
-                className="activity-bar-fill"
-                style={{ width: `${(broadcast.revealedChars / Math.max(1, broadcast.text.length)) * 100}%` }}
-              />
-            </div>
-          </div>
-        </>
+        (() => {
+          // 4.5.3: sliding window. The caret stays anchored at the
+          // right edge while older characters scroll off the left, so
+          // long monologues keep going instead of getting clipped by
+          // the pill's text-overflow:ellipsis. WINDOW is a chars
+          // approximation — actual pill width varies but ~85 reads
+          // comfortably across typical window sizes. Left edge gets a
+          // subtle fade-to-transparent mask (see toolbar.css
+          // .np-broadcast-window) so the scroll-out feels deliberate.
+          const WINDOW = 85
+          const reveal = broadcast.revealedChars
+          const start = Math.max(0, reveal - WINDOW)
+          const visible = broadcast.text.slice(start, reveal)
+          const stillRevealing = reveal < broadcast.text.length
+          return (
+            <>
+              <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast">
+                <span className="now-playing-title">{broadcast.speaker}</span>
+                <span className="now-playing-sep"> — </span>
+                <span className="now-playing-broadcast-text">
+                  <span className={`np-broadcast-window ${start > 0 ? 'np-broadcast-window--scrolled' : ''}`}>
+                    {visible}
+                    {stillRevealing && <span className="np-caret" aria-hidden>▍</span>}
+                  </span>
+                </span>
+              </div>
+              <div className="scrubber-row">
+                <div className="activity-bar">
+                  <div
+                    className="activity-bar-fill"
+                    style={{ width: `${(reveal / Math.max(1, broadcast.text.length)) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </>
+          )
+        })()
       ) : (
         <div className="now-playing-empty" />
       )}

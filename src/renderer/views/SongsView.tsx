@@ -96,13 +96,33 @@ export default function SongsView() {
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
+  // 4.5.3: user-rearrangeable column order. Default is the natural
+  // ALL_COLUMN_DEFS order; drag a header onto another to reorder.
+  // Persists with the rest of the column state. Defensive about new
+  // columns added in future versions — those get appended at the end
+  // rather than being lost from the saved order.
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => ALL_COLUMN_DEFS.map(c => c.key))
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
 
-  // Filter columns based on visibility
-  const visibleCols = ALL_COLUMN_DEFS.filter(c => !hiddenCols.has(c.key))
+  // Filter columns based on visibility, ordered per user's columnOrder.
+  // Any column NOT in columnOrder (e.g. a brand-new column added in a
+  // future version that landed after the user's last save) gets
+  // appended at the end so nothing silently disappears.
+  const byKey = ALL_COLUMN_DEFS.reduce<Record<string, ColDef>>((m, c) => { m[c.key] = c; return m }, {})
+  const orderedCols: ColDef[] = []
+  const seen = new Set<string>()
+  for (const k of columnOrder) {
+    const c = byKey[k]
+    if (c && !seen.has(k)) { orderedCols.push(c); seen.add(k) }
+  }
+  for (const c of ALL_COLUMN_DEFS) {
+    if (!seen.has(c.key)) orderedCols.push(c)
+  }
+  const visibleCols = orderedCols.filter(c => !hiddenCols.has(c.key))
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
 
   const sorted = useSortedTracks(lib.tracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
@@ -586,12 +606,15 @@ export default function SongsView() {
   // Restore column state from saved UI state
   useEffect(() => {
     const handler = (e: Event) => {
-      const { colWidthMap: savedWidths, hiddenCols: savedHidden } = (e as CustomEvent).detail
+      const { colWidthMap: savedWidths, hiddenCols: savedHidden, columnOrder: savedOrder } = (e as CustomEvent).detail
       if (savedWidths && typeof savedWidths === 'object') {
         setColWidthMap(prev => ({ ...prev, ...savedWidths }))
       }
       if (Array.isArray(savedHidden)) {
         setHiddenCols(new Set(savedHidden))
+      }
+      if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+        setColumnOrder(savedOrder.filter((k: unknown): k is string => typeof k === 'string'))
       }
     }
     window.addEventListener('jaketunes-restore-columns', handler)
@@ -604,10 +627,41 @@ export default function SongsView() {
     if (colSaveRef.current) clearTimeout(colSaveRef.current)
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
-        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols) }
+        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder }
       }))
     }, 500)
-  }, [colWidthMap, hiddenCols])
+  }, [colWidthMap, hiddenCols, columnOrder])
+
+  // 4.5.3: drag-to-reorder headers. Standard convention: drop AFTER
+  // target when dragging rightward, BEFORE target when dragging left.
+  // dragOverKey gives the destination cell a visual hint while the
+  // user hovers (see .songs-header-cell--drag-over in songs.css).
+  const handleHeaderDragStart = useCallback((e: React.DragEvent, key: string) => {
+    e.dataTransfer.setData('text/plain', key)
+    e.dataTransfer.effectAllowed = 'move'
+  }, [])
+  const handleHeaderDragOver = useCallback((e: React.DragEvent, key: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverKey !== key) setDragOverKey(key)
+  }, [dragOverKey])
+  const handleHeaderDragLeave = useCallback(() => { setDragOverKey(null) }, [])
+  const handleHeaderDrop = useCallback((e: React.DragEvent, targetKey: string) => {
+    e.preventDefault()
+    setDragOverKey(null)
+    const sourceKey = e.dataTransfer.getData('text/plain')
+    if (!sourceKey || sourceKey === targetKey) return
+    setColumnOrder(prev => {
+      const next = [...prev]
+      const sourceIdx = next.indexOf(sourceKey)
+      const targetIdx = next.indexOf(targetKey)
+      if (sourceIdx < 0 || targetIdx < 0) return prev
+      next.splice(sourceIdx, 1)
+      const newTargetIdx = next.indexOf(targetKey)
+      next.splice(newTargetIdx + (sourceIdx < targetIdx ? 1 : 0), 0, sourceKey)
+      return next
+    })
+  }, [])
 
   return (
     <div className="songs-view" ref={viewRef}>
@@ -622,8 +676,13 @@ export default function SongsView() {
         {visibleCols.map((col, i) => (
           <div
             key={col.key}
-            className={`songs-header-cell ${lib.sortColumn === col.key ? 'sorted' : ''}`}
+            className={`songs-header-cell ${lib.sortColumn === col.key ? 'sorted' : ''} ${dragOverKey === col.key ? 'songs-header-cell--drag-over' : ''}`}
             onClick={() => handleSort(col.key)}
+            draggable
+            onDragStart={(e) => handleHeaderDragStart(e, col.key)}
+            onDragOver={(e) => handleHeaderDragOver(e, col.key)}
+            onDragLeave={handleHeaderDragLeave}
+            onDrop={(e) => handleHeaderDrop(e, col.key)}
           >
             {col.label}
             {lib.sortColumn === col.key && (

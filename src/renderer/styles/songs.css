@@ -54,6 +54,16 @@
 .songs-header-cell:hover { background: rgba(0,0,0,0.05); }
 .songs-header-cell.sorted { color: #1a1a1a; }
 
+/* 4.5.3: drag-to-reorder column hint. Cursor + 2 px blue insert-bar
+ * on the left edge of the cell the user is hovering. Drop puts the
+ * dragged column on whichever side they'd naturally expect. */
+.songs-header-cell[draggable="true"] { cursor: grab; }
+.songs-header-cell[draggable="true"]:active { cursor: grabbing; }
+.songs-header-cell--drag-over {
+  box-shadow: inset 2px 0 0 0 #4577d3;
+  background: rgba(69, 119, 211, 0.10);
+}
+
 .col-resize-handle {
   position: absolute;
   right: -2px;
