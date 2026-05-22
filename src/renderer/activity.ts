@@ -26,10 +26,14 @@ export interface SyncActivity {
  *  each other and so the pill can label them differently. */
 export interface ImportActivity {
   active: boolean
-  current: number          // tracks completed in this batch
+  current: number          // integer count of fully-completed items (for the "X of N" label)
   total: number            // total tracks queued (excluding dupes)
   trackTitle: string       // filename or title of the item currently importing
   errors: number           // count of failed items so the pill can flag them
+  /** Optional smooth-fill fraction 0..1 for the bar — lets a half-credit
+   *  for the currently-running file advance the bar between integer
+   *  completions without putting "2.5 of 3" into the label. */
+  barFraction?: number
 }
 
 let rip: RipActivity | null = null
@@ -82,7 +86,8 @@ export function setImport(next: ImportActivity | null): void {
       importing.current === next.current &&
       importing.total === next.total &&
       importing.trackTitle === next.trackTitle &&
-      importing.errors === next.errors) return
+      importing.errors === next.errors &&
+      importing.barFraction === next.barFraction) return
   importing = next
   notify()
 }

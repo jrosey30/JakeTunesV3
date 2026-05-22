@@ -251,7 +251,7 @@ export default function NowPlaying() {
           </div>
           <div className="scrubber-row">
             <div className="activity-bar">
-              <div className="activity-bar-fill" style={{ width: `${(imp.current / Math.max(1, imp.total)) * 100}%` }} />
+              <div className="activity-bar-fill" style={{ width: `${(imp.barFraction ?? imp.current / Math.max(1, imp.total)) * 100}%` }} />
             </div>
           </div>
         </>
