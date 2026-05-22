@@ -1859,6 +1859,13 @@ async function resolveAudioPaths(paths: string[]): Promise<string[]> {
           if (!seen.has(n)) { seen.add(n); results.push(n) }
         }
       } else {
+        const base = p.substring(p.lastIndexOf('/') + 1)
+        // Skip dotfiles: .DS_Store has no audio extension and was already
+        // filtered, but AppleDouble metadata forks (._01 Track.m4a, born
+        // when a macOS-created zip is unpacked on another OS) DO have
+        // audio extensions and would otherwise enter the queue, fail at
+        // import, and pad the visible total.
+        if (base.startsWith('.')) continue
         const ext = p.substring(p.lastIndexOf('.')).toLowerCase()
         if (AUDIO_EXTS.has(ext) && !seen.has(p)) {
           seen.add(p); results.push(p)

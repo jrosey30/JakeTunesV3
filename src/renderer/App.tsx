@@ -102,11 +102,14 @@ function AppInner() {
       const active = getActiveItem()
       const trackTitle = active ? (active.srcPath.split('/').pop() || active.srcPath) : ''
       // current = integer done count (drives the "X of N" label).
+      // total subtracts both dupes and failures so the visible count
+      // reflects what'll actually land in the library — neither is "being
+      // imported" in the sense the user means.
       // barFraction = a smooth 0..1 fill for the bar that also credits
       // half a step for the file currently being encoded, so the bar
       // doesn't sit frozen for the 10-30 s an ALAC two-step takes.
       const doneCount = getDoneCount()
-      const total = Math.max(1, items.length - getDupeCount())
+      const total = Math.max(1, items.length - getDupeCount() - getFailedCount())
       const inFlight = active && active.status === 'running' ? 0.5 : 0
       setImport({
         active: true,
