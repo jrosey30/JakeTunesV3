@@ -7738,8 +7738,15 @@ app.whenReady().then(async () => {
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
   })
 
-  // squid.wtf embedded view — separate partition, no download routing.
-  registerSquidStore({ getMainWindow: () => mainWindow })
+  // squid.wtf embedded view — separate partition, same download routing
+  // pipeline as Bandcamp (importDownloaded + pendingImportsDir wired so
+  // downloads land in library with source='squid'). Reuses the
+  // bandcamp:* event channels the renderer is already subscribed to.
+  registerSquidStore({
+    getMainWindow: () => mainWindow,
+    importDownloaded: importDownloadedFiles,
+    pendingImportsDir: join(libraryRoot, '_pending-imports'),
+  })
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
   // audio files (Qobuz downloads, manual drops, etc.) and forwards them
