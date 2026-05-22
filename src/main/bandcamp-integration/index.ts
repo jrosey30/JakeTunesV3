@@ -31,6 +31,15 @@ export interface BandcampDeps {
 
 const BANDCAMP_HOME = 'https://bandcamp.com'
 
+// Electron's default UA includes "Electron/X.X JakeTunes/X.X" tokens that
+// Fastly's bot-detection layer (which fronts bandcamp.com) flags as
+// automated traffic — the user hits a CAPTCHA wall instead of the normal
+// page. Override with a clean, current Chrome-on-macOS string so the
+// session looks like an ordinary browser. The underlying Chromium is
+// real, only the identifying tokens are stripped.
+const REAL_BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
 interface Bounds {
   x: number
   y: number
@@ -65,6 +74,10 @@ function ensureView(): WebContentsView {
       nodeIntegration: false,
     },
   })
+  // Belt-and-suspenders: the session-level UA covers all requests, but
+  // also pin it on this webContents in case Electron ever decouples them
+  // (defaultURLChain edge cases).
+  view.webContents.setUserAgent(REAL_BROWSER_UA)
   viewLoaded = false
   return view
 }
@@ -93,6 +106,11 @@ function detachView(deps: BandcampDeps): void {
 }
 
 export function registerBandcampIntegration(deps: BandcampDeps): void {
+  // Override the partition's UA before anything else so every request
+  // (page loads, XHR, downloads) and the in-page navigator.userAgent both
+  // present as a real Chrome on macOS — defuses Fastly's bot challenge.
+  bandcampSession().setUserAgent(REAL_BROWSER_UA)
+
   // Download interception is attached to the partition's session at startup
   // so downloads route through importOneFile even if the user never opens
   // the Store view (Bandcamp could spawn a download from a new tab). The
