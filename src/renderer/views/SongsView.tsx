@@ -41,23 +41,28 @@ function formatDateAdded(d: string): string {
   return `${m}-${day}-${y}`
 }
 
+// 4.5.2: was an inline 5-star widget that shadowed the shared
+// components/StarRating. Replaced with a single-star toggle matching
+// the shared component. Click toggles 0 <-> 5 (the stored value stays
+// on the 0..5 scale; any > 0 reads as starred so legacy ratings show
+// up). Kept inline rather than importing because SongsView is on the
+// hot path and the shared component lives in src/renderer/components.
 function StarRating({ value, onChange }: { value: number; onChange: (r: number) => void }) {
+  const filled = value > 0
   return (
     <span className="star-rating" onMouseLeave={(e) => e.stopPropagation()}>
-      {[1, 2, 3, 4, 5].map(star => (
-        <span
-          key={star}
-          className={`star-rating-star ${star <= value ? 'star-rating-star--filled' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation()
-            onChange(star === value ? 0 : star)
-          }}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill={star <= value ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
-            <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
-          </svg>
-        </span>
-      ))}
+      <span
+        className={`star-rating-star ${filled ? 'star-rating-star--filled' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          onChange(filled ? 0 : 5)
+        }}
+        title={filled ? 'Unstar' : 'Star'}
+      >
+        <svg width="11" height="11" viewBox="0 0 10 10" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+          <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+        </svg>
+      </span>
     </span>
   )
 }
