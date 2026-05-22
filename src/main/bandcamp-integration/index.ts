@@ -16,12 +16,17 @@
 import { ipcMain, WebContentsView, BrowserWindow } from 'electron'
 import { BANDCAMP_PARTITION } from './partition'
 import { bandcampSession } from './acquisition/auth'
-import { attachDownloadRouter } from './acquisition/download-router'
+import { attachDownloadRouter, ImportedTrackRecord } from './acquisition/download-router'
 
 export interface BandcampDeps {
   getMainWindow: () => BrowserWindow | null
-  /** Wraps importOneFile() for absolute audio paths; returns Track records. */
-  importDownloaded: (absPaths: string[]) => Promise<unknown[]>
+  /** Wraps importOneFile() for absolute audio paths. Receives a `source`
+   *  tag (always 'bandcamp' from here) that gets persisted on each
+   *  track record. */
+  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[]>
+  /** Absolute directory where Bandcamp downloads land; importOneFile
+   *  copies them into the canonical library layout afterwards. */
+  pendingImportsDir: string
 }
 
 const BANDCAMP_HOME = 'https://bandcamp.com'
@@ -40,6 +45,11 @@ let view: WebContentsView | null = null
 let viewLoaded = false
 let attached = false
 let routerAttached = false
+
+function send(deps: BandcampDeps, channel: string, payload: unknown): void {
+  const win = deps.getMainWindow()
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+}
 
 function ensureView(): WebContentsView {
   if (view && !view.webContents.isDestroyed()) return view
@@ -90,11 +100,10 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
   // open new tabs that trigger downloads outside our view).
   if (!routerAttached) {
     attachDownloadRouter(bandcampSession(), {
+      pendingImportsDir: deps.pendingImportsDir,
       importDownloaded: deps.importDownloaded,
-      // Phase A keeps the v3 purchase-complete channel as a no-op subscriber
-      // target. Phase B reshapes the callback to emit bandcamp:track-imported
-      // / bandcamp:import-failed per Decision 5.
-      onComplete: () => { /* phase B */ },
+      onTrackImported: (track) => send(deps, 'bandcamp:track-imported', track),
+      onImportFailed: (reason) => send(deps, 'bandcamp:import-failed', reason),
     })
     routerAttached = true
   }

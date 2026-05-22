@@ -300,6 +300,9 @@ declare global {
       bandcampMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampUnmount: () => Promise<{ ok: true }>
+      // ── Bandcamp Store v4 (download -> library events) ──
+      onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => () => void
+      onBandcampImportFailed: (callback: (reason: { filename: string; error: string }) => void) => () => void
 
       // ── Bandcamp Store (Brief 036 v2.2) — pre-v4 IPC surface, pruned in v4/D ──
       bandcampAuthStatus: () => Promise<{ loggedIn: boolean; fanId?: number; username?: string }>

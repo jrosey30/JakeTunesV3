@@ -240,6 +240,17 @@ const electronAPI = {
   bandcampResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('bandcamp:resize', bounds),
   bandcampUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('bandcamp:unmount'),
+  // ── Bandcamp Store v4 (download -> library events; Phase B/C wires consumer) ──
+  onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)
+    ipcRenderer.on('bandcamp:track-imported', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:track-imported', handler) }
+  },
+  onBandcampImportFailed: (callback: (reason: { filename: string; error: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, r: { filename: string; error: string }) => callback(r)
+    ipcRenderer.on('bandcamp:import-failed', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:import-failed', handler) }
+  },
 
   // ── Bandcamp Store (Brief 036 v2.2) — pre-v4 IPC surface, pruned in v4/D ──
   bandcampAuthStatus: (): Promise<{ loggedIn: boolean; fanId?: number; username?: string }> =>

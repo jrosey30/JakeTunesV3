@@ -2178,6 +2178,7 @@ async function importOneFile(
   preferredFormat: string | undefined,
   dupeFingerprints: Set<string>,
   dateOverride?: Date,
+  source?: string,
 ): Promise<SingleImportResult> {
   const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
   try {
@@ -2289,6 +2290,7 @@ async function importOneFile(
       fileSize: fileStats.size,
       rating: 0,
       ...(audioFingerprint ? { audioFingerprint } : {}),
+      ...(source ? { source } : {}),
     }
 
     // Add this fingerprint to the set so a duplicate appearing later in
@@ -5516,7 +5518,7 @@ async function nextLibraryId(): Promise<number> {
   }
 }
 
-async function importDownloadedFiles(absPaths: string[]): Promise<Array<Record<string, unknown>>> {
+async function importDownloadedFiles(absPaths: string[], source?: string): Promise<Array<Record<string, unknown>>> {
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   const settings = await readAppSettingsAsync()
   const lib = settings?.library as { defaultImportFormat?: string } | undefined
@@ -5528,7 +5530,7 @@ async function importDownloadedFiles(absPaths: string[]): Promise<Array<Record<s
   let id = await nextLibraryId()
   const tracks: Array<Record<string, unknown>> = []
   for (const p of absPaths) {
-    const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints)
+    const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints, undefined, source)
     if (r.ok && r.track) {
       tracks.push(r.track)
       const fp = fingerprintTrack({ title: r.track.title, artist: r.track.artist, duration: r.track.duration })
@@ -5944,12 +5946,14 @@ app.whenReady().then(async () => {
   // createWindow so mainWindow is defined when the watcher emits.
   startLibraryWatcher()
 
-  // ── Bandcamp Store integration (Brief 036 v2.2) ──
-  // Registered after createWindow so mainWindow is live for overlay views
-  // and purchase-complete events.
+  // ── Bandcamp Store integration (Brief 036 v4) ──
+  // Registered after createWindow so mainWindow is live for the embedded
+  // WebContentsView mount + the download-router events.
+  const libraryRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   registerBandcampIntegration({
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
+    pendingImportsDir: join(libraryRoot, '_pending-imports'),
   })
 
   // Auto-update: check for updates in production

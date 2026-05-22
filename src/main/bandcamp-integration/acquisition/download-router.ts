@@ -1,31 +1,34 @@
 // ════════════════════════════════════════════════════════════════════════
-//  Download router (Brief 036 v2.2, Layer 4 — highest-risk early-validation)
+//  Download router — Bandcamp purchase -> library (Brief 036 v4 Phase B)
 //
-//  Bandcamp post-purchase downloads: single tracks arrive as one tagged
-//  audio file; albums arrive as a ZIP of tagged files + cover.jpg. We
-//  intercept via `will-download` on the persist:bandcamp session, save to
-//  a temp staging dir, unzip albums (pure-JS yauzl — no native build), and
-//  hand each audio file to the existing importOneFile() primitive (injected
-//  as `importDownloaded`) so dedupe / conversion / tag-embedding / hashed-
-//  folder placement all happen exactly as for any other import.
+//  Hooks `will-download` on the persist:bandcamp session, parks every
+//  download in a stable _pending-imports/ directory under the library
+//  root, then dispatches by extension:
+//    - .zip (album purchase)  -> unzip audio members, importOneFile each
+//    - single audio file      -> importOneFile directly
+//    - anything else          -> ignored
+//
+//  Each successful import fires onTrackImported with the track record
+//  so the renderer can drive the toast + Recently Added marker
+//  (Brief 036 v4 Decision 5 / Phase C). Failures fire onImportFailed.
+//
+//  After import the downloaded files stay in _pending-imports/ — the
+//  library import already made canonical copies, but keeping the
+//  originals gives the user a paper trail to inspect if a purchase
+//  ever looks wrong.
 // ════════════════════════════════════════════════════════════════════════
 
 import { Session, DownloadItem } from 'electron'
-import { app } from 'electron'
 import { join } from 'path'
-import { rm } from 'fs/promises'
 import { createWriteStream, mkdirSync } from 'fs'
 import yauzl from 'yauzl'
 
 const AUDIO_EXT = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
+const SOURCE_TAG = 'bandcamp'
 
 function ext(name: string): string {
   const i = name.lastIndexOf('.')
   return i >= 0 ? name.slice(i).toLowerCase() : ''
-}
-
-function stagingDir(): string {
-  return join(app.getPath('temp'), 'jaketunes-bandcamp', String(Date.now()))
 }
 
 /** Extract only audio members of a Bandcamp album zip into destDir. */
@@ -38,7 +41,6 @@ function unzipAudio(zipPath: string, destDir: string): Promise<string[]> {
       zip.on('end', () => resolve(out))
       zip.readEntry()
       zip.on('entry', (entry) => {
-        // Directories end with '/'. Skip non-audio (cover.jpg, etc.).
         if (/\/$/.test(entry.fileName) || !AUDIO_EXT.has(ext(entry.fileName))) {
           zip.readEntry()
           return
@@ -57,72 +59,96 @@ function unzipAudio(zipPath: string, destDir: string): Promise<string[]> {
   })
 }
 
+export interface ImportedTrackRecord {
+  id?: number
+  title?: string
+  artist?: string
+  album?: string
+}
+
 export interface DownloadRouterDeps {
-  /** Wraps importOneFile() for a batch of absolute audio paths; returns the
-   *  created Track records (renderer adds them to the library). */
-  importDownloaded: (absPaths: string[]) => Promise<unknown[]>
-  /** Notify the renderer a purchase landed (for toast + library refresh). */
-  onComplete: (result: { ok: boolean; trackCount: number; error?: string }) => void
+  /** Absolute directory where Bandcamp downloads land before import.
+   *  Persisted across restarts; importOneFile already copies into the
+   *  canonical hashed layout. */
+  pendingImportsDir: string
+  /** Wraps importOneFile() for a batch of absolute audio paths. The
+   *  `source` tag (always 'bandcamp' from this caller) is persisted
+   *  on the resulting track records so library views can surface
+   *  provenance later. */
+  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[]>
+  /** Fired once per successfully imported track. */
+  onTrackImported: (track: ImportedTrackRecord) => void
+  /** Fired once per import failure (download-level OR per-file). */
+  onImportFailed: (reason: { filename: string; error: string }) => void
 }
 
 /** Attach interception to the Bandcamp session. Idempotent per session. */
 export function attachDownloadRouter(session: Session, deps: DownloadRouterDeps): void {
+  // The save dir must exist before any download lands. Create it once
+  // here so we don't race on the first purchase of the session.
+  mkdirSync(deps.pendingImportsDir, { recursive: true })
+
   session.on('will-download', (_event, item: DownloadItem) => {
-    // setSavePath + the done-listener MUST be attached synchronously here,
-    // before any await, or Electron pops a save dialog / the event is missed.
-    const dir = stagingDir()
-    mkdirSync(dir, { recursive: true })
+    // setSavePath + the done-listener MUST be attached synchronously
+    // here, before any await, or Electron pops a save dialog / the
+    // event is missed.
     const filename = item.getFilename()
-    const savePath = join(dir, filename)
+    const savePath = join(deps.pendingImportsDir, filename)
     item.setSavePath(savePath)
     const donePromise: Promise<string> = new Promise((resolve) => {
       item.once('done', (_e, s) => resolve(s))
     })
-    void handleDownload({ dir, filename, savePath, donePromise }, deps)
+    void handleDownload({ filename, savePath, donePromise }, deps)
   })
 }
 
 interface PendingDownload {
-  dir: string
   filename: string
   savePath: string
   donePromise: Promise<string>
 }
 
 async function handleDownload(dl: PendingDownload, deps: DownloadRouterDeps): Promise<void> {
-  const { dir, filename, savePath, donePromise } = dl
+  const { filename, savePath, donePromise } = dl
   try {
     const state = await donePromise
     if (state !== 'completed') {
-      deps.onComplete({ ok: false, trackCount: 0, error: `download ${state}` })
+      deps.onImportFailed({ filename, error: `download ${state}` })
       return
     }
 
     let audioFiles: string[]
     if (ext(filename) === '.zip') {
-      audioFiles = await unzipAudio(savePath, dir)
+      // Extract into a per-purchase subdir so concurrent album buys
+      // can't collide on track filenames inside the zip.
+      const stem = filename.replace(/\.zip$/i, '')
+      const extractDir = join(deps.pendingImportsDir, `${stem}-${Date.now()}`)
+      mkdirSync(extractDir, { recursive: true })
+      audioFiles = await unzipAudio(savePath, extractDir)
     } else if (AUDIO_EXT.has(ext(filename))) {
       audioFiles = [savePath]
     } else {
-      deps.onComplete({ ok: false, trackCount: 0, error: `unsupported file: ${filename}` })
+      // Not an audio download (artwork, lyrics PDF, etc.) — leave the
+      // file in place but don't import. Quiet by design.
       return
     }
 
     if (audioFiles.length === 0) {
-      deps.onComplete({ ok: false, trackCount: 0, error: 'no audio in download' })
+      deps.onImportFailed({ filename, error: 'no audio in download' })
       return
     }
 
-    // Deterministic order so album track numbers import in sequence even
-    // when tags are sparse and the filename parser is the fallback.
+    // Deterministic order so album track numbers import in sequence
+    // even when tags are sparse and the filename parser is the
+    // fallback.
     audioFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-    const tracks = await deps.importDownloaded(audioFiles)
-    deps.onComplete({ ok: true, trackCount: tracks.length })
+    const tracks = await deps.importDownloaded(audioFiles, SOURCE_TAG)
+    if (tracks.length === 0) {
+      deps.onImportFailed({ filename, error: 'import produced no tracks (all duplicates?)' })
+      return
+    }
+    for (const t of tracks) deps.onTrackImported(t)
   } catch (err) {
-    deps.onComplete({ ok: false, trackCount: 0, error: err instanceof Error ? err.message : String(err) })
-  } finally {
-    // Best-effort cleanup of the staging copy; importOneFile already copied
-    // each file into the library hashed-folder layout.
-    await rm(dir, { recursive: true, force: true }).catch(() => {})
+    deps.onImportFailed({ filename, error: err instanceof Error ? err.message : String(err) })
   }
 }
