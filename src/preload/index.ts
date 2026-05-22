@@ -240,7 +240,7 @@ const electronAPI = {
   bandcampResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('bandcamp:resize', bounds),
   bandcampUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('bandcamp:unmount'),
-  // ── Bandcamp Store v4 (download -> library events; Phase B/C wires consumer) ──
+  // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)
     ipcRenderer.on('bandcamp:track-imported', handler)
@@ -250,35 +250,6 @@ const electronAPI = {
     const handler = (_e: Electron.IpcRendererEvent, r: { filename: string; error: string }) => callback(r)
     ipcRenderer.on('bandcamp:import-failed', handler)
     return () => { ipcRenderer.removeListener('bandcamp:import-failed', handler) }
-  },
-
-  // ── Bandcamp Store (Brief 036 v2.2) — pre-v4 IPC surface, pruned in v4/D ──
-  bandcampAuthStatus: (): Promise<{ loggedIn: boolean; fanId?: number; username?: string }> =>
-    ipcRenderer.invoke('bandcamp:auth-status'),
-  bandcampConnect: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:connect'),
-  bandcampLogout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:logout'),
-  bandcampClearData: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:clear-data'),
-  bandcampRefreshProfile: (): Promise<{ ok: boolean; computedAt?: number }> =>
-    ipcRenderer.invoke('bandcamp:refresh-profile'),
-  bandcampGetProfile: (): Promise<unknown> => ipcRenderer.invoke('bandcamp:get-profile'),
-  bandcampGetAlbum: (url: string): Promise<{ ok: boolean; album?: unknown; error?: string }> =>
-    ipcRenderer.invoke('bandcamp:get-album', url),
-  bandcampSearch: (query: string): Promise<{ ok: boolean; results?: unknown[]; error?: string }> =>
-    ipcRenderer.invoke('bandcamp:search', query),
-  bandcampGetSurface: (name: string, limit?: number): Promise<{ ok: boolean; items?: unknown[]; error?: string }> =>
-    ipcRenderer.invoke('bandcamp:get-surface', name, limit),
-  bandcampOpenCheckout: (url: string): Promise<{ ok: boolean; outcome: 'completed' | 'cancelled' | 'external' }> =>
-    ipcRenderer.invoke('bandcamp:open-checkout', url),
-  bandcampCloseOverlay: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:close-overlay'),
-  onBandcampPurchaseComplete: (callback: (r: { ok: boolean; trackCount: number; error?: string }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, r: { ok: boolean; trackCount: number; error?: string }) => callback(r)
-    ipcRenderer.on('bandcamp:purchase-complete', handler)
-    return () => { ipcRenderer.removeListener('bandcamp:purchase-complete', handler) }
-  },
-  onBandcampProfileUpdated: (callback: (r: { computedAt: number }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, r: { computedAt: number }) => callback(r)
-    ipcRenderer.on('bandcamp:profile-updated', handler)
-    return () => { ipcRenderer.removeListener('bandcamp:profile-updated', handler) }
   },
 }
 
