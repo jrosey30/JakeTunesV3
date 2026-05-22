@@ -82,12 +82,18 @@ export interface DownloadRouterDeps {
   onImportFailed: (reason: { filename: string; error: string }) => void
 }
 
-/** Attach interception to the Bandcamp session. Idempotent per session. */
+/** Attach interception to the Bandcamp session. Idempotent per session —
+ *  removes any prior `will-download` listener on the way in, so repeated
+ *  calls (electron-vite main reload, multiple registerBandcampIntegration
+ *  invocations) don't accumulate duplicate handlers. One Bandcamp download
+ *  was firing N extracts because each accumulated listener owned its own
+ *  `done` once-handler and re-ran unzipAudio on the same zip. */
 export function attachDownloadRouter(session: Session, deps: DownloadRouterDeps): void {
   // The save dir must exist before any download lands. Create it once
   // here so we don't race on the first purchase of the session.
   mkdirSync(deps.pendingImportsDir, { recursive: true })
 
+  session.removeAllListeners('will-download')
   session.on('will-download', (_event, item: DownloadItem) => {
     // setSavePath + the done-listener MUST be attached synchronously
     // here, before any await, or Electron pops a save dialog / the

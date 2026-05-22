@@ -63,6 +63,17 @@ function AppInner() {
   // Bandcamp download-router events. Idempotent.
   useEffect(() => { initRecentlyAdded() }, [])
 
+  // Mirror the drag-drop importQueue pattern (see line below): each
+  // Bandcamp purchase track produced by importOneFile lands in the
+  // library state the same way a manually-dropped file does. Without
+  // this dispatch, importOneFile copies the audio to its canonical
+  // location but the renderer never learns the track exists.
+  useEffect(() => {
+    return window.electronAPI.onBandcampTrackImported((t) => {
+      dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
+    })
+  }, [dispatch])
+
   // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
   // 'jaketunes-ipod-mounted' on each false→true transition; we react
   // here only when the user has opted in.

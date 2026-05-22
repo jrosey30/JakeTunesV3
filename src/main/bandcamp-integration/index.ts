@@ -44,7 +44,6 @@ interface Bounds {
 let view: WebContentsView | null = null
 let viewLoaded = false
 let attached = false
-let routerAttached = false
 
 function send(deps: BandcampDeps, channel: string, payload: unknown): void {
   const win = deps.getMainWindow()
@@ -94,19 +93,17 @@ function detachView(deps: BandcampDeps): void {
 }
 
 export function registerBandcampIntegration(deps: BandcampDeps): void {
-  // Download interception is attached to the partition's session once, at
-  // startup, so downloads route through importOneFile even if the user
-  // never opens the Store view in this session (paranoia: Bandcamp could
-  // open new tabs that trigger downloads outside our view).
-  if (!routerAttached) {
-    attachDownloadRouter(bandcampSession(), {
-      pendingImportsDir: deps.pendingImportsDir,
-      importDownloaded: deps.importDownloaded,
-      onTrackImported: (track) => send(deps, 'bandcamp:track-imported', track),
-      onImportFailed: (reason) => send(deps, 'bandcamp:import-failed', reason),
-    })
-    routerAttached = true
-  }
+  // Download interception is attached to the partition's session at startup
+  // so downloads route through importOneFile even if the user never opens
+  // the Store view (Bandcamp could spawn a download from a new tab). The
+  // attach function itself removes any prior listener, so we don't need a
+  // module-level guard — works across electron-vite main reloads too.
+  attachDownloadRouter(bandcampSession(), {
+    pendingImportsDir: deps.pendingImportsDir,
+    importDownloaded: deps.importDownloaded,
+    onTrackImported: (track) => send(deps, 'bandcamp:track-imported', track),
+    onImportFailed: (reason) => send(deps, 'bandcamp:import-failed', reason),
+  })
 
   ipcMain.handle('bandcamp:mount', (_e, bounds: Bounds) => {
     attachView(deps, bounds)

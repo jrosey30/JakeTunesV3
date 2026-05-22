@@ -301,7 +301,10 @@ declare global {
       bandcampResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampUnmount: () => Promise<{ ok: true }>
       // ── Bandcamp Store v4 (download -> library events) ──
-      onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => () => void
+      // Payload is the full Track record minted by importOneFile() — same
+      // shape the drag-drop importQueue delivers. App.tsx dispatches it
+      // into LibraryContext; recentlyAdded.ts uses just id/title/album.
+      onBandcampTrackImported: (callback: (track: Track) => void) => () => void
       onBandcampImportFailed: (callback: (reason: { filename: string; error: string }) => void) => () => void
     }
   }
