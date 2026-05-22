@@ -1,17 +1,15 @@
 :root {
-  /* 4.5.1: iTunes 10 (Sept 2010) palette — lighter, more neutral
-     pearl-grey chrome; sidebar dropped the iTunes-8 cool-blue tint
-     and went near-pure grey, with the selection pill providing the
-     only blue. The earlier iTunes-8 values felt darker + cooler
-     than the 2010 look Jake asked for. */
-  --chrome-top: #e8e8e8;
-  --chrome-bottom: #d4d4d4;
-  --sidebar-top: #d2d2d2;
-  --sidebar-bottom: #bcbcbc;
-  /* Selection pill — iTunes 10's blue was slightly softer / more
-     translucent at the edges than iTunes 8's saturated gradient. */
-  --selection-top: #6a92e3;
-  --selection-bottom: #4a73c8;
+  /* Window chrome / toolbar — iTunes 8 unified gray gradient
+     (Leopard era; brushed metal removed). [4.5.2: 4.5.1's iTunes-10
+     palette read as too plain; reverted on Jake's call.] */
+  --chrome-top: #d6d6d6;
+  --chrome-bottom: #c4c4c4;
+  /* Sidebar: iTunes 8 (Sept 2008) cool light blue-gray gradient. */
+  --sidebar-top: #c1cad7;
+  --sidebar-bottom: #a9b4c2;
+  /* Selection pill (iTunes 8 blue). */
+  --selection-top: #5b86dc;
+  --selection-bottom: #3e6ec7;
   --row-alt: #f7f7f7;
   /* Now-playing LCD pill — iTunes-8 cream. The earlier values were a
      touch warm/bright; pulled toward the actual on-screen tone in

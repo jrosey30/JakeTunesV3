@@ -197,6 +197,37 @@
 .now-playing-info--notice-info {
   color: #4a3a18;
 }
+
+/* 4.5.2: live broadcast caption — Music Man / Megan / DJ commentary
+ * typed out in the pill character-by-character, replaces the floating
+ * dj-bubble. Slightly warmer text colour + a non-italic body so the
+ * caption reads as spoken-voice rather than UI status. The activity
+ * bar underneath fills 0->100% as the reveal progresses (NowPlaying
+ * renders it from broadcast.revealedChars / broadcast.text.length). */
+.now-playing-info--broadcast {
+  color: #3a3520;
+  font-style: normal;
+}
+.now-playing-broadcast-text {
+  color: #5a4e2c;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.np-caret {
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--brand-orange);
+  font-weight: 600;
+  animation: np-caret-blink 0.9s steps(2, end) infinite;
+  user-select: none;
+}
+@keyframes np-caret-blink {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .np-caret { animation: none; }
+}
 .activity-bar {
   flex: 1;
   min-width: 0;

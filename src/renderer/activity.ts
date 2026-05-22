@@ -49,11 +49,24 @@ export interface NoticeActivity {
   kind: 'error' | 'info'
 }
 
+/** 4.5.2: Music Man / Megan / DJ commentary rendered live inside the
+ *  pill — replaces the floating dj-bubble Jake asked to kill. text is
+ *  the full caption; revealedChars is how many characters of it have
+ *  been "typed out" so far. The setBroadcast timer advances it ~33
+ *  chars/sec to approximate TTS pacing. */
+export interface BroadcastActivity {
+  speaker: string
+  text: string
+  revealedChars: number
+}
+
 let rip: RipActivity | null = null
 let sync: SyncActivity | null = null
 let importing: ImportActivity | null = null
 let notice: NoticeActivity | null = null
 let noticeTimer: ReturnType<typeof setTimeout> | null = null
+let broadcast: BroadcastActivity | null = null
+let broadcastTimer: ReturnType<typeof setInterval> | null = null
 
 // Bumped on every mutation. `getSnapshot` returns this number, which
 // is cheap to compare by reference in React's external-store check.
@@ -80,6 +93,7 @@ export function getRip(): RipActivity | null { return rip }
 export function getSync(): SyncActivity | null { return sync }
 export function getImport(): ImportActivity | null { return importing }
 export function getNotice(): NoticeActivity | null { return notice }
+export function getBroadcast(): BroadcastActivity | null { return broadcast }
 
 export function setRip(next: RipActivity | null): void {
   rip = next
@@ -130,4 +144,50 @@ export function setNotice(message: string | null, opts?: { kind?: 'error' | 'inf
     noticeTimer = null
     notify()
   }, durationMs)
+}
+
+// 4.5.2: start (or replace) a live broadcast caption in the pill.
+// The text is revealed character-by-character at ~33 chars/sec — fast
+// enough to feel responsive, slow enough to read along as the TTS
+// audio plays. Pass null to clear immediately. Passing the same text
+// again is idempotent (no timer restart, no re-render). The reveal
+// completes regardless of TTS audio finishing; an explicit setBroadcast
+// (null) at speech-end clears the caption.
+//
+// Tuning note: 30 ms per char ≈ 33 cps ≈ 400 wpm — runs roughly in
+// step with ElevenLabs' default speech rate for short comments. Long
+// monologues finish reveal before TTS does; that's fine — the caption
+// just sits at full length until cleared.
+const CHARS_PER_TICK = 1
+const TICK_INTERVAL_MS = 30
+
+export function setBroadcast(next: { speaker: string; text: string } | null): void {
+  if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+  if (!next || !next.text) {
+    if (broadcast === null) return
+    broadcast = null
+    notify()
+    return
+  }
+  // Idempotent on identical text — avoids restarting the reveal when
+  // a caller fires the same caption twice (e.g. React effect re-run).
+  if (broadcast && broadcast.text === next.text && broadcast.speaker === next.speaker) return
+  broadcast = { speaker: next.speaker, text: next.text, revealedChars: 0 }
+  notify()
+  broadcastTimer = setInterval(() => {
+    if (!broadcast) {
+      if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+      return
+    }
+    const nextChars = Math.min(broadcast.text.length, broadcast.revealedChars + CHARS_PER_TICK)
+    if (nextChars === broadcast.revealedChars) {
+      if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+      return
+    }
+    broadcast = { ...broadcast, revealedChars: nextChars }
+    notify()
+    if (nextChars >= broadcast.text.length) {
+      if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+    }
+  }, TICK_INTERVAL_MS)
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
-import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice } from '../../activity'
+import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast } from '../../activity'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -80,7 +80,7 @@ function MiniVisualizer({ active }: { active: boolean }) {
   return <canvas ref={canvasRef} className="mini-viz" aria-hidden />
 }
 
-type PillMode = 'playing' | 'rip' | 'sync' | 'import' | 'notice'
+type PillMode = 'playing' | 'rip' | 'sync' | 'import' | 'notice' | 'broadcast'
 
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
@@ -127,10 +127,12 @@ export default function NowPlaying() {
   const syn = getSync()
   const imp = getImport()
   const notice = getNotice()
+  const broadcast = getBroadcast()
   const ripActive = !!rip?.active
   const syncActive = !!syn?.active
   const importActive = !!imp?.active
   const noticeActive = !!notice
+  const broadcastActive = !!broadcast
 
   // Which modes have anything to show right now?
   const available: PillMode[] = []
@@ -139,6 +141,7 @@ export default function NowPlaying() {
   if (syncActive) available.push('sync')
   if (importActive) available.push('import')
   if (noticeActive) available.push('notice')
+  if (broadcastActive) available.push('broadcast')
 
   const [mode, setMode] = useState<PillMode>('playing')
 
@@ -152,8 +155,12 @@ export default function NowPlaying() {
   const prevSyncRef = useRef(syncActive)
   const prevImportRef = useRef(importActive)
   const prevNoticeRef = useRef(noticeActive)
+  const prevBroadcastRef = useRef(broadcastActive)
   useEffect(() => {
-    if (noticeActive && !prevNoticeRef.current) setMode('notice')
+    // Broadcast (live mic / DJ caption) beats everything else while
+    // active — it's the user's voice they're listening to right now.
+    if (broadcastActive && !prevBroadcastRef.current) setMode('broadcast')
+    else if (noticeActive && !prevNoticeRef.current) setMode('notice')
     else if (syncActive && !prevSyncRef.current) setMode('sync')
     else if (ripActive && !prevRipRef.current) setMode('rip')
     else if (importActive && !prevImportRef.current) setMode('import')
@@ -161,7 +168,8 @@ export default function NowPlaying() {
     prevSyncRef.current = syncActive
     prevImportRef.current = importActive
     prevNoticeRef.current = noticeActive
-  }, [ripActive, syncActive, importActive, noticeActive])
+    prevBroadcastRef.current = broadcastActive
+  }, [ripActive, syncActive, importActive, noticeActive, broadcastActive])
 
   // Also: if the current mode disappears from the available set
   // (e.g. sync ended and nothing else is selected), fall through to
@@ -169,7 +177,7 @@ export default function NowPlaying() {
   useEffect(() => {
     if (available.length === 0) return
     if (!available.includes(mode)) {
-      const priority: PillMode[] = ['notice', 'sync', 'rip', 'import', 'playing']
+      const priority: PillMode[] = ['broadcast', 'notice', 'sync', 'rip', 'import', 'playing']
       const next = priority.find(m => available.includes(m)) || available[0]
       setMode(next)
     }
@@ -191,14 +199,14 @@ export default function NowPlaying() {
   // catches up.
   const effectiveMode: PillMode | null = available.length === 0 ? null :
     (available.includes(mode) ? mode : (
-      (['notice', 'sync', 'rip', 'import', 'playing'] as PillMode[]).find(m => available.includes(m)) || available[0]
+      (['broadcast', 'notice', 'sync', 'rip', 'import', 'playing'] as PillMode[]).find(m => available.includes(m)) || available[0]
     ))
 
-  // Activity modes (rip / sync / import / notice) get tighter symmetric
-  // padding (16 px) for slightly more text room. Playing mode uses the
+  // Activity modes (rip / sync / import / notice / broadcast) get tighter
+  // symmetric padding (16 px) for more text room. Playing mode uses the
   // base symmetric padding from toolbar.css (4.4.43: 22 px after the
   // mini-visualizer was retired).
-  const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import' || effectiveMode === 'notice'
+  const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import' || effectiveMode === 'notice' || effectiveMode === 'broadcast'
 
   return (
     <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''}`}>
@@ -298,6 +306,25 @@ export default function NowPlaying() {
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill activity-bar-fill--indeterminate" />
+            </div>
+          </div>
+        </>
+      ) : effectiveMode === 'broadcast' && broadcast ? (
+        <>
+          <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast">
+            <span className="now-playing-title">{broadcast.speaker}</span>
+            <span className="now-playing-sep"> — </span>
+            <span className="now-playing-broadcast-text">
+              {broadcast.text.slice(0, broadcast.revealedChars)}
+              {broadcast.revealedChars < broadcast.text.length && <span className="np-caret" aria-hidden>▍</span>}
+            </span>
+          </div>
+          <div className="scrubber-row">
+            <div className="activity-bar">
+              <div
+                className="activity-bar-fill"
+                style={{ width: `${(broadcast.revealedChars / Math.max(1, broadcast.text.length)) * 100}%` }}
+              />
             </div>
           </div>
         </>

@@ -60,47 +60,28 @@
   text-overflow: ellipsis;
 }
 
+/* 4.5.2: smoother hover — was a hard snap, now eases in over 120 ms.
+ * Same iTunes-8 colored icons (kept their original palette per Jake);
+ * just the row-fill animates. */
+.sidebar-item {
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
 .sidebar-item:hover {
   background: rgba(0,0,0,0.06);
-}
-
-/* 4.5.1: iTunes 10 monochrome sidebar icons — Apple desaturated every
- * sidebar glyph in iTunes 10 (the change that made everyone mad in
- * 2010). Implemented as a CSS filter so the icon SVGs don't have to
- * be rewritten. Selected rows brighten the icon so it pops against
- * the blue selection bg. */
-.sidebar-item svg,
-.sidebar-item img {
-  filter: grayscale(1);
-  opacity: 0.6;
-  transition: opacity 0.12s ease;
-}
-.sidebar-item:hover svg,
-.sidebar-item:hover img {
-  opacity: 0.85;
 }
 
 .sidebar-item--selected {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
   color: #fff;
-  /* iTunes 10 selection pill — kept the inset top highlight from
-     iTunes 8 but softened the bottom edge (the 2010 redesign was
-     subtly flatter). */
+  /* iTunes 8 selection pill carries a subtle inner top-edge highlight
+     and a 1px deeper-blue border, giving it a slightly lifted feel. */
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06);
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
 }
 
 .sidebar-item--selected:hover {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-}
-
-.sidebar-item--selected svg,
-.sidebar-item--selected img {
-  /* Brighten to near-white against the blue pill — iTunes 10's
-     selected sidebar icons read as a single light tone. */
-  filter: grayscale(1) brightness(2.2);
-  opacity: 1;
 }
 
 .sidebar-item--dragover {

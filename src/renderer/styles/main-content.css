@@ -19,12 +19,16 @@
 }
 
 .main-content-view > * {
-  animation: view-mount-fade 140ms ease-out;
+  /* 4.5.2: subtle upward drift in addition to the fade — gives the
+   * view a sense of "settling into place" instead of just blinking on.
+   * 180 ms is still short enough to feel responsive but reads as
+   * intentional motion rather than a hard cut. */
+  animation: view-mount-fade 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes view-mount-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {

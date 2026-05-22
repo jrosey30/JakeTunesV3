@@ -8,7 +8,7 @@ import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
-import { setNotice } from '../../activity'
+import { setNotice, setBroadcast } from '../../activity'
 
 function QueueIcon() {
   return (
@@ -198,6 +198,21 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       window.removeEventListener('musicman-speaking-end', handleEnd)
     }
   }, [pb.volume, fadeVolumeOut, fadeVolumeIn])
+
+  // 4.5.2: relay djText / djLoading into the activity store's broadcast
+  // mode so the now-playing pill renders the caption with a typewriter
+  // reveal — replaces the floating dj-bubble (the bubble JSX below is
+  // gone). One effect, no per-callsite changes; every existing setDjText
+  // call flows through here.
+  useEffect(() => {
+    if (djLoading) {
+      setBroadcast({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: BUBBLE_SPEAKER_VERB[djSpeaker] })
+    } else if (djText) {
+      setBroadcast({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: djText })
+    } else {
+      setBroadcast(null)
+    }
+  }, [djText, djLoading, djSpeaker])
 
   // Cancel DJ when user manually plays a track
   useEffect(() => {
@@ -1416,25 +1431,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
               <span className="rec-pill-dot" /> REC {Math.floor(recElapsed/60)}:{String(recElapsed%60).padStart(2,'0')}
             </span>
           )}
-          {showBubble && !radioMode && (djLoading || djText) && (
-            <div className={`dj-bubble ${djExiting ? 'dj-bubble--exiting' : ''}`} data-speaker={djSpeaker}>
-              {/* 4.4.49 + 4.4.52: attribute the bubble to whoever's
-                  actually speaking — Stephen Hands in DJ Mode, the
-                  chosen host (Music Man or Megan) on a mic comment.
-                  Name, loading verb, AND colour (via data-speaker)
-                  all key off djSpeaker. */}
-              {djLoading ? (
-                <>
-                  <span className="dj-bubble-label">{BUBBLE_SPEAKER_LABEL[djSpeaker]}</span>{' '}
-                  <span className="dj-loading-dots">{BUBBLE_SPEAKER_VERB[djSpeaker]}</span>
-                </>
-              ) : (
-                <>
-                  <span className="dj-bubble-label">{BUBBLE_SPEAKER_LABEL[djSpeaker]}:</span> {djText}
-                </>
-              )}
-            </div>
-          )}
+          {/* 4.5.2: dj-bubble removed — commentary now renders inside the
+              now-playing pill as a typewriter caption (NowPlaying's
+              'broadcast' mode). See the relay useEffect above that
+              wires djText / djLoading -> setBroadcast. */}
         </div>
       </div>
       <div className="volume-group">
