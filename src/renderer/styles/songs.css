@@ -103,6 +103,20 @@
   font-weight: 700;
 }
 
+/* Bandcamp library-arrival marker — visible for 10s after import lands
+ * (Brief 036 v4 Decision 5). A subtle pulsing left edge in the same
+ * blue as the import toast; --selected still wins because that bg
+ * fully overdraws the left edge. */
+.songs-row--recently-added {
+  box-shadow: inset 3px 0 0 #6ab0ff;
+  animation: recently-added-pulse 2s ease-in-out infinite;
+}
+
+@keyframes recently-added-pulse {
+  0%, 100% { box-shadow: inset 3px 0 0 #6ab0ff; }
+  50%      { box-shadow: inset 3px 0 0 #c1ddff; }
+}
+
 .songs-cell {
   padding: 0 6px;
   white-space: nowrap;

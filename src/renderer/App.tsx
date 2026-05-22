@@ -14,6 +14,8 @@ import PlayCacheModal from './components/PlayCacheModal'
 import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
+import BandcampImportToast from './components/BandcampImportToast'
+import { initRecentlyAdded } from './state/recentlyAdded'
 import { enqueueFiles, onTrackImported, setNextLibraryId } from './importQueue'
 import { setCrossfadeSettings } from './hooks/useAudio'
 import { setEqSettings } from './audio/eq'
@@ -56,6 +58,10 @@ function AppInner() {
       setEqSettings(merged.eq)
     })
   }, [])
+
+  // Subscribe the renderer-side recently-added store to the main-process
+  // Bandcamp download-router events. Idempotent.
+  useEffect(() => { initRecentlyAdded() }, [])
 
   // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
   // 'jaketunes-ipod-mounted' on each false→true transition; we react
@@ -654,6 +660,7 @@ function AppInner() {
         </div>
       )}
       <ImportQueuePanel />
+      <BandcampImportToast />
     </div>
   )
 }

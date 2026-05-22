@@ -51,3 +51,15 @@
   from { opacity: 1; transform: translateX(-50%) translateY(0); }
   to { opacity: 0; transform: translateX(-50%) translateY(10px); }
 }
+
+/* Bandcamp library-arrival toast: reuses .undo-toast layout, adds a
+   left-edge accent matching the recently-added row marker. */
+.bandcamp-import-toast {
+  cursor: pointer;
+  border-left: 3px solid #6ab0ff;
+}
+
+.bandcamp-import-toast--failure {
+  border-left-color: #d97a6c;
+  color: #f4dcd5;
+}

@@ -1,9 +1,10 @@
-import { useCallback, useState, useEffect, useRef } from 'react'
+import { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useSortedTracks } from '../hooks/useSortedTracks'
+import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -80,6 +81,9 @@ export default function SongsView() {
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
+  // Subscribe to the Bandcamp recently-added store so the row class
+  // re-renders when a new import lands or its 10s TTL expires.
+  useSyncExternalStore(subscribeRecentlyAdded, recentlyAddedSnapshot)
 
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set())
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
@@ -577,10 +581,11 @@ export default function SongsView() {
               const idx = startIndex + i
               const isPlaying = pb.nowPlaying?.id === track.id
               const isSelected = lib.selectedTrackIds.has(track.id)
+              const isRecent = isRecentlyAdded(track.id)
               return (
                 <div
                   key={track.id}
-                  className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''}`}
+                  className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${isRecent ? 'songs-row--recently-added' : ''}`}
                   style={{ gridTemplateColumns: gridTemplate }}
                   onClick={(e) => handleClick(track.id, idx, e)}
                   onDoubleClick={() => handleDoubleClick(idx)}
