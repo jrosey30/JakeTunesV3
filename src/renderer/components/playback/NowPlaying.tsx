@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
-import { subscribe, getSnapshot, getRip, getSync, getImport } from '../../activity'
+import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice } from '../../activity'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -80,7 +80,7 @@ function MiniVisualizer({ active }: { active: boolean }) {
   return <canvas ref={canvasRef} className="mini-viz" aria-hidden />
 }
 
-type PillMode = 'playing' | 'rip' | 'sync' | 'import'
+type PillMode = 'playing' | 'rip' | 'sync' | 'import' | 'notice'
 
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
@@ -117,17 +117,20 @@ export default function NowPlaying() {
   const track = state.nowPlaying
 
   // Subscribe to the global activity store so this pill can surface
-  // background work (CD rip / iPod sync) in addition to the currently
-  // playing track — matches iTunes 7 behavior where a tiny arrow
-  // button let the user cycle the LCD between now-playing and
-  // import/sync status when multiple things are happening.
+  // background work (CD rip / iPod sync / drag-drop import / transient
+  // notice) in addition to the currently playing track — matches
+  // iTunes 7 behavior where a tiny arrow button let the user cycle the
+  // LCD between now-playing and import/sync status when multiple
+  // things were happening.
   useSyncExternalStore(subscribe, getSnapshot)
   const rip = getRip()
   const syn = getSync()
   const imp = getImport()
+  const notice = getNotice()
   const ripActive = !!rip?.active
   const syncActive = !!syn?.active
   const importActive = !!imp?.active
+  const noticeActive = !!notice
 
   // Which modes have anything to show right now?
   const available: PillMode[] = []
@@ -135,25 +138,30 @@ export default function NowPlaying() {
   if (ripActive) available.push('rip')
   if (syncActive) available.push('sync')
   if (importActive) available.push('import')
+  if (noticeActive) available.push('notice')
 
   const [mode, setMode] = useState<PillMode>('playing')
 
-  // Auto-follow rule: when a rip / sync / import STARTS, switch the pill
-  // to show it. When it ends, fall through to whatever's still active
-  // (priority: sync > rip > import > playing). User cycle override still
-  // works in between — clicking the arrow locks the pill to their chosen
-  // mode until that mode disappears from `available`.
+  // Auto-follow rule: when any non-playing activity STARTS, switch the
+  // pill to show it. Notices are transient (auto-clear at 4 s) so they
+  // beat everything else while shown; otherwise priority is sync > rip
+  // > import > playing. User cycle override still works in between —
+  // clicking the arrow locks the pill to their chosen mode until that
+  // mode disappears from `available`.
   const prevRipRef = useRef(ripActive)
   const prevSyncRef = useRef(syncActive)
   const prevImportRef = useRef(importActive)
+  const prevNoticeRef = useRef(noticeActive)
   useEffect(() => {
-    if (syncActive && !prevSyncRef.current) setMode('sync')
+    if (noticeActive && !prevNoticeRef.current) setMode('notice')
+    else if (syncActive && !prevSyncRef.current) setMode('sync')
     else if (ripActive && !prevRipRef.current) setMode('rip')
     else if (importActive && !prevImportRef.current) setMode('import')
     prevRipRef.current = ripActive
     prevSyncRef.current = syncActive
     prevImportRef.current = importActive
-  }, [ripActive, syncActive, importActive])
+    prevNoticeRef.current = noticeActive
+  }, [ripActive, syncActive, importActive, noticeActive])
 
   // Also: if the current mode disappears from the available set
   // (e.g. sync ended and nothing else is selected), fall through to
@@ -161,7 +169,7 @@ export default function NowPlaying() {
   useEffect(() => {
     if (available.length === 0) return
     if (!available.includes(mode)) {
-      const priority: PillMode[] = ['sync', 'rip', 'import', 'playing']
+      const priority: PillMode[] = ['notice', 'sync', 'rip', 'import', 'playing']
       const next = priority.find(m => available.includes(m)) || available[0]
       setMode(next)
     }
@@ -175,16 +183,22 @@ export default function NowPlaying() {
   }, [mode, available])
 
   const showCycle = available.length > 1
-  // When nothing is playing and nothing's syncing/ripping, pill is
-  // empty (matches idle iTunes LCD).
+  // When nothing is playing and nothing's syncing/ripping/importing,
+  // pill is empty (matches idle iTunes LCD). If the selected mode
+  // isn't available (e.g. a notice fired while we were on 'playing'
+  // with no track), fall through to the highest-priority available
+  // mode so we don't flash an empty pill before the auto-follow effect
+  // catches up.
   const effectiveMode: PillMode | null = available.length === 0 ? null :
-    (available.includes(mode) ? mode : 'playing')
+    (available.includes(mode) ? mode : (
+      (['notice', 'sync', 'rip', 'import', 'playing'] as PillMode[]).find(m => available.includes(m)) || available[0]
+    ))
 
-  // Activity modes (rip / sync / import) don't render the right-side
-  // visualizer, so the playing-mode's 56px right-padding (reserved for
-  // the visualizer) leaves the content visibly left-shifted in those
-  // modes. Use a modifier so the activity layout gets symmetric padding.
-  const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import'
+  // Activity modes (rip / sync / import / notice) get tighter symmetric
+  // padding (16 px) for slightly more text room. Playing mode uses the
+  // base symmetric padding from toolbar.css (4.4.43: 22 px after the
+  // mini-visualizer was retired).
+  const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import' || effectiveMode === 'notice'
 
   return (
     <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''}`}>
@@ -197,7 +211,13 @@ export default function NowPlaying() {
       )}
       {effectiveMode === 'playing' && track ? (
         <>
-          <MiniVisualizer active={state.isPlaying} />
+          {/* 4.4.41: MiniVisualizer removed. Jake: "get rid of the
+              visualizer on the far right it is useless and kills
+              battery". The rAF loop computed RMS from the audio
+              waveform every frame — ~60fps continuously while
+              playing — which kept the renderer's compositor busy
+              for a 60×8px squiggle nobody used. Component definition
+              kept above in case it gets revived; just not rendered. */}
           <div className="now-playing-info">
             <span className="now-playing-title">{track.title}</span>
             <span className="now-playing-sep"> — </span>
@@ -206,12 +226,25 @@ export default function NowPlaying() {
             {track.album && <span className="now-playing-album">{track.album}</span>}
           </div>
           <div className="scrubber-row">
-            <span className="scrubber-time">{formatTime(state.position)}</span>
+            {/* Brief 025: floor position + duration ONCE, then compute
+                remaining as their integer difference, so the count-up and
+                countdown labels never drift apart by the ~half-second
+                rounding asymmetry. Pre-fix: formatTime(position) floored
+                position, formatTime(duration - position) floored AFTER
+                subtraction — e.g. position=4.6 / duration=75.4 produced
+                "0:04" + "-1:10" while the actual duration read as 1:15.
+                Fix keeps position + |remaining| === floor(duration) at
+                every render. Math.max(0, ...) clamps the countdown to
+                -0:00 when position briefly overshoots duration near
+                track end. Strictly read-only; the scrubber drag-logic
+                seam (handleMouseDown, barRef) on the next line is
+                untouched per the do-not-touch list. */}
+            <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
             <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
               <div className="scrubber-fill" style={{ width: `${progress}%` }} />
               <div className="scrubber-knob" style={{ left: `${progress}%` }} />
             </div>
-            <span className="scrubber-time">-{formatTime(state.duration - state.position)}</span>
+            <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(state.duration) - Math.floor(state.position)))}</span>
           </div>
         </>
       ) : effectiveMode === 'sync' && syn ? (
@@ -252,6 +285,19 @@ export default function NowPlaying() {
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill" style={{ width: `${(imp.barFraction ?? imp.current / Math.max(1, imp.total)) * 100}%` }} />
+            </div>
+          </div>
+        </>
+      ) : effectiveMode === 'notice' && notice ? (
+        <>
+          <div className={`now-playing-info now-playing-info--activity now-playing-info--notice-${notice.kind}`}>
+            <span className="now-playing-title">{notice.kind === 'error' ? 'Notice' : 'JakeTunes'}</span>
+            <span className="now-playing-sep"> — </span>
+            <span className="now-playing-artist">{notice.message}</span>
+          </div>
+          <div className="scrubber-row">
+            <div className="activity-bar">
+              <div className="activity-bar-fill activity-bar-fill--indeterminate" />
             </div>
           </div>
         </>

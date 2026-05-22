@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
+import { setNotice } from '../../activity'
 import ContextMenu from '../ContextMenu'
 
 export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () => void }) {
@@ -50,6 +51,9 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
     if (result.ok && result.key && result.hash) {
       libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
       fetchedRef.current.delete(artKey || '')
+    } else {
+      // 4.4.12: surface failure (usually sips conversion).
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
     }
   }, [artist, album, artKey, libDispatch])
 
@@ -86,6 +90,9 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
     if (result.ok && result.key && result.hash) {
       libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
       fetchedRef.current.delete(artKey || '')
+    } else {
+      // 4.4.12: surface failure (usually sips conversion).
+      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
     }
   }, [artist, album, artKey, libDispatch])
 

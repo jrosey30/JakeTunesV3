@@ -35,6 +35,9 @@
 .genres-column-list {
   flex: 1;
   overflow-y: auto;
+  /* 4.4.35 smoother scroll */
+  will-change: scroll-position;
+  overscroll-behavior: contain;
 }
 
 .genres-column-item {
@@ -61,6 +64,9 @@
 .genres-tracklist {
   flex: 1;
   overflow-y: auto;
+  /* 4.4.35 smoother scroll */
+  will-change: scroll-position;
+  overscroll-behavior: contain;
 }
 
 .genres-track-row {

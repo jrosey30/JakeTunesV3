@@ -58,12 +58,50 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
       setDropIndex(null)
       return
     }
-    // Library-track import branch (existing behavior).
+    // Library-track import branch.
     const tracks = resolveTracks(e)
     if (tracks.length === 0) {
       setDropIndex(null)
       return
     }
+
+    // 4.4.45 — "honest queue." If the player is idle (nothing loaded —
+    // fresh launch, cleared queue, or the queue finished and the
+    // natural-end handler dispatched STOP, which nulls nowPlaying), a
+    // track dragged into the queue should START PLAYING — not just land
+    // silently in the list. That's the bug Jake hit: "if i drag
+    // something into queue, it does not play."
+    //
+    // Root cause: ADD_TO_QUEUE / INSERT_IN_QUEUE only mutate the queue
+    // array — they never touch nowPlaying / isPlaying / queueIndex. And
+    // the audio engine is imperative: only playTrack() / loadAndPlay()
+    // actually produce sound (the reducer can't call into the audio
+    // engine). So when idle we build the would-be queue locally and
+    // hand it straight to playTrack(), which does the
+    // dispatch(PLAY_TRACK) + loadAndPlay() in one call.
+    //
+    // "Idle" = !nowPlaying. That's the unambiguous "player has nothing
+    // loaded" state — it does NOT fire when something's actively
+    // playing OR paused (both keep nowPlaying set), so a drag never
+    // interrupts a track in progress; it just queues normally.
+    if (!state.nowPlaying) {
+      let newQueue: typeof tracks
+      let startIndex: number
+      if (dropIndex !== null) {
+        const absIndex = Math.max(0, state.queueIndex + 1 + dropIndex)
+        newQueue = [...state.queue]
+        newQueue.splice(absIndex, 0, ...tracks)
+        startIndex = absIndex
+      } else {
+        newQueue = [...state.queue, ...tracks]
+        startIndex = state.queue.length
+      }
+      playTrack(tracks[0], newQueue, startIndex, undefined, true)
+      setDropIndex(null)
+      return
+    }
+
+    // Player is active (playing or paused) — queue without interrupting.
     if (dropIndex !== null) {
       const absIndex = state.queueIndex + 1 + dropIndex
       dispatch({ type: 'INSERT_IN_QUEUE', tracks, atIndex: absIndex })
@@ -71,7 +109,7 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
       dispatch({ type: 'ADD_TO_QUEUE', tracks })
     }
     setDropIndex(null)
-  }, [resolveTracks, dropIndex, state.queueIndex, dispatch])
+  }, [resolveTracks, dropIndex, state.queueIndex, state.queue, state.nowPlaying, dispatch, playTrack])
 
   const handlePanelDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -130,7 +168,7 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
                 className="queue-item"
                 draggable
                 onDragStart={(e) => handleItemDragStart(e, i)}
-                onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i)}
+                onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i, undefined, true)}
                 onDragOver={(e) => handleItemDragOver(e, i)}
               >
                 <div className="queue-item-num">{i + 1}</div>

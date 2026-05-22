@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import type { Playlist, Track } from '../types'
+import { buildSmartPlaylistsForSync } from '../utils/smartPlaylists'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import '../styles/device.css'
 
@@ -45,62 +45,12 @@ function IpodLargeIcon() {
   )
 }
 
-/** Regenerate smart playlists (Recently Added, Top 25, My Top Rated) with fresh data before syncing to iPod. */
-function refreshSmartPlaylists(tracks: Track[], playlists: Playlist[]): Playlist[] {
-  const SMART_NAMES = new Set(['Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated'])
-
-  // Build fresh smart playlist track lists
-  const recentlyAdded = [...tracks]
-    .filter(t => t.dateAdded)
-    .sort((a, b) => (b.dateAdded || '').localeCompare(a.dateAdded || ''))
-    .slice(0, 100)
-    .map(t => t.id)
-
-  const top25 = [...tracks]
-    .filter(t => t.playCount > 0)
-    .sort((a, b) => b.playCount - a.playCount)
-    .slice(0, 25)
-    .map(t => t.id)
-
-  const topRated = [...tracks]
-    .filter(t => t.rating > 0)
-    .sort((a, b) => b.rating - a.rating || b.playCount - a.playCount)
-    .slice(0, 25)
-    .map(t => t.id)
-
-  const smartData: Record<string, number[]> = {
-    'Recently Added': recentlyAdded,
-    'Top 25 Most Played': top25,
-    'My Top Rated': topRated,
-  }
-
-  // Update existing smart playlists, keep user playlists as-is
-  const result: Playlist[] = []
-  const updated = new Set<string>()
-
-  for (const pl of playlists) {
-    if (pl.name in smartData) {
-      result.push({ ...pl, trackIds: smartData[pl.name] })
-      updated.add(pl.name)
-    } else if (!SMART_NAMES.has(pl.name)) {
-      result.push(pl)
-    }
-    // Skip "Recently Played" — we don't have reliable cross-session data for it
-  }
-
-  // Add smart playlists that weren't in the original list
-  for (const [name, ids] of Object.entries(smartData)) {
-    if (!updated.has(name) && ids.length > 0) {
-      result.push({
-        id: `smart-${name.toLowerCase().replace(/\s+/g, '-')}`,
-        name,
-        trackIds: ids,
-      })
-    }
-  }
-
-  return result
-}
+// 4.4.46 — `refreshSmartPlaylists` used to live here as a local copy
+// that diverged from what `SmartPlaylistView` displayed (different
+// counts; Recently Played skipped). It's now the shared
+// `buildSmartPlaylistsForSync` in `utils/smartPlaylists.ts`, backed by
+// the same `evaluateSmartPlaylist` the view uses. See that file's
+// header for the full why.
 
 type SyncStatus = { state: 'idle' } | { state: 'syncing'; step: string } | { state: 'done'; copied: number; total: number; time: string } | { state: 'error'; message: string }
 
@@ -221,7 +171,7 @@ export default function DeviceView() {
     setSyncStatus({ state: 'syncing', step: 'Preparing playlists...' })
     activity.setSync({ active: true, step: 'Preparing playlists...' })
     try {
-      const syncPlaylists = refreshSmartPlaylists(state.tracks, state.playlists)
+      const syncPlaylists = buildSmartPlaylistsForSync(state.tracks, state.playlists)
       setSyncStatus({ state: 'syncing', step: 'Copying new tracks to iPod...' })
       activity.setSync({ active: true, step: 'Copying new tracks to iPod...' })
       const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists)
