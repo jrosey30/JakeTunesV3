@@ -118,7 +118,15 @@ export async function enqueueFiles(paths: string[], format?: string): Promise<nu
   const audio = resolved.ok && resolved.paths ? resolved.paths : []
   if (!audio.length) return 0
 
-  const inQueue = new Set(state.items.map(i => i.srcPath))
+  // Purge completed history (done + dupe) from prior drags so this drag's
+  // batch starts at 0/N in the pill instead of "3/16" where the 3 was
+  // leftover from an earlier import. Pending + running stay (they're a
+  // batch still in flight). Failed stay too (user might retry them via
+  // the bottom dock, which only surfaces when failures exist).
+  const surviving = state.items.filter(i =>
+    i.status === 'pending' || i.status === 'running' || i.status === 'failed'
+  )
+  const inQueue = new Set(surviving.map(i => i.srcPath))
   const newItems: QueueItem[] = []
   const now = Date.now()
   for (const p of audio) {
@@ -130,11 +138,11 @@ export async function enqueueFiles(paths: string[], format?: string): Promise<nu
       addedAt: now,
     })
   }
-  if (!newItems.length) return 0
+  if (!newItems.length && surviving.length === state.items.length) return 0
 
   state = {
     ...state,
-    items: [...state.items, ...newItems],
+    items: [...surviving, ...newItems],
     format: format ?? state.format,
   }
   notify()
