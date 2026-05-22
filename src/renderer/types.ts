@@ -74,7 +74,7 @@ export interface Playlist {
   commentary?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store'
+export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid'
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -408,6 +408,10 @@ declare global {
       bandcampMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampUnmount: () => Promise<{ ok: true }>
+      // ── squid.wtf embedded view (parallel to Bandcamp, separate partition) ──
+      squidMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
+      squidResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
+      squidUnmount: () => Promise<{ ok: true }>
       // ── Bandcamp Store v4 (download -> library events) ──
       // Payload is the full Track record minted by importOneFile() — same
       // shape the drag-drop importQueue delivers. App.tsx dispatches it

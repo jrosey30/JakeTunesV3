@@ -10,6 +10,7 @@ import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
 import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
+import SquidStoreView from '../views/SquidStore'
 import '../styles/main-content.css'
 
 export default function MainContent() {
@@ -48,6 +49,7 @@ export default function MainContent() {
     case 'device': viewElement = <DeviceView />; break
     case 'cd-import': viewElement = <CDImportView />; break
     case 'store': viewElement = <StoreView />; break
+    case 'squid': viewElement = <SquidStoreView />; break
     default: viewElement = <SongsView />
   }
 

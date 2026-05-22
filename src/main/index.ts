@@ -41,6 +41,7 @@ import {
   type AudioFormat,
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
+import { registerSquidStore } from './squid-store'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -7736,6 +7737,9 @@ app.whenReady().then(async () => {
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
   })
+
+  // squid.wtf embedded view — separate partition, no download routing.
+  registerSquidStore({ getMainWindow: () => mainWindow })
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
   // audio files (Qobuz downloads, manual drops, etc.) and forwards them

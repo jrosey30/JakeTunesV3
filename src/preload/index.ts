@@ -362,6 +362,12 @@ const electronAPI = {
   bandcampResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('bandcamp:resize', bounds),
   bandcampUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('bandcamp:unmount'),
+  // ── squid.wtf embedded view (separate partition, no download routing) ──
+  squidMount: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('squid:mount', bounds),
+  squidResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('squid:resize', bounds),
+  squidUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('squid:unmount'),
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)
