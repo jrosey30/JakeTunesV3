@@ -373,25 +373,45 @@ export default function AlbumsView() {
                 <div className="album-card-artist">{album.artist}</div>
               </div>
               {showDetailHere && (() => {
-                const detailArtHash = findArtHash(selectedAlbum)
+                // 4.5: dropped the redundant 48px thumbnail (the album's
+                // grid tile right above it is already huge). Replaced
+                // with a denser metadata block — Jake asked for date
+                // released, genre, runtime, etc. All aggregates derive
+                // from the album's tracks since we don't carry album-
+                // level metadata yet (label / catalogue # would need a
+                // schema add at import time — flagged for later).
+                const totalMs = selectedAlbum.tracks.reduce((s, t) => s + (Number(t.duration) || 0), 0)
+                const totalH = Math.floor(totalMs / 3_600_000)
+                const totalM = Math.floor((totalMs % 3_600_000) / 60_000)
+                const runtime = totalH > 0 ? `${totalH}h ${totalM}m` : `${totalM}m`
+                // Most-common non-empty genre across the album's tracks.
+                const genreCount = new Map<string, number>()
+                for (const t of selectedAlbum.tracks) {
+                  const g = (t.genre || '').trim()
+                  if (g) genreCount.set(g, (genreCount.get(g) || 0) + 1)
+                }
+                const topGenre = [...genreCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+                // Earliest dateAdded = when the album first hit the library.
+                const addedAtMs = selectedAlbum.tracks
+                  .map(t => t.dateAdded ? new Date(t.dateAdded).getTime() : Infinity)
+                  .reduce((m, v) => Math.min(m, v), Infinity)
+                const addedFmt = isFinite(addedAtMs)
+                  ? new Date(addedAtMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                  : ''
+                const totalPlays = selectedAlbum.tracks.reduce((s, t) => s + (Number(t.playCount) || 0), 0)
+
                 return (
                   <div className="album-detail album-detail--inline">
                     <div className="album-detail-header">
-                      <div className="album-detail-art">
-                        {detailArtHash ? (
-                          <img src={`album-art://${detailArtHash}.jpg`} alt={selectedAlbum.name} className="album-detail-img" />
-                        ) : (
-                          <svg width="48" height="48" viewBox="0 0 48 48" fill="#999">
-                            <circle cx="24" cy="24" r="20" fill="none" stroke="#999" strokeWidth="1.5" />
-                            <circle cx="24" cy="24" r="7" fill="none" stroke="#999" strokeWidth="1.5" />
-                            <circle cx="24" cy="24" r="2" fill="#999" />
-                          </svg>
-                        )}
-                      </div>
-                      <div>
-                        <div className="album-detail-title">{selectedAlbum.name}</div>
-                        <div className="album-detail-artist">{selectedAlbum.artist}</div>
-                        <div className="album-detail-meta">{selectedAlbum.tracks.length} tracks{selectedAlbum.year ? ` · ${selectedAlbum.year}` : ''}</div>
+                      <div className="album-detail-title">{selectedAlbum.name}</div>
+                      <div className="album-detail-artist">{selectedAlbum.artist}</div>
+                      <div className="album-detail-meta">
+                        <span>{selectedAlbum.tracks.length} tracks</span>
+                        <span>{runtime}</span>
+                        {selectedAlbum.year && <span>Released {selectedAlbum.year}</span>}
+                        {topGenre && <span>{topGenre}</span>}
+                        {addedFmt && <span>Added {addedFmt}</span>}
+                        {totalPlays > 0 && <span>{totalPlays} plays</span>}
                       </div>
                     </div>
                     <div className="album-detail-tracks">

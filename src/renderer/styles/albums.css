@@ -74,53 +74,62 @@
   text-overflow: ellipsis;
 }
 
-/* Detail panel — inline within the grid */
+/* Detail panel — inline within the grid. 4.5: smoother slide-out
+ * (cubic-bezier ease-out, slight transform), no redundant thumbnail
+ * (the grid tile right above already shows the cover at full size),
+ * denser metadata. */
 .album-detail--inline {
   grid-column: 1 / -1;
-  animation: album-detail-slide 0.2s ease-out;
+  animation: album-detail-slide 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
 }
 
 @keyframes album-detail-slide {
-  from { opacity: 0; max-height: 0; }
-  to { opacity: 1; max-height: 500px; }
+  from { opacity: 0; max-height: 0; transform: translateY(-6px); }
+  to   { opacity: 1; max-height: 720px; transform: translateY(0); }
 }
 
 .album-detail {
   border-top: 1px solid #ddd;
   background: #fafafa;
-  padding: 12px 16px;
+  padding: 14px 18px 12px;
   flex-shrink: 0;
   border-radius: 4px;
 }
 
 .album-detail-header {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ececec;
+}
+
+.album-detail-title {
+  font-weight: 700;
+  font-size: var(--font-title);
+  line-height: 1.2;
+}
+.album-detail-artist {
+  font-size: var(--font-body);
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.album-detail-meta {
+  font-size: var(--font-label);
+  color: var(--text-dim);
+  margin-top: 6px;
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.album-detail-meta span {
+  display: inline-flex;
   align-items: center;
-  margin-bottom: 10px;
 }
-
-.album-detail-art {
-  width: 60px;
-  height: 60px;
-  background: linear-gradient(135deg, #ccc, #aaa);
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  overflow: hidden;
+.album-detail-meta span + span::before {
+  content: '·';
+  margin-right: 12px;
+  color: #c8c8c8;
 }
-
-.album-detail-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.album-detail-title { font-weight: 700; font-size: var(--font-title); }
-.album-detail-artist { font-size: var(--font-body); color: var(--text-secondary); }
-.album-detail-meta { font-size: var(--font-label); color: var(--text-dim); }
 
 .album-detail-tracks { max-height: 200px; overflow-y: auto; }
 

@@ -180,7 +180,6 @@ says to and explains why:
 - `src/renderer/hooks/useAudio.ts`
 - `src/renderer/hooks/useVirtualScroll.ts`
 - `src/renderer/components/playback/NowPlaying.tsx` (scrubber drag logic)
-- `src/renderer/views/AlbumsView.tsx`
 - `src/renderer/views/ArtistsView.tsx`
 - `src/renderer/views/GenresView.tsx`
 - `src/renderer/views/CDImportView.tsx`
