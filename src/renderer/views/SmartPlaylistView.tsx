@@ -101,6 +101,11 @@ interface ColDef {
 
 const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'playing', label: '', defaultWidth: 24, minWidth: 24, resizable: false },
+  // 4.5: Power-rankings column — only surfaced for the Top 25 playlist
+  // (filtered out below for other smart playlists). Shows current rank +
+  // last-week rank in parens + a green up / red down / neutral dash
+  // arrow. LW data is taken from a weekly-rotated snapshot in ui-state.
+  { key: 'rank', label: '#', defaultWidth: 80, minWidth: 60, resizable: false },
   { key: 'title', label: 'Name', defaultWidth: 220, minWidth: 80, resizable: true },
   { key: 'time', label: 'Time', defaultWidth: 50, minWidth: 40, resizable: true },
   { key: 'artist', label: 'Artist', defaultWidth: 160, minWidth: 60, resizable: true },
@@ -329,7 +334,59 @@ export default function SmartPlaylistView() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount']))
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
-  const visibleCols = ALL_COLUMN_DEFS.filter(c => !hiddenCols.has(c.key))
+  const visibleCols = ALL_COLUMN_DEFS.filter(c => {
+    if (hiddenCols.has(c.key)) return false
+    // Rank column only applies to the Top 25 power-rankings list.
+    if (c.key === 'rank' && playlistId !== 'top-25') return false
+    return true
+  })
+
+  // 4.5: Top-25 last-week snapshot. Rotates weekly: when we detect a new
+  // ISO week, promote the in-flight `curr` snapshot to `prev` and capture
+  // current ranks as the new `curr`. Display reads `prev` for the "(LW)"
+  // value + delta arrow. First-ever load has prev=null → every track
+  // shows as NEW; subsequent weeks show real movement.
+  type RankSnap = { weekKey: number; prev: Record<string, number> | null; curr: Record<string, number> }
+  const [rankSnap, setRankSnap] = useState<RankSnap | null>(null)
+  useEffect(() => {
+    if (playlistId !== 'top-25') return
+    if (smartTracks.length === 0) return
+    const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+    const currentWeek = Math.floor(Date.now() / WEEK_MS)
+    const currentRanks: Record<string, number> = {}
+    smartTracks.forEach((t, i) => { currentRanks[String(t.id)] = i + 1 })
+
+    let cancelled = false
+    window.electronAPI.loadUiState().then(r => {
+      if (cancelled) return
+      const existing = (r.ok && r.state) ? (r.state as Record<string, unknown>) : {}
+      const saved = existing.topRankSnapshot as RankSnap | undefined
+
+      let next: RankSnap
+      if (!saved || typeof saved.weekKey !== 'number') {
+        // First-ever snapshot — no LW data yet.
+        next = { weekKey: currentWeek, prev: null, curr: currentRanks }
+      } else if (saved.weekKey === currentWeek) {
+        // Same week as the saved snapshot — keep prev as-is, refresh
+        // curr to current ranks (plays may have shifted intra-week,
+        // but we don't rotate prev until next week).
+        next = { weekKey: currentWeek, prev: saved.prev, curr: currentRanks }
+      } else {
+        // Week rolled over — promote saved.curr to prev, set curr to
+        // current. THIS is the moment the user gets fresh LW deltas.
+        next = { weekKey: currentWeek, prev: saved.curr, curr: currentRanks }
+      }
+      setRankSnap(next)
+      // Persist only if anything actually changed; avoid pointless writes.
+      const isSame = saved && saved.weekKey === next.weekKey
+        && JSON.stringify(saved.curr) === JSON.stringify(next.curr)
+        && JSON.stringify(saved.prev) === JSON.stringify(next.prev)
+      if (!isSame) {
+        window.electronAPI.saveUiState({ ...existing, topRankSnapshot: next })
+      }
+    })
+    return () => { cancelled = true }
+  }, [playlistId, smartTracks])
 
   // --- Local sort state — restored from module-level map so it survives navigation ---
   const [sortCol, setSortCol] = useState<string | null>(() => {
@@ -836,6 +893,36 @@ export default function SmartPlaylistView() {
                 switch (col.key) {
                   case 'playing':
                     return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
+                  case 'rank': {
+                    const rank = i + 1
+                    const lwRank = rankSnap?.prev?.[String(track.id)]
+                    let arrow = ''
+                    let arrowClass = 'rank-arrow rank-arrow--same'
+                    let lwLabel = ''
+                    if (lwRank === undefined) {
+                      arrow = 'NEW'
+                      arrowClass = 'rank-arrow rank-arrow--new'
+                    } else if (rank < lwRank) {
+                      arrow = '▲'
+                      arrowClass = 'rank-arrow rank-arrow--up'
+                      lwLabel = `(${lwRank})`
+                    } else if (rank > lwRank) {
+                      arrow = '▼'
+                      arrowClass = 'rank-arrow rank-arrow--down'
+                      lwLabel = `(${lwRank})`
+                    } else {
+                      arrow = '—'
+                      arrowClass = 'rank-arrow rank-arrow--same'
+                      lwLabel = `(${lwRank})`
+                    }
+                    return (
+                      <div key={col.key} className="songs-cell songs-cell--rank">
+                        <span className="rank-num">{rank}</span>
+                        {lwLabel && <span className="rank-lw">{lwLabel}</span>}
+                        <span className={arrowClass}>{arrow}</span>
+                      </div>
+                    )
+                  }
                   case 'title':
                     return <div key={col.key} className="songs-cell songs-cell--title">{track.title}</div>
                   case 'time':

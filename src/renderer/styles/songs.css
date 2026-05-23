@@ -196,6 +196,47 @@
   font-weight: 500;
 }
 
+/* 4.5: Top 25 power-rankings cell. Three pieces: current rank,
+ * last-week rank in parens, arrow with up/down/same/new colouring.
+ * Lives only in SmartPlaylistView's Top 25 mode (filtered out
+ * everywhere else). */
+.songs-cell--rank {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.rank-num {
+  font-weight: 700;
+  min-width: 18px;
+  text-align: right;
+}
+.rank-lw {
+  color: #8a8a8a;
+  font-size: 10px;
+  font-weight: 500;
+}
+.rank-arrow {
+  font-weight: 700;
+  font-size: 10px;
+}
+.rank-arrow--up   { color: #1f8a3d; }
+.rank-arrow--down { color: #b1331f; }
+.rank-arrow--same { color: #9a9a9a; }
+.rank-arrow--new  {
+  color: #1c5db8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+/* Selected rows: bump the LW + arrow contrast against the blue
+   selection bg so they don't muddle into the fill. */
+.songs-row--selected .rank-lw      { color: #d5dffb; }
+.songs-row--selected .rank-arrow--up   { color: #b2f0c0; }
+.songs-row--selected .rank-arrow--down { color: #ffcfbf; }
+.songs-row--selected .rank-arrow--same { color: #e0e0e0; }
+.songs-row--selected .rank-arrow--new  { color: #fff; }
+
 /* Tiny "!" badge that appears in the title cell when the post-sync
  * identity verifier flagged a track as audioMissing — its audio file
  * couldn't be located on any known mount and no other file with the
