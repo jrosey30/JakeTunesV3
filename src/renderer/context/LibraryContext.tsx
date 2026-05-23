@@ -6,6 +6,10 @@ interface LibraryState {
   playlists: Playlist[]
   activePlaylistId: string | null
   activeSmartPlaylist: SmartPlaylistId | null
+  // 4.5: which artist's detail page is currently shown. Set by
+  // VIEW_ARTIST_DETAIL action when the user clicks a row in
+  // ArtistsView; cleared when navigating away.
+  activeArtist: string | null
   currentView: ViewName
   searchQuery: string
   sortColumn: SortColumn
@@ -40,6 +44,7 @@ type LibraryAction =
   | { type: 'RESTORE_TRACKS_TO_PLAYLIST'; playlistId: string; trackIds: number[]; atIndex: number }
   | { type: 'VIEW_PLAYLIST'; id: string }
   | { type: 'VIEW_SMART_PLAYLIST'; id: SmartPlaylistId }
+  | { type: 'VIEW_ARTIST_DETAIL'; artistName: string }
   | { type: 'SET_ARTWORK_MAP'; map: Record<string, string> }
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
   | { type: 'REMOVE_ARTWORK'; key: string }
@@ -50,6 +55,7 @@ const initialState: LibraryState = {
   playlists: [],
   activePlaylistId: null,
   activeSmartPlaylist: null,
+  activeArtist: null,
   currentView: 'songs',
   searchQuery: '',
   sortColumn: 'dateAdded',
@@ -197,6 +203,8 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
       return { ...state, currentView: 'playlist', activePlaylistId: action.id, activeSmartPlaylist: null }
     case 'VIEW_SMART_PLAYLIST':
       return { ...state, currentView: 'smart-playlist', activeSmartPlaylist: action.id, activePlaylistId: null }
+    case 'VIEW_ARTIST_DETAIL':
+      return { ...state, currentView: 'artist-detail', activeArtist: action.artistName }
     case 'SET_ARTWORK_MAP':
       return { ...state, artworkMap: action.map }
     case 'ADD_ARTWORK':

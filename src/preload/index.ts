@@ -462,6 +462,9 @@ const electronAPI = {
   // the fetch + tells the renderer when a slug is ready to render.
   getArtistImage: (artist: string): Promise<{ ok: boolean; slug: string | null }> =>
     ipcRenderer.invoke('get-artist-image', artist),
+  // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
+  getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
+    ipcRenderer.invoke('get-artist-wiki', artist),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

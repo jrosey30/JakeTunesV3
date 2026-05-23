@@ -2,6 +2,7 @@ import { useLibrary } from '../context/LibraryContext'
 import HomeView from '../views/HomeView'
 import SongsView from '../views/SongsView'
 import ArtistsView from '../views/ArtistsView'
+import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
 import GenresView from '../views/GenresView'
 import MusicManView from '../views/MusicManView'
@@ -41,6 +42,7 @@ export default function MainContent() {
     case 'home': viewElement = <HomeView />; break
     case 'songs': viewElement = <SongsView />; break
     case 'artists': viewElement = <ArtistsView />; break
+    case 'artist-detail': viewElement = <ArtistDetailView />; break
     case 'albums': viewElement = <AlbumsView />; break
     case 'genres': viewElement = <GenresView />; break
     case 'musicman': break  // handled by the always-mounted wrapper below

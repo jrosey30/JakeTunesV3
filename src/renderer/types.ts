@@ -74,7 +74,7 @@ export interface Playlist {
   commentary?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid'
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -442,6 +442,14 @@ declare global {
       // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
       // library artists.
       getUpcomingReleasesPersonal: () => Promise<{ ok: boolean; items: UpcomingRelease[] }>
+
+      // 4.4.40 — Per-artist photo slug; renderer loads via the
+      // artist-image:// protocol scheme.
+      getArtistImage: (artist: string) => Promise<{ ok: boolean; slug: string | null }>
+      // 4.5 — Wikipedia summary for the artist detail page. 24h disk
+      // cache in main; both fields null on no-result so UI can fall
+      // back to photo + name only.
+      getArtistWiki: (artist: string) => Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }>
     }
   }
 }

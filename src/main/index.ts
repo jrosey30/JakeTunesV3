@@ -864,6 +864,58 @@ ipcMain.handle('get-artist-image', async (_event, artist: string): Promise<{ ok:
   }
 })
 
+// 4.5: Wikipedia summary for the artist detail page. Hits the public
+// REST summary endpoint (en.wikipedia.org/api/rest_v1/page/summary/<title>),
+// caches the parsed extract on disk for 24h. Returns { ok, extract,
+// pageUrl } — extract is the short ~250-word summary the page renders;
+// pageUrl is the canonical wiki URL for a "read more" link. Both null
+// on no-result so the UI can degrade gracefully (just the photo + name).
+const WIKI_CACHE_DIR = join(app.getPath('userData'), 'wiki-cache')
+const WIKI_TTL_MS = 24 * 60 * 60 * 1000
+async function fetchWikiSummary(artist: string): Promise<{ extract: string | null; pageUrl: string | null }> {
+  await mkdir(WIKI_CACHE_DIR, { recursive: true }).catch(() => {})
+  const key = createHash('md5').update(artist.toLowerCase().trim()).digest('hex')
+  const cachePath = join(WIKI_CACHE_DIR, `${key}.json`)
+  // Disk cache first — survives app restarts.
+  try {
+    const stat0 = await stat(cachePath)
+    if (Date.now() - stat0.mtimeMs < WIKI_TTL_MS) {
+      const raw = await readFile(cachePath, 'utf-8')
+      return JSON.parse(raw)
+    }
+  } catch { /* miss */ }
+  // Wikipedia REST summary endpoint. Underscores for spaces; %20 also
+  // works but underscores are the wiki-canonical form. redirect=true
+  // follows "Drake_(musician)" -> the actual artist page when needed.
+  const title = encodeURIComponent(artist.trim().replace(/ /g, '_'))
+  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${title}?redirect=true`
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'JakeTunes/4.5 (personal music library; jakerosenbaum30@gmail.com)' },
+    })
+    if (!res.ok) {
+      const miss = { extract: null, pageUrl: null }
+      await writeFile(cachePath, JSON.stringify(miss)).catch(() => {})
+      return miss
+    }
+    const data = await res.json() as { extract?: string; content_urls?: { desktop?: { page?: string } } }
+    const out = {
+      extract: typeof data.extract === 'string' ? data.extract : null,
+      pageUrl: data.content_urls?.desktop?.page || null,
+    }
+    await writeFile(cachePath, JSON.stringify(out)).catch(() => {})
+    return out
+  } catch (err) {
+    console.warn('[wiki] fetch failed for', artist, err)
+    return { extract: null, pageUrl: null }
+  }
+}
+ipcMain.handle('get-artist-wiki', async (_event, artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> => {
+  if (!artist || typeof artist !== 'string') return { ok: false, extract: null, pageUrl: null }
+  const r = await fetchWikiSummary(artist)
+  return { ok: true, ...r }
+})
+
 // 4.4.29 — Brooklyn weather for the Home header greeting. Cached
 // 10 min in external.ts (already there for the Music Man prompt).
 // Returns null if no API key is set; renderer should render the

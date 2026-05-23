@@ -348,7 +348,17 @@ export default function ArtistsView() {
     >
       {filteredArtists.map((artist) => (
         <div key={artist.name} className="artist-group" data-artist-name={artist.name}>
-          <div className="artist-row" onClick={() => toggleArtist(artist.name)}>
+          {/* 4.5: click navigates to the dedicated artist detail page
+              (hero photo + Wikipedia summary + library albums) instead
+              of expanding inline. The old inline-expand machinery
+              (expandedArtist state, content-wrapper render below) is
+              left in place for now but never triggers — Phase 2
+              cleanup will rip it out once the detail page proves
+              itself. */}
+          <div
+            className="artist-row"
+            onClick={() => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: artist.name })}
+          >
             {(() => {
               // 4.4.40: real artist photo via the artist-image:// scheme
               // (fetched from Bandsintown, cached locally 30 days). Falls
