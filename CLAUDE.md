@@ -142,6 +142,34 @@ the middle two makes the user the test suite.
 
 ---
 
+## Version numbering (don't inflate)
+
+**`4.X` (minor) = feature milestone.** A new capability the user
+notices. `4.5` = Bandcamp + squid stores with download → library
+pipeline. Bump the minor when the *story* of the app changes, not
+when code does.
+
+**`4.X.Y` (patch) = real shipped bug fix on top of an
+already-distributed build.** Only bump when:
+1. A build was already handed to / installed by the user, AND
+2. The fix is meaningful enough that the version label needs to track
+   "before this fix" vs "after this fix" for future debugging.
+
+**Dev iterations during one feature cycle stay on the same version.**
+Rebuild the same dmg over and over; the version doesn't move. Five
+fixes in an afternoon while the user is testing on the same dmg
+filename = still the same version. Bumping every commit produces
+version inflation that erodes the meaning of the number.
+
+**Semver constraint:** electron-builder requires `X.Y.Z`. So `4.5`
+is referred to colloquially but the package.json string is `4.5.0`.
+The About dialog reads `4.5.0` — same thing.
+
+When in doubt, don't bump. The user will tell you when a label
+matters.
+
+---
+
 ## Do Not Touch (without explicit permission)
 
 These are working correctly. Do not change them unless a brief explicitly
