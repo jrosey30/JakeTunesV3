@@ -289,6 +289,12 @@ export default function SmartPlaylistView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlistId, libState.tracks, picks, picksStateLoaded])
 
+  // 4.5: Top 25 windowing. Declared here (BEFORE smartTracks) because
+  // smartTracks's memo reads topWindow to apply the date filter. The
+  // load/save effects + segmented control are further down.
+  type TopWindow = 'all' | 'month' | 'week'
+  const [topWindow, setTopWindow] = useState<TopWindow>('all')
+
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
 
@@ -315,8 +321,24 @@ export default function SmartPlaylistView() {
         .map(id => trackMap.get(id))
         .filter((t): t is Track => t !== undefined)
     }
+    // 4.5: Top-25 windowing. evaluateSmartPlaylist remains the
+    // canonical "all time" definition (also what iPod-sync uses); the
+    // week/month variants post-filter against lastPlayedAt and
+    // re-rank by cumulative playCount. NOTE: this is an approximation —
+    // we don't keep per-play timestamps, so "last week" really means
+    // "tracks with lastPlayedAt in the last 7 days, ranked by ALL-TIME
+    // playCount." Honest enough for a personal library; if we ever add
+    // per-play history we can compute true windowed play counts.
+    if (playlistId === 'top-25' && topWindow !== 'all') {
+      const WINDOW_MS = topWindow === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
+      const cutoff = Date.now() - WINDOW_MS
+      return libState.tracks
+        .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff)
+        .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+        .slice(0, 25)
+    }
     return evaluateSmartPlaylist(playlistId, libState.tracks)
-  }, [playlistId, libState.tracks, picks])
+  }, [playlistId, libState.tracks, picks, topWindow])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
@@ -334,10 +356,32 @@ export default function SmartPlaylistView() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount']))
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
+  // 4.5: Top 25 windowing — see the topWindow state declared above
+  // smartTracks. The load/save effects + segmented control live here
+  // (below smartTracks) so the initial render uses the persisted value.
+  useEffect(() => {
+    if (playlistId !== 'top-25') return
+    let cancelled = false
+    window.electronAPI.loadUiState().then(r => {
+      if (cancelled || !r.ok || !r.state) return
+      const w = (r.state as Record<string, unknown>).topWindow
+      if (w === 'all' || w === 'month' || w === 'week') setTopWindow(w)
+    })
+    return () => { cancelled = true }
+  }, [playlistId])
+  const setTopWindowAndSave = useCallback((w: TopWindow) => {
+    setTopWindow(w)
+    window.electronAPI.loadUiState().then(r => {
+      const existing = (r.ok && r.state) ? (r.state as Record<string, unknown>) : {}
+      window.electronAPI.saveUiState({ ...existing, topWindow: w })
+    })
+  }, [])
+
   const visibleCols = ALL_COLUMN_DEFS.filter(c => {
     if (hiddenCols.has(c.key)) return false
-    // Rank column only applies to the Top 25 power-rankings list.
-    if (c.key === 'rank' && playlistId !== 'top-25') return false
+    // Rank column only applies to the All Time Top 25 — week / month
+    // views are recent-listening snapshots, not trend lines.
+    if (c.key === 'rank' && (playlistId !== 'top-25' || topWindow !== 'all')) return false
     return true
   })
 
@@ -350,6 +394,9 @@ export default function SmartPlaylistView() {
   const [rankSnap, setRankSnap] = useState<RankSnap | null>(null)
   useEffect(() => {
     if (playlistId !== 'top-25') return
+    // Snapshot only the All Time view — week / month variants are
+    // recent-listening lenses, not power-rankings inputs.
+    if (topWindow !== 'all') return
     if (smartTracks.length === 0) return
     const WEEK_MS = 7 * 24 * 60 * 60 * 1000
     const currentWeek = Math.floor(Date.now() / WEEK_MS)
@@ -386,7 +433,7 @@ export default function SmartPlaylistView() {
       }
     })
     return () => { cancelled = true }
-  }, [playlistId, smartTracks])
+  }, [playlistId, smartTracks, topWindow])
 
   // --- Local sort state — restored from module-level map so it survives navigation ---
   const [sortCol, setSortCol] = useState<string | null>(() => {
@@ -780,6 +827,28 @@ export default function SmartPlaylistView() {
               </>
             )}
           </div>
+          {/* 4.5: Top 25 window switcher — keeps the sidebar clean
+              (one entry) while giving Jake last-week / last-month /
+              all-time lenses without a separate playlist per window. */}
+          {playlistId === 'top-25' && (
+            <div className="top25-window-switch" role="tablist" aria-label="Top 25 window">
+              {([
+                ['all',   'All Time'],
+                ['month', 'Last Month'],
+                ['week',  'Last Week'],
+              ] as const).map(([w, label]) => (
+                <button
+                  key={w}
+                  role="tab"
+                  aria-selected={topWindow === w}
+                  className={`top25-window-btn ${topWindow === w ? 'top25-window-btn--active' : ''}`}
+                  onClick={() => setTopWindowAndSave(w)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="playlist-view-actions">
           {isPicksView && (
