@@ -351,9 +351,24 @@ export default function SmartPlaylistView() {
   }, [smartTracks, libState.searchQuery])
 
   // --- Column visibility ---
-  // Rating stays visible so ratings can be edited from any smart
-  // playlist (Recently Added, Top 25, The Music Man Picks…).
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount']))
+  // Default hidden set varies by playlist — Recently Added obviously
+  // wants dateAdded visible; Top 25 wants playCount visible; etc.
+  // Rating stays visible everywhere so ratings can be edited from any
+  // smart playlist.
+  const defaultHidden = useMemo(() => {
+    switch (playlistId) {
+      case 'recently-added':  return new Set(['playCount'])             // show dateAdded
+      case 'recently-played': return new Set(['dateAdded', 'playCount']) // recency-driven; both noisy
+      case 'top-25':          return new Set(['dateAdded'])              // playCount drives the list, keep it visible
+      case 'top-rated':       return new Set(['dateAdded', 'playCount']) // Starred is binary; counts add noise
+      default:                return new Set(['dateAdded', 'playCount']) // picks views — meta-light
+    }
+  }, [playlistId])
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(defaultHidden)
+  // When the user switches between smart playlists, reset hiddenCols
+  // to that playlist's defaults — otherwise carrying over the previous
+  // playlist's hide-set means each view doesn't get the right columns.
+  useEffect(() => { setHiddenCols(defaultHidden) }, [defaultHidden])
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   // 4.5: Top 25 windowing — see the topWindow state declared above
