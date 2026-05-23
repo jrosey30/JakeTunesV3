@@ -30,7 +30,7 @@ const TITLES: Record<string, string> = {
   'recently-added': 'Recently Added',
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
-  'top-rated': 'My Top Rated',
+  'top-rated': 'Starred',
   'musicman-picks': 'The Music Man Picks',
   'megan-picks': 'Megan Picks',
   'dj-hands-picks': 'DJ Stephen Hands Picks',

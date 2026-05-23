@@ -45,7 +45,7 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
   { id: 'recently-added',  name: 'Recently Added' },
   { id: 'recently-played', name: 'Recently Played' },
   { id: 'top-25',          name: 'Top 25 Most Played' },
-  { id: 'top-rated',       name: 'My Top Rated' },
+  { id: 'top-rated',       name: 'Starred' },
 ]
 
 // Selection limits — ONE place. Display and sync read the same numbers
@@ -53,7 +53,7 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
 const RECENTLY_ADDED_LIMIT  = 50
 const RECENTLY_PLAYED_LIMIT = 50
 const TOP_25_LIMIT          = 25
-const TOP_RATED_LIMIT       = 50
+// Starred has no limit — every starred track is in.
 
 /**
  * Evaluate one of the four built-in smart playlists to a concrete,
@@ -81,23 +81,19 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
         .slice(0, TOP_25_LIMIT)
 
     case 'top-rated': {
-      const rated = [...tracks].filter(t => t.rating > 0)
-      if (rated.length > 0) {
-        return rated
-          .sort((a, b) => b.rating - a.rating || b.playCount - a.playCount)
-          .slice(0, TOP_RATED_LIMIT)
-      }
-      // Fallback when nothing's rated yet: a play-count + recency proxy
-      // so the playlist isn't dead weight on a fresh library. Kept
-      // IDENTICAL on the display and sync sides via this shared fn.
+      // 4.5: Jake renamed this to "Starred" and reframed it as a pure
+      // toggle list — every starred track, no limit, no
+      // play-count-fallback. The smart playlist mirrors the binary
+      // star: star a track -> it's here, unstar -> it's gone.
+      // Sort: most recently added starred first (so newly-starred
+      // shows up at the top).
       return [...tracks]
-        .filter(t => t.playCount > 0)
+        .filter(t => (Number(t.rating) || 0) > 0)
         .sort((a, b) => {
-          const scoreA = a.playCount * 2 + (a.dateAdded ? new Date(a.dateAdded).getTime() / 1e12 : 0)
-          const scoreB = b.playCount * 2 + (b.dateAdded ? new Date(b.dateAdded).getTime() / 1e12 : 0)
-          return scoreB - scoreA
+          const ad = a.dateAdded ? new Date(a.dateAdded).getTime() : 0
+          const bd = b.dateAdded ? new Date(b.dateAdded).getTime() : 0
+          return bd - ad
         })
-        .slice(0, TOP_RATED_LIMIT)
     }
 
     default:
