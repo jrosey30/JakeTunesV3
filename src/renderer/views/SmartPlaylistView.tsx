@@ -903,11 +903,13 @@ export default function SmartPlaylistView() {
                       arrow = 'NEW'
                       arrowClass = 'rank-arrow rank-arrow--new'
                     } else if (rank < lwRank) {
-                      arrow = '▲'
+                      // Moved UP — append how many spots: ▲3
+                      arrow = `▲${lwRank - rank}`
                       arrowClass = 'rank-arrow rank-arrow--up'
                       lwLabel = `(${lwRank})`
                     } else if (rank > lwRank) {
-                      arrow = '▼'
+                      // Moved DOWN: ▼5
+                      arrow = `▼${rank - lwRank}`
                       arrowClass = 'rank-arrow rank-arrow--down'
                       lwLabel = `(${lwRank})`
                     } else {
