@@ -145,6 +145,25 @@ export class RecordStoreCache {
     await atomicWriteJson(this.themeHistoryPath(), next)
   }
 
+  /** Walk back through cached shelf bundles for the last N days and
+   *  return the union of every ShelfItem id that appeared. Used by the
+   *  candidate-pool builder for the recency penalty (Brief §3.4). */
+  async getRecentlyPickedIds(todayISO: string, daysBack: number): Promise<Set<string>> {
+    const out = new Set<string>()
+    const d = new Date(`${todayISO}T00:00:00`)
+    for (let i = 0; i < daysBack; i++) {
+      const iso = d.toISOString().slice(0, 10)
+      const bundle = await readJsonOrNull<ShelfBundle>(this.shelvesPath(iso))
+      if (bundle) {
+        for (const shelf of bundle.shelves) {
+          for (const item of shelf.items) out.add(item.id)
+        }
+      }
+      d.setDate(d.getDate() - 1)
+    }
+    return out
+  }
+
   /** Best-effort cleanup of shelf bundles older than 21 days. Called
    *  occasionally so the cache dir doesn't grow forever. Never throws. */
   async pruneOldShelves(): Promise<void> {
