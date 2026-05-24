@@ -361,6 +361,20 @@ export default function Sidebar() {
             selected={state.currentView === 'squid'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'squid' })}
           />
+          {/* Brief 037 — Music Man's Record Store. Phase 0 ships a plain
+              text view; Phase 2 swaps in the illustrated storefront. */}
+          <SidebarItem
+            label="The Record Store"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="6" fill="#5a3a22" />
+                <circle cx="8" cy="8" r="2.4" fill="#e0812e" />
+                <circle cx="8" cy="8" r="0.7" fill="#5a3a22" />
+              </svg>
+            )}
+            selected={state.currentView === 'recordstore'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
+          />
         </SidebarSection>
 
         {(ipodMounted || cdMounted) && (

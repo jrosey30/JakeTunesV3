@@ -368,6 +368,21 @@ const electronAPI = {
   squidResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('squid:resize', bounds),
   squidUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('squid:unmount'),
+
+  // ── Music Man's Record Store (Brief 037) ──
+  // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/
+  // cancel are wired but stubbed. Phase 1 swaps in the LLM-driven
+  // curator; Phase 2 adds the scene/FSM/TTS layer.
+  recordStore: {
+    getShelves: (opts?: { forceRefresh?: boolean }): Promise<unknown> =>
+      ipcRenderer.invoke('record-store:get-shelves', opts ?? {}),
+    getBlurb: (args: { itemId: string; persona: 'music-man' | 'megan' | 'stephen-hands' }): Promise<unknown> =>
+      ipcRenderer.invoke('record-store:get-blurb', args),
+    speakBlurb: (args: { blurb: unknown }): Promise<{ ok: true; audioId: string }> =>
+      ipcRenderer.invoke('record-store:speak-blurb', args),
+    cancelSpeech: (args: { audioId: string }): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('record-store:cancel-speech', args),
+  },
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)

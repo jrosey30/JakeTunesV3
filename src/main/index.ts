@@ -42,6 +42,7 @@ import {
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerSquidStore } from './squid-store'
+import { registerRecordStoreIntegration } from './record-store'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -7798,6 +7799,18 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
+  })
+
+  // ── Music Man's Record Store (Brief 037) ──
+  // Phase 0 ships heuristic shelves backed by library.json — no LLM
+  // calls, no TTS. Phase 1 swaps in the day-theme + Sonnet curator;
+  // Phase 2 adds the illustrated scene + TTS-with-duck. The module
+  // owns its own IPC handlers (record-store:*) and disk cache under
+  // userData/record-store/.
+  registerRecordStoreIntegration({
+    libraryPath: LIBRARY_PATH,
+    userDataDir: app.getPath('userData'),
+    getMainWindow: () => mainWindow,
   })
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
