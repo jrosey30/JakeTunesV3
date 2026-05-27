@@ -59,7 +59,28 @@ function send(deps: BandcampDeps, channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
 
-function ensureView(): WebContentsView {
+// 4.5: parse a Bandcamp URL into a {artistSlug, albumSlug} pair so the
+// renderer can match against the library. Artist subdomain → slug;
+// /album/foo or /track/foo → albumSlug (track-level URLs surface the
+// SAME album-context match — granularity is per-album in the UI).
+// Returns null for non-Bandcamp pages (bandcamp.com home, search,
+// account, etc.) where no per-artist context applies.
+function parseBandcampUrl(url: string): { artistSlug: string; albumSlug: string | null } | null {
+  try {
+    const u = new URL(url)
+    if (!u.hostname.endsWith('.bandcamp.com')) return null
+    const sub = u.hostname.slice(0, -'.bandcamp.com'.length)
+    if (!sub || sub === 'www') return null
+    let albumSlug: string | null = null
+    const m = u.pathname.match(/^\/(?:album|track)\/([^/]+)/)
+    if (m) albumSlug = m[1]
+    return { artistSlug: sub, albumSlug }
+  } catch {
+    return null
+  }
+}
+
+function ensureView(deps?: BandcampDeps): WebContentsView {
   if (view && !view.webContents.isDestroyed()) return view
   // Decision 2: every secure default on. No preload — bandcamp.com content
   // has no access to JakeTunes IPC. The persist:bandcamp partition is the
@@ -93,6 +114,23 @@ function ensureView(): WebContentsView {
     return { action: 'deny' }
   })
 
+  // 4.5: emit library-context updates on every navigation so the
+  // renderer's StoreView header strip can show "you own X tracks by
+  // this artist" while the user browses. Both did-navigate (full
+  // page loads) and did-navigate-in-page (Bandcamp's SPA-style
+  // intra-page transitions) are needed — Bandcamp's player route
+  // change between tracks is the in-page kind. deps is optional
+  // (ensureView gets called from createView pre-register too); when
+  // missing, the parser still runs but nothing's emitted.
+  if (deps) {
+    const emit = (url: string) => {
+      const ctx = parseBandcampUrl(url)
+      send(deps, 'bandcamp:url-changed', { url, ...(ctx || { artistSlug: null, albumSlug: null }) })
+    }
+    view.webContents.on('did-navigate', (_e, url) => emit(url))
+    view.webContents.on('did-navigate-in-page', (_e, url) => emit(url))
+  }
+
   viewLoaded = false
   return view
 }
@@ -100,7 +138,7 @@ function ensureView(): WebContentsView {
 function attachView(deps: BandcampDeps, bounds: Bounds): void {
   const win = deps.getMainWindow()
   if (!win || win.isDestroyed()) return
-  const v = ensureView()
+  const v = ensureView(deps)
   if (!attached) {
     win.contentView.addChildView(v)
     attached = true
@@ -136,6 +174,7 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
     importDownloaded: deps.importDownloaded,
     onTrackImported: (track) => send(deps, 'bandcamp:track-imported', track),
     onImportFailed: (reason) => send(deps, 'bandcamp:import-failed', reason),
+    onAllDuplicates: (info) => send(deps, 'bandcamp:all-duplicates', info),
   })
 
   ipcMain.handle('bandcamp:mount', (_e, bounds: Bounds) => {
@@ -150,6 +189,33 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
 
   ipcMain.handle('bandcamp:unmount', () => {
     detachView(deps)
+    return { ok: true as const }
+  })
+
+  // 4.5.0-47: in-Bandcamp navigation controls so the renderer can paint
+  // a real back arrow (and forward / reload) above the embedded view.
+  // Returns canGoBack/canGoForward so the UI can disable buttons when
+  // there's no history to walk.
+  ipcMain.handle('bandcamp:nav-state', () => {
+    if (!view || view.webContents.isDestroyed()) {
+      return { ok: false as const, canGoBack: false, canGoForward: false }
+    }
+    return {
+      ok: true as const,
+      canGoBack: view.webContents.canGoBack(),
+      canGoForward: view.webContents.canGoForward(),
+    }
+  })
+
+  ipcMain.handle('bandcamp:go-back', () => {
+    if (!view || view.webContents.isDestroyed()) return { ok: false as const }
+    if (view.webContents.canGoBack()) view.webContents.goBack()
+    return { ok: true as const }
+  })
+
+  ipcMain.handle('bandcamp:go-forward', () => {
+    if (!view || view.webContents.isDestroyed()) return { ok: false as const }
+    if (view.webContents.canGoForward()) view.webContents.goForward()
     return { ok: true as const }
   })
 }

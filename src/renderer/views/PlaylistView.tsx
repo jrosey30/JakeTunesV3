@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
+import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -44,7 +44,7 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'rating', label: 'Rating', defaultWidth: 75, minWidth: 55, resizable: true },
+  // 4.5: 'rating' column REMOVED — star renders inline next to title.
 ]
 
 const ALWAYS_VISIBLE = new Set(['playing', 'title'])
@@ -168,7 +168,12 @@ export default function PlaylistView() {
   }, [tracks, sortCol, sortDir])
 
   // Sort handler
+  // 4.5: suppress sort if a column resize just ended — the implicit
+  // click bubbling up from the resize handle was triggering unwanted
+  // re-sorts on every drag-to-resize.
+  const lastResizeEndAt = useRef<number>(0)
   const handleSort = useCallback((key: string) => {
+    if (Date.now() - lastResizeEndAt.current < 300) return
     if (key === 'playing') return
     if (sortCol === key) {
       if (sortDir === 'desc') {
@@ -201,6 +206,7 @@ export default function PlaylistView() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
+      lastResizeEndAt.current = Date.now()
     }
     document.body.style.cursor = 'col-resize'
     window.addEventListener('mousemove', onMove)
@@ -539,7 +545,7 @@ export default function PlaylistView() {
           {visibleCols.map((col, i) => (
             <div
               key={col.key}
-              className={`songs-header-cell ${sortCol === col.key ? 'sorted' : ''}`}
+              className={`songs-header-cell songs-header-cell--${col.key} ${sortCol === col.key ? 'sorted' : ''}`}
               onClick={() => handleSort(col.key)}
             >
               {col.label}
@@ -566,6 +572,8 @@ export default function PlaylistView() {
                 style={{ gridTemplateColumns: gridTemplate }}
                 onClick={(e) => handleClick(track, i, e)}
                 onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
+                onMouseEnter={() => prefetchTrackForPlay(track)}
+                onMouseDown={() => prefetchTrackImmediate(track)}
                 onContextMenu={(e) => handleContextMenu(e, track, i)}
                 draggable
                 onDragStart={(e) => {
@@ -604,8 +612,38 @@ export default function PlaylistView() {
                   switch (col.key) {
                     case 'playing':
                       return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
-                    case 'title':
-                      return <div key={col.key} className="songs-cell songs-cell--title">{track.title}</div>
+                    case 'title': {
+                      const starred = (Number(track.rating) || 0) > 0
+                      const toggleStar = (e: React.MouseEvent) => {
+                        e.stopPropagation()
+                        const value = String(starred ? 0 : 5)
+                        dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
+                        window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
+                        // 4.5: stamp starredAt on star-ON for the Starred
+                        // playlist's recent-first default sort.
+                        if (!starred) {
+                          const stamp = String(Date.now())
+                          dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'starredAt', value: stamp }] })
+                          window.electronAPI.saveMetadataOverride(track.id, 'starredAt', stamp)
+                        }
+                      }
+                      return (
+                        <div key={col.key} className="songs-cell songs-cell--title">
+                          <span className="title-row-text">{track.title}</span>
+                          <button
+                            className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
+                            onClick={toggleStar}
+                            onDoubleClick={(e) => e.stopPropagation()}
+                            title={starred ? 'Unstar' : 'Star'}
+                            aria-label={starred ? 'Unstar' : 'Star'}
+                          >
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+                              <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+                            </svg>
+                          </button>
+                        </div>
+                      )
+                    }
                     case 'time':
                       return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
                     case 'artist':
@@ -623,20 +661,7 @@ export default function PlaylistView() {
                       return <div key={col.key} className="songs-cell songs-cell--time">{dp ? `${mo}-${dy}-${y}` : ''}</div>
                     }
                     case 'playCount':
-                      return <div key={col.key} className="songs-cell songs-cell--time">{track.playCount || ''}</div>
-                    case 'rating':
-                      return (
-                        <div key={col.key} className="songs-cell songs-cell--rating">
-                          <StarRating
-                            value={Number(track.rating) || 0}
-                            onChange={(r) => {
-                              const value = String(r)
-                              dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
-                              window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
-                            }}
-                          />
-                        </div>
-                      )
+                      return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
                     default:
                       return null
                   }

@@ -23,6 +23,7 @@
  */
 
 import type { Track } from './types'
+import { setNotice } from './activity'
 
 export type QueueItemStatus =
   | 'pending'    // sitting in the queue, will be processed
@@ -435,6 +436,18 @@ async function runWorker(): Promise<void> {
         nextLibraryId = Math.min(nextLibraryId, id)
         // Failed import: keep the source. User can retry from the queue
         // panel and the file needs to still exist for that to work.
+
+        // 4.5.0-40: surface the failure reason in the LCD pill via a
+        // transient notice. The bottom-right ImportQueuePanel already
+        // carries the error string, but Jake reported he couldn't tell
+        // WHY imports failed from the pill alone — push the reason
+        // somewhere impossible to miss. Capped to one line; ENOENT is
+        // not noticed because it's reclassified to a dupe above.
+        if (!isEnoent) {
+          const fname = next.srcPath.split('/').pop() || next.srcPath
+          const reason = (res.error || 'Import failed').replace(/^Error:\s*/i, '').slice(0, 140)
+          setNotice(`Can't import "${fname}" — ${reason}`, { kind: 'error', durationMs: 8000 })
+        }
       }
       notify()
     }

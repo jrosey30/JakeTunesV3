@@ -60,6 +60,12 @@ export default function DeviceView() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
   const [ipodName, setIpodName] = useState('iPod')
   const [ipodCapacityBytes, setIpodCapacityBytes] = useState<number>(FALLBACK_CAPACITY_BYTES)
+  // Real statfs() free bytes from the mounted iPod (via get-ipod-capacity).
+  // Preferred over the library-sum estimate because library `fileSize` can
+  // drift from on-iPod reality whenever bitrate conversion has run — the
+  // library stores source-side ALAC sizes while the iPod holds smaller AAC
+  // mirrors, leaving the synthetic free-space calc 50+GB off.
+  const [ipodFreeBytes, setIpodFreeBytes] = useState<number | null>(null)
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
 
@@ -82,6 +88,20 @@ export default function DeviceView() {
   const [optManualManage, setOptManualManage] = useState(true)
   const [optDiskUse, setOptDiskUse] = useState(true)
   const optsLoaded = useRef(false)
+  // 4.5: iTunes-style Apply pattern. The "applied" snapshot is what's
+  // currently persisted to disk + considered live; the working state
+  // (above) is what the user is editing. Sync is gated on
+  // applied === working — if the user has unsaved settings changes,
+  // Apply must run first. Initial value matches the defaults so the
+  // first session post-load is clean.
+  const [appliedSettings, setAppliedSettings] = useState({
+    optOpenOnConnect: false,
+    optSyncOnlyChecked: false,
+    optConvertBitrate: false,
+    optConvertBitrateTarget: '128' as '128' | '192' | '256',
+    optManualManage: true,
+    optDiskUse: true,
+  })
 
   useEffect(() => {
     window.electronAPI.checkIpodMounted().then(r => {
@@ -91,39 +111,65 @@ export default function DeviceView() {
     // (modded units can be anything — 64GB, 128GB, 256GB, etc.).
     window.electronAPI.getIpodCapacity().then(r => {
       if (r.ok && r.totalBytes && r.totalBytes > 0) setIpodCapacityBytes(r.totalBytes)
+      if (r.ok && typeof r.freeBytes === 'number') setIpodFreeBytes(r.freeBytes)
     }).catch(() => {})
     // Load persisted device options out of ui-state.
     window.electronAPI.loadUiState().then(r => {
       if (!r.ok || !r.state) { optsLoaded.current = true; return }
       const s = r.state as Record<string, unknown>
-      if (typeof s.optOpenOnConnect === 'boolean') setOptOpenOnConnect(s.optOpenOnConnect)
-      if (typeof s.optSyncOnlyChecked === 'boolean') setOptSyncOnlyChecked(s.optSyncOnlyChecked)
-      if (typeof s.optConvertBitrate === 'boolean') setOptConvertBitrate(s.optConvertBitrate)
-      if (s.optConvertBitrateTarget === '128' || s.optConvertBitrateTarget === '192' || s.optConvertBitrateTarget === '256') {
-        setOptConvertBitrateTarget(s.optConvertBitrateTarget)
+      const loaded = {
+        optOpenOnConnect: typeof s.optOpenOnConnect === 'boolean' ? s.optOpenOnConnect : false,
+        optSyncOnlyChecked: typeof s.optSyncOnlyChecked === 'boolean' ? s.optSyncOnlyChecked : false,
+        optConvertBitrate: typeof s.optConvertBitrate === 'boolean' ? s.optConvertBitrate : false,
+        optConvertBitrateTarget: (s.optConvertBitrateTarget === '128' || s.optConvertBitrateTarget === '192' || s.optConvertBitrateTarget === '256')
+          ? s.optConvertBitrateTarget as '128' | '192' | '256'
+          : '128' as const,
+        optManualManage: typeof s.optManualManage === 'boolean' ? s.optManualManage : true,
+        optDiskUse: typeof s.optDiskUse === 'boolean' ? s.optDiskUse : true,
       }
-      if (typeof s.optManualManage === 'boolean') setOptManualManage(s.optManualManage)
-      if (typeof s.optDiskUse === 'boolean') setOptDiskUse(s.optDiskUse)
+      setOptOpenOnConnect(loaded.optOpenOnConnect)
+      setOptSyncOnlyChecked(loaded.optSyncOnlyChecked)
+      setOptConvertBitrate(loaded.optConvertBitrate)
+      setOptConvertBitrateTarget(loaded.optConvertBitrateTarget)
+      setOptManualManage(loaded.optManualManage)
+      setOptDiskUse(loaded.optDiskUse)
+      // 4.5: applied snapshot matches what was loaded — fresh session
+      // starts in a non-dirty state regardless of what the persisted
+      // values are.
+      setAppliedSettings(loaded)
       optsLoaded.current = true
     }).catch(() => { optsLoaded.current = true })
   }, [])
 
-  // Persist device options on change — merged into ui-state, not overwriting.
-  useEffect(() => {
-    if (!optsLoaded.current) return
-    window.electronAPI.loadUiState().then(r => {
+  // 4.5: dirty detector. True when any working value differs from the
+  // applied snapshot. Apply button appears + Sync gets gated when dirty.
+  const isDirty =
+    optOpenOnConnect !== appliedSettings.optOpenOnConnect ||
+    optSyncOnlyChecked !== appliedSettings.optSyncOnlyChecked ||
+    optConvertBitrate !== appliedSettings.optConvertBitrate ||
+    optConvertBitrateTarget !== appliedSettings.optConvertBitrateTarget ||
+    optManualManage !== appliedSettings.optManualManage ||
+    optDiskUse !== appliedSettings.optDiskUse
+
+  // 4.5: Apply persists current state to disk AND updates the applied
+  // snapshot so the dirty flag drops to false. Sync becomes available.
+  // The auto-save-on-change useEffect above was REMOVED — settings now
+  // only persist on Apply click, matching iTunes' commit pattern Jake
+  // asked for.
+  const handleApplySettings = async () => {
+    try {
+      const r = await window.electronAPI.loadUiState()
       const existing = (r.ok && r.state) ? r.state : {}
-      window.electronAPI.saveUiState({
-        ...existing,
-        optOpenOnConnect,
-        optSyncOnlyChecked,
-        optConvertBitrate,
-        optConvertBitrateTarget,
-        optManualManage,
-        optDiskUse,
-      })
-    }).catch(() => {})
-  }, [optOpenOnConnect, optSyncOnlyChecked, optConvertBitrate, optConvertBitrateTarget, optManualManage, optDiskUse])
+      const snapshot = {
+        optOpenOnConnect, optSyncOnlyChecked, optConvertBitrate,
+        optConvertBitrateTarget, optManualManage, optDiskUse,
+      }
+      await window.electronAPI.saveUiState({ ...existing, ...snapshot })
+      setAppliedSettings(snapshot)
+    } catch (err) {
+      console.warn('[device-settings] apply failed:', err)
+    }
+  }
 
   const stats = useMemo(() => {
     const tracks = state.tracks
@@ -132,11 +178,38 @@ export default function DeviceView() {
     const artists = new Set(tracks.map(t => t.artist).filter(Boolean))
     const albums = new Set(tracks.map(t => t.album).filter(Boolean))
     const genres = new Set(tracks.map(t => t.genre).filter(Boolean))
-    const otherBytes = 500 * 1024 * 1024 // ~500MB for iPod OS/DB/artwork
-    const freeBytes = Math.max(0, ipodCapacityBytes - totalBytes - otherBytes)
-    const audioPercent = (totalBytes / ipodCapacityBytes) * 100
+    // Prefer the real statfs() free bytes when available — library
+    // `fileSize` drifts from on-iPod reality after AAC conversion (the
+    // library keeps source-side ALAC sizes, iPod has smaller AAC mirrors).
+    // Fall back to library-sum math only on the very first paint before
+    // get-ipod-capacity has responded.
+    const freeBytes = ipodFreeBytes != null
+      ? ipodFreeBytes
+      : Math.max(0, ipodCapacityBytes - totalBytes - 500 * 1024 * 1024)
+    // Ground truth: bytes the filesystem reports as in-use. Everything on
+    // the bar (Audio + Other) has to fit inside this number, or the bar
+    // sums to more than the iPod is physically capable of holding.
+    const usedBytes = Math.max(0, ipodCapacityBytes - freeBytes)
+    // The library's totalBytes can overstate reality whenever bitrate
+    // conversion ran (library keeps source ALAC size, iPod has smaller
+    // AAC mirror). Clamp Audio to what can actually fit on the device so
+    // the bar tells the truth even when library `fileSize` is stale.
+    const audioBytes = Math.min(totalBytes, usedBytes)
+    // "Other" = everything else taking space (macOS dotfiles, iTunesDB,
+    // artwork, orphans from past sync states). Derived so Audio + Other
+    // + Free always adds up to capacity.
+    const otherBytes = Math.max(0, usedBytes - audioBytes)
+    const audioPercent = (audioBytes / ipodCapacityBytes) * 100
     const otherPercent = (otherBytes / ipodCapacityBytes) * 100
     const freePercent = Math.max(0, 100 - audioPercent - otherPercent)
+    // Self-calibrating "room for N more songs": uses average bytes per
+    // track on the device right now as the predictor, so it tracks the
+    // user's actual library bitrate/length distribution rather than a
+    // hardcoded "4 min @ 128k" assumption that's wrong for everyone.
+    const avgBytesPerTrack = tracks.length > 0 ? audioBytes / tracks.length : 0
+    const roomForSongs = avgBytesPerTrack > 0
+      ? Math.max(0, Math.round(freeBytes / avgBytesPerTrack))
+      : null
 
     return {
       trackCount: tracks.length,
@@ -146,11 +219,14 @@ export default function DeviceView() {
       totalBytes,
       totalMs,
       freeBytes,
+      audioBytes,
+      otherBytes,
       audioPercent,
       otherPercent,
       freePercent,
+      roomForSongs,
     }
-  }, [state.tracks, ipodCapacityBytes])
+  }, [state.tracks, ipodCapacityBytes, ipodFreeBytes])
 
   const handleSync = async () => {
     const activity = await import('../activity')
@@ -174,8 +250,36 @@ export default function DeviceView() {
       const syncPlaylists = buildSmartPlaylistsForSync(state.tracks, state.playlists)
       setSyncStatus({ state: 'syncing', step: 'Copying new tracks to iPod...' })
       activity.setSync({ active: true, step: 'Copying new tracks to iPod...' })
-      const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists)
+      // 4.5: pass the APPLIED convert settings (not the working draft).
+      // Sync button is gated to applied state via isDirty so this is
+      // always the user's committed choice. targetKbps coerced from
+      // the persisted string to the numeric enum the IPC expects.
+      const targetKbpsNum: 128 | 192 | 256 =
+        appliedSettings.optConvertBitrateTarget === '256' ? 256
+        : appliedSettings.optConvertBitrateTarget === '192' ? 192
+        : 128
+      const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists, {
+        enabled: appliedSettings.optConvertBitrate,
+        targetKbps: targetKbpsNum,
+      })
+      // 4.5.0-109: silent no-op when another sync was already in flight.
+      // We just leave the existing sync to finish — DON'T flip syncing
+      // back off, DON'T show a "done" toast (the real sync hasn't done
+      // anything yet from THIS click's perspective). The global
+      // sync-progress listener will paint the in-flight one's status.
+      if (result.alreadyRunning) {
+        return
+      }
       if (!result.ok) {
+        // 4.5.0-109: distinguish user-cancelled from real failure. Cancel
+        // is expected, not an error; flash a brief notice + return to idle.
+        if (result.cancelled) {
+          setSyncStatus({ state: 'idle' })
+          activity.setSync({ active: true, step: `Sync cancelled (${result.copied || 0} files copied before stop)` })
+          setTimeout(() => activity.setSync(null), 3000)
+          setSyncing(false)
+          return
+        }
         const msg = result.error || 'Unknown error'
         setSyncStatus({ state: 'error', message: msg })
         activity.setSync({ active: true, step: `Sync failed — ${msg}` })
@@ -345,10 +449,10 @@ export default function DeviceView() {
           <div className="device-itunes-capacity-bar">
             <div className="device-itunes-capacity-seg device-itunes-capacity-audio"
               style={{ width: `${stats.audioPercent}%` }}
-              title={`Audio: ${formatBytes(stats.totalBytes)}`} />
+              title={`Audio: ${formatBytes(stats.audioBytes)}`} />
             <div className="device-itunes-capacity-seg device-itunes-capacity-other"
               style={{ width: `${stats.otherPercent}%` }}
-              title="Other (iPod OS, database, artwork)" />
+              title="Other (iPod OS, database, artwork, orphan files)" />
             <div className="device-itunes-capacity-seg device-itunes-capacity-free"
               style={{ width: `${stats.freePercent}%` }}
               title={`Free: ${formatBytes(stats.freeBytes)}`} />
@@ -356,15 +460,21 @@ export default function DeviceView() {
           <div className="device-itunes-capacity-labels">
             <span className="device-itunes-capacity-label">
               <span className="device-itunes-capacity-swatch device-itunes-capacity-audio" />
-              Audio&nbsp;<strong>{formatBytes(stats.totalBytes)}</strong>
+              Audio&nbsp;<strong>{formatBytes(stats.audioBytes)}</strong>
             </span>
             <span className="device-itunes-capacity-label">
               <span className="device-itunes-capacity-swatch device-itunes-capacity-other" />
-              Other&nbsp;<strong>500 MB</strong>
+              Other&nbsp;<strong>{formatBytes(stats.otherBytes)}</strong>
             </span>
             <span className="device-itunes-capacity-label">
               <span className="device-itunes-capacity-swatch device-itunes-capacity-free" />
               Free&nbsp;<strong>{formatBytes(stats.freeBytes)}</strong>
+              {stats.roomForSongs != null && stats.roomForSongs > 0 && (
+                <span className="device-itunes-capacity-room"
+                  title="Estimated room for additional songs based on your average track size">
+                  &nbsp;· ~{stats.roomForSongs.toLocaleString()} more songs
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -381,11 +491,42 @@ export default function DeviceView() {
               window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
             }}
           >Eject</button>
+          {/* 4.5: Apply button — iTunes-style. Appears only when one
+              of the sync settings has been changed since the last
+              Apply (or session load). Click to persist; the button
+              disappears once the working state matches the applied
+              snapshot. Sync is disabled while dirty so the user
+              can't run a sync against half-committed settings. */}
+          {isDirty && (
+            <button
+              className="device-itunes-btn device-itunes-btn--apply"
+              onClick={handleApplySettings}
+              title="Apply the changed sync settings before running Sync"
+            >Apply</button>
+          )}
           <button
             className="device-itunes-btn device-itunes-btn--sync"
-            disabled={syncing}
+            disabled={syncing || isDirty}
             onClick={handleSync}
+            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Sync to iPod')}
           >{syncing ? 'Syncing…' : 'Sync'}</button>
+          {/* 4.5.0-109: Cancel button — only rendered while a sync is in
+              flight. Hits cancel-sync IPC which flips a flag main checks
+              between each file copy. Pre-fix, force-quitting the app was
+              the only way to stop a runaway sync (which would also leave
+              the iPod in an undefined state). */}
+          {syncing && (
+            <button
+              className="device-itunes-btn"
+              onClick={async () => {
+                const r = await window.electronAPI.cancelSync()
+                if (r.wasRunning) {
+                  setSyncStatus({ state: 'syncing', step: 'Cancelling…' })
+                }
+              }}
+              title="Stop the current sync after the file in flight finishes"
+            >Cancel</button>
+          )}
         </div>
       </div>
       {showIpodLibrary && <IpodLibraryModal onClose={() => setShowIpodLibrary(false)} />}

@@ -8,7 +8,7 @@ import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
-import { setNotice, setBroadcast } from '../../activity'
+import { setNotice, setBroadcast, streamBroadcast, setBroadcastTimed, setRadio, getBroadcast } from '../../activity'
 
 function QueueIcon() {
   return (
@@ -142,6 +142,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djExiting, setDjExiting] = useState(false)
   const savedVolumeRef = useRef(0.8)
   const djAudioRef = useRef<HTMLAudioElement | null>(null)
+  // 4.5: hover-prefetch debounce. Mouse-over the mic button → after
+  // ~200ms (long enough to not fire on accidental sweeps) kick off the
+  // artist-facts lookup so a real click finds the cache already warm.
+  const micHoverTimer = useRef<number | null>(null)
+  const lastPrefetchedTrackId = useRef<number | null>(null)
 
   const fadeVolumeIn = useCallback(() => {
     const target = savedVolumeRef.current
@@ -206,9 +211,19 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // call flows through here.
   useEffect(() => {
     if (djLoading) {
-      setBroadcast({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: BUBBLE_SPEAKER_VERB[djSpeaker] })
+      setBroadcast({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: '', mode: 'thinking' })
     } else if (djText) {
-      setBroadcast({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: djText })
+      // 4.5: the mic-button path drives setBroadcastTimed directly so
+      // the typewriter is pinned to the audio's exact duration. If the
+      // activity store ALREADY shows this exact speaker+text+speaking
+      // state, the timed reveal is already running — don't fire the
+      // generic 12 cps setBroadcast on top (it would reset reveal to
+      // 0 and run at the wrong rate). Only fall back to setBroadcast
+      // for paths that didn't pre-set (radio segments, etc.).
+      const speaker = BUBBLE_SPEAKER_LABEL[djSpeaker]
+      const current = getBroadcast()
+      if (current && current.text === djText && current.speaker === speaker && current.mode === 'speaking') return
+      setBroadcast({ speaker, text: djText, mode: 'speaking' })
     } else {
       setBroadcast(null)
     }
@@ -249,6 +264,20 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   useEffect(() => {
     setAutoDjMode(autoDj || radioMode)
   }, [autoDj, radioMode])
+
+  // 4.5: push radio status into the activity store so NowPlaying paints
+  // the "ON AIR · WJLR 330.9 · elapsed / remaining" strip INSIDE the
+  // pill. Removes the awkward external red pill that used to sit next
+  // to the transport row (Jake: "it needs to make sense"). Tick-level
+  // updates are coalesced inside setRadio so repeated equal-state pushes
+  // are cheap.
+  useEffect(() => {
+    if (radioMode) {
+      setRadio({ active: true, elapsedMs: radioElapsedMs, capMs: RADIO_CAP_MS })
+    } else {
+      setRadio(null)
+    }
+  }, [radioMode, radioElapsedMs, RADIO_CAP_MS])
 
   // Toggle handler for Radio Mode — mutual exclusion with autoDj.
   // Turning ON shuffles the entire library, generates a SHOW OPENER
@@ -306,15 +335,85 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
       if (radioCapTimerRef.current) { clearTimeout(radioCapTimerRef.current); radioCapTimerRef.current = null }
       setRadioElapsedMs(0)
+      // 4.5: drop the persisted show plan so it doesn't leak into the
+      // next session's segments. Fire-and-forget.
+      void window.electronAPI.radioClearShowPlan?.()
       return
     }
     setAutoDj(false)
     const tracks = lib.tracks
     if (tracks.length === 0) return
-    const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+
+    // 4.5: ask the hosts to PLAN the show before playback starts.
+    // Pre-4.5 the queue was just `[...tracks].sort(random)` → genre
+    // whiplash that read as "no plan" (Jake's words: "too jumpy with
+    // genres"). The planner builds a curated 13-track set with a theme
+    // + throughline, then we ride that as the queue. Falls back to
+    // shuffle if the planner times out or errors so the user never
+    // gets stuck on a dead Radio button.
+    // 4.5: cap the planner's track payload at 600 randomly-sampled
+    // tracks. Pre-cap, the full library (often 6000+ tracks) hit
+    // Claude as a ~500KB prompt — adds 2-4s on its own. 600 is enough
+    // for the planner to feel the shape of the collection without
+    // shipping the whole thing every Radio toggle.
+    const PLAN_TRACK_CAP = 600
+    const tracksForPlanner = tracks.length > PLAN_TRACK_CAP
+      ? [...tracks].sort(() => Math.random() - 0.5).slice(0, PLAN_TRACK_CAP)
+      : tracks
+    const planCompactTracks = tracksForPlanner.map(t => ({
+      id: t.id, title: t.title, artist: t.artist, album: t.album,
+      genre: t.genre, year: t.year,
+      playCount: Number(t.playCount) || 0,
+      rating: Number(t.rating) || 0,
+      lastPlayedAt: t.lastPlayedAt || 0,
+      dateAdded: t.dateAdded || '',
+    }))
+    const recentIds = pb.recentlyPlayed || []
+    let shuffled: typeof tracks
+    let showTheme: string | undefined
+    try {
+      // 4.5: planner timeout dropped 8s → 3s. Pre-cut the toggle felt
+      // dead for up to 23s in the worst case (8s planner + 15s opener).
+      // 3s either lands a plan or we degrade to shuffle without making
+      // the user stare at a non-responsive button.
+      const planPromise = window.electronAPI.musicmanRadioPlan(planCompactTracks, recentIds)
+      const timeout = new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), 3000))
+      const result = await Promise.race([planPromise, timeout])
+      if (result.ok && 'trackIds' in result && Array.isArray(result.trackIds) && result.trackIds.length > 0) {
+        const byId = new Map(tracks.map(t => [t.id, t]))
+        const planTracks = result.trackIds.map(id => byId.get(id)).filter((t): t is typeof tracks[number] => !!t)
+        if (planTracks.length >= 5) {
+          shuffled = planTracks
+          showTheme = result.theme
+          console.log(`[Radio] planner: "${result.theme}" — ${planTracks.length} tracks`)
+          // 4.5: push the plan to main-side radio-memory so every per-
+          // segment musicman-radio call can inject theme + throughline
+          // + "track N of M" into the hosts' prompt. Fire-and-forget;
+          // a persistence failure doesn't block playback.
+          if ('theme' in result && 'throughline' in result && result.theme && result.throughline) {
+            void window.electronAPI.radioSetShowPlan?.({
+              theme: result.theme,
+              throughline: result.throughline,
+              setList: planTracks.map(t => ({ id: t.id, title: t.title || '', artist: t.artist || '' })),
+            })
+          }
+        } else {
+          console.warn(`[Radio] planner returned too few resolvable tracks (${planTracks.length}); falling back to shuffle`)
+          shuffled = [...tracks].sort(() => Math.random() - 0.5)
+        }
+      } else {
+        console.warn('[Radio] planner failed, falling back to shuffle:', result)
+        shuffled = [...tracks].sort(() => Math.random() - 0.5)
+      }
+    } catch (err) {
+      console.warn('[Radio] planner threw, falling back to shuffle:', err)
+      shuffled = [...tracks].sort(() => Math.random() - 0.5)
+    }
+
     const firstTrack = shuffled[0]
     setRadioMode(true)
     stopPlayback()
+    if (showTheme) console.log(`[Radio] tonight's theme: ${showTheme}`)
     // 4.4.3: arm the 90-min cap. After RADIO_CAP_MS the show wraps —
     // the toggle flips back to OFF as if the user clicked it. Tick
     // updates radioElapsedMs every second so the pill counts up.
@@ -338,6 +437,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
       radioCapTimerRef.current = null
       setRadioElapsedMs(0)
+      void window.electronAPI.radioClearShowPlan?.()
     }, RADIO_CAP_MS)
     console.log('[Radio] toggle ON — generating opener…')
 
@@ -713,26 +813,48 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjSpeaker(micHost === 'megan' ? 'megan' : 'mm')
     savedVolumeRef.current = pb.volume
 
+    // 4.5: SINGLE-TTS path (reverted from per-sentence queue). The
+    // per-sentence approach produced "5 random voices stitched
+    // together" — ElevenLabs gave subtly different inflection per
+    // call, and the seams between clips read as different speakers.
+    // One TTS on the full response loses the early-start speed but
+    // sounds like ONE person delivering the take. Latency is what it
+    // is; thinking dots cover it. Caption flips when audio.play()
+    // fires so the typewriter (12 cps) starts in step with the voice.
+    const stripAudioTags = (s: string): string =>
+      s.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+
     try {
       const track = pb.nowPlaying
-      const result = await window.electronAPI.musicmanDj({
-        title: track.title || '', artist: track.artist || '',
-        album: track.album || '', genre: track.genre || '', year: track.year || '',
-      })
+      const persona = micHost === 'megan' ? undefined : undefined
+      // Subscribe to chunks but DON'T do anything with them — the
+      // stream completion is what matters now. Empty subscribe keeps
+      // the IPC channel clean and lets future debug logging slot in
+      // without re-wiring.
+      const unsubscribe = window.electronAPI.onMusicmanDjChunk(() => { /* no-op */ })
+      let result: { ok: boolean; text?: string; error?: string }
+      try {
+        result = await window.electronAPI.musicmanDjStreaming({
+          title: track.title || '', artist: track.artist || '',
+          album: track.album || '', genre: track.genre || '', year: track.year || '',
+        }, persona)
+      } finally {
+        unsubscribe()
+      }
       if (djCancelledRef.current) return
       console.log('[DJ] Claude response:', result)
       if (result.ok && result.text) {
         const tts = await window.electronAPI.musicmanSpeak(result.text, false)
         if (djCancelledRef.current) return
         console.log('[DJ] TTS response:', tts.ok, tts.error || '')
-        setDjLoading(false)
         if (tts.ok && tts.audio) {
-          setDjText(result.text)
+          const caption = stripAudioTags(result.text)
           const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           audio.onended = () => {
-            fadeVolumeIn()
+            try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
+            try { fadeVolumeIn() } catch { /* ignore */ }
             djAudioRef.current = null
             setDjActive(false)
             setAutoDj(false)
@@ -743,6 +865,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           }
           audio.onerror = (err) => {
             console.error('[DJ] Audio playback error:', err)
+            try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
             setVolume(savedVolumeRef.current)
             djAudioRef.current = null
             setDjActive(false)
@@ -750,6 +873,34 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             setDjText('')
           }
           await fadeVolumeOut()
+          if (djCancelledRef.current) return
+          // 4.5: wait for the audio's loadedmetadata so audio.duration
+          // is known, then pin the typewriter to that exact length via
+          // setBroadcastTimed. Caption finishes exactly when the voice
+          // does — no drift on long Music Man takes. djText stays
+          // empty so the existing relay useEffect doesn't ALSO fire a
+          // regular setBroadcast and double-start the typewriter.
+          await new Promise<void>((resolve) => {
+            if (!isNaN(audio.duration) && audio.duration > 0) { resolve(); return }
+            const onMeta = () => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }
+            audio.addEventListener('loadedmetadata', onMeta)
+            // 1s belt-and-suspenders: if metadata never lands (rare for
+            // a data: URI), proceed with unknown duration — setBroadcast
+            // Timed handles durationMs<=0 by revealing instantly.
+            setTimeout(() => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }, 1000)
+          })
+          if (djCancelledRef.current) return
+          const durationMs = (audio.duration > 0 && !isNaN(audio.duration)) ? audio.duration * 1000 : 0
+          // Order matters: setBroadcastTimed FIRST seeds the activity
+          // store with the timed reveal; setDjText afterwards triggers
+          // the relay useEffect, which now sees a matching speaking
+          // entry and no-ops (see relay guard). Without setDjText
+          // here, the relay would treat djText='' + djLoading=false
+          // as "clear broadcast" on the next render and wipe the
+          // timed reveal.
+          setBroadcastTimed({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: caption }, durationMs)
+          setDjLoading(false)
+          setDjText(caption)
           await audio.play()
           return
         } else {
@@ -1378,6 +1529,25 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             className={`transport-toggle dj-btn ${djActive && !djModeActive ? 'dj-btn--active' : ''} ${djLoading && !djModeActive ? 'dj-btn--loading' : ''}`}
             onClick={handleDjClick}
             onContextMenu={(e) => { e.preventDefault(); setShowBubble(s => !s) }}
+            onMouseEnter={() => {
+              if (!pb.nowPlaying) return
+              if (lastPrefetchedTrackId.current === pb.nowPlaying.id) return
+              if (micHoverTimer.current) window.clearTimeout(micHoverTimer.current)
+              micHoverTimer.current = window.setTimeout(() => {
+                if (!pb.nowPlaying) return
+                lastPrefetchedTrackId.current = pb.nowPlaying.id
+                window.electronAPI.musicmanPrefetchFacts?.({
+                  artist: pb.nowPlaying.artist || '',
+                  album: pb.nowPlaying.album || '',
+                }).catch(() => { /* fall through to cold-start on click */ })
+              }, 200)
+            }}
+            onMouseLeave={() => {
+              if (micHoverTimer.current) {
+                window.clearTimeout(micHoverTimer.current)
+                micHoverTimer.current = null
+              }
+            }}
             disabled={!pb.nowPlaying}
             title="Music Man — one-shot comment on the current track (right-click: toggle bubble)"
           >
@@ -1404,28 +1574,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           >
             <RecordIcon active={recording} />
           </button>
-          {radioMode && (
-            <span className="radio-on-air-pill" aria-live="polite">
-              ON AIR · WJLR 330.9
-              {/* 4.4.3: count-up + 90-min cap indicator. Format mm:ss
-                  under 1h, h:mm:ss above. The remaining minutes sit
-                  next to the elapsed time so the listener sees the
-                  show's runtime budget. */}
-              {(() => {
-                const elapsedSec = Math.floor(radioElapsedMs / 1000)
-                const remainingSec = Math.max(0, Math.floor((RADIO_CAP_MS - radioElapsedMs) / 1000))
-                const fmt = (s: number) => {
-                  const h = Math.floor(s / 3600)
-                  const m = Math.floor((s % 3600) / 60)
-                  const ss = s % 60
-                  return h > 0
-                    ? `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`
-                    : `${m}:${String(ss).padStart(2,'0')}`
-                }
-                return ` · ${fmt(elapsedSec)} / ${fmt(remainingSec)} left`
-              })()}
-            </span>
-          )}
+          {/* 4.5: external "ON AIR · WJLR 330.9 · time" pill removed —
+              the info now paints inside the now-playing pill via the
+              activity store's radio status (setRadio in Toolbar →
+              getRadio in NowPlaying). Less visual noise next to the
+              transport row, and the WJLR context sits in the same
+              eye-line as the song/CC content where it belongs. */}
           {recording && (
             <span className="rec-pill" aria-live="polite">
               <span className="rec-pill-dot" /> REC {Math.floor(recElapsed/60)}:{String(recElapsed%60).padStart(2,'0')}

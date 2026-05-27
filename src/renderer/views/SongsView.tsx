@@ -1,7 +1,7 @@
 import { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
+import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
 import { useSortedTracks } from '../hooks/useSortedTracks'
@@ -13,8 +13,10 @@ import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
+import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import type { SortColumn, Track } from '../types'
 import { setNotice } from '../activity'
+import EmptyState from '../components/EmptyState'
 import '../styles/songs.css'
 
 function formatDuration(ms: number): string {
@@ -77,7 +79,11 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'rating', label: 'Rating', defaultWidth: 75, minWidth: 55, resizable: true },
+  // 4.5: 'rating' column REMOVED — the star now renders inline next to
+  // the song title (hover-reveal when unstarred, always-visible when
+  // starred). Right-click Star/Unstar still works via ratingMenuEntries.
+  // If a persisted user columnOrder references 'rating', the visibleCols
+  // filter quietly drops it because no def matches the key.
 ]
 
 // Columns that cannot be hidden
@@ -137,7 +143,14 @@ export default function SongsView() {
   // 4.4.27: removed useElasticOverscroll — let macOS provide the
   // native bounce instead of a JS approximation.
 
+  // 4.5: column-resize sort-suppression. The resize handle lives inside
+  // the header cell; user mousedown on the handle, drags, releases —
+  // the click event still fires on the parent header and triggered an
+  // unwanted re-sort. lastResizeEndAt is updated on resize mouseup;
+  // handleSort ignores clicks that land inside the suppression window.
+  const lastResizeEndAt = useRef<number>(0)
   const handleSort = useCallback((col: string) => {
+    if (Date.now() - lastResizeEndAt.current < 300) return
     if (col === 'playing' || col === 'time') return
     libDispatch({ type: 'SET_SORT', column: col as SortColumn })
   }, [libDispatch])
@@ -351,6 +364,10 @@ export default function SongsView() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
+      // 4.5: stamp the suppression window so the click event that
+      // bubbles to the header right after this mouseup doesn't fire
+      // a re-sort. handleSort checks against this timestamp.
+      lastResizeEndAt.current = Date.now()
     }
     document.body.style.cursor = 'col-resize'
     window.addEventListener('mousemove', onMove)
@@ -369,21 +386,44 @@ export default function SongsView() {
   // consecutive saves as different identities.
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
-      // Snapshot the original tracks BEFORE dispatch so we have
-      // pre-edit fingerprints to pass with each save.
+      // 4.5.0-67 — save-first ordering for artwork-affecting edits.
+      // OLD order: dispatch UPDATE_TRACKS → re-render with new key →
+      // requestArtworkResolution(newKey) fires → main's migration hasn't
+      // run yet → returns null → renderer caches 60s negative → album
+      // tile stays blank until that cache expires even after main
+      // completes the migration.
+      // NEW order: snapshot old (artist, album), await all saves
+      // (migration runs inside save-metadata-override), derive new
+      // (artist, album), explicitly clear the negative cache for those
+      // keys, THEN dispatch UPDATE_TRACKS. The re-render now triggers
+      // a fresh resolveArtwork IPC that finds the migrated entry.
       const fpById = new Map<number, string>()
+      const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
       for (const u of updates) {
         if (fpById.has(u.id)) continue
         const t = lib.tracks.find(tr => tr.id === u.id)
         if (!t) continue
-        const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
-        fpById.set(u.id, fp)
+        fpById.set(u.id, `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`)
+        oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
+      }
+      for (const u of updates) {
+        await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value, fpById.get(u.id))
+      }
+      const touchesArtwork = updates.some(u => u.field === 'artist' || u.field === 'album')
+      if (touchesArtwork) {
+        const newArtAlbumById = new Map<number, { artist: string; album: string }>()
+        for (const [id, old] of oldArtAlbumById) newArtAlbumById.set(id, { ...old })
+        for (const u of updates) {
+          const cur = newArtAlbumById.get(u.id)
+          if (!cur) continue
+          if (u.field === 'artist') cur.artist = u.value
+          else if (u.field === 'album') cur.album = u.value
+        }
+        for (const v of newArtAlbumById.values()) {
+          clearArtworkNegativeCache(v.artist, v.album)
+        }
       }
       libDispatch({ type: 'UPDATE_TRACKS', updates })
-      for (const u of updates) {
-        const fp = fpById.get(u.id)
-        await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value, fp)
-      }
     },
     [libDispatch, lib.tracks]
   )
@@ -418,10 +458,19 @@ export default function SongsView() {
   )
 
   // Set rating for a track (click stars)
+  // 4.5: when starring (rating > 0), also stamp starredAt = now so the
+  // Starred smart playlist can sort recent-first. Unstar leaves the
+  // timestamp alone — irrelevant since the track drops out of the
+  // playlist anyway, and re-starring later will overwrite it.
   const handleRatingChange = useCallback((trackId: number, rating: number) => {
     const value = String(rating)
     libDispatch({ type: 'UPDATE_TRACKS', updates: [{ id: trackId, field: 'rating', value }] })
     window.electronAPI.saveMetadataOverride(trackId, 'rating', value)
+    if (rating > 0) {
+      const stampValue = String(Date.now())
+      libDispatch({ type: 'UPDATE_TRACKS', updates: [{ id: trackId, field: 'starredAt', value: stampValue }] })
+      window.electronAPI.saveMetadataOverride(trackId, 'starredAt', stampValue)
+    }
   }, [libDispatch])
 
   const gridTemplate = colWidths.map(w => `${w}px`).join(' ')
@@ -676,7 +725,7 @@ export default function SongsView() {
         {visibleCols.map((col, i) => (
           <div
             key={col.key}
-            className={`songs-header-cell ${lib.sortColumn === col.key ? 'sorted' : ''} ${dragOverKey === col.key ? 'songs-header-cell--drag-over' : ''}`}
+            className={`songs-header-cell songs-header-cell--${col.key} ${lib.sortColumn === col.key ? 'sorted' : ''} ${dragOverKey === col.key ? 'songs-header-cell--drag-over' : ''}`}
             onClick={() => handleSort(col.key)}
             draggable
             onDragStart={(e) => handleHeaderDragStart(e, col.key)}
@@ -698,6 +747,9 @@ export default function SongsView() {
         ))}
       </div>
       <div className="songs-body" ref={containerRef} onScroll={handleScroll}>
+        {sorted.length === 0 && (
+          <EmptyState query={lib.searchQuery} noun="tracks" />
+        )}
         <div style={{ height: totalHeight, position: 'relative' }}>
           <div style={{ position: 'absolute', top: offsetY, left: 0, right: 0 }}>
             {sorted.slice(startIndex, endIndex).map((track, i) => {
@@ -712,6 +764,8 @@ export default function SongsView() {
                   style={{ gridTemplateColumns: gridTemplate }}
                   onClick={(e) => handleClick(track.id, idx, e)}
                   onDoubleClick={() => handleDoubleClick(idx)}
+                  onMouseEnter={() => prefetchTrackForPlay(track)}
+                  onMouseDown={() => prefetchTrackImmediate(track)}
                   onContextMenu={(e) => handleContextMenu(e, track, idx)}
                   draggable
                   onDragStart={(e) => {
@@ -736,7 +790,8 @@ export default function SongsView() {
                     switch (col.key) {
                       case 'playing':
                         return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
-                      case 'title':
+                      case 'title': {
+                        const starred = (Number(track.rating) || 0) > 0
                         return (
                           <div key={col.key} className="songs-cell songs-cell--title">
                             {track.audioMissing && (
@@ -746,9 +801,25 @@ export default function SongsView() {
                                 aria-label="Audio file missing"
                               >!</span>
                             )}
-                            {track.title || ''}
+                            <span className="title-row-text">{track.title || ''}</span>
+                            {/* 4.5: inline star to the RIGHT of the title.
+                                Hover-reveal when unstarred, always visible
+                                when starred. Click stops propagation so
+                                it doesn't trigger row select. */}
+                            <button
+                              className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
+                              onClick={(e) => { e.stopPropagation(); handleRatingChange(track.id, starred ? 0 : 5) }}
+                              onDoubleClick={(e) => e.stopPropagation()}
+                              title={starred ? 'Unstar' : 'Star'}
+                              aria-label={starred ? 'Unstar' : 'Star'}
+                            >
+                              <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+                                <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+                              </svg>
+                            </button>
                           </div>
                         )
+                      }
                       case 'time':
                         return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
                       case 'artist':
@@ -762,9 +833,7 @@ export default function SongsView() {
                       case 'dateAdded':
                         return <div key={col.key} className="songs-cell">{formatDateAdded(track.dateAdded)}</div>
                       case 'playCount':
-                        return <div key={col.key} className="songs-cell">{track.playCount || ''}</div>
-                      case 'rating':
-                        return <div key={col.key} className="songs-cell songs-cell--rating"><StarRating value={Number(track.rating) || 0} onChange={(r) => handleRatingChange(track.id, r)} /></div>
+                        return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
                       default:
                         return null
                     }

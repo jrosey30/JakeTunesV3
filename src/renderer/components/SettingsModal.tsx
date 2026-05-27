@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
 import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import '../styles/import-convert.css'
@@ -51,6 +51,39 @@ const FORMAT_OPTIONS: { value: ImportFormatChoice; label: string }[] = [
   { value: 'wav',     label: 'WAV (uncompressed)' },
 ]
 
+function formatRelative(ms: number): string {
+  const diff = Date.now() - ms
+  if (diff < 0) return 'just now'
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} min ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const days = Math.floor(hr / 24)
+  return `${days}d ago`
+}
+
+function reasonLabel(reason: string | null): string {
+  switch (reason) {
+    case 'import':        return 'Imports'
+    case 'metadata-edit': return 'Metadata edits'
+    case 'playlist':      return 'Playlist changes'
+    case 'safety-net':    return 'Routine backup'
+    case 'manual':        return 'Manual'
+    default:              return reason || 'Sync'
+  }
+}
+
+interface LastSync {
+  ok: boolean | null
+  reason: string | null
+  at: number | null
+  durationMs: number | null
+  error: string | null
+  scriptPresent: boolean
+}
+
 export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial)
   const [tab, setTab] = useState<Tab>('Playback')
@@ -60,12 +93,39 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   // for the inbox folder input. Comes from main since renderer doesn't
   // know the user's homedir without a separate IPC.
   const [defaultInboxPath, setDefaultInboxPath] = useState<string>('')
+  // 4.5: snapshot of the last laptop → homemini sync. Pulled on open and
+  // refreshed every 15s while the modal stays open so the relative time
+  // string ("3 min ago") stays roughly accurate without push wiring.
+  const [lastSync, setLastSync] = useState<LastSync | null>(null)
   // 4.4.51: audio output devices for the call-route speaker picker. The
   // call-route feature moves music to a chosen speaker (e.g. an AirPlay
   // device) when a call grabs the mic, then restores it on hang-up.
   const [audioDevices, setAudioDevices] = useState<
     { id: number; name: string; transport: string; isDefault: boolean }[]
   >([])
+  // 4.5.0-83 — locked-artwork count for the Library tab. Refreshed
+  // every time the modal opens (cheap — one disk read of a small
+  // JSON file). Gives a verifiable count of hand-set covers that
+  // are protected from auto-fetch / re-import overwrite.
+  const [artworkLockCount, setArtworkLockCount] = useState<number | null>(null)
+  // 4.5.0-87 — RAG status + backfill button. configured=false when
+  // OPENAI_API_KEY isn't set in .env; UI shows that explicitly so the
+  // user knows what's missing. count/total drive the indexed-of-total
+  // display. running flag locks the button + shows progress.
+  const [embedStatus, setEmbedStatus] = useState<{ configured: boolean; count: number; total: number } | null>(null)
+  const [embedRunning, setEmbedRunning] = useState(false)
+  const [embedProgress, setEmbedProgress] = useState<{ done: number; total: number } | null>(null)
+  // 4.5.0-91 Phase 2.5 — storage-mode display + orphaned-edit
+  // reconciliation. State conflicts are local-userData state files
+  // newer than NAS, meaning the user edited offline and those
+  // changes haven't reached NAS yet. The button pushes them.
+  const [stateConflictInfo, setStateConflictInfo] = useState<{
+    mode: 'NAS' | 'local-fallback'
+    nasDir: string
+    localDir: string
+    conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string }>
+  } | null>(null)
+  const [reconcileRunning, setReconcileRunning] = useState(false)
 
   useEffect(() => { setDraft(initial) }, [initial])
 
@@ -79,6 +139,55 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
     window.electronAPI.listAudioDevices?.().then(r => {
       if (r?.ok && Array.isArray(r.devices)) setAudioDevices(r.devices)
     }).catch(() => { /* leave empty; UI still shows the saved label */ })
+  }, [])
+
+  useEffect(() => {
+    const fetchSnap = () => {
+      window.electronAPI.getLastLibrarySync?.().then(r => setLastSync(r)).catch(() => { /* leave null */ })
+    }
+    fetchSnap()
+    const id = window.setInterval(fetchSnap, 15_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI.getArtworkLockCount?.().then(r => {
+      if (r?.ok) setArtworkLockCount(r.count)
+    }).catch(() => { /* leave null; UI degrades to a single dash */ })
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI.embeddingStatus?.().then(setEmbedStatus).catch(() => { /* leave null */ })
+    const unsub = window.electronAPI.onEmbeddingBackfillProgress?.((p) => setEmbedProgress(p))
+    return () => { if (unsub) unsub() }
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI.getStateConflicts?.().then(setStateConflictInfo).catch(() => { /* leave null */ })
+  }, [])
+
+  const reconcileStateNow = useCallback(async () => {
+    setReconcileRunning(true)
+    try {
+      await window.electronAPI.reconcileStateConflicts?.()
+      const fresh = await window.electronAPI.getStateConflicts?.()
+      if (fresh) setStateConflictInfo(fresh)
+    } finally {
+      setReconcileRunning(false)
+    }
+  }, [])
+
+  const runEmbeddingBackfill = useCallback(async () => {
+    setEmbedRunning(true)
+    setEmbedProgress({ done: 0, total: 0 })
+    try {
+      await window.electronAPI.embeddingBackfill?.()
+      const fresh = await window.electronAPI.embeddingStatus?.()
+      if (fresh) setEmbedStatus(fresh)
+    } finally {
+      setEmbedRunning(false)
+      setEmbedProgress(null)
+    }
   }, [])
 
   const handleSave = async () => {
@@ -322,6 +431,107 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                 Applied when you drag-drop or use Import. Existing tracks aren't re-encoded.
               </p>
 
+              {/* 4.5.0-83 — locked-artwork visibility. Surfaces the
+                  count of covers you've hand-set so you can verify
+                  protection at a glance. The four-layer protection
+                  story: locked.json + sidecar self-heal + locked-
+                  backup/ + force-confirm on remove. */}
+              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
+                <span style={{ color: '#3a3a3a', fontWeight: 600 }}>Locked artwork covers:</span>
+                <span style={{ color: '#3a3520', fontFamily: 'var(--font-mono, monospace)' }}>
+                  {artworkLockCount === null ? '—' : artworkLockCount.toLocaleString()}
+                </span>
+              </div>
+              <p className="imp-help" style={{ marginTop: 0, marginBottom: 14 }}>
+                Hand-set covers protected from auto-fetch + re-import overwrite. Backed up to <code>locked-backup/</code> and self-healed from sidecars on every launch.
+              </p>
+
+              {/* 4.5.0-91 Phase 2.5 — Storage Mode + conflict surface.
+                  Renders the canonical state-storage location (NAS vs
+                  local-fallback) plus a reconciliation button when
+                  there are offline edits that haven't reached NAS yet. */}
+              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
+                <span style={{ color: '#3a3a3a', fontWeight: 600 }}>State storage:</span>
+                <span style={{ color: stateConflictInfo?.mode === 'NAS' ? '#2a6e2a' : '#a23a2a', fontFamily: 'var(--font-mono, monospace)' }}>
+                  {!stateConflictInfo ? '—'
+                    : stateConflictInfo.mode === 'NAS'
+                      ? `NAS (${stateConflictInfo.nasDir})`
+                      : `local fallback (${stateConflictInfo.localDir}) — NAS not mounted`}
+                </span>
+              </div>
+              <p className="imp-help" style={{ marginTop: 0, marginBottom: 10 }}>
+                library.json, overrides, playlists, mobile-stars/plays, play-events, and embeddings.bin all live at the path above. NAS-mode = Synology is the canonical source of truth. Local-fallback fires when the NAS mount isn't present at app boot.
+              </p>
+              {stateConflictInfo && stateConflictInfo.conflicts.length > 0 && (
+                <div style={{ background: '#fff5e0', border: '1px solid #d6b34e', borderRadius: 6, padding: '10px 12px', marginBottom: 12, fontSize: 12 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, color: '#7a5a10' }}>
+                    {stateConflictInfo.conflicts.length} local file{stateConflictInfo.conflicts.length === 1 ? '' : 's'} newer than NAS — offline edits not yet pushed:
+                  </div>
+                  <ul style={{ margin: '0 0 8px 18px', padding: 0, color: '#3a3a3a' }}>
+                    {stateConflictInfo.conflicts.map(c => (
+                      <li key={c.file}>
+                        <code>{c.file}</code> — local +{Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    onClick={reconcileStateNow}
+                    disabled={reconcileRunning}
+                    style={{
+                      padding: '5px 12px', fontSize: 12,
+                      cursor: reconcileRunning ? 'default' : 'pointer',
+                    }}
+                  >
+                    {reconcileRunning ? 'Pushing…' : 'Push local edits to NAS'}
+                  </button>
+                  <span style={{ marginLeft: 10, color: '#7a5a10', fontSize: 11 }}>
+                    (NAS copies get backed up to <code>.reconcile-bak/</code> first.)
+                  </span>
+                </div>
+              )}
+
+              {/* 4.5.0-87 — RAG (per-track embeddings) status + manual
+                  backfill. First Phase 1 hook is musicman-chat (replaces
+                  the giant pre-computed digest with retrieval-grounded
+                  context). Indexing costs ≈ $0.50 one-time at OpenAI's
+                  text-embedding-3-small rate. Per-query embedding cost
+                  is sub-penny. */}
+              <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
+                <span style={{ color: '#3a3a3a', fontWeight: 600 }}>AI library index (RAG):</span>
+                <span style={{ color: '#3a3520', fontFamily: 'var(--font-mono, monospace)' }}>
+                  {!embedStatus ? '—'
+                    : !embedStatus.configured ? 'OPENAI_API_KEY not set'
+                    : embedRunning && embedProgress
+                      ? `embedding ${embedProgress.done.toLocaleString()} / ${embedProgress.total.toLocaleString()}…`
+                      : `${embedStatus.count.toLocaleString()} / ${embedStatus.total.toLocaleString()} tracks indexed`}
+                </span>
+              </div>
+              <p className="imp-help" style={{ marginTop: 0, marginBottom: 10 }}>
+                Per-track semantic index that lets Music Man retrieve the actually-relevant tracks per question instead of guessing from a summary. One-time embedding ≈ $0.50 (OpenAI text-embedding-3-small); per-query cost is negligible.
+              </p>
+              <button
+                type="button"
+                onClick={runEmbeddingBackfill}
+                disabled={embedRunning || !embedStatus?.configured}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  marginBottom: 14,
+                  cursor: embedRunning || !embedStatus?.configured ? 'default' : 'pointer',
+                  opacity: !embedStatus?.configured ? 0.5 : 1,
+                }}
+              >
+                {embedRunning
+                  ? 'Indexing…'
+                  : embedStatus && embedStatus.count < embedStatus.total
+                    ? `Index ${(embedStatus.total - embedStatus.count).toLocaleString()} missing tracks`
+                    : 'Re-index library'}
+              </button>
+
               {/* 4.4.13 — Inbox auto-import. Lets users point Qobuz (or any
                   other downloader) at a folder and have JakeTunes pick up
                   new files automatically, eliminating the manual drag step. */}
@@ -391,6 +601,56 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <p className="imp-help" style={{ marginTop: 10 }}>
                 When off, both flows still work — they just require an explicit click. Turn on for set-and-forget syncing.
               </p>
+
+              {/* 4.5 — Library backups to homemini. Pulled out of the
+                  now-playing pill (was a chirp on every import / metadata
+                  / playlist save, became visual noise). Lives here as a
+                  passive read-out: last time, what it was for, whether
+                  it succeeded. Failures still chirp the pill in real time. */}
+              <div style={{
+                marginTop: 22,
+                padding: '12px 14px',
+                background: '#f5f1e2',
+                border: '1px solid #d8cda8',
+                borderRadius: 6,
+              }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+                  Library backups to homemini
+                </div>
+                {!lastSync ? (
+                  <div style={{ fontSize: 12, color: '#7a7560' }}>Loading…</div>
+                ) : !lastSync.scriptPresent ? (
+                  <div style={{ fontSize: 12, color: '#7a7560' }}>
+                    Homemini sync is not configured on this machine.
+                  </div>
+                ) : lastSync.at === null ? (
+                  <div style={{ fontSize: 12, color: '#7a7560' }}>
+                    No backup yet this session — runs automatically when imports, edits, or playlists change (and every 10 min as a safety net).
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#3a3520' }}>
+                    <div>
+                      <span style={{
+                        display: 'inline-block',
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        marginRight: 8,
+                        background: lastSync.ok ? '#4a8a4a' : '#c44a3a',
+                        verticalAlign: 'middle',
+                      }} />
+                      Last backup <strong>{formatRelative(lastSync.at)}</strong>
+                      <span style={{ color: '#7a7560' }}> · {reasonLabel(lastSync.reason)}</span>
+                      {lastSync.durationMs !== null && (
+                        <span style={{ color: '#9a9580' }}> · {(lastSync.durationMs / 1000).toFixed(1)}s</span>
+                      )}
+                    </div>
+                    {!lastSync.ok && lastSync.error && (
+                      <div style={{ color: '#a23a2a', fontSize: 11 }}>{lastSync.error}</div>
+                    )}
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -503,6 +763,31 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               </label>
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
                 When off, your selected host chats in text only. Saves ElevenLabs credits on quiet days.
+              </p>
+
+              {/* 4.5: Exa.ai key. Powers semantic music-journalism
+                  search that augments every character call's facts
+                  block. Optional — empty string disables the feature
+                  and behavior reverts to Wikipedia + MusicBrainz only. */}
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
+                Exa.ai API key (optional — augments artist facts)
+              </label>
+              <input
+                type="password"
+                placeholder="sk-…"
+                value={draft.ai.exaApiKey || ''}
+                onChange={(e) => setDraft({
+                  ...draft,
+                  ai: { ...draft.ai, exaApiKey: e.target.value },
+                })}
+                style={{ width: '100%', padding: 6, fontSize: 12, fontFamily: 'monospace', marginBottom: 6 }}
+              />
+              <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
+                When set, Music Man / Megan / Stephen / chat all get
+                richer per-track facts via Exa semantic search (Pitchfork,
+                Stereogum, AllMusic, music press generally). 7-day cache,
+                ~$0.005 per artist lookup. Edit the query templates in
+                <code>src/main/exa.ts</code> to tune what Exa retrieves.
               </p>
 
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>

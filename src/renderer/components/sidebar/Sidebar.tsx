@@ -275,6 +275,13 @@ export default function Sidebar() {
           ipodMissStreak += 1
           if (ipodMissStreak >= 2) {
             setIpodMounted(false)
+            // 4.5: dispatch eject event on the true→false transition
+            // so App-level listeners (sync-pill cleanup) can react.
+            // Pre-fix only the explicit Eject button fired this event;
+            // a physical unplug left stale sync banners in the pill.
+            if (prevMounted) {
+              window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
+            }
             prevMounted = false
           }
         }
@@ -283,6 +290,9 @@ export default function Sidebar() {
         ipodMissStreak += 1
         if (ipodMissStreak >= 2) {
           setIpodMounted(false)
+          if (prevMounted) {
+            window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
+          }
           prevMounted = false
         }
       })
@@ -292,7 +302,11 @@ export default function Sidebar() {
       }).catch(() => {})
     }
     check()
-    const interval = setInterval(check, 5000)
+    // 4.5: 5s → 2.5s. The 5s gap meant a user plugging in a freshly-
+    // mounted iPod could wait up to 5s for the sidebar entry. 2.5s
+    // halves that worst case without adding meaningful main-process
+    // load (a stat + readdir per tick is negligible).
+    const interval = setInterval(check, 2500)
     // Listen for eject events so sidebar updates immediately. Explicit
     // eject resets the miss streak and forces an unmounted state.
     const onIpodEject = () => { ipodMissStreak = 2; setTimeout(check, 500) }
@@ -361,20 +375,12 @@ export default function Sidebar() {
             selected={state.currentView === 'squid'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'squid' })}
           />
-          {/* Brief 037 — Music Man's Record Store. Phase 0 ships a plain
-              text view; Phase 2 swaps in the illustrated storefront. */}
-          <SidebarItem
-            label="The Record Store"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                <circle cx="8" cy="8" r="6" fill="#5a3a22" />
-                <circle cx="8" cy="8" r="2.4" fill="#e0812e" />
-                <circle cx="8" cy="8" r="0.7" fill="#5a3a22" />
-              </svg>
-            )}
-            selected={state.currentView === 'recordstore'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
-          />
+          {/* 4.5.0-62: Record Store sidebar entry hidden. Brief 037 Phase 0
+              shipped an unstyled HTML placeholder that didn't match the
+              iTunes chrome; pulled from the UI until the Phase 2
+              illustrated storefront lands. The view module + IPC stay in
+              place (dead code, zero UI cost) so re-enabling is one
+              uncommented JSX block. */}
         </SidebarSection>
 
         {(ipodMounted || cdMounted) && (

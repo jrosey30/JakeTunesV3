@@ -1,22 +1,35 @@
 :root {
-  /* Window chrome / toolbar — iTunes 8 unified gray gradient
-     (Leopard era; brushed metal removed). [4.5.2: 4.5.1's iTunes-10
-     palette read as too plain; reverted on Jake's call.] */
-  --chrome-top: #d6d6d6;
-  --chrome-bottom: #c4c4c4;
-  /* Sidebar: iTunes 8 (Sept 2008) cool light blue-gray gradient. */
+  /* 4.5: Window chrome — warm silver. Pre-4.5 was a flat neutral grey
+     (#d6d6d6 → #c4c4c4); Jake wants a barely-perceptible orange tilt
+     across every silver/metallic surface so the desktop palette is
+     in sync with the mobile app. ~3% warm shift — eye reads it as
+     "warmer silver" without consciously seeing the orange. */
+  --chrome-top: #d8d3cb;
+  --chrome-bottom: #c6c1b8;
+  /* Sidebar stays cool blue-grey — distinct visual zone from the
+     warm toolbar. */
   --sidebar-top: #c1cad7;
   --sidebar-bottom: #a9b4c2;
   /* Selection pill (iTunes 8 blue). */
   --selection-top: #5b86dc;
   --selection-bottom: #3e6ec7;
-  --row-alt: #f7f7f7;
-  /* Now-playing LCD pill — iTunes-8 cream. The earlier values were a
-     touch warm/bright; pulled toward the actual on-screen tone in
-     the iTunes 8 reference. */
-  --pill-top: #ece4cc;
-  --pill-bottom: #d6cdb0;
-  --pill-border: #9b9682;
+  /* 4.5: alt-row tint — dialed BACK toward neutral cream. Prior
+     #f9f4eb leaned too warm-yellow and competed visually with the
+     pill's orange. Pulled to #f6f2e8 — still warmer than the row's
+     #fdf9f2 base but reads as a quiet stripe instead of a "second
+     orange surface". Cohesion: only the pill, brand orange, and
+     mid-tone highlights should register as orange; the cream
+     surfaces are background. */
+  --row-alt: #f6f2e8;
+  /* 4.5: Now-playing LCD pill — another notch of orange. Iteration 3:
+     prior pass (#f7e6c4 → #e1d0a5) read amber but still leaned cream;
+     this nudges the hue ~5% toward the brand orange. Reads as soft
+     peach-amber now — the pill is unambiguously the warm focal point
+     of the chrome without crossing into "Halloween panel" territory.
+     Gradient still subtle enough to read as iTunes-LCD. */
+  --pill-top: #f7e0b6;
+  --pill-bottom: #e0c690;
+  --pill-border: #b59c70;
   --musicman-bg: #1e140a;
 
   /* 4.4.47 — Brand palette, sampled directly from the JakeTunes app
@@ -56,12 +69,23 @@
   --persona-stephen-rgb: 177, 112, 221;
   --persona-stephen-bg:  26, 16, 34;      /* dark purple-charcoal */
 
-  --text-primary: #1a1a1a;
-  --text-secondary: #666666;
-  --text-dim: #999999;
+  /* 4.5.0-49: text palette darkened a notch for crisper hierarchy on
+   * Retina. Primary stays inky; secondary/dim pull ~10% darker so the
+   * subordinate text doesn't dissolve into the warm-cream background.
+   * Pre-fix #666 / #999 were tuned for stark-white; on cream they
+   * read as washed-out. */
+  --text-primary: #161312;
+  --text-secondary: #555049;
+  --text-dim: #8a8378;
   --border-subtle: #a0a0a0;
   --border-light: #c8c8c8;
-  --white: #ffffff;
+  /* 4.5: --white is no longer pure #fff. Subtle warm tint (R 253 / G 249 /
+     B 242) so every surface that resolves to "white" reads as off-white
+     cream — matches the mobile app's color language. Pure white usage
+     in components that should stay clinical (modals dialogs, etc.) can
+     override locally; most should pick this up automatically via the
+     variable. */
+  --white: #fdf9f2;
   --sidebar-width: 148px;
   --titlebar-height: 38px;
   --toolbar-height: 78px;

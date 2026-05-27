@@ -32,7 +32,8 @@ import {
 } from './importQueue'
 import { setImport } from './activity'
 import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
-import { setCrossfadeSettings } from './hooks/useAudio'
+import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
+import { lookupArtworkOneShot } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
@@ -71,6 +72,12 @@ function AppInner() {
   const [refreshSizesProgress, setRefreshSizesProgress] = useState<{ scanned: number; refreshed: number; total: number } | null>(null)
   const [refreshSizesResult, setRefreshSizesResult] = useState<{ refreshed: number; error?: string } | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
+  // Bug #1 data-loss guard: shown when NAS reconnects mid-session while
+  // we're in local-fallback mode. Saves get refused in main until restart.
+  const [saveLockReason, setSaveLockReason] = useState<string | null>(null)
+  useEffect(() => {
+    return window.electronAPI.onStateSaveLocked(({ reason }) => setSaveLockReason(reason))
+  }, [])
   const [uiReady, setUiReady] = useState(false)
   // 4.4.39: minimum splash display time. Even on a warm cache where the
   // library Promise.all settles in <500ms, we hold the splash for ≥1400ms
@@ -79,7 +86,12 @@ function AppInner() {
   // loaded AND the min-time has elapsed.
   const [splashMinElapsed, setSplashMinElapsed] = useState(false)
   useEffect(() => {
-    const t = window.setTimeout(() => setSplashMinElapsed(true), 1400)
+    // 4.5: bumped 1400 → 2800ms. The splash is a grand welcome — Jake's
+    // direction — and 1.4s wasn't enough room for the logo entrance,
+    // halo pulse, and floating notes to actually read as a scene.
+    // Library still loads in parallel; this just holds the splash for
+    // the visual beat to land before AppInner shows.
+    const t = window.setTimeout(() => setSplashMinElapsed(true), 2800)
     return () => window.clearTimeout(t)
   }, [])
 
@@ -146,6 +158,42 @@ function AppInner() {
       } catch (err) {
         console.error('[bandcamp:batch-progress handler] crash-guard:', err, p)
       }
+    })
+  }, [])
+
+  // 4.5.0-46: surface Bandcamp per-file failures in the LCD pill so the
+  // user sees the actual reason (codec, ENOENT, transcode failure) the
+  // moment it happens — matches the drag-drop importQueue behavior.
+  useEffect(() => {
+    return window.electronAPI.onBandcampPerFileFailed((r) => {
+      import('./activity').then(a => {
+        a.setNotice(`Can't import "${r.filename}" — ${r.error}`, { kind: 'error', durationMs: 9000 })
+      }).catch(() => {})
+    })
+  }, [])
+
+  // 4.5.0-46: same for the WHOLESALE Bandcamp failures (zip with no
+  // audio, download interrupted, all-dupes batch). These never even hit
+  // importOneFile so the per-file handler above wouldn't catch them.
+  useEffect(() => {
+    return window.electronAPI.onBandcampImportFailed((r) => {
+      import('./activity').then(a => {
+        a.setNotice(`Bandcamp: "${r.filename}" — ${r.error}`, { kind: 'error', durationMs: 9000 })
+      }).catch(() => {})
+    })
+  }, [])
+
+  // 4.5.0-48: clean re-purchase — every track in the zip was already
+  // in the library. INFO notice (not error) so Jake knows nothing
+  // broke; this is just "you already own this album".
+  useEffect(() => {
+    return window.electronAPI.onBandcampAllDuplicates((info) => {
+      import('./activity').then(a => {
+        a.setNotice(
+          `Already in your library: "${info.filename}" — all ${info.dupeCount} track${info.dupeCount === 1 ? '' : 's'} skipped`,
+          { kind: 'info', durationMs: 6000 }
+        )
+      }).catch(() => {})
     })
   }, [])
 
@@ -290,8 +338,10 @@ function AppInner() {
       })
     }
     apply([]) // show title/artist/album immediately; art upgrades below
-    const artKey = `${(np.artist || '').toLowerCase().trim()}|||${(np.album || '').toLowerCase().trim()}`
-    const artHash = libState.artworkMap[artKey]
+    // 4.5: lookupArtworkOneShot — normalized + fuzzy fallback so the
+    // MediaSession cover (lock-screen, Now-Playing widget) sticks
+    // even when album/artist drift between import and play time.
+    const artHash = lookupArtworkOneShot(libState.artworkMap, np.artist || '', np.album || '')
     if (artHash) {
       fetch(`album-art://${artHash}.jpg`)
         .then(r => (r.ok ? r.blob() : Promise.reject(new Error('artwork not found'))))
@@ -348,13 +398,14 @@ function AppInner() {
     }
   }, [pbState.isPlaying, pbState.position, pbState.duration, pbState.nowPlaying])
 
-  // 4.4.18: Library sync orchestrator status. Surface success/failure
-  // of laptop → homemini sync via the LCD-pill notice (4.4.12). Only
-  // surface FAILURES on success because the safety-net tick fires
-  // every 10 min and we don't want a "synced ok" popup that often;
-  // the user only needs to know when something's actually broken.
-  // Exception: post-import sync success IS surfaced so the user gets
-  // the "boom, it's on homemini" feeling after a new import.
+  // 4.4.18 / 4.5: Library sync orchestrator status. Only FAILURES
+  // surface in the now-playing pill — success info lives in Settings →
+  // Sync ("Last backup: X minutes ago"). Pre-4.5 the import/metadata/
+  // playlist success cases each chirped the pill; turned out to be too
+  // chatty given the orchestrator now debounces at 5s and the safety
+  // net fires every 10 min. The user only wants to know when something
+  // is actually broken; routine "boom it synced" became visual noise
+  // and was disabled in 4.5.
   useEffect(() => {
     const cleanup = window.electronAPI.onLibrarySyncStatus((status) => {
       if (!status.ok) {
@@ -364,19 +415,33 @@ function AppInner() {
             : "Couldn't sync to homemini.",
           { kind: 'error', durationMs: 6000 },
         )
-        return
-      }
-      // OK path — only chirp on import/metadata-edit/playlist triggers.
-      // safety-net silent (10 min noise = bad UX).
-      if (status.reason === 'import') {
-        setNotice('Synced new imports to homemini.', { kind: 'info', durationMs: 4000 })
-      } else if (status.reason === 'metadata-edit') {
-        setNotice('Synced edits to homemini.', { kind: 'info', durationMs: 3000 })
-      } else if (status.reason === 'playlist') {
-        setNotice('Synced playlists to homemini.', { kind: 'info', durationMs: 3000 })
       }
     })
     return cleanup
+  }, [])
+
+  // 4.5: fade-on-quit. Main intercepts cmd+Q, fires 'app-quit-fade'
+  // and waits ~180ms before actually exiting. We ramp every live Howl
+  // to 0 in that window so the OS audio buffer isn't snapped from
+  // mid-waveform amplitude — eliminates the speaker-cone pop on quit.
+  useEffect(() => {
+    return window.electronAPI.onAppQuitFade?.(() => {
+      void fadeAllForQuit(140)
+    }) || (() => {})
+  }, [])
+
+  // 4.5: clear stale sync activity from the pill when the iPod ejects.
+  // Pre-fix the "Writing iTunesDB..." sync-progress message lingered
+  // long after the device was gone, because main kept emitting sync-
+  // progress events even though the writes were failing. Listening
+  // for the eject event and proactively clearing the sync activity
+  // gives the user honest UI: if the iPod's gone, no sync banner.
+  useEffect(() => {
+    const onEject = () => {
+      import('./activity').then(a => a.setSync(null)).catch(() => {})
+    }
+    window.addEventListener('jaketunes-ipod-ejected', onEject)
+    return () => window.removeEventListener('jaketunes-ipod-ejected', onEject)
   }, [])
 
   // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
@@ -395,8 +460,85 @@ function AppInner() {
   // that track's playback state.
   const pbStateRef = useRef(pbState)
   pbStateRef.current = pbState
+
+  // 4.5: global keyboard shortcuts. Bound to document.keydown so they
+  // fire from anywhere in the app, but every transport key bails when
+  // focus is inside a text input — otherwise Space typed into the
+  // search field would steal the keypress and toggle playback instead
+  // of inserting a space character. ⌘F always works; "/" only works
+  // outside text inputs so it can still be typed normally in search
+  // boxes, tag fields, Get Info, etc. Esc both blurs the focused
+  // input and clears the search query for a one-stroke reset.
   useEffect(() => {
-    const onIpodMounted = () => {
+    function isTypingTarget(t: EventTarget | null): boolean {
+      if (!(t instanceof HTMLElement)) return false
+      const tag = t.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      if (t.isContentEditable) return true
+      return false
+    }
+    function focusSearch() {
+      const el = document.querySelector<HTMLInputElement>('.search-pill .search-input')
+      if (el) {
+        el.focus()
+        el.select()
+      }
+    }
+    const handler = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey
+      const typing = isTypingTarget(e.target)
+
+      if (e.key === 'Escape') {
+        if (typing && e.target instanceof HTMLElement) e.target.blur()
+        if (libStateRef.current.searchQuery) dispatch({ type: 'SET_SEARCH', query: '' })
+        return
+      }
+      if (meta && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        focusSearch()
+        return
+      }
+      if (!typing && e.key === '/') {
+        e.preventDefault()
+        focusSearch()
+        return
+      }
+      if (typing) return
+
+      if (e.key === ' ') {
+        e.preventDefault()
+        togglePlayPause()
+        return
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        nextTrack()
+        return
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        prevTrack()
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        const v = pbStateRef.current.volume
+        setVolume(Math.min(1, v + 0.05))
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        const v = pbStateRef.current.volume
+        setVolume(Math.max(0, v - 0.05))
+        return
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [togglePlayPause, nextTrack, prevTrack, setVolume, dispatch])
+
+  useEffect(() => {
+    const onIpodMounted = async () => {
       const settings = appSettingsRef.current
       if (!settings.sync.autoSyncOnConnect) return
       const lib = libStateRef.current
@@ -411,8 +553,52 @@ function AppInner() {
       // iTunesDB writer takes whatever it's handed as THE complete
       // playlist set, so `buildSmartPlaylistsForSync` returns regular
       // playlists too (kept as-is) — they are NOT dropped.
+      //
+      // 4.5.0-109: auto-sync now reads the persisted convert toggle from
+      // ui-state.json and passes it along. Pre-fix this call ALWAYS sent
+      // `convertOptions=undefined` → main treated it as off → every
+      // auto-sync silently re-copied lossless originals over previously-
+      // converted AAC files on the iPod. That's how Jake's 2,917 cached
+      // AAC mirrors never made it to the device.
       const playlists = buildSmartPlaylistsForSync(lib.tracks, lib.playlists || [])
-      window.electronAPI.syncToIpod(lib.tracks, playlists).catch((err) => {
+      // Bug #4: previous logic defaulted `enabled=false` on any ambiguity
+      // (load failure, missing field, exception). That's the *destructive*
+      // default — convert-off means full ALAC copies to the iPod, which is
+      // exactly how 2,540 lossless files landed there this afternoon.
+      //
+      // New rule: if we can't confidently read both convert fields, ABORT
+      // the auto-sync entirely. The user can still trigger a manual sync
+      // from Device view (which uses appliedSettings, gated by Apply).
+      // Silent destructive defaults are how we end up overwriting hours
+      // of work in 30 seconds.
+      let convertOptions: { enabled: boolean; targetKbps: 128 | 192 | 256 } | null = null
+      let abortReason: string | null = null
+      try {
+        const ui = await window.electronAPI.loadUiState()
+        if (!ui.ok || !ui.state) {
+          abortReason = 'loadUiState returned no state'
+        } else {
+          const s = ui.state as Record<string, unknown>
+          const enabledRaw = s.optConvertBitrate
+          const targetRaw = s.optConvertBitrateTarget
+          if (typeof enabledRaw !== 'boolean') {
+            abortReason = `optConvertBitrate field missing or non-bool (got ${typeof enabledRaw}=${JSON.stringify(enabledRaw)})`
+          } else if (targetRaw !== '128' && targetRaw !== '192' && targetRaw !== '256') {
+            abortReason = `optConvertBitrateTarget missing or invalid (got ${JSON.stringify(targetRaw)})`
+          } else {
+            const targetKbps: 128 | 192 | 256 = targetRaw === '256' ? 256 : targetRaw === '192' ? 192 : 128
+            convertOptions = { enabled: enabledRaw, targetKbps }
+          }
+        }
+      } catch (err) {
+        abortReason = `exception while reading ui-state: ${err instanceof Error ? err.message : String(err)}`
+      }
+      if (!convertOptions) {
+        console.warn(`[auto-sync] ABORTED — convert preference unreadable: ${abortReason}. Open Device view and click Apply to commit a known-good convert state.`)
+        return
+      }
+      console.log(`[auto-sync] firing with convertOptions=`, convertOptions)
+      window.electronAPI.syncToIpod(lib.tracks, playlists, convertOptions).catch((err) => {
         console.warn('[auto-sync] failed:', err)
       })
     }
@@ -426,7 +612,11 @@ function AppInner() {
       window.electronAPI.loadMetadataOverrides(),
       window.electronAPI.loadPlaylists(),
       window.electronAPI.loadUiState(),
-    ]).then(([dbResult, overridesResult, playlistsResult, uiResult]) => {
+      // 4.5.0-81 — 2-way star sync. Pulled alongside the other startup
+      // reads so the first render of any list already shows mobile-set
+      // stars without a re-render flash. Empty set if file missing.
+      window.electronAPI.loadMobileStars?.().catch(() => ({ ok: false, trackIds: [] as string[] })),
+    ]).then(([dbResult, overridesResult, playlistsResult, uiResult, mobileStarsResult]) => {
       const tracks = dbResult.tracks || []
       const ipodPlaylists = dbResult.playlists || []
 
@@ -484,6 +674,31 @@ function AppInner() {
           console.warn(`metadata overrides: applied ${appliedCount}, skipped ${skippedStale} stale and ${skippedLegacy} legacy entries`)
         }
       }
+      // 4.5.0-81 — apply mobile-set stars on top of overrides. The
+      // mobile-stars.json sidecar is the canonical truth-of-record for
+      // binary star state across desktop ↔ mobile (Brief 054 on the
+      // iOS side, hooked from save-metadata-override on desktop). Any
+      // trackId in the set gets its rating bumped to ≥ 1 so the
+      // existing Starred smart-playlist filter (rating > 0) and inline
+      // star widget light up. Doesn't lower ratings (mobile is
+      // additive-only), so multi-star desktop ratings are preserved.
+      if (mobileStarsResult?.ok && Array.isArray(mobileStarsResult.trackIds) && mobileStarsResult.trackIds.length > 0) {
+        const mobileStarred = new Set(mobileStarsResult.trackIds.map(String))
+        let mobileBumped = 0
+        for (const t of tracks) {
+          if (mobileStarred.has(String(t.id))) {
+            const cur = Number(t.rating) || 0
+            if (cur < 1) {
+              const tr = t as unknown as Record<string, unknown>
+              tr.rating = 5
+              mobileBumped++
+            }
+          }
+        }
+        if (mobileBumped > 0) {
+          console.log(`[mobile-stars] applied ${mobileBumped} mobile-set stars on top of overrides (${mobileStarsResult.trackIds.length} total in sidecar)`)
+        }
+      }
       dispatch({ type: 'SET_TRACKS', tracks })
 
       // Merge iPod playlists with user-saved playlists (only on first load).
@@ -519,7 +734,12 @@ function AppInner() {
         const ui = uiResult.state
         if (typeof ui.sidebarWidth === 'number') setSidebarWidth(ui.sidebarWidth)
         if (typeof ui.currentView === 'string') {
-          dispatch({ type: 'SET_VIEW', view: ui.currentView as import('./types').ViewName })
+          // 4.5.0-63: if a prior session left the user on the now-hidden
+          // Record Store view (Brief 037 placeholder), fall back to
+          // Songs on relaunch so they don't open into a dead view with
+          // no sidebar entry to navigate away from.
+          const restoredView = ui.currentView === 'recordstore' ? 'songs' : ui.currentView
+          dispatch({ type: 'SET_VIEW', view: restoredView as import('./types').ViewName })
         }
         if (typeof ui.activePlaylistId === 'string') {
           dispatch({ type: 'VIEW_PLAYLIST', id: ui.activePlaylistId })
@@ -798,7 +1018,15 @@ function AppInner() {
   // text to show real numbers ("Copying 12/30 to iPod — <title>")
   // instead of a perpetually indeterminate pulse.
   useEffect(() => {
+    // 4.5.0-109: auto-clear the activity pill when the sync genuinely
+    // ends. Pre-fix the 'iTunesDB written' message stuck forever for
+    // auto-syncs (DeviceView's 4-sec timeout only runs for manual ones),
+    // which is why Jake saw "Syncing..." after sync was actually done.
+    // We clear after the same 4-sec dwell so the user sees the final
+    // status briefly, then the pill drops.
+    let clearTimer: ReturnType<typeof setTimeout> | null = null
     const cleanup = window.electronAPI.onSyncProgress((progress) => {
+      if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
       import('./activity').then(a => {
         if (progress.phase === 'copy') {
           a.setSync({
@@ -815,16 +1043,21 @@ function AppInner() {
               : 'Verifying audio files…',
           })
         } else if (progress.phase === 'db') {
+          const done = progress.current >= progress.total
           a.setSync({
             active: true,
-            step: progress.current < progress.total
-              ? 'Writing iTunesDB...'
-              : 'iTunesDB written',
+            step: done ? 'iTunesDB written' : 'Writing iTunesDB...',
           })
+          if (done) {
+            clearTimer = setTimeout(() => { a.setSync(null) }, 4000)
+          }
+        } else if (progress.phase === 'cancelled') {
+          a.setSync({ active: true, step: `Sync cancelled (${progress.current} copied)` })
+          clearTimer = setTimeout(() => { a.setSync(null) }, 3000)
         }
       }).catch(() => {})
     })
-    return cleanup
+    return () => { if (clearTimer) clearTimeout(clearTimer); cleanup() }
   }, [])
 
   // Global CD-rip progress listener. Lives at the App level so it survives
@@ -1180,6 +1413,12 @@ function AppInner() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >
+      {saveLockReason && (
+        <div className="state-save-locked-banner" role="alert">
+          <strong>Library writes paused.</strong> {saveLockReason}
+          <button onClick={() => window.location.reload()}>Reload (restart this window)</button>
+        </div>
+      )}
       <div className="titlebar">JakeTunes</div>
       <div className="toolbar-area">
         <Toolbar onToggleQueue={() => setShowQueue(q => !q)} onOpenQueue={() => setShowQueue(true)} showQueue={showQueue} />
@@ -1417,7 +1656,6 @@ function AppInner() {
           <div className="app-drop-message">Drop to import</div>
         </div>
       )}
-      <ImportQueuePanel />
       <BandcampImportToast />
     </div>
   )

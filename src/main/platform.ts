@@ -147,12 +147,19 @@ export function volumeNameFromMount(mountPoint: string): string {
 }
 
 /**
- * Check whether the given mount point is an iPod by looking for the
- * iTunesDB file at the standard path.
+ * Check whether the given mount point is an iPod. Primary signal is
+ * the iTunesDB at the canonical path; 4.5 fallback: if iPod_Control
+ * exists at the root but iTunesDB is missing (uninitialized iPod,
+ * mid-sync write, brand-new device), still treat it as an iPod so
+ * the sidebar entry appears and the user can take action from there.
  */
 export async function isIpodMount(mountPoint: string): Promise<boolean> {
   try {
     await stat(join(mountPoint, 'iPod_Control', 'iTunes', 'iTunesDB'))
+    return true
+  } catch { /* iTunesDB missing — try the directory fallback */ }
+  try {
+    await stat(join(mountPoint, 'iPod_Control'))
     return true
   } catch {
     return false
@@ -162,12 +169,27 @@ export async function isIpodMount(mountPoint: string): Promise<boolean> {
 /**
  * Find the first mounted iPod on the system, or null if none is connected.
  * Returns the mount point (full path), not just the volume name.
+ * 4.5: diagnostic logging — every check logs the mount list and the
+ * iTunesDB stat results so a "iPod plugged in but not appearing" bug
+ * is debuggable from a single dev-console open instead of needing
+ * fresh instrumentation each time.
  */
 export async function findIpodMount(): Promise<string | null> {
   const mounts = await listMountPoints()
+  const checks: { mount: string; isIpod: boolean }[] = []
   for (const m of mounts) {
-    if (await isIpodMount(m)) return m
+    const hit = await isIpodMount(m)
+    checks.push({ mount: m, isIpod: hit })
+    if (hit) {
+      console.log('[ipod-detect] FOUND iPod at', m, '— mounts scanned:', mounts.length)
+      return m
+    }
   }
+  // No match. Dump what we saw — a typical "I plugged it in!" report
+  // is either (a) mount missing entirely from /Volumes (macOS didn't
+  // mount it), or (b) mount present but no iPod_Control/iTunes/iTunesDB
+  // (uninitialized iPod, or wrong device).
+  console.log('[ipod-detect] NO iPod found. Checked:', JSON.stringify(checks))
 
   // macOS-only fallback: the iPod might be physically connected but
   // unmounted (e.g. previous sync triggered a safety-eject, or the

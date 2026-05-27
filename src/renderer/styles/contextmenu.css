@@ -2,6 +2,14 @@
   position: fixed;
   z-index: 100;
   min-width: 180px;
+  /* 4.5.0-107: cap width so a long Play "<title>" item can't blow the
+   * menu past the screen edge; cap height + scroll so a tall menu
+   * clipped below the viewport reveals the rest with a scrollbar
+   * instead of silently hiding Delete Song / Cynthia / etc. */
+  max-width: 320px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  overflow-x: hidden;
   background: linear-gradient(180deg, #f6f6f6, #e8e8e8);
   border: 1px solid #888;
   border-radius: 5px;
@@ -17,6 +25,10 @@
   padding: 4px 16px;
   cursor: default;
   white-space: nowrap;
+  /* Truncate over-long labels (e.g. Play "<long-song-title>") with an
+   * ellipsis instead of stretching the menu past max-width. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .context-menu-item:hover {

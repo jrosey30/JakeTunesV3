@@ -41,6 +41,17 @@ interface MemoryFile {
     setAt: number    // epoch ms — informational
     hourCounter: number  // for sanity-checking we're still in the same hour
   }
+  /** 4.5: current Radio Mode show plan. Populated when the show
+   *  planner succeeds at Radio toggle ON; cleared on toggle OFF. Each
+   *  musicman-radio segment formats this into the prompt so hosts
+   *  reference the arc ("track 4 of 13 — we're halfway through the
+   *  West-Coast → soul-roots set, here comes the pivot"). */
+  showPlan?: {
+    theme: string
+    throughline: string
+    setList: { id: number; title: string; artist: string }[]
+    startedAt: number
+  }
 }
 
 let cache: MemoryFile | null = null
@@ -137,6 +148,67 @@ export async function getRecentCallbacks(n = 8): Promise<string[]> {
     }
   }
   return out
+}
+
+/** 4.5: persist the current show plan (set by Toolbar after the
+ *  planner returns at Radio toggle ON). Existing plan is replaced —
+ *  one plan per session. Cleared on toggle OFF. */
+export async function setShowPlan(plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }): Promise<void> {
+  const file = await loadMemory()
+  file.showPlan = { ...plan, startedAt: Date.now() }
+  cache = file
+  await saveMemory(file)
+}
+
+export async function getShowPlan(): Promise<MemoryFile['showPlan']> {
+  const file = await loadMemory()
+  return file.showPlan
+}
+
+export async function clearShowPlan(): Promise<void> {
+  const file = await loadMemory()
+  if (file.showPlan) {
+    delete file.showPlan
+    cache = file
+    await saveMemory(file)
+  }
+}
+
+/** 4.5: format the show plan for prompt injection. If currentTrackId
+ *  is provided and is in the set list, includes "track N of M" + the
+ *  surrounding tracks so the hosts know exactly where in the arc they
+ *  are. Returns empty string when no plan is active (the hosts then
+ *  freelance as before, no harm done). */
+export async function formatPlanForPrompt(currentTrackId?: number): Promise<string> {
+  const file = await loadMemory()
+  const plan = file.showPlan
+  if (!plan) return ''
+  const lines: string[] = []
+  lines.push('TONIGHT\'S SHOW PLAN (you set this at the top of the show — reference it naturally; don\'t recite it word-for-word):')
+  lines.push(`  • Theme: ${plan.theme}`)
+  lines.push(`  • Throughline: ${plan.throughline}`)
+  if (currentTrackId != null) {
+    const idx = plan.setList.findIndex(t => t.id === currentTrackId)
+    if (idx >= 0) {
+      const pos = idx + 1
+      const total = plan.setList.length
+      const pct = pos / total
+      const arcLabel =
+        pos === 1 ? 'OPENER — this is where the show starts'
+        : pos === total ? 'CLOSER — last track, send it home'
+        : pos === 2 ? 'just past the open, settling in'
+        : pos === total - 1 ? 'penultimate — set up the closer'
+        : pct < 0.34 ? 'early in the set'
+        : pct < 0.67 ? 'middle of the set, mid-arc'
+        : 'back half of the set, headed toward the close'
+      const prev = idx > 0 ? plan.setList[idx - 1] : null
+      const next = idx < total - 1 ? plan.setList[idx + 1] : null
+      lines.push(`  • You're on track ${pos} of ${total} — ${arcLabel}`)
+      if (prev) lines.push(`  • Just played: "${prev.title}" by ${prev.artist}`)
+      if (next) lines.push(`  • Coming up: "${next.title}" by ${next.artist}`)
+    }
+  }
+  return lines.join('\n')
 }
 
 /** Format the memory snapshot for the radio prompt. Returns a single

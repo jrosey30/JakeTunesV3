@@ -3,6 +3,7 @@ import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { setNotice } from '../../activity'
 import ContextMenu from '../ContextMenu'
+import ConfirmDialog from '../ConfirmDialog'
 
 export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () => void }) {
   const { state } = usePlayback()
@@ -11,6 +12,10 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [djModeActive, setDjModeActive] = useState(false)
+  // 4.5.0-80 — confirm-on-locked-remove. Holds the (artist, album)
+  // the user is trying to remove when main returned `locked:true`.
+  // null while no confirm is active.
+  const [lockedRemoveConfirm, setLockedRemoveConfirm] = useState<{ artist: string; album: string; artKey: string } | null>(null)
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -59,12 +64,32 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
 
   const handleRemoveArtwork = useCallback(async () => {
     if (!artist || !album || !artKey) return
+    // 4.5.0-80 — main-side now refuses to silently nuke a user-locked
+    // cover. On `locked:true` we surface a ConfirmDialog (renderer's
+    // window.confirm is silently blocked per CLAUDE.md); user must
+    // explicitly say yes for hand-picked art to be removed. One-click
+    // context-menu removal of locked covers is the failure mode this
+    // guard exists to prevent.
     const result = await window.electronAPI.removeArtwork(artist, album)
+    if (result.locked) {
+      setLockedRemoveConfirm({ artist, album, artKey })
+      return
+    }
     if (result.ok && result.key) {
       libDispatch({ type: 'REMOVE_ARTWORK', key: result.key })
       fetchedRef.current.delete(artKey)
     }
   }, [artist, album, artKey, libDispatch])
+  const handleConfirmLockedRemove = useCallback(async () => {
+    const pending = lockedRemoveConfirm
+    if (!pending) return
+    setLockedRemoveConfirm(null)
+    const forced = await window.electronAPI.removeArtwork(pending.artist, pending.album, true)
+    if (forced.ok && forced.key) {
+      libDispatch({ type: 'REMOVE_ARTWORK', key: forced.key })
+      fetchedRef.current.delete(pending.artKey)
+    }
+  }, [lockedRemoveConfirm, libDispatch])
 
   const handleRefetch = useCallback(async () => {
     if (!artist || !album) return
@@ -186,6 +211,17 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
           y={ctxMenu.y}
           items={ctxItems}
           onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {lockedRemoveConfirm && (
+        <ConfirmDialog
+          message={`Remove the locked cover for "${lockedRemoveConfirm.album}"?`}
+          detail="You set this cover manually. Removing it will lose your hand-picked image. The backup copy will also be deleted."
+          confirmLabel="Remove anyway"
+          cancelLabel="Keep it"
+          destructive={true}
+          onConfirm={handleConfirmLockedRemove}
+          onCancel={() => setLockedRemoveConfirm(null)}
         />
       )}
     </div>

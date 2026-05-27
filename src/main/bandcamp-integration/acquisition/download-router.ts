@@ -66,6 +66,20 @@ export interface ImportedTrackRecord {
   album?: string
 }
 
+/** 4.5.0-48: richer batch-summary return so the router can distinguish
+ *  "all duplicates" (info, not a failure) from "real errors" (already
+ *  surfaced per-file) from "nothing happened" (genuinely worth flagging).
+ *  Pre-fix the return was just `ImportedTrackRecord[]` and any zero-
+ *  length result fired a generic "(all duplicates?)" failure notice —
+ *  which lied to Jake when his album had per-file transcode errors.
+ *  Backwards-compatible: implementations may still return a bare array;
+ *  the router normalizes via Array.isArray. */
+export interface BatchSummary {
+  tracks: ImportedTrackRecord[]
+  dupeCount: number
+  errorCount: number
+}
+
 export interface DownloadRouterDeps {
   /** Absolute directory where Bandcamp downloads land before import.
    *  Persisted across restarts; importOneFile already copies into the
@@ -75,11 +89,16 @@ export interface DownloadRouterDeps {
    *  `source` tag (always 'bandcamp' from this caller) is persisted
    *  on the resulting track records so library views can surface
    *  provenance later. */
-  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[]>
+  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
   /** Fired once per successfully imported track. */
   onTrackImported: (track: ImportedTrackRecord) => void
   /** Fired once per import failure (download-level OR per-file). */
   onImportFailed: (reason: { filename: string; error: string }) => void
+  /** 4.5.0-48: fired once when an entire album-zip turns out to be a
+   *  clean re-purchase — every track was already in the library. Soft
+   *  notice (info, not error). Optional so existing callers don't need
+   *  to wire it. */
+  onAllDuplicates?: (info: { filename: string; dupeCount: number }) => void
 }
 
 /** Attach interception to the Bandcamp session. Idempotent per session —
@@ -148,12 +167,34 @@ async function handleDownload(dl: PendingDownload, deps: DownloadRouterDeps): Pr
     // even when tags are sparse and the filename parser is the
     // fallback.
     audioFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-    const tracks = await deps.importDownloaded(audioFiles, SOURCE_TAG)
-    if (tracks.length === 0) {
-      deps.onImportFailed({ filename, error: 'import produced no tracks (all duplicates?)' })
+    const result = await deps.importDownloaded(audioFiles, SOURCE_TAG)
+
+    // 4.5.0-48: handle both the new BatchSummary shape AND the legacy
+    // bare-array return for any caller that hasn't been updated. When
+    // we have the summary we can distinguish dupes vs errors and pick
+    // the right notice.
+    const summary: BatchSummary = Array.isArray(result)
+      ? { tracks: result, dupeCount: 0, errorCount: 0 }
+      : result
+
+    if (summary.tracks.length === 0) {
+      if (summary.dupeCount > 0 && summary.errorCount === 0) {
+        // Pure re-purchase. Tell the user clearly (info, not error) so
+        // they know nothing is broken and nothing needs retrying.
+        deps.onAllDuplicates?.({ filename, dupeCount: summary.dupeCount })
+      } else if (summary.errorCount === 0) {
+        // Genuinely produced nothing AND no per-file errors — the zip
+        // had audio members but none made it through and nobody knows
+        // why. Keep the wholesale failure notice for this case alone.
+        deps.onImportFailed({ filename, error: 'import produced no tracks' })
+      }
+      // If errorCount > 0 we SKIP the wholesale notice — the per-file
+      // failures already surfaced the actual reasons via the
+      // bandcamp:per-file-failed channel; piling a generic "(all
+      // duplicates?)" notice on top of them was misleading.
       return
     }
-    for (const t of tracks) deps.onTrackImported(t)
+    for (const t of summary.tracks) deps.onTrackImported(t)
   } catch (err) {
     deps.onImportFailed({ filename, error: err instanceof Error ? err.message : String(err) })
   }

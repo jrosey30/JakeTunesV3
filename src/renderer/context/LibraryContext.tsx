@@ -10,6 +10,12 @@ interface LibraryState {
   // VIEW_ARTIST_DETAIL action when the user clicks a row in
   // ArtistsView; cleared when navigating away.
   activeArtist: string | null
+  // 4.5: when set, AlbumsView consumes this on mount/update by selecting
+  // the matching album and then dispatching CLEAR_PENDING_ALBUM_KEY.
+  // Lets HomeView (and any future cross-view link) deep-link straight
+  // into an album's detail row without coupling those views directly to
+  // AlbumsView's internal selected state.
+  pendingAlbumKey: string | null
   currentView: ViewName
   searchQuery: string
   sortColumn: SortColumn
@@ -45,6 +51,8 @@ type LibraryAction =
   | { type: 'VIEW_PLAYLIST'; id: string }
   | { type: 'VIEW_SMART_PLAYLIST'; id: SmartPlaylistId }
   | { type: 'VIEW_ARTIST_DETAIL'; artistName: string }
+  | { type: 'VIEW_ALBUM_DETAIL'; albumKey: string }
+  | { type: 'CLEAR_PENDING_ALBUM_KEY' }
   | { type: 'SET_ARTWORK_MAP'; map: Record<string, string> }
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
   | { type: 'REMOVE_ARTWORK'; key: string }
@@ -56,6 +64,7 @@ const initialState: LibraryState = {
   activePlaylistId: null,
   activeSmartPlaylist: null,
   activeArtist: null,
+  pendingAlbumKey: null,
   currentView: 'songs',
   searchQuery: '',
   sortColumn: 'dateAdded',
@@ -205,6 +214,10 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
       return { ...state, currentView: 'smart-playlist', activeSmartPlaylist: action.id, activePlaylistId: null }
     case 'VIEW_ARTIST_DETAIL':
       return { ...state, currentView: 'artist-detail', activeArtist: action.artistName }
+    case 'VIEW_ALBUM_DETAIL':
+      return { ...state, currentView: 'albums', pendingAlbumKey: action.albumKey }
+    case 'CLEAR_PENDING_ALBUM_KEY':
+      return { ...state, pendingAlbumKey: null }
     case 'SET_ARTWORK_MAP':
       return { ...state, artworkMap: action.map }
     case 'ADD_ARTWORK':

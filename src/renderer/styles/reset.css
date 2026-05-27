@@ -11,12 +11,122 @@ html, body, #root {
   font-size: var(--font-body);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 4.5.0-49: kerning + ligatures + a hair tighter baseline letter-
+   * spacing. Sub-perceptual on its own per glyph but at paragraph
+   * scale every body of text reads ~3-5% sharper / more crafted.
+   * "user should barely notice" — exactly the brief. */
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  letter-spacing: -0.003em;
+  /* 4.5: warm cream baseline so every surface that doesn't explicitly
+   * paint a background inherits the off-white. Matches the mobile
+   * app's color language — pulls every "white" zone toward a barely-
+   * tinted cream instead of stark #fff. Components that need clinical
+   * white (specific modals etc.) can still override locally. */
+  background: var(--white);
 }
 
 ul, ol { list-style: none; }
 button { border: none; background: none; cursor: pointer; font: inherit; color: inherit; }
 input { font: inherit; color: inherit; }
 img { display: block; }
+
+/* 4.5.0-86 — unified empty-state styling for Songs / Albums / Artists
+ * / Genres. Centered card with a magnifier glyph, soft tint, plain
+ * second-line guidance. Replaces the "render nothing when filter
+ * matches zero" pre-fix behavior. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 24px;
+  color: var(--text-secondary);
+  text-align: center;
+  flex: 1;
+  animation: app-view-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.empty-state-glyph {
+  opacity: 0.45;
+  color: var(--text-secondary);
+}
+.empty-state-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.empty-state-title strong {
+  font-weight: 700;
+  color: var(--brand-orange, #bb4308);
+}
+.empty-state-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 4.5.0-84 — subtle view-enter fade for the flat list views (Songs,
+ * Albums, Genres). Home, MusicMan, ArtistDetail, AlbumDetail already
+ * have their own enter animations; these three snapped into existence
+ * compared to the rest of the app. 180 ms ease-out is just enough to
+ * register as "the view appeared" without feeling like a transition.
+ * Scoped to the view-root classes so re-renders inside the view
+ * (sort, filter, scroll) don't retrigger it — `animation` fires once
+ * per mount, the rest of the time the rule is inert. */
+@keyframes app-view-enter {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .songs-view,
+  .albums-view,
+  .genres-view {
+    animation: app-view-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+/* 4.5.0-75 — keyboard-navigation focus rings. Pre-fix the app had
+ * literally one focus-visible rule (Cynthia popover) so tab-key users
+ * had zero visible feedback navigating the entire UI. Mouse clicks
+ * stay clean (focus-visible distinguishes keyboard focus from mouse
+ * focus per the WCAG-aware browser heuristic). Brand-orange outline
+ * matches the cohesive color language; 2px offset keeps the ring
+ * outside the element's own borders.
+ *
+ * Scoped to interactive types most likely to be keyboard-targeted:
+ *   - buttons (transport, sidebar, header)
+ *   - text inputs (search pill, get-info fields, modal inputs)
+ *   - rows + cards we use as button-like targets via role/tabIndex
+ *
+ * Native HTML interactives all participate without explicit opt-in
+ * because :focus-visible auto-binds. The role="button" / tabindex
+ * lists below pull in our custom div-as-button patterns. */
+button:focus-visible,
+input:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--brand-orange);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+/* 4.5.0-93 — the toolbar search input is in the brushed-metal chrome
+ * area; the brand-orange focus ring shouted there. Fully suppressed —
+ * the cursor blink inside the input is the standard macOS focus cue
+ * and we keep the pill's own visual treatment unaffected. */
+.search-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+/* Tighter ring on the rows + cards where 2px outset would bleed into
+ * adjacent cells. Inset 1px reads as a crisp inner border. */
+.songs-row:focus-visible,
+.album-card:focus-visible,
+.artist-row:focus-visible,
+.sidebar-item:focus-visible {
+  outline: 1px solid var(--brand-orange);
+  outline-offset: -1px;
+}
 
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -60,6 +60,16 @@ export function ratingMenuEntries(
     const updates = tracks.map(t => ({ id: t.id, field: 'rating', value: String(target) }))
     dispatch({ type: 'UPDATE_TRACKS', updates })
     for (const u of updates) window.electronAPI.saveMetadataOverride(u.id, 'rating', u.value)
+    // 4.5: stamp starredAt on bulk star-ON. Recent-first sort of the
+    // Starred smart playlist uses this; legacy stars without the field
+    // sort to the bottom. All tracks in the bulk get the same stamp,
+    // which is fine — they were starred together.
+    if (target > 0) {
+      const stamp = String(Date.now())
+      const stampUpdates = tracks.map(t => ({ id: t.id, field: 'starredAt', value: stamp }))
+      dispatch({ type: 'UPDATE_TRACKS', updates: stampUpdates })
+      for (const u of stampUpdates) window.electronAPI.saveMetadataOverride(u.id, 'starredAt', u.value)
+    }
   }
 
   return [

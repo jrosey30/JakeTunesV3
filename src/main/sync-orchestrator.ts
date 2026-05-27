@@ -56,13 +56,38 @@ const SAFETY_NET_INTERVAL_MS = 600_000  // 10 min — full sync, catches deletes
 const RUN_TIMEOUT_MS = 600_000          // kill a hung sync after 10 min
 
 export type SyncReason =
-  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
+  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork'
 
 let getWindow: (() => BrowserWindow | null) | null = null
 let debounceTimer: NodeJS.Timeout | null = null
 let safetyNetTimer: NodeJS.Timeout | null = null
 let inFlight = false
 let pendingReason: SyncReason | null = null
+
+// 4.5: persist the last sync outcome in process memory so the renderer
+// can read "last backed up: 3 min ago" in Settings → Sync. Cleared on
+// process restart — that's fine; a settings panel that says "not yet
+// synced this session" after a fresh launch is honest, and the first
+// import/edit trigger will populate it within minutes.
+export interface LastSyncSnapshot {
+  ok: boolean | null  // null = no sync attempted yet this session
+  reason: SyncReason | null
+  at: number | null   // epoch ms
+  durationMs: number | null
+  error: string | null
+  scriptPresent: boolean  // false on installs where homemini sync is not configured
+}
+const lastSync: LastSyncSnapshot = {
+  ok: null,
+  reason: null,
+  at: null,
+  durationMs: null,
+  error: null,
+  scriptPresent: existsSync(SYNC_SCRIPT),
+}
+export function getLastSyncSnapshot(): LastSyncSnapshot {
+  return { ...lastSync }
+}
 
 function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durationMs?: number }): void {
   const win = getWindow?.()
@@ -192,6 +217,11 @@ async function flushDebounce(): Promise<void> {
   const result = await runSyncOnce(reason)
   inFlight = false
 
+  lastSync.ok = result.ok
+  lastSync.reason = reason
+  lastSync.at = Date.now()
+  lastSync.durationMs = result.durationMs
+  lastSync.error = result.error || null
   notify({ ok: result.ok, reason, error: result.error, durationMs: result.durationMs })
 
   // If a trigger landed while we were running, fire another debounced sync.

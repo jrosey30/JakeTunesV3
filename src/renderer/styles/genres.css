@@ -47,9 +47,14 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 4.5.0-84: matched SongsView's row hover-ease (90 ms) so the
+     genre browser feels responsive instead of snapping between
+     states. Selection blue stays instant (gradient transitions are
+     expensive). */
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
-.genres-column-item:hover { background: rgba(0,0,0,0.04); }
+.genres-column-item:hover { background: rgba(0,0,0,0.05); }
 
 .genres-column-item--selected {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
@@ -79,6 +84,10 @@
 }
 
 .genres-track-row--alt { background: #f0f4fa; }
+.genres-track-row {
+  /* 4.5.0-84: same 90 ms hover ease as the main Songs view rows. */
+  transition: background-color 90ms ease-out;
+}
 .genres-track-row:hover { background: rgba(74,144,217,0.08); }
 
 /* Now-playing indicator only — the SpeakerPlayingIcon already shows

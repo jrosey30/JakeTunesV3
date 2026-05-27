@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
+import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
@@ -114,7 +114,7 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'rating', label: 'Rating', defaultWidth: 75, minWidth: 55, resizable: true },
+  // 4.5: 'rating' column REMOVED — star renders inline next to title.
 ]
 
 const ALWAYS_VISIBLE = new Set(['playing', 'title'])
@@ -294,6 +294,28 @@ export default function SmartPlaylistView() {
   // load/save effects + segmented control are further down.
   type TopWindow = 'all' | 'month' | 'week'
   const [topWindow, setTopWindow] = useState<TopWindow>('all')
+  // 4.5.0-82 — true windowed play counts from the per-play event log.
+  // Fetched whenever the user picks Week or Month on Top 25; replaces
+  // the old "rank by lifetime playCount" approximation. Empty for All
+  // Time (which already uses track.playCount correctly).
+  const [windowedCounts, setWindowedCounts] = useState<Record<string, number>>({})
+  useEffect(() => {
+    if (playlistId !== 'top-25' || topWindow === 'all') {
+      setWindowedCounts({})
+      return
+    }
+    const ms = topWindow === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
+    let cancelled = false
+    window.electronAPI.getWindowedPlayCounts?.(ms).then(r => {
+      if (!cancelled && r?.ok) setWindowedCounts(r.counts || {})
+    }).catch(() => { /* keep last value */ })
+    return () => { cancelled = true }
+  }, [playlistId, topWindow])
+  // 4.5: Starred playlist default sort. true = oldest first (reversed),
+  // false = recent first (default). Toggled by a button in the playlist
+  // header, only visible on the Starred view. Only applies when the
+  // user hasn't picked an explicit sort column.
+  const [starredReversed, setStarredReversed] = useState(false)
 
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
@@ -321,16 +343,31 @@ export default function SmartPlaylistView() {
         .map(id => trackMap.get(id))
         .filter((t): t is Track => t !== undefined)
     }
-    // 4.5: Top-25 windowing. evaluateSmartPlaylist remains the
-    // canonical "all time" definition (also what iPod-sync uses); the
-    // week/month variants post-filter against lastPlayedAt and
-    // re-rank by cumulative playCount. NOTE: this is an approximation —
-    // we don't keep per-play timestamps, so "last week" really means
-    // "tracks with lastPlayedAt in the last 7 days, ranked by ALL-TIME
-    // playCount." Honest enough for a personal library; if we ever add
-    // per-play history we can compute true windowed play counts.
+    // 4.5.0-82 — TRUE windowed Top 25. Pre-fix this filtered by
+    // lastPlayedAt-in-window but RANKED by lifetime playCount — so a
+    // track played 500 times two years ago and once last week
+    // dominated "Last Week" with 500. Now ranks by play events within
+    // the window from the per-play log (main: get-windowed-play-counts).
+    // Falls back to the old approximation only when the windowedCounts
+    // map is empty (first launch before any plays have been logged
+    // post-upgrade — the log is forward-only). Tracks not in the log
+    // for the window get filtered out entirely; tracks WITH events get
+    // ranked by their actual in-window count.
     if (playlistId === 'top-25' && topWindow !== 'all') {
       const WINDOW_MS = topWindow === 'week' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
+      const trackById = new Map(libState.tracks.map(t => [t.id, t]))
+      const haveAnyEvents = Object.keys(windowedCounts).length > 0
+      if (haveAnyEvents) {
+        return Object.entries(windowedCounts)
+          .map(([id, cnt]) => ({ track: trackById.get(Number(id)), cnt }))
+          .filter((x): x is { track: Track; cnt: number } => x.track !== undefined && x.cnt > 0)
+          .sort((a, b) => b.cnt - a.cnt)
+          .slice(0, 25)
+          .map(x => x.track)
+      }
+      // Fallback for the first-launch window where no events have
+      // been logged yet (log starts empty post-upgrade and fills as
+      // tracks play). Same shape as the old approximation.
       const cutoff = Date.now() - WINDOW_MS
       return libState.tracks
         .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff)
@@ -338,7 +375,7 @@ export default function SmartPlaylistView() {
         .slice(0, 25)
     }
     return evaluateSmartPlaylist(playlistId, libState.tracks)
-  }, [playlistId, libState.tracks, picks, topWindow])
+  }, [playlistId, libState.tracks, picks, topWindow, windowedCounts])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
@@ -394,9 +431,11 @@ export default function SmartPlaylistView() {
 
   const visibleCols = ALL_COLUMN_DEFS.filter(c => {
     if (hiddenCols.has(c.key)) return false
-    // Rank column only applies to the All Time Top 25 — week / month
-    // views are recent-listening snapshots, not trend lines.
-    if (c.key === 'rank' && (playlistId !== 'top-25' || topWindow !== 'all')) return false
+    // Rank column shows on every Top 25 view; the LW arrow inside it
+    // only renders for All Time (week/month don't have a meaningful
+    // week-over-week snapshot). Number always present so the user
+    // sees positions 1 -> 25.
+    if (c.key === 'rank' && playlistId !== 'top-25') return false
     return true
   })
 
@@ -476,7 +515,12 @@ export default function SmartPlaylistView() {
     if (playlistId) smartSortPrefs.set(playlistId, { col: sortCol, dir: sortDir })
   }, [playlistId, sortCol, sortDir])
 
+  // 4.5: column-resize sort-suppression. handleColResize stamps
+  // lastResizeEndAt on mouseup; handleSort ignores clicks within the
+  // suppression window so a resize drag doesn't also re-sort.
+  const lastResizeEndAt = useRef<number>(0)
   const handleSort = useCallback((key: string) => {
+    if (Date.now() - lastResizeEndAt.current < 300) return
     if (key === 'playing') return
     if (sortCol === key) {
       if (sortDir === 'desc') {
@@ -493,6 +537,18 @@ export default function SmartPlaylistView() {
 
   // --- Sorted tracks ---
   const sortedTracks = useMemo(() => {
+    // 4.5: Starred playlist defaults to starredAt sort — recent star
+    // on top, oldest at bottom. Reverse toggle in the header flips it.
+    // Only applies when user hasn't picked an explicit column header
+    // (clicking a column escapes back into the generic sort path).
+    if (playlistId === 'top-rated' && !sortCol) {
+      return [...filteredTracks].sort((a, b) => {
+        const av = a.starredAt || 0
+        const bv = b.starredAt || 0
+        const cmp = av < bv ? -1 : av > bv ? 1 : 0
+        return starredReversed ? cmp : -cmp
+      })
+    }
     if (!sortCol) return filteredTracks
     return [...filteredTracks].sort((a, b) => {
       let av: string | number = '', bv: string | number = ''
@@ -513,7 +569,7 @@ export default function SmartPlaylistView() {
       const cmp = aStr < bStr ? -1 : aStr > bStr ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [filteredTracks, sortCol, sortDir])
+  }, [filteredTracks, sortCol, sortDir, playlistId, starredReversed])
 
   // --- Column resize ---
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>({})
@@ -538,6 +594,7 @@ export default function SmartPlaylistView() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
+      lastResizeEndAt.current = Date.now()
     }
     document.body.style.cursor = 'col-resize'
     window.addEventListener('mousemove', onMove)
@@ -864,6 +921,28 @@ export default function SmartPlaylistView() {
               ))}
             </div>
           )}
+          {/* 4.5: Starred reverse-order toggle. Default = recent first.
+              Click to flip to oldest first. Only renders on the Starred
+              playlist and only when the user hasn't picked an explicit
+              column sort (which would override anyway). */}
+          {playlistId === 'top-rated' && !sortCol && (
+            <div className="top25-window-switch" role="group" aria-label="Starred sort order">
+              <button
+                className={`top25-window-btn ${!starredReversed ? 'top25-window-btn--active' : ''}`}
+                onClick={() => setStarredReversed(false)}
+                title="Most recently starred at the top"
+              >
+                Recent
+              </button>
+              <button
+                className={`top25-window-btn ${starredReversed ? 'top25-window-btn--active' : ''}`}
+                onClick={() => setStarredReversed(true)}
+                title="Oldest starred at the top"
+              >
+                Oldest
+              </button>
+            </div>
+          )}
         </div>
         <div className="playlist-view-actions">
           {isPicksView && (
@@ -936,7 +1015,7 @@ export default function SmartPlaylistView() {
         {visibleCols.map((col, i) => (
           <div
             key={col.key}
-            className={`songs-header-cell ${sortCol === col.key ? 'sorted' : ''}`}
+            className={`songs-header-cell songs-header-cell--${col.key} ${sortCol === col.key ? 'sorted' : ''}`}
             onClick={() => handleSort(col.key)}
           >
             {col.label}
@@ -963,6 +1042,8 @@ export default function SmartPlaylistView() {
               style={{ gridTemplateColumns: gridTemplate }}
               onClick={(e) => handleClick(track, i, e)}
               onDoubleClick={() => playTrack(track, sortedTracks, i, undefined, true)}
+              onMouseEnter={() => prefetchTrackForPlay(track)}
+              onMouseDown={() => prefetchTrackImmediate(track)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}
               draggable
               onDragStart={(e) => {
@@ -979,6 +1060,17 @@ export default function SmartPlaylistView() {
                     return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
                   case 'rank': {
                     const rank = i + 1
+                    // LW arrow + delta only on All Time (the snapshot
+                    // is keyed to all-time ranks). Week/month views
+                    // get the rank number alone — still meaningful as
+                    // "position 1 through 25 within this lens."
+                    if (topWindow !== 'all') {
+                      return (
+                        <div key={col.key} className="songs-cell songs-cell--rank">
+                          <span className="rank-num">{rank}</span>
+                        </div>
+                      )
+                    }
                     const lwRank = rankSnap?.prev?.[String(track.id)]
                     let arrow = ''
                     let arrowClass = 'rank-arrow rank-arrow--same'
@@ -987,12 +1079,10 @@ export default function SmartPlaylistView() {
                       arrow = 'NEW'
                       arrowClass = 'rank-arrow rank-arrow--new'
                     } else if (rank < lwRank) {
-                      // Moved UP — append how many spots: ▲3
                       arrow = `▲${lwRank - rank}`
                       arrowClass = 'rank-arrow rank-arrow--up'
                       lwLabel = `(${lwRank})`
                     } else if (rank > lwRank) {
-                      // Moved DOWN: ▼5
                       arrow = `▼${rank - lwRank}`
                       arrowClass = 'rank-arrow rank-arrow--down'
                       lwLabel = `(${lwRank})`
@@ -1009,8 +1099,37 @@ export default function SmartPlaylistView() {
                       </div>
                     )
                   }
-                  case 'title':
-                    return <div key={col.key} className="songs-cell songs-cell--title">{track.title}</div>
+                  case 'title': {
+                    const starred = (Number(track.rating) || 0) > 0
+                    const toggleStar = (e: React.MouseEvent) => {
+                      e.stopPropagation()
+                      const value = String(starred ? 0 : 5)
+                      dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
+                      window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
+                      // 4.5: stamp starredAt on star-ON for recent-first sort.
+                      if (!starred) {
+                        const stamp = String(Date.now())
+                        dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'starredAt', value: stamp }] })
+                        window.electronAPI.saveMetadataOverride(track.id, 'starredAt', stamp)
+                      }
+                    }
+                    return (
+                      <div key={col.key} className="songs-cell songs-cell--title">
+                        <span className="title-row-text">{track.title}</span>
+                        <button
+                          className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
+                          onClick={toggleStar}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          title={starred ? 'Unstar' : 'Star'}
+                          aria-label={starred ? 'Unstar' : 'Star'}
+                        >
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+                            <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+                          </svg>
+                        </button>
+                      </div>
+                    )
+                  }
                   case 'time':
                     return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
                   case 'artist':
@@ -1028,20 +1147,7 @@ export default function SmartPlaylistView() {
                     return <div key={col.key} className="songs-cell">{dp ? `${mo}-${dy}-${y}` : ''}</div>
                   }
                   case 'playCount':
-                    return <div key={col.key} className="songs-cell">{track.playCount || ''}</div>
-                  case 'rating':
-                    return (
-                      <div key={col.key} className="songs-cell songs-cell--rating">
-                        <StarRating
-                          value={Number(track.rating) || 0}
-                          onChange={(r) => {
-                            const value = String(r)
-                            dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: track.id, field: 'rating', value }] })
-                            window.electronAPI.saveMetadataOverride(track.id, 'rating', value)
-                          }}
-                        />
-                      </div>
-                    )
+                    return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
                   default:
                     return null
                 }

@@ -391,6 +391,25 @@ export default function GetInfoModal({
                 </div>
               </div>
             ))}
+            {/* 4.5: channel-mode dropdown. Background metadata only —
+                never surfaces in the title, song row, or playback engine.
+                Blank means "unset"; user can tag mono/stereo per track
+                for their own categorization. Stored as a metadata
+                override like every other editable field. */}
+            <div className="getinfo-field-row" key="channelMode">
+              <label className="getinfo-label">Channels</label>
+              <select
+                className="getinfo-input"
+                value={getFieldValue('channelMode')}
+                onChange={(e) =>
+                  setEditedFields((prev) => ({ ...prev, channelMode: e.target.value }))
+                }
+              >
+                <option value=""></option>
+                <option value="mono">Mono</option>
+                <option value="stereo">Stereo</option>
+              </select>
+            </div>
             {!isMulti && currentTrack && (
               <div className="getinfo-field-row getinfo-field-row--readonly">
                 <label className="getinfo-label">File</label>

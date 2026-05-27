@@ -8,11 +8,14 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
+import { clearArtworkNegativeCache } from '../utils/artworkLookup'
+import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { Track } from '../types'
 import { setNotice } from '../activity'
+import { canonicalArtist } from '../utils/artistAlias'
 import '../styles/artists.css'
 
 interface ArtistGroup {
@@ -67,8 +70,15 @@ export default function ArtistsView() {
       const contributors = (t.contributingArtists && t.contributingArtists.length > 0)
         ? t.contributingArtists
         : [t.artist || 'Unknown Artist']
+      // 4.5.0-43: canonicalize each contributor so "Paul McCartney & Wings"
+      // and "Wings" both collapse into the "Paul McCartney" row. Dedup
+      // within a single track's contributor list so the same track isn't
+      // double-counted when the raw + alias resolve to the same canonical.
+      const seenForTrack = new Set<string>()
       for (const raw of contributors) {
-        const name = raw || 'Unknown Artist'
+        const name = canonicalArtist(raw || 'Unknown Artist')
+        if (seenForTrack.has(name)) continue
+        seenForTrack.add(name)
         if (!map.has(name)) map.set(name, [])
         map.get(name)!.push(t)
       }
@@ -185,10 +195,28 @@ export default function ArtistsView() {
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
-      libDispatch({ type: 'UPDATE_TRACKS', updates })
+      // 4.5.0-67 — save-first ordering, see SongsView for full rationale.
+      const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
+      for (const u of updates) {
+        if (oldArtAlbumById.has(u.id)) continue
+        const t = lib.tracks.find(tr => tr.id === u.id)
+        if (t) oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
+      }
       for (const u of updates) await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value)
+      if (updates.some(u => u.field === 'artist' || u.field === 'album')) {
+        const newArtAlbumById = new Map<number, { artist: string; album: string }>()
+        for (const [id, old] of oldArtAlbumById) newArtAlbumById.set(id, { ...old })
+        for (const u of updates) {
+          const cur = newArtAlbumById.get(u.id)
+          if (!cur) continue
+          if (u.field === 'artist') cur.artist = u.value
+          else if (u.field === 'album') cur.album = u.value
+        }
+        for (const v of newArtAlbumById.values()) clearArtworkNegativeCache(v.artist, v.album)
+      }
+      libDispatch({ type: 'UPDATE_TRACKS', updates })
     },
-    [libDispatch]
+    [libDispatch, lib.tracks]
   )
 
   const handleFetchArt = useCallback(
@@ -346,6 +374,9 @@ export default function ArtistsView() {
       onScrollCapture={noteUserActivity}
       onKeyDownCapture={noteUserActivity}
     >
+      {filteredArtists.length === 0 && (
+        <EmptyState query={lib.searchQuery} noun="artists" />
+      )}
       {filteredArtists.map((artist) => (
         <div key={artist.name} className="artist-group" data-artist-name={artist.name}>
           {/* 4.5: click navigates to the dedicated artist detail page

@@ -4,6 +4,26 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
 import { attachHowlToEq, detachHowlFromEq } from '../audio/eq'
+import {
+  scheduleAbsoluteFadeOut,
+  scheduleAbsoluteStart,
+  decodeUrl,
+  promoteBufferSourceToHowl,
+  type ScheduledIncoming,
+} from '../audio/seamScheduler'
+
+// 4.5.0-78 — sample-accurate seam scheduling. See seamScheduler.ts
+// header for the full rationale. Flag-gated so flipping to false
+// restores the pre-78 Howler-only path instantly.
+const USE_SAMPLE_ACCURATE_SEAMS = true
+
+// 4.5.0-54: REVERTED the AudioContext sample-rate pin from 4.5.0-52.
+// Setting Howler.ctx to a pre-created suspended AudioContext broke
+// playback entirely in Radio Mode (and likely elsewhere) — Howler's
+// auto-resume on user gesture doesn't fire for a context it didn't
+// create itself. Pops + sample-rate alignment will be revisited via
+// a different mechanism (per-track context, or Howler-bypass at the
+// seam) — see Grok consult notes.
 
 // Resolved at runtime from main process via IPC — set by init call
 let IPOD_MOUNT = ''
@@ -172,16 +192,69 @@ function cleanupCrossfadeAudio() {
 // new sharedHowl is html5: false and bypasses EQ until the user picks
 // a different track. EQ is off by default; the trade-off is acceptable.
 //
-// We still PRE-WARM with play() at volume 0 a beat before the seam.
-// Even Web Audio's first play() has microsecond-scale setup; the
-// pre-warm makes that vanish under the current track's tail. Lead time
-// is small (50ms) since Web Audio doesn't need much head start.
+// 4.5.0-70 — pop reproduction analysis on the -65 design exposed two
+// real waveform-discontinuity sources at every seam:
+//
+//   POP #1 (outgoing). rAF runs at 60 Hz (~16.7 ms per tick) so the
+//   fade-out check, which fires when `remaining ≤ FADE_MS`, can land
+//   when remaining is anywhere in [0, FADE_MS]. In -65 the fade was
+//   triggered AND lasted 25 ms — meaning the fade routinely COMPLETED
+//   10–20 ms after onend, so the outgoing track's gain was still
+//   ~0.4–0.7 at the seam. The buffer ended at non-zero amplitude →
+//   speaker cone snap → audible pop.
+//   Fix: trigger the fade-out at remaining ≤ FADE_TRIGGER_MS (60 ms),
+//   and use FADE_DURATION_MS (40 ms). Even if rAF fires at the very
+//   end of the trigger window (remaining=0), the fade still has 40 ms
+//   to ramp — covered by the outgoing buffer's natural tail PLUS the
+//   incoming fade-in mask. In the typical case the fade COMPLETES with
+//   20+ ms of clean silence on the outgoing before onend.
+//
+//   POP #2 (incoming). A 5 ms gain-ramp from 0→target is effectively
+//   a step function for any track whose first sample has non-zero
+//   amplitude (most music — encoder padding only buys 1–2 ms of
+//   silence). Audible click. Fix: 20 ms fade-in. Long enough that the
+//   ear hears smooth onset, short enough that no perceived "swell."
+//
+//   We still skip the prewarm so the user hears the next track from
+//   sample 0 (no missed audio). The 20 ms fade-in masks the buffer-
+//   start discontinuity instead.
+// 4.5.0-78 — sample-accurate seam state. Lives alongside the existing
+// gapless preload because the runNaturalEnd handoff still needs a Howl
+// to promote to (the BufferSource only owns playback for ~5 s across
+// the seam). Phase A: pre-decode the incoming buffer (~10 s before
+// seam). Phase B: schedule absolute-time fade-out + BufferSource start
+// at the precise seam moment. Phase C: on onend, promote BufferSource
+// to Howl via internal crossfade.
+let seamIncomingBuffer: AudioBuffer | null = null
+let seamIncomingBufferUrl: string | null = null
+let seamScheduled: ScheduledIncoming | null = null
+let seamFadeOutScheduled = false
+let seamStartScheduled = false
+
+function cleanupSeamScheduler() {
+  if (seamScheduled) {
+    try { seamScheduled.stop() } catch { /* ignore */ }
+    seamScheduled = null
+  }
+  seamIncomingBuffer = null
+  seamIncomingBufferUrl = null
+  seamFadeOutScheduled = false
+  seamStartScheduled = false
+}
+
 let gaplessNextHowl: Howl | null = null
 let gaplessNextTrack: Track | null = null
 let gaplessNextQueue: Track[] | null = null
 let gaplessNextIdx = -1
 let gaplessNextPrewarmed = false
-const GAPLESS_PREWARM_LEAD_MS = 50
+let gaplessOutgoingFaded = false
+const GAPLESS_PREWARM_LEAD_MS = 0
+const GAPLESS_FADE_OUT_TRIGGER_MS = 60   // when to KICK the outgoing fade
+const GAPLESS_FADE_OUT_DURATION_MS = 40  // how long the outgoing fade runs
+const GAPLESS_FADE_IN_MS = 20            // incoming fade-in duration
+// Legacy name kept so any other reader of this module sees the canonical
+// "seam fade" value — equals the duration, not the trigger.
+const GAPLESS_SEAM_FADE_MS = GAPLESS_FADE_OUT_DURATION_MS
 function cleanupGaplessPreload() {
   if (gaplessNextHowl) {
     try { gaplessNextHowl.stop() } catch { /* ignore */ }
@@ -193,6 +266,124 @@ function cleanupGaplessPreload() {
   gaplessNextQueue = null
   gaplessNextIdx = -1
   gaplessNextPrewarmed = false
+  gaplessOutgoingFaded = false
+  // 4.5.0-78 — also tear down the seam scheduler's incoming buffer +
+  // any scheduled BufferSource. Cleared on any track change / stop /
+  // crossfade kick that abandons the gapless slot.
+  cleanupSeamScheduler()
+}
+
+// ── Hover prefetch (4.5) ──
+// When the user mouses over a track row, decode it in the background
+// with Web Audio (html5: false) so a click-to-play promotion lands on
+// an already-decoded buffer instead of starting a fresh HTMLAudioElement
+// pipeline. HTMLAudio first-play carries 500–1500 ms of setup latency
+// even on warm files; Web Audio play() on a pre-decoded buffer is
+// effectively instant.
+//
+// One prefetch slot only — a fresh hover evicts the prior, and a
+// real playback take-over (loadAndPlay) consumes the slot. The 150ms
+// debounce avoids hammering disk/decoder on fast row-to-row mouse
+// movement. EQ bypass for prefetched plays is the same trade-off the
+// gapless preload already accepts (EQ is off by default).
+let prefetchHowl: Howl | null = null
+let prefetchTrackId: string | number | null = null
+let prefetchDebounceTimer: number = 0
+
+function clearPrefetch() {
+  if (prefetchHowl) {
+    try { prefetchHowl.unload() } catch { /* ignore */ }
+    prefetchHowl = null
+  }
+  prefetchTrackId = null
+}
+
+// 4.5: fade-on-quit. Main process intercepts before-quit and pings the
+// renderer via 'app-quit-fade' IPC; App.tsx subscribes and calls this.
+// Ramps every live Howl to 0 over ~120ms so the OS audio buffers aren't
+// snapped from mid-waveform amplitude — eliminates the speaker-cone
+// pop on cmd+Q. Resolves once the fade window has elapsed so the
+// caller can let the quit proceed.
+export function fadeAllForQuit(durMs: number = 120): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      if (sharedHowl) {
+        try {
+          const v = sharedHowl.volume() as number
+          sharedHowl.fade(v, 0, durMs)
+        } catch { /* ignore */ }
+      }
+      if (outgoingHowl) {
+        try {
+          const v = outgoingHowl.volume() as number
+          outgoingHowl.fade(v, 0, durMs)
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+    window.setTimeout(resolve, durMs + 20)
+  })
+}
+
+export function prefetchTrackForPlay(track: Track) {
+  if (!track || !track.path) return
+  if (prefetchTrackId === track.id) return
+  if (prefetchDebounceTimer) {
+    window.clearTimeout(prefetchDebounceTimer)
+    prefetchDebounceTimer = 0
+  }
+  // 4.5: 150ms → 60ms. The longer debounce reliably caught row-to-row
+  // mouse sweeps without firing, but it also meant fast clicks
+  // (hover for ~100ms then click) got no prefetch at all and hit the
+  // full cold-load latency Jake noticed on "some songs". 60ms catches
+  // any hover that's deliberate enough to count, including a brief
+  // pause before clicking.
+  prefetchDebounceTimer = window.setTimeout(() => {
+    prefetchDebounceTimer = 0
+    if (prefetchTrackId === track.id) return
+    clearPrefetch()
+    const { url, format } = ipodPathToAudioURL(track.path || '')
+    prefetchTrackId = track.id
+    prefetchHowl = new Howl({
+      src: [url],
+      format: [format],
+      html5: false,
+      preload: true,
+      autoplay: false,
+      volume: 0,
+      onloaderror: () => {
+        if (prefetchTrackId === track.id) clearPrefetch()
+      },
+    })
+  }, 60)
+}
+
+// 4.5: synchronous prefetch — bypasses the hover debounce for paths
+// where intent is already certain (mousedown on a row, keyboard
+// arrow selection). The click event fires ~80-200ms after mousedown
+// in typical interaction, which is enough head start for the Web
+// Audio decode to be well underway by the time loadAndPlay runs and
+// looks for a matching prefetch.
+export function prefetchTrackImmediate(track: Track) {
+  if (!track || !track.path) return
+  if (prefetchTrackId === track.id) return
+  if (prefetchDebounceTimer) {
+    window.clearTimeout(prefetchDebounceTimer)
+    prefetchDebounceTimer = 0
+  }
+  clearPrefetch()
+  const { url, format } = ipodPathToAudioURL(track.path || '')
+  prefetchTrackId = track.id
+  prefetchHowl = new Howl({
+    src: [url],
+    format: [format],
+    html5: false,
+    preload: true,
+    autoplay: false,
+    volume: 0,
+    onloaderror: () => {
+      if (prefetchTrackId === track.id) clearPrefetch()
+    },
+  })
 }
 
 
@@ -264,6 +455,7 @@ export function useAudio(opts?: { primary?: boolean }) {
     if (!state.isPlaying) return
     let lastPos = -1
     let stuckTicks = 0
+    let lastRafTickCountSeen = rafTickCount
     const id = window.setInterval(() => {
       try {
         type HowlInternal = Howl & { _sounds?: Array<{ _node?: HTMLAudioElement }>; _state?: string }
@@ -276,6 +468,43 @@ export function useAudio(opts?: { primary?: boolean }) {
           void ctx.resume().catch(() => { /* ignore */ })
           logAudioEvent('heartbeat.ctx.resume')
         }
+
+        // 4.5.0-77 — UI-safe position recovery. The rAF loop is what
+        // normally pushes SET_POSITION to React state at ~10 Hz. If
+        // the loop dies (stillActive evaluates false for any reason
+        // mid-track — stale sharedHowl reference, isPaused stuck, a
+        // ref refresh hiccup), the position bar freezes at the last
+        // dispatched value while audio keeps playing. User sees "song
+        // is playing but stuck at 1:02" with no way to recover but
+        // pause/play.
+        //
+        // Two recoveries here, both SAFE (no audio mutation, no Howl
+        // recreation — past attempts at hard-recovery caused clicks
+        // and were removed in 4.2.12):
+        //
+        //   (a) Unconditional position dispatch from the LIVE Howler
+        //       seek when React state says playing. Bypasses the rAF
+        //       throttle gate. Even if rAF is dead, the position bar
+        //       updates every 2 s — jumpy, but at least correct.
+        //   (b) Restart rAF if rafTickCount hasn't advanced since the
+        //       prior heartbeat AND React state says playing. The
+        //       loop's own stillActive check is the safety net — if
+        //       it shouldn't be running, the new tick self-cancels.
+        if (h && stateRef.current.isPlaying && !isPaused) {
+          try {
+            const livePos = h.seek() as number
+            const liveDur = h.duration()
+            dispatchRef.current({ type: 'SET_POSITION', position: livePos })
+            if (liveDur > 0) dispatchRef.current({ type: 'SET_DURATION', duration: liveDur })
+            lastPositionDispatchMs = Date.now()
+          } catch { /* ignore */ }
+          if (rafTickCount === lastRafTickCountSeen) {
+            logAudioEvent('heartbeat.raf-dead-restart', { rafTickCount, pos: lastPos })
+            cancelAnimationFrame(sharedRaf)
+            sharedRaf = requestAnimationFrame(updatePosition)
+          }
+        }
+        lastRafTickCountSeen = rafTickCount
 
         const pos = h ? Number((h.seek() as number).toFixed(2)) : null
         logAudioEvent('heartbeat', {
@@ -291,32 +520,24 @@ export function useAudio(opts?: { primary?: boolean }) {
           nodeError: node?.error?.code,
         })
 
-        // 2. Stuck-position kicker. If position is the same float as last
-        // heartbeat AND howl thinks it's playing, count a stuck tick.
-        // After 2 stuck ticks (4s of frozen audio) try a recovery.
+        // 4.5: Stuck-position KICKER + HARD-RECOVER both DISABLED.
+        // These were diagnostic-era recovery paths for the Airfoil
+        // hijack edge case, but they cause MORE clicks than they fix
+        // when they false-positive on a routine buffer hiccup. Calling
+        // node.play() on an element that's actively playing produces a
+        // click; hard-recover stops + recreates the howl which is a
+        // guaranteed click. Both are gone. The user pause/play recovers
+        // a genuinely-stuck stream just as well, and the heartbeat's
+        // ctx.resume() above still handles the actual mid-song
+        // AudioContext-suspended edge case that was the only valid
+        // win these kickers ever delivered.
         const howlPlaying = h ? h.playing() : false
         if (pos !== null && howlPlaying && pos === lastPos) {
           stuckTicks++
           if (stuckTicks >= 2) {
-            logAudioEvent('heartbeat.kick', { pos, stuckTicks })
-            try { node?.play() } catch { /* ignore */ }
-            // If the kick doesn't help in another 2 ticks, hard-recover.
-            if (stuckTicks >= 4 && playTrackRef.current) {
-              const cur = stateRef.current.nowPlaying
-              const q = stateRef.current.queue
-              const qi = stateRef.current.queueIndex
-              const stuckAt = pos
-              if (cur && q.length > 0) {
-                logAudioEvent('heartbeat.hardRecover', { pos, title: cur.title })
-                try { sharedHowl?.stop() } catch { /* ignore */ }
-                detachHowlFromEq(sharedHowl)
-                try { sharedHowl?.unload() } catch { /* ignore */ }
-                sharedHowl = null
-                playTrackRef.current(cur, q, qi)
-                setTimeout(() => { try { sharedHowl?.seek(stuckAt) } catch { /* ignore */ } }, 600)
-                stuckTicks = 0
-              }
-            }
+            logAudioEvent('heartbeat.observed-stuck-no-action', { pos, stuckTicks })
+            // (kick + hardRecover removed — see comment above)
+            void playTrackRef.current  // keep ref alive for type-checker
           }
         } else {
           stuckTicks = 0
@@ -510,20 +731,23 @@ export function useAudio(opts?: { primary?: boolean }) {
       const pos = sharedHowl.seek() as number
       const dur = sharedHowl.duration()
 
-      // Gapless preload: in the last ~3 seconds of the current track,
-      // create a Howl for the next track. The audio file decode happens
-      // during the current track's tail, so when the natural end fires
-      // we can promote the preloaded Howl with near-zero latency.
+      // Gapless preload: in the last ~10 seconds of the current track,
+      // create a Howl for the next track. 4.5: bumped from 3s to 10s
+      // so the file-decode CPU spike happens MID-tail, not in the
+      // final seconds where buffer underruns produce audible cracks
+      // on the still-playing current track. 10s gives the decoder
+      // plenty of runway to finish well before the seam, leaving the
+      // pre-warm + promote moments uncontested.
       // Skipped when crossfade is enabled (crossfade does its own
       // overlap), DJ Mode is on, repeat=one, or no next track exists.
       if (
         !crossfadeSettings.enabled &&
         !autoDjMode &&
         !gaplessNextHowl &&
-        dur > 4
+        dur > 12
       ) {
         const remaining = dur - pos
-        if (remaining > 0 && remaining <= 3) {
+        if (remaining > 0 && remaining <= 10) {
           const s = stateRef.current
           if (s.repeat !== 'one' && s.queue.length > 0) {
             // Shuffle is achieved by reordering the queue itself (see
@@ -552,6 +776,31 @@ export function useAudio(opts?: { primary?: boolean }) {
                 gaplessNextQueue = s.queue
                 gaplessNextIdx = nextIdx
                 gaplessNextPrewarmed = false
+                // 4.5.0-78 — pre-decode the same URL into a raw
+                // AudioBuffer for sample-accurate seam scheduling. The
+                // decode runs in parallel with Howler's own (Howler
+                // shares the same fetched bytes via the browser cache).
+                // Fire-and-forget; if decode fails we fall back to the
+                // Howler-only path at the seam.
+                if (USE_SAMPLE_ACCURATE_SEAMS) {
+                  const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+                  if (ctx) {
+                    seamIncomingBufferUrl = nextUrl
+                    decodeUrl(nextUrl, ctx).then(buf => {
+                      // Race guard: if user navigated away or the
+                      // gapless slot got cleaned up before decode
+                      // finished, drop the buffer.
+                      if (seamIncomingBufferUrl === nextUrl) seamIncomingBuffer = buf
+                    }).catch(() => {
+                      // Decode failure: leave seamIncomingBuffer null
+                      // so the seam-trigger falls back to Howler-only.
+                      if (seamIncomingBufferUrl === nextUrl) {
+                        seamIncomingBufferUrl = null
+                        seamIncomingBuffer = null
+                      }
+                    })
+                  }
+                }
               }
             }
           }
@@ -574,6 +823,96 @@ export function useAudio(opts?: { primary?: boolean }) {
           try { gaplessNextHowl.volume(0) } catch { /* ignore */ }
           try { gaplessNextHowl.play() } catch { /* ignore */ }
           gaplessNextPrewarmed = true
+        }
+      }
+
+      // 4.5.0-71 — outgoing fade now SCHEDULED to land precisely at
+      // onend, not just "triggered when remaining ≤ N." Per Grok's
+      // audit on -70: rAF jitter (16–80 ms) meant the prior fixed-
+      // duration fade could complete anywhere between 5 ms early and
+      // 40 ms late relative to onend. Late = outgoing gain still at
+      // ~0.4–0.8 at the buffer's last sample = pop on the speaker
+      // cone snap to silence.
+      //
+      // New strategy: in rAF, when remaining ≤ 250 ms (well before the
+      // seam), compute the precise moment to call Howler.fade() such
+      // that the gain ramp REACHES 0 exactly at onend. Schedule it via
+      // setTimeout against absolute msUntilEnd. setTimeout has 4–15 ms
+      // jitter at the FIRE step, but Howler.fade itself uses Web Audio
+      // gain.linearRampToValueAtTime which IS sample-accurate from the
+      // fire moment forward — so a small jitter in the fire moment
+      // means a small jitter in the START of the ramp, but the ramp
+      // still completes deterministically (fadeDur ms later). Add a
+      // 5 ms safety margin so the ramp ends just BEFORE onend in the
+      // worst case.
+      //
+      // Also: explicitly resume the AudioContext if it got suspended
+      // (e.g., the app was backgrounded). Suspended ctx means scheduled
+      // gain ramps don't fire and the seam silently breaks.
+      if (
+        gaplessNextHowl &&
+        !gaplessOutgoingFaded &&
+        !crossfadeSettings.enabled
+      ) {
+        const remaining = dur - pos
+        if (remaining > 0 && remaining * 1000 <= 250) {
+          gaplessOutgoingFaded = true
+          const msUntilEnd = remaining * 1000
+          const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+          if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => { /* ignore */ })
+          // 4.5.0-78 — sample-accurate fade-out via Howler's own
+          // sample-accurate Web Audio gain ramp. Calling fade() with
+          // duration = msUntilEnd makes the ramp END at the EXACT
+          // sample-EOF (the only thing that varies is when the ramp
+          // STARTS, which is now, ~250 ms before EOF). The pre-78 path
+          // was: setTimeout(()=>fade(short_dur), fireDelay) where the
+          // setTimeout jitter (4-15 ms) shifted the ramp's start AND
+          // therefore its end relative to onend. New path: ramp starts
+          // immediately, ends precisely at EOF. No setTimeout in seam
+          // path = no jitter.
+          if (USE_SAMPLE_ACCURATE_SEAMS && sharedHowl) {
+            scheduleAbsoluteFadeOut(sharedHowl, msUntilEnd)
+          } else {
+            // Fallback: pre-78 behavior gated by the same flag.
+            const fadeDur = Math.min(GAPLESS_FADE_OUT_DURATION_MS, Math.max(15, msUntilEnd - 5))
+            const fireDelay = Math.max(0, msUntilEnd - fadeDur)
+            setTimeout(() => {
+              try {
+                if (!sharedHowl) return
+                const cur = (sharedHowl.volume() as number) || stateRef.current.volume
+                sharedHowl.fade(cur, 0, fadeDur)
+              } catch { /* ignore */ }
+            }, fireDelay)
+          }
+
+          // 4.5.0-78 — schedule the incoming BufferSource at the EXACT
+          // sample-EOF time. Bypasses Howler.play()'s "start NOW" path
+          // (which carries the 3-10 ms slop that's been our incoming
+          // pop source). Only fires if we successfully pre-decoded the
+          // incoming buffer (Phase A); otherwise the existing onend →
+          // gapless-promote path handles it the old way.
+          if (
+            USE_SAMPLE_ACCURATE_SEAMS &&
+            ctx &&
+            seamIncomingBuffer &&
+            !seamStartScheduled &&
+            !seamScheduled
+          ) {
+            seamStartScheduled = true
+            const absoluteSeamTime = ctx.currentTime + msUntilEnd / 1000
+            try {
+              seamScheduled = scheduleAbsoluteStart(
+                seamIncomingBuffer,
+                ctx,
+                absoluteSeamTime,
+                stateRef.current.volume,
+                20, // fade-in to mask buffer-start amplitude
+              )
+            } catch (err) {
+              dx('seam.schedule-failed', { err: String(err) })
+              seamStartScheduled = false
+            }
+          }
         }
       }
 
@@ -669,11 +1008,51 @@ export function useAudio(opts?: { primary?: boolean }) {
       cleanupCrossfadeAudio()
       cleanupGaplessPreload()
       if (sharedHowl) {
-        detachHowlFromEq(sharedHowl)
-        sharedHowl.unload()
+        // Pop suppression: don't hard-unload the previous Howl — that
+        // produces an audible click when the speaker cone snaps from
+        // mid-waveform amplitude straight to silence. Fade the outgoing
+        // Howl to 0 over ~25ms, then unload async. The new Howl below
+        // starts at vol 0 and fades in over the same window inside its
+        // onplay handler — the two ramps overlap in real time, giving a
+        // clean amplitude crossing through zero at the boundary.
+        const departing = sharedHowl
+        const curVol = (departing.volume() as number) || stateRef.current.volume
+        try { departing.fade(curVol, 0, 25) } catch { /* ignore */ }
+        window.setTimeout(() => {
+          try { detachHowlFromEq(departing) } catch { /* ignore */ }
+          try { departing.unload() } catch { /* ignore */ }
+        }, 35)
         sharedHowl = null
       }
       cancelAnimationFrame(sharedRaf)
+    }
+
+    // Hover-prefetch promotion. If the user hovered this exact track
+    // long enough to trigger a Web Audio prefetch (decoded into memory
+    // in the background), promote it instead of constructing a fresh
+    // Howl — skips the 500–1500ms HTMLAudioElement startup pipeline
+    // and gives near-instant play(). Crossfade path is too entangled
+    // with the construct-new-howl flow to safely promote here; falls
+    // through to the standard branch.
+    if (!asCrossfade && prefetchHowl && prefetchTrackId === track.id) {
+      const promoted = prefetchHowl
+      prefetchHowl = null
+      prefetchTrackId = null
+      const endedHolder = { v: false }
+      const targetVol = stateRef.current.volume
+      promoted.once('play', () => {
+        logAudioEvent('howl.onplay', { title: track.title, src: 'prefetch-promote' })
+        try { promoted.fade(0, targetVol, 25) } catch { /* ignore */ }
+        dispatchRef.current({ type: 'SET_DURATION', duration: promoted.duration() })
+        sharedRaf = requestAnimationFrame(updatePosition)
+      })
+      promoted.once('end', () => {
+        logAudioEvent('howl.onend', { title: track.title, src: 'prefetch-promote' })
+        runNaturalEndRef.current?.(track, promoted, endedHolder, queueIndex)
+      })
+      sharedHowl = promoted
+      promoted.play()
+      return
     }
 
     const { url, format } = ipodPathToAudioURL(track.path || '')
@@ -682,11 +1061,39 @@ export function useAudio(opts?: { primary?: boolean }) {
     // even with repeat off. Also belt-and-suspenders loop:false so no
     // underlying <audio> element ever auto-loops.
     const endedHolder = { v: false }
-    const startVolume = asCrossfade ? 0 : stateRef.current.volume
+    // Always start at 0 and fade in (crossfade ramps over seconds inside
+    // updatePosition; non-crossfade ramps over ~25ms inside onplay). The
+    // fade-in pairs with the outgoing fade-out above so neither the stop
+    // nor the start lands on a non-zero waveform sample — eliminates the
+    // "click" pop on song change.
+    const startVolume = 0
     const howl = new Howl({
       src: [url],
       format: [format],
-      html5: true,
+      // 4.5: html5:true → html5:false. PERMANENT pop fix. Streaming
+      // HTMLAudioElement decoded audio on the renderer thread + read
+      // bytes lazily from the protocol handler; any thread starvation
+      // or disk-I/O hiccup mid-track produced a buffer underrun, which
+      // is what every "random pop in the middle of a song" Jake's
+      // been reporting was. Web Audio decodes the whole file into
+      // memory before play() starts, then plays from buffer with
+      // sample-accurate timing — no streaming pipeline that can
+      // starve, no underruns possible. The gapless preload + hover
+      // prefetch already use this mode; this brings the main
+      // playback path in line.
+      //
+      // Trade-offs (already accepted elsewhere in the file):
+      //   - ~30-50MB memory per loaded song. Two at a time max
+      //     (current + outgoing during fade) = ~100MB. Acceptable.
+      //   - First-play latency without hover prefetch: ~200-500ms for
+      //     decode. Hover prefetch (60ms debounce + immediate on
+      //     mousedown) covers nearly every click path; cold clicks
+      //     are slightly slower but no clicks.
+      //   - EQ chain bypasses (MediaElementAudioSourceNode only
+      //     works with html5:true). EQ is off by default per the
+      //     existing comments; if someone needs it later we wire
+      //     AudioBufferSource → EQ chain instead.
+      html5: false,
       loop: false,
       volume: startVolume,
       onplay: () => {
@@ -707,6 +1114,10 @@ export function useAudio(opts?: { primary?: boolean }) {
           // continuous.
           return
         }
+        // Pop suppression: ramp from silent up to user volume over
+        // ~25ms. Pairs with the outgoing-Howl fade-out above to avoid
+        // the speaker-cone click on track change.
+        try { howl.fade(0, stateRef.current.volume, 25) } catch { /* ignore */ }
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         dx('raf.reschedule', { site: 'howl.onplay', title: track.title, isPaused })
         sharedRaf = requestAnimationFrame(updatePosition)
@@ -969,6 +1380,55 @@ export function useAudio(opts?: { primary?: boolean }) {
         detachHowlFromEq(howl)
         try { howl.unload() } catch { /* ignore */ }
         sharedHowl = next
+        // 4.5.0-78 — if a sample-accurate BufferSource is already
+        // playing (scheduleAbsoluteStart fired in the rAF tick that
+        // detected ≤250 ms remaining), the user is ALREADY hearing
+        // the next track from sample 0 — Howler doesn't need to fire
+        // play() at the seam, and the prewarmed-fade path would just
+        // re-introduce the slop we just eliminated. Instead: promote
+        // BufferSource → Howl with a contained 50 ms internal cross-
+        // fade at the same audio content (the listener can't hear
+        // the source-node swap because both are outputting the same
+        // samples). After the crossfade, Howler owns the track for
+        // the rest of its play — pause/seek/volume/EQ all work
+        // normally from there. Falls through to the legacy branches
+        // below when seamScheduled is null (decode failed, flag off,
+        // or short-duration track that never hit the ≤250 ms window).
+        if (USE_SAMPLE_ACCURATE_SEAMS && seamScheduled && seamIncomingBuffer) {
+          const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+          const playedSec = ctx ? (ctx.currentTime - seamScheduled.scheduledStartAt) : 0
+          const handle = seamScheduled
+          // Reset state immediately — the rest of the seam vars are
+          // captured by the promote helper via the handle.
+          seamScheduled = null
+          seamIncomingBuffer = null
+          seamIncomingBufferUrl = null
+          seamFadeOutScheduled = false
+          seamStartScheduled = false
+          // Seek the Howl to the spot BufferSource has played to, then
+          // start at volume 0; the promote helper crossfades them.
+          try { next.volume(0) } catch { /* ignore */ }
+          try { next.seek(Math.max(0, playedSec)) } catch { /* ignore */ }
+          next.once('play', () => {
+            attachHowlToEq(next)
+            dx('raf.reschedule', { site: 'sample-accurate-promote-onplay' })
+            sharedRaf = requestAnimationFrame(updatePosition)
+            if (ctx) promoteBufferSourceToHowl(handle, ctx, next, 50)
+          })
+          try { next.play() } catch { /* ignore */ }
+          const nextDur = next.duration() || 0
+          dx('playtrack.dispatch', {
+            site: 'sample-accurate-promote',
+            title: nt.title,
+            duration: nextDur,
+            position: playedSec,
+            sharedRaf,
+            isPaused,
+          })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: playedSec })
+          if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'sample-accurate-promote', nextIdx, ts: Date.now() })
+          return
+        }
         if (wasPrewarmed) {
           // The preload was already started silently in the last
           // ~150ms of the previous track. Just bump the volume — it's
@@ -976,7 +1436,12 @@ export function useAudio(opts?: { primary?: boolean }) {
           // anyway since Howler considers the howl already playing).
           // 'play' didn't fire on the SoundManager listener path, so
           // dispatch SET_DURATION + EQ binding manually here.
-          try { next.volume(s.volume) } catch { /* ignore */ }
+          // Pop suppression: ramp 0 → target over ~25ms instead of an
+          // instantaneous jump. The prewarmed howl is decoding at vol 0
+          // mid-waveform; a hard volume(s.volume) flips the speaker
+          // cone from silent to whatever sample is current, producing
+          // the click users heard at every gapless seam.
+          try { next.fade(0, s.volume, 25) } catch { /* ignore */ }
           attachHowlToEq(next)
           // Brief 012: atomic dispatch — duration travels INSIDE the
           // PLAY_TRACK action so the reducer can't clobber it back to
@@ -1004,16 +1469,20 @@ export function useAudio(opts?: { primary?: boolean }) {
           cancelAnimationFrame(sharedRaf)
           sharedRaf = requestAnimationFrame(updatePosition)
         } else {
-          // Pre-warm didn't fire (very short track, or rAF hadn't ticked
-          // inside the last 150ms). Fall back to standard promote: wire
-          // a play handler then call play() ourselves.
+          // 4.5.0-70: 5 ms fade-in (was -65 default) was effectively a
+          // step function — any track whose first sample has non-zero
+          // amplitude (most music) clicked. 20 ms is short enough to
+          // not register as a perceived "fade" but long enough for the
+          // ear to read the onset as smooth. See block comment near
+          // GAPLESS_FADE_IN_MS for the full rationale.
           next.once('play', () => {
             attachHowlToEq(next)
             dx('raf.reschedule', { site: 'standard-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
           })
-          next.volume(s.volume)
+          try { next.volume(0) } catch { /* ignore */ }
           next.play()
+          try { next.fade(0, s.volume, GAPLESS_FADE_IN_MS) } catch { /* fallback to hard set */ try { next.volume(s.volume) } catch { /* ignore */ } }
           // Brief 012: pass duration through PLAY_TRACK atomically.
           // If the howl isn't fully loaded here next.duration() may
           // return 0 — the load-handler SET_DURATION around line 600
@@ -1041,7 +1510,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         sharedRaf,
         isPaused,
       })
-      dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx })
+      dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx, duration: (nextTrack.duration || 0) / 1000 })
       loadAndPlay(nextTrack, s.queue, nextIdx)
       if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'standard-advance', nextIdx, ts: Date.now() })
     }
@@ -1074,7 +1543,22 @@ export function useAudio(opts?: { primary?: boolean }) {
     // prevTrack pass false (default) — they're queue navigation,
     // and the reducer must NOT rebuild the shuffle queue on those
     // dispatches or queueIndex resets to 0 every Next press.
-    dispatchRef.current({ type: 'PLAY_TRACK', track, queue: q, queueIndex: qi, freshContext })
+    //
+    // Seed duration from the track metadata so the pill renders
+    // "0:00 / 3:42" immediately on click instead of "0:00 / -0:00"
+    // while the Howl decodes — the metadata-derived value matches
+    // what howl.duration() will report a moment later, and the
+    // onplay SET_DURATION reconciles any sub-second drift. Removes
+    // the "song takes 2 seconds to load" perceptual lag even though
+    // the audio start time is unchanged.
+    dispatchRef.current({
+      type: 'PLAY_TRACK',
+      track,
+      queue: q,
+      queueIndex: qi,
+      freshContext,
+      duration: (track.duration || 0) / 1000,
+    })
     loadAndPlay(track, q, qi)
   }, [loadAndPlay])
 
@@ -1146,7 +1630,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           sharedRaf,
           isPaused,
         })
-        dispatchRef.current({ type: 'PLAY_TRACK', track, queue: s.queue, queueIndex: prevIdx, skipHistory: true })
+        dispatchRef.current({ type: 'PLAY_TRACK', track, queue: s.queue, queueIndex: prevIdx, skipHistory: true, duration: (track.duration || 0) / 1000 })
         loadAndPlay(track, s.queue, prevIdx)
       }
       return

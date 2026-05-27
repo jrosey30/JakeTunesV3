@@ -109,6 +109,14 @@
   border-bottom: 1px solid transparent;
   user-select: none;
   -webkit-user-select: none;
+  /* 4.5: explicit white background. Without this, the row inherits
+   * whatever the parent surface is — which became the warm cream
+   * --white (#fdf9f2) in the palette pass, and combined with the
+   * cool-blue alt row below to produce "cream + blue stripes" that
+   * Jake flagged as not cohesive. Anchoring base row to a true
+   * off-white + dialing alt to neutral pale-grey gives quiet rhythm
+   * without two competing hues. */
+  background: #fefefd;
   /* 4.4.24: soften the hover / selection bg change so it eases in
      instead of snapping. 90ms is fast enough that nothing feels
      delayed; long enough that you can perceive it as a transition. */
@@ -131,11 +139,13 @@
   min-width: max-content;
 }
 
-/* Cool blue-tint alternating row (iTunes 8). The previous warm
- * #f7f7f7 read as Leopard Aqua-era; the cool tint pairs with the
- * blue selection state without fighting it. */
+/* 4.5: neutral pale grey alt-row. Earlier values were either too
+ * warm (#f7f7f7 read Leopard-era cream) or too cool (#f0f4fa cool
+ * blue that fought the warm chrome). #f3f3f1 splits the difference:
+ * subtle, no hue commitment, the slight warmth pairs cleanly with
+ * the warm-silver toolbar without screaming orange. */
 .songs-row--alt {
-  background: #f0f4fa;
+  background: #f3f3f1;
 }
 
 .songs-row:hover {
@@ -194,6 +204,66 @@
 
 .songs-cell--title {
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+.title-row-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  /* 4.5: flex: 0 1 auto — text takes its NATURAL width when the cell
+   * has room, shrinks (with ellipsis) when it doesn't. Star sits
+   * inline right after the last letter instead of floating at the
+   * column's right edge. flex-grow: 0 is the key change vs. the
+   * earlier flex:1 that stretched text across the whole cell. */
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+/* 4.5: inline star — sits to the RIGHT of the song text, at the end of
+ * the title cell. Reserves a 14px slot in layout so the title text never
+ * jumps width on hover. Hover-reveals when unstarred; always visible
+ * when starred. Pre-fix versions put the star to the left of the title
+ * which pushed every row's text right of the "Name" header; star-on-
+ * right keeps titles flush left like a normal column. */
+.title-row-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: #b3a98a;
+  opacity: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, transform 0.1s ease;
+}
+.songs-row:hover .title-row-star { opacity: 0.55; }
+.songs-row:hover .title-row-star:hover { opacity: 1; color: var(--brand-orange); transform: scale(1.15); }
+.title-row-star--filled {
+  opacity: 1 !important;
+  color: var(--brand-orange);
+}
+.title-row-star--filled:hover { transform: scale(1.15); }
+
+/* 4.5: numeric columns right-align — iTunes convention. Header label
+ * matches so the column letterheads read as a vertical block, not a
+ * left-aligned heading with right-floating digits underneath. */
+.songs-cell--plays {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding-right: 12px;
+}
+.songs-header-cell--playCount {
+  text-align: right;
+  padding-right: 12px;
 }
 
 /* 4.5: Top 25 power-rankings cell. Three pieces: current rank,

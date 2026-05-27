@@ -13,12 +13,40 @@ const electronAPI = {
     return () => { ipcRenderer.removeListener('menu-action', handler) }
   },
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
-  musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string }> =>
+  musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string; textRaw: string }> =>
     ipcRenderer.invoke('musicman-chat', messages),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }> =>
     ipcRenderer.invoke('musicman-dj', track, nextTrack, persona),
+  // 4.5: streaming variant for the mic button. The renderer subscribes
+  // to onMusicmanDjChunk before invoking; the resolved promise carries
+  // the final text after the stream completes (or an error).
+  musicmanDjStreaming: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('musicman-dj-streaming', track, persona),
+  onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { chunk: string; accumulated: string }) => callback(p)
+    ipcRenderer.on('musicman-dj-chunk', handler)
+    return () => { ipcRenderer.removeListener('musicman-dj-chunk', handler) }
+  },
+  // 4.5: hover-prefetch from the mic button — warms the per-artist
+  // facts cache so the streaming Claude call starts ~500-1500ms sooner
+  // on the subsequent click. Fire-and-forget.
+  musicmanPrefetchFacts: (track: { artist: string; album: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('musicman-prefetch-facts', track),
+  // 4.5: fired from main's before-quit handler, ~180ms before app
+  // actually exits. Renderer uses this window to fade Howler volumes
+  // to 0 so the OS doesn't snap audio buffers mid-waveform on cmd+Q.
+  onAppQuitFade: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('app-quit-fade', handler)
+    return () => { ipcRenderer.removeListener('app-quit-fade', handler) }
+  },
+  // 4.5: per-artist canonical discography from MusicBrainz, 7-day
+  // disk cache. ArtistDetailView drill-down uses this to show
+  // "owned vs not owned" per track for each album.
+  getArtistDiscography: (artist: string): Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }> }>; error?: string }> =>
+    ipcRenderer.invoke('get-artist-discography', artist),
   // 4.4.52: which persona the mic button speaks as right now ('mm' or
   // 'megan') — the toolbar speech bubble reads this to attribute and
   // colour itself correctly.
@@ -43,8 +71,24 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-radio', track, nextTrack, opener, forceAnnouncer, callerSegment, djHandsSegment, callerId, archetypeId, slot, hourCounter, miniId),
   musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]): Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-dj-set', tracks, recentIds),
-  musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
+  // 4.5: playlist track payload extended with playCount/rating/
+  // lastPlayedAt/dateAdded so the Music Man can weight picks by your
+  // actual taste, not just metadata. Optional on inbound so existing
+  // call sites that haven't been updated still compile.
+  musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
     ipcRenderer.invoke('musicman-playlist', mood, tracks),
+  // 4.5: Radio Mode show planner. Generates a curated set list with a
+  // theme + throughline before Radio playback starts, replacing the
+  // random library shuffle that produced "jumpy with genres" shows.
+  musicmanRadioPlan: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]): Promise<{ ok: boolean; theme?: string; throughline?: string; trackIds?: number[]; error?: string }> =>
+    ipcRenderer.invoke('musicman-radio-plan', tracks, recentPlayedIds),
+  // 4.5: persist the planner's output to main-side radio-memory so
+  // per-segment commentary can reference theme + throughline + arc
+  // position. Clear on Radio toggle OFF.
+  radioSetShowPlan: (plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('radio-set-show-plan', plan),
+  radioClearShowPlan: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('radio-clear-show-plan'),
   // 4.4.48: optional `force` bypasses the main-process weekly cache
   // (the Regenerate button passes it). Omitted/false → main returns
   // this week's cached picks with no Claude call.
@@ -107,6 +151,22 @@ const electronAPI = {
     ipcRenderer.invoke('load-metadata-overrides'),
   saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-metadata-override', trackId, field, value, fingerprint),
+  // 4.5.0-81 — 2-way stars: renderer asks main for the merged set of
+  // trackIds the mobile app has starred (read from mobile-stars.json
+  // sidecar). Desktop App.tsx calls this on startup + after every
+  // sync-success event and bumps each track's rating to ≥1 so the
+  // Starred smart playlist + inline-star UI light up. Desktop-side
+  // stars also write to the same file (via save-metadata-override's
+  // hook in main), so the file is the single source of truth that
+  // sync replicates bidirectionally.
+  loadMobileStars: (): Promise<{ ok: boolean; trackIds: string[] }> =>
+    ipcRenderer.invoke('load-mobile-stars'),
+  // 4.5.0-82 — windowed play counts derived from the per-play event
+  // log. Returns { trackIdString: count } for plays in the last
+  // `windowMs` ms. Used by Top 25's Last Week / Last Month views to
+  // rank by ACTUAL plays in the window, not lifetime playCount.
+  getWindowedPlayCounts: (windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> =>
+    ipcRenderer.invoke('get-windowed-play-counts', windowMs),
   loadChatHistory: (): Promise<{ ok: boolean; conversations: unknown[] }> =>
     ipcRenderer.invoke('load-chat-history'),
   saveChatHistory: (conversations: unknown[]): Promise<{ ok: boolean }> =>
@@ -162,6 +222,42 @@ const electronAPI = {
     ipcRenderer.invoke('load-app-settings'),
   saveAppSettings: (settings: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('save-app-settings', settings),
+  // 4.5: settings UI reads this on the Sync tab to show "Last backup:
+  // X ago" instead of chirping every successful sync in the pill.
+  getLastLibrarySync: (): Promise<{
+    ok: boolean | null
+    reason: string | null
+    at: number | null
+    durationMs: number | null
+    error: string | null
+    scriptPresent: boolean
+  }> =>
+    ipcRenderer.invoke('get-last-library-sync'),
+  // 4.5.0-83 — count of user-locked covers. Surfaced in Settings →
+  // Library so the user can verify their hand-set artwork is
+  // protected without having to grep Console.app for the launch line.
+  getArtworkLockCount: (): Promise<{ ok: boolean; count: number }> =>
+    ipcRenderer.invoke('get-artwork-lock-count'),
+  // 4.5.0-91 — Phase 2.5 storage-mode + conflict surface for the UI.
+  getStateConflicts: (): Promise<{
+    mode: 'NAS' | 'local-fallback';
+    nasDir: string;
+    localDir: string;
+    conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string }>;
+  }> => ipcRenderer.invoke('get-state-conflicts'),
+  reconcileStateConflicts: (): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> =>
+    ipcRenderer.invoke('reconcile-state-conflicts'),
+  // 4.5.0-87 — RAG (per-track embeddings + cosine retrieval) status +
+  // backfill controls. Settings → Library exposes both.
+  embeddingStatus: (): Promise<{ configured: boolean; count: number; total: number }> =>
+    ipcRenderer.invoke('embedding-status'),
+  embeddingBackfill: (opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> =>
+    ipcRenderer.invoke('embedding-backfill', opts),
+  onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void): () => void => {
+    const handler = (_e: unknown, p: { done: number; total: number }) => callback(p)
+    ipcRenderer.on('embedding-backfill-progress', handler)
+    return () => ipcRenderer.removeListener('embedding-backfill-progress', handler)
+  },
   // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile /
   // mobileOverridesApply — vestigial mobile-sync feature that never
   // shipped. Plex (via Brief 020 tag write-back) is the mobile path now.
@@ -171,12 +267,20 @@ const electronAPI = {
     ipcRenderer.invoke('fetch-album-art', artist, album, force),
   setCustomArtwork: (artist: string, album: string, imagePath: string): Promise<{ ok: boolean; key?: string; hash?: string; error?: string }> =>
     ipcRenderer.invoke('set-custom-artwork', artist, album, imagePath),
-  removeArtwork: (artist: string, album: string): Promise<{ ok: boolean; key?: string; error?: string }> =>
-    ipcRenderer.invoke('remove-artwork', artist, album),
+  removeArtwork: (artist: string, album: string, force?: boolean): Promise<{ ok: boolean; key?: string; locked?: boolean; error?: string }> =>
+    ipcRenderer.invoke('remove-artwork', artist, album, force),
   chooseArtworkFile: (): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('choose-artwork-file'),
   loadArtworkMap: (): Promise<{ ok: boolean; map: Record<string, string> }> =>
     ipcRenderer.invoke('load-artwork-map'),
+  // 4.5.0-51: server-authoritative artwork resolver — used when the
+  // renderer's in-memory map misses for an (artist, album) pair. Main
+  // runs the full chain (exact key → normalized → recompute hash + disk
+  // existence check) and returns the hash if the JPG is reachable.
+  resolveArtwork: (artist: string, album: string): Promise<{ ok: boolean; hash: string | null }> =>
+    ipcRenderer.invoke('resolve-artwork', artist, album),
+  migrateArtworkKey: (oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string): Promise<{ ok: boolean; migrated?: boolean; hash?: string }> =>
+    ipcRenderer.invoke('migrate-artwork-key', oldArtist, oldAlbum, newArtist, newAlbum),
   checkIpodMounted: (): Promise<{ mounted: boolean; name: string | null }> =>
     ipcRenderer.invoke('check-ipod-mounted'),
   getIpodCapacity: (): Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }> =>
@@ -268,12 +372,26 @@ const electronAPI = {
     ipcRenderer.invoke('save-library', tracks, playlists),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>
     ipcRenderer.invoke('sync-ipod', existingIds),
-  syncToIpod: (tracks: unknown[], playlists: unknown[]): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
-    ipcRenderer.invoke('sync-to-ipod', tracks, playlists),
-  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => callback(progress)
+  // 4.5: third arg `convertOptions` enables iTunes-style "Convert
+  // higher bit rate songs to N kbps AAC" at sync time. Lossless
+  // sources are transcoded + cached; their iPod destination filename
+  // is rewritten to .m4a and the iTunesDB entry updated. Optional —
+  // omitted means original-quality copy (legacy behavior).
+  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
+    ipcRenderer.invoke('sync-to-ipod', tracks, playlists, convertOptions),
+  // 4.5.0-109: cancel an in-flight sync. Main flips a flag; the copy
+  // loop checks it between files and bails with cancelled:true.
+  cancelSync: (): Promise<{ ok: boolean; wasRunning: boolean }> =>
+    ipcRenderer.invoke('cancel-sync'),
+  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)
     return () => { ipcRenderer.removeListener('sync-progress', handler) }
+  },
+  onStateSaveLocked: (callback: (info: { reason: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { reason: string }) => callback(info)
+    ipcRenderer.on('state-save-locked', handler)
+    return () => { ipcRenderer.removeListener('state-save-locked', handler) }
   },
   loadUiState: (): Promise<{ ok: boolean; state: Record<string, unknown> | null }> =>
     ipcRenderer.invoke('load-ui-state'),
@@ -362,12 +480,22 @@ const electronAPI = {
   bandcampResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('bandcamp:resize', bounds),
   bandcampUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('bandcamp:unmount'),
+  // 4.5.0-47: Bandcamp in-browser nav controls so the renderer can paint
+  // a real back arrow above the embedded WebContentsView.
+  bandcampNavState: (): Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }> =>
+    ipcRenderer.invoke('bandcamp:nav-state'),
+  bandcampGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-back'),
+  bandcampGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-forward'),
   // ── squid.wtf embedded view (separate partition, no download routing) ──
   squidMount: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('squid:mount', bounds),
   squidResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('squid:resize', bounds),
   squidUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('squid:unmount'),
+  squidNavState: (): Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }> =>
+    ipcRenderer.invoke('squid:nav-state'),
+  squidGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('squid:go-back'),
+  squidGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('squid:go-forward'),
 
   // ── Music Man's Record Store (Brief 037) ──
   // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/
@@ -394,6 +522,25 @@ const electronAPI = {
     ipcRenderer.on('bandcamp:import-failed', handler)
     return () => { ipcRenderer.removeListener('bandcamp:import-failed', handler) }
   },
+  // 4.5.0-46: per-FILE failure inside a Bandcamp batch. The wholesale
+  // `bandcamp:import-failed` above fires once per download (zip/single
+  // failed before importOneFile got to run); this fires once per
+  // INDIVIDUAL file that importOneFile rejected, so Jake sees the
+  // actual codec/permission/etc. reason in the LCD pill.
+  onBandcampPerFileFailed: (callback: (reason: { filename: string; error: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, r: { filename: string; error: string }) => callback(r)
+    ipcRenderer.on('bandcamp:per-file-failed', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:per-file-failed', handler) }
+  },
+  // 4.5.0-48: every track in an album zip was already in the library
+  // (clean re-purchase). Soft INFO notice, not an error — pre-fix
+  // these triggered "import produced no tracks (all duplicates?)"
+  // which was technically accurate but read as broken.
+  onBandcampAllDuplicates: (callback: (info: { filename: string; dupeCount: number }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, i: { filename: string; dupeCount: number }) => callback(i)
+    ipcRenderer.on('bandcamp:all-duplicates', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:all-duplicates', handler) }
+  },
   // 4.4.85: per-file progress so the now-playing pill renders Bandcamp
   // batches via the same setImport() drag-drop uses. Fires once per file
   // (running:true) + a final running:false when the batch finishes, then
@@ -402,6 +549,15 @@ const electronAPI = {
     const handler = (_e: Electron.IpcRendererEvent, p: { current: number; total: number; trackTitle: string; errors: number; running: boolean }) => callback(p)
     ipcRenderer.on('bandcamp:batch-progress', handler)
     return () => { ipcRenderer.removeListener('bandcamp:batch-progress', handler) }
+  },
+  // 4.5: navigation context for the library-ownership header strip.
+  // Fires on every page navigation inside the Bandcamp WebContentsView.
+  // Artist/album slugs are null when the page isn't a per-artist URL
+  // (bandcamp.com home, search, account pages, etc.).
+  onBandcampUrlChanged: (callback: (p: { url: string; artistSlug: string | null; albumSlug: string | null }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { url: string; artistSlug: string | null; albumSlug: string | null }) => callback(p)
+    ipcRenderer.on('bandcamp:url-changed', handler)
+    return () => { ipcRenderer.removeListener('bandcamp:url-changed', handler) }
   },
 
   // 4.4.13 — Inbox auto-import. Main-side chokidar watches a folder

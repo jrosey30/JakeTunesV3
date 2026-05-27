@@ -64,6 +64,13 @@ type Tab = typeof TABS[number]
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  // 4.5: tagged version of the assistant's response (with ElevenLabs
+  // [scoff]/[laughs]/[softer]/etc. inline). Hidden from display —
+  // `content` is the stripped-clean version — but used by the speaker
+  // button so v3 still performs the dialogue expressively when the
+  // user opts into hearing it. Optional + only set on assistant
+  // messages; user messages don't need it.
+  contentRaw?: string
 }
 
 interface PlaylistResult {
@@ -194,7 +201,15 @@ export default function MusicManView() {
     setIsLoading(true)
 
     const result = await window.electronAPI.musicmanChat(newMessages)
-    const finalMessages: ChatMessage[] = [...newMessages, { role: 'assistant', content: result.text }]
+    // 4.5: store BOTH the stripped text (for display) and the raw
+    // text with [scoff]/[laughs] tags intact (for the speaker button
+    // to feed to ElevenLabs v3 with full performance). textRaw defaults
+    // to text if main didn't return it — older builds + error paths.
+    const finalMessages: ChatMessage[] = [...newMessages, {
+      role: 'assistant',
+      content: result.text,
+      contentRaw: result.textRaw || result.text,
+    }]
     setMessages(finalMessages)
     setIsLoading(false)
 
@@ -255,9 +270,19 @@ export default function MusicManView() {
     setPlaylistResult(null)
     setPlaylistSaved(false)
 
+    // 4.5: pass play signals so the Music Man can weight picks by your
+    // actual listening behaviour, not just metadata. Previously it saw
+    // only id/title/artist/album/genre/year and had no way to know
+    // which tracks you love vs. which you've never opened — hence
+    // playlists that felt blocky and ignored your taste. lastPlayedAt
+    // is ms; we ship it raw and let main convert to a relative bucket.
     const compactTracks = libState.tracks.map(t => ({
       id: t.id, title: t.title, artist: t.artist,
-      album: t.album, genre: t.genre, year: t.year
+      album: t.album, genre: t.genre, year: t.year,
+      playCount: Number(t.playCount) || 0,
+      rating: Number(t.rating) || 0,
+      lastPlayedAt: t.lastPlayedAt || 0,
+      dateAdded: t.dateAdded || '',
     }))
 
     const result = await window.electronAPI.musicmanPlaylist(mood, compactTracks)
@@ -964,7 +989,7 @@ export default function MusicManView() {
                         ))}
                         <button
                           className={`musicman-speak-btn ${isSpeaking && speakingIdx === i ? 'musicman-speak-btn--active' : ''}`}
-                          onClick={() => speakMessage(msg.content, i)}
+                          onClick={() => speakMessage(msg.contentRaw || msg.content, i)}
                           title={isSpeaking && speakingIdx === i ? 'Stop' : 'Listen'}
                         >
                           {isSpeaking && speakingIdx === i ? (

@@ -27,6 +27,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import logoUrl from '../assets/jaketunes-logo.png'
 
 const STAGES = [
   'Reading your library…',
@@ -66,14 +67,16 @@ export default function SplashScreen({ isReady }: Props) {
     return () => window.clearInterval(id)
   }, [isReady])
 
-  // Animate progress 5 → 92 over 1600ms (ease-out cubic). On isReady,
-  // jump to 100 over 200ms. rAF-driven so it's silky.
+  // 4.5: bumped progress fill from 1600 → 2600ms so the splash feels
+  // like a grand welcome — there's time for the logo to land, the
+  // halo to breathe, the notes to actually rise before the bar fills.
+  // Jake: "grand welcome to the best music experience ever".
   useEffect(() => {
     let rafId = 0
     const start = performance.now()
     const from = progress
     const to = isReady ? 100 : 92
-    const duration = isReady ? 240 : 1600
+    const duration = isReady ? 320 : 2600
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration)
       // ease-out cubic
@@ -100,6 +103,19 @@ export default function SplashScreen({ isReady }: Props) {
               style={{ animationDelay: `${i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
             />
           ))}
+        </div>
+        <div className="app-splash-logo" aria-hidden="true">
+          <div className="app-splash-logo-halo" />
+          <img src={logoUrl} alt="" className="app-splash-logo-img" />
+          <div className="app-splash-logo-shine" />
+          {/* 4.5: musical notes floating up out of the logo, Pixar-feel.
+              Each note is on its own keyframe with stagger so the stream
+              is continuous, not synchronized. Drift direction varies per
+              note (left/right/left/right) so they don't read as a column. */}
+          <span className="splash-note splash-note--1" aria-hidden="true">♪</span>
+          <span className="splash-note splash-note--2" aria-hidden="true">♫</span>
+          <span className="splash-note splash-note--3" aria-hidden="true">♬</span>
+          <span className="splash-note splash-note--4" aria-hidden="true">♩</span>
         </div>
         <div className="app-splash-wordmark">JakeTunes</div>
         <div className="app-splash-tagline">The greatest music platform ever built.</div>

@@ -1,47 +1,95 @@
 .artist-detail {
   height: 100%;
   overflow-y: auto;
-  padding: 16px 28px 40px;
+  padding: 0 0 40px;
+  position: relative;
 }
 
 .artist-detail-back {
-  background: transparent;
-  border: none;
-  color: #5a6a8a;
+  background: rgba(255,255,255,0.55);
+  border: 1px solid rgba(0,0,0,0.08);
+  color: #2a2510;
   font-size: var(--font-body);
   font-weight: 600;
-  padding: 4px 0;
+  padding: 5px 12px 5px 8px;
+  border-radius: 14px;
   cursor: pointer;
-  transition: color 0.12s ease;
-  margin-bottom: 12px;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+  position: absolute;
+  top: 14px; left: 18px;
+  z-index: 3;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
-.artist-detail-back:hover { color: #2a3a5a; }
+.artist-detail-back:hover {
+  background: rgba(255,255,255,0.85);
+  color: #1a1a1a;
+  transform: translateX(-1px);
+}
 
 .artist-detail-empty {
   color: var(--text-dim);
   font-style: italic;
-  padding: 24px 0;
+  padding: 24px 28px;
 }
 
-/* ── Hero: photo + name + counts ── */
+/* ── Hero: cinematic banner with blurred-photo backdrop + portrait ── */
 .artist-detail-hero {
+  position: relative;
+  min-height: 280px;
+  padding: 36px 32px 28px;
+  overflow: hidden;
+  color: #fdf9f2;
+  background: linear-gradient(180deg, #2a2017, #1a140e);
+  border-bottom: 1px solid rgba(0,0,0,0.12);
+  margin-bottom: 0;
+}
+.artist-detail-hero-backdrop {
+  position: absolute; inset: 0;
+  background-size: cover;
+  background-position: center 25%;
+  filter: blur(38px) saturate(1.15) brightness(0.8);
+  transform: scale(1.18);
+  z-index: 0;
+  opacity: 0.85;
+}
+.artist-detail-hero-shade {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(90% 70% at 20% 30%, rgba(0,0,0,0.05), rgba(0,0,0,0.55) 75%),
+    linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.85) 100%);
+  z-index: 1;
+}
+.artist-detail-hero-inner {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: flex-end;
-  gap: 20px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid #d8d8d8;
+  gap: 26px;
 }
 .artist-detail-photo {
-  width: 160px;
-  height: 160px;
-  border-radius: 80px;
+  width: 192px;
+  height: 192px;
+  border-radius: 50%;
   overflow: hidden;
   background: linear-gradient(135deg, #b8c1d4, #8a96ad);
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  box-shadow:
+    0 12px 30px rgba(0,0,0,0.55),
+    0 2px 8px rgba(0,0,0,0.35),
+    inset 0 0 0 4px rgba(253,249,242,0.55);
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+}
+.artist-detail-photo::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15);
+  pointer-events: none;
 }
 .artist-detail-photo img {
   width: 100%;
@@ -49,32 +97,108 @@
   object-fit: cover;
 }
 .artist-detail-monogram {
-  font-size: 64px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 84px;
   font-weight: 800;
   color: #fff;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.25);
-  letter-spacing: -2px;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  letter-spacing: -3px;
 }
 .artist-detail-hero-info {
   flex: 1;
   min-width: 0;
+  padding-bottom: 6px;
+}
+.artist-detail-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(253,249,242,0.7);
+  margin-bottom: 6px;
 }
 .artist-detail-name {
-  font-size: 32px;
+  font-size: 48px;
   font-weight: 800;
-  letter-spacing: -0.5px;
-  line-height: 1.1;
-  color: #1a1a1a;
-  margin: 0 0 6px;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+  color: #fdf9f2;
+  margin: 0 0 14px;
+  text-shadow:
+    0 2px 6px rgba(0,0,0,0.55),
+    0 0 30px rgba(0,0,0,0.25);
+  word-break: break-word;
 }
 .artist-detail-stats {
-  font-size: var(--font-body);
-  color: var(--text-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  color: rgba(253,249,242,0.85);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.artist-detail-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.artist-detail-stat-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fdf9f2;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.artist-detail-stat-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(253,249,242,0.65);
+  font-weight: 600;
+}
+.artist-detail-stat-sep {
+  display: inline-block;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: rgba(253,249,242,0.4);
+  align-self: center;
+}
+.artist-detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.artist-detail-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: rgba(253,249,242,0.15);
+  border: 1px solid rgba(253,249,242,0.25);
+  color: #fdf9f2;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
-/* ── Wikipedia summary ── */
+/* Inner page sections sit on the warm cream below the hero. */
+.artist-detail-wiki,
+.artist-detail-albums,
+.artist-detail-discography {
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+/* ── Wikipedia card ── */
 .artist-detail-wiki {
-  padding: 18px 0 8px;
+  padding-top: 22px;
+  padding-bottom: 22px;
   border-bottom: 1px solid #ececec;
   margin-bottom: 18px;
   animation: artist-detail-fade-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
@@ -83,30 +207,179 @@
   color: var(--text-dim);
   font-style: italic;
   font-size: var(--font-body);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.artist-detail-wiki-spinner {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(187,67,8,0.2);
+  border-top-color: var(--brand-orange, #bb4308);
+  border-radius: 50%;
+  animation: artist-detail-spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes artist-detail-spin {
+  to { transform: rotate(360deg); }
+}
+.artist-detail-wiki-card {
+  position: relative;
+  background: linear-gradient(180deg, #fbf6e8 0%, #f5efde 100%);
+  border: 1px solid rgba(184, 168, 127, 0.45);
+  border-radius: 10px;
+  padding: 16px 20px 14px 28px;
+  max-width: 880px;
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.04),
+    inset 0 1px 0 rgba(255,255,255,0.65);
+}
+.artist-detail-wiki-rule {
+  position: absolute;
+  top: 14px; bottom: 14px;
+  left: 12px;
+  width: 3px;
+  background: linear-gradient(180deg, var(--brand-orange, #bb4308), #d96820);
+  border-radius: 2px;
+}
+.artist-detail-wiki-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8a7e5a;
+  margin-bottom: 6px;
 }
 .artist-detail-wiki-extract {
   font-size: 14px;
-  line-height: 1.55;
-  color: #2a2a2a;
-  margin: 0 0 10px;
-  max-width: 720px;
+  line-height: 1.6;
+  color: #1f1a10;
+  margin: 0 0 14px;
 }
-.artist-detail-wiki-link {
-  font-size: var(--font-label);
-  color: #4577d3;
+.artist-detail-wiki-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.artist-detail-wiki-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 10px;
+  background: linear-gradient(180deg, #fff, #ece6d1);
+  border: 1px solid rgba(184, 168, 127, 0.65);
+  border-radius: 14px;
+  color: #2a2510;
+  font-family: inherit;
+  font-size: 12px;
   font-weight: 600;
-  text-decoration: none;
-  transition: color 0.12s ease;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: 0 1px 1px rgba(0,0,0,0.05);
 }
-.artist-detail-wiki-link:hover { color: #2a5ab8; text-decoration: underline; }
-.artist-detail-wiki-empty {
-  color: var(--text-dim);
-  font-size: var(--font-label);
+.artist-detail-wiki-btn:hover {
+  background: linear-gradient(180deg, #fff, #f6efd6);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+.artist-detail-wiki-btn-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #1f1a10;
+  color: #fdf9f2;
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 700;
+  font-size: 10px;
   font-style: italic;
+}
+.artist-detail-wiki-btn-arrow {
+  font-size: 10px;
+  color: #8a7e5a;
+  margin-left: 1px;
+}
+.artist-detail-wiki-btn--ghost {
+  background: transparent;
+  border-color: rgba(184, 168, 127, 0.45);
+  color: #5a5540;
+}
+.artist-detail-wiki-btn--ghost:hover {
+  background: rgba(187, 67, 8, 0.06);
+  color: #2a2510;
+}
+.artist-detail-wiki-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+}
+.artist-detail-wiki-empty-text {
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  font-style: italic;
+}
+
+/* 4.5.0-45 — Chapters. For multi-persona artists (Paul McCartney =
+ * solo + Wings) each persona renders as its own labeled chapter so the
+ * career story reads top-to-bottom: solo first (canonical), Wings
+ * underneath, etc. Single-persona artists collapse to the plain album
+ * grid + discography below — no visual change. */
+.artist-detail-chapter {
+  padding: 0 28px;
+  margin-bottom: 32px;
+}
+.artist-detail-chapter--multi + .artist-detail-chapter--multi {
+  border-top: 1px solid #ecddc0;
+  padding-top: 22px;
+  margin-top: 8px;
+}
+.artist-detail-chapter-header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 14px;
+  margin-bottom: 6px;
+  border-bottom: 2px solid rgba(187, 67, 8, 0.18);
+}
+.artist-detail-chapter-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #1a140a;
+}
+.artist-detail-chapter-years {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #fff, #f1eadb);
+  border: 1px solid rgba(184, 168, 127, 0.6);
+  color: #5a4a28;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chapter sections sit inside the chapter wrap which already provides
+ * horizontal padding; reset the section-level padding so they nest
+ * cleanly. */
+.artist-detail-chapter .artist-detail-albums,
+.artist-detail-chapter .artist-detail-discography {
+  padding-left: 0;
+  padding-right: 0;
+}
+.artist-detail-chapter .artist-detail-discography {
+  margin-top: 22px;
 }
 
 /* ── Albums in library grid ── */
 .artist-detail-albums {
+  padding-top: 8px;
   animation: artist-detail-fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: 60ms;
 }
@@ -138,11 +411,18 @@
   border-radius: 4px;
   overflow: hidden;
   background: linear-gradient(135deg, #ccc, #aaa);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  /* 4.5.0-49: matches the home/albums lifted-tile shadow language. */
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.12),
+    0 3px 8px rgba(0,0,0,0.12),
+    inset 0 0 0 0.5px rgba(0,0,0,0.18);
   transition: box-shadow 0.14s ease;
 }
 .artist-detail-album-card:hover .artist-detail-album-art {
-  box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+  box-shadow:
+    0 2px 4px rgba(0,0,0,0.14),
+    0 8px 18px rgba(0,0,0,0.22),
+    inset 0 0 0 0.5px rgba(0,0,0,0.22);
 }
 .artist-detail-album-art img {
   width: 100%;
@@ -180,4 +460,152 @@
   .artist-detail-albums {
     animation: none;
   }
+}
+
+/* 4.5: full-discography section. MusicBrainz-derived list of every
+ * canonical album, with owned/total counts + a completion bar per row.
+ * Click row → expands an inline tracklist where owned tracks are
+ * clickable (play) and not-owned tracks are dimmed. */
+.artist-detail-discography {
+  margin-top: 36px;
+  animation: artist-detail-fade-in 320ms ease-out 80ms both;
+}
+.artist-detail-disco-loading,
+.artist-detail-disco-empty {
+  font-size: 12px;
+  color: #7a7560;
+  font-style: italic;
+  padding: 14px 0;
+}
+.artist-detail-disco-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.artist-detail-disco-album {
+  border-radius: 6px;
+  background: rgba(245, 240, 220, 0.55);
+  border: 1px solid rgba(184, 168, 127, 0.35);
+  overflow: hidden;
+  transition: background-color 0.15s ease;
+}
+.artist-detail-disco-album:hover {
+  background: rgba(247, 243, 225, 0.85);
+}
+.artist-detail-disco-album--owned .artist-detail-disco-album-bar-fill {
+  background: linear-gradient(90deg, #4a8a4a, #5fa05f);
+}
+.artist-detail-disco-album-header {
+  display: grid;
+  grid-template-columns: 18px 1fr 60px 60px 80px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #2a2510;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.artist-detail-disco-album-chev {
+  color: #b8a87f;
+  font-size: 10px;
+  text-align: center;
+}
+.artist-detail-disco-album-title {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artist-detail-disco-album-year {
+  font-size: 11px;
+  color: #7a7560;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.artist-detail-disco-album-count {
+  font-size: 11px;
+  color: #5a5540;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.artist-detail-disco-album--owned .artist-detail-disco-album-count {
+  color: #2c652c;
+  font-weight: 600;
+}
+.artist-detail-disco-album-bar {
+  display: block;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.artist-detail-disco-album-bar-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand-orange, #bb4308), #d96820);
+  border-radius: 2px;
+  transition: width 0.25s ease;
+}
+.artist-detail-disco-tracks {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px 12px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.3);
+  border-top: 1px solid rgba(184, 168, 127, 0.3);
+}
+.artist-detail-disco-track {
+  display: grid;
+  grid-template-columns: 24px 12px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  cursor: default;
+}
+.artist-detail-disco-track--owned {
+  cursor: pointer;
+  color: #2a2510;
+}
+.artist-detail-disco-track--owned:hover {
+  background: rgba(187, 67, 8, 0.08);
+  border-radius: 4px;
+}
+.artist-detail-disco-track--missing {
+  color: #9a9580;
+  font-style: italic;
+}
+.artist-detail-disco-track-num {
+  font-size: 10px;
+  color: #9a9580;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.artist-detail-disco-track-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d8cda8;
+  margin-left: 2px;
+}
+.artist-detail-disco-track--owned .artist-detail-disco-track-dot {
+  background: #4a8a4a;
+  box-shadow: 0 0 4px rgba(74, 138, 74, 0.4);
+}
+.artist-detail-disco-track-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artist-detail-discography { animation: none; }
 }

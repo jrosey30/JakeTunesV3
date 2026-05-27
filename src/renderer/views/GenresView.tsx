@@ -7,6 +7,8 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
+import { clearArtworkNegativeCache } from '../utils/artworkLookup'
+import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
 import { setNotice } from '../activity'
 import '../styles/genres.css'
@@ -121,10 +123,28 @@ export default function GenresView() {
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
-      libDispatch({ type: 'UPDATE_TRACKS', updates })
+      // 4.5.0-67 — save-first ordering, see SongsView for full rationale.
+      const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
+      for (const u of updates) {
+        if (oldArtAlbumById.has(u.id)) continue
+        const t = lib.tracks.find(tr => tr.id === u.id)
+        if (t) oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
+      }
       for (const u of updates) await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value)
+      if (updates.some(u => u.field === 'artist' || u.field === 'album')) {
+        const newArtAlbumById = new Map<number, { artist: string; album: string }>()
+        for (const [id, old] of oldArtAlbumById) newArtAlbumById.set(id, { ...old })
+        for (const u of updates) {
+          const cur = newArtAlbumById.get(u.id)
+          if (!cur) continue
+          if (u.field === 'artist') cur.artist = u.value
+          else if (u.field === 'album') cur.album = u.value
+        }
+        for (const v of newArtAlbumById.values()) clearArtworkNegativeCache(v.artist, v.album)
+      }
+      libDispatch({ type: 'UPDATE_TRACKS', updates })
     },
-    [libDispatch]
+    [libDispatch, lib.tracks]
   )
 
   const handleFetchArt = useCallback(
@@ -230,6 +250,12 @@ export default function GenresView() {
         </div>
       </div>
       <div className="genres-tracklist">
+        {filteredTracks.length === 0 && (
+          <EmptyState
+            query={lib.searchQuery}
+            noun={selectedGenre ? `${selectedGenre} tracks` : 'tracks'}
+          />
+        )}
         {filteredTracks.map((track, i) => {
           const isPlaying = pb.nowPlaying?.id === track.id
           return (

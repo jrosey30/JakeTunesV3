@@ -116,6 +116,7 @@ export function registerSquidStore(deps: SquidDeps): void {
     importDownloaded: (paths) => deps.importDownloaded(paths, 'squid'),
     onTrackImported: (track) => send(deps, 'bandcamp:track-imported', track),
     onImportFailed: (reason) => send(deps, 'bandcamp:import-failed', reason),
+    onAllDuplicates: (info) => send(deps, 'bandcamp:all-duplicates', info),
   })
 
   ipcMain.handle('squid:mount', (_e, bounds: Bounds) => {
@@ -130,6 +131,33 @@ export function registerSquidStore(deps: SquidDeps): void {
 
   ipcMain.handle('squid:unmount', () => {
     detachView(deps)
+    return { ok: true as const }
+  })
+
+  // 4.5.0-76 — back/forward nav, mirror of the Bandcamp store. Lets the
+  // renderer paint a real back arrow above the embedded view so users
+  // aren't trapped in the iframe with no way out. canGoBack/Forward
+  // returned so the UI can dim buttons with no history to walk.
+  ipcMain.handle('squid:nav-state', () => {
+    if (!view || view.webContents.isDestroyed()) {
+      return { ok: false as const, canGoBack: false, canGoForward: false }
+    }
+    return {
+      ok: true as const,
+      canGoBack: view.webContents.canGoBack(),
+      canGoForward: view.webContents.canGoForward(),
+    }
+  })
+
+  ipcMain.handle('squid:go-back', () => {
+    if (!view || view.webContents.isDestroyed()) return { ok: false as const }
+    if (view.webContents.canGoBack()) view.webContents.goBack()
+    return { ok: true as const }
+  })
+
+  ipcMain.handle('squid:go-forward', () => {
+    if (!view || view.webContents.isDestroyed()) return { ok: false as const }
+    if (view.webContents.canGoForward()) view.webContents.goForward()
     return { ok: true as const }
   })
 }

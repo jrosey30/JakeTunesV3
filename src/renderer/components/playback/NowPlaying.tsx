@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
-import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast } from '../../activity'
+import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast, getRadio } from '../../activity'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -128,6 +128,7 @@ export default function NowPlaying() {
   const imp = getImport()
   const notice = getNotice()
   const broadcast = getBroadcast()
+  const radio = getRadio()
   const ripActive = !!rip?.active
   const syncActive = !!syn?.active
   const importActive = !!imp?.active
@@ -208,8 +209,64 @@ export default function NowPlaying() {
   // mini-visualizer was retired).
   const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import' || effectiveMode === 'notice' || effectiveMode === 'broadcast'
 
+  // 4.5: render a thin "ON AIR · WJLR 330.9 · elapsed / remaining"
+  // strip inside the pill whenever Radio Mode is active. Replaces the
+  // external red pill that sat awkwardly next to the transport row.
+  // Strip is the same color language as the existing radio-on-air-pill
+  // (brand orange/red) so the visual ID survives the relocation.
+  function formatSec(s: number): string {
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    const ss = s % 60
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+      : `${m}:${String(ss).padStart(2, '0')}`
+  }
+  const radioActive = !!radio?.active
+  // 4.5.0-53: two variants of the radio strip.
+  //  - HERO: shown when the pill has no other content (no track playing,
+  //    no broadcast caption, no activity). Centered, big, EQ bars, station
+  //    callsign stacked above the time. Fills the empty pill so "Radio
+  //    Mode is on" reads at a glance instead of being a tiny corner label.
+  //  - COMPACT: shown when something else IS playing inside the pill so
+  //    the radio strip doesn't fight the foreground for attention. Same
+  //    small top-bar treatment as before.
+  const radioElapsedSec = radio ? Math.floor(radio.elapsedMs / 1000) : 0
+  const radioRemainingSec = radio ? Math.max(0, Math.floor((radio.capMs - radio.elapsedMs) / 1000)) : 0
+  const isPillEmpty = effectiveMode === null
+  const radioStrip = radioActive && radio && !isPillEmpty ? (
+    <div className="np-radio-strip" aria-live="polite">
+      <span className="np-radio-strip__dot" /> ON AIR · WJLR 330.9 · {formatSec(radioElapsedSec)} / {formatSec(radioRemainingSec)} left
+    </div>
+  ) : null
+  const radioHero = radioActive && radio && isPillEmpty ? (
+    <div className="np-radio-hero" aria-live="polite">
+      <div className="np-radio-hero__eq" aria-hidden="true">
+        <span /><span /><span /><span />
+      </div>
+      <div className="np-radio-hero__main">
+        <div className="np-radio-hero__label">
+          <span className="np-radio-hero__dot" /> ON AIR
+          <span className="np-radio-hero__sep">·</span>
+          <span className="np-radio-hero__call">WJLR 330.9</span>
+        </div>
+        <div className="np-radio-hero__time">
+          <span className="np-radio-hero__elapsed">{formatSec(radioElapsedSec)}</span>
+          <span className="np-radio-hero__time-sep">/</span>
+          <span className="np-radio-hero__remaining">{formatSec(radioRemainingSec)}</span>
+          <span className="np-radio-hero__left">left</span>
+        </div>
+      </div>
+      <div className="np-radio-hero__eq np-radio-hero__eq--mirror" aria-hidden="true">
+        <span /><span /><span /><span />
+      </div>
+    </div>
+  ) : null
+
   return (
-    <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''}`}>
+    <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''} ${effectiveMode === 'broadcast' ? 'now-playing-pill--broadcast' : ''} ${radioActive ? 'now-playing-pill--radio' : ''} ${radioHero ? 'now-playing-pill--radio-hero' : ''}`}>
+      {radioStrip}
+      {radioHero}
       {showCycle && (
         <button className="np-cycle-btn" onClick={cycleMode} title="Toggle display">
           <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
@@ -226,12 +283,15 @@ export default function NowPlaying() {
               playing — which kept the renderer's compositor busy
               for a 60×8px squiggle nobody used. Component definition
               kept above in case it gets revived; just not rendered. */}
-          <div className="now-playing-info">
-            <span className="now-playing-title">{track.title}</span>
-            <span className="now-playing-sep"> — </span>
-            <span className="now-playing-artist">{track.artist}</span>
-            {track.album && <span className="now-playing-sep"> — </span>}
-            {track.album && <span className="now-playing-album">{track.album}</span>}
+          <div className="now-playing-info now-playing-info--stacked">
+            <div className="now-playing-line-primary">
+              <span className="now-playing-title">{track.title}</span>
+            </div>
+            <div className="now-playing-line-secondary">
+              <span className="now-playing-artist">{track.artist}</span>
+              {track.album && <span className="now-playing-sep"> — </span>}
+              {track.album && <span className="now-playing-album">{track.album}</span>}
+            </div>
           </div>
           <div className="scrubber-row">
             {/* Brief 025: floor position + duration ONCE, then compute
@@ -311,40 +371,59 @@ export default function NowPlaying() {
         </>
       ) : effectiveMode === 'broadcast' && broadcast ? (
         (() => {
-          // 4.5.3: sliding window. The caret stays anchored at the
-          // right edge while older characters scroll off the left, so
-          // long monologues keep going instead of getting clipped by
-          // the pill's text-overflow:ellipsis. WINDOW is a chars
-          // approximation — actual pill width varies but ~85 reads
-          // comfortably across typical window sizes. Left edge gets a
-          // subtle fade-to-transparent mask (see toolbar.css
-          // .np-broadcast-window) so the scroll-out feels deliberate.
-          const WINDOW = 85
-          const reveal = broadcast.revealedChars
-          const start = Math.max(0, reveal - WINDOW)
-          const visible = broadcast.text.slice(start, reveal)
-          const stillRevealing = reveal < broadcast.text.length
-          return (
-            <>
-              <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast">
+          // 4.5: closed-caption stack. Thinking phase shows speaker +
+          // pulsing dots with no progress bar (the prior single-line
+          // "is listening" text typewriter-revealed in 300ms and read
+          // as a visual spazz). Speaking phase wraps the revealed text
+          // greedily by word into ~40-char lines, then renders the
+          // most recent two stacked on top of each other — like a TV
+          // captions track. Older lines slide up off-screen as new
+          // ones arrive; the bottom (current) line carries the caret.
+          if (broadcast.mode === 'thinking') {
+            return (
+              <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast np-broadcast-thinking">
                 <span className="now-playing-title">{broadcast.speaker}</span>
-                <span className="now-playing-sep"> — </span>
-                <span className="now-playing-broadcast-text">
-                  <span className={`np-broadcast-window ${start > 0 ? 'np-broadcast-window--scrolled' : ''}`}>
-                    {visible}
-                    {stillRevealing && <span className="np-caret" aria-hidden>▍</span>}
-                  </span>
+                <span className="np-thinking-dots" aria-hidden>
+                  <span /><span /><span />
                 </span>
               </div>
-              <div className="scrubber-row">
-                <div className="activity-bar">
-                  <div
-                    className="activity-bar-fill"
-                    style={{ width: `${(reveal / Math.max(1, broadcast.text.length)) * 100}%` }}
-                  />
+            )
+          }
+          const reveal = broadcast.revealedChars
+          const visibleText = broadcast.text.slice(0, reveal)
+          const stillRevealing = reveal < broadcast.text.length
+          // Greedy word wrap to ~40 chars per line. Hyphenated long
+          // words get broken on the dash; otherwise we never split a
+          // word — better to spill over by a few chars than to render
+          // mid-word splits that read as broken.
+          const LINE_LIMIT = 40
+          const lines: string[] = []
+          let current = ''
+          for (const word of visibleText.split(/(\s+)/)) {
+            if (!word) continue
+            if (current.length + word.length > LINE_LIMIT && current.trim().length > 0) {
+              lines.push(current.trimEnd())
+              current = word.trimStart()
+            } else {
+              current += word
+            }
+          }
+          if (current) lines.push(current)
+          const lastTwo = lines.slice(-2)
+          const isFirstLine = lastTwo.length < 2
+          return (
+            <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast np-broadcast-cc">
+              <div className="np-broadcast-speaker">{broadcast.speaker}</div>
+              <div className="np-broadcast-lines">
+                {lastTwo.length === 2 && (
+                  <div className="np-broadcast-line np-broadcast-line--older">{lastTwo[0]}</div>
+                )}
+                <div className="np-broadcast-line np-broadcast-line--current">
+                  {isFirstLine ? lastTwo[0] || '' : lastTwo[1]}
+                  {stillRevealing && <span className="np-caret" aria-hidden>▍</span>}
                 </div>
               </div>
-            </>
+            </div>
           )
         })()
       ) : (

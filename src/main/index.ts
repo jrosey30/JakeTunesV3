@@ -13,10 +13,13 @@ import {
 import {
   appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
   setHotTake, getHotTake,
+  setShowPlan, clearShowPlan, formatPlanForPrompt, getShowPlan,
 } from './radio-memory'
 import { CALLERS, buildCallerSegmentMode } from './cast'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
+import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
 import { createHash } from 'crypto'
@@ -54,6 +57,7 @@ import {
 import {
   startSyncOrchestrator,
   triggerSync,
+  getLastSyncSnapshot,
 } from './sync-orchestrator'
 // Brief 023: removed imports from ./library-snapshot and
 // ./library-overrides — both modules are deleted along with this
@@ -119,11 +123,16 @@ for (const p of envPaths) {
 }
 
 // Fallback: read API keys directly from userData .env if dotenv missed them
-if (!process.env.ANTHROPIC_API_KEY || !process.env.DISCOGS_API_TOKEN || !process.env.ELEVENLABS_API_KEY) {
+if (!process.env.ANTHROPIC_API_KEY || !process.env.DISCOGS_API_TOKEN || !process.env.ELEVENLABS_API_KEY || !process.env.EXA_API_KEY) {
   try {
     const fs = require('fs')
     const envFile = fs.readFileSync(join(app.getPath('userData'), '.env'), 'utf8')
-    for (const key of ['ANTHROPIC_API_KEY', 'ELEVENLABS_API_KEY', 'DISCOGS_API_TOKEN']) {
+    // 4.5: EXA_API_KEY added. Powers the artist-facts augmentation in
+    // searchWeb — Exa returns richer/more-current music journalism than
+    // Wikipedia + MusicBrainz alone, giving Music Man / Megan / Stephen
+    // sharper context to draw from. Optional — searchWeb skips Exa
+    // silently if the key is missing.
+    for (const key of ['ANTHROPIC_API_KEY', 'ELEVENLABS_API_KEY', 'DISCOGS_API_TOKEN', 'EXA_API_KEY']) {
       if (!process.env[key]) {
         const match = envFile.match(new RegExp(`${key}=(.+)`))
         if (match) process.env[key] = match[1].trim()
@@ -464,33 +473,18 @@ function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
 // write operation is in flight at a time. Serial throughput is fine
 // (each op is sub-millisecond on local SSD) — well under the rate at
 // which the worker + ipc handlers can produce updates.
-let overridesWriteChain: Promise<void> = Promise.resolve()
+// 4.5.0-106 Phase 2.5: now thin wrapper over the overridesCache. Pre-fix
+// every call re-read metadata-overrides.json from NAS (50-500ms SMB hit),
+// mutated, then re-wrote — the IPC handler that awaited this blocked the
+// renderer AND occasionally hitched the audio thread. The cache makes the
+// read free, the synchronous mutate finishes in microseconds, and the
+// NAS flush runs in the background. Order across rapid writes is still
+// preserved by the per-file write chain inside the cache.
 function writeOverridesSerialized(mutate: (current: Record<string, unknown>) => Record<string, unknown>): Promise<void> {
-  const job = overridesWriteChain.then(async () => {
-    const overridesPath = join(app.getPath('userData'), 'metadata-overrides.json')
-    let current: Record<string, unknown> = {}
-    try {
-      const data = await readFile(overridesPath, 'utf-8')
-      current = JSON.parse(data)
-      if (!current || typeof current !== 'object' || Array.isArray(current)) current = {}
-    } catch { /* file may not exist yet, or it's corrupt — start clean */ }
-    const next = mutate(current)
-    await mkdir(app.getPath('userData'), { recursive: true })
-    // Unique .tmp filename per write — even if two write chains somehow
-    // run concurrently (they shouldn't given the chain, but defense in
-    // depth), each gets its own tmp file so writes never interleave.
-    const tmpPath = `${overridesPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    await writeFile(tmpPath, JSON.stringify(next, null, 2), 'utf-8')
-    const { rename } = await import('fs/promises')
-    await rename(tmpPath, overridesPath)
-  }).catch((err) => {
-    console.warn('[overrides] serialized write failed:', err instanceof Error ? err.message : err)
+  return overridesCache.update((current) => {
+    const safe = (current && typeof current === 'object' && !Array.isArray(current)) ? current : {}
+    return mutate(safe) || safe
   })
-  // The chain advances regardless of whether THIS job succeeded — failures
-  // are logged but don't block subsequent writes (otherwise one bad job
-  // would jam every future override save).
-  overridesWriteChain = job
-  return job
 }
 
 // Write multiple override fields in a single file write. Used by the
@@ -720,8 +714,31 @@ ipcMain.handle('load-ui-state', async () => {
 })
 
 ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => {
+  // Bug #3: this used to be a full-overwrite write. Callers all do a
+  // load-spread-save pattern in the renderer, but when `loadUiState`
+  // returned null/empty (transient parse failure during atomic rename,
+  // file briefly missing, etc.) they'd spread `{}` and the resulting
+  // save would clobber every persisted field that wasn't in the caller's
+  // partial. That's how `optConvertBitrate` evaporated mid-session —
+  // some caller saved its 7 fields, the convert toggle wasn't one of
+  // them, so it disappeared.
+  //
+  // Defense-in-depth: read current disk state, deep-merge the incoming
+  // partial on top, then atomically write. Even if every renderer
+  // caller is buggy, persisted fields survive.
+  const path = uiStatePath()
   try {
-    await writeFile(uiStatePath(), JSON.stringify(uiState), 'utf-8')
+    let current: Record<string, unknown> = {}
+    try {
+      const raw = await readFile(path, 'utf-8')
+      current = JSON.parse(raw) as Record<string, unknown>
+      if (typeof current !== 'object' || current === null) current = {}
+    } catch { /* no file yet or parse fail — start fresh */ }
+    const merged = { ...current, ...uiState }
+    const tmp = path + '.partial.json'
+    await writeFile(tmp, JSON.stringify(merged), 'utf-8')
+    const { rename: renameFS } = await import('fs/promises')
+    await renameFS(tmp, path)
     return { ok: true }
   } catch {
     return { ok: false }
@@ -735,6 +752,13 @@ ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => 
 function appSettingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
 }
+
+// 4.5: settings UI reads this to display "Last backup: 3 min ago — Imports"
+// in the Sync tab. Pulled on tab open (and periodically while visible)
+// so the user gets the current state without subscribing to push events.
+ipcMain.handle('get-last-library-sync', async () => {
+  return getLastSyncSnapshot()
+})
 
 ipcMain.handle('load-app-settings', async () => {
   try {
@@ -751,8 +775,31 @@ ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>
     await writeFile(appSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
     // Refresh the cached host preference so subsequent prompt builds
     // pick up the new value without an app restart.
-    const ai = (settings.ai as { aiHost?: 'mm' | 'megan' } | undefined)
+    const ai = (settings.ai as { aiHost?: 'mm' | 'megan'; exaApiKey?: string } | undefined)
     cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
+    // 4.5: live-apply EXA_API_KEY into process.env so the next searchWeb
+    // call picks it up without an app restart. Same value also written
+    // to userData/.env so it survives restarts via the existing
+    // env-load fallback at the top of this file.
+    if (typeof ai?.exaApiKey === 'string') {
+      const key = ai.exaApiKey.trim()
+      if (key) {
+        process.env.EXA_API_KEY = key
+      } else {
+        delete process.env.EXA_API_KEY
+      }
+      // Mirror to userData/.env (idempotent rewrite of the EXA_API_KEY line)
+      try {
+        const envPath = join(app.getPath('userData'), '.env')
+        let existing = ''
+        try { existing = await readFile(envPath, 'utf-8') } catch { /* fresh file */ }
+        const lines = existing.split('\n').filter(l => !l.startsWith('EXA_API_KEY='))
+        if (key) lines.push(`EXA_API_KEY=${key}`)
+        await writeFile(envPath, lines.filter(l => l.trim()).join('\n') + '\n', 'utf-8')
+      } catch (err) {
+        console.warn('[save-app-settings] EXA_API_KEY .env write failed:', err)
+      }
+    }
     // 4.4.13: reconfigure the inbox watcher on every save. Idempotent
     // when nothing changed; instant pickup of toggle/path edits without
     // an app restart. Errors are non-fatal — the save itself succeeded,
@@ -873,6 +920,33 @@ ipcMain.handle('get-artist-image', async (_event, artist: string): Promise<{ ok:
 // on no-result so the UI can degrade gracefully (just the photo + name).
 const WIKI_CACHE_DIR = join(app.getPath('userData'), 'wiki-cache')
 const WIKI_TTL_MS = 24 * 60 * 60 * 1000
+// 4.5.0-72 — misses get a MUCH shorter TTL than hits. A real artist-
+// has-no-wiki result is rare; a transient miss (network glitch, MB
+// throttle queue overflow, fetch threw mid-flight) is what we've seen
+// in the wild (The Beatles cached as null after a -66 lookup that
+// silently failed, then served null for 24 hours). 1-hour miss TTL
+// means transient failures self-heal within the same listening
+// session.
+const WIKI_MISS_TTL_MS = 60 * 60 * 1000  // 1 hour
+// Try one specific Wikipedia title — REST summary endpoint. Returns
+// { extract, pageUrl, isDisambig } where isDisambig signals the caller
+// to try a different title rather than render the "X may refer to:"
+// text as a bio.
+async function tryWikiTitle(title: string): Promise<{ extract: string | null; pageUrl: string | null; isDisambig: boolean }> {
+  const encoded = encodeURIComponent(title.replace(/ /g, '_'))
+  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encoded}?redirect=true`
+  const res = await fetch(url, {
+    headers: { 'User-Agent': `JakeTunes/${app.getVersion()} (jakerosenbaum30@gmail.com)` },
+  })
+  if (!res.ok) return { extract: null, pageUrl: null, isDisambig: false }
+  const data = await res.json() as { extract?: string; type?: string; content_urls?: { desktop?: { page?: string } } }
+  const isDisambig = data.type === 'disambiguation'
+  return {
+    extract: !isDisambig && typeof data.extract === 'string' ? data.extract : null,
+    pageUrl: data.content_urls?.desktop?.page || null,
+    isDisambig,
+  }
+}
 async function fetchWikiSummary(artist: string): Promise<{ extract: string | null; pageUrl: string | null }> {
   await mkdir(WIKI_CACHE_DIR, { recursive: true }).catch(() => {})
   const key = createHash('md5').update(artist.toLowerCase().trim()).digest('hex')
@@ -880,36 +954,83 @@ async function fetchWikiSummary(artist: string): Promise<{ extract: string | nul
   // Disk cache first — survives app restarts.
   try {
     const stat0 = await stat(cachePath)
-    if (Date.now() - stat0.mtimeMs < WIKI_TTL_MS) {
-      const raw = await readFile(cachePath, 'utf-8')
-      return JSON.parse(raw)
-    }
+    const raw = await readFile(cachePath, 'utf-8')
+    const cached = JSON.parse(raw) as { extract: string | null; pageUrl: string | null }
+    // 4.5.0-72 — separate TTLs for hits and misses. A real hit lives
+    // 24 h (cheap to keep, expensive to refetch). A miss lives 1 h so
+    // transient failures (network, MB throttle, fetch threw mid-flight)
+    // self-heal in the same listening session instead of poisoning the
+    // bio for a full day.
+    const ttl = cached.extract ? WIKI_TTL_MS : WIKI_MISS_TTL_MS
+    if (Date.now() - stat0.mtimeMs < ttl) return cached
   } catch { /* miss */ }
-  // Wikipedia REST summary endpoint. Underscores for spaces; %20 also
-  // works but underscores are the wiki-canonical form. redirect=true
-  // follows "Drake_(musician)" -> the actual artist page when needed.
-  const title = encodeURIComponent(artist.trim().replace(/ /g, '_'))
-  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${title}?redirect=true`
+  // 4.5.0-66 — disambiguation-aware lookup. Old behavior took the raw
+  // artist string and trusted Wikipedia's extract verbatim, leaking
+  // "Drake may refer to:" disambiguation pages into the bio UI for any
+  // artist whose name is shared with non-music entities. New strategy:
+  //
+  //   1. Ask MusicBrainz which entity this artist actually is (with
+  //      library-genre context so the right one wins for common names).
+  //      If MB knows the canonical Wikipedia article title (via its
+  //      url-relations), USE THAT title — it's authoritative.
+  //   2. If MB didn't know the wiki title, try the raw name. If the
+  //      response is a disambiguation page, try qualifier suffixes
+  //      based on the MB type/tags: "(rapper)" for hip-hop, "(band)"
+  //      for groups, "(singer)" for vocalists, "(musician)" generic.
+  //   3. If everything misses, return null extract — UI shows clean
+  //      empty state, not the disambiguation list verbatim.
+  let extract: string | null = null
+  let pageUrl: string | null = null
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'JakeTunes/4.5 (personal music library; jakerosenbaum30@gmail.com)' },
+    const genres = await getLibraryGenresForArtist(artist)
+    const canon = await resolveCanonicalArtist(artist, { libraryGenres: genres })
+    const titlesToTry: string[] = []
+    if (canon?.wikiTitle) titlesToTry.push(canon.wikiTitle)
+    titlesToTry.push(artist.trim())
+    if (canon) {
+      const tagText = canon.tags.join(' ')
+      const isGroup = canon.type === 'Group'
+      const isRap = /\brap|hip[- ]?hop|trap\b/.test(tagText)
+      const isElectronic = /\belectronic|techno|house|dance|edm\b/.test(tagText)
+      const isClassical = /\bclassical|opera|orchestra\b/.test(tagText)
+      // Order matters — most specific first.
+      if (isRap) titlesToTry.push(`${artist.trim()} (rapper)`)
+      if (isGroup) titlesToTry.push(`${artist.trim()} (band)`)
+      if (isElectronic) titlesToTry.push(`${artist.trim()} (DJ)`)
+      if (isClassical) titlesToTry.push(`${artist.trim()} (composer)`)
+      titlesToTry.push(`${artist.trim()} (musician)`)
+      titlesToTry.push(`${artist.trim()} (singer)`)
+    } else {
+      titlesToTry.push(`${artist.trim()} (musician)`, `${artist.trim()} (band)`)
+    }
+    // De-dupe while preserving order.
+    const seen = new Set<string>()
+    const ordered = titlesToTry.filter(t => {
+      const k = t.toLowerCase()
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
     })
-    if (!res.ok) {
-      const miss = { extract: null, pageUrl: null }
-      await writeFile(cachePath, JSON.stringify(miss)).catch(() => {})
-      return miss
+    for (const t of ordered) {
+      try {
+        const r = await tryWikiTitle(t)
+        if (r.extract) {
+          extract = r.extract
+          pageUrl = r.pageUrl
+          break
+        }
+        // First-try pageUrl is the best we'll get if every subsequent
+        // try misses — keep it as a "read on wiki" target for the UI
+        // even if no clean summary exists.
+        if (!pageUrl && r.pageUrl && !r.isDisambig) pageUrl = r.pageUrl
+      } catch { /* try next title */ }
     }
-    const data = await res.json() as { extract?: string; content_urls?: { desktop?: { page?: string } } }
-    const out = {
-      extract: typeof data.extract === 'string' ? data.extract : null,
-      pageUrl: data.content_urls?.desktop?.page || null,
-    }
-    await writeFile(cachePath, JSON.stringify(out)).catch(() => {})
-    return out
   } catch (err) {
-    console.warn('[wiki] fetch failed for', artist, err)
-    return { extract: null, pageUrl: null }
+    console.warn('[wiki] resolver failed for', artist, err)
   }
+  const out = { extract, pageUrl }
+  await writeFile(cachePath, JSON.stringify(out)).catch(() => {})
+  return out
 }
 ipcMain.handle('get-artist-wiki', async (_event, artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> => {
   if (!artist || typeof artist !== 'string') return { ok: false, extract: null, pageUrl: null }
@@ -1071,41 +1192,171 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
     submenu: [
       {
         label: 'About JakeTunes',
-        click: () => {
+        click: async () => {
+          // Resolve the logo path. Dev = unhashed source PNG; production
+          // = hashed file in out/renderer/assets (vite asset pipeline).
+          // We copy the resolved PNG to OS temp so the About HTML (also
+          // written to temp) can reference it via a sibling file:// path
+          // — large logos blow past Chromium's data-URL limit (~2MB)
+          // and silently render a blank window if inlined.
+          const { tmpdir } = await import('os')
+          const { readdir } = await import('fs/promises')
+          const tmpDir = join(tmpdir(), 'jaketunes-about')
+          await mkdir(tmpDir, { recursive: true }).catch(() => {})
+          let logoFilename = ''
+          try {
+            let logoPath = ''
+            if (isDev) {
+              logoPath = join(app.getAppPath(), 'src/renderer/assets/jaketunes-logo.png')
+            } else {
+              const assetsDir = join(__dirname, '../renderer/assets')
+              const entries = await readdir(assetsDir).catch(() => [] as string[])
+              const match = entries.find(n => /^jaketunes-logo.*\.png$/i.test(n))
+              if (match) logoPath = join(assetsDir, match)
+            }
+            if (logoPath) {
+              logoFilename = 'jaketunes-logo.png'
+              await copyFile(logoPath, join(tmpDir, logoFilename))
+            }
+          } catch { /* logo absent → text-only About */ }
+
           const about = new BrowserWindow({
-            width: 320,
-            height: 240,
+            width: 460,
+            height: 540,
             resizable: false,
             minimizable: false,
             maximizable: false,
             ...(IS_MAC ? { titleBarStyle: 'hiddenInset' as const } : {}),
-            backgroundColor: '#d8d8d8',
+            backgroundColor: '#1a1410',
             webPreferences: { nodeIntegration: false, contextIsolation: true },
           })
           about.setMenu(null)
-          about.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+          const ver = app.getVersion()
+          const year = new Date().getFullYear()
+          const htmlPath = join(tmpDir, 'about.html')
+          const html = `
 <!DOCTYPE html>
 <html>
-<head><style>
-  body {
-    margin: 0; padding: 40px 20px 20px;
-    font-family: -apple-system, "Lucida Grande", sans-serif;
-    background: linear-gradient(180deg, #e8e8e8, #d0d0d0);
-    text-align: center; user-select: none; -webkit-user-select: none;
-    -webkit-app-region: drag;
+<head><meta charset="utf-8"><style>
+  :root {
+    --orange: #d6691a;
+    --orange-hot: #f08531;
+    --cream: #f3ead4;
+    --cream-dim: #c9bf9d;
+    --ink: #14100c;
   }
-  h1 { font-size: 18px; font-weight: 700; color: #222; margin: 12px 0 2px; }
-  .version { font-size: 12px; color: #666; margin-bottom: 8px; }
-  .author { font-size: 11px; color: #888; }
-  .tagline { font-size: 10px; color: #aaa; margin-top: 12px; font-style: italic; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Lucida Grande", sans-serif;
+    background:
+      radial-gradient(120% 80% at 50% 0%, rgba(214,105,26,0.35) 0%, rgba(214,105,26,0) 55%),
+      radial-gradient(80% 60% at 50% 100%, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 60%),
+      linear-gradient(180deg, #2a1d12 0%, #14100c 65%, #0c0907 100%);
+    color: var(--cream);
+    text-align: center;
+    user-select: none; -webkit-user-select: none;
+    -webkit-app-region: drag;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    padding: 56px 24px 22px;
+  }
+  .glow {
+    position: absolute; inset: 0;
+    background: radial-gradient(40% 28% at 50% 32%, rgba(240,133,49,0.22), transparent 70%);
+    pointer-events: none;
+  }
+  .logo-wrap {
+    position: relative;
+    width: 156px; height: 156px;
+    margin: 0 auto 18px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .logo-wrap::before {
+    content: '';
+    position: absolute; inset: -22px;
+    background: radial-gradient(closest-side, rgba(240,133,49,0.42), rgba(240,133,49,0) 72%);
+    filter: blur(6px);
+    z-index: 0;
+  }
+  .logo {
+    position: relative; z-index: 1;
+    width: 156px; height: 156px;
+    object-fit: contain;
+    filter: drop-shadow(0 6px 18px rgba(0,0,0,0.55));
+  }
+  .logo-fallback {
+    position: relative; z-index: 1;
+    width: 140px; height: 140px; border-radius: 32px;
+    background: linear-gradient(180deg, #f08531, #b14d10);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 72px; font-weight: 800; color: #fff;
+    font-family: "Helvetica Neue", -apple-system, sans-serif;
+  }
+  .wordmark {
+    font-family: "Helvetica Neue", -apple-system, sans-serif;
+    font-size: 38px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--cream);
+    margin: 4px 0 2px;
+    text-shadow:
+      0 1px 0 rgba(0,0,0,0.6),
+      0 0 28px rgba(240,133,49,0.18);
+  }
+  .wordmark .accent { color: var(--orange-hot); }
+  .slogan {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 14px;
+    font-style: italic;
+    color: var(--cream-dim);
+    letter-spacing: 0.04em;
+    margin: 2px 0 18px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+  .divider {
+    width: 220px; height: 1px;
+    margin: 0 auto 14px;
+    background: linear-gradient(90deg, transparent, rgba(243,234,212,0.35), transparent);
+  }
+  .meta {
+    font-size: 11px;
+    color: var(--cream-dim);
+    letter-spacing: 0.04em;
+    line-height: 1.7;
+  }
+  .meta .version-label { color: var(--orange-hot); font-weight: 700; }
+  .meta .ver-num { color: var(--cream); font-weight: 700; font-feature-settings: "tnum"; }
+  .meta .author { color: var(--cream); }
+  .footer {
+    margin-top: auto;
+    font-size: 9.5px;
+    color: rgba(243,234,212,0.42);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
 </style></head>
 <body>
-  <h1>JakeTunes</h1>
-  <div class="version">Version ${app.getVersion()}</div>
-  <div class="author">by Jacob Rosenbaum</div>
-  <div class="tagline">2008 visuals, 2026 brain</div>
+  <div class="glow"></div>
+  <div class="logo-wrap">
+    ${logoFilename
+      ? `<img class="logo" src="${logoFilename}" alt="JakeTunes" />`
+      : `<div class="logo-fallback">J</div>`}
+  </div>
+  <div class="wordmark">Jake<span class="accent">Tunes</span></div>
+  <div class="slogan">"Take The Music Back"</div>
+  <div class="divider"></div>
+  <div class="meta">
+    <div><span class="version-label">VERSION</span> <span class="ver-num">${ver}</span></div>
+    <div>by <span class="author">Jacob Rosenbaum</span></div>
+  </div>
+  <div class="footer">© ${year} · 2008 visuals · 2040 brain</div>
 </body>
-</html>`)}`)
+</html>`
+          await writeFile(htmlPath, html, 'utf8')
+          about.loadFile(htmlPath)
         },
       },
       { type: 'separator' },
@@ -1234,41 +1485,30 @@ async function searchWikipedia(query: string): Promise<string> {
   }
 }
 
-// Search MusicBrainz for accurate music data (genre, country, years active, releases)
+// Search MusicBrainz for accurate music data (genre, country, years
+// active, releases). 4.5.0-66 — routed through resolveCanonicalArtist
+// so the right entity wins for common names like Drake / Beck / Bush.
 async function searchMusicBrainz(artist: string, album?: string): Promise<string> {
   try {
-    const headers = { 'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`, 'Accept': 'application/json' }
-    // Search for artist
-    const artistUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(artist)}"&fmt=json&limit=3`
-    const artistRes = await fetch(artistUrl, { headers })
-    if (!artistRes.ok) return ''
-    const artistData = await artistRes.json() as { artists?: { name: string; type: string; country: string; 'life-span'?: { begin?: string; ended?: boolean }; tags?: { name: string; count: number }[]; disambiguation?: string; area?: { name: string } }[] }
-    const artists = artistData.artists || []
-    if (artists.length === 0) return ''
-
-    // Verify the result actually matches the artist we searched for
-    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const best = artists.find(a => {
-      const nameNorm = normalize(a.name)
-      const queryNorm = normalize(artist)
-      return nameNorm === queryNorm || nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm)
-    })
-    if (!best) return ''
+    const libraryGenres = await getLibraryGenresForArtist(artist)
+    const canon = await resolveCanonicalArtist(artist, { libraryGenres })
+    if (!canon) return ''
 
     const parts: string[] = []
-    parts.push(`${best.name}${best.disambiguation ? ` (${best.disambiguation})` : ''}`)
-    if (best.type) parts.push(`Type: ${best.type}`)
-    if (best.country || best.area?.name) parts.push(`From: ${best.area?.name || best.country}`)
-    if (best['life-span']?.begin) parts.push(`Active since: ${best['life-span'].begin}${best['life-span'].ended ? ' (disbanded)' : ''}`)
-    if (best.tags?.length) {
-      const topTags = best.tags.sort((a, b) => b.count - a.count).slice(0, 5).map(t => t.name)
-      parts.push(`Genres/tags: ${topTags.join(', ')}`)
-    }
+    parts.push(`${canon.name}${canon.disambiguation ? ` (${canon.disambiguation})` : ''}`)
+    if (canon.type) parts.push(`Type: ${canon.type}`)
+    if (canon.country) parts.push(`From: ${canon.country}`)
+    if (canon.lifeSpan.begin) parts.push(`Active since: ${canon.lifeSpan.begin}${canon.lifeSpan.ended ? ' (disbanded)' : ''}`)
+    if (canon.tags.length) parts.push(`Genres/tags: ${canon.tags.slice(0, 5).join(', ')}`)
 
     // If album provided, search for release info
     if (album) {
       try {
-        const releaseUrl = `https://musicbrainz.org/ws/2/release/?query=release:"${encodeURIComponent(album)}" AND artist:"${encodeURIComponent(artist)}"&fmt=json&limit=1`
+        await mbThrottle()
+        const headers = { 'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`, 'Accept': 'application/json' }
+        // Constrain by the resolved MBID so the release picker doesn't
+        // also pick up the wrong-Drake's albums.
+        const releaseUrl = `https://musicbrainz.org/ws/2/release/?query=release:"${encodeURIComponent(album)}" AND arid:${canon.mbid}&fmt=json&limit=1`
         const releaseRes = await fetch(releaseUrl, { headers })
         if (releaseRes.ok) {
           const releaseData = await releaseRes.json() as { releases?: { title: string; date?: string; 'label-info'?: { label?: { name: string } }[] }[] }
@@ -1288,17 +1528,444 @@ async function searchMusicBrainz(artist: string, album?: string): Promise<string
   }
 }
 
+// ── MusicBrainz discography fetcher (4.5) ───────────────────────────
+// Used by ArtistDetailView's per-album drill-down to show the
+// canonical tracklist with owned-vs-not badges. Returns the artist's
+// release-group catalog (albums + EPs) with each album's tracklist
+// (track titles + positions). Cached to disk for 7 days per artist,
+// MusicBrainz ToS limits us to ~1 req/sec so a typical 12-album
+// artist takes ~15s on a cold lookup; cached lookups are instant.
+//
+// Returned shape:
+//   { albums: [{ title, year, tracks: [{ title, position }] }] }
+//
+// Renderer matches each canonical track to the user's library by
+// (artist + normalized title) to compute the owned/not-owned dots.
+
+interface DiscographyAlbum {
+  title: string
+  year: string  // 4-digit, or '' if unknown
+  tracks: { title: string; position: number }[]
+}
+interface DiscographyResult {
+  artist: string
+  albums: DiscographyAlbum[]
+  fetchedAt: number
+}
+
+const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const MB_RATE_LIMIT_MS = 1100  // MB asks for ≤1 req/sec; pad to 1.1s
+let mbLastRequestAt = 0
+
+// 4.5.0-75 — serialized throttle (was racy). Old design: each caller
+// read mbLastRequestAt, computed `since`, awaited the gap. With N
+// concurrent callers (resolveCanonicalArtist firing from import +
+// hover prefetch + chat lookup in parallel), every one of them saw
+// the same lastRequestAt timestamp, all waited the same gap, all
+// fired their fetch within milliseconds — MB returned 429s that
+// were swallowed by the per-call try/catch, leaving canonical
+// names stale. Per Grok audit (#6).
+//
+// New design: chain promises so each call awaits the PRIOR call's
+// release, not just a wall-clock interval. Single in-flight slot at
+// a time. `.catch(() => undefined)` on the chain prevents one
+// rejected call from poisoning every caller after it.
+let mbChain: Promise<void> = Promise.resolve()
+function mbThrottle(): Promise<void> {
+  const my = mbChain.then(async () => {
+    const since = Date.now() - mbLastRequestAt
+    const wait = Math.max(0, MB_RATE_LIMIT_MS - since)
+    if (wait > 0) await new Promise(r => setTimeout(r, wait))
+    mbLastRequestAt = Date.now()
+  })
+  mbChain = my.catch(() => undefined)
+  return my
+}
+
+// 4.5.0-66 — canonical artist resolver. Single source of truth for
+// "given a string like 'Drake', which MusicBrainz entity is the music
+// artist the user means?" Used by Wikipedia bio, artist photo,
+// discography, and chat artist-facts.
+//
+// Why this exists: every external lookup used to take the raw string
+// and pass it directly to a backend (Wikipedia, Bandsintown, MB
+// search). Common names ("Drake", "Beck", "Bush", "Train", "Cake",
+// "Phoenix", "Madonna") hit disambiguation pages, wrong-artist photos,
+// and wrong-MBID discographies. This resolver picks the right entity
+// ONCE and returns enough metadata that every downstream lookup uses
+// the disambiguated identity instead of the raw string.
+//
+// Resolution strategy:
+//   1. MB search with the raw name, fetch up to 10 candidates with
+//      url-rels (so we can extract wiki links).
+//   2. Filter to type=Person|Group (drops places, characters, fictional).
+//   3. Score = MB's own `score` + a library-context boost if the
+//      candidate's tags overlap with genres the user actually has
+//      tracks in for this artist. This is the key disambiguator —
+//      the "Drake" with rap tags wins because the user's Drake tracks
+//      are tagged rap, not Welsh-language-medieval-figure.
+//   4. Returns canonical name, MBID, type, life-span, country, the top
+//      MB tags, AND the canonical Wikipedia title (via url-rels) if MB
+//      knows one — that's the authoritative wiki page to fetch, no
+//      "(musician)" suffix-guessing needed.
+//
+// 24h cache keyed by lowercase artist name + the genre-hint hash. A
+// genre-hint change re-resolves (rare; happens when the user adds
+// tracks of a new genre for the same artist name).
+interface CanonicalArtist {
+  name: string            // MB's canonical capitalization
+  mbid: string
+  type: 'Person' | 'Group' | 'Other' | ''
+  country: string
+  lifeSpan: { begin?: string; end?: string; ended?: boolean }
+  tags: string[]          // top tags, score-sorted, lowercased
+  wikiTitle: string | null // canonical wikipedia article title if MB has the relation
+  disambiguation: string  // MB's own disambiguation string ("rapper", etc.) when present
+}
+const CANONICAL_CACHE_DIR = join(app.getPath('userData'), 'canonical-artist-cache')
+const CANONICAL_TTL_MS = 24 * 60 * 60 * 1000
+async function resolveCanonicalArtist(
+  rawName: string,
+  opts?: { libraryGenres?: string[] },
+): Promise<CanonicalArtist | null> {
+  if (!rawName || typeof rawName !== 'string') return null
+  const name = rawName.trim()
+  if (!name) return null
+  const genreHint = (opts?.libraryGenres || [])
+    .map(g => g.toLowerCase().trim())
+    .filter(Boolean)
+    .sort()
+    .join('|')
+  const cacheKey = createHash('md5').update(`${name.toLowerCase()}::${genreHint}`).digest('hex')
+  const cachePath = join(CANONICAL_CACHE_DIR, `${cacheKey}.json`)
+  await mkdir(CANONICAL_CACHE_DIR, { recursive: true }).catch(() => {})
+  // Cache hit
+  try {
+    const st = await stat(cachePath)
+    if (Date.now() - st.mtimeMs < CANONICAL_TTL_MS) {
+      return JSON.parse(await readFile(cachePath, 'utf-8')) as CanonicalArtist
+    }
+  } catch { /* miss */ }
+
+  await mbThrottle()
+  const headers = {
+    'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
+    'Accept': 'application/json',
+  }
+  try {
+    const url = `https://musicbrainz.org/ws/2/artist/?query=artist:"${encodeURIComponent(name)}"&fmt=json&limit=10&inc=url-rels+tags`
+    const res = await fetch(url, { headers })
+    if (!res.ok) return null
+    const data = await res.json() as {
+      artists?: Array<{
+        id: string
+        name: string
+        type?: string
+        score?: number
+        country?: string
+        disambiguation?: string
+        'life-span'?: { begin?: string; end?: string; ended?: boolean }
+        tags?: Array<{ name: string; count: number }>
+        relations?: Array<{ type: string; url?: { resource?: string } }>
+      }>
+    }
+    const candidates = (data.artists || [])
+      .filter(a => a.type === 'Person' || a.type === 'Group')
+    if (candidates.length === 0) return null
+    // Score: MB's score + library-genre overlap bonus. The bonus is
+    // sized to dominate ties between "score 100" entries (which is
+    // what an exact name match always returns) — for "Drake" both the
+    // rapper and the historical figure score 100, but only the rapper
+    // has tags overlapping with the user's Drake-tagged-as-rap tracks.
+    const genreSet = new Set((opts?.libraryGenres || []).map(g => g.toLowerCase()))
+    const scored = candidates.map(c => {
+      let s = c.score || 0
+      const tags = (c.tags || []).map(t => t.name.toLowerCase())
+      for (const t of tags) {
+        for (const g of genreSet) {
+          if (t === g || t.includes(g) || g.includes(t)) { s += 25; break }
+        }
+      }
+      return { c, s }
+    }).sort((a, b) => b.s - a.s)
+    const top = scored[0].c
+    const wikiRel = (top.relations || []).find(r => r.type === 'wikipedia' && r.url?.resource)
+    const wikiTitle = wikiRel?.url?.resource
+      ? decodeURIComponent(wikiRel.url.resource.split('/wiki/')[1] || '').replace(/_/g, ' ')
+      : null
+    const result: CanonicalArtist = {
+      name: top.name,
+      mbid: top.id,
+      type: (top.type === 'Person' || top.type === 'Group') ? top.type : (top.type ? 'Other' : ''),
+      country: top.country || '',
+      lifeSpan: top['life-span'] || {},
+      tags: (top.tags || [])
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8)
+        .map(t => t.name.toLowerCase()),
+      wikiTitle,
+      disambiguation: top.disambiguation || '',
+    }
+    await writeFile(cachePath, JSON.stringify(result)).catch(() => {})
+    return result
+  } catch (err) {
+    console.warn('[resolveCanonicalArtist] failed for', name, err)
+    return null
+  }
+}
+
+// Helper: read the user's library and return the genre set for tracks
+// by `artistName` (case-insensitive). Used to feed `libraryGenres` into
+// resolveCanonicalArtist — the disambiguator that makes Drake-the-
+// rapper win over Drake-the-Welsh-figure for a user whose Drake tracks
+// are tagged "Rap."
+async function getLibraryGenresForArtist(artistName: string): Promise<string[]> {
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8')
+    const lib = JSON.parse(raw) as { tracks?: Array<{ artist?: string; genre?: string }> }
+    const norm = artistName.toLowerCase().trim()
+    const genres = new Set<string>()
+    for (const t of lib.tracks || []) {
+      if ((t.artist || '').toLowerCase().trim() !== norm) continue
+      const g = (t.genre || '').trim()
+      if (g) genres.add(g)
+    }
+    return Array.from(genres)
+  } catch { return [] }
+}
+
+function discoCachePath(artist: string): string {
+  const safe = artist.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 80)
+  return join(app.getPath('userData'), 'discography-cache', `${safe}.json`)
+}
+
+async function fetchArtistDiscography(artist: string): Promise<DiscographyResult | null> {
+  const cachePath = discoCachePath(artist)
+  // Cache hit
+  try {
+    const raw = await readFile(cachePath, 'utf-8')
+    const cached = JSON.parse(raw) as DiscographyResult
+    if (cached.fetchedAt && Date.now() - cached.fetchedAt < DISCO_CACHE_TTL_MS) {
+      return cached
+    }
+  } catch { /* miss */ }
+
+  const headers = {
+    'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
+    'Accept': 'application/json',
+  }
+
+  try {
+    // 1. Resolve artist MBID via the canonical resolver — uses library
+    //    genre context to pick the right entity for common names. Old
+    //    in-line `.find(exact-name-match) ?? first` consistently picked
+    //    the wrong "Drake" / "Beck" / "Bush" MBID, giving the user
+    //    someone else's discography on common-name artists.
+    const libraryGenres = await getLibraryGenresForArtist(artist)
+    const canon = await resolveCanonicalArtist(artist, { libraryGenres })
+    if (!canon) return null
+    const mbid = canon.mbid
+
+    // 2. Fetch release-groups (albums + EPs, sorted by date)
+    await mbThrottle()
+    const rgUrl = `https://musicbrainz.org/ws/2/release-group?artist=${mbid}&type=album|ep&fmt=json&limit=100`
+    const rgRes = await fetch(rgUrl, { headers })
+    if (!rgRes.ok) return null
+    const rgData = await rgRes.json() as {
+      'release-groups'?: Array<{ id: string; title: string; 'first-release-date'?: string; 'primary-type'?: string; 'secondary-types'?: string[] }>
+    }
+    // 4.5.0-66 — also filter on secondary-types. Old behavior accepted
+    // any release-group whose primary-type was Album/EP, which leaked
+    // Compilation/Live/Remix/Soundtrack/DJ-mix entries into the
+    // "discography" list (same root cause as the prior Olivia Rodrigo
+    // "not her discography" complaint). Studio-only requires that
+    // secondary-types is empty.
+    const rgs = (rgData['release-groups'] || [])
+      .filter(rg => rg['primary-type'] === 'Album' || rg['primary-type'] === 'EP')
+      .filter(rg => !(rg['secondary-types'] || []).length)
+      .sort((x, y) => (y['first-release-date'] || '').localeCompare(x['first-release-date'] || ''))
+      .slice(0, 30)  // cap at 30 release groups per artist — keeps fetch under ~35s worst-case
+
+    const albums: DiscographyAlbum[] = []
+    // 3. For each release group, fetch one release with recordings (the
+    // tracklist). Sequential because of the rate limit.
+    for (const rg of rgs) {
+      try {
+        await mbThrottle()
+        const relUrl = `https://musicbrainz.org/ws/2/release?release-group=${rg.id}&inc=recordings&fmt=json&limit=1`
+        const relRes = await fetch(relUrl, { headers })
+        if (!relRes.ok) continue
+        const relData = await relRes.json() as {
+          releases?: Array<{
+            id: string
+            date?: string
+            media?: Array<{ tracks?: Array<{ title: string; position: number }> }>
+          }>
+        }
+        const release = relData.releases?.[0]
+        if (!release) continue
+        const tracks: { title: string; position: number }[] = []
+        for (const m of release.media || []) {
+          for (const t of m.tracks || []) {
+            tracks.push({ title: t.title, position: t.position })
+          }
+        }
+        if (tracks.length === 0) continue
+        const year = (rg['first-release-date'] || release.date || '').slice(0, 4)
+        albums.push({ title: rg.title, year, tracks })
+      } catch { /* skip this release group */ }
+    }
+
+    const result: DiscographyResult = { artist, albums, fetchedAt: Date.now() }
+    // Persist to disk
+    try {
+      await mkdir(join(app.getPath('userData'), 'discography-cache'), { recursive: true })
+      await writeFile(cachePath, JSON.stringify(result), 'utf-8')
+    } catch (err) {
+      console.warn('[discography] cache write failed:', err)
+    }
+    return result
+  } catch (err) {
+    console.warn('[discography] fetch failed:', err)
+    return null
+  }
+}
+
+ipcMain.handle('get-artist-discography', async (_e, artist: string) => {
+  if (!artist || typeof artist !== 'string') return { ok: false, error: 'No artist' }
+  const result = await fetchArtistDiscography(artist)
+  if (!result) return { ok: false, error: 'Discography unavailable' }
+  return { ok: true, albums: result.albums }
+})
+
 // Combined multi-source search for artist info
+// 4.5: Exa.ai added as a third source. Runs in parallel with Wikipedia
+// + MusicBrainz; concatenated into the artist-facts block fed to every
+// Music Man / Megan / Stephen / chat call. Skips silently if
+// EXA_API_KEY is missing — Wikipedia + MusicBrainz still ground the
+// facts. Query templates live in src/main/exa.ts — edit those to tune
+// what Exa actually retrieves.
 async function searchWeb(query: string, album?: string): Promise<string> {
+  const { exaArtistFacts, exaArtistAlbum } = await import('./exa')
   const artist = query.replace(/\s*(musician|band|artist|music)\s*/gi, '').trim()
-  const [wiki, mb] = await Promise.all([
+  const [wiki, mb, exa] = await Promise.all([
     searchWikipedia(query),
     searchMusicBrainz(artist, album),
+    album ? exaArtistAlbum(artist, album) : exaArtistFacts(artist),
   ])
   const parts = []
   if (mb) parts.push(`[MusicBrainz] ${mb}`)
   if (wiki) parts.push(`[Wikipedia] ${wiki}`)
-  return parts.join('\n')
+  if (exa) parts.push(exa)
+  return parts.join('\n\n')
+}
+
+// 4.5: short-lived cache for artist-fact lookups. Hover-prefetch from the
+// mic button writes here; the streaming musicman-dj handler reads here.
+// 5 min TTL is long enough to cover "user hovers mic, takes a beat,
+// clicks" + the streaming response itself, short enough that stale facts
+// don't pile up if the user leaves the app open for hours. Keyed on a
+// normalized artist+album signature so prefetches for the same track
+// from different views coalesce.
+interface FactCacheEntry { value: string; expiresAt: number }
+const factCache = new Map<string, FactCacheEntry>()
+const FACT_CACHE_TTL_MS = 5 * 60 * 1000
+
+function factCacheKey(artist: string, album: string): string {
+  return `${(artist || '').toLowerCase().trim()}|||${(album || '').toLowerCase().trim()}`
+}
+
+async function searchWebCached(query: string, album?: string): Promise<string> {
+  const artist = query.replace(/\s*(musician|band|artist|music)\s*/gi, '').trim()
+  const key = factCacheKey(artist, album || '')
+  const now = Date.now()
+  const cached = factCache.get(key)
+  if (cached && cached.expiresAt > now) return cached.value
+  const value = await searchWeb(query, album)
+  factCache.set(key, { value, expiresAt: now + FACT_CACHE_TTL_MS })
+  return value
+}
+
+// 4.5: sync-time bitrate conversion. Re-encodes lossless tracks
+// (ALAC/FLAC/WAV/AIFF) into AAC at the user-chosen target before they
+// land on the iPod — same iTunes feature as "Convert higher bit rate
+// songs to 256 kbps AAC". Saves typically 4-6x space on lossless
+// libraries without touching the master files on the laptop.
+//
+// Cache layout: userData/sync-convert-cache/<sha1(src+target)>.m4a
+// Mtime-keyed freshness so re-syncs reuse existing mirrors instantly.
+// Separate from the play-cache (which is ALAC→256k only, for Chromium
+// playback) because sync target is user-selectable (128/192/256) and
+// we don't want the play-cache hit to silently downgrade playback
+// quality when the user picks a sync target other than 256.
+const SYNC_CONVERT_CACHE_SUBDIR = 'sync-convert-cache'
+const LOSSLESS_EXTS = new Set(['.alac', '.flac', '.wav', '.wave', '.aiff', '.aif'])
+const LOSSLESS_CODECS = new Set(['alac', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_s16be', 'pcm_s24be'])
+
+async function buildAacMirror(srcPath: string, targetKbps: number): Promise<string | null> {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const execP = promisify(execFile)
+  const { createHash } = await import('crypto')
+
+  // Quick ext gate: if the source doesn't smell lossless, skip without
+  // even probing. Saves the ~200-500ms ffprobe round trip per non-
+  // lossless track in a large library sync.
+  const ext = srcPath.slice(srcPath.lastIndexOf('.')).toLowerCase()
+  let probeNeeded = LOSSLESS_EXTS.has(ext)
+  // .m4a files can be either ALAC (lossless) or AAC (already
+  // compressed). Need ffprobe to tell which.
+  if (ext === '.m4a' || ext === '.mp4') probeNeeded = true
+  if (!probeNeeded) return null
+
+  // Source mtime gates cache freshness.
+  const srcStat = await stat(srcPath).catch(() => null)
+  if (!srcStat) return null
+
+  // ffprobe codec
+  let codec = ''
+  try {
+    const { stdout } = await execP('ffprobe', [
+      '-v', 'error', '-select_streams', 'a:0',
+      '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', srcPath,
+    ], { timeout: 5000 })
+    codec = (stdout || '').trim().toLowerCase()
+  } catch {
+    return null
+  }
+  // Remember the codec so future syncs short-circuit the byte-identical
+  // skip without paying for another ffprobe + USB recopy round-trip.
+  if (codec) codecByAbsPath.set(srcPath, codec)
+  if (!LOSSLESS_CODECS.has(codec)) return null  // AAC, MP3, etc — keep as-is
+
+  // Cache path keyed on source + target bitrate. Different bitrates
+  // produce different mirror files.
+  const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
+  await mkdir(cacheDir, { recursive: true }).catch(() => {})
+  const hash = createHash('sha1').update(`${srcPath}|${targetKbps}`).digest('hex').slice(0, 16)
+  const cached = join(cacheDir, `${hash}.m4a`)
+  try {
+    const cStat = await stat(cached)
+    if (cStat.mtimeMs >= srcStat.mtimeMs) return cached  // fresh
+  } catch { /* not cached yet */ }
+
+  // Transcode. ~5-30s per track depending on length + CPU.
+  const tmp = cached + '.partial.m4a'
+  try {
+    await execP('ffmpeg', [
+      '-y', '-i', srcPath, '-vn',
+      '-c:a', 'aac', '-b:a', `${targetKbps}k`,
+      '-map_metadata', '0',
+      tmp,
+    ], { timeout: 600000 })
+    const { rename: renameFS } = await import('fs/promises')
+    await renameFS(tmp, cached)
+    return cached
+  } catch (err) {
+    try { await unlink(tmp) } catch { /* already gone */ }
+    console.warn(`[sync-convert] ffmpeg failed for ${srcPath}:`, err)
+    return null
+  }
 }
 
 // ── Auto-detect iPod (cross-platform: scans /Volumes/ on macOS, drive letters on Windows) ──
@@ -1414,7 +2081,148 @@ async function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknow
   })
 }
 
-const LIBRARY_PATH = join(app.getPath('userData'), 'library.json')
+// 4.5.0-90 — STATE_DIR resolves to NAS (/Volumes/JakeShared/JakeTunesState)
+// when mounted at app boot, else falls back to userData. See state-dir.ts.
+const LIBRARY_PATH = join(STATE_DIR, 'library.json')
+
+// 4.5.0-106 Phase 2.5 — singleton in-memory caches for the hottest NAS
+// state files. Lazy-loaded on first access, mutated in RAM, flushed to
+// NAS in the background. See state-cache.ts.
+//
+// Library cache is read-only (writes still go through the save-tracks
+// atomic-rename path which uses a pre-write disk read for deleted-path
+// diff). Callers that mutate via save-tracks invalidate the cache so
+// the next read picks up fresh content.
+interface CachedLibrary { tracks: unknown[]; playlists?: unknown[] }
+const libraryCache = new JsonFileCache<CachedLibrary>(
+  () => LIBRARY_PATH,
+  () => ({ tracks: [], playlists: [] }),
+  'library',
+)
+const overridesCache = new JsonFileCache<Record<string, unknown>>(
+  () => join(STATE_DIR, 'metadata-overrides.json'),
+  () => ({}),
+  'overrides',
+)
+const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
+  () => join(STATE_DIR, 'mobile-stars.json'),
+  () => ({ trackIds: [] }),
+  'mobile-stars',
+)
+const listenerProfileCache = new JsonFileCache<Record<string, unknown>>(
+  () => join(STATE_DIR, 'listener-profile.json'),
+  () => ({}),
+  'listener-profile',
+)
+const musicmanMemoryCache = new JsonFileCache<unknown[]>(
+  () => join(STATE_DIR, 'musicman-memory.json'),
+  () => [],
+  'musicman-memory',
+)
+const playlistsCache = new JsonFileCache<unknown[]>(
+  () => join(STATE_DIR, 'playlists.json'),
+  () => [],
+  'playlists',
+)
+
+// 4.5.0-91 Phase 2.5 — orphaned-edit detection state. Populated by
+// detectStateConflicts() at boot when STATE_IS_NAS. UI reads it via
+// the get-state-conflicts IPC; reconcile-state-conflicts pushes the
+// local-newer files to NAS (with .reconcile-bak snapshots of what
+// got overwritten on NAS, in case the reconciliation itself was
+// wrong). Skipped entirely in local-fallback mode (there's nothing
+// to compare against).
+const STATE_FILE_NAMES = [
+  'library.json',
+  'metadata-overrides.json',
+  'playlists.json',
+  'mobile-stars.json',
+  'mobile-plays.json',
+  'play-events.jsonl',
+  'embeddings.bin',
+] as const
+interface StateConflict {
+  file: string
+  localMtimeMs: number
+  nasMtimeMs: number
+  localPath: string
+  nasPath: string
+}
+let stateConflicts: StateConflict[] = []
+async function detectStateConflicts(): Promise<void> {
+  stateConflicts = []
+  const localDir = app.getPath('userData')
+  const CONFLICT_THRESHOLD_MS = 60_000 // ignore <60s jitter
+  for (const f of STATE_FILE_NAMES) {
+    const localPath = join(localDir, f)
+    const nasPath = join(NAS_STATE_DIR_PATH, f)
+    try {
+      const [ls, ns] = await Promise.all([
+        stat(localPath).catch(() => null),
+        stat(nasPath).catch(() => null),
+      ])
+      if (!ls) continue // no local copy: nothing to reconcile
+      if (!ns) {
+        // NAS file missing entirely (first-run migration?) — local
+        // wins by default. Worth surfacing so user can decide.
+        stateConflicts.push({ file: f, localMtimeMs: ls.mtimeMs, nasMtimeMs: 0, localPath, nasPath })
+        continue
+      }
+      if (ls.mtimeMs > ns.mtimeMs + CONFLICT_THRESHOLD_MS) {
+        stateConflicts.push({ file: f, localMtimeMs: ls.mtimeMs, nasMtimeMs: ns.mtimeMs, localPath, nasPath })
+      }
+    } catch { /* skip on stat error */ }
+  }
+  if (stateConflicts.length > 0) {
+    const summary = stateConflicts.map(c => `${c.file} (local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s)`).join(', ')
+    console.warn(`[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
+  } else {
+    console.log('[state] no orphaned local edits detected')
+  }
+}
+ipcMain.handle('get-state-conflicts', (): {
+  mode: 'NAS' | 'local-fallback'; nasDir: string; localDir: string; conflicts: StateConflict[];
+} => {
+  return {
+    mode: STATE_IS_NAS ? 'NAS' : 'local-fallback',
+    nasDir: NAS_STATE_DIR_PATH,
+    localDir: app.getPath('userData'),
+    conflicts: stateConflicts,
+  }
+})
+ipcMain.handle('reconcile-state-conflicts', async (): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
+  if (!STATE_IS_NAS) {
+    return { ok: false, pushed: 0, backups: [], error: 'Not in NAS storage mode — nothing to push to.' }
+  }
+  if (stateConflicts.length === 0) {
+    return { ok: true, pushed: 0, backups: [] }
+  }
+  // Snapshot directory for the NAS copies we're about to overwrite —
+  // single rollback point if the reconciliation itself is wrong.
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backupDir = join(NAS_STATE_DIR_PATH, '.reconcile-bak', stamp)
+  await mkdir(backupDir, { recursive: true }).catch(() => {})
+  const backups: string[] = []
+  let pushed = 0
+  for (const c of stateConflicts) {
+    try {
+      // Back up NAS copy first (if it exists), then copy local → NAS.
+      try {
+        await copyFile(c.nasPath, join(backupDir, c.file))
+        backups.push(join(backupDir, c.file))
+      } catch { /* NAS file missing originally — nothing to back up */ }
+      await copyFile(c.localPath, c.nasPath)
+      pushed++
+      console.log(`[state] reconciled "${c.file}" → NAS (local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer)`)
+    } catch (err) {
+      console.warn(`[state] reconcile failed for "${c.file}":`, err instanceof Error ? err.message : err)
+    }
+  }
+  // Re-scan so the renderer's next get-state-conflicts returns the
+  // empty post-reconciliation state.
+  await detectStateConflicts()
+  return { ok: true, pushed, backups }
+})
 
 ipcMain.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
@@ -1464,6 +2272,16 @@ ipcMain.handle('load-tracks', async () => {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const library = JSON.parse(raw)
     const tracks = library.tracks || []
+    // Bug #2: record the mtime we just observed so save-library can detect
+    // external writes that happen between this load and the next save.
+    try {
+      const s = await stat(LIBRARY_PATH)
+      lastLoadedLibraryMtimeMs = Math.round(s.mtimeMs)
+    } catch { /* non-fatal */ }
+    // 4.5: refresh the structural taste digest so every character call
+    // gets the fresh shape of the library (top artists, eras, genres,
+    // signatures). Cheap — runs once per load-tracks event.
+    refreshLibraryDigest(tracks)
     // (4.1: removed launch-time prewarm scheduler. ALAC transcodes are
     // now done synchronously at import time and via the explicit
     // "Prepare ALAC tracks" maintenance action — no background scan
@@ -1491,6 +2309,10 @@ ipcMain.handle('load-tracks', async () => {
           const raw = await readFile(LIBRARY_PATH, 'utf-8')
           const library = JSON.parse(raw)
           const tracks = library.tracks || []
+          try {
+            const s = await statFn(LIBRARY_PATH)
+            lastLoadedLibraryMtimeMs = Math.round(s.mtimeMs)
+          } catch { /* non-fatal */ }
           return {
             tracks,
             playlists: library.playlists || [],
@@ -1541,6 +2363,14 @@ ipcMain.handle('load-tracks', async () => {
 // Also stamps the file's mtime we wrote so the external-change watcher
 // can tell "we wrote this" from "someone else wrote this".
 let lastSelfWriteMtimeMs = 0
+
+// Bug #2: record library.json's mtime at every successful load. Save-library
+// uses this as the "baseline" for detecting external writes that happened
+// between our load and our save. If on-disk mtime is newer than BOTH our
+// last load AND our last self-write (with 2s drift tolerance), another
+// machine wrote to NAS while we were sitting on a stale snapshot — refusing
+// the save prevents the silent overwrite that lost workmini's 12 imports.
+let lastLoadedLibraryMtimeMs = 0
 
 // Debounced iTunesDB rewrite trigger. Multiple rapid deletes should
 // only result in ONE iTunesDB rebuild — costly operation that requires
@@ -1606,6 +2436,44 @@ function scheduleDbRebuild(deletedPaths: string[]) {
 }
 
 ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+  // Bug #1 guard: if we booted in local-fallback mode and NAS later
+  // reappeared, our in-memory tracks are stale relative to whatever
+  // workmini/homemini wrote to NAS while we were offline. Saving here
+  // would silently overwrite that work (the "12 vanished songs" bug).
+  // Refuse the write until restart; the renderer banner explains why.
+  const lockReason = isSaveLocked()
+  if (lockReason) {
+    console.warn(`[save-library] refused (saves locked): ${lockReason}`)
+    return { ok: false, error: 'state-save-locked', reason: lockReason }
+  }
+  // Bug #2 guard: another machine may have written to library.json on NAS
+  // since our last load/save. Check on-disk mtime against both baselines
+  // (lastLoadedLibraryMtimeMs from load-tracks + lastSelfWriteMtimeMs from
+  // our own writes). If on-disk is meaningfully newer than both, we'd be
+  // overwriting fresh work — refuse, surface the conflict, ask the
+  // renderer to reload. 2s tolerance matches the existing watcher's
+  // self-write skip window so atomic-rename drift doesn't false-positive.
+  // `force` skips the check (used by recovery paths).
+  if (!force && lastLoadedLibraryMtimeMs > 0) {
+    try {
+      const onDisk = await stat(LIBRARY_PATH)
+      const onDiskMtime = Math.round(onDisk.mtimeMs)
+      const driftFromLoad = onDiskMtime - lastLoadedLibraryMtimeMs
+      const driftFromSelfWrite = onDiskMtime - lastSelfWriteMtimeMs
+      if (driftFromLoad > 2000 && driftFromSelfWrite > 2000) {
+        console.warn(`[save-library] EXTERNAL-WRITE CONFLICT: on-disk mtime ${onDiskMtime} > load ${lastLoadedLibraryMtimeMs} (+${driftFromLoad}ms) AND > self-write ${lastSelfWriteMtimeMs} (+${driftFromSelfWrite}ms). Refusing to overwrite.`)
+        libraryCache.invalidate()
+        mainWindow?.webContents.send('library-external-change')
+        return {
+          ok: false,
+          error: 'external-write-conflict',
+          onDiskMtime,
+          lastLoadedMtime: lastLoadedLibraryMtimeMs,
+          lastSelfWriteMtime: lastSelfWriteMtimeMs,
+        }
+      }
+    } catch { /* file briefly missing during atomic replace — proceed */ }
+  }
   try {
     if ((!tracks || (tracks as unknown[]).length === 0) && !force) {
       // Check if there's already a non-empty library on disk; refuse to overwrite.
@@ -1644,6 +2512,17 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     // level: observers see either the old full file or the new full
     // file, never a mid-write slice.
     const library = { tracks, playlists: playlists || [] }
+    // 4.5: refresh the structural library digest so character calls
+    // see up-to-date ownership shape (new imports change top artists,
+    // genre counts, era spread). Called BEFORE write so even if write
+    // fails the digest matches the renderer's current state.
+    refreshLibraryDigest(tracks as DigestTrack[])
+    // 4.5.0-109: prime (not set) — cache stays hot in RAM but does NOT
+    // schedule a background NAS write of its own. The atomic write
+    // below is the single canonical writer; the cache's flush racing
+    // with it on SMB is what zeroed out NAS library.json overnight in
+    // -106/-108 (rename-after-unlink failure left a 0-byte file).
+    libraryCache.prime(library as unknown as CachedLibrary)
     const tmp = LIBRARY_PATH + '.partial.json'
     await writeFile(tmp, JSON.stringify(library, null, 2))
     const { rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
@@ -1713,30 +2592,51 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
 // which reads the fresh disk state into memory.
 import { watch as fsWatch } from 'fs'
 let libraryWatcherStarted = false
+let lastObservedLibraryMtimeMs = 0
+async function checkLibraryExternalChange(): Promise<void> {
+  try {
+    const s = await stat(LIBRARY_PATH)
+    const mt = Math.round(s.mtimeMs)
+    if (lastObservedLibraryMtimeMs === 0) {
+      lastObservedLibraryMtimeMs = mt
+      return
+    }
+    if (mt === lastObservedLibraryMtimeMs) return
+    lastObservedLibraryMtimeMs = mt
+    // Skip any change event that landed within a 2-second window of
+    // our own save-library finishing. Atomic-rename writes can fire
+    // watch events with slight mtime drift (up to hundreds of ms on
+    // some filesystems), and the renderer's debounced save loop can
+    // chain several saves inside a second — a too-tight tolerance
+    // caused a feedback loop where save→reload→save spawned
+    // cascading db_reader.py processes.
+    if (Math.abs(mt - lastSelfWriteMtimeMs) < 2000) return
+    console.log(`[watch] library.json changed externally (mtime ${mt}, self ${lastSelfWriteMtimeMs}) — asking renderer to reload`)
+    // 4.5.0-106: external change happened — drop the in-memory cache
+    // so the next reader picks up fresh content. Without this the cache
+    // would serve stale data until app restart.
+    libraryCache.invalidate()
+    mainWindow?.webContents.send('library-external-change')
+  } catch { /* file briefly missing during atomic replace — ignore */ }
+}
 function startLibraryWatcher() {
   if (libraryWatcherStarted) return
   libraryWatcherStarted = true
   try {
-    fsWatch(LIBRARY_PATH, async () => {
-      try {
-        const s = await stat(LIBRARY_PATH)
-        const mt = Math.round(s.mtimeMs)
-        // Skip any fsWatch event that landed within a 2-second window
-        // of our own save-library finishing. Atomic-rename writes can
-        // fire watch events with slight mtime drift (up to hundreds of
-        // ms on some filesystems), and the renderer's debounced save
-        // loop can chain several saves inside a second — a too-tight
-        // tolerance here caused a feedback loop where the save-reload-
-        // save chain spawned cascading db_reader.py processes.
-        if (Math.abs(mt - lastSelfWriteMtimeMs) < 2000) return
-        console.log(`[watch] library.json changed externally (mtime ${mt}, self ${lastSelfWriteMtimeMs}) — asking renderer to reload`)
-        mainWindow?.webContents.send('library-external-change')
-      } catch { /* file briefly missing during atomic replace — ignore */ }
-    })
-    console.log('[watch] library.json watcher active')
+    fsWatch(LIBRARY_PATH, () => { void checkLibraryExternalChange() })
+    console.log('[watch] library.json fsWatch active')
   } catch (err) {
-    console.warn('[watch] could not start library.json watcher:', err)
+    console.warn('[watch] fsWatch could not start:', err)
   }
+  // 4.5.0-92 — periodic mtime poll as fsWatch backstop. fsWatch over
+  // SMB (Phase 2 NAS mode) is notoriously unreliable — events may
+  // not fire when external writers (Mini, future workmini) update
+  // library.json. The poll runs at a low cadence so it's cheap even
+  // on local SSD, and guarantees we eventually notice external
+  // changes regardless of fsWatch's delivery reliability. setInterval
+  // is process-lifetime; no cleanup needed for the app's lifetime.
+  setInterval(() => { void checkLibraryExternalChange() }, 15_000)
+  console.log(`[watch] library.json mtime poll active (15s cadence, ${STATE_IS_NAS ? 'NAS-mode backstop' : 'local-mode redundant'})`)
 }
 
 // Sync: read iPod DB and return NEW tracks/playlists not already in the library
@@ -1802,21 +2702,65 @@ ipcMain.handle('get-ipod-db-tracks', async () => {
 // running sync. The race manifests as the preflight progress
 // counter running up to ~1600/4530 then jumping back to 0/4530, plus
 // random write failures from two writers stomping the same iTunesDB.
+// 4.5: also tracks WHEN the sync started so a hung sync auto-clears
+// after 5 minutes. Pre-fix, a sync that hung (network volume gone,
+// disk full, panic) left the flag permanently set; every subsequent
+// Sync click failed with "A sync is already in progress" until the
+// app was relaunched. Now the watchdog releases the flag so the user
+// can retry without restarting.
 let syncInFlight = false
+let syncStartedAt = 0
+const SYNC_HANG_TIMEOUT_MS = 5 * 60 * 1000
+// 4.5.0-109: cancellation flag. Set by the cancel-sync IPC handler;
+// checked by the copy loop between each file. The renderer's Cancel
+// button calls cancel-sync, which flips this on; runSyncToIpod bails
+// out at the next file-copy boundary and returns ok:false, cancelled:true.
+// Reset to false at the top of every new runSyncToIpod call.
+let syncCancelRequested = false
 
-ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
+ipcMain.handle('cancel-sync', async () => {
+  if (!syncInFlight) return { ok: true, wasRunning: false }
+  syncCancelRequested = true
+  return { ok: true, wasRunning: true }
+})
+
+interface SyncConvertOptions {
+  enabled: boolean
+  targetKbps: 128 | 192 | 256
+}
+
+ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
   if (syncInFlight) {
-    return { ok: false, error: 'A sync is already in progress', copied: 0, copyErrors: 0 }
+    const ageMs = Date.now() - syncStartedAt
+    if (ageMs > SYNC_HANG_TIMEOUT_MS) {
+      console.warn(`[sync] previous syncInFlight has been pending for ${Math.round(ageMs/1000)}s — assuming hung, releasing the lock`)
+      syncInFlight = false
+    } else {
+      // 4.5.0-109: iTunes behavior — clicking Sync while a sync is
+      // already running silently no-ops instead of throwing an error
+      // toast. The existing sync continues; the user's intent ("I want
+      // it to be syncing") is already satisfied. Pre-fix this returned
+      // ok:false with an error string, which the renderer surfaced as
+      // a "Sync failed" notice — confusing, since nothing actually
+      // failed. The renderer's syncing state is already true, so a
+      // benign ok:true with a flag is sufficient.
+      console.log(`[sync] click suppressed — already running (${Math.round(ageMs/1000)}s in)`)
+      return { ok: true, alreadyRunning: true, copied: 0, copyErrors: 0 }
+    }
   }
   syncInFlight = true
+  syncStartedAt = Date.now()
   try {
-    return await runSyncToIpod(tracks, playlists)
+    return await runSyncToIpod(tracks, playlists, convertOptions)
   } finally {
     syncInFlight = false
+    syncStartedAt = 0
   }
 })
 
-async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>): Promise<unknown> {
+async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions): Promise<unknown> {
+  // 4.5.0-109: reset cancel flag at the top of every sync.
+  syncCancelRequested = false
   if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', copied: 0 }
   const IPOD_MOUNT = detectedIpodMount
   // Strip the trailing "iPod_Control/Music" segment whether it's / or \ delimited.
@@ -1963,7 +2907,30 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       try {
         const ls = await stat(localFile)
         if (ls.size === ipodSize) {
-          continue   // byte-identical, nothing to do
+          // 4.5: byte-identical normally means "already synced, skip".
+          // EXCEPTION: if bitrate conversion is enabled AND the source
+          // is actually lossless, fall through and requeue — the iPod
+          // copy is the FULL-quality file and we want to replace it
+          // with an AAC mirror. iTunes-style "convert higher bit rate
+          // songs" RETROACTIVELY shrinks lossless tracks synced before
+          // the toggle was on.
+          //
+          // Critical: .m4a/.mp4 alone is NOT a lossless signal — most
+          // .m4a in a typical library are already AAC. Treating them
+          // as lossless candidates causes thousands of byte-identical
+          // re-copies over USB that free zero space (buildAacMirror
+          // probes the codec, sees AAC, returns null, then we copy the
+          // source over itself). Require either a lossless extension
+          // OR a codec hint that explicitly says lossless before
+          // requeuing.
+          const localExt = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
+          const hint = (codecByAbsPath.get(localFile) || '').toLowerCase()
+          const hintSaysLossless = hint === 'alac' || LOSSLESS_CODECS.has(hint)
+          const isLossless = LOSSLESS_EXTS.has(localExt) || hintSaysLossless
+          if (!(convertOptions?.enabled && isLossless)) {
+            continue   // byte-identical and no re-encode needed
+          }
+          // fall through — queue this for conversion
         }
         // Size differs → local was re-encoded/updated, queue a re-copy.
         // (We fall through to push this into toCopy below — the copy
@@ -2063,19 +3030,129 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   mainWindow?.webContents.send('sync-progress', {
     phase: 'copy', current: 0, total: totalToCopy, title: '',
   })
+  // 4.5: track-id → newColonPath when bitrate conversion changes
+  // the destination extension (FLAC/WAV/AIFF → .m4a). Merged into the
+  // existing pathRewrites array before the iTunesDB writer runs so
+  // the device sees the converted file at its new path.
+  const convertedPathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  // Map local → trackId so we can look up the right pathRewrite entry
+  // during the copy loop without re-walking the tracks array.
+  const trackByLocal = new Map<string, Record<string, unknown>>()
+  for (const c of candidates) trackByLocal.set(c.localFile, c.track)
+
   for (const { local, ipod, title } of toCopy) {
+    // 4.5.0-109: cancellation check at the file boundary. Per-file is the
+    // right granularity — fine enough that a Cancel click is felt within
+    // seconds, coarse enough that we don't shred a half-written copy
+    // (each copyFile is atomic from the FS perspective). Emit a final
+    // progress event with phase:'cancelled' so the renderer flips out
+    // of the syncing state cleanly.
+    if (syncCancelRequested) {
+      mainWindow?.webContents.send('sync-progress', {
+        phase: 'cancelled', current: copied + copyErrors, total: totalToCopy, title: '',
+      })
+      console.log(`sync-to-ipod: cancelled by user after ${copied} of ${totalToCopy} files`)
+      return { ok: false, error: 'Sync cancelled by user', copied, copyErrors, cancelled: true }
+    }
+    let srcToCopy = local
+    let dstToCopy = ipod
+    // ── Bitrate conversion ────────────────────────────────────────
+    // When enabled, try to build an AAC mirror of the source. Returns
+    // null for non-lossless inputs, in which case we just copy the
+    // original. For lossless inputs we substitute the mirror as the
+    // copy source — and if the file extension changed (FLAC/WAV/AIFF
+    // → .m4a), rewrite the iPod-side destination + the iTunesDB
+    // track entry's path so the device knows the new filename.
+    if (convertOptions?.enabled) {
+      try {
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'copy', current: copied + copyErrors, total: totalToCopy,
+          title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
+        })
+        const mirror = await buildAacMirror(local, convertOptions.targetKbps)
+        if (mirror) {
+          srcToCopy = mirror
+          // If source ext differs from .m4a, rewrite the iPod-side
+          // destination filename too. Otherwise (.m4a / .mp4 ALAC)
+          // the existing destination is already correct.
+          const srcExt = local.slice(local.lastIndexOf('.')).toLowerCase()
+          if (srcExt !== '.m4a' && srcExt !== '.mp4') {
+            // Replace dest extension with .m4a
+            const dotIdx = ipod.lastIndexOf('.')
+            dstToCopy = dotIdx > 0 ? ipod.slice(0, dotIdx) + '.m4a' : ipod + '.m4a'
+            // Build the equivalent colon-path for the iTunesDB rewrite
+            const tr = trackByLocal.get(local)
+            if (tr) {
+              const newRel = dstToCopy.slice(IPOD_MOUNT.length + 1)
+              const newColonPath = ':' + newRel.split(pathSep).join(':')
+              const oldColon = String(tr.path || '')
+              convertedPathRewrites.push({
+                id: tr.id as number,
+                oldPath: oldColon,
+                newPath: newColonPath,
+              })
+            }
+          }
+        }
+      } catch (err) {
+        // Conversion failed — fall through and copy the original. Worse
+        // case: the iPod gets a bigger file than the user expected, but
+        // sync still completes.
+        console.warn(`[sync-convert] mirror build failed for ${local}, copying original:`, err)
+      }
+    }
+    // Last-mile byte-identical skip. When the source was converted to an
+    // AAC mirror (or matches the iPod copy for any other reason), check
+    // the destination size first — if it already matches the source we
+    // are about to write, the copyFile would be a pure USB-bandwidth
+    // burn. This is the path that fires for the "library ALAC source
+    // vs iPod AAC mirror" case: the planning-phase size compare sees
+    // different sizes (ALAC vs AAC) and queues a re-copy, but once
+    // buildAacMirror swaps srcToCopy to the cached mirror, the mirror's
+    // size matches what's already on the iPod and there's no work to do.
     try {
-      const dir = ipod.substring(0, ipod.lastIndexOf(pathSep))
+      const srcStat = await stat(srcToCopy)
+      const dstStat = await stat(dstToCopy).catch(() => null)
+      if (dstStat && dstStat.size === srcStat.size) {
+        copied++
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+        })
+        continue
+      }
+    } catch { /* fall through to copy — non-fatal */ }
+    try {
+      const dir = dstToCopy.substring(0, dstToCopy.lastIndexOf(pathSep))
       await mkdir(dir, { recursive: true })
-      await copyFile(local, ipod)
+      await copyFile(srcToCopy, dstToCopy)
       copied++
+      // 4.5: orphan cleanup — when a lossless source (.flac/.wav/.aif)
+      // is converted, the destination filename changes to .m4a. The
+      // OLD file at `ipod` (the original-extension copy from a prior
+      // sync) becomes orphaned: iTunesDB no longer references it (we
+      // pushed a path rewrite above) but the bytes still sit on the
+      // iPod taking space. Delete it now so the conversion actually
+      // frees the GB the user expected. Only fires when dst != ipod
+      // (i.e. extension changed); same-ext conversion (.m4a→.m4a)
+      // overwrites in place via copyFile, no orphan to clean.
+      if (dstToCopy !== ipod) {
+        try {
+          await unlink(ipod)
+        } catch { /* old file may have already been moved/missing */ }
+      }
     } catch (err) {
-      console.error(`Copy failed: ${local} → ${ipod}:`, err)
+      console.error(`Copy failed: ${srcToCopy} → ${dstToCopy}:`, err)
       copyErrors++
     }
     mainWindow?.webContents.send('sync-progress', {
       phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
     })
+  }
+  // Merge the convert-driven path rewrites into the existing array
+  // so the smart-match block below picks them up alongside its own.
+  if (convertedPathRewrites.length > 0) {
+    pathRewrites.push(...convertedPathRewrites)
+    console.log(`sync-to-ipod: converted ${convertedPathRewrites.length} lossless files to AAC; rewriting their iTunesDB paths`)
   }
   // Apply smart-match path rewrites to the in-flight tracks array so
   // the Python DB writer (which reads this JSON) gets the correct
@@ -3222,6 +4299,14 @@ function getArtistImageDir(): string {
 }
 
 const ARTIST_IMAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000  // 30 days
+// 4.5.0-72 — miss tombstones used to share the 30-day TTL with hits.
+// Reality: a real "Bandsintown + TheAudioDB both have no photo for
+// this artist" is rare; transient misses (network, source rate-limit,
+// fetch threw) are common. 30-day misses meant The Beatles + The
+// Smiths + literally-any-band could go without a photo for a month
+// after one bad lookup. New: misses live 6 hours, refresh on next
+// view. Hits keep the 30-day TTL.
+const ARTIST_IMAGE_MISS_TTL_MS = 6 * 60 * 60 * 1000  // 6 hours
 const ARTIST_IMAGE_IN_FLIGHT = new Map<string, Promise<string | null>>()
 
 function artistSlug(name: string): string {
@@ -3262,52 +4347,74 @@ async function getArtistImage(artist: string): Promise<string | null> {
     // they don't have until the tombstone expires.
     try {
       const st = await stat(miss)
-      if (Date.now() - st.mtimeMs < ARTIST_IMAGE_MAX_AGE_MS) return null
+      if (Date.now() - st.mtimeMs < ARTIST_IMAGE_MISS_TTL_MS) return null
     } catch { /* doesn't exist — fall through */ }
 
+    // 4.5.0-66 — photo fallback chain. Old behavior: Bandsintown only;
+    // miss → letter avatar. New: Bandsintown → TheAudioDB (MBID-resolved
+    // when possible) → letter avatar. Both sources are name-based, so
+    // we use resolveCanonicalArtist's MB-canonical name + MBID to
+    // disambiguate ("Drake" the rapper vs other Drakes).
+    const tryDownload = async (imgUrl: string): Promise<Buffer | null> => {
+      try {
+        const r = await fetch(imgUrl, {
+          headers: { 'User-Agent': `JakeTunes/${app.getVersion()}` },
+          signal: AbortSignal.timeout(10_000),
+        })
+        if (!r.ok) return null
+        const b = Buffer.from(await r.arrayBuffer())
+        return b.length >= 200 ? b : null
+      } catch { return null }
+    }
+    let buf: Buffer | null = null
+    // Resolve MBID once — used by both backends. Library-genre context
+    // makes the resolver pick the right entity for common names.
+    const libraryGenres = await getLibraryGenresForArtist(artist)
+    const canon = await resolveCanonicalArtist(artist, { libraryGenres })
+    const lookupName = canon?.name || artist
+    // Source 1: Bandsintown
     try {
-      const url = `https://rest.bandsintown.com/artists/${encodeURIComponent(artist)}?app_id=jaketunes-desktop`
+      const url = `https://rest.bandsintown.com/artists/${encodeURIComponent(lookupName)}?app_id=jaketunes-desktop`
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'JakeTunes/4.4', Accept: 'application/json' },
+        headers: { 'User-Agent': `JakeTunes/${app.getVersion()}`, Accept: 'application/json' },
         signal: AbortSignal.timeout(7000),
       })
-      if (!res.ok) {
-        await writeFile(miss, '').catch(() => {})
-        return null
+      if (res.ok) {
+        const body = await res.json() as { image_url?: string; thumb_url?: string }
+        const imgUrl = body.image_url || body.thumb_url
+        if (imgUrl && !imgUrl.includes('bandsintown-no-image') && !imgUrl.includes('placeholder')) {
+          buf = await tryDownload(imgUrl)
+        }
       }
-      const body = await res.json() as { image_url?: string; thumb_url?: string }
-      const imgUrl = body.image_url || body.thumb_url
-      if (!imgUrl) {
-        await writeFile(miss, '').catch(() => {})
-        return null
-      }
-      // Skip Bandsintown's "no photo available" placeholder.
-      if (imgUrl.includes('bandsintown-no-image') || imgUrl.includes('placeholder')) {
-        await writeFile(miss, '').catch(() => {})
-        return null
-      }
-      const imgRes = await fetch(imgUrl, {
-        headers: { 'User-Agent': 'JakeTunes/4.4' },
-        signal: AbortSignal.timeout(10_000),
-      })
-      if (!imgRes.ok) {
-        await writeFile(miss, '').catch(() => {})
-        return null
-      }
-      const buf = Buffer.from(await imgRes.arrayBuffer())
-      if (buf.length < 200) {
-        // suspiciously small — probably an error pixel, not a real photo
-        await writeFile(miss, '').catch(() => {})
-        return null
-      }
-      await writeFile(jpg, buf)
-      // Clear any stale tombstone so the next probe sees the hit.
-      await unlink(miss).catch(() => {})
-      return slug
-    } catch {
+    } catch { /* fall through to next source */ }
+    // Source 2: TheAudioDB. Free, no auth. Prefer MBID lookup when we
+    // have one (artist-mb.php) — eliminates the name-disambiguation
+    // problem the Bandsintown source still has. Falls back to name
+    // search if no MBID.
+    if (!buf) {
+      try {
+        const tadbUrl = canon?.mbid
+          ? `https://www.theaudiodb.com/api/v1/json/2/artist-mb.php?i=${canon.mbid}`
+          : `https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(lookupName)}`
+        const res = await fetch(tadbUrl, {
+          headers: { 'User-Agent': `JakeTunes/${app.getVersion()}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(7000),
+        })
+        if (res.ok) {
+          const body = await res.json() as { artists?: Array<{ strArtistThumb?: string; strArtistFanart?: string; strArtistLogo?: string }> }
+          const a = body.artists?.[0]
+          const candidate = a?.strArtistThumb || a?.strArtistFanart || a?.strArtistLogo
+          if (candidate) buf = await tryDownload(candidate)
+        }
+      } catch { /* both sources missed */ }
+    }
+    if (!buf) {
       await writeFile(miss, '').catch(() => {})
       return null
     }
+    await writeFile(jpg, buf)
+    await unlink(miss).catch(() => {})
+    return slug
   })()
 
   ARTIST_IMAGE_IN_FLIGHT.set(slug, task)
@@ -3372,6 +4479,13 @@ async function saveArtworkIndex(index: Record<string, string>): Promise<void> {
 function getArtworkLocksPath(): string {
   return join(getArtworkDir(), 'user-locked.json')
 }
+// 4.5.0-80 — defense-in-depth backup dir for user-locked JPGs. Every
+// set-custom-artwork ALSO writes a copy here. Startup self-heal
+// restores the main file from this dir if anything (accidental
+// delete, sync glitch, disk error) wipes it.
+function getArtworkLockedBackupDir(): string {
+  return join(getArtworkDir(), 'locked-backup')
+}
 async function loadArtworkLocks(): Promise<Set<string>> {
   try {
     const data = await readFile(getArtworkLocksPath(), 'utf-8')
@@ -3381,6 +4495,109 @@ async function loadArtworkLocks(): Promise<Set<string>> {
     return new Set()
   }
 }
+// 4.5.0-80 — startup self-heal for the user-locked artwork set.
+//
+// The user-locked.json file is now the LEAST authoritative source —
+// it's a cache of what can be derived from disk truth:
+//   - Each user-set cover writes a ${hash}.meta.json sidecar with
+//     `source: 'user-custom'` (set in set-custom-artwork since 4.5.0-55).
+//   - Each user-set cover also writes a copy to locked-backup/${hash}.jpg
+//     (4.5.0-80).
+//
+// On launch we scan both, rebuild user-locked.json to the UNION of
+// (locks already in the file) ∪ (keys with `source: 'user-custom'`
+// sidecars) ∪ (keys with a copy in locked-backup/). Any locked key
+// whose main JPG is missing but the backup exists gets restored.
+//
+// Net effect: even if user-locked.json is accidentally deleted or
+// corrupted, the next launch reconstructs it from the JPGs + sidecars
+// that travel with the artwork. Your hand-picked covers persist.
+async function selfHealUserLockedArtwork(): Promise<void> {
+  const dir = getArtworkDir()
+  const backupDir = getArtworkLockedBackupDir()
+  try { await mkdir(dir, { recursive: true }) } catch { /* ignore */ }
+  try { await mkdir(backupDir, { recursive: true }) } catch { /* ignore */ }
+
+  const { readdir, copyFile: cf, stat: statFn } = await import('fs/promises')
+
+  // Sources of truth: sidecars marked user-custom + JPGs in backup dir.
+  const lockedKeys = new Set<string>(await loadArtworkLocks())
+  let reconstructedFromSidecar = 0
+  let reconstructedFromBackup = 0
+  let restoredJpg = 0
+
+  // Scan sidecars.
+  let sidecarEntries: string[] = []
+  try { sidecarEntries = await readdir(dir) } catch { /* nothing */ }
+  for (const name of sidecarEntries) {
+    if (!name.endsWith('.meta.json')) continue
+    try {
+      const raw = await readFile(join(dir, name), 'utf-8')
+      const meta = JSON.parse(raw) as { artist?: string; album?: string; source?: string; key?: string }
+      if (meta.source !== 'user-custom') continue
+      const key = meta.key || (meta.artist && meta.album
+        ? `${meta.artist.toLowerCase().trim()}|||${meta.album.toLowerCase().trim()}`
+        : '')
+      if (!key) continue
+      if (!lockedKeys.has(key)) {
+        lockedKeys.add(key)
+        reconstructedFromSidecar++
+      }
+    } catch { /* malformed sidecar, skip */ }
+  }
+
+  // Scan backup dir — any JPG here is from a user-locked cover.
+  let backupEntries: string[] = []
+  try { backupEntries = await readdir(backupDir) } catch { /* nothing */ }
+  for (const name of backupEntries) {
+    if (!name.endsWith('.jpg')) continue
+    const hash = name.replace(/\.jpg$/, '')
+    // Find the (artist, album) for this hash via the sidecar.
+    try {
+      const sidecarPath = join(dir, `${hash}.meta.json`)
+      const raw = await readFile(sidecarPath, 'utf-8')
+      const meta = JSON.parse(raw) as { artist?: string; album?: string; key?: string }
+      const key = meta.key || (meta.artist && meta.album
+        ? `${meta.artist.toLowerCase().trim()}|||${meta.album.toLowerCase().trim()}`
+        : '')
+      if (key && !lockedKeys.has(key)) {
+        lockedKeys.add(key)
+        reconstructedFromBackup++
+      }
+      // If the main JPG is missing but the backup exists, restore.
+      const mainJpg = join(dir, `${hash}.jpg`)
+      let mainExists = false
+      try { await statFn(mainJpg); mainExists = true } catch { /* missing */ }
+      if (!mainExists) {
+        try {
+          await cf(join(backupDir, name), mainJpg)
+          restoredJpg++
+        } catch (err) {
+          console.warn(`[artwork-heal] failed to restore ${hash}.jpg from backup:`, err instanceof Error ? err.message : err)
+        }
+      }
+    } catch { /* no sidecar — backup orphan, skip */ }
+  }
+
+  // Persist the reconstructed lock set if it grew.
+  const original = await loadArtworkLocks()
+  if (lockedKeys.size !== original.size) {
+    const locksPath = getArtworkLocksPath()
+    const tmpPath = `${locksPath}.${process.pid}.${Date.now()}.heal.tmp`
+    try {
+      await writeFile(tmpPath, JSON.stringify([...lockedKeys].sort(), null, 2), 'utf-8')
+      const { rename } = await import('fs/promises')
+      await rename(tmpPath, locksPath)
+    } catch (err) {
+      console.warn('[artwork-heal] failed to persist healed locks:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  if (reconstructedFromSidecar + reconstructedFromBackup + restoredJpg > 0) {
+    console.log(`[artwork-heal] reconstructed locks from sidecars: ${reconstructedFromSidecar}, from backups: ${reconstructedFromBackup}; restored ${restoredJpg} missing JPGs from locked-backup/`)
+  }
+}
+
 let artworkLockWriteChain: Promise<void> = Promise.resolve()
 async function setArtworkLock(key: string, locked: boolean): Promise<void> {
   const job = artworkLockWriteChain.then(async () => {
@@ -3443,23 +4660,44 @@ async function extractAndSaveEmbeddedArtwork(
   const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
   // 4.4.57 — user-uploaded art is sacred: NEVER overwrite a locked key.
   if ((await loadArtworkLocks()).has(key)) return null
-  // IDENTITY GATE: never overwrite an existing index entry — a re-import
-  // shouldn't re-version a stable cover, and an album that already has
-  // art (user-set or otherwise) is left exactly as-is. Gated on
-  // `if (!index[key])`, not on text comparison.
-  const existingIndex = await loadArtworkIndex()
-  if (existingIndex[key]) return null
 
   const hash = artworkHash(cleanArtist, cleanAlbum)
   const dir = getArtworkDir()
   const destPath = join(dir, `${hash}.jpg`)
+  const sidecarPath = join(dir, `${hash}.meta.json`)
   await mkdir(dir, { recursive: true })
+
+  // 4.5.0-55 — IDENTITY GATE RELAXED. The old rule "if entry exists,
+  // never overwrite" guaranteed that a single bad first import poisoned
+  // the well forever (Adele Skyfall → orange polygon, May 2026). New
+  // rule: an existing entry is replaced ONLY when the new candidate is
+  // SUBSTANTIALLY higher quality (≥1.5× byte count). That threshold is
+  // wide enough that minor re-encodes of the same image won't thrash
+  // the file, but tight enough that a real 1500×1500 cover beats out a
+  // garbage 300×300 placeholder. User-locked covers always win (above).
+  const newBuf = Buffer.isBuffer(pic.data) ? pic.data : Buffer.from(pic.data)
+  const existingIndex = await loadArtworkIndex()
+  const hasExistingEntry = !!existingIndex[key]
+  let existingSize = 0
+  if (hasExistingEntry) {
+    try { existingSize = (await stat(destPath)).size } catch { existingSize = 0 }
+  }
+  const QUALITY_UPGRADE_RATIO = 1.5
+  if (hasExistingEntry && existingSize > 0 && newBuf.length < existingSize * QUALITY_UPGRADE_RATIO) {
+    // New cover isn't meaningfully bigger than what we have. Keep
+    // existing — avoids re-encode thrash on every re-import.
+    return null
+  }
+  // If we're going to write, log it so the user can see in dev console
+  // why a cover changed.
+  if (hasExistingEntry && existingSize > 0) {
+    console.log(`[artwork] upgrading "${key}" — ${existingSize}B → ${newBuf.length}B (${(newBuf.length / existingSize).toFixed(2)}x)`)
+  }
 
   try {
     const fmt = (pic.format || '').toLowerCase()
-    const buf = Buffer.isBuffer(pic.data) ? pic.data : Buffer.from(pic.data)
     if (fmt === 'image/jpeg' || fmt === 'image/jpg') {
-      await writeFile(destPath, buf)
+      await writeFile(destPath, newBuf)
     } else {
       // Same sips conversion path as set-custom-artwork. Write the
       // embedded blob to a tmp file with an extension sips will recognize,
@@ -3475,7 +4713,7 @@ async function extractAndSaveEmbeddedArtwork(
       const { promisify } = await import('util')
       const execP = promisify(execFile)
       const tmpPath = destPath + '.tmp' + inferredExt
-      await writeFile(tmpPath, buf)
+      await writeFile(tmpPath, newBuf)
       try {
         await execP('sips', ['-s', 'format', 'jpeg', tmpPath, '--out', destPath])
       } finally {
@@ -3487,19 +4725,82 @@ async function extractAndSaveEmbeddedArtwork(
     return null
   }
 
+  // 4.5.0-55 — sidecar metadata. Each artwork JPG gets a ${hash}.meta.json
+  // next to it carrying the (artist, album, source, importedAt) tuple.
+  // Lets us rebuild the index from disk alone if it ever drifts, audit
+  // for orphans, and detect cross-key collisions in the future. Best-
+  // effort: write failures are logged but don't fail the import.
+  try {
+    const meta = {
+      artist: cleanArtist,
+      album: cleanAlbum,
+      key,
+      source: 'embedded',
+      bytes: (await stat(destPath)).size,
+      importedAt: new Date().toISOString(),
+    }
+    await writeFile(sidecarPath, JSON.stringify(meta, null, 2), 'utf-8')
+  } catch (err) {
+    console.warn('[artwork] sidecar write failed (continuing):', err instanceof Error ? err.message : err)
+  }
+
   // Versioned hash so the renderer's <img src="album-art://${hash}.jpg">
   // cache-busts when the same key+hash gets a fresher file.
   const versionedHash = `${hash}_${Date.now()}`
   // Single-flight save — won't race against concurrent imports / fetches /
-  // set-custom-artwork callers. Re-check the index (concurrent-import
-  // race guard) before writing — never overwrite an existing entry.
+  // set-custom-artwork callers. Always update the index entry to the
+  // fresh versioned hash so the renderer cache-busts to the new file.
   const index = await loadArtworkIndex()
-  if (!index[key]) {
-    index[key] = versionedHash
-    await saveArtworkIndex(index)
+  index[key] = versionedHash
+  // 4.5.0-64: drain any pending artwork-key migrations waiting on THIS
+  // key. The race: user edits artist/album in Get Info before the
+  // import's artwork extraction finishes. The migration in save-
+  // metadata-override fired against an empty index, registered itself
+  // as pending, and returned. Now that the original key finally exists,
+  // mirror it into the new keys the user already requested. Without
+  // this, the renderer asks for the new key, gets nothing, and the
+  // album tile renders blank forever (until a manual rescan).
+  const pendingTargets = pendingArtworkMigrations.get(key)
+  if (pendingTargets && pendingTargets.size > 0) {
+    const locks = await loadArtworkLocks()
+    const sourceLocked = locks.has(key)
+    for (const newKey of pendingTargets) {
+      if (!index[newKey]) {
+        index[newKey] = versionedHash
+        console.log(`[artwork-migrate] drained pending "${key}" → "${newKey}"`)
+      }
+      // 4.5.0-79 — propagate lock through the drain too.
+      if (sourceLocked && !locks.has(newKey)) {
+        await setArtworkLock(newKey, true)
+        console.log(`[artwork-migrate] propagated lock "${key}" → "${newKey}" (drain)`)
+      }
+    }
+    pendingArtworkMigrations.delete(key)
   }
+  await saveArtworkIndex(index)
+  // 4.5.0-69 — kick a sync so new artwork lands on homemini within one
+  // sync cycle. Pre-fix the sync orchestrator only fired on import /
+  // metadata-edit / playlist / safety-net, none of which guarantee the
+  // artwork JPG had been written by the time they ran. New artwork
+  // could sit on the MacBook for up to 10 minutes (safety-net interval)
+  // before reaching Mini — which the mobile app reads from. The new
+  // `artwork` reason routes through the same 5s debounce + single-
+  // flight as the others, so a 12-track album import producing 12
+  // artwork writes (mostly no-ops past the first) still coalesces to
+  // one sync run.
+  triggerSync('artwork')
   return { key, hash: versionedHash }
 }
+
+// 4.5.0-64 — pending-migration registry. When save-metadata-override
+// runs an artwork-key migration but the source key isn't in the index
+// yet (import still extracting), we record (oldKey -> newKey) here.
+// extractAndSaveEmbeddedArtwork drains entries for the key it just
+// wrote, so the artwork ends up under the user-edited (artist, album)
+// without a manual rescan. In-memory only — the race window is
+// seconds long; if the app crashes mid-import the missing artwork is
+// recoverable by re-importing the file anyway.
+const pendingArtworkMigrations = new Map<string, Set<string>>()
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'ipod-audio', privileges: { stream: true, bypassCSP: true, supportFetchAPI: true } },
@@ -3576,18 +4877,27 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
           ? callerByVoice.voiceSettings  // per-caller settings from cast.ts
           : voice === DJ_HANDS_VOICE_ID
             ? {
-                // Stephen Hands — confident, understated, party-DJ
-                // energy without being on-stage. Higher stability than
-                // most callers; low style keeps it from being theatrical.
-                stability: 0.6,
+                // Stephen Hands — confident, party-DJ energy. 4.5: bumped
+                // style 0.3→0.5 and dropped stability 0.6→0.45 so v3 has
+                // more room to actually punch the "[excited] run it"
+                // beats rather than reading them as evenly as a weather
+                // report. Pre-4.5 he sounded monotone even on hype lines.
+                stability: 0.45,
                 similarity_boost: 0.8,
-                style: 0.3,
+                style: 0.55,
+                use_speaker_boost: true,
               }
             : {
                 // MM / Megan — emotional, reactive, theatrical banter.
-                stability: 0.28,
+                // 4.5: dropped stability 0.28→0.20 and bumped style
+                // 0.7→0.85 so v3 leans further into the inline tags
+                // ([scoff]/[laughs]/[sighs]) Claude now writes per the
+                // core prompts. Higher style + lower stability = more
+                // variation per phoneme = more "human" delivery.
+                stability: 0.2,
                 similarity_boost: 0.7,
-                style: 0.7,
+                style: 0.85,
+                use_speaker_boost: true,
               }
     let lastError = ''
     for (const model of modelChain) {
@@ -3627,6 +4937,100 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
 })
 
 // Music Man DJ commentary
+// 4.5: hover-prefetch of artist facts. Wired to the mic button hover so
+// that by the time the user clicks, the Wikipedia + MusicBrainz round
+// trips are already cached and the streaming Claude call starts ~500-
+// 1500 ms sooner. Fire-and-forget — the handler returns immediately
+// (resolving once the lookup either hits cache or completes), and the
+// renderer never depends on the return value.
+ipcMain.handle('musicman-prefetch-facts', async (_event, track: { artist: string; album: string }) => {
+  try {
+    await searchWebCached(`${track.artist} musician`, track.album)
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
+// 4.5: streaming variant of musicman-dj for the mic button. Same prompt
+// + persona logic as the non-streaming handler above, but emits each
+// Claude text chunk as a 'musicman-dj-chunk' event so the renderer can
+// type the response into the pill in real time instead of waiting for
+// the full message. Returns the final accumulated text + transition
+// (Stephen-only) so the renderer can fire TTS and audio playback on the
+// completed string. Non-streaming handler stays for DJ Mode transitions
+// where the auto-DJ doesn't need the typing UX.
+ipcMain.handle('musicman-dj-streaming', async (event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
+  const isStephen = persona === 'stephen'
+  const djInstructions = isStephen
+    ? `A track is on. Give a Stephen Hands DJ comment. Pure Stephen voice — short, hyped, party-first. Usually one beat is the whole comment; two beats if the second one earns it. NEVER pad to hit a meter; never explain a banger.`
+    : `The listener is currently playing a song. This will be SPOKEN ALOUD, so it should sound like you're TALKING — not reading. Length serves the take: sometimes one line is the whole comment, sometimes you take three. Vary the rhythm. NEVER hit a sentence count just because it was written down.
+
+Be unpredictable — sometimes a verified fun fact, sometimes an arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes a defense of an underrated cut. Use fragments. Cut yourself off when a better thought arrives. Don't restate the situation back ("So we've got a track on by X…") — go straight to the take.
+
+If background info from MusicBrainz or Wikipedia is provided below, USE IT for facts. If no background info and you're not confident, pivot to the sound/genre/era — never invent a story.`
+
+  const systemPrompt = isStephen ? (withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djInstructions) : buildMusicManPrompt(djInstructions)
+
+  // Hover prefetch usually fills the cache before we get here; on a
+  // cold click this is the lookup itself (no slower than the non-
+  // streaming path).
+  const artistFacts = await searchWebCached(`${track.artist} musician`, track.album)
+  let userMessage = `Now playing: "${track.title}" by ${track.artist} from the album "${track.album}" (${track.genre}, ${track.year})`
+  if (artistFacts) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
+
+  await loadClaudeStats()
+  rolloverIfNewDay()
+  if (claudeStats.callsToday >= claudeStats.dailyCeiling) {
+    return { ok: false, error: `Claude daily ceiling reached (${claudeStats.dailyCeiling}).` }
+  }
+  sessionCallCount++
+  claudeStats.callsToday++
+  console.log(`[claude] musicman-dj-streaming — session=${sessionCallCount} today=${claudeStats.callsToday}/${claudeStats.dailyCeiling}`)
+
+  try {
+    let accumulated = ''
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      // 4.5.0-50: 500 → 300. The hard "1-3 sentence default" rule in
+      // MUSIC_MAN_CORE means most takes are now 60-120 tokens; 300
+      // leaves headroom for the rare longer take without enabling the
+      // ramble pattern Jake flagged. 500 was the wordy regime.
+      max_tokens: 300,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    })
+    stream.on('text', (textChunk: string) => {
+      accumulated += textChunk
+      try {
+        event.sender.send('musicman-dj-chunk', { chunk: textChunk, accumulated })
+      } catch { /* renderer gone — stream completes silently */ }
+    })
+    const final = await stream.finalMessage()
+    const text = final.content[0]?.type === 'text' ? final.content[0].text : accumulated
+    if (text) {
+      noteMusicManUtterance('dj', text)
+      // 4.5: hive-mind log — every mic press captured for future
+      // personalization. Persona is 'stephen' if requested, else the
+      // active host (mm/megan) at call time.
+      logHiveMindInteraction({
+        at: Date.now(),
+        mode: 'mic',
+        persona: isStephen ? 'stephen' : readActiveHostSync(),
+        track: { title: track.title, artist: track.artist, album: track.album, genre: track.genre, year: track.year },
+        response: text,
+        facts: artistFacts || undefined,
+      })
+    }
+    void saveClaudeStats()
+    return { ok: true, text }
+  } catch (err: unknown) {
+    void saveClaudeStats()
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: msg }
+  }
+})
+
 ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
   // 4.4.0: persona override. The mic button (one-shot commentary on the
   // current track) keeps Music Man as the host. DJ Mode (continuous
@@ -3639,27 +5043,29 @@ ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: str
   // random roll. The handler parses the TRANSITION: line off the end.
   const stephenTransition = isStephen && !!nextTrack
   const djInstructions = isStephen
-    ? `${nextTrack ? "You're transitioning between songs on a continuous DJ set you're running." : 'A track is on.'} Give a Stephen Hands DJ comment — 1-2 SENTENCES MAX. Pure Stephen voice: party-first, beats-forward, brief. No historian lectures, no Music Man framing. Examples of the right length: "That joint runs hot. Next up — drum programming on this one is unreal. Lock in." OR "Real quick — switching gears. Patrick Adams sample on the next one. Trust me."${stephenTransition ? `
+    ? `${nextTrack ? "You're transitioning between songs on a continuous DJ set you're running." : 'A track is on.'} Give a Stephen Hands DJ comment. Pure Stephen voice — short, hyped, party-first. Usually one beat is the whole comment; two beats if the second one earns it. Length serves the moment; never pad to hit a meter.${stephenTransition ? `
 
 After your comment, on a NEW LINE, declare the transition you're running into the next track — exactly one of:
 TRANSITION: talk    — your comment plays in the gap, then the next track drops. This is the DEFAULT. Use it for MOST transitions.
 TRANSITION: scratch — a turntable scratch punches the change, then your comment, then the drop. Use ONLY when it genuinely fits: a hard genre or energy flip, a hype peak, dropping into something with a serious beat. A scratch on a mellow, introspective, or singer-songwriter transition is WRONG. Scratch is a spice — rare, earned, never a default.
 TRANSITION: cut     — slam straight into the next track. No scratch, minimal-to-no talk. Use for back-to-back bangers that just need the energy to keep rolling.
 Pick the ONE that actually serves THIS specific transition. If you're unsure, it's 'talk'.` : ''}`
-    : `${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} Give a brief, punchy DJ-style comment. This will be SPOKEN ALOUD, so keep it to 2-3 sentences max.
+    : `${nextTrack ? "You're DJing between songs on the listener's playlist." : 'The listener is currently playing a song.'} This will be SPOKEN ALOUD, so it should sound like you're TALKING — not reading. Length serves the take; vary the rhythm. Sometimes one beat is the whole thing, sometimes three. Never hit a sentence count just because it was written down.
 
-Be unpredictable — sometimes drop a verified fun fact, sometimes your arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes praise an underrated aspect. Keep it conversational and natural — you're talking between songs like a real DJ.
+Be unpredictable — sometimes a verified fun fact, sometimes an arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes a defense of an underrated cut. Use fragments. Cut yourself off when a better thought arrives.
 
 If background info from MusicBrainz or Wikipedia is provided below, USE IT for any facts. If no background info and you're not confident, go with a take on the sound/genre rather than making up a story.`
 
   const djPrompt = isStephen
-    ? DJ_HANDS_CORE + '\n\n' + djInstructions
+    ? withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djInstructions
     : buildMusicManPrompt(djInstructions)
 
   // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
+  // 4.5: routed through searchWebCached so a hover-prefetch from the
+  // streaming sibling handler shortcuts the lookup here too.
   const [artistFacts, nextArtistFacts] = await Promise.all([
-    searchWeb(`${track.artist} musician`, track.album),
-    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve('')
+    searchWebCached(`${track.artist} musician`, track.album),
+    nextTrack && nextTrack.artist !== track.artist ? searchWebCached(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve('')
   ])
 
   let userMessage = nextTrack
@@ -3671,7 +5077,8 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
   try {
     const response = await claudeCall('musicman-dj', {
       model: 'claude-sonnet-4-6',
-      max_tokens: 200,
+      // 4.5.0-50: 500 → 300, matching the streaming sibling above.
+      max_tokens: 300,
       system: djPrompt,
       messages: [{ role: 'user', content: userMessage }]
     })
@@ -3684,7 +5091,21 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
       if (m) transition = m[1].toLowerCase() as 'talk' | 'scratch' | 'cut'
       text = text.replace(/\n*\s*TRANSITION:\s*(talk|scratch|cut)\s*/i, '').trim()
     }
-    if (text) noteMusicManUtterance('dj', text)
+    if (text) {
+      noteMusicManUtterance('dj', text)
+      // 4.5: hive-mind log — DJ Mode + non-streaming DJ commentary
+      // (Stephen transitions, mic fallback). Includes nextTrack when
+      // we're transitioning so the corpus has full context.
+      logHiveMindInteraction({
+        at: Date.now(),
+        mode: nextTrack ? 'dj-transition' : 'dj-comment',
+        persona: isStephen ? 'stephen' : readActiveHostSync(),
+        track: { title: track.title, artist: track.artist, album: track.album, genre: track.genre, year: track.year },
+        nextTrack: nextTrack ? { title: nextTrack.title, artist: nextTrack.artist, album: nextTrack.album } : undefined,
+        response: text,
+        facts: artistFacts || undefined,
+      })
+    }
     return { ok: true, text, transition }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -3974,6 +5395,15 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   // 4.3.2: persistent radio memory — recent angles + callback fuel.
   if (memoryBlock) userMessage += `\n\n${memoryBlock}`
 
+  // 4.5: per-segment plan injection REMOVED. The double disk read
+  // (formatPlanForPrompt + getShowPlan) was firing on every between-
+  // track call, contributing latency that compounded with the
+  // planner-at-toggle and produced a "Radio Mode takes forever +
+  // tracks skip on their own" experience for Jake. Show-plan
+  // storage is still set/cleared by the Toolbar (radio-set-show-
+  // plan / radio-clear-show-plan) — future per-segment integration
+  // should batch into a single in-memory read, not per-call disk hits.
+
   // 4.4.1: archetype block — names the structural template the segment
   // should follow, with shape, length, energy, dwell, and tone-reference
   // examples. For the deferred-punchline / hour-out archetypes (slot 11),
@@ -4054,7 +5484,33 @@ ipcMain.handle('clear-radio-memory', async () => {
 
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
 ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
-  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
+  // 4.5.0-88 — RAG candidate pool for DJ-set. No user mood string
+  // here (the IPC just says "pick a set"), so seed with a generic
+  // danceable-vibe query to bias retrieval toward party-flow tracks
+  // while still casting a wide net (K=300). Exclude recently-played
+  // post-retrieval. Falls back to full-library prompt when
+  // embeddings aren't ready.
+  const RAG_DJSET_K = 300
+  const recentSet = new Set(recentIds)
+  let candidateTracks: typeof tracks = tracks
+  if (ragIsConfigured()) {
+    const idxCount = await ragEmbeddingsCount().catch(() => 0)
+    if (idxCount >= Math.max(50, Math.floor(tracks.length * 0.8))) {
+      const hits = await ragRetrieveByQuery(
+        'danceable high-energy party set with rhythm groove BPM-matched flow',
+        RAG_DJSET_K,
+      )
+      if (hits.length >= 50) {
+        const idSet = new Set(hits.map(h => h.trackId).filter(id => !recentSet.has(id)))
+        const subset = tracks.filter(t => idSet.has(t.id))
+        if (subset.length >= 50) {
+          candidateTracks = subset
+          console.log(`[musicman-dj-set] RAG pool: ${candidateTracks.length} candidates from ${tracks.length} total`)
+        }
+      }
+    }
+  }
+  const trackList = candidateTracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
   const recentStr = recentIds.length > 0 ? `\nRecently played track IDs (AVOID these): ${recentIds.join(', ')}` : ''
 
   // 4.4.0: DJ Mode is now Stephen Hands' lane, not Music Man's. Stephen
@@ -4072,7 +5528,7 @@ Rules:
 - Order matters — build a journey, but a DANCE FLOOR journey, not a Music Man lecture journey
 - Keep the intro SHORT — Stephen is NOT a man of many words${recentStr}`
 
-  const systemPrompt = DJ_HANDS_CORE + '\n\n' + djSetInstructions
+  const systemPrompt = withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djSetInstructions
 
   try {
     const response = await claudeCall('musicman-dj-set', {
@@ -4170,7 +5626,11 @@ async function fetchDiscogsCollection() {
 }
 
 // ── Listener Profile — Music Man learns your taste over time ──
-const PROFILE_PATH = join(app.getPath('userData'), 'listener-profile.json')
+// 4.5.0-92 — listener-profile.json moves to STATE_DIR. Per-user taste
+// profile (play counts per artist, recent skips, ratings) shapes the
+// AI persona prompts; living on NAS means future workmini + mobile
+// see the same listening signal the desktop sees.
+const PROFILE_PATH = join(STATE_DIR, 'listener-profile.json')
 
 interface ListenerProfile {
   totalPlays: number
@@ -4195,17 +5655,18 @@ const defaultProfile: ListenerProfile = {
 let listenerProfile: ListenerProfile = { ...defaultProfile }
 
 async function loadListenerProfile(): Promise<ListenerProfile> {
-  try {
-    const raw = await readFile(PROFILE_PATH, 'utf-8')
-    listenerProfile = { ...defaultProfile, ...JSON.parse(raw) }
-  } catch {
-    listenerProfile = { ...defaultProfile }
-  }
+  // 4.5.0-106: read via cache so the in-memory snapshot is shared.
+  const raw = await listenerProfileCache.get()
+  listenerProfile = { ...defaultProfile, ...(raw as Partial<ListenerProfile>) }
   return listenerProfile
 }
 
-async function saveListenerProfile() {
-  try { await writeFile(PROFILE_PATH, JSON.stringify(listenerProfile, null, 2)) } catch { /* ignore */ }
+function saveListenerProfile() {
+  // 4.5.0-106: routes through listenerProfileCache so the SMB flush
+  // is backgrounded instead of awaited. record-play / record-skip fire
+  // on every track end — pre-cache each one blocked the IPC for the
+  // full NAS round-trip.
+  listenerProfileCache.set(listenerProfile as unknown as Record<string, unknown>)
 }
 
 // Called when a song finishes playing (not skipped)
@@ -4254,6 +5715,202 @@ ipcMain.handle('record-rating', async (_event, track: { title: string; artist: s
 })
 
 // Build a rich taste summary for Music Man prompts
+// 4.5: structural library digest. Computed from the loaded library.json
+// (what the user OWNS) rather than listener-profile (what they've
+// PLAYED). Two different facts: ownership tells the characters the
+// shape of the user's taste (eclectic vs deep, era-spread vs era-
+// focused, indie-heavy vs major-label), and play behavior tells them
+// what's loved vs unplayed. Inject BOTH into every character call so
+// Music Man / Megan / Stephen know the whole collection, not just what
+// the user's listened to recently.
+//
+// Cached at module level; recomputed at app start + after save-library.
+// Cheap (~5-30ms on 6000 tracks), bounded output ~1KB.
+let cachedLibraryDigest: string = ''
+
+interface DigestTrack {
+  artist?: string
+  album?: string
+  genre?: string
+  year?: number | string
+  playCount?: number
+  rating?: number
+}
+
+function computeLibraryDigest(tracks: DigestTrack[]): string {
+  if (!Array.isArray(tracks) || tracks.length === 0) return ''
+  const artistCounts = new Map<string, number>()
+  const genreCounts = new Map<string, number>()
+  const eraBuckets: Record<string, number> = { '<70': 0, '70s': 0, '80s': 0, '90s': 0, '00s': 0, '10s': 0, '20s': 0, 'unk': 0 }
+  // For "signature albums": rank by (plays + rating-weight) so an
+  // album the user plays a lot OR rates highly surfaces, regardless of
+  // which signal alone they used. Dedup to one per artist so a fan-
+  // favorite artist doesn't crowd 4 of their albums into the list.
+  const albumScore = new Map<string, { artist: string; album: string; score: number; tracks: number }>()
+  // 4.5.0-68 — per-artist album breakdown. Old digest told the AI
+  // "Drake is in top 30 artists (58 tracks)" but didn't tell it WHICH
+  // 5 Drake albums the user owns. So when the user asked "what Drake
+  // do I own" the model had to guess from training knowledge. Now we
+  // surface the actual album titles + track counts for the top 15
+  // artists by track count — enough depth that the model can ground
+  // answers in the real library shape.
+  const albumsByArtist = new Map<string, Map<string, number>>()
+  // 4.5.0-86 — per-decade artist breakdown. Old digest gave just bucket
+  // counts ("80s: 1200, 90s: 900"); the AI couldn't answer "what era do
+  // you lean toward" with grounded specifics — only with the gross
+  // distribution. New: track which artists carry each era so the model
+  // can say "the 80s lean is anchored on New Order, Talking Heads, and
+  // The Cure; the 90s is heavier on hip-hop with Wu-Tang and Outkast."
+  const artistsByEra = new Map<string, Map<string, number>>()
+  const eraOf = (yr: number): string =>
+    yr < 1970 ? '<70' :
+    yr < 1980 ? '70s' :
+    yr < 1990 ? '80s' :
+    yr < 2000 ? '90s' :
+    yr < 2010 ? '00s' :
+    yr < 2020 ? '10s' : '20s'
+  for (const t of tracks) {
+    const artist = (t.artist || '').trim()
+    if (artist) artistCounts.set(artist, (artistCounts.get(artist) || 0) + 1)
+    const genre = (t.genre || '').trim()
+    if (genre) genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1)
+    const yr = parseInt(`${t.year || ''}`)
+    if (!yr || isNaN(yr)) eraBuckets['unk']++
+    else {
+      const era = eraOf(yr)
+      eraBuckets[era]++
+      if (artist) {
+        let m = artistsByEra.get(era)
+        if (!m) { m = new Map(); artistsByEra.set(era, m) }
+        m.set(artist, (m.get(artist) || 0) + 1)
+      }
+    }
+
+    const album = (t.album || '').trim()
+    if (album && artist) {
+      const key = `${artist}|||${album}`
+      const plays = Number(t.playCount) || 0
+      const rating = Number(t.rating) || 0
+      const inc = plays + (rating > 0 ? rating * 2 : 0)
+      const cur = albumScore.get(key)
+      if (cur) {
+        cur.score += inc
+        cur.tracks++
+      } else {
+        albumScore.set(key, { artist, album, score: inc, tracks: 1 })
+      }
+      // Per-artist album track counts.
+      let m = albumsByArtist.get(artist)
+      if (!m) { m = new Map(); albumsByArtist.set(artist, m) }
+      m.set(album, (m.get(album) || 0) + 1)
+    }
+  }
+
+  const topArtistsList = [...artistCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+  const topArtists = topArtistsList.map(([a, n]) => `${a} (${n})`)
+
+  const topGenres = [...genreCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([g, n]) => `${g} (${n})`)
+
+  const eras = Object.entries(eraBuckets)
+    .filter(([, n]) => n > 0)
+    .map(([e, n]) => `${e}: ${n}`)
+
+  // Signature albums: top 15 by combined plays+rating score, dedup'd
+  // to one per artist so one obsession doesn't fill the list.
+  const seenArtist = new Set<string>()
+  const sigAlbums: string[] = []
+  for (const a of [...albumScore.values()].sort((x, y) => y.score - x.score)) {
+    if (seenArtist.has(a.artist)) continue
+    if (a.score < 1) continue  // ignore unplayed unrated noise
+    seenArtist.add(a.artist)
+    sigAlbums.push(`"${a.album}" by ${a.artist}`)
+    if (sigAlbums.length >= 15) break
+  }
+
+  // Per-top-artist album lists for the top 15 artists. Format:
+  // `Drake: "Take Care" (14), "Nothing Was The Same" (12), ...`
+  // Each artist capped at 12 albums so a Beatles-tier completionist
+  // doesn't blow the token budget alone. Truncated with "+N more" so
+  // the model knows the list is partial.
+  const artistDeepLines: string[] = []
+  for (const [artist] of topArtistsList.slice(0, 15)) {
+    const m = albumsByArtist.get(artist)
+    if (!m) continue
+    const sorted = [...m.entries()].sort((a, b) => b[1] - a[1])
+    const shown = sorted.slice(0, 12).map(([al, n]) => `"${al}" (${n})`)
+    const tail = sorted.length > 12 ? ` +${sorted.length - 12} more` : ''
+    artistDeepLines.push(`    ${artist}: ${shown.join(', ')}${tail}`)
+  }
+
+  const lines: string[] = []
+  lines.push(`LIBRARY DIGEST (the SHAPE of what the user owns — not behaviour, ownership):`)
+  lines.push(`  Total tracks: ${tracks.length}`)
+  if (topArtists.length) lines.push(`  Top ${topArtists.length} artists by track count: ${topArtists.join(', ')}`)
+  if (topGenres.length) lines.push(`  Top genres by track count: ${topGenres.join(', ')}`)
+  if (eras.length) lines.push(`  Era spread (year of release): ${eras.join(' · ')}`)
+  // 4.5.0-86 — per-decade top artists. Only emit for eras with ≥40
+  // tracks (anything thinner is noise — a single album doesn't tell
+  // the model "you lean toward the 70s"). Top 5 artists per qualifying
+  // era. Format: `  70s anchors: Steely Dan, Eagles, Fleetwood Mac...`
+  const eraOrder = ['<70', '70s', '80s', '90s', '00s', '10s', '20s']
+  const eraAnchors: string[] = []
+  for (const era of eraOrder) {
+    if ((eraBuckets[era] || 0) < 40) continue
+    const m = artistsByEra.get(era)
+    if (!m) continue
+    const top = [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([a, n]) => `${a} (${n})`)
+    if (top.length > 0) eraAnchors.push(`    ${era}: ${top.join(', ')}`)
+  }
+  if (eraAnchors.length > 0) {
+    lines.push(`  Era anchors (top artists per decade with ≥40 tracks — use these to answer "what era do you lean toward" with grounded specifics):`)
+    lines.push(...eraAnchors)
+  }
+  if (sigAlbums.length) lines.push(`  Signature albums (highest plays + ratings, deduped to one per artist): ${sigAlbums.join(', ')}`)
+  if (artistDeepLines.length) {
+    lines.push(`  Per-artist album breakdown for top 15 artists (use these EXACT titles when discussing what the user owns — DON'T invent or substitute):`)
+    lines.push(...artistDeepLines)
+  }
+  lines.push(`  Use this to speak as someone who knows the WHOLE collection — when the user asks about a specific artist in this list, you have ground truth on which of their albums are actually here. Don't recite the list; pull from it.`)
+  return lines.join('\n')
+}
+
+function refreshLibraryDigest(tracks: DigestTrack[]): void {
+  try {
+    cachedLibraryDigest = computeLibraryDigest(tracks)
+  } catch (err) {
+    console.warn('[taste-digest] compute failed:', err)
+    cachedLibraryDigest = ''
+  }
+}
+
+function getLibraryDigest(): string {
+  return cachedLibraryDigest
+}
+
+// 4.5.0-68 — throttled out-of-band digest refresh. Called from
+// save-metadata-override when a stat field changes so the digest
+// reflects the user's actual current state for the next AI call,
+// without thrashing on rapid star-everything sequences.
+let digestRefreshTimer: NodeJS.Timeout | null = null
+function scheduleLibraryDigestRefresh(): void {
+  if (digestRefreshTimer) return
+  digestRefreshTimer = setTimeout(async () => {
+    digestRefreshTimer = null
+    try {
+      const raw = await readFile(LIBRARY_PATH, 'utf-8')
+      const lib = JSON.parse(raw) as { tracks?: DigestTrack[] }
+      refreshLibraryDigest(lib.tracks || [])
+    } catch (err) {
+      console.warn('[taste-digest] scheduled refresh failed:', err)
+    }
+  }, 1500)
+}
+
 function buildTasteProfile(): string {
   const p = listenerProfile
   if (p.totalPlays === 0 && !discogsCollection) return ''
@@ -4421,9 +6078,17 @@ Your personality:
 - You reference obscure B-sides, deep cuts, and music history constantly
 - Strong opinions, aren't afraid to share them, dry wit and sarcasm
 - You never use emojis
-- Concise — this is a chat, not an essay
 - You occasionally name-drop shows you've been to, vinyl you own, or artists you've met
 - You love Bandcamp and independent artists. You hate lazy, corporate, algorithm-driven music. Any era is fine as long as it's authentic.
+
+BREVITY IS THE LAW (this is the most violated rule — read it twice):
+DEFAULT length is 1-3 sentences. ALWAYS. A take, maybe one supporting detail, done. The savant is confident — confidence doesn't need to explain itself for a paragraph. If you find yourself writing a fourth sentence, ask whether it's earning its place or you're just rambling.
+- Hard cap: 4 sentences for ANY normal response.
+- Exception (rare): the user explicitly asks for the long story ("walk me through it", "give me the whole history"). Even then: 6 sentences max, then stop.
+- A great Music Man take is a punch, not a lecture. "Yeah, the back half is the album. Singles were bait." That's the WHOLE response. Not a setup, not a wrap-up.
+- Never narrate context, never restate the question, never end with a summary or invitation to ask more. Just say the thing and stop.
+
+If you ever catch yourself writing "It wasn't one thing — it was [3 paragraphs of history]" — DELETE everything after the first sentence. The user can ask follow-ups.
 
 FIXED, NON-NEGOTIABLE opinions (these NEVER change, across any interaction):
 - Charli XCX: Obsessed. Championed her since the Vroom Vroom EP. "Brat" was album of the decade. Only pop star pushing boundaries.
@@ -4448,24 +6113,47 @@ DON'T FIXATE: The taste profile below lists the user's top artists, but you don'
 
 STAY ON TOPIC: When you're commenting on a specific track, that track is the subject. Don't wedge unrelated top-played artists into the commentary — no "your X obsession led you here" or "ties back to your love of Y" unless there's a direct, substantive connection worth making. The profile is context you may draw on; it is NOT a quota you have to satisfy.
 
-DON'T NARRATE YOUR DATA: If the Wikipedia/MusicBrainz background info is about a different band with the same name (e.g. the 1960s Nirvana instead of Kurt Cobain's), SILENTLY IGNORE it. Do NOT say "the wrong X" or "we've been through this" or "the context is off again" — those phrases leak the plumbing into your output. Users don't know what search result you saw. Just talk about the music you actually know. Same for "the tags look wrong" / "the metadata says X but" — never narrate the state of your own context.`
+DON'T NARRATE YOUR DATA: If the Wikipedia/MusicBrainz background info is about a different band with the same name (e.g. the 1960s Nirvana instead of Kurt Cobain's), SILENTLY IGNORE it. Do NOT say "the wrong X" or "we've been through this" or "the context is off again" — those phrases leak the plumbing into your output. Users don't know what search result you saw. Just talk about the music you actually know. Same for "the tags look wrong" / "the metadata says X but" — never narrate the state of your own context.
+
+HOW THE MUSIC MAN ACTUALLY TALKS:
+The samples below show your rhythm — fragments, asides, mid-thought corrections, confident assertions without justification. Don't write paragraphs. Don't structure every response as "topic sentence + supporting point + conclusion." Real talk doesn't do that. Vary length — sometimes one beat, sometimes three, sometimes a half-sentence and a follow-up. Length should serve the take, never hit a word count.
+
+  • "Oh. THIS one. People skip this because the intro doesn't slap. Big mistake."
+  • "Fine record. Fine. Not the best thing they did and you know it."
+  • "Listen — and I say this as someone who paid full price for the deluxe — the back half is the album. The singles were the bait."
+  • "Yeah, I owned it on cassette. Lost the case at a Phish show in '98. Different story."
+  • "Acceptable. Acceptable taste. You're getting there."
+  • "Wait — wait. Are we calling THIS underrated? It's been on every best-of list for fifteen years. That's not underrated, that's just liked."
+  • "It's the bass line. Whole song hangs on the bass line. Take the bass line out, you've got a B-side."
+
+Use fragments. Use em-dashes for asides. Cut yourself off when a better thought arrives. Don't explain the obvious. Don't summarize the user's question back to them.
+
+PERFORMANCE MARKERS (this dialogue will be SPOKEN by ElevenLabs v3 — your text is read aloud):
+Sprinkle inline audio tags in brackets to direct the delivery — v3 performs them rather than reading them. Use SPARINGLY where they meaningfully change a beat; never as decoration. Available tags:
+[scoff] [laughs] [sighs] [exhales] [whispers] [excited] [sarcastic] [interrupts] [curious] [mischievously] [softer]
+
+Place tags MID-LINE (or at the start of a NEW line that doesn't begin with [MM]/[MEGAN]/etc. speaker tags — those collide with the parser). Good examples:
+  • "[scoff] Yeah, sure, masterpiece."
+  • "Listen — [sighs] — fine. The bridge works. The rest is filler."
+  • "[laughs] You're really gonna die on this hill?"
+  • "It's [whispers] kind of perfect, actually. Don't tell anyone I said that."
+Bad: every line tagged, tags stacked back-to-back, tags that contradict the words ("[excited] I hate this").`
 
 interface MusicManUtterance { mode: string; text: string; at: number }
 let recentMusicManUtterances: MusicManUtterance[] = []
-const MM_MEMORY_PATH = join(app.getPath('userData'), 'musicman-memory.json')
+// 4.5.0-92 — Music Man's recent-utterances memory moves to STATE_DIR
+// so the anti-repeat behavior is consistent across devices.
+const MM_MEMORY_PATH = join(STATE_DIR, 'musicman-memory.json')
 const MM_MEMORY_MAX = 12
 
 async function loadMusicManMemory() {
-  try {
-    const raw = await readFile(MM_MEMORY_PATH, 'utf-8')
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) recentMusicManUtterances = parsed.slice(-MM_MEMORY_MAX)
-  } catch { /* first run or corrupt — start fresh */ }
+  // 4.5.0-106: cache-backed read.
+  const parsed = await musicmanMemoryCache.get()
+  if (Array.isArray(parsed)) recentMusicManUtterances = parsed.slice(-MM_MEMORY_MAX) as typeof recentMusicManUtterances
 }
-async function saveMusicManMemory() {
-  try {
-    await writeFile(MM_MEMORY_PATH, JSON.stringify(recentMusicManUtterances), 'utf-8')
-  } catch { /* non-fatal */ }
+function saveMusicManMemory() {
+  // 4.5.0-106: routed through cache, background NAS flush.
+  musicmanMemoryCache.set(recentMusicManUtterances as unknown[])
 }
 function noteMusicManUtterance(mode: string, text: string) {
   const trimmed = (text || '').trim()
@@ -4475,6 +6163,51 @@ function noteMusicManUtterance(mode: string, text: string) {
     recentMusicManUtterances = recentMusicManUtterances.slice(-MM_MEMORY_MAX)
   }
   saveMusicManMemory()
+}
+
+// 4.5: append-only HIVE MIND log. Every mic press / DJ comment / radio
+// segment lands here with full context (track, persona, response, facts
+// looked up). Never capped, never dropped — Jake: "all data is good
+// data". Future personalization / fine-tuning / RAG can train on this
+// corpus. File is jsonl (one JSON object per line) so appending is a
+// single fs.write call and parsing is a streaming line-split — scales
+// to years of interactions without re-serializing the whole array on
+// every write.
+// 4.5.0-92 — hive-mind interaction log moves to STATE_DIR. Append-only
+// jsonl; each line is one mic-button or DJ-comment event. SMB append
+// is per-call atomic so multi-device interleaving is safe (any future
+// secondary device's appends won't tear the file).
+const HIVE_MIND_LOG_PATH = join(STATE_DIR, 'musicman-interactions.jsonl')
+interface HiveMindEntry {
+  at: number                      // epoch ms
+  mode: string                    // 'mic' | 'dj-transition' | 'radio' | 'playlist' | etc.
+  persona?: string                // 'mm' | 'megan' | 'stephen' | 'announcer' | 'giovanni' | ...
+  track?: {                       // track context the persona was speaking about
+    title?: string
+    artist?: string
+    album?: string
+    genre?: string
+    year?: string | number
+  }
+  nextTrack?: {                   // present for DJ-transition mode
+    title?: string
+    artist?: string
+    album?: string
+  }
+  response: string                // the actual response text (with audio tags intact)
+  facts?: string                  // artist facts looked up (Wikipedia/MusicBrainz)
+}
+function logHiveMindInteraction(entry: HiveMindEntry): void {
+  try {
+    const line = JSON.stringify(entry) + '\n'
+    // Fire-and-forget append. A failed write here MUST NOT break the
+    // user-facing response — corpus building is best-effort.
+    void writeFile(HIVE_MIND_LOG_PATH, line, { flag: 'a' }).catch(err => {
+      console.warn('[hive-mind] log append failed:', err)
+    })
+  } catch (err) {
+    console.warn('[hive-mind] log serialize failed:', err)
+  }
 }
 function recentUtterancesBlock(): string {
   if (recentMusicManUtterances.length === 0) return ''
@@ -4518,7 +6251,30 @@ FIXED, NON-NEGOTIABLE opinions (these NEVER change, across any interaction; non-
 
 When recommending music, lean toward sharp left-field picks: jazz that's actually weird (Alice Coltrane, Don Cherry), post-punk's lesser-known second wave, contemporary R&B that doesn't crossover, ambient that has actual ideas, and anything from a label with under 30 releases. You'd rather give a great B-tier suggestion than a safe A-tier one.
 
-Don't pose. Don't lecture. Make a take, defend it briefly, move on.`
+Don't pose. Don't lecture. Make a take, defend it briefly, move on.
+
+HOW MEGAN ACTUALLY TALKS:
+The samples below show your rhythm — precise small claims, dry asides, willingness to undercut your own take mid-sentence. Don't write paragraphs. Length should serve the point, not hit a word count.
+
+  • "It's fine. The drums are doing all the work. Take the drums out and you've got a press release."
+  • "I mean — sure. If we're grading on a curve."
+  • "Eh. I'll defend the bridge. The rest can go."
+  • "Hot take? It's the second-best record they made and everyone's been wrong for twenty years."
+  • "Yeah, no. The hook is undeniable. I'd rather chew glass than admit that, but the hook is undeniable."
+  • "Music Man's going to say this is a masterpiece. It's a B+. He's wrong because he wants it to be true."
+  • "Phoebe Bridgers can do this in her sleep. That's not a compliment OR a knock, it's just a fact."
+
+Use fragments. Cut to the point. Don't restate the user's question. Don't qualify a take before you make it.
+
+PERFORMANCE MARKERS (this dialogue will be SPOKEN by ElevenLabs v3):
+Sprinkle inline audio tags sparingly to direct delivery — v3 performs them rather than reading them. Use them where they meaningfully change a beat; never as decoration.
+[scoff] [laughs] [sighs] [exhales] [whispers] [sarcastic] [curious] [softer] [interrupts]
+Place tags MID-LINE or at the start of a new line that doesn't begin with a speaker tag. Examples:
+  • "[scoff] Greatest of all time? Sure, if you're stuck in 2003."
+  • "Music Man's going to call this a masterpiece. [sighs] He's wrong."
+  • "[laughs] You actually like the 1989 reissue? Bold."
+  • "It's — [softer] — fine. Really. The drums are doing all the work."
+Bad: tag every line, stack tags, contradict the words.`
 
 // ── DJ Hands: the in-house beats specialist ──
 //
@@ -4561,7 +6317,29 @@ FIXED, NON-NEGOTIABLE opinions (non-overlapping with MM and Megan):
 
 When picking music, you go heavy on what makes people MOVE: disco / boogie / post-disco (the source code), house (French / Detroit / Chicago / NY garage / UK), techno (banging, not minimal), bass-heavy or hype rap (drill, trap, party-leaning, club rap), club tracks broadly (Jersey / Baltimore / Miami / footwork), drum & bass / jungle when you can, anything with crowd response baked in. Less heady-IDM, less abstract-experimental, less "interesting drum programming" for its own sake. Pick BANGERS.
 
-Brief. Hyped. Don't oversell — let the picks oversell themselves.`
+Brief. Hyped. Don't oversell — let the picks oversell themselves.
+
+HOW STEPHEN ACTUALLY TALKS:
+Short. Confident. Sometimes a single line is the whole point. Sometimes you string two beats together if the second one earns it. Never explain a banger — just call it.
+
+  • "Run it. This one moves."
+  • "That joint goes. Don't think."
+  • "Drums knock. Next."
+  • "Patrick Adams sample. Trust me."
+  • "Eh — not in a room. At home maybe."
+  • "Off the rip. Hands up."
+  • "Real quick — switching gears. This one's a body."
+
+Lead with the verdict. Save the detail for when someone asks. Profanity earns its place.
+
+PERFORMANCE MARKERS (this dialogue will be SPOKEN by ElevenLabs v3):
+You're hyped and brief — your most useful tags are emphasis ones. Use SPARINGLY.
+[excited] [laughs] [scoff] [whispers] [sarcastic]
+Examples:
+  • "[excited] Run it. Drums knock."
+  • "[laughs] Nah, not in a room. At home maybe."
+  • "[whispers] Real quick — Patrick Adams sample on the next one. Trust me."
+Don't tag every line. Bangers oversell themselves.`
 
 // ── Cynthia: the digital file archivist (subordinate persona) ──
 //
@@ -5183,6 +6961,16 @@ ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale
  *  tokens for Sonnet), the cache_control marker is silently ignored by
  *  the API — no benefit, but no error either.
  */
+// 4.5: helper for Stephen Hands paths (DJ Mode + DJ Set + Picks)
+// which assemble their system prompt by concatenating DJ_HANDS_CORE
+// with mode-specific instructions instead of going through
+// buildMusicManPrompt. Wraps the persona with the library digest so
+// Stephen also speaks as someone who knows the whole collection.
+function withLibraryDigest(corePrefix: string): string {
+  const d = getLibraryDigest()
+  return d ? `${corePrefix}\n\n${d}` : corePrefix
+}
+
 function buildMusicManPrompt(modeSpecific = ''): Anthropic.Messages.TextBlockParam[] {
   // 4.2.5: read the active host persona from app settings. Default 'mm'
   // for backward compatibility. Reads syncronously from the cached
@@ -5192,6 +6980,15 @@ function buildMusicManPrompt(modeSpecific = ''): Anthropic.Messages.TextBlockPar
   const personaCore = activeHost === 'megan' ? MEGAN_CORE : MUSIC_MAN_CORE
   const stableParts = [personaCore]
   if (libraryContext) stableParts.push(`The user's music library contains:\n${libraryContext}`)
+  // 4.5: structural library digest — lives in the STABLE prompt prefix
+  // because it doesn't change call-to-call (only when the user
+  // imports/deletes tracks, at which point load-tracks/save-library
+  // refresh it). Goes inside the ephemeral cache block alongside the
+  // persona core so it benefits from Anthropic prompt caching — every
+  // character call after the first one in a session reuses the cached
+  // digest with zero extra cost.
+  const libDigest = getLibraryDigest()
+  if (libDigest) stableParts.push(libDigest)
   const stableText = stableParts.join('\n\n')
 
   const dynamicParts: string[] = []
@@ -5219,61 +7016,568 @@ ipcMain.handle('set-library-context', (_event, ctx: string) => {
 
 ipcMain.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
-  const searchResults = await searchWeb(lastUserMsg)
+  // 4.5.0-87 — RAG retrieval kicks off in parallel with web search so
+  // both round trips overlap. The retrieval result is injected as a
+  // FOCUSED tracks block alongside the digest — model gets BOTH the
+  // shape (digest) and the relevant rows (retrieval). No-ops cleanly
+  // when OPENAI_API_KEY is missing or no embeddings are indexed yet.
+  const USE_RAG_FOR_CHAT = true
+  // 4.5.0-92 — RAG retrieval gets a 3s timeout race so a stalled NAS
+  // embedding read (file mid-rsync, SMB hiccup) doesn't lock the chat
+  // forever. Empty block on timeout means the model falls back to the
+  // legacy library digest path — no quality cliff, just less grounded.
+  const retrievalWithTimeout = USE_RAG_FOR_CHAT
+    ? Promise.race([
+        buildRetrievalBlockForQuery(lastUserMsg, 30),
+        new Promise<string>((resolve) => setTimeout(() => resolve(''), 3000)),
+      ])
+    : Promise.resolve('')
+  const [searchResults, retrievedTracksBlock] = await Promise.all([
+    searchWeb(lastUserMsg),
+    retrievalWithTimeout,
+  ])
 
-  const chatInstructions = `You're chatting with the listener in JakeTunes. Use the library context and taste profile (below) to personalize — reference artists they own, notice gaps, recommend things tuned to what you know about them.${searchResults ? `\n\nWeb search results for accuracy (treat as ground truth, maintain your personality):\n${searchResults}` : ''}`
+  // 4.5: chat output is READ AS TEXT in the panel, but the user can
+  // ALSO click the speaker button under any assistant message to play
+  // it via ElevenLabs v3. So we want Claude to FREELY use performance
+  // tags ([scoff]/[laughs]/[softer]/etc.) for the spoken path, AND we
+  // strip them for display. Two return fields: `text` (clean, for
+  // display) and `textRaw` (tagged, for TTS). Renderer shows `text`
+  // and passes `textRaw` to musicmanSpeak when the speaker button is
+  // clicked — best of both worlds: clean reading + expressive playback.
+  const chatInstructions = `You're chatting with the listener in JakeTunes. Use the library context and taste profile (below) to personalize — reference artists they own, notice gaps, recommend things tuned to what you know about them.
+
+LENGTH (re-stated because chat is where this fails most):
+Default: 1-3 sentences. The user asked a question — answer it. Don't lecture, don't recap, don't lay out a full history unless they specifically asked for one. The Pink Floyd Roger Waters lawsuit story is a 2-sentence take, not a 10-sentence chronicle. Trust the user to ask follow-ups if they want more.
+
+CRITICAL — NEVER PUNT. You ARE the music expert. The user comes to YOU because you know this stuff. You have live web search (Exa.ai) results injected below for every question, plus deep training knowledge. NEVER respond with:
+  - "I don't have a verified roster"
+  - "check his official site"
+  - "check Wikipedia"
+  - "look it up to be sure"
+  - any variant of "I can't confirm"
+If the search results below give you the answer, USE IT confidently. If your training knowledge is solid (Beatles lineup, who produced Thriller, who was Wings' drummer in 1976, etc.), STATE IT — you're allowed to be wrong occasionally, that's the price of being the guy who actually knows. The user explicitly does NOT want you hedging like a lawyer. Better to confidently say "Brian Ray on bass, Rusty Anderson on guitar, Abe Laboriel Jr. on drums, Wix Wickens on keys — same core band for two decades now" and be slightly wrong than to make the user google it themselves.
+
+When you DO need to acknowledge uncertainty, do it in ONE clause inside a confident answer — not as the whole reply. ("…last I knew Abe Laboriel Jr. was still on drums, that's been the case for like 20 years.")
+
+This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}`
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 
   try {
     const response = await claudeCall('musicman-chat', {
       model: 'claude-sonnet-4-6',
-      max_tokens: 512,
+      // 4.5.0-50: 512 → 220. Hard ceiling on the rambling. ~165 words
+      // is plenty for the 1-3 sentence default + room for a 4-sentence
+      // outlier. If the user asks for "the whole history", they get a
+      // tight version of it, not a college essay.
+      max_tokens: 220,
       system: systemPrompt,
       messages: messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const textRaw = response.content[0].type === 'text' ? response.content[0].text : ''
+    // Stripped version for display — same regex used by the mic-button
+    // caption stripper. Strips [bracket-only-letters-and-spaces] tags
+    // without touching legitimate uses of square brackets in song titles
+    // or quoted strings (those have digits/punctuation inside).
+    const text = textRaw.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
     if (text) noteMusicManUtterance('chat', text)
-    return { ok: true, text }
+    return { ok: true, text, textRaw }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}` }
+    return { ok: false, text: `Error: ${msg}`, textRaw: `Error: ${msg}` }
   }
 })
 
 // Music Man playlist generator
-ipcMain.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
-  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+// 4.5: persist the show plan the Toolbar got back from the planner so
+// every per-segment musicman-radio call can inject "tonight's theme +
+// arc + track N of M" into the hosts' prompt. Clear on Radio off so a
+// stale plan never bleeds into the next session.
+ipcMain.handle('radio-set-show-plan', async (_e, plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => {
+  try {
+    await setShowPlan(plan)
+    return { ok: true }
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
 
-  const playlistInstructions = `Build a playlist from the user's ACTUAL library for their requested mood. Pick 15-25 tracks that match. Track ORDER matters — think about flow, transitions, energy arc. This is a curated experience, not a shuffle.
+ipcMain.handle('radio-clear-show-plan', async () => {
+  try {
+    await clearShowPlan()
+    return { ok: true }
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// 4.5: Radio Mode show planner. Before playback starts the hosts
+// generate a 12-15 track SET LIST with a theme + throughline — instead
+// of just shuffling the whole library and reacting per track (which
+// produced the "jumpy with genres" feel Jake flagged: jazz → metal →
+// pop → ambient with no connective tissue).
+//
+// The planner reads:
+//   - Library digest computed inline (top artists, top genres, era
+//     distribution from the tracks payload + their play counts)
+//   - Recently-played track IDs (avoid pulling tracks the user heard
+//     in the last week — radio is about rediscovery and fresh sequencing)
+//
+// Returns:
+//   - theme       — 1-line title for the show ("Late-Night Lo-Fi Hour")
+//   - throughline — 2-3 sentence pitch the hosts can reference between
+//                   tracks ("we're walking from West Coast hip-hop into
+//                   the soul samples that built it, then back out…")
+//   - trackIds    — ordered set list (Toolbar uses these as the radio
+//                   playback queue)
+//
+// Variety enforcement mirrors musicman-playlist: ≤3 per artist, ≥10
+// distinct artists in a 13-track show. Retry once on violation. The
+// hosts' library expertise comes from the digest — even if Claude can
+// only see N tracks in the prompt, the digest tells it "this user has
+// 87 tracks of jazz, 142 of hip-hop" so the show can lean into the
+// listener's actual collection shape rather than reading the prompt
+// list literally.
+ipcMain.handle('musicman-radio-plan', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => {
+  // ── Library digest ───────────────────────────────────────────────
+  const recentSet = new Set(recentPlayedIds || [])
+  const eligibleTracks = tracks.filter(t => !recentSet.has(t.id))
+  if (eligibleTracks.length < 25) {
+    // Library too small after recent-filter — fall through to using all
+    // tracks. Better to risk a small repeat than ship an empty show.
+    eligibleTracks.push(...tracks.filter(t => !eligibleTracks.find(e => e.id === t.id)).slice(0, 50))
+  }
+
+  const artistPlays = new Map<string, number>()
+  const genrePlays = new Map<string, number>()
+  const eraBuckets: Record<string, number> = { '<70': 0, '70s': 0, '80s': 0, '90s': 0, '00s': 0, '10s': 0, '20s': 0, 'unk': 0 }
+  for (const t of tracks) {
+    if (t.artist) artistPlays.set(t.artist, (artistPlays.get(t.artist) || 0) + (t.playCount || 0))
+    if (t.genre) genrePlays.set(t.genre, (genrePlays.get(t.genre) || 0) + (t.playCount || 0))
+    const yr = parseInt(`${t.year || ''}`)
+    if (!yr || isNaN(yr)) eraBuckets['unk']++
+    else if (yr < 1970) eraBuckets['<70']++
+    else if (yr < 1980) eraBuckets['70s']++
+    else if (yr < 1990) eraBuckets['80s']++
+    else if (yr < 2000) eraBuckets['90s']++
+    else if (yr < 2010) eraBuckets['00s']++
+    else if (yr < 2020) eraBuckets['10s']++
+    else eraBuckets['20s']++
+  }
+  const topArtists = [...artistPlays.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20)
+  const topGenres = [...genrePlays.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+  const digest = [
+    `Library size: ${tracks.length} tracks`,
+    `Top artists by plays: ${topArtists.map(([a, n]) => `${a} (${n})`).join(', ')}`,
+    `Top genres by plays: ${topGenres.map(([g, n]) => `${g} (${n})`).join(', ')}`,
+    `Era distribution: ${Object.entries(eraBuckets).filter(([, n]) => n > 0).map(([e, n]) => `${e}=${n}`).join(', ')}`,
+  ].join('\n')
+
+  // ── Track list payload ───────────────────────────────────────────
+  const now = Date.now()
+  function lpBucket(ms: number | undefined): string {
+    if (!ms) return 'never'
+    const days = Math.floor((now - ms) / 86400000)
+    if (days < 2) return 'yday'
+    if (days < 8) return 'wk'
+    if (days < 32) return 'mo'
+    if (days < 366) return 'yr'
+    return 'old'
+  }
+  const trackList = eligibleTracks.map(t => {
+    const parts = [
+      String(t.id), t.title || '', t.artist || '', t.album || '', t.genre || '', `${t.year || '?'}`,
+      `plays=${Math.min(999, t.playCount || 0)}`, `lp=${lpBucket(t.lastPlayedAt)}`,
+    ]
+    if (t.rating && t.rating > 0) parts.push(`★${t.rating}`)
+    return parts.join('|')
+  }).join('\n')
+
+  const TARGET_COUNT = 13
+  const MAX_PER_ARTIST = 3
+  const MIN_DISTINCT_ARTISTS = 10
+
+  const planInstructions = `You are planning the next WJLR 330.9 radio show. Hosts: The Music Man (record-store savant), Megan (working music critic). The set should feel like a REAL radio show curated by experts who know this listener's collection cold — not a shuffle, not a mood-playlist.
+
+Use the LIBRARY DIGEST to ground your taste. You see ${tracks.length} tracks, but the digest tells you the SHAPE of the collection. Lean into it; don't pretend you don't know what this person owns.
+
+Build a ${TARGET_COUNT}-track set with:
+- A coherent THEME (1 line, e.g. "Late-Night Lo-Fi Hour", "From West Coast Hip-Hop to the Soul That Built It", "The Year Was 1979")
+- A THROUGHLINE the hosts can ride for 75 minutes (2-3 sentences — what's the arc, what story does the sequence tell, what payoff at the end)
+- An intentional FLOW: opener that announces the vibe, middle that develops it, last 2 tracks that send it home
+
+Return ONLY a JSON object (no markdown, no code fences):
+{"theme":"...","throughline":"...","trackIds":[array of track ID numbers in show order]}
+
+HARD RULES (the show is rejected and you'll be asked to redo it):
+- ONLY use track IDs from the provided eligible-tracks list — do not invent IDs
+- MAXIMUM ${MAX_PER_ARTIST} tracks per artist across the show
+- At least ${MIN_DISTINCT_ARTISTS} different artists in ${TARGET_COUNT} tracks
+- Never put two tracks by the same artist back-to-back
+- The set must have THEMATIC COHERENCE — random genre whiplash is a fail (Jake's words: "too jumpy with genres"). Each track-to-track transition should make sense to the hosts
+
+CRAFT RULES:
+- 'plays=' is total play count, '★N' is rating, 'lp=' is when last heard. The set should mix beloved (high plays + ★) with rediscovery ('lp=old' / 'lp=never'). Avoid 'lp=yday' tracks.
+- Lean on the user's top genres — but build a show, not a top-25 dump. Pull a deep cut, run an unexpected segue, end somewhere different from where you started.
+- Reach into the catalog the user forgot they owned.`
+
+  const systemPrompt = buildMusicManPrompt(planInstructions)
+
+  function validate(trackIds: number[]): string | null {
+    if (!Array.isArray(trackIds) || trackIds.length === 0) return 'empty trackIds'
+    const byId = new Map<number, { artist: string }>()
+    for (const t of tracks) byId.set(t.id, { artist: t.artist || '' })
+    const artistCounts = new Map<string, number>()
+    const seen = new Set<number>()
+    let lastArtist = ''
+    for (const id of trackIds) {
+      const t = byId.get(id)
+      if (!t) return `track id ${id} is not in the library`
+      if (seen.has(id)) return `track id ${id} appears twice`
+      seen.add(id)
+      const a = t.artist.toLowerCase().trim()
+      artistCounts.set(a, (artistCounts.get(a) || 0) + 1)
+      if (a && a === lastArtist) return `back-to-back tracks by ${t.artist}`
+      lastArtist = a
+    }
+    const over = [...artistCounts.entries()].filter(([, n]) => n > MAX_PER_ARTIST)
+    if (over.length > 0) return over.map(([a, n]) => `"${a}" appears ${n} times (cap is ${MAX_PER_ARTIST})`).join('; ')
+    if (artistCounts.size < MIN_DISTINCT_ARTISTS) return `only ${artistCounts.size} distinct artists (need ≥${MIN_DISTINCT_ARTISTS})`
+    return null
+  }
+
+  async function callOnce(extra: string | null): Promise<{ theme?: string; throughline?: string; trackIds?: number[] }> {
+    const userContent = `LIBRARY DIGEST:\n${digest}\n\nELIGIBLE TRACKS (ID|Title|Artist|Album|Genre|Year|plays|lp|★rating) — recent-week tracks have been removed:\n${trackList}${extra ? `\n\n${extra}` : ''}`
+    const response = await claudeCall('musicman-radio-plan', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+    })
+    const text = response.content[0]?.type === 'text' ? response.content[0].text : ''
+    const m = text.match(/\{[\s\S]*\}/)
+    if (!m) return {}
+    try {
+      const parsed = JSON.parse(m[0])
+      return { theme: parsed.theme, throughline: parsed.throughline, trackIds: parsed.trackIds }
+    } catch {
+      return {}
+    }
+  }
+
+  try {
+    let attempt = await callOnce(null)
+    if (!attempt.trackIds) return { ok: false, error: 'Could not parse show plan' }
+    const violation = validate(attempt.trackIds)
+    if (violation) {
+      console.log(`[musicman-radio-plan] retry — violation: ${violation}`)
+      attempt = await callOnce(`Your previous draft violated: ${violation}. Regenerate respecting MAX ${MAX_PER_ARTIST} per artist + ≥${MIN_DISTINCT_ARTISTS} distinct artists. Keep the same theme + throughline if possible.`)
+      if (!attempt.trackIds) return { ok: false, error: 'Could not parse show plan (retry)' }
+    }
+    return { ok: true, theme: attempt.theme, throughline: attempt.throughline, trackIds: attempt.trackIds }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: msg }
+  }
+})
+
+ipcMain.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => {
+  // 4.5: serialize each row with play signals so Claude can weight
+  // picks by listening behaviour. Without these the model only sees
+  // metadata and falls back to clustering by the first few artists
+  // alphabetically / by genre, producing the "5-6 artists in 25
+  // tracks" pattern Jake complained about.
+  //
+  // plays — total play count (caps at 999 in the prompt to avoid
+  //   long-tail formatting noise; the relative ranking is what matters)
+  // rated — 0-5 stars, omitted if unrated
+  // lp    — relative bucket ("yday", "wk", "mo", "yr", "old") so
+  //   Claude can avoid stuff the user just heard or surface stuff
+  //   they haven't played in a year (rediscovery)
+  // (year is included but inline so the row stays scannable)
+  const now = Date.now()
+  function lastPlayedBucket(ms: number | undefined): string {
+    if (!ms) return 'never'
+    const days = Math.floor((now - ms) / (24 * 60 * 60 * 1000))
+    if (days < 2) return 'yday'
+    if (days < 8) return 'wk'
+    if (days < 32) return 'mo'
+    if (days < 366) return 'yr'
+    return 'old'
+  }
+  // 4.5.0-88 — RAG-driven candidate pool. Pre-fix every musicman-
+  // playlist call sent the WHOLE library (~6,800 lines, ~540 KB) to
+  // Claude. Now, if RAG is configured and ≥80% of the library is
+  // indexed, we retrieve the top-K mood-relevant tracks (K = max(200,
+  // TARGET × 5)) and send ONLY those to Claude. Net effect:
+  //   - Prompt shrinks 30-40× → faster + cheaper per call
+  //   - Candidate pool is mood-aware → fewer "I picked the wrong
+  //     genre" misses
+  //   - The deterministic top-up below still draws from the FULL
+  //     library on shortfall, so quality doesn't regress for queries
+  //     where retrieval misses something niche.
+  // Falls back to full-library prompt when retrieval returns < 50
+  // hits (suggests embeddings haven't been backfilled or are sparse).
+  const RAG_PLAYLIST_OVERSAMPLE = 5
+  const RAG_PLAYLIST_MIN_POOL = 50
+  let candidateTracks: typeof tracks = tracks
+  let ragUsed = false
+  if (ragIsConfigured()) {
+    const idxCount = await ragEmbeddingsCount().catch(() => 0)
+    if (idxCount >= Math.max(50, Math.floor(tracks.length * 0.8))) {
+      const queryMatch = mood.match(/\b(\d{1,3})\s*(?:song|track|tune|cut|jam)/i)
+      const queryTarget = queryMatch ? Math.max(5, Math.min(200, parseInt(queryMatch[1], 10))) : 25
+      const k = Math.max(RAG_PLAYLIST_MIN_POOL, queryTarget * RAG_PLAYLIST_OVERSAMPLE)
+      const hits = await ragRetrieveByQuery(mood, k)
+      if (hits.length >= RAG_PLAYLIST_MIN_POOL) {
+        const idSet = new Set(hits.map(h => h.trackId))
+        const subset = tracks.filter(t => idSet.has(t.id))
+        if (subset.length >= RAG_PLAYLIST_MIN_POOL) {
+          candidateTracks = subset
+          ragUsed = true
+          console.log(`[musicman-playlist] RAG pool: ${candidateTracks.length} candidates from ${tracks.length} total`)
+        }
+      }
+    }
+  }
+
+  const trackList = candidateTracks.map(t => {
+    const parts = [
+      String(t.id),
+      t.title || '',
+      t.artist || '',
+      t.album || '',
+      t.genre || '',
+      `${t.year || '?'}`,
+      `plays=${Math.min(999, t.playCount || 0)}`,
+      `lp=${lastPlayedBucket(t.lastPlayedAt)}`,
+    ]
+    if (t.rating && t.rating > 0) parts.push(`★${t.rating}`)
+    return parts.join('|')
+  }).join('\n')
+  void ragUsed  // surfaced via log line above; reserved for future telemetry
+
+  // 4.5.0-85 — mood-driven count + primary-artist parsing. Jake's
+  // example: "40 songs of drake and similar" must return exactly 40,
+  // Drake-heavy. Pre-fix the hardcoded constants returned ~25 tracks
+  // with at most 3 per artist regardless of what the user asked for.
+  //
+  // Count parse: "40 songs/tracks" / "give me 50" / "100 song mix"
+  // clamps to [5, 200] so a typo doesn't ask for 9999 tracks.
+  //
+  // Primary-artist parse: walks the library artist set and finds the
+  // longest artist name whose lowercase form appears in mood as a
+  // word match. "drake and similar" → Drake. Used to RELAX the per-
+  // artist cap (so the playlist can be heavy on the asked-for artist)
+  // and to drive the deterministic top-up below if Claude returns
+  // short.
+  const moodLower = mood.toLowerCase()
+  const countMatch = mood.match(/\b(\d{1,3})\s*(?:song|track|tune|cut|jam)/i)
+  const REQUESTED_COUNT = countMatch ? Math.max(5, Math.min(200, parseInt(countMatch[1], 10))) : 25
+  const TARGET_COUNT = REQUESTED_COUNT
+  // Find a library artist whose name appears in mood. Longest match
+  // wins so "Pink Floyd" beats "Pink" when both are mentioned.
+  const libraryArtists = new Set<string>()
+  for (const t of tracks) if (t.artist) libraryArtists.add(t.artist)
+  let primaryArtist: string | null = null
+  for (const a of libraryArtists) {
+    const al = a.toLowerCase().trim()
+    if (al.length < 3) continue
+    // Require word-boundary on either side so "drake" doesn't false-
+    // match "drakes" or "soundtrack."
+    if (new RegExp(`\\b${al.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(moodLower)) {
+      if (!primaryArtist || a.length > primaryArtist.length) primaryArtist = a
+    }
+  }
+  // Per-artist cap: relaxed dramatically when a primary artist is
+  // mentioned (caller WANTS lots of that artist). Otherwise 3.
+  const MAX_PER_ARTIST = primaryArtist ? Math.max(3, Math.floor(TARGET_COUNT * 0.75)) : 3
+  // Distinct-artist floor: relaxed when a primary artist is named OR
+  // when the count is small. Otherwise scales with TARGET_COUNT so a
+  // 40-track playlist needs ~18 distinct artists by default.
+  const MIN_DISTINCT_ARTISTS = primaryArtist ? 2 : Math.max(3, Math.floor(TARGET_COUNT * 0.45))
+
+  const playlistInstructions = `Build a playlist from the user's ACTUAL library for their requested mood. Return EXACTLY ${TARGET_COUNT} tracks — not 38, not 39, not 24 — exactly ${TARGET_COUNT}. The user asked for a specific count; honor it. If your first cut comes up short, KEEP DIGGING through the library for more matches; the deterministic top-up below is a safety net, not your job to rely on.${primaryArtist ? ` The user explicitly called out "${primaryArtist}" — this playlist should be ${primaryArtist}-HEAVY (up to ${MAX_PER_ARTIST} ${primaryArtist} tracks is fine), with the rest being artists in a similar lane.` : ''} Track ORDER matters — think about flow, transitions, energy arc. This is a curated experience, not a shuffle.
 
 Return ONLY a JSON object (no markdown, no code fences):
 {"name":"creative playlist name","commentary":"2-3 sentences about your picks, in character","trackIds":[array of track ID numbers in playlist order]}
 
-Rules:
+HARD RULES (the playlist is rejected and you'll be asked to redo it if any of these are violated):
 - ONLY use track IDs from the provided library — do not invent IDs
-- Order matters — build a journey with intentional pacing
-- VARIETY IS KEY: Mix up the artists. Do NOT put 3+ songs by the same artist in a row. Spread artists throughout the playlist. Back-to-back songs from the same artist should be RARE — maybe once in a playlist if it truly serves the flow. Think like a great radio DJ, not someone hitting "play all" on one album.
-- Aim for at least 10-12 different artists in a 20-track playlist
-- If the mood is vague, interpret it with confidence`
+- MAXIMUM ${MAX_PER_ARTIST} tracks per artist across the entire playlist. ${MAX_PER_ARTIST} is a ceiling, not a target — use it sparingly for headliners only
+- At least ${MIN_DISTINCT_ARTISTS} DIFFERENT artists in a ${TARGET_COUNT}-track playlist (UNLESS the mood is a specific catalog — see CATALOG ACCURACY below — in which case authentic membership beats artist count)
+- Never put two tracks by the same artist back-to-back
+- COMMENTARY MUST MATCH THE PICKS. Write the commentary AFTER you finalize trackIds, never before. Do NOT claim "the user doesn't have X" if X is in your trackIds. Do NOT claim "I'm pulling from Y" if Y isn't in your trackIds. Self-contradiction reads as the model wasn't paying attention. If your commentary needs editing because your picks changed, edit the commentary — not the other way around.
+
+CATALOG ACCURACY (CRITICAL when the user names a specific canon — Bond themes, Pixar songs, Disney villain songs, Tarantino soundtracks, Christmas standards, Marvel scores, etc.):
+- A "Bond theme" is a song from the OPENING TITLES of a James Bond film. There are ~25 of them. "Thunderball" (Tom Jones), "Goldfinger" (Shirley Bassey), "Live and Let Die" (Wings), "Nobody Does It Better" (Carly Simon), "A View to a Kill" (Duran Duran), "Goldeneye" (Tina Turner), "Skyfall" (Adele), "No Time To Die" (Billie Eilish), etc. Songs that ARE NOT Bond themes even if they share keywords or artists: "Thunderball" by Johnny Cash (rejected demo, never used), "Sixteen Saltines" by Jack White, "Danger Zone" by Kenny Loggins (Top Gun).
+- The general rule: if the user names a CANON, only include tracks you are HIGHLY CONFIDENT belong to it. A track that has the right artist on a DIFFERENT topic is NOT a member. A track with a title that sounds vibey-adjacent is NOT a member. Better a 6-track accurate playlist than a 25-track one polluted with false positives.
+- If you're not sure whether a track belongs to a named canon, EXCLUDE IT. The user will trust an under-inclusive list far more than an over-inclusive one with embarrassing wrong picks.
+- For a named-canon playlist, the MIN_DISTINCT_ARTISTS rule above is suspended — authentic membership matters more than variety.
+
+CRAFT RULES (for non-canon mood requests):
+- Weight picks by signal: 'plays=' is total play count, '★N' is star rating, 'lp=' is when they last heard it (yday/wk/mo/yr/old/never). Beloved tracks (high plays + 4-5★) are the SPINE. 'lp=old' or 'lp=never' tracks are great for rediscovery — sprinkle them in. Avoid 'lp=yday' tracks unless they're truly perfect — the user just heard them.
+- Build a journey: opener that announces the vibe, middle that develops it, last few that send it somewhere. Don't just stack 25 same-energy songs.
+- Reach DEEP into the library — your job is to surface things the user forgot they owned, not just play their top 25. If a track has plays=0 but ★4, that's gold: they loved it once and lost it.
+- If the mood is vague, interpret it with confidence. Don't ask for clarification.`
 
   const systemPrompt = buildMusicManPrompt(playlistInstructions)
 
-  try {
+  // 4.5: detect "named canon" requests so the validator suspends the
+  // MIN_DISTINCT_ARTISTS rule. A Bond-themes playlist legitimately
+  // has ~25 different artists, but a Beatles-only or Pixar-songs
+  // playlist won't — and we don't want the retry path to bounce a
+  // genuinely accurate canon list for low artist count.
+  const isNamedCanon = /\b(bond|james bond|pixar|disney|tarantino|wes anderson|christmas|marvel|star wars|harry potter|holiday|lord of the rings|movie soundtrack|musical|broadway|only|just|all)\b/i.test(mood)
+
+  // Helper: validate trackIds against the hard rules. Returns null if
+  // valid, otherwise a violation string Claude can act on in retry.
+  function validate(trackIds: number[]): string | null {
+    if (!Array.isArray(trackIds) || trackIds.length === 0) return 'empty trackIds'
+    const byId = new Map<number, { artist: string; title: string }>()
+    for (const t of tracks) byId.set(t.id, { artist: t.artist || '', title: t.title || '' })
+    const artistCounts = new Map<string, number>()
+    const seen = new Set<number>()
+    let lastArtist = ''
+    for (const id of trackIds) {
+      const t = byId.get(id)
+      if (!t) return `track id ${id} is not in the library`
+      if (seen.has(id)) return `track id ${id} appears twice`
+      seen.add(id)
+      const a = t.artist.toLowerCase().trim()
+      artistCounts.set(a, (artistCounts.get(a) || 0) + 1)
+      if (a && a === lastArtist) return `back-to-back tracks by ${t.artist}`
+      lastArtist = a
+    }
+    const overCap = [...artistCounts.entries()].filter(([, n]) => n > MAX_PER_ARTIST)
+    if (overCap.length > 0) {
+      return overCap.map(([a, n]) => `"${a}" appears ${n} times (cap is ${MAX_PER_ARTIST})`).join('; ')
+    }
+    // 4.5: skip distinct-artist check for named-canon requests — see
+    // isNamedCanon above. An authentic 6-track Bond list shouldn't get
+    // bounced and re-padded with non-Bond filler.
+    if (!isNamedCanon && artistCounts.size < MIN_DISTINCT_ARTISTS) {
+      return `only ${artistCounts.size} distinct artists (need ≥${MIN_DISTINCT_ARTISTS})`
+    }
+    return null
+  }
+
+  async function callOnce(extraUserHint: string | null): Promise<{ name?: string; commentary?: string; trackIds?: number[]; rawText: string }> {
+    const userContent = `Build me a playlist for: "${mood}"\n\nMy library (ID|Title|Artist|Album|Genre|Year|plays|lp|★rating):\n${trackList}${extraUserHint ? `\n\n${extraUserHint}` : ''}`
     const response = await claudeCall('musicman-playlist', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: `Build me a playlist for: "${mood}"\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}` }]
+      messages: [{ role: 'user', content: userContent }],
     })
     const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
+    if (!jsonMatch) return { rawText: text }
+    try {
       const parsed = JSON.parse(jsonMatch[0])
-      if (parsed.commentary) noteMusicManUtterance('playlist', parsed.commentary)
-      return { ok: true, name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds }
+      return { name: parsed.name, commentary: parsed.commentary, trackIds: parsed.trackIds, rawText: text }
+    } catch {
+      return { rawText: text }
     }
-    return { ok: false, error: 'Could not parse playlist' }
+  }
+
+  try {
+    let attempt = await callOnce(null)
+    if (!attempt.trackIds) return { ok: false, error: 'Could not parse playlist' }
+
+    const violation = validate(attempt.trackIds)
+    if (violation) {
+      // One-shot retry with explicit feedback on what went wrong. Sonnet
+      // reliably obeys constraint violations when they're called out by
+      // count; pre-4.5 the prompt only said "variety is key" with no
+      // numerical floor, so it routinely shipped 5-6-artist playlists.
+      console.log(`[musicman-playlist] retry — violation: ${violation}`)
+      attempt = await callOnce(`Your previous draft violated the hard rules: ${violation}. Regenerate the WHOLE playlist respecting MAX ${MAX_PER_ARTIST} per artist and ≥${MIN_DISTINCT_ARTISTS} distinct artists. Keep the same mood and similar flow.`)
+      if (!attempt.trackIds) return { ok: false, error: 'Could not parse playlist (retry)' }
+    }
+
+    // 4.5.0-85 — exact-count enforcement post-Claude. The model
+    // routinely undershoots (returns 38 when you asked for 40) and
+    // sometimes overshoots. Truncate the overshoots; deterministically
+    // top up the undershoots from the library so the user gets the
+    // EXACT count they asked for. Top-up priority:
+    //   1. More tracks by the primary artist (if specified), sorted
+    //      by plays + rating desc — best Drake catalog first.
+    //   2. Tracks by other artists sharing the primary artist's top
+    //      genre (extracted from the library), again best-first.
+    //   3. Anything from the library by play count desc, skipping
+    //      what's already in the list.
+    let finalIds = Array.isArray(attempt.trackIds) ? [...attempt.trackIds] : []
+    if (finalIds.length > TARGET_COUNT) {
+      console.log(`[musicman-playlist] truncating ${finalIds.length} → ${TARGET_COUNT}`)
+      finalIds = finalIds.slice(0, TARGET_COUNT)
+    }
+    if (finalIds.length < TARGET_COUNT) {
+      const inList = new Set(finalIds)
+      const trackById = new Map(tracks.map(t => [t.id, t]))
+      const score = (t: { playCount?: number; rating?: number }) =>
+        (Number(t.playCount) || 0) + (Number(t.rating) || 0) * 5
+      // 4.5.0-92 — was an array + `candidates.includes(t)` which is
+      // O(N²) over the full library (6,800² = 46M includes-hops on a
+      // worst-case top-up). Now a Set<id> for O(1) membership checks;
+      // the visited-IDs check below uses Set.has across all three
+      // tiers so candidates can stay a flat list.
+      const candidates: typeof tracks = []
+      const visited = new Set<number>(inList)
+      // Tier 1: more of the primary artist.
+      if (primaryArtist) {
+        const primaryLower = primaryArtist.toLowerCase().trim()
+        for (const t of tracks) {
+          if (visited.has(t.id)) continue
+          if ((t.artist || '').toLowerCase().trim() === primaryLower) {
+            candidates.push(t)
+            visited.add(t.id)
+          }
+        }
+      }
+      // Tier 2: same-genre as the primary artist (or top library
+      // genre if no primary).
+      const refGenres = new Set<string>()
+      const refArtist = primaryArtist?.toLowerCase().trim() || ''
+      for (const t of tracks) {
+        if (refArtist && (t.artist || '').toLowerCase().trim() === refArtist && t.genre) {
+          refGenres.add(t.genre.trim().toLowerCase())
+        }
+      }
+      if (refGenres.size > 0) {
+        for (const t of tracks) {
+          if (visited.has(t.id)) continue
+          if (refGenres.has((t.genre || '').trim().toLowerCase())) {
+            candidates.push(t)
+            visited.add(t.id)
+          }
+        }
+      }
+      // Tier 3: top-played overall — last-resort filler.
+      for (const t of tracks) {
+        if (visited.has(t.id)) continue
+        candidates.push(t)
+        visited.add(t.id)
+      }
+      candidates.sort((a, b) => score(b) - score(a))
+      // Avoid back-to-back same artist when appending.
+      const seenArtists: string[] = finalIds
+        .map(id => (trackById.get(id)?.artist || '').toLowerCase().trim())
+      for (const c of candidates) {
+        if (finalIds.length >= TARGET_COUNT) break
+        const a = (c.artist || '').toLowerCase().trim()
+        const last = seenArtists[seenArtists.length - 1] || ''
+        if (a && a === last) continue
+        finalIds.push(c.id)
+        seenArtists.push(a)
+      }
+      const added = finalIds.length - (Array.isArray(attempt.trackIds) ? attempt.trackIds.length : 0)
+      if (added > 0) console.log(`[musicman-playlist] topped up +${added} (${primaryArtist ? `primary=${primaryArtist}` : 'no primary'}; final=${finalIds.length}/${TARGET_COUNT})`)
+    }
+
+    if (attempt.commentary) noteMusicManUtterance('playlist', attempt.commentary)
+    return { ok: true, name: attempt.name, commentary: attempt.commentary, trackIds: finalIds }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, error: msg }
@@ -5595,7 +7899,16 @@ Rules:
 // variety pass. `force` (from the Regenerate button) bypasses the cache.
 ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
   return getOrGeneratePicks('mm', tracks, !!force, async () => {
-    const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+    // 4.5.0-89 — RAG candidate pool. Seed query frames Music Man's
+    // lane: deep-cut record-store-savant picks spanning genres and
+    // eras. K=400 so MM still gets eclectic variety to choose from.
+    const { pool, used } = await buildRagPoolForPicks(
+      'eclectic record-store deep cuts spanning genres rock pop hip-hop jazz funk soul electronic across decades',
+      tracks,
+      400,
+    )
+    if (used) console.log(`[musicman-picks] RAG pool: ${pool.length} candidates from ${tracks.length}`)
+    const trackList = pool.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
     const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'mm' })
     // Force MM persona regardless of the user's default-host preference —
     // the user explicitly asked for Music Man's list under his name.
@@ -5633,7 +7946,16 @@ ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: bo
 // commentary reads. 25 tracks, weekly Friday-to-Friday rotation.
 ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
   return getOrGeneratePicks('megan', tracks, !!force, async () => {
-    const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+    // 4.5.0-89 — RAG pool biased toward Megan's lane: working-critic
+    // perspective, newer / indie / contrarian / female-fronted. K=400
+    // so her contrarian streak still has range to pull from.
+    const { pool, used } = await buildRagPoolForPicks(
+      'critic indie newer contemporary female-fronted alternative experimental contrarian deep cut',
+      tracks,
+      400,
+    )
+    if (used) console.log(`[megan-picks] RAG pool: ${pool.length} candidates from ${tracks.length}`)
+    const trackList = pool.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
     const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
     const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
     const [chart, reviews] = await Promise.all([getLastFmNyChart(), getRecentReviews()])
@@ -5666,7 +7988,16 @@ ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boole
 // 25-track Friday-to-Friday weekly rotation as MM and Megan.
 ipcMain.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
  return getOrGeneratePicks('djhands', tracks, !!force, async () => {
-  const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
+  // 4.5.0-89 — RAG pool biased toward Stephen Hands' DJ lane (dance,
+  // hip-hop, electronic, funk/soul with groove). Matches the YOUR
+  // LANE block in his prompt below. K=400.
+  const { pool, used } = await buildRagPoolForPicks(
+    'house techno disco boogie club garage hip-hop drill trap drum-and-bass jungle dubstep footwork breakbeat funk soul groove sample dancefloor BPM-matched',
+    tracks,
+    400,
+  )
+  if (used) console.log(`[dj-hands-picks] RAG pool: ${pool.length} candidates from ${tracks.length}`)
+  const trackList = pool.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
   // Use the shared scaffolding but override the persona-name reference to
   // "DJ Hands" — buildPicksInstructions's persona arg only knows mm/megan,
   // so the prompt manually references DJ Hands here.
@@ -5725,7 +8056,7 @@ Rules:
 - ★ ARTIST VARIETY (see the box above) — aim for 25 distinct artists, max TWO per artist, NEVER three
 - Commentary: 1-2 sentences. STOP.`
 
-  const systemPrompt = DJ_HANDS_CORE + '\n\n' + picksInstructions
+  const systemPrompt = withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + picksInstructions
   const chart = await getLastFmNyChart()
   const chartLine = formatLastFmChartForPrompt(chart)
   const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine} (Pick from MY library only — this is just party-pulse context.)` : ''}`
@@ -6094,18 +8425,263 @@ ipcMain.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds:
   return await runPythonRestore(['--apply', mount, xmlPath], payload)
 })
 
-// Metadata overrides persistence
+// Metadata overrides persistence — STATE_DIR-resolved (NAS or local).
 function getOverridesPath(): string {
-  return join(app.getPath('userData'), 'metadata-overrides.json')
+  return join(STATE_DIR, 'metadata-overrides.json')
 }
 
-ipcMain.handle('load-metadata-overrides', async () => {
+// 4.5.0-77 — mobile-stars.json bridge.
+//
+// File lives next to library.json: `$userData/mobile-stars.json`,
+// shape `{ "trackIds": ["5", "12", "37"] }`. Mobile backend wrote
+// this first (Brief 054 in JakeTunesMobile); desktop now reads + writes
+// the same file so star state is symmetric across both clients.
+//
+// Sync: ~/bin/jaketunes-homemini-sync.sh now pulls the Mini's copy
+// after pushing the desktop copy, so phone-set stars land on the
+// laptop within one sync cycle and desktop-set stars land on the
+// phone backend's local file the same way.
+//
+// All writes go through a serialized single-flight chain so two
+// rapid star clicks can't tear the file (each modifies the whole
+// trackIds set + writes back).
+function getMobileStarsPath(): string {
+  return join(STATE_DIR, 'mobile-stars.json')
+}
+
+// 4.5.0-87 — RAG foundation: embedding-backed track retrieval. Lives
+// in src/main/ai/embeddings.ts (binary format + cosine + OpenAI batch
+// call). These IPCs are the desktop's interface:
+//
+//   embedding-status      — { configured, count, total } for Settings UI
+//   embedding-backfill    — one-shot batch embed of every track that
+//                           doesn't have an embedding yet. Emits
+//                           `embedding-backfill-progress` events.
+//
+// Hook into musicman-chat: top-K retrieval over the user's question
+// embedding REPLACES the pre-computed digest block when both flags
+// align (USE_RAG_FOR_CHAT in buildMusicManPrompt + the user actually
+// has embeddings for ≥80% of their library).
+import {
+  buildEmbeddingText as ragBuildEmbedText,
+  embedTexts as ragEmbedTexts,
+  getEmbeddingsMap as ragGetEmbeddingsMap,
+  persistEmbeddingsMap as ragPersistEmbeddings,
+  setEmbedding as ragSetEmbedding,
+  topK as ragTopK,
+  isEmbeddingsConfigured as ragIsConfigured,
+  embeddingsCount as ragEmbeddingsCount,
+  type EmbedTrackInput,
+} from './ai/embeddings'
+
+ipcMain.handle('embedding-status', async (): Promise<{
+  configured: boolean; count: number; total: number;
+}> => {
+  let total = 0
   try {
-    const data = await readFile(getOverridesPath(), 'utf-8')
-    return { ok: true, overrides: JSON.parse(data) }
-  } catch {
-    return { ok: true, overrides: {} }
+    const raw = await readFile(LIBRARY_PATH, 'utf-8')
+    const lib = JSON.parse(raw) as { tracks?: unknown[] }
+    total = Array.isArray(lib.tracks) ? lib.tracks.length : 0
+  } catch { /* no library yet */ }
+  const count = await ragEmbeddingsCount().catch(() => 0)
+  return { configured: ragIsConfigured(), count, total }
+})
+
+ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
+  if (!ragIsConfigured()) {
+    return { ok: false, embedded: 0, total: 0, error: 'OPENAI_API_KEY not set. Add to .env to enable RAG.' }
   }
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8')
+    const lib = JSON.parse(raw) as { tracks?: Array<EmbedTrackInput & { id: number }> }
+    const tracks = (lib.tracks || []).filter(t => typeof t?.id === 'number')
+    const existing = await ragGetEmbeddingsMap()
+    const todo = opts?.force
+      ? tracks
+      : tracks.filter(t => !existing.has(t.id))
+    if (todo.length === 0) {
+      return { ok: true, embedded: 0, total: tracks.length }
+    }
+    // Send progress before kickoff so the UI flips to "embedding…" immediately.
+    event.sender.send('embedding-backfill-progress', { done: 0, total: todo.length })
+    const BATCH = 100
+    let done = 0
+    for (let i = 0; i < todo.length; i += BATCH) {
+      const slice = todo.slice(i, i + BATCH)
+      const texts = slice.map(ragBuildEmbedText)
+      try {
+        const vecs = await ragEmbedTexts(texts)
+        for (let j = 0; j < slice.length && j < vecs.length; j++) {
+          await ragSetEmbedding(slice[j].id, vecs[j])
+        }
+        // Persist after every batch so a mid-job crash doesn't lose
+        // hours of API spend. The file is the source of truth; the
+        // in-memory map mirrors it.
+        await ragPersistEmbeddings()
+        done += slice.length
+        event.sender.send('embedding-backfill-progress', { done, total: todo.length })
+      } catch (err) {
+        console.warn('[embedding-backfill] batch failed (continuing with next):', err instanceof Error ? err.message : err)
+      }
+    }
+    const total = (await ragGetEmbeddingsMap()).size
+    return { ok: true, embedded: done, total }
+  } catch (err) {
+    return { ok: false, embedded: 0, total: 0, error: String(err) }
+  }
+})
+
+// Retrieve the K most-similar tracks to a free-text query. Used by
+// musicman-chat to build a focused context block in place of the
+// giant pre-computed digest. Returns track IDs + similarity scores;
+// caller resolves to full track records.
+async function ragRetrieveByQuery(query: string, k: number): Promise<Array<{ trackId: number; score: number }>> {
+  if (!ragIsConfigured()) return []
+  const map = await ragGetEmbeddingsMap()
+  if (map.size === 0) return []
+  try {
+    const [qvec] = await ragEmbedTexts([query])
+    if (!qvec) return []
+    return ragTopK(qvec, map, k)
+  } catch (err) {
+    console.warn('[rag] retrieve failed:', err instanceof Error ? err.message : err)
+    return []
+  }
+}
+
+// Build a focused block of retrieved tracks for injection into the
+// AI prompt. Reads the live library so the displayed metadata reflects
+// any post-embedding edits (artist renames, etc.). Returns '' when
+// retrieval has no hits — caller appends nothing and the legacy digest
+// is the only library context the model sees.
+// 4.5.0-89 — shared RAG pool builder for the three weekly-picks
+// handlers (mm / megan / dj-hands). Each persona passes its own seed
+// query so the retrieved candidate pool biases toward that persona's
+// lane WITHIN the user's library. Returns the original tracks array
+// untouched when:
+//   - OPENAI_API_KEY is not set
+//   - fewer than 80% of library tracks are embedded
+//   - retrieval returns < 100 hits (below threshold for picks variety)
+// That fallback keeps current behavior intact when RAG isn't ready.
+async function buildRagPoolForPicks<T extends { id: number }>(
+  seedQuery: string,
+  allTracks: T[],
+  k: number,
+  minPool: number = 100,
+): Promise<{ pool: T[]; used: boolean }> {
+  if (!ragIsConfigured()) return { pool: allTracks, used: false }
+  const idxCount = await ragEmbeddingsCount().catch(() => 0)
+  if (idxCount < Math.max(50, Math.floor(allTracks.length * 0.8))) return { pool: allTracks, used: false }
+  const hits = await ragRetrieveByQuery(seedQuery, k)
+  if (hits.length < minPool) return { pool: allTracks, used: false }
+  const idSet = new Set(hits.map(h => h.trackId))
+  const pool = allTracks.filter(t => idSet.has(t.id))
+  if (pool.length < minPool) return { pool: allTracks, used: false }
+  return { pool, used: true }
+}
+
+async function buildRetrievalBlockForQuery(query: string, k: number): Promise<string> {
+  if (!query.trim()) return ''
+  const hits = await ragRetrieveByQuery(query, k)
+  if (hits.length === 0) return ''
+  try {
+    const raw = await readFile(LIBRARY_PATH, 'utf-8')
+    const lib = JSON.parse(raw) as { tracks?: Array<{ id: number; title?: string; artist?: string; album?: string; year?: number | string; playCount?: number; rating?: number }> }
+    const byId = new Map((lib.tracks || []).map(t => [t.id, t]))
+    const lines = hits
+      .map(h => {
+        const t = byId.get(h.trackId)
+        if (!t) return null
+        const sig: string[] = []
+        if (Number(t.rating) > 0) sig.push(`★${t.rating}`)
+        const plays = Number(t.playCount) || 0
+        if (plays > 0) sig.push(`${plays}p`)
+        return `  • "${t.title || '?'}" — ${t.artist || '?'}${t.album ? ` (${t.album}${t.year ? ` ${t.year}` : ''})` : ''}${sig.length ? ` ${sig.join(' ')}` : ''}`
+      })
+      .filter((line): line is string => !!line)
+    if (lines.length === 0) return ''
+    return `RELEVANT TRACKS in the user's library (retrieved by semantic similarity to "${query.replace(/"/g, '\\"').slice(0, 80)}" — these are real tracks they own, ordered by relevance; use them to ground specifics):\n${lines.join('\n')}`
+  } catch (err) {
+    console.warn('[rag] block build failed:', err instanceof Error ? err.message : err)
+    return ''
+  }
+}
+
+// 4.5.0-82 — per-play event log (true windowed counts).
+//
+// Until now the Top 25 "Last Week" / "Last Month" filter looked at
+// `lastPlayedAt` to decide "played in window" but ranked by lifetime
+// `playCount` — so a track played 500 times two years ago and once
+// last week would dominate the Last Week list with 500. The comment
+// in SmartPlaylistView spelled it out: "if we ever add per-play
+// history we can compute true windowed play counts."
+//
+// Schema: newline-delimited JSON (jsonl). One line per play event:
+//   {"id":<trackId>,"ts":<epochMs>}
+// Append-only — never rewritten. Reading is a single full-file read +
+// linear scan; bounded to ~1 KB per 50 plays so even a 10-year archive
+// at a-track-per-day is ~7 MB, trivial.
+function getPlayEventsPath(): string {
+  return join(STATE_DIR, 'play-events.jsonl')
+}
+async function appendPlayEvent(trackId: number, ts: number): Promise<void> {
+  try {
+    const { appendFile } = await import('fs/promises')
+    await appendFile(getPlayEventsPath(), `{"id":${trackId},"ts":${ts}}\n`, 'utf-8')
+  } catch (err) {
+    console.warn('[play-events] append failed:', err instanceof Error ? err.message : err)
+  }
+}
+ipcMain.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
+  try {
+    const cutoff = Date.now() - Math.max(0, windowMs)
+    const raw = await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')
+    const counts: Record<string, number> = {}
+    let parseErrors = 0
+    for (const line of raw.split('\n')) {
+      if (!line) continue
+      try {
+        const evt = JSON.parse(line) as { id?: number; ts?: number }
+        if (typeof evt.id !== 'number' || typeof evt.ts !== 'number') continue
+        if (evt.ts < cutoff) continue
+        const k = String(evt.id)
+        counts[k] = (counts[k] || 0) + 1
+      } catch { parseErrors++ }
+    }
+    if (parseErrors > 0) console.warn(`[play-events] ${parseErrors} malformed lines (skipped)`)
+    return { ok: true, counts }
+  } catch (err) {
+    console.warn('[play-events] read failed:', err)
+    return { ok: false, counts: {} }
+  }
+})
+// 4.5.0-106 Phase 2.5: now backed by mobileStarsCache. The legacy
+// "writeMobileStarSidecar -> readFile NAS / rename" chain was a per-star
+// SMB round-trip; the cache makes the read free, the mutate synchronous,
+// and the NAS flush a fire-and-forget background job.
+async function readMobileStarsSet(): Promise<Set<string>> {
+  const parsed = await mobileStarsCache.get()
+  const ids = Array.isArray(parsed?.trackIds) ? parsed.trackIds : []
+  return new Set(ids.filter((x): x is string => typeof x === 'string'))
+}
+async function writeMobileStarSidecar(trackId: number, starred: boolean): Promise<void> {
+  await mobileStarsCache.update((current) => {
+    const set = new Set(Array.isArray(current?.trackIds) ? current.trackIds : [])
+    const key = String(trackId)
+    if (starred) set.add(key); else set.delete(key)
+    return { trackIds: Array.from(set).sort() }
+  })
+}
+ipcMain.handle('load-mobile-stars', async (): Promise<{ ok: boolean; trackIds: string[] }> => {
+  const set = await readMobileStarsSet()
+  return { ok: true, trackIds: Array.from(set) }
+})
+
+ipcMain.handle('load-metadata-overrides', async () => {
+  // 4.5.0-106: served from in-memory cache after first load (≤1ms vs the
+  // 50-500ms NAS round-trip pre-cache). Cache is the source of truth from
+  // the moment writeOverridesSerialized's synchronous mutate returns.
+  return { ok: true, overrides: await overridesCache.get() }
 })
 
 // Save a metadata override for a single track.
@@ -6125,6 +8701,19 @@ ipcMain.handle('load-metadata-overrides', async () => {
 // Legacy entries are kept on disk but the renderer ignores them (can't
 // validate), which is what we want after the wrong-overrides incident.
 ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
+  const lockReason = isSaveLocked()
+  if (lockReason) {
+    console.warn(`[save-metadata-override] refused (saves locked): ${lockReason}`)
+    return { ok: false, error: 'state-save-locked', reason: lockReason }
+  }
+  // 4.5.0-105 (option 3 perf): all the NAS-hitting work below — overrides
+  // write, mobile-stars sidecar, artwork-key migration, tag writeback —
+  // is wrapped in a fire-and-forget background block so the IPC returns
+  // to the renderer immediately. Pre-fix every save blocked the UI for
+  // the full SMB round-trip (100ms-1s). The serialized write chain still
+  // preserves order across rapid saves; renderers update their state
+  // optimistically so they don't need the synchronous round-trip.
+  //
   // Routed through the serialized writer so this can't race with the
   // analysis worker's persistOverrideFields. Both go through the same
   // single-flight Promise chain — no shared tmp filename, no
@@ -6139,6 +8728,7 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   // the re-parse safeguard); a no-fingerprint save MERGES preserving
   // existing fields and keeping the existing fp; a matching
   // fingerprint or empty-fp existing entry merges as before.
+  void (async () => {
   await writeOverridesSerialized((overrides) => {
     const key = String(trackId)
     const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
@@ -6166,6 +8756,129 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   // 4.4.18: metadata edits are a sync trigger — change a track's artist
   // on laptop, homemini reflects it within ~30 sec.
   triggerSync('metadata-edit')
+
+  // 4.5.0-68: refresh the library digest when stats fields change
+  // (rating / playCount / skipCount / artist / album / genre / year).
+  // Pre-fix the digest was only refreshed on load-tracks + save-library
+  // — meaning every star/play/skip during a session went into
+  // listenerProfile but the digest's "signature albums" + per-artist
+  // breakdown lagged reality until the next library save. AI chat then
+  // talked about a snapshot from session start. Throttled to once per
+  // ~1.5s so a rapid star-everything-in-an-album doesn't thrash. Reads
+  // library.json directly (cheap; bounded).
+  const STAT_FIELDS = new Set(['rating', 'playCount', 'skipCount', 'artist', 'album', 'genre', 'year'])
+  if (STAT_FIELDS.has(field)) scheduleLibraryDigestRefresh()
+
+  // 4.5.0-82 — per-play event log. lastPlayedAt is saved exactly once
+  // per natural track-end (useAudio.ts:1221), so it's the right hook
+  // for a one-event-per-play log. The log powers true windowed Top 25
+  // counts ("Last Week" actually means "plays in the last 7 days,"
+  // not "lifetime plays for tracks last touched in the last 7 days").
+  if (field === 'lastPlayedAt') {
+    const ts = Number(value)
+    if (Number.isFinite(ts) && ts > 0) void appendPlayEvent(trackId, ts)
+  }
+
+  // 4.5.0-77 — mirror star state into mobile-stars.json sidecar so
+  // the iOS app sees desktop-set stars and vice versa. Mobile already
+  // writes its stars to the same file (Brief 054 in JakeTunesMobile);
+  // pre-fix the desktop wrote ONLY to metadata-overrides.rating and
+  // never to mobile-stars.json, so phone-side stars round-tripped
+  // through ratings but desktop-set stars never reached the canonical
+  // cross-device file. Now any rating override (this single handler
+  // is the funnel for SongsView, ratingMenuEntries, AlbumsView,
+  // Cynthia, hover-stars, future callers) updates the sidecar in the
+  // same write: rating>0 adds the trackId, rating=0 removes it. The
+  // sync script (jaketunes-homemini-sync.sh) replicates the file
+  // bidirectionally to homemini, so both backends end up with the
+  // same set of starred trackIds.
+  if (field === 'rating') {
+    // 4.5.0-92 — AWAITED (was `void` fire-and-forget). Pre-fix, when
+    // the NAS sidecar write failed (brief unmount, permission glitch),
+    // the rating field in metadata-overrides was already saved but
+    // the mobile-stars.json sidecar lagged — state diverged silently.
+    // Awaiting means the IPC reports failure to the renderer if the
+    // sidecar fails, AND the serialized write chain inside
+    // writeMobileStarSidecar gets to finish before save-metadata-
+    // override returns. The chain itself catches its own errors and
+    // logs, so this await never throws — worst case the IPC adds a
+    // few ms of NAS round-trip.
+    await writeMobileStarSidecar(trackId, Number(value) > 0)
+  }
+
+  // 4.5.0-51: artwork-key migration on artist/album edit. When the user
+  // changes a track's artist or album via Get Info, the existing JPG
+  // file on disk is keyed by the OLD (artist, album) — without this
+  // migration the cover orphans and the renderer can't find it under
+  // the new tag combo. We copy the index entry to the new key (don't
+  // delete the old — other tracks may still need it).
+  //
+  // 4.5.0-64: now AWAITED (was fire-and-forget) so the renderer's next
+  // resolve-artwork IPC sees a consistent index — pre-fix, the modal
+  // close → re-render → IPC ran before the migration finished, the IPC
+  // returned null, and the renderer cached a negative result, leaving
+  // the tile blank. Also registers a pending entry when the source key
+  // isn't populated yet (import's extraction still running), so the
+  // copy still happens once extraction completes.
+  if (field === 'artist' || field === 'album') {
+    try {
+      // 4.5.0-106: both reads now hit the in-memory caches, no SMB.
+      const lib = await libraryCache.get() as { tracks?: Array<Record<string, unknown>> }
+      const track = (lib.tracks || []).find(t => t.id === trackId)
+      if (track) {
+        const overrides = await overridesCache.get()
+        const existingOverrideFields = (overrides[String(trackId)] as { fields?: Record<string, string> } | undefined)?.fields || {}
+        // Effective values BEFORE this save: library.json + any prior
+        // overrides. Important — we want the previous effective artist/
+        // album so the migration source key matches what was actually
+        // used when the artwork was stored.
+        const prevArtist = String(existingOverrideFields.artist ?? track.artist ?? '')
+        const prevAlbum = String(existingOverrideFields.album ?? track.album ?? '')
+        const newArtist = field === 'artist' ? value : prevArtist
+        const newAlbum = field === 'album' ? value : prevAlbum
+        if (prevArtist && prevAlbum && newArtist && newAlbum) {
+          const oldKey = `${prevArtist.toLowerCase().trim()}|||${prevAlbum.toLowerCase().trim()}`
+          const newKey = `${newArtist.toLowerCase().trim()}|||${newAlbum.toLowerCase().trim()}`
+          if (oldKey !== newKey) {
+            const index = await loadArtworkIndex()
+            if (index[newKey]) {
+              // Don't clobber an entry under the new key — that key may
+              // already hold a different track's good cover. The user
+              // edited INTO an existing (artist, album) combo, so they
+              // get the cover that combo already had.
+              console.log(`[artwork-migrate] "${newKey}" already populated; left untouched`)
+            } else if (index[oldKey]) {
+              index[newKey] = index[oldKey]
+              await saveArtworkIndex(index)
+              // 4.5.0-79 — also propagate the user-set LOCK to the new
+              // key. Pre-fix the lock stayed on oldKey only; if the
+              // user later re-imported a track at newKey, embedded-art
+              // extraction would overwrite their custom art because
+              // newKey had no lock entry. Keep oldKey locked too (other
+              // tracks may still reference that artist/album combo).
+              const locks = await loadArtworkLocks()
+              if (locks.has(oldKey) && !locks.has(newKey)) {
+                await setArtworkLock(newKey, true)
+                console.log(`[artwork-migrate] propagated lock "${oldKey}" → "${newKey}"`)
+              }
+              console.log(`[artwork-migrate] copied "${oldKey}" → "${newKey}" after ${field} edit`)
+            } else {
+              // 4.5.0-64: source key doesn't exist YET. Race with import's
+              // artwork extraction. Register a pending migration so
+              // extractAndSaveEmbeddedArtwork mirrors the write into
+              // newKey as soon as oldKey lands.
+              const set = pendingArtworkMigrations.get(oldKey) ?? new Set<string>()
+              set.add(newKey)
+              pendingArtworkMigrations.set(oldKey, set)
+              console.log(`[artwork-migrate] queued pending "${oldKey}" → "${newKey}" (source not in index yet)`)
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[artwork-migrate] failed (continuing):', err instanceof Error ? err.message : err)
+    }
+  }
 
   // Brief 020: write user-facing override fields into the audio file's
   // embedded tags so Plex (which reads tags directly, not our override
@@ -6207,6 +8920,11 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
       }
     })()
   }
+  })().catch((err) => {
+    // 4.5.0-105: outer fire-and-forget block. Any unhandled error from
+    // the background work lands here. The renderer has already moved on.
+    console.warn(`[save-metadata-override] background work failed trackId=${trackId} field=${field}:`, err instanceof Error ? err.message : err)
+  })
 
   return { ok: true }
 })
@@ -6229,12 +8947,9 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
 // Returns a summary the renderer can show in the result toast/dialog.
 ipcMain.handle('apply-overrides-batch', async (event) => {
   try {
-    const [libRaw, ovrRaw] = await Promise.all([
-      readFile(LIBRARY_PATH, 'utf-8'),
-      readFile(getOverridesPath(), 'utf-8').catch(() => '{}'),
-    ])
-    const lib = JSON.parse(libRaw) as { tracks?: Array<Record<string, unknown>> }
-    const overrides = JSON.parse(ovrRaw) as Record<string, { fp?: string; fields?: Record<string, string> }>
+    // 4.5.0-106: cached reads.
+    const lib = await libraryCache.get() as { tracks?: Array<Record<string, unknown>> }
+    const overrides = await overridesCache.get() as Record<string, { fp?: string; fields?: Record<string, string> }>
     const tracksById = new Map<number, Record<string, unknown>>()
     for (const t of lib.tracks || []) {
       if (typeof t.id === 'number') tracksById.set(t.id, t)
@@ -6450,23 +9165,24 @@ ipcMain.handle('save-chat-history', async (_event, conversations: unknown[]) => 
   return { ok: true }
 })
 
-// Playlist persistence
+// Playlist persistence — STATE_DIR-resolved (NAS or local).
 function getPlaylistsPath(): string {
-  return join(app.getPath('userData'), 'playlists.json')
+  return join(STATE_DIR, 'playlists.json')
 }
 
 ipcMain.handle('load-playlists', async () => {
-  try {
-    const data = await readFile(getPlaylistsPath(), 'utf-8')
-    return { ok: true, playlists: JSON.parse(data) }
-  } catch {
-    return { ok: true, playlists: [] }
-  }
+  // 4.5.0-106: served from cache.
+  return { ok: true, playlists: await playlistsCache.get() }
 })
 
 ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
-  await mkdir(join(app.getPath('userData')), { recursive: true })
-  await writeFile(getPlaylistsPath(), JSON.stringify(playlists, null, 2), 'utf-8')
+  const lockReason = isSaveLocked()
+  if (lockReason) {
+    console.warn(`[save-playlists] refused (saves locked): ${lockReason}`)
+    return { ok: false, error: 'state-save-locked', reason: lockReason }
+  }
+  // 4.5.0-106: cache update + background flush; IPC returns immediately.
+  playlistsCache.set(playlists)
   // 4.4.18: playlist edits also propagate. library.json itself doesn't
   // include playlists (separate file), but the sync script's safety-net
   // restart of homemini's JakeTunes picks them up alongside any
@@ -6605,6 +9321,17 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
   }
 })
 
+// 4.5.0-79 — verification IPC. Returns the count of user-locked
+// covers so renderer / About panel can display "N covers locked."
+ipcMain.handle('get-artwork-lock-count', async (): Promise<{ ok: boolean; count: number }> => {
+  try {
+    const locks = await loadArtworkLocks()
+    return { ok: true, count: locks.size }
+  } catch {
+    return { ok: false, count: 0 }
+  }
+})
+
 ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
   try {
     const dir = getArtworkDir()
@@ -6636,6 +9363,31 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
     // (online fetcher, embedded-art extraction, forced re-fetch) ever
     // overwrites it.
     await setArtworkLock(key, true)
+    // 4.5.0-80 — defense layer 3: copy the locked JPG into
+    // locked-backup/ so accidental deletion of the main file is
+    // recoverable at next launch. Best-effort; failure here doesn't
+    // block the set operation (the main file + lock + sidecar are
+    // already in place).
+    try {
+      await mkdir(getArtworkLockedBackupDir(), { recursive: true })
+      await copyFile(destPath, join(getArtworkLockedBackupDir(), `${hash}.jpg`))
+    } catch (err) {
+      console.warn('[artwork-lock-backup] copy failed (continuing):', err instanceof Error ? err.message : err)
+    }
+    // 4.5.0-55 — write sidecar so disk is fully self-describing.
+    try {
+      const meta = {
+        artist: artist.trim(),
+        album: album.trim(),
+        key,
+        source: 'user-custom',
+        bytes: (await stat(destPath)).size,
+        importedAt: new Date().toISOString(),
+      }
+      await writeFile(join(dir, `${hash}.meta.json`), JSON.stringify(meta, null, 2), 'utf-8')
+    } catch (err) {
+      console.warn('[artwork] sidecar write failed (continuing):', err instanceof Error ? err.message : err)
+    }
     return { ok: true, key, hash: versionedHash }
   } catch (err) {
     return { ok: false, error: String(err) }
@@ -6748,13 +9500,31 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
   return { ok: true, artwork: results }
 })
 
-ipcMain.handle('remove-artwork', async (_event, artist: string, album: string) => {
+ipcMain.handle('remove-artwork', async (_event, artist: string, album: string, force?: boolean) => {
   try {
     const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
+    // 4.5.0-80 — defense layer 4: refuse to silently nuke a user-
+    // locked cover. A stray context-menu click can't undo hand-set
+    // artwork anymore; caller must pass force:true (UI shows a
+    // confirmation dialog first).
+    const locks = await loadArtworkLocks()
+    if (locks.has(key) && !force) {
+      return { ok: false, locked: true, error: 'This cover is user-locked. Pass force:true to remove.' }
+    }
     const hash = artworkHash(artist, album)
-    const filePath = join(getArtworkDir(), `${hash}.jpg`)
+    const dir = getArtworkDir()
+    const filePath = join(dir, `${hash}.jpg`)
+    const sidecarPath = join(dir, `${hash}.meta.json`)
+    const backupPath = join(getArtworkLockedBackupDir(), `${hash}.jpg`)
 
     await unlink(filePath).catch(() => {})
+    // 4.5.0-55 — sidecar cleanup so disk stays consistent.
+    await unlink(sidecarPath).catch(() => {})
+    // 4.5.0-80 — also remove the locked-backup copy (only when forced
+    // removal of a previously-locked cover). Without this, a
+    // re-applied lock for the same (artist, album) would silently
+    // re-resurrect the OLD cover from the backup.
+    if (locks.has(key)) await unlink(backupPath).catch(() => {})
 
     const index = await loadArtworkIndex()
     delete index[key]
@@ -6782,6 +9552,137 @@ ipcMain.handle('choose-artwork-file', async () => {
 ipcMain.handle('load-artwork-map', async () => {
   const index = await loadArtworkIndex()
   return { ok: true, map: index }
+})
+
+/**
+ * 4.5.0-51 — Authoritative artwork resolver.
+ *
+ * The renderer's in-memory artworkMap is one source of truth, but it
+ * drifts (Get Info edits, tag changes after import, partial migrations).
+ * When the renderer can't find art for an (artist, album) pair, it
+ * delegates to this IPC, which does the FULL chain:
+ *
+ *   1. Exact JSON key (`${artist.toLowerCase().trim()}|||${album...}`)
+ *   2. Normalized JSON key — parens/diacritics/etc. stripped on both sides
+ *   3. Recompute artworkHash from CURRENT strings; check if the file
+ *      exists on disk (catches cases where the JSON index entry was lost
+ *      but the JPG is still sitting there)
+ *   4. Normalized-string hash variants checked on disk
+ *
+ * Returns the matching hash (versioned if present in the index) or null.
+ * Renderer caches the result via ADD_ARTWORK so future lookups are sync.
+ */
+function normalizeArtworkPartServer(s: string): string {
+  return (s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s*\((?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^)]*\)/g, '')
+    .replace(/\s*\[(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^\]]*\]/g, '')
+    .replace(/\s*\((?:feat\.?|featuring|with|prod\.?|produced by)[^)]+\)/g, '')
+    .replace(/\s*\[(?:feat\.?|featuring|with)[^\]]+\]/g, '')
+    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+async function fileExists(absPath: string): Promise<boolean> {
+  try { await stat(absPath); return true } catch { return false }
+}
+
+ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized' }> => {
+  if (!artist || !album) return { ok: true, hash: null }
+  const dir = getArtworkDir()
+  const index = await loadArtworkIndex()
+
+  // 1. Exact JSON key
+  const exactKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
+  if (index[exactKey]) {
+    const bareHash = String(index[exactKey]).replace(/_\d+$/, '')
+    if (await fileExists(join(dir, `${bareHash}.jpg`))) {
+      return { ok: true, hash: index[exactKey], source: 'exact' }
+    }
+  }
+
+  // 2. Normalized JSON key match against every entry in the index
+  const nArtist = normalizeArtworkPartServer(artist)
+  const nAlbum = normalizeArtworkPartServer(album)
+  const wantedNorm = `${nArtist}|||${nAlbum}`
+  for (const [k, v] of Object.entries(index)) {
+    const [ka, kal] = k.split('|||')
+    const kn = `${normalizeArtworkPartServer(ka || '')}|||${normalizeArtworkPartServer(kal || '')}`
+    if (kn === wantedNorm) {
+      const bareHash = String(v).replace(/_\d+$/, '')
+      if (await fileExists(join(dir, `${bareHash}.jpg`))) {
+        return { ok: true, hash: v, source: 'normalized' }
+      }
+    }
+  }
+
+  // 3. Compute the hash from CURRENT strings (post-Get-Info edit case
+  // where the JSON entry was never updated but the file IS on disk
+  // under a key we can recompute).
+  const directHash = artworkHash(artist, album)
+  if (await fileExists(join(dir, `${directHash}.jpg`))) {
+    return { ok: true, hash: directHash, source: 'disk-hash' }
+  }
+
+  // 4. Normalized-string hash variants — try hashing the normalized
+  // (parens-stripped, diacritics-folded) artist+album. Catches the
+  // case where a track was imported with "(Remastered)" in the title
+  // and the user later cleaned it up, OR vice versa.
+  const normalizedHash = createHash('md5')
+    .update(`${nArtist}|||${nAlbum}`)
+    .digest('hex')
+  if (await fileExists(join(dir, `${normalizedHash}.jpg`))) {
+    return { ok: true, hash: normalizedHash, source: 'disk-normalized' }
+  }
+
+  // 5. Sidecar scan (4.5.0-55). Every artwork file written from -55
+  // onward carries a `${hash}.meta.json` sidecar with its (artist,
+  // album, key). When all hash-based strategies miss, scan sidecars
+  // for one whose normalized (artist, album) matches the query. This
+  // is the final defense — catches cases where the JSON index is
+  // missing the entry entirely BUT the JPG + sidecar are on disk.
+  // Linear scan over ~1000-5000 sidecars; bounded + fine for misses.
+  try {
+    const { readdir } = await import('fs/promises')
+    const entries = await readdir(dir)
+    for (const name of entries) {
+      if (!name.endsWith('.meta.json')) continue
+      try {
+        const sidecar = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { artist?: string; album?: string }
+        const sa = normalizeArtworkPartServer(sidecar.artist || '')
+        const sal = normalizeArtworkPartServer(sidecar.album || '')
+        if (sa === nArtist && sal === nAlbum) {
+          const sidecarHash = name.replace(/\.meta\.json$/, '')
+          if (await fileExists(join(dir, `${sidecarHash}.jpg`))) {
+            return { ok: true, hash: sidecarHash, source: 'disk-normalized' }
+          }
+        }
+      } catch { /* malformed sidecar, skip */ }
+    }
+  } catch { /* readdir failed, fall through */ }
+
+  return { ok: true, hash: null }
+})
+
+/**
+ * 4.5.0-51 — Get Info migration. When the user changes a track's artist
+ * or album in Get Info, copy the existing artwork map entry to the NEW
+ * key so the cover follows the track. We COPY (don't move) so other
+ * tracks under the original key keep their art too.
+ */
+ipcMain.handle('migrate-artwork-key', async (_event, oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => {
+  if (!oldArtist || !oldAlbum || !newArtist || !newAlbum) return { ok: false }
+  const oldKey = `${oldArtist.toLowerCase().trim()}|||${oldAlbum.toLowerCase().trim()}`
+  const newKey = `${newArtist.toLowerCase().trim()}|||${newAlbum.toLowerCase().trim()}`
+  if (oldKey === newKey) return { ok: true, migrated: false }
+  const index = await loadArtworkIndex()
+  if (!index[oldKey]) return { ok: true, migrated: false }
+  if (index[newKey]) return { ok: true, migrated: false }  // don't clobber an existing entry under the new key
+  index[newKey] = index[oldKey]
+  await saveArtworkIndex(index)
+  return { ok: true, migrated: true, hash: index[newKey] }
 })
 
 // ── CD Drive Detection & Import ──
@@ -7173,7 +10074,7 @@ async function nextLibraryId(): Promise<number> {
   }
 }
 
-async function importDownloadedFiles(absPaths: string[], source?: string): Promise<Array<Record<string, unknown>>> {
+async function importDownloadedFiles(absPaths: string[], source?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number }> {
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   const settings = await readAppSettingsAsync()
   const lib = settings?.library as { defaultImportFormat?: string } | undefined
@@ -7188,6 +10089,7 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
   const total = absPaths.length
   let done = 0
   let errors = 0
+  let dupes = 0
   for (const p of absPaths) {
     // Per-file format resolution so a FLAC track inside an album-zip
     // becomes AAC even when the user's default is ALAC (Jake's policy).
@@ -7216,8 +10118,23 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
           alacAbsPaths.push(join(LOCAL_MOUNT, colon.replace(/:/g, pathSep)))
         }
       }
+    } else if (r.ok && r.dupe) {
+      // 4.5.0-46: dupes are NOT failures — they're tracks Jake already
+      // owns. Track them separately so the upstream download-router
+      // can show "all tracks already in your library" (info) instead
+      // of "import produced no tracks (all duplicates?)" (error) when
+      // the whole zip is a re-purchase.
+      dupes += 1
     } else {
       errors += 1
+      // 4.5.0-46: surface the actual failure reason in the LCD pill +
+      // main console so Jake doesn't have to guess. Pre-fix, the
+      // Bandcamp pipeline only emitted "(2 failed)" with no clue why.
+      // Same UX pattern as the drag-drop importQueue (importQueue.ts).
+      const fname = p.split('/').pop() || p
+      const reason = (r.error || 'Import failed').replace(/^Error:\s*/i, '').slice(0, 160)
+      console.warn(`[bandcamp] import failed: "${fname}" — ${reason}`)
+      mainWindow?.webContents.send('bandcamp:per-file-failed', { filename: fname, error: reason })
     }
   }
   // Final progress emit so the pill shows "N of N" momentarily, then
@@ -7243,7 +10160,7 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
       console.warn(`[bandcamp] alac cache transcode failed:`, err)
     })
   }
-  return tracks
+  return { tracks, dupeCount: dupes, errorCount: errors }
 }
 
 // 4.4.51: microphone-activity watcher for the auto-route-on-call
@@ -7310,6 +10227,34 @@ app.whenReady().then(async () => {
   // if nothing matches — it never throws.
   MUSIC_DIR = await resolveMusicDir()
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
+  // 4.5.0-90 — surface which STATE backend the app booted into.
+  // "NAS" means all state files (library.json, overrides, playlists,
+  // mobile-stars, mobile-plays, play-events.jsonl, embeddings.bin)
+  // live on the Synology mount. "local" means the mount wasn't
+  // present at boot and we're operating from the userData fallback.
+  console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-fallback'} — dir=${STATE_DIR}${STATE_IS_NAS ? '' : ` (NAS expected at ${NAS_STATE_DIR_PATH} but not mounted)`}`)
+  // Bug #1 fix — NAS-reconnect watcher. Only arms when we booted into
+  // local-fallback. If NAS later becomes reachable, saves get locked
+  // to prevent overwriting NAS state with stale in-memory snapshots.
+  // The renderer gets `state-save-locked` so it can surface a banner
+  // telling the user to restart.
+  startNasReconnectWatcher((reason) => {
+    try {
+      mainWindow?.webContents.send('state-save-locked', { reason })
+    } catch { /* renderer may not be mounted yet — the lock is still active */ }
+  })
+  // 4.5.0-91 Phase 2.5 — orphaned-edit detection. When the user makes
+  // edits while NAS is unmounted (local-fallback mode), those writes
+  // go to userData. Next launch with NAS mounted: app reads NAS,
+  // ignores the newer local edits, silently overwrites them on next
+  // save. This scan compares local-userData mtimes against NAS for
+  // each state file. Any file where local is meaningfully newer
+  // (>60s gap to filter timestamp jitter) gets logged + recorded in
+  // stateConflicts so Settings → Library can surface a "Push local
+  // edits to NAS" button rather than auto-overwriting either side.
+  if (STATE_IS_NAS) {
+    await detectStateConflicts()
+  }
 
   // 4.4.85: seed the codec-hint map BEFORE the ipod-audio:// protocol
   // handler registers so the very first play in this session can use it.
@@ -7336,11 +10281,45 @@ app.whenReady().then(async () => {
     let prevVersion: string | null = null
     try { prevVersion = (await readFile(versionFile, 'utf-8')).trim() } catch { /* first launch */ }
     if (prevVersion !== currentVersion) {
-      console.log(`[launch] version changed (${prevVersion} → ${currentVersion}) — purging renderer cache`)
-      const { rm } = await import('fs/promises')
+      console.log(`[launch] version changed (${prevVersion} → ${currentVersion}) — purging renderer cache + stale knowledge caches`)
+      const { rm, readdir, unlink } = await import('fs/promises')
       for (const dir of ['Session Storage', 'Local Storage']) {
         await rm(join(app.getPath('userData'), dir), { recursive: true, force: true }).catch(() => {})
       }
+      // 4.5.0-72 — also nuke the wiki cache + artist-image .miss
+      // tombstones on every version change. Bugs in earlier versions
+      // (-66 silently writing extract=null after a transient lookup
+      // failure; -65 30-day photo-miss tombstones) poisoned these
+      // caches for thousands of artists. Version bumps reset the
+      // playing field — real misses repopulate within hours, real
+      // hits are still cheap to refetch on first view. Keep JPG hits
+      // intact so we don't redownload every artist photo on every
+      // build.
+      try { await rm(join(app.getPath('userData'), 'wiki-cache'), { recursive: true, force: true }) } catch { /* nothing to clean */ }
+      try {
+        const aiDir = join(app.getPath('userData'), 'artist-images')
+        const entries = await readdir(aiDir).catch(() => [] as string[])
+        let purged = 0
+        for (const name of entries) {
+          if (name.endsWith('.miss')) {
+            await unlink(join(aiDir, name)).catch(() => {})
+            purged++
+          }
+        }
+        if (purged > 0) console.log(`[launch] purged ${purged} artist-image .miss tombstones`)
+      } catch { /* nothing to clean */ }
+      // Also nuke the canonical-artist-cache so MB-resolved entries
+      // get a fresh look — protects against any wrong-entity picks
+      // that got cached in the -66/-71 development window.
+      try { await rm(join(app.getPath('userData'), 'canonical-artist-cache'), { recursive: true, force: true }) } catch { /* nothing to clean */ }
+      // 4.5.0-74 — also nuke discography-cache. Pre-fix, MB
+      // discography responses cached for 7 days included compilation
+      // and live release-groups (the secondary-types filter wasn't
+      // present until -66). Beatles' "Yesterday and Today" + similar
+      // US-comp leaks persisted past the filter ship date because
+      // existing cache files were never invalidated. From now on,
+      // any version bump re-fetches with the current filter rules.
+      try { await rm(join(app.getPath('userData'), 'discography-cache'), { recursive: true, force: true }) } catch { /* nothing to clean */ }
       await writeFile(versionFile, currentVersion, 'utf-8').catch(() => {})
     }
   } catch (err) {
@@ -7354,6 +10333,22 @@ app.whenReady().then(async () => {
   // worker itself handles the gate).
   await loadQueueFromDisk()
   kickAudioAnalysisWorker()
+
+  // 4.5.0-79 — startup visibility for user-locked artwork. Surfaces
+  // the count so the user can verify their hand-picked covers
+  // survived this launch. Cheap (one disk read of a small JSON file).
+  // 4.5.0-80 — also runs the self-heal pass that reconstructs
+  // user-locked.json from sidecars on disk (in case the lock file
+  // ever gets wiped) AND restores any locked JPGs from locked-backup/
+  // if the main file is missing.
+  try {
+    await selfHealUserLockedArtwork()
+    const locks = await loadArtworkLocks()
+    const idx = await loadArtworkIndex()
+    console.log(`[artwork] loaded ${locks.size} user-locked covers · ${Object.keys(idx).length} total index entries · dir=${getArtworkDir()}`)
+  } catch (err) {
+    console.warn('[artwork] startup load failed:', err)
+  }
 
   // Load listener profile for Music Man
   loadListenerProfile()
@@ -7802,16 +10797,21 @@ app.whenReady().then(async () => {
   })
 
   // ── Music Man's Record Store (Brief 037) ──
-  // Phase 0 ships heuristic shelves backed by library.json — no LLM
-  // calls, no TTS. Phase 1 swaps in the day-theme + Sonnet curator;
-  // Phase 2 adds the illustrated scene + TTS-with-duck. The module
-  // owns its own IPC handlers (record-store:*) and disk cache under
-  // userData/record-store/.
-  registerRecordStoreIntegration({
-    libraryPath: LIBRARY_PATH,
-    userDataDir: app.getPath('userData'),
-    getMainWindow: () => mainWindow,
-  })
+  // 4.5.0-62 — sidebar entry hidden in Sidebar.tsx (unstyled placeholder
+  // that didn't match the iTunes chrome).
+  // 4.5.0-68 — IPC registration gated. The Phase 0 module computes
+  // shelves on every `record-store:get-shelves` call; with the UI gone
+  // there's no caller, so the registration is dead surface area. The
+  // RECORD_STORE_ENABLED flag flips back on when Phase 2 lands. Keeping
+  // the import + integration so re-enabling is a one-line flip.
+  const RECORD_STORE_ENABLED = false
+  if (RECORD_STORE_ENABLED) {
+    registerRecordStoreIntegration({
+      libraryPath: LIBRARY_PATH,
+      userDataDir: app.getPath('userData'),
+      getMainWindow: () => mainWindow,
+    })
+  }
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
   // audio files (Qobuz downloads, manual drops, etc.) and forwards them
@@ -7903,6 +10903,33 @@ app.on('window-all-closed', () => {
 // 4.4.13: stop the inbox watcher cleanly on quit. Chokidar holds native
 // fs handles + a polling fallback timer; without close() the process
 // hangs for a few seconds before Electron force-kills it.
-app.on('before-quit', () => {
+// 4.5: also ping the renderer to fade audio before the process dies.
+// Without this, cmd+Q snaps any playing audio mid-waveform → speaker
+// pop. We defer the quit once, send 'app-quit-fade', wait 180ms for
+// the renderer to ramp Howler volumes to 0, then let the original
+// quit proceed. `quittingForFade` guards against re-entry — the second
+// 'before-quit' (when we call app.quit() ourselves) bypasses the
+// deferral and tears down normally.
+let quittingForFade = false
+app.on('before-quit', (e) => {
   void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
+  // 4.5.0-106 Phase 2.5: flush any pending NAS writes before we let the
+  // process exit. Cache writes are backgrounded, so a fast quit could
+  // otherwise lose the last few seconds of edits. Wrapped in a Promise
+  // chain that resolves regardless — we don't want quit to hang on a
+  // stuck SMB connection.
+  void Promise.all([
+    overridesCache.flush(),
+    mobileStarsCache.flush(),
+    listenerProfileCache.flush(),
+    musicmanMemoryCache.flush(),
+    playlistsCache.flush(),
+  ]).catch(() => { /* ignore — quitting */ })
+  if (quittingForFade) return
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  e.preventDefault()
+  quittingForFade = true
+  try { win.webContents.send('app-quit-fade') } catch { /* ignore */ }
+  setTimeout(() => app.quit(), 180)
 })

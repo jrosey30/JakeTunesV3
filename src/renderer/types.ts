@@ -65,6 +65,19 @@ export interface Track {
   // we don't re-analyze every session. Re-tried after audioAnalysisRetryAfter
   // (see consumer) when audio_analysis.py rolls forward.
   audioAnalysisAt?: number
+  // 4.5: user-set channel-mode tag. Background-only metadata — not
+  // surfaced in the track title, song row, or playback engine. Lives
+  // in Get Info as a dropdown (blank / 'mono' / 'stereo') so the
+  // user can tag tracks for future categorization without affecting
+  // playback. Persisted via metadata-overrides.json like the rest of
+  // the user-editable fields.
+  channelMode?: 'mono' | 'stereo' | ''
+  // 4.5: epoch-ms timestamp of the most recent star toggle ON. Drives
+  // the Starred smart playlist's default sort (recent-first). Cleared
+  // is OK — legacy starred tracks without this field sort to the
+  // bottom (undefined → 0). Updated on every star action (per-cell
+  // toggle, right-click bulk Star, Get Info checkbox).
+  starredAt?: number
 }
 
 export interface Playlist {
@@ -207,6 +220,13 @@ export interface AppSettings {
     musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
     claudeDailyCeiling: number      // mirrored to claude-stats.json on save
     aiHost: 'mm' | 'megan'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
+    /** 4.5: Exa.ai API key. When set, searchWeb augments the per-track
+     *  artist-facts block fed to every Music Man / Megan / Stephen /
+     *  chat call with semantic results from Exa's music-journalism
+     *  index. Empty string = disabled, behavior reverts to Wikipedia +
+     *  MusicBrainz only. Persisted to app-settings.json + mirrored to
+     *  userData/.env for main-process pickup. */
+    exaApiKey?: string
   }
   eq: EqSettings   // 10-band parametric EQ (4.0 §6.5)
   // 4.4.13 — Inbox auto-import. Main-side chokidar watches `path` and
@@ -242,7 +262,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
   library: { defaultImportFormat: 'aac-256' },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
-  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm' },
+  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm', exaApiKey: '' },
   eq: {
     enabled: false,
     preamp: 0,
@@ -266,7 +286,7 @@ declare global {
       getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
-      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string }>
+      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string; textRaw: string }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
       // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
@@ -275,7 +295,16 @@ declare global {
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
       musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>
       musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
-      musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      musicmanRadioPlan: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => Promise<{ ok: boolean; theme?: string; throughline?: string; trackIds?: number[]; error?: string }>
+      radioSetShowPlan: (plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => Promise<{ ok: boolean; error?: string }>
+      radioClearShowPlan: () => Promise<{ ok: boolean; error?: string }>
+      // 4.5: streaming mic-button path + hover prefetch.
+      musicmanDjStreaming: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text?: string; error?: string }>
+      onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => () => void
+      musicmanPrefetchFacts: (track: { artist: string; album: string }) => Promise<{ ok: boolean }>
+      onAppQuitFade: (callback: () => void) => () => void
+      getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }> }>; error?: string }>
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
@@ -297,6 +326,8 @@ declare global {
       saveChatHistory: (conversations: ChatConversation[]) => Promise<{ ok: boolean }>
       loadMetadataOverrides: () => Promise<{ ok: boolean; overrides: Record<string, unknown> }>
       saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string) => Promise<{ ok: boolean }>
+      loadMobileStars: () => Promise<{ ok: boolean; trackIds: string[] }>
+      getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
@@ -320,14 +351,36 @@ declare global {
       audioAnalysisClearQueue: () => Promise<{ ok: boolean }>
       loadAppSettings: () => Promise<{ ok: boolean; settings: Record<string, unknown> | null }>
       saveAppSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
+      // 4.5 — last homemini sync snapshot for Settings → Sync panel.
+      getLastLibrarySync: () => Promise<{
+        ok: boolean | null
+        reason: string | null
+        at: number | null
+        durationMs: number | null
+        error: string | null
+        scriptPresent: boolean
+      }>
+      getArtworkLockCount: () => Promise<{ ok: boolean; count: number }>
+      getStateConflicts: () => Promise<{
+        mode: 'NAS' | 'local-fallback'
+        nasDir: string
+        localDir: string
+        conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string }>
+      }>
+      reconcileStateConflicts: () => Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }>
+      embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number }>
+      embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
+      onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
       // / mobileOverridesApply types — vestigial mobile-sync feature gone.
       setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
       fetchAlbumArt: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
       setCustomArtwork: (artist: string, album: string, imagePath: string) => Promise<{ ok: boolean; key?: string; hash?: string; error?: string }>
-      removeArtwork: (artist: string, album: string) => Promise<{ ok: boolean; key?: string; error?: string }>
+      removeArtwork: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; locked?: boolean; error?: string }>
       chooseArtworkFile: () => Promise<{ ok: boolean; path?: string }>
       loadArtworkMap: () => Promise<{ ok: boolean; map: Record<string, string> }>
+      resolveArtwork: (artist: string, album: string) => Promise<{ ok: boolean; hash: string | null }>
+      migrateArtworkKey: (oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => Promise<{ ok: boolean; migrated?: boolean; hash?: string }>
       checkIpodMounted: () => Promise<{ mounted: boolean; name: string | null }>
       getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
@@ -360,19 +413,23 @@ declare global {
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
-      syncToIpod: (tracks: Track[], playlists: Playlist[]) => Promise<{
+      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{
         ok: boolean
         copied?: number
         copyErrors?: number
         totalTracks?: number
         error?: string
+        cancelled?: boolean
+        alreadyRunning?: boolean
         pathRewrites?: Array<{ id: number; newPath: string }>
         // Updates from the silent post-sync identity verifier. Renderer
         // applies these as UPDATE_TRACKS so library.json reflects the
         // verified state and the UI can show audioMissing flags.
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
-      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => void) => () => void
+      cancelSync: () => Promise<{ ok: boolean; wasRunning: boolean }>
+      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => void) => () => void
+      onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
       // CD drive
@@ -408,18 +465,28 @@ declare global {
       bandcampMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampUnmount: () => Promise<{ ok: true }>
+      bandcampNavState: () => Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }>
+      bandcampGoBack: () => Promise<{ ok: boolean }>
+      bandcampGoForward: () => Promise<{ ok: boolean }>
       // ── squid.wtf embedded view (parallel to Bandcamp, separate partition) ──
       squidMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       squidResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       squidUnmount: () => Promise<{ ok: true }>
+      squidNavState: () => Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }>
+      squidGoBack: () => Promise<{ ok: boolean }>
+      squidGoForward: () => Promise<{ ok: boolean }>
       // ── Bandcamp Store v4 (download -> library events) ──
       // Payload is the full Track record minted by importOneFile() — same
       // shape the drag-drop importQueue delivers. App.tsx dispatches it
       // into LibraryContext; recentlyAdded.ts uses just id/title/album.
       onBandcampTrackImported: (callback: (track: Track) => void) => () => void
       onBandcampImportFailed: (callback: (reason: { filename: string; error: string }) => void) => () => void
+      onBandcampPerFileFailed: (callback: (reason: { filename: string; error: string }) => void) => () => void
+      onBandcampAllDuplicates: (callback: (info: { filename: string; dupeCount: number }) => void) => () => void
       // 4.4.85: per-file progress for the now-playing pill's import mode.
       onBandcampBatchProgress: (callback: (p: { current: number; total: number; trackTitle: string; errors: number; running: boolean }) => void) => () => void
+      // 4.5 — Bandcamp navigation context for the library-ownership header.
+      onBandcampUrlChanged: (callback: (p: { url: string; artistSlug: string | null; albumSlug: string | null }) => void) => () => void
       // 4.4.13 — Inbox auto-import (Qobuz → JakeTunes pipeline).
       onInboxFilesDetected: (callback: (paths: string[]) => void) => () => void
       deleteInboxSource: (filePath: string) => Promise<{ ok: boolean; error?: string }>

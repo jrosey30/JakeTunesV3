@@ -449,6 +449,10 @@
   color: #222;
   font-weight: 600;
 }
+.device-itunes-capacity-room {
+  color: #888;
+  font-style: italic;
+}
 .device-itunes-capacity-swatch {
   width: 10px;
   height: 10px;
@@ -494,4 +498,27 @@
 .device-itunes-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* 4.5: Apply button — orange to draw the eye since it gates Sync.
+ * Matches the brand orange used elsewhere (mic button, EQ bars). */
+.device-itunes-btn--apply {
+  background: linear-gradient(180deg, #f08a3a, #c46a18);
+  color: #fff;
+  border-color: #9a510e;
+  text-shadow: 0 -1px 0 rgba(0,0,0,0.2);
+  animation: apply-pulse 1.6s ease-in-out infinite;
+}
+.device-itunes-btn--apply:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f8964a, #d27828);
+}
+.device-itunes-btn--apply:active:not(:disabled) {
+  background: linear-gradient(180deg, #c46a18, #9a510e);
+}
+@keyframes apply-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(196, 106, 24, 0); }
+  50%      { box-shadow: 0 0 8px 2px rgba(196, 106, 24, 0.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .device-itunes-btn--apply { animation: none; }
 }

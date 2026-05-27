@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
+import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
+import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../utils/artworkLookup'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -10,6 +11,9 @@ import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
+import { clearArtworkNegativeCache } from '../utils/artworkLookup'
+import { albumKeyOf, albumKeyFromStrings } from '../utils/albumKey'
+import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
 import { setNotice } from '../activity'
 import '../styles/albums.css'
@@ -28,6 +32,31 @@ export default function AlbumsView() {
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
   const [selected, setSelected] = useState<string | null>(null)
+
+  // 4.5: pending-album-key consumer. HomeView's Recently Added card
+  // click dispatches VIEW_ALBUM_DETAIL with the album's lowercased
+  // "artist|||album" key; the reducer flips to the 'albums' view and
+  // stashes the key here. We adopt it into local `selected`, then
+  // clear the pending so a later return to AlbumsView (sidebar nav,
+  // etc.) doesn't re-select the same album the user already moved on
+  // from. Same dance the existing artist-detail wiring does.
+  useEffect(() => {
+    if (lib.pendingAlbumKey) {
+      const key = lib.pendingAlbumKey
+      setSelected(key)
+      libDispatch({ type: 'CLEAR_PENDING_ALBUM_KEY' })
+      // 4.5.0-73: also scroll the picked album into view. Pre-fix even
+      // when the key DID match (after the key-format alignment in this
+      // same commit), the user could still be staring at row 1 of a
+      // 200-album grid with the picked album on row 47 — they'd see
+      // "nothing happened" and assume the click failed. Defer to the
+      // next paint so the card has rendered with its selected class.
+      window.setTimeout(() => {
+        const card = document.querySelector(`.album-card[data-album-key="${CSS.escape(key)}"]`)
+        if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }, 60)
+    }
+  }, [lib.pendingAlbumKey, libDispatch])
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; tracks: Track[]; idx: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
@@ -37,10 +66,12 @@ export default function AlbumsView() {
   const albums = useMemo((): Album[] => {
     const map = new Map<string, Album>()
     for (const t of lib.tracks) {
-      // Use albumArtist when available, fall back to track artist
-      const groupArtist = (t.albumArtist || t.artist || 'Unknown Artist').toLowerCase().trim()
-      const albumKey = (t.album || 'Unknown').toLowerCase().trim()
-      const key = `${groupArtist}|||${albumKey}`
+      // 4.5.0-73: routed through shared `albumKeyOf` helper so this
+      // matches the SearchPanel's index key format exactly. Pre-fix
+      // every view computed its own key and they diverged — click-
+      // through from search dropped the user on the full grid with
+      // nothing selected.
+      const key = albumKeyOf(t)
       if (!map.has(key)) {
         map.set(key, {
           name: t.album || 'Unknown Album',
@@ -90,16 +121,25 @@ export default function AlbumsView() {
     })
   }, [albums, effectiveQuery])
 
-  // Helper: find artwork hash trying all artist variants for an album
+  // 4.5: normalized-artwork index built once per render. The
+  // lookupArtwork fall-through (exact → normalized) catches the
+  // "(Remastered)" / "feat." / diacritic variants that broke the
+  // old exact-string-match lookup. Multiple artists tried in
+  // sequence so a compilation with the album credited under any
+  // contributing artist still finds its cover.
+  const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
   const findArtHash = (album: Album): string | undefined => {
-    const albumKey = album.name.toLowerCase().trim()
     for (const artist of album.artists) {
-      const artKey = `${artist.toLowerCase().trim()}|||${albumKey}`
-      if (lib.artworkMap[artKey]) return lib.artworkMap[artKey]
+      const hit = lookupArtwork(lib.artworkMap, normalizedArtIndex, artist, album.name)
+      if (hit) return hit
     }
-    // Fallback: try display artist
-    const fallbackKey = `${album.artist.toLowerCase().trim()}|||${albumKey}`
-    return lib.artworkMap[fallbackKey]
+    const fallback = lookupArtwork(lib.artworkMap, normalizedArtIndex, album.artist, album.name)
+    if (fallback) return fallback
+    // 4.5.0-51: still nothing — fire the server-side resolver for the
+    // primary artist+album. Disk-existence check + normalized variants
+    // will hit any JPG file that's on disk under a near-match key.
+    requestArtworkResolution(album.artist || album.artists[0] || '', album.name, libDispatch)
+    return undefined
   }
 
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, tracks: Track[], idx: number) => {
@@ -228,12 +268,35 @@ export default function AlbumsView() {
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
-      libDispatch({ type: 'UPDATE_TRACKS', updates })
+      // 4.5.0-67 — save-first ordering. See SongsView.handleGetInfoSave
+      // for the full rationale. Short version: dispatching UPDATE_TRACKS
+      // before awaiting save lets the re-render fire resolveArtwork on
+      // the new key before main's migration has populated it, which
+      // poisons the renderer's 60s negative cache and leaves the album
+      // tile blank for a minute.
+      const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
+      for (const u of updates) {
+        if (oldArtAlbumById.has(u.id)) continue
+        const t = lib.tracks.find(tr => tr.id === u.id)
+        if (t) oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
+      }
       for (const u of updates) {
         await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value)
       }
+      if (updates.some(u => u.field === 'artist' || u.field === 'album')) {
+        const newArtAlbumById = new Map<number, { artist: string; album: string }>()
+        for (const [id, old] of oldArtAlbumById) newArtAlbumById.set(id, { ...old })
+        for (const u of updates) {
+          const cur = newArtAlbumById.get(u.id)
+          if (!cur) continue
+          if (u.field === 'artist') cur.artist = u.value
+          else if (u.field === 'album') cur.album = u.value
+        }
+        for (const v of newArtAlbumById.values()) clearArtworkNegativeCache(v.artist, v.album)
+      }
+      libDispatch({ type: 'UPDATE_TRACKS', updates })
     },
-    [libDispatch]
+    [libDispatch, lib.tracks]
   )
 
   const handleFetchArt = useCallback(
@@ -305,12 +368,8 @@ export default function AlbumsView() {
     if (!pb.nowPlaying) return
     if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
     const t = pb.nowPlaying
-    const groupArtist = (t.albumArtist || t.artist || 'Unknown Artist').toLowerCase().trim()
-    const albumKey = (t.album || 'Unknown').toLowerCase().trim()
-    const key = `${groupArtist}|||${albumKey}`
-    const exists = filteredAlbums.some(a =>
-      `${a.artist.toLowerCase().trim()}|||${a.name.toLowerCase().trim()}` === key
-    )
+    const key = albumKeyOf(t)
+    const exists = filteredAlbums.some(a => albumKeyFromStrings(a.artist, a.name) === key)
     if (!exists) return
     isAutoScrollAtRef.current = Date.now()
     setSelected(key)
@@ -325,9 +384,10 @@ export default function AlbumsView() {
     })
   }, [pb.nowPlaying?.id, lib.currentView, filteredAlbums])
 
-  // Find the selected album's index
+  // Find the selected album's index — must match the same canonical
+  // key format the albums Map uses (and that the SearchPanel hands us).
   const selectedIdx = selected
-    ? filteredAlbums.findIndex(a => `${a.artist.toLowerCase().trim()}|||${a.name.toLowerCase().trim()}` === selected)
+    ? filteredAlbums.findIndex(a => albumKeyFromStrings(a.artist, a.name) === selected)
     : -1
   // The detail should appear after the last album in the selected album's row
   const detailAfterIdx = selectedIdx >= 0
@@ -344,9 +404,12 @@ export default function AlbumsView() {
       onScrollCapture={noteUserActivity}
       onKeyDownCapture={noteUserActivity}
     >
+      {filteredAlbums.length === 0 && (
+        <EmptyState query={lib.searchQuery} noun="albums" />
+      )}
       <div className="albums-grid" ref={gridRef}>
         {filteredAlbums.map((album, albumIdx) => {
-          const key = `${album.artist.toLowerCase().trim()}|||${album.name.toLowerCase().trim()}`
+          const key = albumKeyFromStrings(album.artist, album.name)
           const artHash = findArtHash(album)
           const isSelected = selected === key
           // Show detail after the last album in this row
@@ -438,6 +501,8 @@ export default function AlbumsView() {
                                 className={`album-detail-row ${isPlaying ? 'album-detail-row--playing' : ''} ${isTrackSelected ? 'album-detail-row--selected' : ''} ${currentRowIdx % 2 ? 'album-detail-row--alt' : ''}`}
                                 onClick={(e) => handleTrackClick(track, i, selectedAlbum.tracks, e)}
                                 onDoubleClick={() => playTrack(track, selectedAlbum.tracks, i, undefined, true)}
+                                onMouseEnter={() => prefetchTrackForPlay(track)}
+                                onMouseDown={() => prefetchTrackImmediate(track)}
                                 onContextMenu={(e) => {
                                   if (!selectedTrackIds.has(track.id)) {
                                     setSelectedTrackIds(new Set([track.id]))

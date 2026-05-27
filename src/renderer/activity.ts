@@ -58,6 +58,11 @@ export interface BroadcastActivity {
   speaker: string
   text: string
   revealedChars: number
+  /** 4.5: distinguishes "thinking" (model is generating, no words yet)
+   *  from "speaking" (text is streaming). The pill renders these
+   *  differently — thinking shows pulsing dots with no progress bar;
+   *  speaking shows multi-line closed-caption stacking. */
+  mode: 'thinking' | 'speaking'
 }
 
 let rip: RipActivity | null = null
@@ -67,6 +72,29 @@ let notice: NoticeActivity | null = null
 let noticeTimer: ReturnType<typeof setTimeout> | null = null
 let broadcast: BroadcastActivity | null = null
 let broadcastTimer: ReturnType<typeof setInterval> | null = null
+
+/** 4.5: Radio Mode status. When non-null, the now-playing pill paints
+ *  an "ON AIR · WJLR 330.9 · elapsed / remaining" strip inside itself
+ *  (replacing the previous external red pill that sat awkwardly next
+ *  to the transport row). Toolbar owns the radio-mode source of truth
+ *  and pushes here on toggle + on every elapsed-tick. */
+export interface RadioStatus {
+  active: boolean
+  elapsedMs: number
+  capMs: number
+}
+let radio: RadioStatus | null = null
+export function getRadio(): RadioStatus | null { return radio }
+export function setRadio(next: RadioStatus | null): void {
+  // Skip the version bump (and re-render) when the second tick has
+  // produced an identical state — happens whenever the elapsed counter
+  // ticks but the floored-to-seconds value the pill displays hasn't
+  // changed since the last tick.
+  if (radio === next) return
+  if (radio && next && radio.active === next.active && radio.elapsedMs === next.elapsedMs && radio.capMs === next.capMs) return
+  radio = next
+  notify()
+}
 
 // Bumped on every mutation. `getSnapshot` returns this number, which
 // is cheap to compare by reference in React's external-store check.
@@ -154,25 +182,137 @@ export function setNotice(message: string | null, opts?: { kind?: 'error' | 'inf
 // completes regardless of TTS audio finishing; an explicit setBroadcast
 // (null) at speech-end clears the caption.
 //
-// Tuning note: 30 ms per char ≈ 33 cps ≈ 400 wpm — runs roughly in
-// step with ElevenLabs' default speech rate for short comments. Long
-// monologues finish reveal before TTS does; that's fine — the caption
-// just sits at full length until cleared.
+// 4.5: tuned for SPEECH RATE not reading rate. 85ms per char ≈ 11.8
+// cps ≈ 140 wpm — slightly UNDER natural English speaking pace so the
+// caption trails the voice by a beat instead of leading it. Reads as
+// "captions following the speaker", not "speaker catching up to
+// captions". Pre-4.5 the reveal was 33 cps (400 wpm) which raced
+// ahead by seconds; intermediate 65ms was closer but still slightly
+// ahead per Jake's ear. 85ms is the comfortable trailing pace.
 const CHARS_PER_TICK = 1
-const TICK_INTERVAL_MS = 30
+const TICK_INTERVAL_MS = 85
 
-export function setBroadcast(next: { speaker: string; text: string } | null): void {
+// 4.5: streaming variant. Replaces text in-place and pins revealedChars
+// to the full length so the typewriter is a no-op — the LLM token rate
+// (~50-250 cps) IS the reveal speed, not the 33 cps default. Use this
+// when text arrives from a streaming source (Claude messages.stream);
+// for static pre-baked text keep using setBroadcast which animates the
+// typewriter.
+export function streamBroadcast(next: { speaker: string; text: string }): void {
   if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
-  if (!next || !next.text) {
+  broadcast = {
+    speaker: next.speaker,
+    text: next.text,
+    revealedChars: next.text.length,
+    mode: 'speaking',
+  }
+  notify()
+}
+
+// 4.5: typewriter pinned to audio duration. Use when you know the
+// exact length of the TTS clip about to play — caption finishes
+// exactly when the voice does, no drift on long messages. Tick
+// interval is computed as durationMs / text.length so a 30-second
+// 360-char message reveals at 12 cps, a 60-second 720-char message
+// reveals at 12 cps too — sync regardless of message length.
+export function setBroadcastTimed(next: { speaker: string; text: string }, durationMs: number): void {
+  if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+  if (!next.text) {
     if (broadcast === null) return
     broadcast = null
     notify()
     return
   }
-  // Idempotent on identical text — avoids restarting the reveal when
-  // a caller fires the same caption twice (e.g. React effect re-run).
-  if (broadcast && broadcast.text === next.text && broadcast.speaker === next.speaker) return
-  broadcast = { speaker: next.speaker, text: next.text, revealedChars: 0 }
+  broadcast = { speaker: next.speaker, text: next.text, revealedChars: 0, mode: 'speaking' }
+  notify()
+  if (durationMs <= 0) {
+    // Unknown duration — reveal everything instantly (better than
+    // freezing at char 0 forever).
+    broadcast = { ...broadcast, revealedChars: next.text.length }
+    notify()
+    return
+  }
+  // Floor at 25ms per tick — Howler's own setInterval clamp behavior
+  // and our render budget — so very short clips (e.g. "Run it.")
+  // don't try to tick every 5ms.
+  const tickMs = Math.max(25, Math.floor(durationMs / Math.max(1, next.text.length)))
+  broadcastTimer = setInterval(() => {
+    if (!broadcast) {
+      if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+      return
+    }
+    const nextChars = Math.min(broadcast.text.length, broadcast.revealedChars + 1)
+    if (nextChars === broadcast.revealedChars) {
+      if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+      return
+    }
+    broadcast = { ...broadcast, revealedChars: nextChars }
+    notify()
+    if (nextChars >= broadcast.text.length) {
+      if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+    }
+  }, tickMs)
+}
+
+export function setBroadcast(next: { speaker: string; text: string; mode?: 'thinking' | 'speaking' } | null): void {
+  if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+  if (!next) {
+    if (broadcast === null) return
+    broadcast = null
+    notify()
+    return
+  }
+  const mode = next.mode || (next.text ? 'speaking' : 'thinking')
+  // Thinking state: no text reveal — the pill just renders a label +
+  // pulsing dots while the model generates. Idempotent on identical
+  // speaker so a tick-by-tick "still thinking" repeat doesn't restart
+  // the visual.
+  if (mode === 'thinking') {
+    if (broadcast && broadcast.mode === 'thinking' && broadcast.speaker === next.speaker) return
+    broadcast = { speaker: next.speaker, text: '', revealedChars: 0, mode: 'thinking' }
+    notify()
+    return
+  }
+  // Speaking state: typewriter reveal.
+  if (broadcast && broadcast.mode === 'speaking' && broadcast.text === next.text && broadcast.speaker === next.speaker) return
+  // 4.5: EXTEND case — new text starts with old text + same speaker.
+  // Keep the current reveal position so a growing transcript (e.g.
+  // per-sentence TTS appending the rest of the message) continues
+  // the typewriter from where it was, rather than restarting at char
+  // 0 and re-revealing already-spoken text. Restart the timer if it
+  // had stopped because the prior text was fully revealed.
+  if (
+    broadcast &&
+    broadcast.mode === 'speaking' &&
+    broadcast.speaker === next.speaker &&
+    next.text.startsWith(broadcast.text) &&
+    next.text.length > broadcast.text.length
+  ) {
+    const oldReveal = broadcast.revealedChars
+    broadcast = { speaker: next.speaker, text: next.text, revealedChars: oldReveal, mode: 'speaking' }
+    notify()
+    // If the previous typewriter had stopped (reveal had caught up to
+    // old text.length), restart it for the new chars.
+    if (oldReveal >= broadcast.text.length) return
+    broadcastTimer = setInterval(() => {
+      if (!broadcast) {
+        if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+        return
+      }
+      const nextChars = Math.min(broadcast.text.length, broadcast.revealedChars + CHARS_PER_TICK)
+      if (nextChars === broadcast.revealedChars) {
+        if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+        return
+      }
+      broadcast = { ...broadcast, revealedChars: nextChars }
+      notify()
+      if (nextChars >= broadcast.text.length) {
+        if (broadcastTimer) { clearInterval(broadcastTimer); broadcastTimer = null }
+      }
+    }, TICK_INTERVAL_MS)
+    return
+  }
+  broadcast = { speaker: next.speaker, text: next.text, revealedChars: 0, mode: 'speaking' }
   notify()
   broadcastTimer = setInterval(() => {
     if (!broadcast) {

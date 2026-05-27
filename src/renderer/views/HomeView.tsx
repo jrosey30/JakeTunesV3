@@ -27,6 +27,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
+import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../utils/artworkLookup'
 import type { Track, MusicNewsItem, TourDate, UpcomingRelease } from '../types'
 import '../styles/home.css'
 
@@ -446,12 +447,24 @@ export default function HomeView() {
       .slice(0, 10)
   }, [lib.tracks])
 
-  // Resolve an artwork hash for an album key. Mirrors AlbumsView's
-  // approach but simpler — Home's small cards only need the album-
-  // artist match; we don't fall through every artist variant.
+  // 4.5: artwork lookup with normalization fallback. The key passed
+  // in is the canonical "artistFolded|||albumFolded" pre-built by the
+  // card aggregator, but the artworkMap may store the entry under a
+  // VARIANT (e.g. an album imported as "X (Remastered)" while the
+  // grouped card key is just "X"). lookupArtwork tries exact first
+  // then falls back to a normalized scan that strips parens/diacritics.
+  const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
   const artHashForKey = (key: string | null): string | undefined => {
     if (!key) return undefined
-    return lib.artworkMap[key]
+    if (lib.artworkMap[key]) return lib.artworkMap[key]
+    const [artist, album] = key.split('|||')
+    const hit = lookupArtwork(lib.artworkMap, normalizedArtIndex, artist || '', album || '')
+    if (hit) return hit
+    // 4.5.0-51: server-side resolve on miss. Disk-existence check +
+    // recomputed-hash variants catch JPGs that exist but whose JSON
+    // index entry drifted.
+    requestArtworkResolution(artist || '', album || '', dispatch)
+    return undefined
   }
 
   const playAlbum = (card: AlbumCard) => {
@@ -592,12 +605,12 @@ export default function HomeView() {
                   key={card.key}
                   className={`home-album-card${flashing ? ' is-playing-flash' : ''}`}
                   role="listitem"
-                  onClick={() => playAlbum(card)}
+                  onClick={() => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    dispatch({ type: 'SET_VIEW', view: 'albums' })
+                    playAlbum(card)
                   }}
-                  title={`${card.artist} — ${card.album}\nClick plays. Right-click jumps to Albums view.`}
+                  title={`${card.artist} — ${card.album}\nClick opens the album. Right-click plays it.`}
                 >
                   <div className="home-album-art">
                     {hash ? (
