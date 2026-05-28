@@ -85,6 +85,9 @@ export interface Playlist {
   name: string
   trackIds: number[]
   commentary?: string
+  // Brief 121 — playlists synced from the iOS app. Renderer can use this
+  // to badge or order them differently; absence = V3-owned.
+  source?: 'mobile'
 }
 
 export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore'
@@ -327,6 +330,8 @@ declare global {
       loadMetadataOverrides: () => Promise<{ ok: boolean; overrides: Record<string, unknown> }>
       saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string) => Promise<{ ok: boolean }>
       loadMobileStars: () => Promise<{ ok: boolean; trackIds: string[] }>
+      loadMobilePlaylists: () => Promise<{ ok: boolean; playlists: Array<{ id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }> }>
+      loadPlaylistAdditions: () => Promise<{ ok: boolean; additions: Record<string, string[]> }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

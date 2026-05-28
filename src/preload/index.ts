@@ -161,6 +161,14 @@ const electronAPI = {
   // sync replicates bidirectionally.
   loadMobileStars: (): Promise<{ ok: boolean; trackIds: string[] }> =>
     ipcRenderer.invoke('load-mobile-stars'),
+  // Brief 121 — iOS-created playlists + iOS-side additions to V3
+  // playlists. Both files live next to library.json on the NAS; the
+  // mobile backend owns them, V3 is read-only. Always resolves; missing
+  // or torn files return empty defaults.
+  loadMobilePlaylists: (): Promise<{ ok: boolean; playlists: Array<{ id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }> }> =>
+    ipcRenderer.invoke('read-mobile-playlists'),
+  loadPlaylistAdditions: (): Promise<{ ok: boolean; additions: Record<string, string[]> }> =>
+    ipcRenderer.invoke('read-playlist-additions'),
   // 4.5.0-82 — windowed play counts derived from the per-play event
   // log. Returns { trackIdString: count } for plays in the last
   // `windowMs` ms. Used by Top 25's Last Week / Last Month views to

@@ -616,7 +616,12 @@ function AppInner() {
       // reads so the first render of any list already shows mobile-set
       // stars without a re-render flash. Empty set if file missing.
       window.electronAPI.loadMobileStars?.().catch(() => ({ ok: false, trackIds: [] as string[] })),
-    ]).then(([dbResult, overridesResult, playlistsResult, uiResult, mobileStarsResult]) => {
+      // Brief 121 — iOS-created playlists + iOS-side additions to V3
+      // playlists. Same startup-parallel pattern as mobile-stars so the
+      // first sidebar render already includes them.
+      window.electronAPI.loadMobilePlaylists?.().catch(() => ({ ok: false, playlists: [] as Array<{ id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }> })),
+      window.electronAPI.loadPlaylistAdditions?.().catch(() => ({ ok: false, additions: {} as Record<string, string[]> })),
+    ]).then(([dbResult, overridesResult, playlistsResult, uiResult, mobileStarsResult, mobilePlaylistsResult, playlistAdditionsResult]) => {
       const tracks = dbResult.tracks || []
       const ipodPlaylists = dbResult.playlists || []
 
@@ -707,6 +712,59 @@ function AppInner() {
       // on the next mount/load.
       const savedPlaylists: import('./types').Playlist[] =
         (playlistsResult.ok && playlistsResult.playlists) ? playlistsResult.playlists : []
+
+      // Brief 121 — fold iOS-side additions into the V3 playlists they
+      // target. Additions are appended to the end and deduped (mobile
+      // owns its sidecar; V3 treats it read-only). Mobile writes track
+      // IDs as strings — coerce to numbers to match the Playlist schema.
+      if (playlistAdditionsResult?.ok && playlistAdditionsResult.additions) {
+        const additions = playlistAdditionsResult.additions
+        let mergedCount = 0
+        for (const pl of savedPlaylists) {
+          const extras = additions[pl.id]
+          if (!Array.isArray(extras) || extras.length === 0) continue
+          const existing = new Set(pl.trackIds)
+          const toAppend: number[] = []
+          for (const raw of extras) {
+            const n = Number(raw)
+            if (!Number.isFinite(n) || existing.has(n)) continue
+            existing.add(n)
+            toAppend.push(n)
+          }
+          if (toAppend.length > 0) {
+            pl.trackIds = [...pl.trackIds, ...toAppend]
+            mergedCount += toAppend.length
+          }
+        }
+        if (mergedCount > 0) {
+          console.log(`[mobile-playlist-additions] merged ${mergedCount} iOS-side track adds across V3 playlists`)
+        }
+      }
+
+      // Brief 121 — append iOS-created playlists to the list. IDs are
+      // already prefixed `mobile:` by the mobile backend, so they can't
+      // collide with V3 IDs. Marked source:'mobile' so the sidebar can
+      // badge them later.
+      if (mobilePlaylistsResult?.ok && Array.isArray(mobilePlaylistsResult.playlists)) {
+        const existingIds = new Set(savedPlaylists.map(p => p.id))
+        let added = 0
+        for (const mp of mobilePlaylistsResult.playlists) {
+          if (!mp?.id || existingIds.has(mp.id)) continue
+          const trackIds = Array.isArray(mp.trackIds)
+            ? mp.trackIds.map(Number).filter(n => Number.isFinite(n))
+            : []
+          savedPlaylists.push({
+            id: mp.id,
+            name: mp.name || 'Untitled playlist',
+            trackIds,
+            source: 'mobile',
+          })
+          added++
+        }
+        if (added > 0) {
+          console.log(`[mobile-playlists] loaded ${added} iOS-created playlists`)
+        }
+      }
       const tombstones = new Set<string>(
         Array.isArray(uiResult?.state?.deletedIpodPlaylistNames)
           ? uiResult.state.deletedIpodPlaylistNames as string[]

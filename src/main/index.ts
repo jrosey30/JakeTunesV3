@@ -2109,6 +2109,22 @@ const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
   () => ({ trackIds: [] }),
   'mobile-stars',
 )
+// Brief 121 — read-only mirrors of the iOS-owned playlist sidecars. V3
+// never writes either file (the Mini's backend owns them), so these
+// caches exist purely to keep startup reads off the SMB hot path.
+// Same JsonFileCache contract as mobile-stars: error-fallback locks
+// writes anyway, but we also just never call .update() on these.
+interface MobilePlaylistRecord { id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }
+const mobilePlaylistsCache = new JsonFileCache<{ playlists: MobilePlaylistRecord[] }>(
+  () => join(STATE_DIR, 'mobile-playlists.json'),
+  () => ({ playlists: [] }),
+  'mobile-playlists',
+)
+const playlistAdditionsCache = new JsonFileCache<Record<string, string[]>>(
+  () => join(STATE_DIR, 'playlist-additions.json'),
+  () => ({}),
+  'playlist-additions',
+)
 const listenerProfileCache = new JsonFileCache<Record<string, unknown>>(
   () => join(STATE_DIR, 'listener-profile.json'),
   () => ({}),
@@ -2138,6 +2154,8 @@ const STATE_FILE_NAMES = [
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',
+  'mobile-playlists.json',
+  'playlist-additions.json',
   'play-events.jsonl',
   'embeddings.bin',
 ] as const
@@ -8675,6 +8693,39 @@ async function writeMobileStarSidecar(trackId: number, starred: boolean): Promis
 ipcMain.handle('load-mobile-stars', async (): Promise<{ ok: boolean; trackIds: string[] }> => {
   const set = await readMobileStarsSet()
   return { ok: true, trackIds: Array.from(set) }
+})
+
+// Brief 121 — read iOS-created playlists. Schema on disk:
+//   { playlists: [{ id: "mobile:UUID", name, trackIds: string[], createdAt, source: "mobile" }] }
+// Always returns ok:true with an empty list on missing/torn file — the
+// JsonFileCache fallback path already handles that, and the renderer
+// merges whatever it gets into the sidebar playlist list.
+ipcMain.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: MobilePlaylistRecord[] }> => {
+  try {
+    const data = await mobilePlaylistsCache.get()
+    const playlists = Array.isArray(data?.playlists) ? data.playlists : []
+    return { ok: true, playlists }
+  } catch {
+    return { ok: true, playlists: [] }
+  }
+})
+
+// Brief 121 — read iOS-side additions to V3-owned playlists. Schema:
+//   { [v3PlaylistId: string]: trackId[] }   (trackIds as strings)
+// Same error tolerance as mobile-playlists.
+ipcMain.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions: Record<string, string[]> }> => {
+  try {
+    const data = await playlistAdditionsCache.get()
+    const additions: Record<string, string[]> = {}
+    if (data && typeof data === 'object') {
+      for (const [k, v] of Object.entries(data)) {
+        if (Array.isArray(v)) additions[k] = v.filter((x): x is string => typeof x === 'string')
+      }
+    }
+    return { ok: true, additions }
+  } catch {
+    return { ok: true, additions: {} }
+  }
 })
 
 ipcMain.handle('load-metadata-overrides', async () => {

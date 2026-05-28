@@ -9,6 +9,8 @@
  *   playlists.json            — user playlists
  *   mobile-stars.json         — iOS-set stars (Brief 054)
  *   mobile-plays.json         — iOS-recorded play counts
+ *   mobile-playlists.json     — iOS-created playlists (Brief 121, read-only on V3)
+ *   playlist-additions.json   — iOS-side additions to V3 playlists (Brief 121, read-only on V3)
  *   play-events.jsonl         — per-play event log (4.5.0-82)
  *   embeddings.bin            — per-track embeddings (4.5.0-87)
  *
