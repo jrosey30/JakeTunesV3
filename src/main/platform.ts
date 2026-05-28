@@ -456,12 +456,16 @@ export async function convertAudio(
       return
     }
 
+    // `aac@44100` pins output to 44.1 kHz regardless of source rate.
+    // iPod Mini Gen 1's AAC decoder mishandles 48 kHz playback (audible
+    // squeaking on ~half of 48k tracks), so we resample at encode time —
+    // mirroring the ALAC path's iPod-safety guarantee above.
     const args: string[] = (() => {
       switch (fmt) {
-        case 'aac-128': return ['-f', 'm4af', '-d', 'aac', '-b', '128000', '-s', '2']
-        case 'aac-256': return ['-f', 'm4af', '-d', 'aac', '-b', '256000', '-s', '2']
-        case 'aac-320': return ['-f', 'm4af', '-d', 'aac', '-b', '320000', '-s', '2']
-        case 'wav':     return ['-f', 'WAVE', '-d', 'LEI16']
+        case 'aac-128': return ['-f', 'm4af', '-d', 'aac@44100', '-b', '128000', '-s', '2']
+        case 'aac-256': return ['-f', 'm4af', '-d', 'aac@44100', '-b', '256000', '-s', '2']
+        case 'aac-320': return ['-f', 'm4af', '-d', 'aac@44100', '-b', '320000', '-s', '2']
+        case 'wav':     return ['-f', 'WAVE', '-d', 'LEI16@44100']
         default:        return []
       }
     })()
@@ -474,14 +478,16 @@ export async function convertAudio(
     return
   }
 
-  // Windows — shell out to ffmpeg.
+  // Windows — shell out to ffmpeg. `-ar 44100` matches the macOS AAC
+  // path's iPod-safety resample; ALAC also pinned for the same reason
+  // (mirrors macOS convertToIpodSafeAlac).
   const args: string[] = (() => {
     switch (fmt) {
-      case 'aac-128': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '128k', dest]
-      case 'aac-256': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '256k', dest]
-      case 'aac-320': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '320k', dest]
-      case 'alac':    return ['-y', '-i', src, '-c:a', 'alac', dest]
-      case 'wav':     return ['-y', '-i', src, '-c:a', 'pcm_s16le', dest]
+      case 'aac-128': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', dest]
+      case 'aac-256': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '256k', '-ar', '44100', dest]
+      case 'aac-320': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', dest]
+      case 'alac':    return ['-y', '-i', src, '-c:a', 'alac', '-ar', '44100', '-sample_fmt', 's16p', dest]
+      case 'wav':     return ['-y', '-i', src, '-c:a', 'pcm_s16le', '-ar', '44100', dest]
     }
   })()
   try {

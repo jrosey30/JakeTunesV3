@@ -55,16 +55,33 @@ REMOTE="${WORKMINI_USER}@${HOST}"
 REPO="/Users/jacobrosenbaum/JakeTunesV3"
 DMG="$(ls -t "$REPO"/release/JakeTunes-*-arm64.dmg 2>/dev/null | head -1)"
 LIB_SRC="/Users/jacobrosenbaum/Music2/JakeTunesLibrary/"
-LIBJSON_SRC="/Users/jacobrosenbaum/Library/Application Support/JakeTunes/library.json"
-ENV_SRC="/Users/jacobrosenbaum/Library/Application Support/JakeTunes/.env"
+USERDATA="/Users/jacobrosenbaum/Library/Application Support/JakeTunes"
+NAS_STATE="/Volumes/JakeShared/JakeTunesState"
+# library.json: V3 desktop reads/writes the NAS state copy when it's
+# mounted (Brief 119 Phase 2). The userData copy goes stale as soon as
+# V3 switches into NAS-source mode, so sourcing it (the old default)
+# silently shipped 24h-stale libraries to workmini. Prefer NAS when
+# available, fall back to userData otherwise — and label which we used
+# so a sleep-deprived 3 AM deploy can see why workmini might be behind.
+if [[ -f "$NAS_STATE/library.json" ]]; then
+  LIBJSON_SRC="$NAS_STATE/library.json"
+  LIBJSON_LABEL="NAS state dir (canonical)"
+else
+  LIBJSON_SRC="$USERDATA/library.json"
+  LIBJSON_LABEL="userData (NAS not mounted — may be stale)"
+fi
+ENV_SRC="$USERDATA/.env"
+ART_SRC="$USERDATA/artwork/"           # album covers (md5(artist|||album).jpg)
+ARTIST_IMG_SRC="$USERDATA/artist-images/"  # artist portraits ({slug}.jpg)
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 say "JakeTunes → workmini deployment"
-echo "  app:    $(basename "${DMG:-<none found>}")"
-echo "  target: ${REMOTE}"
-echo "  .env:   $([[ $WITH_ENV == true ]] && echo 'will copy (--with-env)' || echo 'skipped (default)')"
+echo "  app:      $(basename "${DMG:-<none found>}")"
+echo "  target:   ${REMOTE}"
+echo "  library:  $LIBJSON_LABEL"
+echo "  .env:     $([[ $WITH_ENV == true ]] && echo 'will copy (--with-env)' || echo 'skipped (default)')"
 
 # ── 1. Preflight ─────────────────────────────────────────────────────
 say "[1/5] Preflight"
@@ -151,6 +168,39 @@ elif [[ $RC -eq 23 || $RC -eq 24 ]]; then
   echo "  ⚠ rsync partial transfer (exit $RC) — re-run to finish the remainder."
 else
   die "rsync failed (exit $RC)."
+fi
+
+# ── 3.5. Artwork (album covers + artist images) ──────────────────────
+# V3 stores album-cover JPGs in $USERDATA/artwork/ keyed by
+# md5(artist|||album), and artist portraits in $USERDATA/artist-images/.
+# Without this step workmini's artwork dir freezes at whatever was last
+# manually copied — over time the library.json's hashes drift forward
+# while the JPGs sit at hashes that don't exist anymore, so V3's
+# fallback logic shows wrong covers on most tiles. Mirror the homemini
+# watcher's flags (rtz + --update + --no-perms/owner/group) so an
+# interrupted run resumes cleanly and ownership doesn't ping-pong.
+# Non-fatal: if artwork rsync fails the user still gets music + the
+# library list, they just see placeholder covers for new albums.
+say "[3.5/5] Syncing artwork (album covers + artist images)"
+if [[ -d "$ART_SRC" ]]; then
+  ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes/artwork'"
+  rsync -rtz --update --no-perms --no-owner --no-group \
+    --include='*.jpg' --include='*.meta.json' --exclude='*' \
+    "$ART_SRC" "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/artwork/" \
+    && echo "  ✓ artwork synced" \
+    || echo "  ⚠ artwork rsync had errors — V3 will show placeholders for affected covers"
+else
+  echo "  • $ART_SRC not present on this Mac — skipping album artwork"
+fi
+if [[ -d "$ARTIST_IMG_SRC" ]]; then
+  ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes/artist-images'"
+  rsync -rtz --update --no-perms --no-owner --no-group \
+    --include='*.jpg' --include='*.meta.json' --exclude='*' \
+    "$ARTIST_IMG_SRC" "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/artist-images/" \
+    && echo "  ✓ artist images synced" \
+    || echo "  ⚠ artist-images rsync had errors"
+else
+  echo "  • $ARTIST_IMG_SRC not present on this Mac — skipping artist images"
 fi
 
 # ── 4. library.json metadata bootstrap ──────────────────────────────
