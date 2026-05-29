@@ -46,6 +46,8 @@ import {
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerSquidStore } from './squid-store'
 import { registerRecordStoreIntegration } from './record-store'
+import { parsePlayEvents } from './record-store/shelf-generator'
+import type { CandTrack } from './record-store/candidate-pool'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -10917,12 +10919,37 @@ app.whenReady().then(async () => {
   // there's no caller, so the registration is dead surface area. The
   // RECORD_STORE_ENABLED flag flips back on when Phase 2 lands. Keeping
   // the import + integration so re-enabling is a one-line flip.
+  // 4.5.0-68 gated the registration off (Phase-0 UI was removed). The
+  // Phase-1 engine (Brief 037 1a-1e) is now wired below; flip this to
+  // true when Phase 2 ships the store UI.
   const RECORD_STORE_ENABLED = false
   if (RECORD_STORE_ENABLED) {
+    // LLM adapter over claudeCall (§3.6 — no new SDK/keys). Returns the
+    // assistant text; daily ceiling + cached fallback are handled inside
+    // claudeCall, and the engine falls back to heuristics if it throws.
+    const recordStoreLlm = async (req: {
+      callKey: string; model: string; maxTokens: number; system: string; user: string
+    }): Promise<string> => {
+      const reply = await claudeCall(req.callKey, {
+        model: req.model,
+        max_tokens: req.maxTokens,
+        system: req.system,
+        messages: [{ role: 'user', content: req.user }],
+      })
+      const block = reply.content[0]
+      return block && block.type === 'text' ? block.text : ''
+    }
     registerRecordStoreIntegration({
-      libraryPath: LIBRARY_PATH,
       userDataDir: app.getPath('userData'),
       getMainWindow: () => mainWindow,
+      getTracks: async () => {
+        const lib = (await libraryCache.get()) as { tracks?: CandTrack[] }
+        return Array.isArray(lib.tracks) ? lib.tracks : []
+      },
+      getPlayEvents: async () =>
+        parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
+      llm: recordStoreLlm,
+      personaCore: MUSIC_MAN_CORE,
     })
   }
 

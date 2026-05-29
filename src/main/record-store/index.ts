@@ -1,34 +1,50 @@
 // Music Man's Record Store — main-process registration (Brief 037 §6)
 //
-// PHASE 0 SCOPE: this module ships IPC handlers and a heuristic shelf
-// builder (no LLM, no day-theme, no blurbs). Goal is to prove the
-// plumbing end-to-end: open the store → see 3 shelves of real library
-// albums → click an item → it plays.
+// Phase 1 integration: the get-shelves / get-blurb handlers now drive
+// the real engine (1a-1e) instead of the Phase-0 heuristic stub:
+//   get-shelves → candidate pools (1a) + external context (1b) +
+//                 listening summary + the combined day-theme/shelf
+//                 Sonnet call (1c/1d), cached per local-calendar-date.
+//   get-blurb   → relationship-aware Haiku take (1e), cached forever.
 //
-// Phase 1 will replace heuristicBuildShelves() with the day-theme +
-// library-grounded Sonnet call described in Brief 037 §3.
+// The module stays Electron- and SDK-decoupled: index.ts injects the
+// library/play-event readers, the persona core (MUSIC_MAN_CORE), and an
+// `llm` adapter over claudeCall (§3.6 — no new SDK, no new keys).
+//
+// speak-blurb / cancel-speech remain Phase-0 stubs; Phase 2 wires them
+// to the ElevenLabs TTS bridge + the duck pattern.
 
 import { ipcMain, BrowserWindow } from 'electron'
-import { readFile } from 'fs/promises'
 import { RecordStoreCache } from './cache'
-import type {
-  Persona,
-  Shelf,
-  ShelfBundle,
-  ShelfItem,
-  Blurb,
-} from './types'
+import type { Blurb, Persona, ShelfBundle } from './types'
+import type { CandTrack } from './candidate-pool'
+import {
+  buildListeningSummary,
+  buildShelfPools,
+  generateShelves,
+  type PlayEvent,
+  type RecordStoreLlm,
+} from './shelf-generator'
+import { gatherExternalContext, topLibraryArtists } from './external-context'
+import { buildItemRelationship, generateBlurb } from './blurb-generator'
 
 // ── Public registration surface ──────────────────────────────────────
 
 export interface RecordStoreDeps {
-  /** Absolute path to library.json (already loaded elsewhere; this
-   *  module reads it lazily on each shelf request in Phase 0). */
-  libraryPath: string
   /** Absolute path of the JakeTunes user-data dir (where the cache
    *  lives). Pass app.getPath('userData'). */
   userDataDir: string
   getMainWindow: () => BrowserWindow | null
+  /** Canonical merged-library tracks (from libraryCache). The engine
+   *  reads playCount / skipCount / lastPlayedAt / genre / year /
+   *  trackCount off these — all native library.json fields. */
+  getTracks: () => Promise<CandTrack[]>
+  /** Parsed play events for 30d/7d windowing + time-of-day (§3.2). */
+  getPlayEvents: () => Promise<PlayEvent[]>
+  /** LLM adapter wrapping claudeCall (§3.6). Returns assistant text. */
+  llm: RecordStoreLlm
+  /** MUSIC_MAN_CORE persona prompt (index.ts owns it). */
+  personaCore: string
 }
 
 let registered = false
@@ -41,44 +57,17 @@ export function registerRecordStoreIntegration(deps: RecordStoreDeps): void {
 
   const cache = new RecordStoreCache(deps.userDataDir)
 
-  // record-store:get-shelves — Phase 0 returns a heuristic ShelfBundle
-  // built from the live library. Cached for 24h per local-calendar-date
-  // so the store has stable content all day (the "first-open-of-day"
-  // rule from §2 D1).
-  ipcMain.handle('record-store:get-shelves', async (_e, opts?: { forceRefresh?: boolean }) => {
-    const dateISO = todayLocalISODate()
+  // record-store:get-shelves — first-open-of-day generation (§2 D1).
+  // Cached 24h per local-calendar-date so the wall is stable all day.
+  ipcMain.handle('record-store:get-shelves', (_e, opts?: { forceRefresh?: boolean }) =>
+    resolveShelves(cache, deps, opts),
+  )
 
-    if (!opts?.forceRefresh) {
-      const cached = await cache.getShelfBundle(dateISO)
-      if (cached) return cached
-    }
-
-    const tracks = await loadLibraryTracks(deps.libraryPath)
-    const bundle = heuristicBuildShelves(tracks, dateISO)
-    await cache.putShelfBundle(bundle)
-    // Best-effort housekeeping; doesn't block the response.
-    void cache.pruneOldShelves()
-    return bundle
-  })
-
-  // record-store:get-blurb — Phase 0 stub. Returns a placeholder string
-  // so the renderer can still wire the click-to-speak path. Phase 1
-  // replaces this with a Haiku call wrapped in MUSIC_MAN_CORE.
-  ipcMain.handle(
-    'record-store:get-blurb',
-    async (_e, args: { itemId: string; persona: Persona }): Promise<Blurb> => {
-      const existing = await cache.getBlurb(args.persona, args.itemId)
-      if (existing) return existing
-      const blurb: Blurb = {
-        itemId: args.itemId,
-        persona: args.persona,
-        text: '[blurb engine — Phase 1 stub. Real Music Man take coming.]',
-        generatedAt: Date.now(),
-        source: 'cached',
-      }
-      await cache.putBlurb(blurb)
-      return blurb
-    },
+  // record-store:get-blurb — lazy, relationship-aware, cached forever
+  // per (itemId, persona). Returns null when the LLM is unreachable —
+  // no blurb, never an error, never a fabricated take (§8).
+  ipcMain.handle('record-store:get-blurb', (_e, args: { itemId: string; persona: Persona }) =>
+    resolveBlurb(cache, deps, args),
   )
 
   // record-store:speak-blurb — Phase 0 stub. Phase 2 wires this to the
@@ -86,10 +75,6 @@ export function registerRecordStoreIntegration(deps: RecordStoreDeps): void {
   ipcMain.handle(
     'record-store:speak-blurb',
     async (_e, _args: { blurb: Blurb }): Promise<{ ok: true; audioId: string }> => {
-      // Phase 2 will fan out to TTS + dispatch the musicman-speaking-*
-      // CustomEvents so playback ducks/restores correctly. For now just
-      // ack with a synthetic audio id so the renderer's cancel path is
-      // exercisable.
       return { ok: true, audioId: `phase0-stub-${Date.now()}` }
     },
   )
@@ -102,6 +87,100 @@ export function registerRecordStoreIntegration(deps: RecordStoreDeps): void {
   )
 }
 
+// ── Orchestration (exported so the integration probe drives the exact
+//    same path the IPC handlers do — no duplicated logic to drift) ────
+
+/** Resolve today's wall: serve the valid cache, else build it from the
+ *  engine (1a-1e) and cache it. Falls back to a prior day's wall, then a
+ *  heuristic wall, if the LLM is unreachable (§8). */
+export async function resolveShelves(
+  cache: RecordStoreCache,
+  deps: RecordStoreDeps,
+  opts?: { forceRefresh?: boolean },
+): Promise<ShelfBundle> {
+  const dateISO = todayLocalISODate()
+
+  if (!opts?.forceRefresh) {
+    const cached = await cache.getShelfBundle(dateISO)
+    if (cached) return cached
+  }
+
+  const tracks = await deps.getTracks()
+  const events = await deps.getPlayEvents()
+  const now = Date.now()
+
+  // Inputs to the combined day-theme + shelf Sonnet call (§1d).
+  const summary = buildListeningSummary(tracks, events, now)
+  const external = await gatherExternalContext({
+    artists: topLibraryArtists(tracks),
+    userDataDir: deps.userDataDir,
+    forceRefresh: opts?.forceRefresh,
+  })
+  const themeHistory = await cache.getThemeHistory()
+  const recentlyPicked = await cache.getRecentlyPickedIds(dateISO, 14)
+  const pools = buildShelfPools(tracks, dateISO, recentlyPicked)
+
+  const bundle = await generateShelves(
+    { todayISO: dateISO, summary, external, themeHistory, personaCore: deps.personaCore, pools, llm: deps.llm },
+    tracks,
+  )
+
+  if (bundle.source === 'llm') {
+    await cache.putShelfBundle(bundle)
+    // Burn the theme for the 21-day cooldown (§3.4). Heuristic themes
+    // are generic, so we don't pollute the cooldown log with them.
+    await cache.appendThemeHistory({ date: dateISO, theme: bundle.theme.theme })
+    void cache.pruneOldShelves()
+    return bundle
+  }
+
+  // LLM was unreachable. Prefer a real prior wall over a fresh heuristic
+  // one — "served from yesterday" (§8), not an error.
+  const stale = await cache.getStaleShelfBundle(dateISO)
+  if (stale) return { ...stale, source: 'cached' }
+
+  // No cache to fall back to → serve the heuristic wall, and cache it so
+  // the day stays stable if the LLM stays down.
+  await cache.putShelfBundle(bundle)
+  void cache.pruneOldShelves()
+  return bundle
+}
+
+/** Resolve a single record's blurb: cached forever, else generated from
+ *  the user's relationship with the item (§3.2). null = no blurb (LLM
+ *  unreachable / unknown item) — never an error, never fabricated (§8). */
+export async function resolveBlurb(
+  cache: RecordStoreCache,
+  deps: RecordStoreDeps,
+  args: { itemId: string; persona: Persona },
+): Promise<Blurb | null> {
+  const existing = await cache.getBlurb(args.persona, args.itemId)
+  if (existing) return existing
+
+  // Locate the item on today's wall to recover its trackIds + shelf.
+  const dateISO = todayLocalISODate()
+  const bundle = await cache.getStaleShelfBundle(dateISO)
+  const shelf = bundle?.shelves.find((s) => s.items.some((i) => i.id === args.itemId))
+  const item = shelf?.items.find((i) => i.id === args.itemId)
+  if (!item) return null // unknown / stale item id
+
+  const tracks = await deps.getTracks()
+  const events = await deps.getPlayEvents()
+  const tracksById = new Map(tracks.map((t) => [t.id, t]))
+  const relationship = buildItemRelationship(item, tracksById, events, Date.now())
+
+  const blurb = await generateBlurb({
+    item,
+    shelfTitle: shelf?.title ?? '',
+    persona: args.persona,
+    relationship,
+    personaCore: deps.personaCore,
+    llm: deps.llm,
+  })
+  if (blurb) await cache.putBlurb(blurb)
+  return blurb
+}
+
 // ── Internals ────────────────────────────────────────────────────────
 
 /** Local-time YYYY-MM-DD so the cache rolls over at the user's
@@ -112,174 +191,4 @@ function todayLocalISODate(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
-}
-
-/** Minimal Track shape this module needs. Mirror of the renderer
- *  Track interface but importing from there would cross the
- *  main/renderer barrier — duplicate the few fields we use here. */
-interface LibTrack {
-  id: number
-  title: string
-  artist: string
-  albumArtist?: string
-  album: string
-  dateAdded: string
-  playCount: number
-}
-
-async function loadLibraryTracks(libraryPath: string): Promise<LibTrack[]> {
-  try {
-    const raw = await readFile(libraryPath, 'utf-8')
-    const parsed = JSON.parse(raw) as { tracks?: LibTrack[] }
-    return Array.isArray(parsed.tracks) ? parsed.tracks : []
-  } catch (err) {
-    console.warn('[record-store] loadLibraryTracks failed:', err)
-    return []
-  }
-}
-
-// ── Heuristic shelf builder (Phase 0) ────────────────────────────────
-//
-// Phase 0 ships 3 shelves of 5 albums each, picked deterministically
-// from the library. Tracks are grouped into "album units" keyed by
-// `${album}::${albumArtist || artist}`. The brief's "tears of joy"
-// quality bar applies to Phase 1 (the LLM-driven curator) — Phase 0
-// just exists to prove plumbing and never crashes.
-
-interface AlbumUnit {
-  albumKey: string
-  album: string
-  artist: string
-  trackIds: number[]
-  totalPlays: number
-  maxDateAdded: string
-}
-
-function groupAlbums(tracks: LibTrack[]): AlbumUnit[] {
-  const map = new Map<string, AlbumUnit>()
-  for (const t of tracks) {
-    if (!t.album) continue
-    const artist = (t.albumArtist && t.albumArtist.trim()) || (t.artist || '').trim()
-    if (!artist) continue
-    const key = `${t.album}::${artist}`
-    let unit = map.get(key)
-    if (!unit) {
-      unit = {
-        albumKey: key,
-        album: t.album,
-        artist,
-        trackIds: [],
-        totalPlays: 0,
-        maxDateAdded: t.dateAdded || '',
-      }
-      map.set(key, unit)
-    }
-    unit.trackIds.push(t.id)
-    unit.totalPlays += Number(t.playCount) || 0
-    if (t.dateAdded && t.dateAdded > unit.maxDateAdded) {
-      unit.maxDateAdded = t.dateAdded
-    }
-  }
-  return Array.from(map.values())
-}
-
-function unitToShelfItem(u: AlbumUnit, placement: string): ShelfItem {
-  return {
-    id: `lib:album:${u.albumKey}`,
-    kind: 'library-album',
-    coverUrl: null, // Phase 0 — art comes in Phase 2
-    title: u.album,
-    subtitle: u.artist,
-    placement,
-    payload: { trackIds: u.trackIds.map(String) },
-  }
-}
-
-function heuristicBuildShelves(tracks: LibTrack[], dateISO: string): ShelfBundle {
-  const albums = groupAlbums(tracks)
-
-  // mm-picks: top 5 by total playCount (your most-loved records).
-  const mmPicks = [...albums].sort((a, b) => b.totalPlays - a.totalPlays).slice(0, 5)
-
-  // new-arrivals: top 5 by max dateAdded (most recently imported).
-  const newArrivals = [...albums]
-    .filter((a) => a.maxDateAdded)
-    .sort((a, b) => b.maxDateAdded.localeCompare(a.maxDateAdded))
-    .slice(0, 5)
-
-  // deep-cuts: 5 from the bottom 30% by playCount, with at least one
-  // play recorded (filters out things that were never played at all
-  // OR things that are just metadata-stubs). Pick deterministically
-  // so the same date yields the same picks all day.
-  const eligible = albums.filter((a) => a.totalPlays > 0)
-  eligible.sort((a, b) => a.totalPlays - b.totalPlays)
-  const longTail = eligible.slice(0, Math.max(5, Math.floor(eligible.length * 0.3)))
-  const deepCuts = pickDeterministic(longTail, dateISO, 5)
-
-  const shelves: Shelf[] = [
-    {
-      id: 'mm-picks',
-      curator: 'music-man',
-      title: "Music Man's Picks",
-      tagline: 'The records I keep reaching for. No comment.',
-      items: mmPicks.map((u) =>
-        unitToShelfItem(u, 'top of the rotation right now'),
-      ),
-    },
-    {
-      id: 'new-arrivals',
-      curator: 'house',
-      title: 'New Arrivals',
-      tagline: "What's come in lately.",
-      items: newArrivals.map((u) =>
-        unitToShelfItem(u, 'just landed on the shelf'),
-      ),
-    },
-    {
-      id: 'deep-cuts',
-      curator: 'music-man',
-      title: 'Deep Cuts',
-      tagline: "Records you bought and then didn't quite get to.",
-      items: deepCuts.map((u) =>
-        unitToShelfItem(u, "from the back of the bin — give it another listen"),
-      ),
-    },
-  ]
-
-  const now = Date.now()
-  return {
-    date: dateISO,
-    generatedAt: now,
-    validUntil: now + 24 * 60 * 60 * 1000,
-    theme: {
-      date: dateISO,
-      theme: "Today's wall",
-      rationale: 'Phase 0 heuristic — real day-theme engine lands in Phase 1.',
-      source: 'mood',
-    },
-    shelves,
-    source: 'heuristic',
-  }
-}
-
-/** Deterministic per-date pick from a candidate set. Uses a simple
- *  string-hash of (dateISO + index) so today's deep-cuts are stable
- *  for the whole day but rotate across days. */
-function pickDeterministic<T>(pool: T[], dateISO: string, n: number): T[] {
-  if (pool.length <= n) return pool
-  const scored = pool.map((item, i) => ({
-    item,
-    score: hash32(`${dateISO}::${i}`),
-  }))
-  scored.sort((a, b) => a.score - b.score)
-  return scored.slice(0, n).map((s) => s.item)
-}
-
-function hash32(s: string): number {
-  let h = 2166136261 >>> 0
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0
-  }
-  return h >>> 0
 }
