@@ -3,7 +3,7 @@ import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { setNotice } from '../activity'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { togglePreview, subscribePreview, getPreviewSnapshot } from '../previewPlayer'
+import { togglePreview, subscribePreview, getPreviewSnapshot, stopPreview } from '../previewPlayer'
 import type { Recommendation, ItunesSuggestion } from '../types'
 import '../styles/listen-to-the-list.css'
 
@@ -50,13 +50,21 @@ export default function ListenToTheListView() {
   const [searching, setSearching] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressSearchRef = useRef(false)
+  // Monotonic search token: a slow response from an older query must not
+  // overwrite the suggestions of a newer one (out-of-order results).
+  const searchSeqRef = useRef(0)
 
   const load = useCallback(async () => {
-    const res = await window.electronAPI.loadRecommendations()
-    const list = res.ok ? res.recommendations : []
-    recsCache = list
-    setRecs(list)
-    setLoading(false)
+    try {
+      const res = await window.electronAPI.loadRecommendations()
+      const list = res.ok ? res.recommendations : []
+      recsCache = list
+      setRecs(list)
+    } catch (err) {
+      console.error('[ltl] load failed', err)
+    } finally {
+      setLoading(false) // finally so a thrown IPC never strands "Loading…"
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -68,10 +76,17 @@ export default function ListenToTheListView() {
     if (q.length < 2) { setSuggestions([]); return }
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
+      const seq = ++searchSeqRef.current
       setSearching(true)
-      const res = await window.electronAPI.searchItunes(q)
-      setSearching(false)
-      setSuggestions(res.ok ? res.results : [])
+      try {
+        const res = await window.electronAPI.searchItunes(q)
+        if (seq !== searchSeqRef.current) return // a newer query superseded this
+        setSuggestions(res.ok ? res.results : [])
+      } catch {
+        if (seq === searchSeqRef.current) setSuggestions([])
+      } finally {
+        if (seq === searchSeqRef.current) setSearching(false)
+      }
     }, 250)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [form.song, form.artist])
@@ -133,7 +148,11 @@ export default function ListenToTheListView() {
       if (res.recommendation) {
         const enriched = res.recommendation
         setRecs((cur) => {
-          const swapped = cur.map((r) => (r.id === tempId ? enriched : r))
+          // If the provisional row is gone (deleted mid-save), don't drop
+          // the saved record — re-insert it so a saved reco never vanishes.
+          const swapped = cur.some((r) => r.id === tempId)
+            ? cur.map((r) => (r.id === tempId ? enriched : r))
+            : [enriched, ...cur]
           recsCache = swapped
           return swapped
         })
@@ -151,16 +170,25 @@ export default function ListenToTheListView() {
   }, [form, canAdd, adding, load])
 
   const handleDelete = useCallback(async (rec: Recommendation) => {
+    // If a preview of this reco is playing, stop it so it isn't orphaned
+    // (the row + its stop control are about to disappear).
+    if (getPreviewSnapshot().playingId === rec.id) stopPreview()
     // Optimistic: pull the row immediately, then confirm with the backend.
     const prev = recsRef.current
     const next = prev.filter((x) => x.id !== rec.id)
     recsCache = next
     setRecs(next)
-    const res = await window.electronAPI.deleteRecommendation(rec.id)
-    if (!res.ok) {
+    try {
+      const res = await window.electronAPI.deleteRecommendation(rec.id)
+      if (!res.ok) {
+        recsCache = prev
+        setRecs(prev) // put it back exactly where it was
+        setNotice(`Couldn't delete${res.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
+      }
+    } catch (err) {
       recsCache = prev
-      setRecs(prev) // put it back exactly where it was
-      setNotice(`Couldn't delete${res.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
+      setRecs(prev) // a thrown IPC must not leave the row vanished
+      setNotice(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
   }, [])
 

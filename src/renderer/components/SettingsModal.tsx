@@ -193,18 +193,25 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   const handleSave = async () => {
     setSaving(true)
     setError(null)
-    const result = await window.electronAPI.saveAppSettings(draft as unknown as Record<string, unknown>)
-    if (result.ok) {
-      // Mirror the Claude daily ceiling into claude-stats.json so the
-      // runtime wrapper picks it up immediately (no app restart needed).
-      try {
-        await window.electronAPI.setClaudeDailyCeiling?.(draft.ai.claudeDailyCeiling)
-      } catch { /* non-fatal */ }
+    // try/catch/finally is load-bearing: Save AND Cancel are both
+    // disabled={saving}, so a thrown save would trap the modal with no way
+    // to retry or close. finally always re-enables the buttons.
+    try {
+      const result = await window.electronAPI.saveAppSettings(draft as unknown as Record<string, unknown>)
+      if (result.ok) {
+        // Mirror the Claude daily ceiling into claude-stats.json so the
+        // runtime wrapper picks it up immediately (no app restart needed).
+        try {
+          await window.electronAPI.setClaudeDailyCeiling?.(draft.ai.claudeDailyCeiling)
+        } catch { /* non-fatal */ }
+        onSaved(draft)
+      } else {
+        setError(result.error || 'Failed to save settings.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save settings.')
+    } finally {
       setSaving(false)
-      onSaved(draft)
-    } else {
-      setSaving(false)
-      setError(result.error || 'Failed to save settings.')
     }
   }
 
