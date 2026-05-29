@@ -8991,15 +8991,21 @@ interface ItunesSuggestion {
   previewUrl?: string
   appleMusicUrl?: string
 }
+// Obvious non-original acts — karaoke, tribute/cover factories, lullaby
+// renditions, kids covers. iTunes Search has NO popularity score, so it
+// dumps these in with the real thing. Filter them out entirely.
+const ITUNES_JUNK_ARTIST = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
 ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=8`
+    // Pull a WIDER pool (25) than we show, so the re-rank below has enough
+    // signal to float the recognizable artist up and bury one-off covers.
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=25`
     const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
     if (!res.ok) return { ok: false, results: [] }
     const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
-    const results: ItunesSuggestion[] = (data.results || [])
+    const raw: ItunesSuggestion[] = (data.results || [])
       .map((r) => ({
         song: String(r.trackName ?? ''),
         artist: String(r.artistName ?? ''),
@@ -9009,8 +9015,34 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
         previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
         appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
       }))
-      .filter((s) => s.song && s.artist)
-    return { ok: true, results }
+      .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
+
+    // Re-rank toward the recognizable version. iTunes gives no popularity
+    // score, so use a free proxy: a famous artist shows up MULTIPLE times
+    // for one song (studio + live + comps), while a one-off cover appears
+    // once. Boost by that frequency, prefer studio over live, and demote
+    // the "<TrackTitle> - Single" one-offs that covers ship as.
+    const artistFreq = new Map<string, number>()
+    for (const s of raw) {
+      const k = s.artist.toLowerCase()
+      artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
+    }
+    const scoreOf = (s: ItunesSuggestion): number => {
+      let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 10
+      const album = (s.album || '').toLowerCase()
+      const song = s.song.toLowerCase()
+      const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
+      if (!isLive && !/ - single$/.test(album)) score += 4          // prefer a real studio album cut
+      if (isLive) score -= 3                                          // demote live versions a touch
+      if (/ - single$/.test(album) && album.startsWith(song)) score -= 6 // one-off cover single
+      return score
+    }
+    const ranked = raw
+      .map((s, i) => ({ s, i, score: scoreOf(s) }))
+      .sort((a, b) => (b.score - a.score) || (a.i - b.i))   // score desc, iTunes order as stable tiebreak
+      .slice(0, 10)
+      .map((x) => x.s)
+    return { ok: true, results: ranked }
   } catch {
     return { ok: false, results: [] }
   }
