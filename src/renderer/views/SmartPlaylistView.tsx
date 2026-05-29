@@ -3,7 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { attachClipToBroadcast } from '../audio/eq'
+import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
@@ -613,6 +613,19 @@ export default function SmartPlaylistView() {
   const [speaking, setSpeaking] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
+  // Tear down any in-flight commentary speech on unmount so navigating
+  // away doesn't leave it playing or leak its source node into the
+  // Web-Audio broadcast graph (4.4.6 rattle class). Mirrors the
+  // detach → pause → null cleanup the toggle-off branch uses.
+  useEffect(() => () => {
+    if (audioRef.current) {
+      detachClipFromBroadcast(audioRef.current)
+      audioRef.current.pause()
+      audioRef.current = null
+      window.dispatchEvent(new Event('musicman-speaking-end'))
+    }
+  }, [])
+
   // Reset saved state when picks change
   useEffect(() => { setPicksSaved(false) }, [picks])
 
@@ -640,6 +653,7 @@ export default function SmartPlaylistView() {
   const speakCommentary = useCallback(async () => {
     if (!picks?.commentary) return
     if (speaking && audioRef.current) {
+      detachClipFromBroadcast(audioRef.current)
       audioRef.current.pause()
       audioRef.current = null
       setSpeaking(false)
@@ -655,31 +669,38 @@ export default function SmartPlaylistView() {
       picksConfig?.kind === 'megan'   ? MEGAN_VOICE_ID :
       picksConfig?.kind === 'djhands' ? DJ_HANDS_VOICE_ID :
       undefined
-    const tts = await window.electronAPI.musicmanSpeak(picks.commentary, false, voiceId)
-    if (tts.ok && tts.audio) {
-      window.dispatchEvent(new Event('musicman-speaking-start'))
-      await new Promise<void>(resolve => {
-        // The fade handler over in Toolbar fires `musicman-fade-ready`
-        // once the volume duck is in place; we then start playback. Wrap
-        // the resolver in an EventListener-shaped function so the DOM
-        // typings accept it (resolve takes `value`, listeners take `Event`).
-        const listener: EventListener = () => resolve()
-        window.addEventListener('musicman-fade-ready', listener, { once: true })
-        setTimeout(() => resolve(), 2000)
-      })
-      const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
-      attachClipToBroadcast(audio)
-      audioRef.current = audio
-      audio.onended = () => {
+    try {
+      const tts = await window.electronAPI.musicmanSpeak(picks.commentary, false, voiceId)
+      if (tts.ok && tts.audio) {
+        window.dispatchEvent(new Event('musicman-speaking-start'))
+        await new Promise<void>(resolve => {
+          // The fade handler over in Toolbar fires `musicman-fade-ready`
+          // once the volume duck is in place; we then start playback. Wrap
+          // the resolver in an EventListener-shaped function so the DOM
+          // typings accept it (resolve takes `value`, listeners take `Event`).
+          const listener: EventListener = () => resolve()
+          window.addEventListener('musicman-fade-ready', listener, { once: true })
+          setTimeout(() => resolve(), 2000)
+        })
+        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        attachClipToBroadcast(audio)
+        audioRef.current = audio
+        audio.onended = () => {
+          setSpeaking(false)
+          window.dispatchEvent(new Event('musicman-speaking-end'))
+        }
+        audio.play().catch(() => {
+          setSpeaking(false)
+          window.dispatchEvent(new Event('musicman-speaking-end'))
+        })
+      } else {
         setSpeaking(false)
-        window.dispatchEvent(new Event('musicman-speaking-end'))
       }
-      audio.play().catch(() => {
-        setSpeaking(false)
-        window.dispatchEvent(new Event('musicman-speaking-end'))
-      })
-    } else {
+    } catch {
+      // A rejected musicmanSpeak left `speaking` stuck true (dead button)
+      // before this guard — clear the flag and undo the speaking state.
       setSpeaking(false)
+      window.dispatchEvent(new Event('musicman-speaking-end'))
     }
   }, [picks, speaking])
 

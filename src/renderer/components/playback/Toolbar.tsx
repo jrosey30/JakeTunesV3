@@ -148,38 +148,58 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const micHoverTimer = useRef<number | null>(null)
   const lastPrefetchedTrackId = useRef<number | null>(null)
 
+  // The active volume fade lives in a ref so cancel/restore paths can stop
+  // it — a local setInterval (the old code) kept ramping after a cancel
+  // restored the volume, yanking it back (CLAUDE.md cancel-reverses-start).
+  // clearFade also resolves any pending fadeVolumeOut promise so an awaiter
+  // (handleStart) can't dangle when a fade is cancelled mid-flight.
+  const fadeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const fadeResolveRef = useRef<(() => void) | null>(null)
+  const clearFade = useCallback(() => {
+    if (fadeIntervalRef.current) {
+      clearInterval(fadeIntervalRef.current)
+      fadeIntervalRef.current = null
+    }
+    if (fadeResolveRef.current) {
+      fadeResolveRef.current()
+      fadeResolveRef.current = null
+    }
+  }, [])
+
   const fadeVolumeIn = useCallback(() => {
+    clearFade() // cancel any in-flight fade so they can't fight over volume
     const target = savedVolumeRef.current
     const start = target * 0.15
     let step = 0
-    const fade = setInterval(() => {
+    fadeIntervalRef.current = setInterval(() => {
       step++
       if (step >= 30) {
         setVolume(target)
-        clearInterval(fade)
+        clearFade()
       } else {
         setVolume(start + (target - start) * (step / 30))
       }
     }, 50)
-  }, [setVolume])
+  }, [setVolume, clearFade])
 
   const fadeVolumeOut = useCallback((): Promise<void> => {
     return new Promise(resolve => {
+      clearFade()
+      fadeResolveRef.current = resolve
       const start = savedVolumeRef.current
       const target = start * 0.15
       let step = 0
-      const fade = setInterval(() => {
+      fadeIntervalRef.current = setInterval(() => {
         step++
         if (step >= 20) {
           setVolume(target)
-          clearInterval(fade)
-          resolve()
+          clearFade() // clears the interval AND resolves via fadeResolveRef
         } else {
           setVolume(start - (start - target) * (step / 20))
         }
       }, 50)
     })
-  }, [setVolume])
+  }, [setVolume, clearFade])
 
   // Global fade for any Music Man speech (MusicManView, SmartPlaylistView, etc.)
   const isFadedRef = useRef(false)
@@ -245,6 +265,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
+        clearFade() // stop any in-flight duck fade before restoring volume
+        isFadedRef.current = false // clear the latch so the next speech re-ducks
         setVolume(savedVolumeRef.current)
       }
       setAutoDj(false)
@@ -256,7 +278,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
     window.addEventListener('musicman-dj-cancel', handler)
     return () => window.removeEventListener('musicman-dj-cancel', handler)
-  }, [setVolume])
+  }, [setVolume, clearFade])
 
   // Sync auto-DJ mode to audio module. Either DJ-Set's autoDj OR the
   // user-toggled Radio Mode triggers the between-track event the

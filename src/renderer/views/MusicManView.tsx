@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
-import { attachClipToBroadcast } from '../audio/eq'
+import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
+import { setNotice } from '../activity'
 import { Track, MetadataIssue, ChatConversation, RestoreScanResult, RestoreApplyResult, RestoreDiff } from '../types'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
@@ -157,6 +158,20 @@ export default function MusicManView() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Stop any in-flight TTS when the view unmounts (e.g. navigating away).
+  // Without this, the audio element keeps playing and its source node stays
+  // wired into the broadcast graph — speech bleeds over the next view and
+  // dead nodes accumulate ("rattle"). Detach → pause → null, then tell the
+  // rest of the app speaking has ended so the avatar/EQ state resets.
+  useEffect(() => () => {
+    if (audioRef.current) {
+      detachClipFromBroadcast(audioRef.current)
+      audioRef.current.pause()
+      audioRef.current = null
+      window.dispatchEvent(new Event('musicman-speaking-end'))
+    }
+  }, [])
+
   // Load chat history on mount
   useEffect(() => {
     window.electronAPI.loadChatHistory().then(result => {
@@ -200,36 +215,46 @@ export default function MusicManView() {
     setMessages(newMessages)
     setIsLoading(true)
 
-    const result = await window.electronAPI.musicmanChat(newMessages)
-    // 4.5: store BOTH the stripped text (for display) and the raw
-    // text with [scoff]/[laughs] tags intact (for the speaker button
-    // to feed to ElevenLabs v3 with full performance). textRaw defaults
-    // to text if main didn't return it — older builds + error paths.
-    const finalMessages: ChatMessage[] = [...newMessages, {
-      role: 'assistant',
-      content: result.text,
-      contentRaw: result.textRaw || result.text,
-    }]
-    setMessages(finalMessages)
-    setIsLoading(false)
+    try {
+      const result = await window.electronAPI.musicmanChat(newMessages)
+      // 4.5: store BOTH the stripped text (for display) and the raw
+      // text with [scoff]/[laughs] tags intact (for the speaker button
+      // to feed to ElevenLabs v3 with full performance). textRaw defaults
+      // to text if main didn't return it — older builds + error paths.
+      const finalMessages: ChatMessage[] = [...newMessages, {
+        role: 'assistant',
+        content: result.text,
+        contentRaw: result.textRaw || result.text,
+      }]
+      setMessages(finalMessages)
 
-    // Auto-save to history
-    const chatId = activeChatId || `chat-${Date.now()}`
-    const title = newMessages[0]?.content.slice(0, 50) || 'Untitled'
-    const existing = conversations.find(c => c.id === chatId)
-    let updated: ChatConversation[]
-    if (existing) {
-      updated = conversations.map(c => c.id === chatId ? { ...c, messages: finalMessages } : c)
-    } else {
-      const newConv: ChatConversation = { id: chatId, title, messages: finalMessages, createdAt: new Date().toISOString() }
-      updated = [newConv, ...conversations]
+      // Auto-save to history
+      const chatId = activeChatId || `chat-${Date.now()}`
+      const title = newMessages[0]?.content.slice(0, 50) || 'Untitled'
+      const existing = conversations.find(c => c.id === chatId)
+      let updated: ChatConversation[]
+      if (existing) {
+        updated = conversations.map(c => c.id === chatId ? { ...c, messages: finalMessages } : c)
+      } else {
+        const newConv: ChatConversation = { id: chatId, title, messages: finalMessages, createdAt: new Date().toISOString() }
+        updated = [newConv, ...conversations]
+      }
+      setActiveChatId(chatId)
+      saveConversations(updated)
+    } catch (err) {
+      // Roll back the optimistic user bubble and restore their typed text
+      // so the message isn't lost when the chat IPC throws.
+      setMessages(messages)
+      setChatInput(text)
+      setNotice(err instanceof Error ? err.message : 'The Music Man could not respond.', { kind: 'error' })
+    } finally {
+      setIsLoading(false)
     }
-    setActiveChatId(chatId)
-    saveConversations(updated)
   }
 
   const speakMessage = async (text: string, index: number) => {
     if (isSpeaking && audioRef.current) {
+      detachClipFromBroadcast(audioRef.current)
       audioRef.current.pause()
       audioRef.current = null
       window.dispatchEvent(new Event('musicman-speaking-end'))
@@ -241,25 +266,32 @@ export default function MusicManView() {
     }
     setIsSpeaking(true)
     setSpeakingIdx(index)
-    const tts = await window.electronAPI.musicmanSpeak(text)
-    if (tts.ok && tts.audio) {
-      const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
-      attachClipToBroadcast(audio)
-      audioRef.current = audio
-      audio.onended = () => {
+    try {
+      const tts = await window.electronAPI.musicmanSpeak(text)
+      if (tts.ok && tts.audio) {
+        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        attachClipToBroadcast(audio)
+        audioRef.current = audio
+        audio.onended = () => {
+          setIsSpeaking(false)
+          setSpeakingIdx(-1)
+          window.dispatchEvent(new Event('musicman-speaking-end'))
+        }
+        window.dispatchEvent(new Event('musicman-speaking-start'))
+        audio.play().catch(() => {
+          setIsSpeaking(false)
+          setSpeakingIdx(-1)
+          window.dispatchEvent(new Event('musicman-speaking-end'))
+        })
+      } else {
         setIsSpeaking(false)
         setSpeakingIdx(-1)
-        window.dispatchEvent(new Event('musicman-speaking-end'))
       }
-      window.dispatchEvent(new Event('musicman-speaking-start'))
-      audio.play().catch(() => {
-        setIsSpeaking(false)
-        setSpeakingIdx(-1)
-        window.dispatchEvent(new Event('musicman-speaking-end'))
-      })
-    } else {
+    } catch (err) {
       setIsSpeaking(false)
       setSpeakingIdx(-1)
+      window.dispatchEvent(new Event('musicman-speaking-end'))
+      setNotice(err instanceof Error ? err.message : 'Could not play speech.', { kind: 'error' })
     }
   }
 
@@ -285,22 +317,26 @@ export default function MusicManView() {
       dateAdded: t.dateAdded || '',
     }))
 
-    const result = await window.electronAPI.musicmanPlaylist(mood, compactTracks)
+    try {
+      const result = await window.electronAPI.musicmanPlaylist(mood, compactTracks)
 
-    if (result.ok && result.trackIds) {
-      const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-      const playlistTracks = result.trackIds
-        .map(id => trackMap.get(id))
-        .filter((t): t is Track => t !== undefined)
+      if (result.ok && result.trackIds) {
+        const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
+        const playlistTracks = result.trackIds
+          .map(id => trackMap.get(id))
+          .filter((t): t is Track => t !== undefined)
 
-      setPlaylistResult({
-        name: result.name || 'Untitled',
-        commentary: result.commentary || '',
-        tracks: playlistTracks
-      })
+        setPlaylistResult({
+          name: result.name || 'Untitled',
+          commentary: result.commentary || '',
+          tracks: playlistTracks
+        })
+      }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Playlist generation failed.', { kind: 'error' })
+    } finally {
+      setPlaylistLoading(false)
     }
-
-    setPlaylistLoading(false)
   }
 
   const savePlaylist = useCallback(() => {
@@ -321,6 +357,7 @@ export default function MusicManView() {
   const speakCommentary = useCallback(async () => {
     if (!playlistResult?.commentary) return
     if (speakingCommentary && audioRef.current) {
+      detachClipFromBroadcast(audioRef.current)
       audioRef.current.pause()
       audioRef.current = null
       setSpeakingCommentary(false)
@@ -328,22 +365,28 @@ export default function MusicManView() {
       return
     }
     setSpeakingCommentary(true)
-    const tts = await window.electronAPI.musicmanSpeak(playlistResult.commentary)
-    if (tts.ok && tts.audio) {
-      const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
-      attachClipToBroadcast(audio)
-      audioRef.current = audio
-      audio.onended = () => {
+    try {
+      const tts = await window.electronAPI.musicmanSpeak(playlistResult.commentary)
+      if (tts.ok && tts.audio) {
+        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        attachClipToBroadcast(audio)
+        audioRef.current = audio
+        audio.onended = () => {
+          setSpeakingCommentary(false)
+          window.dispatchEvent(new Event('musicman-speaking-end'))
+        }
+        window.dispatchEvent(new Event('musicman-speaking-start'))
+        audio.play().catch(() => {
+          setSpeakingCommentary(false)
+          window.dispatchEvent(new Event('musicman-speaking-end'))
+        })
+      } else {
         setSpeakingCommentary(false)
-        window.dispatchEvent(new Event('musicman-speaking-end'))
       }
-      window.dispatchEvent(new Event('musicman-speaking-start'))
-      audio.play().catch(() => {
-        setSpeakingCommentary(false)
-        window.dispatchEvent(new Event('musicman-speaking-end'))
-      })
-    } else {
+    } catch (err) {
       setSpeakingCommentary(false)
+      window.dispatchEvent(new Event('musicman-speaking-end'))
+      setNotice(err instanceof Error ? err.message : 'Could not play speech.', { kind: 'error' })
     }
   }, [playlistResult, speakingCommentary])
 
@@ -359,12 +402,17 @@ export default function MusicManView() {
       album: t.album, genre: t.genre, year: t.year
     }))
 
-    const result = await window.electronAPI.musicmanScanMetadata(compactTracks)
-    if (result.ok && result.issues) {
-      setMetaIssues(result.issues as MetadataIssue[])
+    try {
+      const result = await window.electronAPI.musicmanScanMetadata(compactTracks)
+      if (result.ok && result.issues) {
+        setMetaIssues(result.issues as MetadataIssue[])
+      }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Metadata scan failed.', { kind: 'error' })
+    } finally {
+      setMetaScanning(false)
+      setMetaScanned(true)
     }
-    setMetaScanning(false)
-    setMetaScanned(true)
   }, [metaScanning, libState.tracks])
 
   // Audio analysis backfill (Brief 010). The renderer no longer drives
@@ -396,7 +444,14 @@ export default function MusicManView() {
     analysisTotalRef.current = jobs.length
     setAnalysisRunning(true)
     setAnalysisStatus(null)
-    await window.electronAPI.audioAnalysisEnqueueMany(jobs)
+    try {
+      await window.electronAPI.audioAnalysisEnqueueMany(jobs)
+    } catch (err) {
+      // Enqueue failed — clear the running flag so the button isn't stuck
+      // spinning forever. (On success the progress effect drives it false.)
+      setAnalysisRunning(false)
+      setNotice(err instanceof Error ? err.message : 'Could not start audio analysis.', { kind: 'error' })
+    }
   }, [analysisRunning, libState.tracks])
 
   const cancelAudioAnalysisBackfill = useCallback(async () => {
@@ -535,16 +590,21 @@ export default function MusicManView() {
     setRestoreXmlPath(picked.path)
     setRestoreScanning(true)
     setRestoreScan(null)
-    const result = await window.electronAPI.restoreXmlScan(picked.path)
-    setRestoreScanning(false)
-    if (!result.ok || !result.data) {
-      setRestoreError(result.error || 'Scan failed')
-      return
+    try {
+      const result = await window.electronAPI.restoreXmlScan(picked.path)
+      if (!result.ok || !result.data) {
+        setRestoreError(result.error || 'Scan failed')
+        return
+      }
+      setRestoreScan(result.data)
+      // Default: everything approved
+      setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
+      setRestoreExpandedGroups(new Set())
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : 'Scan failed')
+    } finally {
+      setRestoreScanning(false)
     }
-    setRestoreScan(result.data)
-    // Default: everything approved
-    setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
-    setRestoreExpandedGroups(new Set())
   }, [restoreScanning])
 
   const rescanXml = useCallback(async () => {
@@ -553,15 +613,20 @@ export default function MusicManView() {
     setRestoreApplied(null)
     setRestoreScanning(true)
     setRestoreScan(null)
-    const result = await window.electronAPI.restoreXmlScan(restoreXmlPath)
-    setRestoreScanning(false)
-    if (!result.ok || !result.data) {
-      setRestoreError(result.error || 'Scan failed')
-      return
+    try {
+      const result = await window.electronAPI.restoreXmlScan(restoreXmlPath)
+      if (!result.ok || !result.data) {
+        setRestoreError(result.error || 'Scan failed')
+        return
+      }
+      setRestoreScan(result.data)
+      setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
+      setRestoreExpandedGroups(new Set())
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : 'Scan failed')
+    } finally {
+      setRestoreScanning(false)
     }
-    setRestoreScan(result.data)
-    setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
-    setRestoreExpandedGroups(new Set())
   }, [restoreXmlPath, restoreScanning])
 
   const toggleRestoreTrack = useCallback((id: number) => {
@@ -607,24 +672,29 @@ export default function MusicManView() {
     if (restoreApprovedIds.size === 0) return
     setRestoreApplying(true)
     setRestoreError(null)
-    const result = await window.electronAPI.restoreXmlApply(
-      restoreXmlPath,
-      Array.from(restoreApprovedIds),
-    )
-    setRestoreApplying(false)
-    if (!result.ok || !result.data) {
-      setRestoreError(result.error || 'Apply failed')
-      return
-    }
-    setRestoreApplied(result.data)
-    // Reload library from iPod so the corrected metadata shows up
     try {
-      const reloaded = await window.electronAPI.loadTracks()
-      if (reloaded?.tracks) {
-        dispatch({ type: 'SET_TRACKS', tracks: reloaded.tracks as Track[] })
+      const result = await window.electronAPI.restoreXmlApply(
+        restoreXmlPath,
+        Array.from(restoreApprovedIds),
+      )
+      if (!result.ok || !result.data) {
+        setRestoreError(result.error || 'Apply failed')
+        return
       }
-    } catch {
-      // Non-fatal; user can restart to see changes
+      setRestoreApplied(result.data)
+      // Reload library from iPod so the corrected metadata shows up
+      try {
+        const reloaded = await window.electronAPI.loadTracks()
+        if (reloaded?.tracks) {
+          dispatch({ type: 'SET_TRACKS', tracks: reloaded.tracks as Track[] })
+        }
+      } catch {
+        // Non-fatal; user can restart to see changes
+      }
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : 'Apply failed')
+    } finally {
+      setRestoreApplying(false)
     }
   }, [restoreXmlPath, restoreScan, restoreApprovedIds, restoreApplying, dispatch])
 
@@ -648,12 +718,19 @@ export default function MusicManView() {
   const fetchSingleArt = useCallback(async (artist: string, album: string) => {
     const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
     setArtFetching(prev => new Set([...prev, key]))
-    const result = await window.electronAPI.fetchAlbumArt(artist, album)
-    setArtFetching(prev => { const next = new Set(prev); next.delete(key); return next })
-    if (result.ok && result.key && result.hash) {
-      dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+    try {
+      const result = await window.electronAPI.fetchAlbumArt(artist, album)
+      if (result.ok && result.key && result.hash) {
+        dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+      }
+      return result.ok
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Album art fetch failed.', { kind: 'error' })
+      return false
+    } finally {
+      // Always clear the in-flight key so the spinner doesn't stick on a throw.
+      setArtFetching(prev => { const next = new Set(prev); next.delete(key); return next })
     }
-    return result.ok
   }, [dispatch])
 
   const fetchAllMissing = useCallback(async () => {
