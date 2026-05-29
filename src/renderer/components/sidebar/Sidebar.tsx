@@ -387,20 +387,21 @@ export default function Sidebar() {
             selected={state.currentView === 'squid'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'squid' })}
           />
-          {/* Brief 037 Phase 2: Record Store re-enabled — the engine
-              (1a-1e) + the cover-grid storefront now back this entry. */}
-          <SidebarItem
-            label="Record Store"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                <circle cx="8" cy="8" r="6.5" fill="#b87333" />
-                <circle cx="8" cy="8" r="2.2" fill="#fff" />
-                <circle cx="8" cy="8" r="0.8" fill="#b87333" />
-              </svg>
-            )}
-            selected={state.currentView === 'recordstore'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
-          />
+          {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
+              release (shipping listen-to-the-list only; Phase-2 store held).
+              Re-add this SidebarItem when RECORD_STORE_ENABLED flips back on:
+              <SidebarItem
+                label="Record Store"
+                icon={(
+                  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6.5" fill="#b87333" />
+                    <circle cx="8" cy="8" r="2.2" fill="#fff" />
+                    <circle cx="8" cy="8" r="0.8" fill="#b87333" />
+                  </svg>
+                )}
+                selected={state.currentView === 'recordstore'}
+                onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
+              /> */}
         </SidebarSection>
 
         {(ipodMounted || cdMounted) && (

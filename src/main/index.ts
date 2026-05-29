@@ -11168,17 +11168,12 @@ app.whenReady().then(async () => {
   })
 
   // ── Music Man's Record Store (Brief 037) ──
-  // 4.5.0-62 — sidebar entry hidden in Sidebar.tsx (unstyled placeholder
-  // that didn't match the iTunes chrome).
-  // 4.5.0-68 — IPC registration gated. The Phase 0 module computes
-  // shelves on every `record-store:get-shelves` call; with the UI gone
-  // there's no caller, so the registration is dead surface area. The
-  // RECORD_STORE_ENABLED flag flips back on when Phase 2 lands. Keeping
-  // the import + integration so re-enabling is a one-line flip.
-  // 4.5.0-68 gated the registration off (Phase-0 UI was removed). The
-  // Phase-1 engine (Brief 037 1a-1e) is wired below, and Phase 2's store
-  // UI + sidebar entry now consume it — registration is live.
-  const RECORD_STORE_ENABLED = true
+  // The Phase-1 engine (1a-1e) + Phase-2 UI are wired below. Held OFF for
+  // the 4.5.0-111 release (shipping listen-to-the-list only) — the store
+  // code ships dormant and the sidebar entry is hidden, so it's
+  // unreachable. Flip back to true (+ unhide the Sidebar entry) to resume
+  // Phase-2 dev after this DMG goes out.
+  const RECORD_STORE_ENABLED = false
   if (RECORD_STORE_ENABLED) {
     // LLM adapter over claudeCall (§3.6 — no new SDK/keys). Returns the
     // assistant text; daily ceiling + cached fallback are handled inside
