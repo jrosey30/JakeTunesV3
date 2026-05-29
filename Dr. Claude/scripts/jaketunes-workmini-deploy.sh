@@ -203,9 +203,41 @@ else
   echo "  • $ARTIST_IMG_SRC not present on this Mac — skipping artist images"
 fi
 
-# ── 4. library.json metadata bootstrap ──────────────────────────────
-say "[4/5] Bootstrapping library.json (portable — relative paths)"
+# ── 4. library.json + sidecar metadata bootstrap ────────────────────
+# Sidecar JSONs that V3 reads alongside library.json. All live ONLY in
+# userData (V3 hardcodes the paths) and don't get propagated by any
+# other sync chain, so without this step workmini diverges from
+# macbook silently:
+#   picks-cache.json     — weekly Music Man/Megan/DJ Hands picks
+#                          (regenerated locally if missing → different
+#                          picks per device)
+#   mobile-playlists.json  — iPhone-created playlists (Brief 121),
+#                          source-of-truth is /Volumes/JakeShared/
+#                          JakeTunesState/, V3 merges them into the UI
+#   playlist-additions.json — iPhone "add to playlist" pending writes
+#                          waiting to merge into the canonical playlists
+# Each push is best-effort; missing sources are skipped silently
+# (different Macs have different feature subsets enabled).
+say "[4/5] Bootstrapping library.json + sidecars"
 ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
+SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json)
+for f in "${SIDECARS[@]}"; do
+  # Sidecars prefer NAS state copy when present (same logic as library.json)
+  src=""
+  if [[ -f "$NAS_STATE/$f" ]]; then
+    src="$NAS_STATE/$f"
+  elif [[ -f "$USERDATA/$f" ]]; then
+    src="$USERDATA/$f"
+  fi
+  if [[ -n "$src" ]]; then
+    scp -q $SSH_OPTS "$src" \
+      "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/$f" \
+      && echo "  ✓ $f copied" \
+      || echo "  ⚠ $f copy failed"
+  else
+    echo "  • $f not present on this Mac — skipping"
+  fi
+done
 scp -q $SSH_OPTS "$LIBJSON_SRC" \
   "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/library.json" \
   || die "library.json copy failed."

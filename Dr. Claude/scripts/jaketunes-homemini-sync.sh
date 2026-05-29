@@ -78,6 +78,13 @@ PLEX_SKIP="${JT_PLEX_SKIP:-0}"
 PLEX_SCANNER="/volume1/@appstore/PlexMediaServer/Plex Media Scanner"
 JT_DATA_LOCAL="$HOME/Library/Application Support/JakeTunes"
 JT_DATA_REMOTE='Library/Application Support/JakeTunes'
+# 4.5.0-90 Phase 2 — when the app is in NAS-source mode, the freshest
+# copies of the SYNC_FILES live at JT_STATE_NAS, NOT in JT_DATA_LOCAL
+# (the local userData copies go stale because the app reads/writes
+# the NAS path directly). Sync's rsync source-selection below probes
+# JT_STATE_NAS first and falls back to JT_DATA_LOCAL when the NAS
+# mount isn't present.
+JT_STATE_NAS='/Volumes/JakeShared/JakeTunesState'
 # Files that comprise the per-device library state we want everywhere
 # (treat homemini's JakeTunes as a read-mostly mirror of the laptop's):
 #   library.json            — track metadata, the master
@@ -86,7 +93,12 @@ JT_DATA_REMOTE='Library/Application Support/JakeTunes'
 # Excluded on purpose:
 #   chat-history.json       — per-device Music Man conversations
 #   *.bak / *.tmp           — backup/working files; rsync's defaults skip
-SYNC_FILES=(library.json metadata-overrides.json playlists.json)
+# 4.5.0-92 — added listener-profile.json + musicman-memory.json +
+# musicman-interactions.jsonl. Per Phase 2 these now live on NAS so
+# the desktop reads/writes them there; for Mini (which doesn't mount
+# NAS yet) the sync pushes them locally so its mobile-backend sees
+# the same listener signal the desktop does.
+SYNC_FILES=(library.json metadata-overrides.json playlists.json embeddings.bin listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json mobile-playlists.json playlist-additions.json)
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
@@ -156,6 +168,7 @@ if [ $QUICK_MODE -eq 1 ]; then
   TMP_LIST=$(mktemp /tmp/jaketunes-sync-files.XXXXXX)
   ( cd "$LIBRARY_ROOT" && find . -mmin -10 -type f \
       -not -path './.*' \
+      -not -path './_pending-imports/*' \
       -not -name '._*' \
       -not -name '.DS_Store' \
       -not -name 'Icon?' ) > "$TMP_LIST"
@@ -180,8 +193,17 @@ else
   # needed, will be a separate deliberate user action — not an
   # automatic side effect of normal sync.
   # -a archive, -z compress. NO --delete.
+  # 2026-05-24: --exclude='_pending-imports/' added after tracing the
+  # NAS-fill-incident-#3 bleed source to JakeTunes' local staging dir
+  # being mirrored to NAS. Some DSM-side daemon then sweeps those temp
+  # files an hour later, into the recycle bin (3.2 TB accumulation over
+  # months). _pending-imports/ has zero value on NAS (homemini doesn't
+  # need staging, Plex shouldn't index it, mobile doesn't need it).
+  # The canonical post-import content lives in iPod_Control/Music/F**/
+  # via JakeTunes' importOneFile copy step. Local _pending-imports/ stays
+  # untouched as a local "paper trail" per download-router.ts intent.
   rsync -az \
-    --exclude='.DS_Store' --exclude='._*' \
+    --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
     "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
     >> "$LOG" 2>&1
   music_rc=$?
@@ -250,6 +272,46 @@ else
   fi
 fi
 
+# ── 2c. Artwork: rsync MacBook's artwork dir → homemini's. ────────────
+#
+# 2026-05-25 — the artwork-blank-on-mobile bug, closed once and for all.
+# Pre-fix: desktop V3 wrote new artwork JPGs to
+#   $JT_DATA_LOCAL/artwork/${md5(artist|||album)}.jpg
+# but this script only synced the JSON state files (library.json,
+# metadata-overrides.json, playlists.json) to homemini. The mobile
+# backend on homemini serves artwork from its OWN local artwork dir
+# under jakerosenbaumnas's home, which never received the new files.
+# Mobile app → /artwork/{hash} → 404 → blank cover for every new
+# import. Manual workaround was an ad-hoc /tmp/sync-artwork.sh; now
+# built into the official chain so every desktop import → mobile sees
+# the artwork within one sync cycle.
+#
+# --update skips files Mini already has at newer-or-equal mtime, so
+# the artwork dir grows but doesn't churn — most syncs are near-empty
+# rsync stat-walks. Sidecar JSONs (${hash}.meta.json from 4.5.0-55)
+# also get carried so Mini's backend has the full ownership trail.
+#
+# Non-critical: an artwork sync failure logs + notifies but does NOT
+# block the JSON state push below. Library is still useful on mobile
+# without covers; missing covers backfill on the next sync.
+LOCAL_ARTWORK="$JT_DATA_LOCAL/artwork/"
+REMOTE_ARTWORK="$JT_DATA_REMOTE/artwork/"
+if [ -d "$LOCAL_ARTWORK" ]; then
+  log "rsync artwork → $HOMEMINI:$REMOTE_ARTWORK …"
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" \
+    "mkdir -p \"$REMOTE_ARTWORK\"" >> "$LOG" 2>&1 || true
+  rsync -rtz --update --no-perms --no-owner --no-group \
+    --include='*.jpg' --include='*.meta.json' --exclude='*' \
+    "$LOCAL_ARTWORK" "$HOMEMINI:$REMOTE_ARTWORK" >> "$LOG" 2>&1
+  art_rc=$?
+  if [ $art_rc -eq 0 ]; then
+    log "artwork rsync OK"
+  else
+    log "WARNING: artwork rsync exit $art_rc — mobile may show blank covers for new imports"
+    notify "Artwork didn't reach homemini (rsync exit $art_rc). Mobile covers may be blank."
+  fi
+fi
+
 # ── 3. JSON state: push to homemini only if anything actually changed ─
 if [ ! -f "$JT_DATA_LOCAL/library.json" ]; then
   log "no local library.json at $JT_DATA_LOCAL — skipping homemini sync"
@@ -257,12 +319,29 @@ if [ ! -f "$JT_DATA_LOCAL/library.json" ]; then
   exit 0
 fi
 
+# 4.5.0-90 Phase 2 — per-file source picker, used by both the mtime-
+# fingerprint diff and the rsync command below. NAS-first because in
+# Phase 2 the app boots in NAS-source mode and writes go there; the
+# userData copies are last-known fallbacks for offline mode. macOS
+# default bash is 3.2 (no associative arrays), so this is implemented
+# as a function called twice — once per loop — rather than via a
+# declared assoc array. Inline `case ... esac` so the function stays
+# fork-free.
+resolve_sync_src() {
+  if [ -f "$JT_STATE_NAS/$1" ]; then
+    echo "$JT_STATE_NAS/$1"
+  elif [ -f "$JT_DATA_LOCAL/$1" ]; then
+    echo "$JT_DATA_LOCAL/$1"
+  fi
+}
+
 # Build a quick fingerprint of every sync-target file's mtime so we can
 # bail without ssh churn when nothing changed. Format: "name:mtime|name:mtime|…"
 local_fp=""
 for f in "${SYNC_FILES[@]}"; do
-  if [ -f "$JT_DATA_LOCAL/$f" ]; then
-    m=$(stat -f "%m" "$JT_DATA_LOCAL/$f" 2>/dev/null || echo 0)
+  src=$(resolve_sync_src "$f")
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    m=$(stat -f "%m" "$src" 2>/dev/null || echo 0)
     local_fp="${local_fp}${f}:${m}|"
   fi
 done
@@ -290,8 +369,9 @@ log "library state differs (local=$local_fp remote=$remote_fp) — pushing …"
 # (this is going via ssh, not SMB, so it's safe either way).
 rsync_args=(-tz --no-perms --no-owner --no-group)
 for f in "${SYNC_FILES[@]}"; do
-  if [ -f "$JT_DATA_LOCAL/$f" ]; then
-    rsync_args+=("$JT_DATA_LOCAL/$f")
+  src=$(resolve_sync_src "$f")
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    rsync_args+=("$src")
   fi
 done
 rsync "${rsync_args[@]}" "$HOMEMINI:$JT_DATA_REMOTE/" >> "$LOG" 2>&1
@@ -315,5 +395,42 @@ if [ $ssh_rc -ne 0 ]; then
 fi
 
 log "homemini JakeTunes restarted — new tracks should be visible now"
+
+# ── 5. BIDIRECTIONAL mobile-set sidecars (NAS ↔ homemini). ────────
+#
+# 4.5.0-81 introduced a pull-only flow that wrote to JT_DATA_LOCAL
+# (the legacy userData path). When STATE_DIR moved to the NAS in
+# 4.5.0-90, the desktop started reading/writing mobile-stars.json
+# from JT_STATE_NAS, but the sync script kept dumping pulled files
+# into the (now-ignored) userData path AND never pushed NAS-side
+# changes back to homemini. Result: 285 desktop-set stars never
+# reached the iOS app for months.
+#
+# Fix: bidirectional rsync against JT_STATE_NAS, both directions,
+# both with --update so newer-mtime wins. Order matters: push first
+# so the desktop's "I just starred this song" reaches homemini
+# before the pull might overwrite it with an older Mini-side mtime.
+NAS_STATE="/Volumes/JakeShared/JakeTunesState"
+log "pushing mobile sidecars (NAS → homemini) …"
+for f in mobile-stars.json mobile-plays.json; do
+  if [ -f "$NAS_STATE/$f" ]; then
+    rsync -tz --update --no-perms --no-owner --no-group \
+      "$NAS_STATE/$f" "$HOMEMINI:$JT_DATA_REMOTE/$f" >> "$LOG" 2>&1
+    push_rc=$?
+    if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
+      log "WARNING: push of $f returned $push_rc (continuing)"
+    fi
+  fi
+done
+log "pulling mobile sidecars (homemini → NAS) …"
+for f in mobile-stars.json mobile-plays.json; do
+  rsync -tz --update --no-perms --no-owner --no-group \
+    "$HOMEMINI:$JT_DATA_REMOTE/$f" "$NAS_STATE/$f" >> "$LOG" 2>&1
+  pull_rc=$?
+  if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
+    log "WARNING: pull of $f returned $pull_rc (continuing)"
+  fi
+done
+
 log "=== sync done ==="
 exit 0
