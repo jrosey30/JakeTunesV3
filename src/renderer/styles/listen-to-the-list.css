@@ -268,6 +268,48 @@
 
 .ltl-link:hover { text-decoration: underline; }
 
+/* iTunes-style preview scrubber (shown on the row that's playing) */
+.ltl-scrubber {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.ltl-scrubber-range {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  /* fill gradient set inline from playback position */
+  background: #c9c9c9;
+  cursor: pointer;
+}
+
+.ltl-scrubber-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid #888;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  /* center the 11px thumb on the 4px track */
+  margin-top: -3.5px;
+  cursor: pointer;
+}
+
+.ltl-scrubber-time {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 62px;
+  text-align: right;
+}
+
 .ltl-delete {
   flex-shrink: 0;
   width: 22px;
