@@ -14,6 +14,7 @@
 // Playback / Library / useAudio are READ here, never edited.
 
 import { useCallback, useMemo, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
@@ -39,6 +40,21 @@ type TakeState =
   | { status: 'ready'; item: ShelfItem; text: string | null }
 
 type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId }
+
+// Clickable regions over the storefront art's drawn bins (point-and-click
+// adventure style). Percentages of the scene box — tune these to line up
+// with the painted crates. Keyed by shelf; FALLBACK_RECTS covers any
+// shelf id without an explicit mapping (positional).
+const HOTSPOT_RECTS: Partial<Record<ShelfId, CSSProperties>> = {
+  'mm-picks': { left: '24%', top: '63%', width: '20%', height: '29%' },
+  'new-arrivals': { left: '45%', top: '63%', width: '22%', height: '29%' },
+  'deep-cuts': { left: '70%', top: '59%', width: '27%', height: '35%' },
+}
+const FALLBACK_RECTS: CSSProperties[] = [
+  { left: '24%', top: '63%', width: '20%', height: '29%' },
+  { left: '45%', top: '63%', width: '22%', height: '29%' },
+  { left: '70%', top: '59%', width: '27%', height: '35%' },
+]
 
 export default function RecordStoreView() {
   const { state: lib } = useLibrary()
@@ -136,9 +152,10 @@ export default function RecordStoreView() {
           <span className="recordstore__sign-theme">{bundle.theme.theme}</span>
         </div>
 
-        {/* WIDE: stand in the shop, pick a bin to dig into. */}
+        {/* WIDE: the bins in the ART are the buttons. Hover highlights +
+            labels a crate; click digs into that shelf. */}
         {scene.view === 'wide' && (
-          <div className="recordstore__wide">
+          <>
             {bundle.theme.rationale && (
               <p className="recordstore__rationale">
                 {bundle.theme.rationale}
@@ -149,20 +166,21 @@ export default function RecordStoreView() {
                 )}
               </p>
             )}
-            <div className="recordstore__bins">
-              {bundle.shelves.map((shelf) => (
-                <button
-                  key={shelf.id}
-                  className="recordstore__bin-entry"
-                  onClick={() => setScene({ view: 'bin', shelfId: shelf.id })}
-                  disabled={shelf.items.length === 0}
-                >
-                  <span className="recordstore__bin-entry-title">{shelf.title}</span>
-                  <span className="recordstore__bin-entry-count">{shelf.items.length} records</span>
-                </button>
-              ))}
-            </div>
-          </div>
+            {bundle.shelves.map((shelf, i) => (
+              <button
+                key={shelf.id}
+                className="rs-hotspot"
+                style={HOTSPOT_RECTS[shelf.id] ?? FALLBACK_RECTS[i] ?? FALLBACK_RECTS[0]}
+                disabled={shelf.items.length === 0}
+                onClick={() => setScene({ view: 'bin', shelfId: shelf.id })}
+              >
+                <span className="rs-hotspot__label">
+                  {shelf.title}
+                  <em>{shelf.items.length} records</em>
+                </span>
+              </button>
+            ))}
+          </>
         )}
 
         {/* BIN: push in; the shelf's real covers fill the crate. */}

@@ -102,26 +102,20 @@
   background: rgba(255, 255, 255, 0.92);
 }
 
-/* ── WIDE view: rationale + bin entries along the bottom ─────────── */
-.recordstore__wide {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  background: linear-gradient(to top, rgba(20, 16, 12, 0.78), rgba(20, 16, 12, 0.28) 70%, transparent);
-  z-index: 2;
-}
+/* ── WIDE view: rationale chip + click-the-art bin hotspots ──────── */
 .recordstore__rationale {
-  font-size: 14px;
-  color: #f0e8da;
-  margin: 0;
+  position: absolute;
+  top: 64px;
+  left: 24px;
+  max-width: 360px;
+  z-index: 3;
+  font-size: 13px;
   line-height: 1.5;
-  max-width: 720px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  color: #f4ece0;
+  margin: 0;
+  background: rgba(28, 22, 18, 0.72);
+  border-radius: 8px;
+  padding: 10px 14px;
 }
 .recordstore__source-pill {
   display: inline-block;
@@ -135,41 +129,59 @@
   padding: 1px 8px;
   vertical-align: middle;
 }
-.recordstore__bins {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
+
+/* The drawn record bins ARE the buttons (point-and-click). Each hotspot
+   sits over a painted crate: a faint idle sheen says "interactive",
+   hover brightens it + floats a label. Tune rects in HOTSPOT_RECTS. */
+.rs-hotspot {
+  position: absolute;
+  appearance: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  z-index: 3;
+  border-radius: 10px;
+  background: rgba(216, 162, 90, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 236, 200, 0.12);
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
-.recordstore__bin-entry {
+.rs-hotspot:hover:not(:disabled) {
+  background: rgba(255, 236, 200, 0.2);
+  box-shadow: inset 0 0 0 2px rgba(255, 236, 200, 0.9), 0 0 16px rgba(255, 236, 200, 0.35);
+}
+.rs-hotspot:active:not(:disabled) { background: rgba(255, 236, 200, 0.12); }
+.rs-hotspot:disabled { cursor: default; background: none; box-shadow: none; }
+.rs-hotspot__label {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translate(-50%, -4px);
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  text-align: left;
-  background: #b87333;
-  color: #2a1c10;
-  border: 2px solid #5a3a22;
-  border-radius: 8px;
-  padding: 12px 18px;
-  cursor: pointer;
-  font: inherit;
-  box-shadow: 0 3px 0 #5a3a22;
-  transition: transform 90ms ease, box-shadow 90ms ease;
+  align-items: center;
+  white-space: nowrap;
+  background: rgba(28, 22, 18, 0.94);
+  color: #f4ece0;
+  border: 1px solid #d8a25a;
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
 }
-.recordstore__bin-entry:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 0 #5a3a22;
-}
-.recordstore__bin-entry:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: 0 1px 0 #5a3a22;
-}
-.recordstore__bin-entry:disabled { opacity: 0.45; cursor: default; }
-.recordstore__bin-entry-title { font-size: 15px; font-weight: 700; }
-.recordstore__bin-entry-count {
-  font-size: 11px;
+.rs-hotspot__label em {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #4a3018;
+  color: #d8a25a;
+}
+.rs-hotspot:hover:not(:disabled) .rs-hotspot__label {
+  opacity: 1;
+  transform: translate(-50%, -8px);
 }
 
 /* ── BIN view: the crate of real covers ──────────────────────────── */
