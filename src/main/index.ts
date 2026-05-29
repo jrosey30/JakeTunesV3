@@ -2085,6 +2085,59 @@ async function readIpodDatabase(): Promise<{ tracks: Array<Record<string, unknow
 // when mounted at app boot, else falls back to userData. See state-dir.ts.
 const LIBRARY_PATH = join(STATE_DIR, 'library.json')
 
+// Pre-load self-heal for failed atomic saves.
+//
+// V3's save-library writes to a temp sidecar (`<lib>.partial.json` or
+// `<lib>.new`) and then atomically renames over `library.json`. On a
+// healthy local FS that's bulletproof. On SMB-mounted state dirs
+// (macOS Sequoia + Synology) the rename intermittently fails with
+// "Resource busy (16)" when another process or a wedged kernel SMB
+// session holds a stale handle on `library.json`. When that happens:
+//   - the sidecar file is left on disk with the FULL up-to-date state
+//   - `library.json` keeps the old state
+//   - if V3 quits before retry succeeds, the next launch reads the
+//     stale `library.json` and the in-memory imports are lost
+//
+// 2026-05-28 incident: 31 imports (Marlo Thomas + Death Lens) sat in
+// `library.json.partial.json` for ~20 min while V3 retried; required
+// manual unmount/remount + mv to recover. This helper makes the next
+// recurrence self-healing: on every load, before reading library.json,
+// check the partial sidecars. If one has STRICTLY more tracks than the
+// current library.json, swap it in. Identical or smaller sidecars are
+// cleaned up (they're stale from a save where atomic-rename had
+// completed but the sidecar got orphaned for some other reason).
+async function recoverPartialIfNewer(libraryPath: string): Promise<void> {
+  const candidates = [`${libraryPath}.partial.json`, `${libraryPath}.new`]
+  const { rename, unlink } = await import('fs/promises')
+  let currentTrackCount = 0
+  try {
+    const cur = JSON.parse(await readFile(libraryPath, 'utf-8'))
+    currentTrackCount = Array.isArray(cur?.tracks) ? cur.tracks.length : 0
+  } catch { /* current missing or unparseable — any non-empty partial wins */ }
+
+  for (const candidate of candidates) {
+    let partialTrackCount = 0
+    try {
+      const partial = JSON.parse(await readFile(candidate, 'utf-8'))
+      partialTrackCount = Array.isArray(partial?.tracks) ? partial.tracks.length : 0
+    } catch {
+      continue // candidate missing or unparseable — leave it for next run
+    }
+    if (partialTrackCount === 0) continue
+    if (partialTrackCount > currentTrackCount) {
+      try {
+        await rename(candidate, libraryPath)
+        console.log(`[load-tracks] RECOVERED ${partialTrackCount - currentTrackCount} tracks from ${candidate} (current had ${currentTrackCount}, partial has ${partialTrackCount})`)
+        currentTrackCount = partialTrackCount
+      } catch (err) {
+        console.warn(`[load-tracks] partial recovery rename failed for ${candidate}:`, err)
+      }
+    } else {
+      try { await unlink(candidate) } catch { /* concurrent cleanup race — fine */ }
+    }
+  }
+}
+
 // 4.5.0-106 Phase 2.5 — singleton in-memory caches for the hottest NAS
 // state files. Lazy-loaded on first access, mutated in RAM, flushed to
 // NAS in the background. See state-cache.ts.
@@ -2285,6 +2338,15 @@ ipcMain.handle('get-app-version', () => app.getVersion())
 // cold-start with the iPod not yet detected can't silently wipe the
 // library file.
 ipcMain.handle('load-tracks', async () => {
+  // Self-heal any failed prior save before we read. If the previous
+  // app session crashed (or was killed, or hit an SMB Resource-busy
+  // rename) mid-atomic-save, a `library.json.partial.json` sidecar
+  // is sitting next to library.json with the un-committed state.
+  // Promote it before reading so the renderer sees the imports the
+  // user thought they made. No-op when no sidecar exists. See
+  // recoverPartialIfNewer for the failure mode and rationale.
+  await recoverPartialIfNewer(LIBRARY_PATH)
+
   // If a local library exists, use it (source of truth)
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
