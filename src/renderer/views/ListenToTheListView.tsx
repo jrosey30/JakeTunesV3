@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { setNotice } from '../activity'
-import type { Recommendation } from '../types'
+import type { Recommendation, ItunesSuggestion } from '../types'
 import '../styles/listen-to-the-list.css'
 
 // Brief 122 Phase 1 — "Listen to the List". Mirrors the mobile app's
@@ -21,6 +21,16 @@ export default function ListenToTheListView() {
   const [playingId, setPlayingId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
+  // Brief 122 Phase 2 — iTunes autocomplete. As the song/artist fields are
+  // typed, debounce a search and surface a live suggestion list. Picking a
+  // suggestion fills the fields (the backend re-resolves on add, so the
+  // chip still gets canonical artwork + links). suppressSearchRef stops the
+  // effect from re-firing the moment a pick programmatically sets the field.
+  const [suggestions, setSuggestions] = useState<ItunesSuggestion[]>([])
+  const [searching, setSearching] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suppressSearchRef = useRef(false)
+
   const load = useCallback(async () => {
     const res = await window.electronAPI.loadRecommendations()
     setRecs(res.ok ? res.recommendations : [])
@@ -31,6 +41,27 @@ export default function ListenToTheListView() {
 
   // Stop any preview when leaving the view.
   useEffect(() => () => { audioRef.current?.pause() }, [])
+
+  // Debounced iTunes search keyed on the song + artist fields.
+  useEffect(() => {
+    if (suppressSearchRef.current) { suppressSearchRef.current = false; return }
+    const q = [form.song.trim(), form.artist.trim()].filter(Boolean).join(' ')
+    if (q.length < 2) { setSuggestions([]); return }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      const res = await window.electronAPI.searchItunes(q)
+      setSearching(false)
+      setSuggestions(res.ok ? res.results : [])
+    }, 250)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [form.song, form.artist])
+
+  const pickSuggestion = useCallback((s: ItunesSuggestion) => {
+    suppressSearchRef.current = true
+    setForm((f) => ({ ...f, song: s.song, artist: s.artist, album: s.album || '' }))
+    setSuggestions([])
+  }, [])
 
   const canAdd = form.song.trim() || form.artist.trim() || form.album.trim() || form.note.trim()
 
@@ -55,6 +86,7 @@ export default function ListenToTheListView() {
       return
     }
     setForm({ song: '', artist: '', album: '', note: '' })
+    setSuggestions([])
     await load()
   }, [form, canAdd, adding, load])
 
@@ -97,19 +129,44 @@ export default function ListenToTheListView() {
         <span className="ltl-count">{recs.length} {recs.length === 1 ? 'reco' : 'recos'}</span>
       </div>
 
-      <form className="ltl-add" onSubmit={handleAdd}>
-        <input className="ltl-add-input" placeholder="Song" value={form.song}
-          onChange={e => setForm(f => ({ ...f, song: e.target.value }))} />
-        <input className="ltl-add-input" placeholder="Artist" value={form.artist}
-          onChange={e => setForm(f => ({ ...f, artist: e.target.value }))} />
-        <input className="ltl-add-input" placeholder="Album" value={form.album}
-          onChange={e => setForm(f => ({ ...f, album: e.target.value }))} />
-        <input className="ltl-add-input ltl-add-note" placeholder="Note (optional)" value={form.note}
-          onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
-        <button className="ltl-add-btn" type="submit" disabled={!canAdd || adding}>
-          {adding ? 'Adding…' : 'Add'}
-        </button>
-      </form>
+      <div className="ltl-add-wrap">
+        <form className="ltl-add" onSubmit={handleAdd}>
+          <input className="ltl-add-input" placeholder="Song" value={form.song}
+            onChange={e => setForm(f => ({ ...f, song: e.target.value }))} />
+          <input className="ltl-add-input" placeholder="Artist" value={form.artist}
+            onChange={e => setForm(f => ({ ...f, artist: e.target.value }))} />
+          <input className="ltl-add-input" placeholder="Album" value={form.album}
+            onChange={e => setForm(f => ({ ...f, album: e.target.value }))} />
+          <input className="ltl-add-input ltl-add-note" placeholder="Note (optional)" value={form.note}
+            onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+          <button className="ltl-add-btn" type="submit" disabled={!canAdd || adding}>
+            {adding ? 'Adding…' : 'Add'}
+          </button>
+        </form>
+        {(suggestions.length > 0 || searching) && (
+          <div className="ltl-suggestions">
+            {searching && suggestions.length === 0 && (
+              <div className="ltl-suggest-empty">Searching…</div>
+            )}
+            {suggestions.map((s, i) => (
+              <button
+                type="button"
+                key={`${s.song}-${s.artist}-${i}`}
+                className="ltl-suggest-row"
+                onClick={() => pickSuggestion(s)}
+              >
+                {s.artworkUrl
+                  ? <img className="ltl-suggest-art" src={s.artworkUrl} alt="" loading="lazy" />
+                  : <span className="ltl-suggest-art ltl-suggest-art--ph" aria-hidden="true">♪</span>}
+                <span className="ltl-suggest-text">
+                  <span className="ltl-suggest-song">{s.song}</span>
+                  <span className="ltl-suggest-artist">{s.artist}{s.album ? ` · ${s.album}` : ''}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {loading ? (
         <div className="ltl-loading">Loading…</div>

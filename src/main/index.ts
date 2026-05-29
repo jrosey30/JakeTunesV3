@@ -7146,25 +7146,105 @@ This response is shown as text in a chat panel, but the user may click a speaker
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 
+  // Brief 122 Phase 3a — Music Man can add to "Listen to the List". When
+  // the user asks him to recommend things to check out (or to "put that on
+  // my list"), he calls this tool and the picks land in recommendations.json
+  // via the Mini backend (single writer + iTunes enrichment), exactly like
+  // a manual add. He does NOT touch the music library.
+  const recoTool: Anthropic.Messages.ToolUnion = {
+    name: 'add_to_recommendations',
+    description: "Add one or more songs or albums to the user's \"Listen to the List\" — their personal running list of music to check out later. Call this ONLY when the user asks you to recommend things for their list, save a rec, or \"add that to my list\" — a deliberate addition, not a casual mention and not music they already own. Each item needs at least a song or an album.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        items: {
+          type: 'array',
+          description: 'The recommendations to add.',
+          items: {
+            type: 'object',
+            properties: {
+              song: { type: 'string', description: 'Song / track title (omit for an album rec)' },
+              artist: { type: 'string', description: 'Artist name' },
+              album: { type: 'string', description: 'Album title (use for album recs, or to disambiguate)' },
+              note: { type: 'string', description: 'Short why-you-recommended-it note (optional)' },
+            },
+          },
+        },
+      },
+      required: ['items'],
+    },
+  }
+
+  // Helper: push one reco through the backend (same path as the
+  // add-recommendation IPC). Returns a short label on success, null on fail.
+  const postReco = async (it: { song?: string; artist?: string; album?: string; note?: string }): Promise<string | null> => {
+    if (!it || (!it.song && !it.album)) return null
+    try {
+      const r = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song: it.song, artist: it.artist, album: it.album, note: it.note }),
+      })
+      if (!r.ok) return null
+      return [it.song, it.artist].filter(Boolean).join(' — ') || it.album || 'item'
+    } catch {
+      return null
+    }
+  }
+
   try {
-    const response = await claudeCall('musicman-chat', {
-      model: 'claude-sonnet-4-6',
-      // 4.5.0-50: 512 → 220. Hard ceiling on the rambling. ~165 words
-      // is plenty for the 1-3 sentence default + room for a 4-sentence
-      // outlier. If the user asks for "the whole history", they get a
-      // tight version of it, not a college essay.
-      max_tokens: 220,
-      system: systemPrompt,
-      messages: messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-    })
-    const textRaw = response.content[0].type === 'text' ? response.content[0].text : ''
+    const convo: Anthropic.Messages.MessageParam[] = messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+    // 4.5.0-50 kept chat at max_tokens 220 as a hard anti-ramble ceiling.
+    // With the reco tool in play we need headroom for the tool_use block
+    // (a multi-item add) — bumped to 600. Brevity is still governed by the
+    // prompt (1–3 sentences), not the token ceiling.
+    const callOpts = { model: 'claude-sonnet-4-6', max_tokens: 600, system: systemPrompt, tools: [recoTool] }
+    let response = await claudeCall('musicman-chat', { ...callOpts, messages: convo })
+
+    const addedLabels: string[] = []
+    let safety = 0
+    while (response.stop_reason === 'tool_use' && safety++ < 3) {
+      convo.push({ role: 'assistant', content: response.content })
+      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
+      for (const block of response.content) {
+        if (block.type === 'tool_use' && block.name === 'add_to_recommendations') {
+          const input = block.input as { items?: Array<{ song?: string; artist?: string; album?: string; note?: string }> }
+          const items = Array.isArray(input.items) ? input.items : []
+          const addedNow: string[] = []
+          for (const it of items) {
+            const label = await postReco(it)
+            if (label) addedNow.push(label)
+          }
+          addedLabels.push(...addedNow)
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: addedNow.length
+              ? `Added ${addedNow.length} to the list: ${addedNow.join('; ')}`
+              : 'Nothing added (backend unreachable or no valid items).',
+          })
+        }
+      }
+      if (toolResults.length === 0) break
+      convo.push({ role: 'user', content: toolResults })
+      response = await claudeCall('musicman-chat-tool', { ...callOpts, messages: convo })
+    }
+
+    // Aggregate text across any blocks (a tool-use turn can leave the
+    // closing remark in a later text block).
+    const textRaw = response.content
+      .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
+      .map(b => b.text)
+      .join(' ')
+      .trim()
     // Stripped version for display — same regex used by the mic-button
     // caption stripper. Strips [bracket-only-letters-and-spaces] tags
     // without touching legitimate uses of square brackets in song titles
     // or quoted strings (those have digits/punctuation inside).
     const text = textRaw.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
     if (text) noteMusicManUtterance('chat', text)
-    return { ok: true, text, textRaw }
+    // `added` lets the renderer surface a toast / refresh the list view.
+    return { ok: true, text, textRaw, added: addedLabels }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, text: `Error: ${msg}`, textRaw: `Error: ${msg}` }
@@ -8175,9 +8255,37 @@ ipcMain.handle('musicman-recommendations', async (_event, tracks: { id: number; 
     if (t.genre) genreCounts.set(t.genre, (genreCounts.get(t.genre) || 0) + 1)
     if (t.album && t.artist) albumSet.add(`${t.artist} - ${t.album}`)
   }
-  const topArtists = Array.from(artistCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([a, c]) => `${a} (${c})`).join(', ')
-  const topGenres = Array.from(genreCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([g, c]) => `${g} (${c})`).join(', ')
+  // Brief 122 Phase 3b — the reco page "always suggested the same shit"
+  // because it sent an IDENTICAL prompt every call (fixed top-40 artists,
+  // fixed top-15 genres → near-deterministic output). Inject variety: a
+  // shuffled/sampled taste seed drawn from a WIDER slice of the library, a
+  // rotating "lens" each call, and higher temperature (below). No library,
+  // metadata, or artwork is touched.
+  const shuffle = <T,>(arr: T[]): T[] => {
+    const a = [...arr]
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[a[i], a[j]] = [a[j], a[i]]
+    }
+    return a
+  }
+  // Sample from the top ~60 (not just the absolute top 40) so successive
+  // calls anchor on different corners of their library.
+  const topArtists = shuffle(Array.from(artistCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 60))
+    .slice(0, 25).map(([a, c]) => `${a} (${c})`).join(', ')
+  const topGenres = shuffle(Array.from(genreCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15))
+    .slice(0, 10).map(([g, c]) => `${g} (${c})`).join(', ')
   const albumList = Array.from(albumSet).sort().join('\n')
+
+  const LENSES = [
+    'deep cuts and lesser-known records they would never stumble onto themselves',
+    'essential classics squarely in their wheelhouse that they are somehow missing',
+    'recent / contemporary releases that fit their taste',
+    'left-field picks that connect to their taste from an unexpected angle',
+    'a focused deep-dive into ONE of their top genres',
+    'artists one hop away from their favorites — collaborators, side projects, clear influences',
+  ]
+  const lens = LENSES[Math.floor(Math.random() * LENSES.length)]
 
   const recsInstructions = `You've been asked to recommend albums that are NOT already in the user's library.
 
@@ -8192,7 +8300,9 @@ CRITICAL RULES:
 Return ONLY a JSON array (no markdown, no code fences):
 [{"title":"album title","artist":"artist name","year":2020,"genre":"genre tag","source":"bandcamp|qobuz|streaming","why":"1-2 sentences explaining why this fits their library, in character"}]
 
-The user's top artists: ${topArtists}
+THIS ROUND, lean toward: ${lens}. Vary your picks from what you'd reflexively reach for — the user has seen the obvious recommendations before and is tired of the same handful of albums. Surprise them.
+
+The user's top artists (a rotating sample of their library, not the full list): ${topArtists}
 Their top genres: ${topGenres}`
 
   const systemPrompt = buildMusicManPrompt(recsInstructions)
@@ -8201,6 +8311,9 @@ Their top genres: ${topGenres}`
     const response = await claudeCall('musicman-recs', {
       model: 'claude-sonnet-4-6',
       max_tokens: 2048,
+      // Brief 122 Phase 3b — crank temperature for variety so the page
+      // stops returning the same picks every visit.
+      temperature: 1,
       system: systemPrompt,
       messages: [{ role: 'user', content: `Recommend albums I don't have.\n\nMy albums:\n${albumList}` }]
     })
@@ -8856,6 +8969,43 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'request failed' }
+  }
+})
+
+// Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
+// iTunes Search is public + key-less; hit it straight from the main process
+// (no CORS, and no per-keystroke round-trip to the Mini backend). Returns a
+// small normalized suggestion list. Does NOT touch the music library.
+interface ItunesSuggestion {
+  song: string
+  artist: string
+  album?: string
+  artworkUrl?: string
+  previewUrl?: string
+  appleMusicUrl?: string
+}
+ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
+  const q = (query || '').trim()
+  if (q.length < 2) return { ok: true, results: [] }
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=8`
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+    if (!res.ok) return { ok: false, results: [] }
+    const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+    const results: ItunesSuggestion[] = (data.results || [])
+      .map((r) => ({
+        song: String(r.trackName ?? ''),
+        artist: String(r.artistName ?? ''),
+        album: r.collectionName ? String(r.collectionName) : undefined,
+        // Bump the 100px thumb to 200px for a crisper suggestion row.
+        artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+        previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+        appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+      }))
+      .filter((s) => s.song && s.artist)
+    return { ok: true, results }
+  } catch {
+    return { ok: false, results: [] }
   }
 })
 

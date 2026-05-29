@@ -112,6 +112,17 @@ export interface Recommendation {
   matchedAlbum?: string
   resolvedAt?: string
 }
+
+// Brief 122 Phase 2 — an iTunes Search autocomplete suggestion for the
+// "Listen to the List" add form.
+export interface ItunesSuggestion {
+  song: string
+  artist: string
+  album?: string
+  artworkUrl?: string
+  previewUrl?: string
+  appleMusicUrl?: string
+}
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -359,6 +370,7 @@ declare global {
       loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
       addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
+      searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

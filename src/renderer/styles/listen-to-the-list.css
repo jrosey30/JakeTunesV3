@@ -74,6 +74,80 @@
   cursor: default;
 }
 
+/* Phase 2 — iTunes autocomplete dropdown */
+.ltl-add-wrap { position: relative; flex-shrink: 0; z-index: 5; }
+
+.ltl-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 14px;
+  right: 14px;
+  margin-top: -4px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #b0b0b0;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.ltl-suggest-empty {
+  padding: 8px 12px;
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+}
+
+.ltl-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ltl-suggest-row:last-child { border-bottom: none; }
+.ltl-suggest-row:hover { background: #f0f4fa; }
+
+.ltl-suggest-art {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  object-fit: cover;
+  background: #e0e0e0;
+}
+
+.ltl-suggest-art--ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a0a0a0;
+  font-size: 16px;
+}
+
+.ltl-suggest-text { display: flex; flex-direction: column; min-width: 0; }
+
+.ltl-suggest-song {
+  font-size: var(--font-body);
+  color: #2a2a2a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-suggest-artist {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* List */
 .ltl-loading {
   padding: 20px 14px;
