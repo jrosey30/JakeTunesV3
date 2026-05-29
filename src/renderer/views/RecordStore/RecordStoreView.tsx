@@ -20,6 +20,7 @@ import { useAudio } from '../../hooks/useAudio'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
 import { useShelves } from './hooks/useShelves'
 import { DialogueBox } from './components/DialogueBox'
+import { CrateBrowse } from './components/CrateBrowse'
 import type { Blurb, Persona, ShelfId, ShelfItem } from '../../../main/record-store/types'
 import storefrontBg from './art/storefront.png'
 import mmSmug from './art/musicman-smug.png'
@@ -142,10 +143,24 @@ export default function RecordStoreView() {
   const activeShelf =
     scene.view === 'bin' ? bundle.shelves.find((s) => s.id === scene.shelfId) ?? null : null
 
+  // Push the "camera" toward the crate you opened (transform-origin at the
+  // crate's center) so digging in feels like leaning into that bin.
+  const activeRect = scene.view === 'bin' ? HOTSPOT_RECTS[scene.shelfId] : undefined
+  const bgOrigin = activeRect
+    ? `${parseFloat(String(activeRect.left)) + parseFloat(String(activeRect.width)) / 2}% ` +
+      `${parseFloat(String(activeRect.top)) + parseFloat(String(activeRect.height)) / 2}%`
+    : '50% 72%'
+
   return (
     <div className="recordstore recordstore--immersive">
       <div className={`recordstore__scene recordstore__scene--${scene.view}`}>
-        <img className="recordstore__scene-bg" src={storefrontBg} alt="" aria-hidden="true" />
+        <img
+          className="recordstore__scene-bg"
+          src={storefrontBg}
+          alt=""
+          aria-hidden="true"
+          style={{ transformOrigin: bgOrigin }}
+        />
 
         <div className="recordstore__sign">
           <span className="recordstore__sign-name">WJLR Records · Greenpoint</span>
@@ -183,45 +198,15 @@ export default function RecordStoreView() {
           </>
         )}
 
-        {/* BIN: push in; the shelf's real covers fill the crate. */}
+        {/* BIN: dig through the crate — fanned real covers, flip to play. */}
         {scene.view === 'bin' && activeShelf && (
-          <div className="recordstore__crate">
-            <div className="recordstore__crate-head">
-              <button className="recordstore__back" onClick={() => setScene({ view: 'wide' })}>
-                ← back to the shop
-              </button>
-              <div>
-                <h2 className="recordstore__crate-title">{activeShelf.title}</h2>
-                <p className="recordstore__crate-tagline">{activeShelf.tagline}</p>
-              </div>
-            </div>
-            <ul className="recordstore__crate-items">
-              {activeShelf.items.map((item) => {
-                const cover = coverSrc(item)
-                const selected = take.status !== 'idle' && take.item.id === item.id
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      className={`recordstore__card${selected ? ' recordstore__card--selected' : ''}`}
-                      onClick={() => handleItemClick(item)}
-                      title={item.placement}
-                    >
-                      <div className="recordstore__cover">
-                        {cover ? (
-                          <img src={cover} alt={item.title} className="recordstore__cover-img" />
-                        ) : (
-                          <div className="recordstore__cover-blank">{item.title}</div>
-                        )}
-                      </div>
-                      <p className="recordstore__card-title">{item.title}</p>
-                      <p className="recordstore__card-subtitle">{item.subtitle}</p>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
+          <CrateBrowse
+            shelf={activeShelf}
+            coverSrc={coverSrc}
+            onPlay={handleItemClick}
+            onBack={() => setScene({ view: 'wide' })}
+            selectedId={take.status !== 'idle' ? take.item.id : null}
+          />
         )}
 
         {/* Music Man pops in to talk (any view). */}
