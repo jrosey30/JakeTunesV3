@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast, getRadio } from '../../activity'
+import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../previewPlayer'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -91,8 +92,51 @@ function formatTime(s: number): string {
 
 export default function NowPlaying() {
   const { state } = usePlayback()
-  const { seek } = useAudio()
+  const { seek, togglePlayPause } = useAudio()
   const barRef = useRef<HTMLDivElement>(null)
+  const previewBarRef = useRef<HTMLDivElement>(null)
+
+  // Brief 122 — the "Listen to the List" preview plays here in the pill
+  // (iTunes-style), via a dedicated player kept OUT of the music engine.
+  const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
+  const previewActive = preview.playingId != null
+  const previewProgress = preview.duration > 0 ? (preview.position / preview.duration) * 100 : 0
+
+  // Pause the user's music while a preview plays; resume it when the
+  // preview ends/stops (the "pause music, resume after" behavior). Acts
+  // only on the preview's start/stop transition — reading isPlaying in
+  // deps is safe because the was/now guard ignores plain isPlaying flips.
+  const prevPreviewId = useRef<string | null>(null)
+  const pausedForPreview = useRef(false)
+  useEffect(() => {
+    const was = prevPreviewId.current
+    const now = preview.playingId
+    prevPreviewId.current = now
+    if (!was && now) {
+      if (state.isPlaying) { pausedForPreview.current = true; togglePlayPause() }
+    } else if (was && !now) {
+      if (pausedForPreview.current) { pausedForPreview.current = false; togglePlayPause() }
+    }
+  }, [preview.playingId, state.isPlaying, togglePlayPause])
+
+  const handlePreviewMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (preview.duration <= 0) return
+    const pctToSec = (clientX: number) => {
+      const el = previewBarRef.current
+      if (!el) return 0
+      const rect = el.getBoundingClientRect()
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+      return pct * preview.duration
+    }
+    seekPreview(pctToSec(e.clientX))
+    const onMove = (ev: MouseEvent) => seekPreview(pctToSec(ev.clientX))
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [preview.duration])
 
   const getPercent = useCallback((clientX: number) => {
     if (!barRef.current) return 0
@@ -274,7 +318,30 @@ export default function NowPlaying() {
           </svg>
         </button>
       )}
-      {effectiveMode === 'playing' && track ? (
+      {previewActive ? (
+        // Brief 122 — preview takes over the pill while it plays. Same
+        // scrubber markup as the real player, bound to the preview clip.
+        <>
+          <div className="now-playing-info now-playing-info--stacked">
+            <div className="now-playing-line-primary">
+              <span className="now-playing-title">{preview.title || 'Preview'}</span>
+            </div>
+            <div className="now-playing-line-secondary">
+              {preview.artist && <span className="now-playing-artist">{preview.artist}</span>}
+              <span className="now-playing-sep"> — </span>
+              <span className="now-playing-album">Preview</span>
+            </div>
+          </div>
+          <div className="scrubber-row">
+            <span className="scrubber-time">{formatTime(Math.floor(preview.position))}</span>
+            <div className="scrubber-track" ref={previewBarRef} onMouseDown={handlePreviewMouseDown}>
+              <div className="scrubber-fill" style={{ width: `${previewProgress}%` }} />
+              <div className="scrubber-knob" style={{ left: `${previewProgress}%` }} />
+            </div>
+            <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(preview.duration) - Math.floor(preview.position)))}</span>
+          </div>
+        </>
+      ) : effectiveMode === 'playing' && track ? (
         <>
           {/* 4.4.41: MiniVisualizer removed. Jake: "get rid of the
               visualizer on the far right it is useless and kills

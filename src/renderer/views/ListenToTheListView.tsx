@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { setNotice } from '../activity'
+import { togglePreview, subscribePreview, getPreviewSnapshot } from '../previewPlayer'
 import type { Recommendation, ItunesSuggestion } from '../types'
 import '../styles/listen-to-the-list.css'
 
@@ -18,11 +19,9 @@ export default function ListenToTheListView() {
   const [adding, setAdding] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Recommendation | null>(null)
   const [form, setForm] = useState({ song: '', artist: '', album: '', note: '' })
-  const [playingId, setPlayingId] = useState<string | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  // iTunes-style preview scrubber: track elapsed + total of the playing clip.
-  const [previewTime, setPreviewTime] = useState(0)
-  const [previewDur, setPreviewDur] = useState(0)
+  // Preview plays in the now-playing pill (iTunes-style) via the shared
+  // previewPlayer; this view just reflects which row is currently playing.
+  const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
 
   // Brief 122 Phase 2 — iTunes autocomplete. As the song/artist fields are
   // typed, debounce a search and surface a live suggestion list. Picking a
@@ -41,9 +40,6 @@ export default function ListenToTheListView() {
   }, [])
 
   useEffect(() => { load() }, [load])
-
-  // Stop any preview when leaving the view.
-  useEffect(() => () => { audioRef.current?.pause() }, [])
 
   // Debounced iTunes search keyed on the song + artist fields.
   useEffect(() => {
@@ -115,39 +111,6 @@ export default function ListenToTheListView() {
     await load()
   }, [load])
 
-  const togglePreview = useCallback((rec: Recommendation) => {
-    if (!rec.previewUrl) return
-    const audio = audioRef.current
-    if (!audio) return
-    if (playingId === rec.id) {
-      audio.pause()
-      setPlayingId(null)
-      return
-    }
-    audio.src = rec.previewUrl
-    audio.currentTime = 0
-    setPreviewTime(0)
-    setPreviewDur(0)
-    audio.play().then(() => setPlayingId(rec.id)).catch(() => {
-      setNotice("Couldn't play preview.", { kind: 'error' })
-    })
-  }, [playingId])
-
-  // Seek within the playing preview (the iTunes-style scrubber drag/click).
-  const seekPreview = useCallback((seconds: number) => {
-    const audio = audioRef.current
-    if (!audio) return
-    audio.currentTime = seconds
-    setPreviewTime(seconds)
-  }, [])
-
-  const fmtTime = (s: number): string => {
-    if (!isFinite(s) || s < 0) s = 0
-    const m = Math.floor(s / 60)
-    const sec = Math.floor(s % 60)
-    return `${m}:${sec.toString().padStart(2, '0')}`
-  }
-
   const displayName = (rec: Recommendation) => {
     const title = rec.matchedTitle || rec.song
     const artist = rec.matchedArtist || rec.artist
@@ -210,7 +173,7 @@ export default function ListenToTheListView() {
         <div className="ltl-list">
           {recs.map(rec => {
             const artwork = rec.artworkUrl
-            const isPlaying = playingId === rec.id
+            const isPlaying = preview.playingId === rec.id
             return (
               <div key={rec.id} className="ltl-row">
                 <div className="ltl-art">
@@ -220,8 +183,13 @@ export default function ListenToTheListView() {
                   {rec.previewUrl && (
                     <button
                       className={`ltl-preview-btn ${isPlaying ? 'ltl-preview-btn--playing' : ''}`}
-                      onClick={() => togglePreview(rec)}
-                      title={isPlaying ? 'Pause preview' : 'Play preview'}
+                      onClick={() => togglePreview(
+                        rec.id,
+                        rec.previewUrl!,
+                        rec.matchedTitle || rec.song || rec.album || 'Preview',
+                        rec.matchedArtist || rec.artist || ''
+                      )}
+                      title={isPlaying ? 'Stop preview' : 'Play preview in player'}
                     >
                       {isPlaying ? '❚❚' : '▶'}
                     </button>
@@ -233,40 +201,12 @@ export default function ListenToTheListView() {
                     <div className="ltl-album">{rec.matchedAlbum || rec.album}</div>
                   )}
                   {rec.note && <div className="ltl-note">{rec.note}</div>}
-                  {isPlaying ? (
-                    // iTunes-style preview scrubber — draggable, filled track,
-                    // elapsed / total readout. Plays the ~30s Apple preview
-                    // in-app; never links out.
-                    <div className="ltl-scrubber">
-                      <input
-                        type="range"
-                        className="ltl-scrubber-range"
-                        min={0}
-                        max={previewDur || 30}
-                        step={0.05}
-                        value={Math.min(previewTime, previewDur || 30)}
-                        onChange={(e) => seekPreview(Number(e.target.value))}
-                        style={{
-                          // Filled (orange) up to the playhead, grey after —
-                          // both stops meet at the same % for a clean edge.
-                          background: (() => {
-                            const pct = ((previewTime / (previewDur || 30)) * 100).toFixed(1)
-                            return `linear-gradient(to right, #bb4308 ${pct}%, #c9c9c9 ${pct}%)`
-                          })(),
-                        }}
-                      />
-                      <span className="ltl-scrubber-time">
-                        {fmtTime(previewTime)} / {fmtTime(previewDur || 30)}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="ltl-sub">
-                      <span className="ltl-date">{new Date(rec.createdAt).toLocaleDateString()}</span>
-                      {/* No "open in Apple Music" link by design — previews
-                          play in-app via the ▶ button; we never send the user
-                          out to the Apple Music app. */}
-                    </div>
-                  )}
+                  <div className="ltl-sub">
+                    <span className="ltl-date">{new Date(rec.createdAt).toLocaleDateString()}</span>
+                    {/* Preview plays in the now-playing pill with its scrubber
+                        (see NowPlaying). No "open in Apple Music" link by
+                        design — we never send the user out to the app. */}
+                  </div>
                 </div>
                 <button className="ltl-delete" onClick={() => setDeleteTarget(rec)} title="Remove from list">✕</button>
               </div>
@@ -274,14 +214,6 @@ export default function ListenToTheListView() {
           })}
         </div>
       )}
-
-      <audio
-        ref={audioRef}
-        onEnded={() => { setPlayingId(null); setPreviewTime(0) }}
-        onTimeUpdate={() => setPreviewTime(audioRef.current?.currentTime ?? 0)}
-        onLoadedMetadata={() => setPreviewDur(audioRef.current?.duration ?? 0)}
-        hidden
-      />
 
       {deleteTarget && (
         <ConfirmDialog
