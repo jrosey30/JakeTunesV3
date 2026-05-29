@@ -1,30 +1,35 @@
-// shelf-generator.ts — the brain (Brief 037 §3.1, Phase 1c)
+// shelf-generator.ts — the brain (Brief 037 §3.1–§3.4, Phases 1c + 1d)
 //
-// PHASE 1c SCOPE: the DAY-THEME PICKER only. Before any shelf is
-// populated, the store picks ONE coherent musical thread for the day
-// (§3.1). Without this, the store is a Spotify Daily Mix in a wood
-// frame. Phase 1d adds generateShelves() to this same file and may fold
-// both into a single Sonnet call (§1d).
+// Two pieces, building on each other:
 //
-// The picker is a single Sonnet call that receives:
-//   - a summary of the user's RECENT listening (last 30d plays, cold
-//     rediscover candidates, heavy-skip tracks) — buildListeningSummary
-//   - the outside world (shows, releases, press, weather, calendar) —
-//     ExternalContext from external-context.ts
-//   - the last 21 day-themes, so it cannot repeat one (§3.4 cooldown)
-//   - the Music Man persona core, so the thread reflects HIS taste
-// and returns { theme, rationale, source, per-shelf weighting }.
+// 1c — pickDayTheme(): pick ONE coherent musical thread for the day
+//      before any record goes on the wall (§3.1). Standalone, still used
+//      as the theme primitive + the heuristic fallback.
+//
+// 1d — generateShelves(): the headline call. Folds the day-theme pick
+//      and the shelf population into ONE Sonnet call (§1d) so the theme
+//      and the picks are chosen together. The model picks 5-7 items per
+//      shelf FROM a balanced candidate pool (built by candidate-pool.ts
+//      with the anti-repeat / diversity math, §3.4) — it never invents
+//      items (§3.3 library-grounded). A validation pass drops anything
+//      the model returns that isn't in the pool, enforces the per-day
+//      artist cap across shelves, and tops shelves up from the pool if
+//      they fall below the floor.
+//
+// Both receive: recent-listening summary (30d windowed plays + cold
+// rediscover pool from play-events.jsonl), ExternalContext (shows /
+// releases / press / calendar), the last 21 themes (§3.4 cooldown), and
+// the Music Man persona core.
 //
 // SDK-DECOUPLED: this module never imports the Anthropic SDK. The caller
-// (index.ts, Phase 1d) injects a DayThemeLlm adapter wrapping the
-// existing claudeCall pipeline (§3.6 — no new SDK, no new keys). The
-// verification probe injects its own adapter (real or stub). If no llm
-// is provided, or the call fails / returns junk, we fall back to a
-// deterministic heuristic theme (§8 LLM-down behavior) — the store
-// never shows an error.
+// (index.ts) injects a DayThemeLlm adapter wrapping the existing
+// claudeCall pipeline (§3.6 — no new SDK, no new keys). The verification
+// probes inject their own adapter. If no llm is provided, or the call
+// fails / returns junk, both paths fall back to a deterministic
+// heuristic (§8 LLM-down behavior) — the store never shows an error.
 
-import type { CandTrack } from './candidate-pool'
-import type { DayTheme } from './types'
+import { buildCandidatePool, type AlbumCandidate, type CandTrack } from './candidate-pool'
+import type { DayTheme, Persona, Shelf, ShelfBundle, ShelfId, ShelfItem } from './types'
 import type { ExternalContext } from './external-context'
 import { formatExternalContextForPrompt } from './external-context'
 
@@ -424,4 +429,314 @@ export async function pickDayTheme(
     }
   }
   return heuristicDayTheme(input.todayISO, input.summary, tracks)
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Phase 1d — shelf generator
+// ═════════════════════════════════════════════════════════════════════
+
+const SHELF_DEFS: Array<{ id: ShelfId; curator: Persona | 'house'; title: string }> = [
+  { id: 'mm-picks', curator: 'music-man', title: "Music Man's Picks" },
+  { id: 'new-arrivals', curator: 'house', title: 'New Arrivals' },
+  { id: 'deep-cuts', curator: 'music-man', title: 'Deep Cuts' },
+]
+const SHELF_IDS = SHELF_DEFS.map((s) => s.id)
+
+/** How many candidates per shelf to SHOW the model. The pool is built
+ *  to 50 (§3.3) but a combined 3-shelf prompt at 50×3 is wasteful; 24
+ *  each is plenty for the model to pick 5-7 from and keeps the prompt
+ *  tight. */
+const CANDIDATES_SHOWN = 24
+/** Target items per shelf (§9: 5 real items). Brief allows 5-7; we ask
+ *  for 5-7 and accept what validates, flooring at MIN. */
+const SHELF_TARGET = 5
+const SHELF_MAX = 7
+/** Below this after validation, top up from the pool (§8). */
+const SHELF_MIN = 3
+/** Max items per artist across the whole day's wall (§3.4). */
+const PER_DAY_ARTIST_CAP = 2
+const SHELF_GEN_MODEL = 'claude-sonnet-4-6'
+const SHELF_GEN_MAX_TOKENS = 2000
+
+export type ShelfPools = Record<'mm-picks' | 'new-arrivals' | 'deep-cuts', AlbumCandidate[]>
+
+/** Build the per-shelf balanced candidate pools (§3.4 math) the LLM will
+ *  pick from. Sequential so the per-day artist cap is threaded across
+ *  shelves via artistsUsedToday — the same pattern the pool probe uses.
+ *  Single home for "how the three pools get built". */
+export function buildShelfPools(
+  tracks: CandTrack[],
+  todayISO: string,
+  recentlyPickedIds: Set<string>,
+): ShelfPools {
+  const artistsUsedToday = new Map<string, number>()
+  const pools = {} as ShelfPools
+  for (const id of SHELF_IDS) {
+    const pool = buildCandidatePool({ tracks, shelfId: id, todayISO, recentlyPickedIds, artistsUsedToday, limit: 50 })
+    pools[id as keyof ShelfPools] = pool
+    // Reserve the top picks' artists so the next shelf leans elsewhere.
+    for (const c of pool.slice(0, SHELF_TARGET)) {
+      artistsUsedToday.set(c.artist, (artistsUsedToday.get(c.artist) ?? 0) + 1)
+    }
+  }
+  return pools
+}
+
+export interface GenerateShelvesInput {
+  todayISO: string
+  summary: ListeningSummary
+  external: ExternalContext
+  themeHistory: Array<{ date: string; theme: string }>
+  personaCore: string
+  pools: ShelfPools
+  /** Injected LLM adapter; omit to force the heuristic bundle. */
+  llm?: DayThemeLlm
+}
+
+// ── Candidate refs ───────────────────────────────────────────────────
+//
+// The model picks by a SHORT ref ("a3"), never by echoing the long
+// `album::artist` key — that's both token-cheap and the library-grounded
+// guarantee (§3.3): a ref the model returns either maps to a real
+// candidate or is dropped. No free-text id can survive validation.
+
+const SHELF_REF_PREFIX: Record<keyof ShelfPools, string> = {
+  'mm-picks': 'a',
+  'new-arrivals': 'b',
+  'deep-cuts': 'c',
+}
+
+function candidateMeta(c: AlbumCandidate): string {
+  const bits = [c.album, '—', c.artist]
+  const tail: string[] = []
+  if (c.year) tail.push(String(c.year))
+  if (c.genre) tail.push(c.genre)
+  tail.push(`${c.totalPlays} plays`)
+  if (Number.isFinite(c.daysSinceLastPlay)) tail.push(`${Math.round(c.daysSinceLastPlay)}d cold`)
+  else tail.push('never played')
+  return `${bits.join(' ')} (${tail.join(', ')})`
+}
+
+function buildShelfUserMessage(input: GenerateShelvesInput, refMap: Map<string, AlbumCandidate>): string {
+  const parts: string[] = []
+  parts.push('OUTSIDE WORLD:')
+  parts.push(formatExternalContextForPrompt(input.external))
+  parts.push('')
+  parts.push("THIS USER'S LISTENING:")
+  parts.push(formatListeningSummaryForPrompt(input.summary))
+  parts.push('')
+  if (input.themeHistory.length) {
+    parts.push(`RECENT THEMES (do NOT repeat any): ${input.themeHistory.map((h) => `"${h.theme}"`).join(', ')}`)
+    parts.push('')
+  }
+  parts.push('CANDIDATE RECORDS — you may ONLY pick from these, by their [ref]. Each shelf has its own list:')
+  for (const def of SHELF_DEFS) {
+    const pool = input.pools[def.id as keyof ShelfPools] ?? []
+    const prefix = SHELF_REF_PREFIX[def.id as keyof ShelfPools]
+    parts.push('')
+    parts.push(`${def.title} (id "${def.id}") — pick ${SHELF_TARGET}-${SHELF_MAX}:`)
+    pool.slice(0, CANDIDATES_SHOWN).forEach((c, i) => {
+      const ref = `${prefix}${i + 1}`
+      refMap.set(ref, c)
+      parts.push(`  [${ref}] ${candidateMeta(c)}`)
+    })
+  }
+  parts.push('')
+  parts.push(SHELF_INSTRUCTIONS)
+  return parts.join('\n')
+}
+
+const SHELF_INSTRUCTIONS = `Stock the wall for ONE day. Two steps, ONE response.
+
+STEP 1 — pick the day's THEME: one coherent thread tying the whole wall together (an era, a scene, a throughline, a mood, a personal thread from this user's listening, or a cultural hook from the context above). It MUST connect to this collection and must not repeat a recent theme. The rationale is 1-2 sentences in your voice — the line under the shop sign.
+
+STEP 2 — fill the three shelves. For EACH shelf, pick ${SHELF_TARGET}-${SHELF_MAX} records that serve the theme, choosing ONLY from that shelf's [ref] list. For each pick write a one-line "placement" — why THIS record is on the wall today, in your voice, tied to the theme or the user's relationship to it. Each shelf gets a one-line "tagline" in your voice. Don't put the same artist on more than two shelves.
+
+Return ONLY this JSON, no prose, no code fence:
+{"theme":"...","rationale":"...","source":"era|scene|throughline|mood|personal|cultural","externalAnchor":{"kind":"show|release|feature","label":"...","url":"..."} (omit unless cultural),"weighting":{"mm-picks":1.0,"new-arrivals":1.0,"deep-cuts":1.0},"shelves":[{"id":"mm-picks","tagline":"...","items":[{"ref":"a3","placement":"..."}]},{"id":"new-arrivals","tagline":"...","items":[{"ref":"b1","placement":"..."}]},{"id":"deep-cuts","tagline":"...","items":[{"ref":"c5","placement":"..."}]}]}`
+
+// ── Response parsing ─────────────────────────────────────────────────
+
+type RawShelf = { id?: unknown; tagline?: unknown; items?: Array<{ ref?: unknown; placement?: unknown }> }
+type RawShelvesResponse = RawTheme & { shelves?: RawShelf[] }
+
+function candidateToShelfItem(c: AlbumCandidate, placement: string): ShelfItem {
+  return {
+    id: `lib:album:${c.albumKey}`,
+    kind: 'library-album',
+    coverUrl: null, // art arrives in Phase 2
+    title: c.album,
+    subtitle: c.artist,
+    placement,
+    payload: { trackIds: c.trackIds.map(String) },
+  }
+}
+
+function defaultPlacement(shelfId: ShelfId): string {
+  switch (shelfId) {
+    case 'new-arrivals': return 'Recently through the door.'
+    case 'deep-cuts': return 'Owned, overlooked, worth another spin.'
+    default: return 'A staple of your collection.'
+  }
+}
+
+/** Convert validated picks to a Shelf, enforcing the per-day artist cap
+ *  and topping up from the pool to the floor. dayArtistCount is mutated
+ *  as items are committed so the cap holds across shelves. */
+function assembleShelf(
+  def: { id: ShelfId; curator: Persona | 'house'; title: string },
+  tagline: string,
+  picked: Array<{ cand: AlbumCandidate; placement: string }>,
+  pool: AlbumCandidate[],
+  dayArtistCount: Map<string, number>,
+): Shelf {
+  const items: ShelfItem[] = []
+  const usedKeys = new Set<string>()
+
+  const tryAdd = (cand: AlbumCandidate, placement: string): boolean => {
+    if (usedKeys.has(cand.albumKey)) return false
+    if ((dayArtistCount.get(cand.artist) ?? 0) >= PER_DAY_ARTIST_CAP) return false
+    items.push(candidateToShelfItem(cand, placement))
+    usedKeys.add(cand.albumKey)
+    dayArtistCount.set(cand.artist, (dayArtistCount.get(cand.artist) ?? 0) + 1)
+    return true
+  }
+
+  for (const p of picked) {
+    if (items.length >= SHELF_MAX) break
+    tryAdd(p.cand, p.placement)
+  }
+  // Top up from the pool (score order) if the model under-filled or its
+  // picks were dropped by the diversity cap (§8 top-up).
+  if (items.length < SHELF_TARGET) {
+    for (const cand of pool) {
+      if (items.length >= SHELF_TARGET) break
+      tryAdd(cand, defaultPlacement(def.id))
+    }
+  }
+  return { id: def.id, curator: def.curator, title: def.title, tagline, items }
+}
+
+function parseShelvesResponse(
+  text: string,
+  input: GenerateShelvesInput,
+  refMap: Map<string, AlbumCandidate>,
+): ShelfBundle {
+  const raw = JSON.parse(stripFence(text)) as RawShelvesResponse
+  const themeStr = typeof raw.theme === 'string' ? raw.theme.trim() : ''
+  const rationale = typeof raw.rationale === 'string' ? raw.rationale.trim() : ''
+  if (!themeStr || !rationale) throw new Error('missing theme/rationale')
+
+  const source = VALID_SOURCES.includes(raw.source as DayTheme['source'])
+    ? (raw.source as DayTheme['source'])
+    : 'throughline'
+  const dayTheme: DayTheme = { date: input.todayISO, theme: themeStr, rationale, source }
+  if (source === 'cultural' && raw.externalAnchor && typeof raw.externalAnchor.label === 'string') {
+    const kind = VALID_ANCHOR_KINDS.includes(raw.externalAnchor.kind as 'show')
+      ? (raw.externalAnchor.kind as 'show' | 'release' | 'feature')
+      : 'feature'
+    dayTheme.externalAnchor = {
+      kind,
+      label: raw.externalAnchor.label.trim(),
+      ...(typeof raw.externalAnchor.url === 'string' && raw.externalAnchor.url ? { url: raw.externalAnchor.url } : {}),
+    }
+  }
+
+  // Index the model's shelves by id so we render in our fixed order
+  // regardless of what order the model returned them.
+  const byId = new Map<string, RawShelf>()
+  for (const s of raw.shelves ?? []) {
+    if (typeof s.id === 'string') byId.set(s.id, s)
+  }
+
+  const dayArtistCount = new Map<string, number>()
+  const shelves: Shelf[] = SHELF_DEFS.map((def) => {
+    const rawShelf = byId.get(def.id)
+    const tagline = typeof rawShelf?.tagline === 'string' && rawShelf.tagline.trim()
+      ? rawShelf.tagline.trim()
+      : def.title
+    const picked: Array<{ cand: AlbumCandidate; placement: string }> = []
+    for (const it of rawShelf?.items ?? []) {
+      const ref = typeof it.ref === 'string' ? it.ref.trim() : ''
+      const cand = refMap.get(ref)
+      if (!cand) continue // hallucinated / out-of-pool ref → drop (§3.3)
+      const placement = typeof it.placement === 'string' && it.placement.trim()
+        ? it.placement.trim()
+        : defaultPlacement(def.id)
+      picked.push({ cand, placement })
+    }
+    return assembleShelf(def, tagline, picked, input.pools[def.id as keyof ShelfPools] ?? [], dayArtistCount)
+  })
+
+  const droppedAShelf = shelves.some((s) => s.items.length < SHELF_MIN)
+  if (droppedAShelf) {
+    // A shelf couldn't reach the floor even after top-up — the pool was
+    // too thin (small / heavily filtered library). Not an error; log it.
+    console.warn('[record-store/shelf-generator] a shelf is below the floor after top-up (thin pool)')
+  }
+
+  const generatedAt = Date.now()
+  return {
+    date: input.todayISO,
+    generatedAt,
+    validUntil: generatedAt + 24 * 60 * 60 * 1000,
+    theme: dayTheme,
+    shelves,
+    source: 'llm',
+  }
+}
+
+// ── Heuristic bundle (§8 LLM-down) ───────────────────────────────────
+
+/** Build a full ShelfBundle from the pools alone — no LLM. Theme from
+ *  heuristicDayTheme; each shelf filled from the top of its pool. */
+export function heuristicShelfBundle(input: GenerateShelvesInput, tracks: CandTrack[]): ShelfBundle {
+  const themeResult = heuristicDayTheme(input.todayISO, input.summary, tracks)
+  const dayArtistCount = new Map<string, number>()
+  const shelves: Shelf[] = SHELF_DEFS.map((def) =>
+    assembleShelf(def, def.title, [], input.pools[def.id as keyof ShelfPools] ?? [], dayArtistCount),
+  )
+  const generatedAt = Date.now()
+  return {
+    date: input.todayISO,
+    generatedAt,
+    validUntil: generatedAt + 24 * 60 * 60 * 1000,
+    theme: themeResult.theme,
+    shelves,
+    source: 'heuristic',
+  }
+}
+
+// ── Public entry point ───────────────────────────────────────────────
+
+/** The headline call: pick the theme and stock all three shelves in ONE
+ *  Sonnet call (§1d), validated library-ground (§3.3) with diversity +
+ *  top-up (§3.4 / §8). Falls back to the heuristic bundle on any
+ *  failure. Never throws. */
+export async function generateShelves(input: GenerateShelvesInput, tracks: CandTrack[]): Promise<ShelfBundle> {
+  if (input.llm) {
+    try {
+      const refMap = new Map<string, AlbumCandidate>()
+      const user = buildShelfUserMessage(input, refMap)
+      const text = await input.llm({
+        callKey: 'record-store:shelves',
+        model: SHELF_GEN_MODEL,
+        maxTokens: SHELF_GEN_MAX_TOKENS,
+        system: input.personaCore,
+        user,
+      })
+      const bundle = parseShelvesResponse(text, input, refMap)
+      // Cooldown guard: a repeated theme means the model ignored the
+      // instruction — fall back rather than serve a stale wall.
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+      if (input.themeHistory.some((h) => norm(h.theme) === norm(bundle.theme.theme))) {
+        console.warn('[record-store/shelf-generator] LLM repeated a cooldown theme; using heuristic bundle')
+        return heuristicShelfBundle(input, tracks)
+      }
+      return bundle
+    } catch (err) {
+      console.warn('[record-store/shelf-generator] shelf-gen LLM failed; using heuristic bundle:', err)
+    }
+  }
+  return heuristicShelfBundle(input, tracks)
 }
