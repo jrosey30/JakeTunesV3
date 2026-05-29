@@ -23,7 +23,7 @@ import {
   buildShelfPools,
   generateShelves,
   heuristicShelfBundle,
-  type DayThemeLlm,
+  type RecordStoreLlm,
   type GenerateShelvesInput,
 } from '../src/main/record-store/shelf-generator'
 import { gatherExternalContext, topLibraryArtists } from '../src/main/record-store/external-context'
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   let bundle
   if (key) {
     const client = new Anthropic({ apiKey: key })
-    const llm: DayThemeLlm = async (req) => {
+    const llm: RecordStoreLlm = async (req) => {
       const reply = await client.messages.create({
         model: req.model, max_tokens: req.maxTokens, system: req.system,
         messages: [{ role: 'user', content: req.user }],

@@ -27,7 +27,7 @@ import {
   formatListeningSummaryForPrompt,
   heuristicDayTheme,
   pickDayTheme,
-  type DayThemeLlm,
+  type RecordStoreLlm,
 } from '../src/main/record-store/shelf-generator'
 import { gatherExternalContext, topLibraryArtists } from '../src/main/record-store/external-context'
 import type { CandTrack } from '../src/main/record-store/candidate-pool'
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
     return
   }
   const client = new Anthropic({ apiKey: key })
-  const llm: DayThemeLlm = async (req) => {
+  const llm: RecordStoreLlm = async (req) => {
     const reply = await client.messages.create({
       model: req.model,
       max_tokens: req.maxTokens,

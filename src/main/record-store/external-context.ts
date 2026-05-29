@@ -120,7 +120,9 @@ function localISODate(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-function partOfDay(hour: number): CalendarContext['partOfDay'] {
+/** Map a 0-23 local hour to a coarse daypart. Exported so the blurb
+ *  generator buckets a record's play timestamps the same way. */
+export function partOfDay(hour: number): CalendarContext['partOfDay'] {
   if (hour >= 5 && hour < 12) return 'morning'
   if (hour >= 12 && hour < 17) return 'afternoon'
   if (hour >= 17 && hour < 22) return 'evening'

@@ -22,7 +22,7 @@
 // the Music Man persona core.
 //
 // SDK-DECOUPLED: this module never imports the Anthropic SDK. The caller
-// (index.ts) injects a DayThemeLlm adapter wrapping the existing
+// (index.ts) injects a RecordStoreLlm adapter wrapping the existing
 // claudeCall pipeline (§3.6 — no new SDK, no new keys). The verification
 // probes inject their own adapter. If no llm is provided, or the call
 // fails / returns junk, both paths fall back to a deterministic
@@ -77,14 +77,14 @@ export interface DayThemeResult {
  *  free of the Anthropic SDK types so this module never imports it.
  *  Returns the assistant's text. Throws on hard failure (the picker
  *  catches and falls back to heuristic). */
-export interface DayThemeLlmRequest {
+export interface RecordStoreLlmRequest {
   callKey: string
   model: string
   maxTokens: number
   system: string
   user: string
 }
-export type DayThemeLlm = (req: DayThemeLlmRequest) => Promise<string>
+export type RecordStoreLlm = (req: RecordStoreLlmRequest) => Promise<string>
 
 export interface PickDayThemeInput {
   /** YYYY-MM-DD local — the new theme's date + cache key. */
@@ -97,7 +97,7 @@ export interface PickDayThemeInput {
   /** MUSIC_MAN_CORE, injected by index.ts (which owns the persona). */
   personaCore: string
   /** Injected LLM adapter. Omit (or let it throw) to force heuristic. */
-  llm?: DayThemeLlm
+  llm?: RecordStoreLlm
 }
 
 const THIRTY_DAYS_MS = 30 * 86_400_000
@@ -490,7 +490,7 @@ export interface GenerateShelvesInput {
   personaCore: string
   pools: ShelfPools
   /** Injected LLM adapter; omit to force the heuristic bundle. */
-  llm?: DayThemeLlm
+  llm?: RecordStoreLlm
 }
 
 // ── Candidate refs ───────────────────────────────────────────────────
