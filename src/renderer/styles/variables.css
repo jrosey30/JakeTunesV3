@@ -79,13 +79,15 @@
   --text-dim: #8a8378;
   --border-subtle: #a0a0a0;
   --border-light: #c8c8c8;
-  /* 4.5: --white is no longer pure #fff. Subtle warm tint (R 253 / G 249 /
-     B 242) so every surface that resolves to "white" reads as off-white
-     cream — matches the mobile app's color language. Pure white usage
-     in components that should stay clinical (modals dialogs, etc.) can
-     override locally; most should pick this up automatically via the
-     variable. */
-  --white: #fdf9f2;
+  /* 4.5: --white is no longer pure #fff — a whisper of warmth so every
+     surface reads as a soft off-white, not clinical. 4.5.0-111: cooled
+     from the old cream #fdf9f2 (R253/G249/B242, warm spread 11 — too
+     orange in the song list) to #f9f8f5 (R249/G248/B245, spread 4): a
+     slight-slight-slight warm hint, no glow. Pure-white usage in
+     components that should stay clinical (modals, dialogs) overrides
+     locally. NOTE: this was tuned to match the mobile app's warm white;
+     mobile may want the same cool-down to stay in sync. */
+  --white: #f9f8f5;
   --sidebar-width: 148px;
   --titlebar-height: 38px;
   --toolbar-height: 78px;

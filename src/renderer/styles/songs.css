@@ -109,8 +109,8 @@
   border-bottom: 1px solid transparent;
   user-select: none;
   -webkit-user-select: none;
-  /* Match the page's --white (#fdf9f2) so the empty area below the last
-   * row reads as the same surface as the rows themselves. Prior pass
+  /* Match the page's --white (#f9f8f5, cooled in 4.5.0-111) so the empty
+   * area below the last row reads as the same surface as the rows. Prior pass
    * pinned this to #fefefd (near-pure white) to keep the alt-row stripe
    * neutral, but that left a visible warm/cool boundary where the
    * track list ends — Jake flagged the bottom band as "not the off-
