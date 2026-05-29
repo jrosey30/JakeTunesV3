@@ -215,9 +215,9 @@ export default function ListenToTheListView() {
                   {rec.note && <div className="ltl-note">{rec.note}</div>}
                   <div className="ltl-sub">
                     <span className="ltl-date">{new Date(rec.createdAt).toLocaleDateString()}</span>
-                    {rec.appleMusicUrl && (
-                      <a className="ltl-link" href={rec.appleMusicUrl} target="_blank" rel="noreferrer">Apple Music ↗</a>
-                    )}
+                    {/* No "open in Apple Music" link by design — previews
+                        play in-app via the ▶ button; we never send the user
+                        out to the Apple Music app. */}
                   </div>
                 </div>
                 <button className="ltl-delete" onClick={() => setDeleteTarget(rec)} title="Remove from list">✕</button>
