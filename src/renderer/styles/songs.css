@@ -109,14 +109,13 @@
   border-bottom: 1px solid transparent;
   user-select: none;
   -webkit-user-select: none;
-  /* 4.5: explicit white background. Without this, the row inherits
-   * whatever the parent surface is — which became the warm cream
-   * --white (#fdf9f2) in the palette pass, and combined with the
-   * cool-blue alt row below to produce "cream + blue stripes" that
-   * Jake flagged as not cohesive. Anchoring base row to a true
-   * off-white + dialing alt to neutral pale-grey gives quiet rhythm
-   * without two competing hues. */
-  background: #fefefd;
+  /* Match the page's --white (#fdf9f2) so the empty area below the last
+   * row reads as the same surface as the rows themselves. Prior pass
+   * pinned this to #fefefd (near-pure white) to keep the alt-row stripe
+   * neutral, but that left a visible warm/cool boundary where the
+   * track list ends — Jake flagged the bottom band as "not the off-
+   * white we picked". --white IS the canonical 4.5 off-white. */
+  background: var(--white);
   /* 4.4.24: soften the hover / selection bg change so it eases in
      instead of snapping. 90ms is fast enough that nothing feels
      delayed; long enough that you can perceive it as a transition. */
