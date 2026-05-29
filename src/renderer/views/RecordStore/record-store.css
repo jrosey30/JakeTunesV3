@@ -1,38 +1,33 @@
-/* Music Man's Record Store — Phase 2 foundation styles.
+/* Music Man's Record Store — Phase 2 immersive scene.
  *
- * Cover-grid storefront backed by the real engine + live library art.
- * The illustrated Backyard-Baseball scene (storefront background, Music
- * Man sprite, speech bubble, wooden bins) layers on top of this once the
- * art PNGs land in ./art — these styles are the structural baseline. */
+ * The whole view IS the shop: one storefront backdrop fills the window,
+ * with code-driven "camera" states (wide / bin) + Music Man popping in to
+ * talk. Real album covers fill the crate in the bin view. */
 
 .recordstore {
-  padding: 24px 32px;
+  height: 100%;
   color: #1c1c1c;
   font-family: -apple-system, system-ui, sans-serif;
-  max-width: 1100px;
-  margin: 0 auto;
 }
 
+/* ── Loading / error (pre-scene) ─────────────────────────────────── */
 .recordstore__header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 8px;
-  border-bottom: 1px solid #d4d4d4;
-  padding-bottom: 10px;
+  padding: 24px 32px 10px;
 }
-
 .recordstore__title {
   font-size: 22px;
   font-weight: 700;
   margin: 0;
 }
-
-.recordstore__theme {
+.recordstore__state-line {
   font-size: 13px;
-  color: #5a5a5a;
-  margin: 4px 0 24px 0;
+  color: #7a7a7a;
+  padding: 0 32px;
 }
+.recordstore__state-line--error { color: #b00020; }
 
 .recordstore__refresh {
   appearance: none;
@@ -45,121 +40,16 @@
   cursor: pointer;
 }
 .recordstore__refresh:hover { background: #f3f3f3; }
-.recordstore__refresh:disabled { opacity: 0.5; cursor: progress; }
 
-.recordstore__state-line {
-  font-size: 13px;
-  color: #7a7a7a;
-  padding: 12px 0;
-}
-.recordstore__state-line--error { color: #b00020; }
-
-.recordstore__shelf {
-  margin: 20px 0 32px 0;
-}
-
-.recordstore__shelf-header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.recordstore__shelf-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.recordstore__shelf-curator {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  color: #888;
-}
-
-.recordstore__shelf-tagline {
-  font-size: 13px;
-  color: #5a5a5a;
-  margin: 0 0 10px 0;
-  font-style: italic;
-}
-
-.recordstore__items {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px;
-}
-
-.recordstore__item {
-  display: flex;
-  flex-direction: column;
-  text-align: left;
-  background: #fafafa;
-  border: 1px solid #e2e2e2;
-  border-radius: 6px;
-  padding: 12px;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  transition: background 80ms ease, border-color 80ms ease;
-}
-.recordstore__item:hover {
-  background: #f0f4fa;
-  border-color: #b8c8df;
-}
-.recordstore__item:active {
-  background: #e6edf6;
-}
-
-.recordstore__item-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 2px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.recordstore__item-subtitle {
-  font-size: 12px;
-  color: #5a5a5a;
-  margin: 0 0 6px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.recordstore__item-placement {
-  font-size: 11px;
-  color: #888;
-  margin: 0;
-  line-height: 1.3;
-}
-
-.recordstore__empty {
-  padding: 24px;
-  text-align: center;
-  color: #888;
-  border: 1px dashed #ddd;
-  border-radius: 6px;
-}
-
-/* ── The shop scene (illustrated storefront banner) ──────────────── */
+/* ── The shop (fills the window) ─────────────────────────────────── */
+.recordstore--immersive { display: flex; }
 .recordstore__scene {
   position: relative;
+  flex: 1;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: 48vh;
-  border-radius: 10px;
+  min-height: 78vh;
   overflow: hidden;
   background: #a8d8ff;
-  border: 1px solid rgba(0, 0, 0, 0.2);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
-  margin-bottom: 14px;
 }
 .recordstore__scene-bg {
   position: absolute;
@@ -168,12 +58,18 @@
   height: 100%;
   object-fit: cover;
   image-rendering: pixelated;
+  transition: transform 320ms ease, filter 320ms ease;
+}
+/* Push in + dim slightly when digging through a bin (the "camera"). */
+.recordstore__scene--bin .recordstore__scene-bg {
+  transform: scale(1.14);
+  filter: brightness(0.72);
 }
 
 /* Shop sign — theme on a plate, top-center over the sky. */
 .recordstore__sign {
   position: absolute;
-  top: 14px;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -185,8 +81,9 @@
   padding: 7px 18px;
   border-radius: 8px;
   border: 2px solid #d8a25a;
-  max-width: 78%;
+  max-width: 80%;
   text-align: center;
+  z-index: 3;
 }
 .recordstore__sign-name {
   font-size: 10px;
@@ -195,36 +92,36 @@
   color: #d8a25a;
   font-weight: 700;
 }
-.recordstore__sign-theme {
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-/* Music Man, standing in the shop bottom-left. */
-.recordstore__mm {
-  position: absolute;
-  left: 1%;
-  bottom: 0;
-  height: 82%;
-  image-rendering: pixelated;
-  pointer-events: none;
-  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
-}
+.recordstore__sign-theme { font-size: 15px; font-weight: 700; line-height: 1.2; }
 
 .recordstore__refresh--scene {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 14px;
+  right: 14px;
+  z-index: 4;
   background: rgba(255, 255, 255, 0.92);
 }
 
+/* ── WIDE view: rationale + bin entries along the bottom ─────────── */
+.recordstore__wide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: linear-gradient(to top, rgba(20, 16, 12, 0.78), rgba(20, 16, 12, 0.28) 70%, transparent);
+  z-index: 2;
+}
 .recordstore__rationale {
-  font-size: 13px;
-  color: #5a5a5a;
-  margin: 0 0 22px 0;
-  line-height: 1.45;
-  max-width: 760px;
+  font-size: 14px;
+  color: #f0e8da;
+  margin: 0;
+  line-height: 1.5;
+  max-width: 720px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 .recordstore__source-pill {
   display: inline-block;
@@ -232,28 +129,195 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #8a6a3a;
-  background: #f3e9da;
-  border: 1px solid #e3d2b8;
+  color: #2a2018;
+  background: #d8a25a;
   border-radius: 999px;
   padding: 1px 8px;
   vertical-align: middle;
+}
+.recordstore__bins {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.recordstore__bin-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: #b87333;
+  color: #2a1c10;
+  border: 2px solid #5a3a22;
+  border-radius: 8px;
+  padding: 12px 18px;
+  cursor: pointer;
+  font: inherit;
+  box-shadow: 0 3px 0 #5a3a22;
+  transition: transform 90ms ease, box-shadow 90ms ease;
+}
+.recordstore__bin-entry:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 0 #5a3a22;
+}
+.recordstore__bin-entry:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 #5a3a22;
+}
+.recordstore__bin-entry:disabled { opacity: 0.45; cursor: default; }
+.recordstore__bin-entry-title { font-size: 15px; font-weight: 700; }
+.recordstore__bin-entry-count {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #4a3018;
+}
+
+/* ── BIN view: the crate of real covers ──────────────────────────── */
+.recordstore__crate {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 72%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 24px 24px;
+  background: linear-gradient(to top, rgba(20, 16, 12, 0.95), rgba(20, 16, 12, 0.86) 60%, rgba(20, 16, 12, 0.4));
+  z-index: 2;
+}
+.recordstore__crate-head { display: flex; align-items: flex-start; gap: 16px; }
+.recordstore__back {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #f4ece0;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.recordstore__back:hover { background: rgba(255, 255, 255, 0.22); }
+.recordstore__crate-title { font-size: 17px; font-weight: 700; color: #f8f1e6; margin: 0; }
+.recordstore__crate-tagline {
+  font-size: 13px;
+  color: #cdbfa9;
+  margin: 2px 0 0 0;
+  font-style: italic;
+}
+.recordstore__crate-items {
+  list-style: none;
+  margin: 0;
+  padding: 4px 2px 8px;
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.recordstore__crate-items > li { flex: 0 0 150px; }
+
+/* ── Cover cards (used in the crate) ─────────────────────────────── */
+.recordstore__card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: #f4ece0;
+}
+.recordstore__cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #2a2622;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: transform 90ms ease, box-shadow 90ms ease;
+}
+.recordstore__card:hover .recordstore__cover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.5);
+}
+.recordstore__card--selected .recordstore__cover {
+  outline: 2px solid #d8a25a;
+  outline-offset: 1px;
+}
+.recordstore__cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.recordstore__cover-blank {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cdbfa9;
+  background: repeating-linear-gradient(45deg, #3a342e, #3a342e 6px, #332e29 6px, #332e29 12px);
+}
+.recordstore__card-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 6px 0 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recordstore__card-subtitle {
+  font-size: 12px;
+  color: #cdbfa9;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Music Man, popping in to talk ───────────────────────────────── */
+.recordstore__mm-stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.recordstore__mm {
+  position: absolute;
+  left: 2%;
+  bottom: 0;
+  height: 72%;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+  animation: mm-slide-in 240ms ease;
+}
+@keyframes mm-slide-in {
+  from { transform: translateX(-32px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
 /* ── Pokémon Game Boy Color dialogue box ─────────────────────────── */
 .gbc-dialogue {
   position: absolute;
-  left: 25%;
-  right: 16px;
-  bottom: 14px;
+  left: 26%;
+  right: 24px;
+  bottom: 22px;
+  pointer-events: auto;
   background: #f7f7ef;
   border: 3px solid #20283a;
   border-radius: 7px;
-  box-shadow: inset 0 0 0 2px #f7f7ef, inset 0 0 0 4px #5b6789, 0 3px 0 rgba(0, 0, 0, 0.28);
-  padding: 11px 15px 13px;
+  box-shadow: inset 0 0 0 2px #f7f7ef, inset 0 0 0 4px #5b6789, 0 3px 0 rgba(0, 0, 0, 0.3);
+  padding: 12px 16px 14px;
   cursor: pointer;
-  min-height: 52px;
+  min-height: 54px;
   font-family: ui-monospace, 'SF Mono', 'Menlo', monospace;
+  animation: mm-slide-in 240ms ease;
 }
 .gbc-dialogue__speaker {
   display: block;
@@ -276,85 +340,13 @@
   margin-left: 6px;
   animation: gbc-blink 0.7s steps(1, end) infinite;
 }
-.gbc-dialogue__thinking {
-  animation: gbc-pulse 0.9s ease-in-out infinite;
-}
+.gbc-dialogue__thinking { animation: gbc-pulse 0.9s ease-in-out infinite; }
 .gbc-dialogue__thinking::after { content: '…'; }
 @keyframes gbc-blink { 50% { opacity: 0; } }
 @keyframes gbc-pulse { 50% { opacity: 0.4; } }
 
-/* ── Cover cards ─────────────────────────────────────────────────── */
-.recordstore__card {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-}
-.recordstore__cover {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #e8e8e8;
-  border: 1px solid rgba(0, 0, 0, 0.18);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
-  transition: transform 90ms ease, box-shadow 90ms ease;
-}
-.recordstore__card:hover .recordstore__cover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
-}
-.recordstore__card:active .recordstore__cover {
-  transform: translateY(0);
-}
-.recordstore__card--selected .recordstore__cover {
-  outline: 2px solid #d8a25a;
-  outline-offset: 1px;
-}
-.recordstore__cover-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.recordstore__cover-blank {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.recordstore__empty {
+  padding: 24px;
   text-align: center;
-  padding: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #6a6a6a;
-  background: repeating-linear-gradient(45deg, #efefef, #efefef 6px, #e7e7e7 6px, #e7e7e7 12px);
-}
-.recordstore__card-title {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 6px 0 1px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.recordstore__card-subtitle {
-  font-size: 12px;
-  color: #5a5a5a;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Cover-card grid sizing — denser than the Phase-0 text rows. */
-.recordstore__items {
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  color: #cdbfa9;
 }

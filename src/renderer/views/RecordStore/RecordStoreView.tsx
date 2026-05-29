@@ -1,16 +1,17 @@
-// Music Man's Record Store — Phase 2 foundation (Brief 037).
+// Music Man's Record Store — Phase 2 immersive scene (Brief 037 §4 FSM).
 //
-// Renders the daily ShelfBundle from the IPC engine (1a-1e) as shelves of
-// REAL album-cover cards pulled from the live library artwork (same
-// `album-art://<hash>.jpg` protocol the Albums view uses). Clicking a
-// cover plays the album AND asks Music Man for his take (the get-blurb
-// Haiku call) — playback never waits on the blurb (§8).
+// The whole window IS the shop. One illustrated storefront backdrop +
+// the Music Man sprites + code-driven "camera" moves stand in for a
+// multi-scene FSM (no per-angle art needed — consistency was a losing
+// battle in Midjourney):
 //
-// This is the structural foundation. The illustrated Backyard-Baseball
-// scene (storefront background, Music Man sprite at the counter, the
-// speech-bubble + bin art, the scene FSM, and TTS/duck) layers on top of
-// this once the art PNGs are dropped into ./art. Playback/Library/useAudio
-// are READ here, never edited (do-not-touch).
+//   wide  → you're in the shop: theme on the sign, three bins to dig into
+//   bin   → push in on a shelf; YOUR real album covers fill the crate
+//   (talk)→ click a record: it plays and Music Man pops in with his take
+//           in a Pokémon-GBC dialogue box, then steps back out
+//
+// Real covers come from the live library artwork (album-art:// protocol).
+// Playback / Library / useAudio are READ here, never edited.
 
 import { useCallback, useMemo, useState } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
@@ -18,7 +19,7 @@ import { useAudio } from '../../hooks/useAudio'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
 import { useShelves } from './hooks/useShelves'
 import { DialogueBox } from './components/DialogueBox'
-import type { Blurb, Persona, Shelf, ShelfItem } from '../../../main/record-store/types'
+import type { Blurb, Persona, ShelfId, ShelfItem } from '../../../main/record-store/types'
 import storefrontBg from './art/storefront.png'
 import mmSmug from './art/musicman-smug.png'
 import mmThink from './art/musicman-think.png'
@@ -37,13 +38,15 @@ type TakeState =
   | { status: 'loading'; item: ShelfItem }
   | { status: 'ready'; item: ShelfItem; text: string | null }
 
+type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId }
+
 export default function RecordStoreView() {
   const { state: lib } = useLibrary()
   const { playTrack } = useAudio()
   const { state, refresh } = useShelves()
   const [take, setTake] = useState<TakeState>({ status: 'idle' })
+  const [scene, setScene] = useState<Scene>({ view: 'wide' })
 
-  // trackId → live library track, for play + artwork resolution.
   const trackById = useMemo(() => {
     const m = new Map<number, typeof lib.tracks[number]>()
     for (const t of lib.tracks) m.set(t.id, t)
@@ -52,8 +55,6 @@ export default function RecordStoreView() {
 
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
-  // Resolve a shelf item to its real library cover (album-art:// protocol),
-  // preferring the matched track's metadata over the item's display strings.
   const coverSrc = useCallback(
     (item: ShelfItem): string | null => {
       const ids = item.payload.trackIds
@@ -122,13 +123,12 @@ export default function RecordStoreView() {
   }
 
   const { bundle } = state
+  const activeShelf =
+    scene.view === 'bin' ? bundle.shelves.find((s) => s.id === scene.shelfId) ?? null : null
 
   return (
-    <div className="recordstore recordstore--scene">
-      {/* The shop: illustrated storefront backdrop, Music Man, and his
-          Pokémon-GBC dialogue box. Real album covers live in the shelves
-          below — the storefront is the atmosphere you browse inside. */}
-      <div className="recordstore__scene">
+    <div className="recordstore recordstore--immersive">
+      <div className={`recordstore__scene recordstore__scene--${scene.view}`}>
         <img className="recordstore__scene-bg" src={storefrontBg} alt="" aria-hidden="true" />
 
         <div className="recordstore__sign">
@@ -136,19 +136,91 @@ export default function RecordStoreView() {
           <span className="recordstore__sign-theme">{bundle.theme.theme}</span>
         </div>
 
-        <img
-          className="recordstore__mm"
-          src={take.status === 'loading' ? mmThink : mmSmug}
-          alt="Music Man"
-        />
+        {/* WIDE: stand in the shop, pick a bin to dig into. */}
+        {scene.view === 'wide' && (
+          <div className="recordstore__wide">
+            {bundle.theme.rationale && (
+              <p className="recordstore__rationale">
+                {bundle.theme.rationale}
+                {bundle.source !== 'llm' && (
+                  <span className="recordstore__source-pill">
+                    {bundle.source === 'cached' ? 'served from yesterday' : 'house picks'}
+                  </span>
+                )}
+              </p>
+            )}
+            <div className="recordstore__bins">
+              {bundle.shelves.map((shelf) => (
+                <button
+                  key={shelf.id}
+                  className="recordstore__bin-entry"
+                  onClick={() => setScene({ view: 'bin', shelfId: shelf.id })}
+                  disabled={shelf.items.length === 0}
+                >
+                  <span className="recordstore__bin-entry-title">{shelf.title}</span>
+                  <span className="recordstore__bin-entry-count">{shelf.items.length} records</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
+        {/* BIN: push in; the shelf's real covers fill the crate. */}
+        {scene.view === 'bin' && activeShelf && (
+          <div className="recordstore__crate">
+            <div className="recordstore__crate-head">
+              <button className="recordstore__back" onClick={() => setScene({ view: 'wide' })}>
+                ← back to the shop
+              </button>
+              <div>
+                <h2 className="recordstore__crate-title">{activeShelf.title}</h2>
+                <p className="recordstore__crate-tagline">{activeShelf.tagline}</p>
+              </div>
+            </div>
+            <ul className="recordstore__crate-items">
+              {activeShelf.items.map((item) => {
+                const cover = coverSrc(item)
+                const selected = take.status !== 'idle' && take.item.id === item.id
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className={`recordstore__card${selected ? ' recordstore__card--selected' : ''}`}
+                      onClick={() => handleItemClick(item)}
+                      title={item.placement}
+                    >
+                      <div className="recordstore__cover">
+                        {cover ? (
+                          <img src={cover} alt={item.title} className="recordstore__cover-img" />
+                        ) : (
+                          <div className="recordstore__cover-blank">{item.title}</div>
+                        )}
+                      </div>
+                      <p className="recordstore__card-title">{item.title}</p>
+                      <p className="recordstore__card-subtitle">{item.subtitle}</p>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
+
+        {/* Music Man pops in to talk (any view). */}
         {take.status !== 'idle' && (
-          <DialogueBox
-            speaker="Music Man"
-            loading={take.status === 'loading'}
-            text={take.status === 'ready' ? take.text : null}
-            onAdvance={() => setTake({ status: 'idle' })}
-          />
+          <div className="recordstore__mm-stage">
+            <img
+              className="recordstore__mm"
+              src={take.status === 'loading' ? mmThink : mmSmug}
+              alt="Music Man"
+            />
+            <DialogueBox
+              speaker="Music Man"
+              loading={take.status === 'loading'}
+              text={take.status === 'ready' ? take.text : null}
+              onAdvance={() => setTake({ status: 'idle' })}
+            />
+          </div>
         )}
 
         <button
@@ -159,82 +231,6 @@ export default function RecordStoreView() {
           Refresh
         </button>
       </div>
-
-      {(bundle.theme.rationale || bundle.source !== 'llm') && (
-        <p className="recordstore__rationale">
-          {bundle.theme.rationale}
-          {bundle.source !== 'llm' && (
-            <span className="recordstore__source-pill">
-              {bundle.source === 'cached' ? 'served from yesterday' : 'house picks'}
-            </span>
-          )}
-        </p>
-      )}
-
-      {bundle.shelves.length === 0 ? (
-        <div className="recordstore__empty">The shop looks empty today. Try refresh.</div>
-      ) : (
-        bundle.shelves.map((shelf) => (
-          <ShelfBlock
-            key={shelf.id}
-            shelf={shelf}
-            coverSrc={coverSrc}
-            selectedId={take.status !== 'idle' ? take.item.id : null}
-            onItemClick={handleItemClick}
-          />
-        ))
-      )}
     </div>
-  )
-}
-
-function ShelfBlock({
-  shelf,
-  coverSrc,
-  selectedId,
-  onItemClick,
-}: {
-  shelf: Shelf
-  coverSrc: (i: ShelfItem) => string | null
-  selectedId: string | null
-  onItemClick: (i: ShelfItem) => void
-}) {
-  return (
-    <section className="recordstore__shelf">
-      <div className="recordstore__shelf-header">
-        <h2 className="recordstore__shelf-title">{shelf.title}</h2>
-        <span className="recordstore__shelf-curator">curated by {shelf.curator}</span>
-      </div>
-      <p className="recordstore__shelf-tagline">{shelf.tagline}</p>
-      {shelf.items.length === 0 ? (
-        <div className="recordstore__empty">Nothing on this shelf yet.</div>
-      ) : (
-        <ul className="recordstore__items">
-          {shelf.items.map((item) => {
-            const cover = coverSrc(item)
-            return (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className={`recordstore__card${selectedId === item.id ? ' recordstore__card--selected' : ''}`}
-                  onClick={() => onItemClick(item)}
-                  title={item.placement}
-                >
-                  <div className="recordstore__cover">
-                    {cover ? (
-                      <img src={cover} alt={item.title} className="recordstore__cover-img" />
-                    ) : (
-                      <div className="recordstore__cover-blank">{item.title}</div>
-                    )}
-                  </div>
-                  <p className="recordstore__card-title">{item.title}</p>
-                  <p className="recordstore__card-subtitle">{item.subtitle}</p>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </section>
   )
 }
