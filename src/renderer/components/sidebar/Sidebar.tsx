@@ -387,12 +387,20 @@ export default function Sidebar() {
             selected={state.currentView === 'squid'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'squid' })}
           />
-          {/* 4.5.0-62: Record Store sidebar entry hidden. Brief 037 Phase 0
-              shipped an unstyled HTML placeholder that didn't match the
-              iTunes chrome; pulled from the UI until the Phase 2
-              illustrated storefront lands. The view module + IPC stay in
-              place (dead code, zero UI cost) so re-enabling is one
-              uncommented JSX block. */}
+          {/* Brief 037 Phase 2: Record Store re-enabled — the engine
+              (1a-1e) + the cover-grid storefront now back this entry. */}
+          <SidebarItem
+            label="Record Store"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="6.5" fill="#b87333" />
+                <circle cx="8" cy="8" r="2.2" fill="#fff" />
+                <circle cx="8" cy="8" r="0.8" fill="#b87333" />
+              </svg>
+            )}
+            selected={state.currentView === 'recordstore'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
+          />
         </SidebarSection>
 
         {(ipodMounted || cdMounted) && (

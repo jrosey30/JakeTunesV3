@@ -11176,9 +11176,9 @@ app.whenReady().then(async () => {
   // RECORD_STORE_ENABLED flag flips back on when Phase 2 lands. Keeping
   // the import + integration so re-enabling is a one-line flip.
   // 4.5.0-68 gated the registration off (Phase-0 UI was removed). The
-  // Phase-1 engine (Brief 037 1a-1e) is now wired below; flip this to
-  // true when Phase 2 ships the store UI.
-  const RECORD_STORE_ENABLED = false
+  // Phase-1 engine (Brief 037 1a-1e) is wired below, and Phase 2's store
+  // UI + sidebar entry now consume it — registration is live.
+  const RECORD_STORE_ENABLED = true
   if (RECORD_STORE_ENABLED) {
     // LLM adapter over claudeCall (§3.6 — no new SDK/keys). Returns the
     // assistant text; daily ceiling + cached fallback are handled inside
