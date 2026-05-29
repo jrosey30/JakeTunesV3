@@ -17,7 +17,11 @@ import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
 import { useShelves } from './hooks/useShelves'
+import { DialogueBox } from './components/DialogueBox'
 import type { Blurb, Persona, Shelf, ShelfItem } from '../../../main/record-store/types'
+import storefrontBg from './art/storefront.png'
+import mmSmug from './art/musicman-smug.png'
+import mmThink from './art/musicman-think.png'
 import './record-store.css'
 
 interface RecordStoreApi {
@@ -120,33 +124,51 @@ export default function RecordStoreView() {
   const { bundle } = state
 
   return (
-    <div className="recordstore">
-      <header className="recordstore__header">
-        <h1 className="recordstore__title">The Record Store</h1>
-        <button className="recordstore__refresh" onClick={refresh} title="Re-stock the wall">
+    <div className="recordstore recordstore--scene">
+      {/* The shop: illustrated storefront backdrop, Music Man, and his
+          Pokémon-GBC dialogue box. Real album covers live in the shelves
+          below — the storefront is the atmosphere you browse inside. */}
+      <div className="recordstore__scene">
+        <img className="recordstore__scene-bg" src={storefrontBg} alt="" aria-hidden="true" />
+
+        <div className="recordstore__sign">
+          <span className="recordstore__sign-name">WJLR Records · Greenpoint</span>
+          <span className="recordstore__sign-theme">{bundle.theme.theme}</span>
+        </div>
+
+        <img
+          className="recordstore__mm"
+          src={take.status === 'loading' ? mmThink : mmSmug}
+          alt="Music Man"
+        />
+
+        {take.status !== 'idle' && (
+          <DialogueBox
+            speaker="Music Man"
+            loading={take.status === 'loading'}
+            text={take.status === 'ready' ? take.text : null}
+            onAdvance={() => setTake({ status: 'idle' })}
+          />
+        )}
+
+        <button
+          className="recordstore__refresh recordstore__refresh--scene"
+          onClick={refresh}
+          title="Re-stock the wall"
+        >
           Refresh
         </button>
-      </header>
-
-      <div className="recordstore__sign">
-        <p className="recordstore__theme">{bundle.theme.theme}</p>
-        {bundle.theme.rationale && <p className="recordstore__rationale">{bundle.theme.rationale}</p>}
-        {bundle.source !== 'llm' && (
-          <span className="recordstore__source-pill">
-            {bundle.source === 'cached' ? 'served from yesterday' : 'house picks'}
-          </span>
-        )}
       </div>
 
-      {/* Music Man's counter — previews the speech bubble; the sprite +
-          bubble art + TTS land in the scene pass. */}
-      {take.status !== 'idle' && (
-        <div className="recordstore__counter">
-          <span className="recordstore__mm-label">Music Man</span>
-          <p className="recordstore__mm-take">
-            {take.status === 'loading' ? '…' : take.text || "[he's got nothing on this one]"}
-          </p>
-        </div>
+      {(bundle.theme.rationale || bundle.source !== 'llm') && (
+        <p className="recordstore__rationale">
+          {bundle.theme.rationale}
+          {bundle.source !== 'llm' && (
+            <span className="recordstore__source-pill">
+              {bundle.source === 'cached' ? 'served from yesterday' : 'house picks'}
+            </span>
+          )}
+        </p>
       )}
 
       {bundle.shelves.length === 0 ? (

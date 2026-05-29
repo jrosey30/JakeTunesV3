@@ -148,26 +148,87 @@
   border-radius: 6px;
 }
 
-/* ── Shop sign (day theme + rationale) ───────────────────────────── */
+/* ── The shop scene (illustrated storefront banner) ──────────────── */
+.recordstore__scene {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 48vh;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #a8d8ff;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  margin-bottom: 14px;
+}
+.recordstore__scene-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+/* Shop sign — theme on a plate, top-center over the sky. */
 .recordstore__sign {
-  margin: 4px 0 20px 0;
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(44, 38, 34, 0.86);
+  color: #f4ece0;
+  padding: 7px 18px;
+  border-radius: 8px;
+  border: 2px solid #d8a25a;
+  max-width: 78%;
+  text-align: center;
 }
-.recordstore__theme {
-  font-size: 18px;
+.recordstore__sign-name {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #d8a25a;
   font-weight: 700;
-  color: #2a2a2a;
-  margin: 0 0 4px 0;
 }
+.recordstore__sign-theme {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* Music Man, standing in the shop bottom-left. */
+.recordstore__mm {
+  position: absolute;
+  left: 1%;
+  bottom: 0;
+  height: 82%;
+  image-rendering: pixelated;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+}
+
+.recordstore__refresh--scene {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
 .recordstore__rationale {
   font-size: 13px;
   color: #5a5a5a;
-  margin: 0;
-  line-height: 1.4;
-  max-width: 720px;
+  margin: 0 0 22px 0;
+  line-height: 1.45;
+  max-width: 760px;
 }
 .recordstore__source-pill {
   display: inline-block;
-  margin-top: 8px;
+  margin-left: 8px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -175,34 +236,52 @@
   background: #f3e9da;
   border: 1px solid #e3d2b8;
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 1px 8px;
+  vertical-align: middle;
 }
 
-/* ── Music Man's counter (blurb preview; speech-bubble art later) ── */
-.recordstore__counter {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  background: #2c2622;
-  color: #f4ece0;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin: 0 0 24px 0;
+/* ── Pokémon Game Boy Color dialogue box ─────────────────────────── */
+.gbc-dialogue {
+  position: absolute;
+  left: 25%;
+  right: 16px;
+  bottom: 14px;
+  background: #f7f7ef;
+  border: 3px solid #20283a;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 2px #f7f7ef, inset 0 0 0 4px #5b6789, 0 3px 0 rgba(0, 0, 0, 0.28);
+  padding: 11px 15px 13px;
+  cursor: pointer;
+  min-height: 52px;
+  font-family: ui-monospace, 'SF Mono', 'Menlo', monospace;
 }
-.recordstore__mm-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: #d8a25a;
-  flex: 0 0 auto;
+.gbc-dialogue__speaker {
+  display: block;
+  font-size: 10px;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #c0392b;
+  margin-bottom: 5px;
 }
-.recordstore__mm-take {
+.gbc-dialogue__text {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.45;
-  font-style: italic;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #20283a;
+  white-space: pre-wrap;
 }
+.gbc-dialogue__arrow {
+  display: inline-block;
+  margin-left: 6px;
+  animation: gbc-blink 0.7s steps(1, end) infinite;
+}
+.gbc-dialogue__thinking {
+  animation: gbc-pulse 0.9s ease-in-out infinite;
+}
+.gbc-dialogue__thinking::after { content: '…'; }
+@keyframes gbc-blink { 50% { opacity: 0; } }
+@keyframes gbc-pulse { 50% { opacity: 0.4; } }
 
 /* ── Cover cards ─────────────────────────────────────────────────── */
 .recordstore__card {
