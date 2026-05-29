@@ -8946,16 +8946,23 @@ ipcMain.handle('read-recommendations', async (): Promise<{ ok: boolean; recommen
 })
 
 ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string }> => {
+  const url = `${MOBILE_BACKEND_URL}/api/recommendations`
+  console.log('[reco] POST →', url, JSON.stringify(input))
   try {
-    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     })
-    if (!res.ok) return { ok: false, error: `backend ${res.status}` }
+    if (!res.ok) {
+      console.warn('[reco] POST failed — backend', res.status)
+      return { ok: false, error: `backend ${res.status}` }
+    }
     const recommendation = (await res.json()) as RecommendationRecord
+    console.log('[reco] POST ok — added', recommendation?.id)
     return { ok: true, recommendation }
   } catch (err) {
+    console.error('[reco] POST threw:', err instanceof Error ? err.message : err)
     return { ok: false, error: err instanceof Error ? err.message : 'request failed' }
   }
 })

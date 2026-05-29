@@ -69,25 +69,38 @@ export default function ListenToTheListView() {
     e.preventDefault()
     if (!canAdd || adding) return
     setAdding(true)
-    const res = await window.electronAPI.addRecommendation({
-      song: form.song.trim() || undefined,
-      artist: form.artist.trim() || undefined,
-      album: form.album.trim() || undefined,
-      note: form.note.trim() || undefined,
-    })
-    setAdding(false)
-    if (!res.ok) {
-      setNotice(
-        res.error?.includes('failed') || res.error?.includes('fetch')
-          ? "Couldn't reach the JakeTunes backend to save. Is the Mini up?"
-          : `Couldn't save recommendation${res.error ? `: ${res.error}` : ''}.`,
-        { kind: 'error' }
-      )
-      return
+    // try/finally is load-bearing: without it, a thrown invoke (e.g. the
+    // IPC channel missing, or fetch rejecting) would skip setAdding(false),
+    // leaving `adding` stuck true → the Add button disabled forever → clicks
+    // silently do nothing. finally guarantees the button re-enables; catch
+    // guarantees every failure is visible instead of swallowed.
+    try {
+      console.log('[ltl] add →', form)
+      const res = await window.electronAPI.addRecommendation({
+        song: form.song.trim() || undefined,
+        artist: form.artist.trim() || undefined,
+        album: form.album.trim() || undefined,
+        note: form.note.trim() || undefined,
+      })
+      console.log('[ltl] add result', res)
+      if (!res?.ok) {
+        setNotice(
+          (res?.error?.includes('failed') || res?.error?.includes('fetch'))
+            ? "Couldn't reach the JakeTunes backend to save. Is the Mini up?"
+            : `Couldn't save recommendation${res?.error ? `: ${res.error}` : ''}.`,
+          { kind: 'error' }
+        )
+        return
+      }
+      setForm({ song: '', artist: '', album: '', note: '' })
+      setSuggestions([])
+      await load()
+    } catch (err) {
+      console.error('[ltl] add threw', err)
+      setNotice(`Add failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
+    } finally {
+      setAdding(false)
     }
-    setForm({ song: '', artist: '', album: '', note: '' })
-    setSuggestions([])
-    await load()
   }, [form, canAdd, adding, load])
 
   const handleDelete = useCallback(async (rec: Recommendation) => {
