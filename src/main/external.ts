@@ -342,17 +342,30 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
  *   - Brooklyn Vegan        — tour + release news, indie/rock heavy
  *   - Consequence           — broad music news
  *
- * Pitchfork "Best New Albums" still drives the cover-led "New This
- * Week" releases row — that section's content is correct, only the
- * news row needed the fix. */
+ * Pitchfork drives the cover-led "New This Week" releases row.
+ *
+ * 4.5.0: Pitchfork retired the legacy /rss/* paths. The old
+ * `/rss/reviews/best/albums/` (Best New Albums) now 404s, and
+ * `/rss/news/` 301-redirects to `/feed/feed-news/rss` (the news row
+ * kept working only because fetch follows redirects). There is no
+ * longer a Best-New-Albums-only feed — the granular feeds were
+ * collapsed into a single `/feed/feed-album-reviews/rss` that carries
+ * every album Pitchfork reviews, with no machine-readable "best new"
+ * marker to filter on. We use that whole feed for the releases row:
+ * everything Pitchfork chooses to review is a reasonable "notable
+ * release," and the card is cover-led so the lost BNA curation isn't
+ * visible. News URLs are pinned to their post-redirect targets to
+ * avoid the extra round-trip. */
 async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
   const cached = newsCache.get('all')
   if (cached) return cached
   const sources: { name: string; url: string; isReleaseReview: boolean }[] = [
-    // Notable Releases (cover-led card row on Home — already correct)
-    { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/reviews/best/albums/',         isReleaseReview: true },
-    // Music News (text-led card row on Home — 4.4.30 swap)
-    { name: 'Pitchfork',       url: 'https://pitchfork.com/rss/news/',                        isReleaseReview: false },
+    // Notable Releases (cover-led card row on Home). 4.5.0: all album
+    // reviews — the Best-New-Albums-only feed no longer exists.
+    { name: 'Pitchfork',       url: 'https://pitchfork.com/feed/feed-album-reviews/rss',      isReleaseReview: true },
+    // Music News (text-led card row on Home — 4.4.30 swap; 4.5.0 URL
+    // pinned to the post-301 target).
+    { name: 'Pitchfork',       url: 'https://pitchfork.com/feed/feed-news/rss',               isReleaseReview: false },
     { name: 'Stereogum',       url: 'https://www.stereogum.com/category/new-music/feed/',     isReleaseReview: false },
     { name: 'Brooklyn Vegan',  url: 'https://www.brooklynvegan.com/feed/',                    isReleaseReview: false },
     // 4.4.31: swapped from main /feed/ which includes TV/celebrity
@@ -571,15 +584,23 @@ export async function getMusicBrainzReleaseMbid(artist: string, album: string): 
 }
 
 // ───────────────────────────── 4.4.32: Bandsintown ─────────────────────────────
-// Tour dates per artist. No API key required — the Discovery API
-// accepts a free-form `app_id` string for attribution. Reasonable
-// non-commercial use is allowed per their TOS. Per-artist 24h cache;
-// aggregate cache keyed by the artist-set hash (so a stable top-N
-// list returns instantly until library or top order changes).
+// Tour dates per artist. Per-artist 24h cache; aggregate cache keyed
+// by the artist-set hash (so a stable top-N list returns instantly
+// until library or top order changes).
 //
 // Why Bandsintown and not Songkick: Bandsintown's free tier is more
 // permissive and the data quality is good for indie/alt acts which
 // dominate Jake's library.
+//
+// 4.5.0: the API no longer accepts arbitrary free-form app_id strings.
+// Unregistered IDs (including our old 'jaketunes-desktop', plus 'test',
+// 'jaketunes', '1', '123', …) now get an "explicit deny" auth error and
+// return zero events — which is why every artist silently showed no
+// tour dates. Registered numeric IDs still work. The durable fix is to
+// register an app_id at https://artists.bandsintown.com/ and set it via
+// the BANDSINTOWN_APP_ID env var; we default to '999' (Bandsintown's
+// long-standing public/demo ID, verified returning live data) so the
+// feature works out of the box.
 
 export interface TourDate {
   /** Artist name as queried (matches the input list, not BIT's normalization). */
@@ -596,7 +617,7 @@ export interface TourDate {
   imageUrl?: string
 }
 
-const BANDSINTOWN_APP_ID = 'jaketunes-desktop'
+const BANDSINTOWN_APP_ID = process.env.BANDSINTOWN_APP_ID || '999'
 const bandsintownPerArtistCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
 const bandsintownAggregateCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
 
