@@ -2,9 +2,19 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from '
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { setNotice } from '../activity'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { togglePreview, subscribePreview, getPreviewSnapshot } from '../previewPlayer'
 import type { Recommendation, ItunesSuggestion } from '../types'
 import '../styles/listen-to-the-list.css'
+
+// In-session cache of the list. MainContent unmounts this view on
+// navigation; without a cache the remount refetched from scratch and the
+// scroll reset to the top (the "forgets its spot" bug). Seeding state from
+// the cache renders the list instantly on return — so useScrollPersistence
+// restores the scroll against real content — while a background load()
+// refreshes. Optimistic add/delete keep the cache in sync. Dies with the
+// renderer (in-session only), which is what we want.
+let recsCache: Recommendation[] | null = null
 
 // Brief 122 Phase 1 — "Listen to the List". Mirrors the mobile app's
 // recommendations list on desktop and lets you add/delete from here too.
@@ -14,14 +24,22 @@ import '../styles/listen-to-the-list.css'
 // music library, its metadata, or its artwork — reco artwork is external
 // (iTunes) URLs.
 export default function ListenToTheListView() {
-  const [recs, setRecs] = useState<Recommendation[]>([])
-  const [loading, setLoading] = useState(true)
+  const [recs, setRecs] = useState<Recommendation[]>(recsCache ?? [])
+  const [loading, setLoading] = useState(recsCache === null)
   const [adding, setAdding] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Recommendation | null>(null)
   const [form, setForm] = useState({ song: '', artist: '', album: '', note: '' })
   // Preview plays in the now-playing pill (iTunes-style) via the shared
   // previewPlayer; this view just reflects which row is currently playing.
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
+
+  // recsRef mirrors the latest list for optimistic add/delete (so handlers
+  // don't need recs in their dep arrays). viewRef + useScrollPersistence
+  // remember the scroll position across unmount/remount.
+  const recsRef = useRef(recs)
+  recsRef.current = recs
+  const viewRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('listen-to-the-list', viewRef)
 
   // Brief 122 Phase 2 — iTunes autocomplete. As the song/artist fields are
   // typed, debounce a search and surface a live suggestion list. Picking a
@@ -35,7 +53,9 @@ export default function ListenToTheListView() {
 
   const load = useCallback(async () => {
     const res = await window.electronAPI.loadRecommendations()
-    setRecs(res.ok ? res.recommendations : [])
+    const list = res.ok ? res.recommendations : []
+    recsCache = list
+    setRecs(list)
     setLoading(false)
   }, [])
 
@@ -68,21 +88,40 @@ export default function ListenToTheListView() {
     e.preventDefault()
     if (!canAdd || adding) return
     setAdding(true)
-    // try/finally is load-bearing: without it, a thrown invoke (e.g. the
-    // IPC channel missing, or fetch rejecting) would skip setAdding(false),
-    // leaving `adding` stuck true → the Add button disabled forever → clicks
-    // silently do nothing. finally guarantees the button re-enables; catch
-    // guarantees every failure is visible instead of swallowed.
+
+    // Optimistic: show a provisional row + clear the form instantly so
+    // adding feels immediate. The Mini backend re-resolves iTunes metadata
+    // and returns the canonical, artwork-enriched record, which we swap in
+    // (no full reload). The provisional id is temp-* so we can find it.
+    const draft = { ...form }
+    const tempId = `temp-${Date.now()}`
+    const provisional: Recommendation = {
+      id: tempId,
+      song: draft.song.trim() || undefined,
+      artist: draft.artist.trim() || undefined,
+      album: draft.album.trim() || undefined,
+      note: draft.note.trim() || undefined,
+      createdAt: new Date().toISOString(),
+    }
+    const prev = recsRef.current
+    const withProvisional = [provisional, ...prev]
+    recsCache = withProvisional
+    setRecs(withProvisional)
+    setForm({ song: '', artist: '', album: '', note: '' })
+    setSuggestions([])
+
+    // try/finally is load-bearing: a thrown invoke would otherwise leave
+    // `adding` stuck true → Add button disabled forever. finally re-enables.
     try {
-      console.log('[ltl] add →', form)
       const res = await window.electronAPI.addRecommendation({
-        song: form.song.trim() || undefined,
-        artist: form.artist.trim() || undefined,
-        album: form.album.trim() || undefined,
-        note: form.note.trim() || undefined,
+        song: provisional.song, artist: provisional.artist,
+        album: provisional.album, note: provisional.note,
       })
-      console.log('[ltl] add result', res)
       if (!res?.ok) {
+        // Roll the provisional row back out + restore the form to retry.
+        recsCache = prev
+        setRecs(prev)
+        setForm(draft)
         setNotice(
           (res?.error?.includes('failed') || res?.error?.includes('fetch'))
             ? "Couldn't reach the JakeTunes backend to save. Is the Mini up?"
@@ -91,11 +130,20 @@ export default function ListenToTheListView() {
         )
         return
       }
-      setForm({ song: '', artist: '', album: '', note: '' })
-      setSuggestions([])
-      await load()
+      if (res.recommendation) {
+        const enriched = res.recommendation
+        setRecs((cur) => {
+          const swapped = cur.map((r) => (r.id === tempId ? enriched : r))
+          recsCache = swapped
+          return swapped
+        })
+      } else {
+        await load() // backend didn't echo the record — reconcile fully
+      }
     } catch (err) {
-      console.error('[ltl] add threw', err)
+      recsCache = prev
+      setRecs(prev)
+      setForm(draft)
       setNotice(`Add failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     } finally {
       setAdding(false)
@@ -103,13 +151,18 @@ export default function ListenToTheListView() {
   }, [form, canAdd, adding, load])
 
   const handleDelete = useCallback(async (rec: Recommendation) => {
+    // Optimistic: pull the row immediately, then confirm with the backend.
+    const prev = recsRef.current
+    const next = prev.filter((x) => x.id !== rec.id)
+    recsCache = next
+    setRecs(next)
     const res = await window.electronAPI.deleteRecommendation(rec.id)
     if (!res.ok) {
+      recsCache = prev
+      setRecs(prev) // put it back exactly where it was
       setNotice(`Couldn't delete${res.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
-      return
     }
-    await load()
-  }, [load])
+  }, [])
 
   const displayName = (rec: Recommendation) => {
     const title = rec.matchedTitle || rec.song
@@ -119,7 +172,7 @@ export default function ListenToTheListView() {
   }
 
   return (
-    <div className="ltl-view">
+    <div className="ltl-view" ref={viewRef}>
       <div className="ltl-header">
         <h1 className="ltl-title">Listen to the List</h1>
         <span className="ltl-count">{recs.length} {recs.length === 1 ? 'reco' : 'recos'}</span>
