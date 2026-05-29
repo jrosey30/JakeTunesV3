@@ -5,6 +5,7 @@ import ArtistsView from '../views/ArtistsView'
 import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
 import GenresView from '../views/GenresView'
+import ListenToTheListView from '../views/ListenToTheListView'
 import MusicManView from '../views/MusicManView'
 import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
@@ -46,6 +47,7 @@ export default function MainContent() {
     case 'artist-detail': viewElement = <ArtistDetailView />; break
     case 'albums': viewElement = <AlbumsView />; break
     case 'genres': viewElement = <GenresView />; break
+    case 'listen-to-the-list': viewElement = <ListenToTheListView />; break
     case 'musicman': break  // handled by the always-mounted wrapper below
     case 'playlist': viewElement = <PlaylistView />; break
     case 'smart-playlist': viewElement = <SmartPlaylistView />; break

@@ -1,0 +1,199 @@
+/* Brief 122 Phase 1 — "Listen to the List" view. Matches the light
+   brushed-metal aesthetic of the other library views (Genres etc.). */
+
+.ltl-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ltl-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px 6px;
+  flex-shrink: 0;
+}
+
+.ltl-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #2a2a2a;
+}
+
+.ltl-count {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+}
+
+/* Add form */
+.ltl-add {
+  display: flex;
+  gap: 6px;
+  padding: 6px 14px 10px;
+  border-bottom: 1px solid #c0c0c0;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.ltl-add-input {
+  flex: 1;
+  min-width: 90px;
+  padding: 4px 8px;
+  font-size: var(--font-body);
+  border: 1px solid #b0b0b0;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.ltl-add-note { flex: 2; min-width: 140px; }
+
+.ltl-add-input:focus {
+  outline: none;
+  border-color: #888;
+  box-shadow: 0 0 0 2px rgba(187, 67, 8, 0.15);
+}
+
+.ltl-add-btn {
+  padding: 4px 14px;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #fff;
+  background: #bb4308;
+  border: 1px solid #963505;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ltl-add-btn:disabled {
+  background: #c9c9c9;
+  border-color: #b0b0b0;
+  cursor: default;
+}
+
+/* List */
+.ltl-loading {
+  padding: 20px 14px;
+  font-size: var(--font-body);
+  color: var(--text-secondary);
+}
+
+.ltl-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ltl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #e2e2e2;
+}
+
+.ltl-row:hover { background: #f1f1f1; }
+
+.ltl-art {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e0e0e0;
+}
+
+.ltl-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.ltl-art-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: #a0a0a0;
+}
+
+.ltl-preview-btn {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.42);
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.ltl-art:hover .ltl-preview-btn,
+.ltl-preview-btn--playing { opacity: 1; }
+
+.ltl-meta { flex: 1; min-width: 0; }
+
+.ltl-name {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #2a2a2a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-album {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-note {
+  font-size: var(--font-label);
+  color: #555;
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.ltl-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+}
+
+.ltl-date {
+  font-size: var(--font-label);
+  color: #999;
+}
+
+.ltl-link {
+  font-size: var(--font-label);
+  color: #bb4308;
+  text-decoration: none;
+}
+
+.ltl-link:hover { text-decoration: underline; }
+
+.ltl-delete {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  color: #999;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ltl-row:hover .ltl-delete { opacity: 1; }
+.ltl-delete:hover { background: #e0e0e0; color: #c0392b; }

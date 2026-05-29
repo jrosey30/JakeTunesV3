@@ -15,6 +15,7 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
   artists: <ArtistsIcon />,
   albums: <AlbumsIcon />,
   genres: <GenresIcon />,
+  'listen-to-the-list': <ListenIcon />,
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
@@ -25,6 +26,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
   { label: 'Genres', view: 'genres' },
+  { label: 'Listen to the List', view: 'listen-to-the-list' },
   { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
 
@@ -106,6 +108,16 @@ function GenresIcon() {
       <rect x="6.5" y="1" width="4.5" height="4.5" rx="0.8" />
       <rect x="1" y="6.5" width="4.5" height="4.5" rx="0.8" />
       <rect x="6.5" y="6.5" width="4.5" height="4.5" rx="0.8" />
+    </svg>
+  )
+}
+
+function ListenIcon() {
+  // List lines with a play glyph — "Listen to the List".
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={ICON_GREEN} strokeWidth="1.2">
+      <path d="M1 2.5h7M1 5.5h7M1 8.5h4" strokeLinecap="round" />
+      <path d="M8.4 7.2v3.2l2.6-1.6z" fill={ICON_GREEN} stroke="none" />
     </svg>
   )
 }

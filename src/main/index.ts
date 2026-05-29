@@ -8792,6 +8792,73 @@ ipcMain.handle('read-playlist-additions', async (): Promise<{ ok: boolean; addit
   }
 })
 
+// Brief 122 — "Listen to the List". recommendations.json is a bare JSON
+// array of Recommendation objects, written next to library.json on the
+// NAS by the Mini backend (the single writer). We read it FRESH on every
+// invoke (no JsonFileCache): the file is tiny and only read when the view
+// opens or right after an edit, so freshness > caching here — a cached
+// copy would go stale the moment a desktop or mobile edit lands.
+interface RecommendationRecord {
+  id: string
+  song?: string
+  artist?: string
+  album?: string
+  note?: string
+  createdAt: string
+  artworkUrl?: string
+  appleMusicUrl?: string
+  previewUrl?: string
+  matchedTitle?: string
+  matchedArtist?: string
+  matchedAlbum?: string
+  resolvedAt?: string
+}
+// The Mini backend owns add/delete (keeps its in-memory cache coherent and
+// runs the iTunes Search enrichment). Reachable on the tailnet; override
+// for a local dev backend via JAKETUNES_MOBILE_BACKEND.
+const MOBILE_BACKEND_URL = process.env.JAKETUNES_MOBILE_BACKEND || 'http://homemini:3000'
+
+ipcMain.handle('read-recommendations', async (): Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> => {
+  try {
+    const raw = await readFile(join(STATE_DIR, 'recommendations.json'), 'utf-8')
+    const parsed = JSON.parse(raw) as unknown
+    const recommendations = Array.isArray(parsed) ? (parsed as RecommendationRecord[]) : []
+    // Newest first, matching the backend's GET /api/recommendations sort.
+    recommendations.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    return { ok: true, recommendations }
+  } catch {
+    // Missing/torn file (first run) → empty list, never throws.
+    return { ok: true, recommendations: [] }
+  }
+})
+
+ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string }> => {
+  try {
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) return { ok: false, error: `backend ${res.status}` }
+    const recommendation = (await res.json()) as RecommendationRecord
+    return { ok: true, recommendation }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'request failed' }
+  }
+})
+
+ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) return { ok: false, error: `backend ${res.status}` }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'request failed' }
+  }
+})
+
 ipcMain.handle('load-metadata-overrides', async () => {
   // 4.5.0-106: served from in-memory cache after first load (≤1ms vs the
   // 50-500ms NAS round-trip pre-cache). Cache is the source of truth from

@@ -90,7 +90,28 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list'
+
+// Brief 122 — a "Listen to the List" recommendation. User-authored "jot
+// it down" entries, owned by the mobile backend (recommendations.json on
+// the NAS, next to library.json) and mirrored to desktop. The optional
+// matched* / *Url fields are filled by the backend's iTunes Search
+// resolve at creation time (Brief 094); absent when no confident match.
+export interface Recommendation {
+  id: string
+  song?: string
+  artist?: string
+  album?: string
+  note?: string
+  createdAt: string
+  artworkUrl?: string
+  appleMusicUrl?: string
+  previewUrl?: string
+  matchedTitle?: string
+  matchedArtist?: string
+  matchedAlbum?: string
+  resolvedAt?: string
+}
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -332,6 +353,12 @@ declare global {
       loadMobileStars: () => Promise<{ ok: boolean; trackIds: string[] }>
       loadMobilePlaylists: () => Promise<{ ok: boolean; playlists: Array<{ id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }> }>
       loadPlaylistAdditions: () => Promise<{ ok: boolean; additions: Record<string, string[]> }>
+      // Brief 122 — "Listen to the List". Read mirrors recommendations.json
+      // from the NAS state dir; add/delete route through the Mini backend
+      // so it stays the single writer (cache-coherent + iTunes-enriched).
+      loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
+      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string }>
+      deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

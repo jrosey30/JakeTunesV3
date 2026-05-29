@@ -169,6 +169,13 @@ const electronAPI = {
     ipcRenderer.invoke('read-mobile-playlists'),
   loadPlaylistAdditions: (): Promise<{ ok: boolean; additions: Record<string, string[]> }> =>
     ipcRenderer.invoke('read-playlist-additions'),
+  // Brief 122 — "Listen to the List". Read mirrors recommendations.json
+  // (next to library.json on the NAS); add/delete route through the Mini
+  // backend so it stays the single writer.
+  loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) =>
+    ipcRenderer.invoke('add-recommendation', input),
+  deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   // 4.5.0-82 — windowed play counts derived from the per-play event
   // log. Returns { trackIdString: count } for plays in the last
   // `windowMs` ms. Used by Top 25's Last Week / Last Month views to
