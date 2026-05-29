@@ -22,9 +22,18 @@ import { join, dirname } from 'path'
 import { randomBytes } from 'crypto'
 import type { ShelfBundle, Blurb, Persona } from './types'
 
+const RECORD_STORE_DIR = 'record-store'
 const SUB_SHELVES = 'shelves'
 const SUB_BLURBS = 'blurbs'
 const SUB_THEMES = 'day-themes'
+
+/** The on-disk root for everything this feature persists, under the
+ *  JakeTunes user-data dir. Exported so sibling modules (e.g.
+ *  external-context) write under the same tree without re-hardcoding
+ *  the segment name. */
+export function recordStoreBaseDir(userDataDir: string): string {
+  return join(userDataDir, RECORD_STORE_DIR)
+}
 
 /** Slug a blurb item id into a safe filename (max one disk hop). */
 function blurbFilename(itemId: string): string {
@@ -34,7 +43,10 @@ function blurbFilename(itemId: string): string {
 /** Single-flight write map. Keyed by absolute path. */
 const writeInflight = new Map<string, Promise<void>>()
 
-async function atomicWriteJson(filePath: string, payload: unknown): Promise<void> {
+/** Atomic, single-flight JSON write (tmp file + rename). Exported so
+ *  sibling modules persist with the same crash-safety guarantees
+ *  instead of growing a second copy of this logic. */
+export async function atomicWriteJson(filePath: string, payload: unknown): Promise<void> {
   const prior = writeInflight.get(filePath)
   if (prior) {
     // Chain after the prior write so we never have two renames racing
@@ -55,7 +67,10 @@ async function atomicWriteJson(filePath: string, payload: unknown): Promise<void
   }
 }
 
-async function readJsonOrNull<T>(filePath: string): Promise<T | null> {
+/** Defensive JSON read. Missing file → null. Corrupt file (truncated
+ *  by a crash mid-write) → unlink + null so the caller regenerates.
+ *  Exported for sibling modules that keep their own cache files. */
+export async function readJsonOrNull<T>(filePath: string): Promise<T | null> {
   try {
     const raw = await readFile(filePath, 'utf-8')
     return JSON.parse(raw) as T
