@@ -160,7 +160,8 @@ export default function ListenToTheListView() {
                   : <span className="ltl-suggest-art ltl-suggest-art--ph" aria-hidden="true">♪</span>}
                 <span className="ltl-suggest-text">
                   <span className="ltl-suggest-song">{s.song}</span>
-                  <span className="ltl-suggest-artist">{s.artist}{s.album ? ` · ${s.album}` : ''}</span>
+                  <span className="ltl-suggest-artist">{s.artist}</span>
+                  {s.album && <span className="ltl-suggest-album">{s.album}</span>}
                 </span>
               </button>
             ))}

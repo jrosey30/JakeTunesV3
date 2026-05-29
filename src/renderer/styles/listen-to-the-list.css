@@ -130,7 +130,7 @@
   font-size: 16px;
 }
 
-.ltl-suggest-text { display: flex; flex-direction: column; min-width: 0; }
+.ltl-suggest-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 
 .ltl-suggest-song {
   font-size: var(--font-body);
@@ -140,7 +140,19 @@
   text-overflow: ellipsis;
 }
 
+/* Artist is the differentiator when every result shares the same title
+   (e.g. "Bulls on Parade" by RATM vs. a cover band) — make it bold and
+   dark so it can't be misread for the wrong artist. */
 .ltl-suggest-artist {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #bb4308;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-suggest-album {
   font-size: var(--font-label);
   color: var(--text-secondary);
   white-space: nowrap;
