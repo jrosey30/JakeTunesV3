@@ -17,7 +17,7 @@ import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
 import ConfirmDialog from './components/ConfirmDialog'
 import BandcampImportToast from './components/BandcampImportToast'
-import { initRecentlyAdded } from './state/recentlyAdded'
+import { initRecentlyAdded, isRecentlyAdded } from './state/recentlyAdded'
 import {
   enqueueFiles,
   onTrackImported,
@@ -1218,7 +1218,23 @@ function AppInner() {
         // playback — the audio engine has the source of truth for that
         // track's playback state.
         const currentTracks = libStateRef.current.tracks
-        const newTracks = r.tracks
+        // Rescue just-imported tracks the disk copy doesn't have yet. A
+        // Bandcamp/squid import adds the track to memory immediately but
+        // only persists via the 1s-debounced saveLibrary; if an external
+        // write (NAS/Mini sync, or the import's own write) fires the
+        // library watcher inside that window, this reload reads a
+        // library.json WITHOUT the fresh track and the count-mismatch
+        // branch below would SET_TRACKS it away — the "album appears then
+        // disappears post-download" bug. recentlyAdded marks imports for
+        // 10s (well past the 1s save), so keep any such track that's
+        // missing from disk; the next reload after the save has it and
+        // this is a no-op.
+        const diskIds = new Set(r.tracks.map(t => t.id))
+        const rescued = currentTracks.filter(t => !diskIds.has(t.id) && isRecentlyAdded(t.id))
+        if (rescued.length > 0) {
+          console.log('[lib-reload] rescued', rescued.length, 'just-imported track(s) missing from disk reload')
+        }
+        const newTracks = rescued.length > 0 ? [...r.tracks, ...rescued] : r.tracks
         const nowPlayingId = pbStateRef.current.nowPlaying?.id
 
         // Large structural change → fall back to SET_TRACKS so things
