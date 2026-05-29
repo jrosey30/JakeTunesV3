@@ -89,6 +89,14 @@ const ALL_COLUMN_DEFS: ColDef[] = [
 // Columns that cannot be hidden
 const ALWAYS_VISIBLE = new Set(['playing', 'title'])
 
+// Idle window before the library re-follows the playing track. Any
+// library action (scroll, click, sort, keyboard nav) resets this clock;
+// only after this long with NO activity does the now-playing track snap
+// to the top. Deliberately long so browsing is never yanked away.
+const FOLLOW_IDLE_MS = 15000
+// Fixed row height (px) — matches the value passed to useVirtualScroll.
+const ROW_HEIGHT = 19
+
 export default function SongsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
@@ -489,15 +497,14 @@ export default function SongsView() {
   const typeBuffer = useRef('')
   const typeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Scroll a row into view
+  // Scroll a row just into view (nearest edge). Used by keyboard nav.
   const scrollToIdx = useCallback((idx: number) => {
     const el = containerRef.current
     if (!el) return
-    const rowH = 19
     const scrollTop = el.scrollTop
     const viewH = el.clientHeight
-    const rowTop = idx * rowH
-    const rowBottom = rowTop + rowH
+    const rowTop = idx * ROW_HEIGHT
+    const rowBottom = rowTop + ROW_HEIGHT
     if (rowTop < scrollTop) {
       el.scrollTop = rowTop
     } else if (rowBottom > scrollTop + viewH) {
@@ -505,24 +512,73 @@ export default function SongsView() {
     }
   }, [containerRef])
 
-  // Auto-follow now-playing (4.0). When the playing track changes (e.g.
-  // shuffle moves to next song) and the user has been idle for >5s,
-  // scroll the new now-playing row into view. Programmatic scrolls
-  // are gated by isAutoScrollAtRef so they don't register as user
-  // activity in the wrapped onScroll handler.
+  // Scroll a row to the TOP of the viewport. Used by the idle auto-follow
+  // so the now-playing track lands at the top of the list (browser clamps
+  // at the scroll max, so a track near the end sits as high as it can).
+  const scrollIdxToTop = useCallback((idx: number) => {
+    const el = containerRef.current
+    if (!el) return
+    el.scrollTop = idx * ROW_HEIGHT
+  }, [containerRef])
+
+  // Auto-follow now-playing. The list re-centers the playing track at the
+  // TOP, but ONLY after the user has been idle in the library for
+  // FOLLOW_IDLE_MS. ANY library action (scroll, click, sort, keyboard
+  // nav) calls markActivity, which resets the idle clock AND restarts the
+  // countdown — so browsing is never yanked away mid-scroll. Two triggers
+  // keep the playing track on top while idle:
+  //   1. an idle timer — re-centers FOLLOW_IDLE_MS after you stop, even if
+  //      the track never changed; and
+  //   2. a track-change effect — follows shuffle/next while still idle.
+  // Programmatic auto-scrolls set isAutoScrollAtRef so the resulting
+  // scroll event isn't mistaken for user activity.
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
-  const FOLLOW_IDLE_MS = 5000
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+  // Refs mirror the latest values so the idle timer's (stale) setTimeout
+  // closure always reads current state when it eventually fires.
+  const sortedRef = useRef(sorted)
+  sortedRef.current = sorted
+  const nowPlayingIdRef = useRef(pb.nowPlaying?.id)
+  nowPlayingIdRef.current = pb.nowPlaying?.id
+  const currentViewRef = useRef(lib.currentView)
+  currentViewRef.current = lib.currentView
+
+  const followNowPlayingTop = useCallback(() => {
+    if (currentViewRef.current !== 'songs') return
+    const id = nowPlayingIdRef.current
+    if (id == null) return
+    const idx = sortedRef.current.findIndex(t => t.id === id)
+    if (idx < 0) return
+    isAutoScrollAtRef.current = Date.now()
+    scrollIdxToTop(idx)
+  }, [scrollIdxToTop])
+
+  const markActivity = useCallback(() => {
+    lastUserActivityAtRef.current = Date.now()
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+    idleTimerRef.current = setTimeout(followNowPlayingTop, FOLLOW_IDLE_MS)
+  }, [followNowPlayingTop])
+
+  const handleScroll = useCallback((_e: React.UIEvent<HTMLDivElement>) => {
     onScroll()
     // Skip activity update if this scroll was triggered by our own
     // auto-follow (within 200ms of the programmatic scrollTop write).
     if (Date.now() - isAutoScrollAtRef.current > 200) {
-      lastUserActivityAtRef.current = Date.now()
+      markActivity()
     }
-  }, [onScroll])
+  }, [onScroll, markActivity])
 
+  // Start the idle countdown when the view mounts; clear it on unmount so
+  // a pending snap never fires into a dead component.
+  useEffect(() => {
+    markActivity()
+    return () => { if (idleTimerRef.current) clearTimeout(idleTimerRef.current) }
+  }, [markActivity])
+
+  // Track-change follow: when the playing track changes while the user is
+  // still idle (>= FOLLOW_IDLE_MS), keep the new track pinned to the top.
   useEffect(() => {
     if (lib.currentView !== 'songs') return
     if (!pb.nowPlaying) return
@@ -530,8 +586,8 @@ export default function SongsView() {
     const idx = sorted.findIndex(t => t.id === pb.nowPlaying!.id)
     if (idx < 0) return
     isAutoScrollAtRef.current = Date.now()
-    scrollToIdx(idx)
-  }, [pb.nowPlaying?.id, lib.currentView, sorted, scrollToIdx])
+    scrollIdxToTop(idx)
+  }, [pb.nowPlaying?.id, lib.currentView, sorted, scrollIdxToTop])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -540,6 +596,9 @@ export default function SongsView() {
 
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+
+      // Keyboard interaction is library activity — reset the idle clock.
+      markActivity()
 
       // Delete/Backspace = delete selected tracks
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdsRef.current.size > 0) {
@@ -617,7 +676,7 @@ export default function SongsView() {
     // before any intermediate element can consume the event
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [sorted, libDispatch, playTrack, scrollToIdx])
+  }, [sorted, libDispatch, playTrack, scrollToIdx, markActivity])
 
   // Cmd+I → open Get Info for selected tracks
   useEffect(() => {
@@ -713,7 +772,7 @@ export default function SongsView() {
   }, [])
 
   return (
-    <div className="songs-view" ref={viewRef}>
+    <div className="songs-view" ref={viewRef} onPointerDownCapture={markActivity}>
       <div
         className="songs-header"
         style={{ gridTemplateColumns: gridTemplate }}
