@@ -8980,19 +8980,29 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
 })
 
 // Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
-// One Sonnet call grounded in the user's taste (top library artists/genres)
-// and the existing list (so it never repeats). Returns 3 {song,artist,note}.
-// claudeCall handles the daily ceiling + cached fallback; any failure is
-// fail-soft (ok:false → the UI just shows no suggestions).
+// This is a DISCOVERY list: the suggestions must be music the user does NOT
+// already own — new-to-them artists in the lineage of what they love. The
+// prompt steers toward that, and a HARD library filter guarantees it: any
+// suggestion by an artist already in the collection (or an exact owned
+// song) is dropped. We over-generate (8) so ≥3 survive the filter. Returns
+// up to 3 {song,artist,note}. claudeCall handles the daily ceiling + cached
+// fallback; any failure is fail-soft (ok:false → the UI shows no strip).
 ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }> => {
   try {
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; genre?: string; playCount?: number }> }
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; title?: string; genre?: string; playCount?: number }> }
     const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
     const playsByArtist = new Map<string, number>()
     const playsByGenre = new Map<string, number>()
+    const ownedArtists = new Set<string>() // normalized — every artist in the library
+    const ownedSongs = new Set<string>()   // normalized artist|title
     for (const t of tracks) {
       const a = (t.albumArtist || t.artist || '').trim()
-      if (a) playsByArtist.set(a, (playsByArtist.get(a) ?? 0) + (Number(t.playCount) || 0))
+      if (a) {
+        playsByArtist.set(a, (playsByArtist.get(a) ?? 0) + (Number(t.playCount) || 0))
+        ownedArtists.add(norm(a))
+        if (t.title) ownedSongs.add(`${norm(a)}|${norm(t.title)}`)
+      }
       const g = (t.genre || '').trim()
       if (g) playsByGenre.set(g, (playsByGenre.get(g) ?? 0) + (Number(t.playCount) || 0))
     }
@@ -9012,17 +9022,18 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
     } catch { /* no list yet */ }
 
     const user = [
-      `Top artists in this collection: ${topArtists.join(', ') || '(unknown)'}.`,
+      `Artists this person ALREADY OWNS and loves: ${topArtists.join(', ') || '(unknown)'}.`,
       topGenres.length ? `Genres in rotation: ${topGenres.join(', ')}.` : '',
-      existing.length ? `Already on their Listen-to-the-List — do NOT repeat any of these: ${existing.join('; ')}.` : '',
+      existing.length ? `Already on their Listen-to-the-List: ${existing.join('; ')}.` : '',
       '',
-      'Suggest exactly 3 records they should add to their Listen-to-the-List — music to go check out that fits their taste but ISN\'T the obvious #1-artist pick. Pull from adjacent corners, deep cuts, or the lineage of what they already love. Each suggestion: a real song + artist, plus a one-sentence note in your voice on why it belongs there.',
-      'Return ONLY JSON, no prose, no code fence: [{"song":"...","artist":"...","note":"..."},{"song":"...","artist":"...","note":"..."},{"song":"...","artist":"...","note":"..."}]',
+      'This is a DISCOVERY list. Suggest 8 records they almost certainly do NOT own yet — artists NEW to this collection that sit in the lineage of, or just adjacent to, what they love (their influences, contemporaries, the bands they inspired or ripped off, the deeper scene). Do NOT suggest any artist listed above, and nothing already on the list — they HAVE those. The entire point is music they have not heard.',
+      'Each: a real song + the artist + a one-sentence note in your voice on why it\'s the right next step for them.',
+      'Return ONLY JSON, no prose, no code fence: an array of 8 objects [{"song":"...","artist":"...","note":"..."}, ...].',
     ].filter(Boolean).join('\n')
 
     const reply = await claudeCall('listen-list:suggest', {
       model: 'claude-sonnet-4-6',
-      max_tokens: 500,
+      max_tokens: 900,
       system: MUSIC_MAN_CORE,
       messages: [{ role: 'user', content: user }],
     })
@@ -9032,8 +9043,12 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
     const parsed = JSON.parse((fence ? fence[1] : text).trim()) as Array<{ song?: unknown; artist?: unknown; note?: unknown }>
     const suggestions = (Array.isArray(parsed) ? parsed : [])
       .map((s) => ({ song: String(s.song || '').trim(), artist: String(s.artist || '').trim(), note: String(s.note || '').trim() }))
-      .filter((s) => s.song || s.artist)
+      .filter((s) => s.song && s.artist)
+      // HARD guarantee: never suggest music they already own — drop any
+      // artist already in the library, or any exact owned song.
+      .filter((s) => !ownedArtists.has(norm(s.artist)) && !ownedSongs.has(`${norm(s.artist)}|${norm(s.song)}`))
       .slice(0, 3)
+    if (suggestions.length === 0) console.warn('[reco] suggest: all candidates were already owned/filtered')
     return { ok: true, suggestions }
   } catch (err) {
     console.error('[reco] suggest failed:', err instanceof Error ? err.message : err)
