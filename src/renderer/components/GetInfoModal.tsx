@@ -47,7 +47,12 @@ export default function GetInfoModal({
   onSetCustomArt,
 }: GetInfoModalProps) {
   const isMulti = tracks.length > 1
-  const [currentIdx, setCurrentIdx] = useState(initialIndex)
+  // 4.5.0-115: track the song being edited by STABLE ID, not list position.
+  // Before, currentIdx indexed into allTracks — so an import (or re-sort)
+  // that changed allTracks slid a DIFFERENT track under the open modal and
+  // you could edit the wrong song. Anchoring on the id keeps the same song
+  // in view (and the same edits attached to it) regardless of list churn.
+  const [currentId, setCurrentId] = useState<number | null>(() => allTracks[initialIndex]?.id ?? null)
   const [editedFields, setEditedFields] = useState<Record<string, string>>({})
   // Accumulated edits from prev/next navigation, keyed by track id
   const [allEdits, setAllEdits] = useState<Record<number, Record<string, string>>>({})
@@ -58,7 +63,10 @@ export default function GetInfoModal({
   const isInitialMount = useRef(true)
   const userInteractedRef = useRef(false)
 
-  const currentTrack = isMulti ? null : allTracks[currentIdx]
+  // Index is DERIVED from the id (re-resolved every render), so it follows
+  // the song as the list changes. -1 means the song was removed from the list.
+  const currentIdx = currentId != null ? allTracks.findIndex((t) => t.id === currentId) : -1
+  const currentTrack = isMulti ? null : (currentIdx >= 0 ? allTracks[currentIdx] : null)
 
   // Focus first input on mount and after navigation. Auto-select-all only
   // on initial open (iTunes convention — type to overwrite title); on
@@ -84,12 +92,18 @@ export default function GetInfoModal({
       window.removeEventListener('mousedown', onUserInteract, { capture: true })
       window.removeEventListener('focusin', onUserInteract, { capture: true })
     }
-  }, [currentIdx])
+  }, [currentId])
 
   // Reset per-track edits when navigating
   useEffect(() => {
     setEditedFields({})
-  }, [currentIdx])
+  }, [currentId])
+
+  // If the song being edited is removed from the list while the modal is open
+  // (e.g. deleted elsewhere), close instead of rendering an empty/stale form.
+  useEffect(() => {
+    if (!isMulti && currentId != null && currentIdx < 0) onClose()
+  }, [isMulti, currentId, currentIdx, onClose])
 
   const getFieldValue = useCallback(
     (field: string): string => {
@@ -182,16 +196,16 @@ export default function GetInfoModal({
   const goPrev = useCallback(() => {
     if (currentIdx > 0) {
       commitCurrentEdits()
-      setCurrentIdx((i) => i - 1)
+      setCurrentId(allTracks[currentIdx - 1]?.id ?? null)
     }
-  }, [currentIdx, commitCurrentEdits])
+  }, [currentIdx, allTracks, commitCurrentEdits])
 
   const goNext = useCallback(() => {
-    if (currentIdx < allTracks.length - 1) {
+    if (currentIdx >= 0 && currentIdx < allTracks.length - 1) {
       commitCurrentEdits()
-      setCurrentIdx((i) => i + 1)
+      setCurrentId(allTracks[currentIdx + 1]?.id ?? null)
     }
-  }, [currentIdx, allTracks.length, commitCurrentEdits])
+  }, [currentIdx, allTracks, commitCurrentEdits])
 
   // Keyboard: Escape to close, Enter to save
   useEffect(() => {
