@@ -2517,6 +2517,26 @@ function scheduleDbRebuild(deletedPaths: string[]) {
   }, 1500)
 }
 
+// 4.5.0-114: best-effort async backup mirror of library.json to the NAS.
+// Local is the source of truth; this keeps an off-machine copy current
+// WITHOUT ever being on the hot path. If the NAS isn't mounted or the write
+// tears, it's a harmless no-op — the app never reads the NAS, so a stale or
+// missing mirror can't cause empty-display or loss. tmp+rename for atomicity
+// when it does land.
+async function mirrorLibraryToNas(library: unknown): Promise<void> {
+  try {
+    const { existsSync } = await import('fs')
+    if (!existsSync(NAS_STATE_DIR_PATH)) return
+    const nasPath = join(NAS_STATE_DIR_PATH, 'library.json')
+    const tmp = nasPath + '.mirror.tmp'
+    await writeFile(tmp, JSON.stringify(library, null, 2))
+    const { rename: renameFS } = await import('fs/promises')
+    await renameFS(tmp, nasPath)
+  } catch (err) {
+    console.warn('[mirror] NAS backup push skipped/failed (harmless — local is truth):', err instanceof Error ? err.message : err)
+  }
+}
+
 ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
   // Bug #1 guard: if we booted in local-fallback mode and NAS later
   // reappeared, our in-memory tracks are stale relative to whatever
@@ -2667,6 +2687,12 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
         console.error('[save-library] self-heal direct write also failed:', healErr)
       }
     }
+
+    // 4.5.0-114: async best-effort backup mirror to the NAS. Local is the
+    // source of truth; this just keeps an off-machine copy current. Fire-and-
+    // forget — never blocks the save, never affects local, so a flaky/torn
+    // NAS write here is harmless (the app never reads the NAS).
+    void mirrorLibraryToNas(library)
 
     // Disk now reflects the current library — the session-level
     // fingerprint set existed only to bridge the gap between an

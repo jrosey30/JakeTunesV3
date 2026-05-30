@@ -1,112 +1,59 @@
 /**
- * 4.5.0-90 — Phase 2: NAS as single source of truth for STATE files.
+ * 4.5.0-114 — LOCAL is the source of truth.
  *
- * Seven files belong to the canonical app state and now live primarily
- * on the Synology mount at /Volumes/JakeShared/JakeTunesState/:
+ * History: 4.5.0-90 made the NAS (Synology /Volumes/JakeShared/JakeTunesState)
+ * the single source of truth for state files. That put a flaky SMB link on the
+ * app's hot read/write path, and on 2026-05-29/30 it caused two P0 incidents:
+ * a torn write left library.json missing ("library deleted"), and flaky reads
+ * at boot loaded an empty library ("0 songs").
  *
- *   library.json              — track metadata (the master)
- *   metadata-overrides.json   — Get Info edits + analysis fields
- *   playlists.json            — user playlists
- *   mobile-stars.json         — iOS-set stars (Brief 054)
- *   mobile-plays.json         — iOS-recorded play counts
- *   mobile-playlists.json     — iOS-created playlists (Brief 121, read-only on V3)
- *   playlist-additions.json   — iOS-side additions to V3 playlists (Brief 121, read-only on V3)
- *   play-events.jsonl         — per-play event log (4.5.0-82)
- *   embeddings.bin            — per-track embeddings (4.5.0-87)
+ * Fix: the canonical state lives on the LOCAL SSD (app.getPath('userData')).
+ * Reads and writes go there — a local read cannot tear. The NAS is demoted to
+ * an async, best-effort BACKUP MIRROR (see mirrorLibraryToNas in index.ts):
+ * the app copies to it AFTER a successful local save, off the hot path, and
+ * NEVER reads from it or blocks on it. A flaky NAS therefore can no longer
+ * cause empty-display or data loss — the app never depends on it to run.
  *
- * Music files are NOT moved (Phase 3 territory) — they stay on the
- * local SSD for playback latency.
- *
- * Resolution rule: at module-boot we probe whether the NAS state dir
- * is mounted. If yes, every reader/writer in the app uses that path.
- * If not, fall back to `app.getPath('userData')` (the legacy location)
- * — the app continues working from local copies and the user can
- * manually re-sync to NAS once it's back.
- *
- * Why module-boot (not per-call): the SMB mount usually stays up. A
- * one-shot detection at app start gives every code path a stable,
- * single value to work with — no risk of one reader picking NAS and
- * a subsequent writer picking local because the mount dropped between
- * those microseconds. The trade-off is that a mid-session mount drop
- * means failed writes until app restart, which the existing retry +
- * error-handling already tolerates.
+ * Trade-off vs the old NAS-primary model: cross-machine sync (homemini/
+ * workmini sharing one NAS state dir) is looser — each machine is now
+ * local-authoritative and the NAS holds this machine's latest mirror.
+ * Accepted deliberately (the laptop is primary; the NAS was the loss source).
  *
  * Imported by:
- *   - src/main/index.ts (all 5 state-file path constants/getters)
+ *   - src/main/index.ts (all state-file path constants/getters)
  *   - src/main/ai/embeddings.ts (the embeddings.bin path)
  */
 
 import { app } from 'electron'
-import { existsSync } from 'fs'
 
 const NAS_STATE_DIR = '/Volumes/JakeShared/JakeTunesState'
 
-function detectStateDir(): string {
-  try {
-    if (existsSync(NAS_STATE_DIR)) return NAS_STATE_DIR
-  } catch {
-    /* mount stale or denied — fall through to local */
-  }
-  return app.getPath('userData')
-}
+/** Local SSD — the single source of truth for every state file, for the
+ *  entire process lifetime. Resolved once at module init. */
+export const STATE_DIR = app.getPath('userData')
 
-/** Resolved at module-init. Single value used by every state-file
- *  path in the app for this entire process lifetime. */
-export const STATE_DIR = detectStateDir()
+/** Always false now: state is local-primary. Retained so existing callers /
+ *  UI badges that reference it keep compiling. */
+export const STATE_IS_NAS = false
 
-/** True when STATE_DIR resolved to the NAS path. Useful for UI badges
- *  ("Storage: NAS" vs "Storage: local cache"). */
-export const STATE_IS_NAS = STATE_DIR === NAS_STATE_DIR
-
-/** The canonical NAS path — exported so callers can still construct
- *  fallback paths or surface it in the UI. */
+/** The NAS path — used ONLY as the async backup-mirror target, never read. */
 export const NAS_STATE_DIR_PATH = NAS_STATE_DIR
 
-// ── Data-loss guard: refuse to overwrite NAS with stale local state ──
-//
-// The bug this prevents: this machine boots with NAS unmounted, falls back
-// to local. While running, NAS comes back up (or was actually mounted all
-// along but briefly flaky at boot). Other machines (workmini, homemini)
-// have been writing to NAS in the meantime — those edits are NOT in our
-// in-memory state. Without this guard, the next save here would overwrite
-// NAS with our stale snapshot, silently destroying the other-machine work.
-//
-// Behaviour: if we booted in local-fallback mode AND NAS later becomes
-// reachable, set a one-way save lock. Every save handler checks `isSaveLocked()`
-// at the top and refuses the write, emitting `state-save-locked` so the
-// renderer can surface a banner. The lock stays until app restart — we
-// don't try to magically reconnect because in-memory state is stale
-// relative to NAS and we can't merge safely.
-let saveLockReason: string | null = null
+/**
+ * Saves are never locked under local-primary: the local copy is authoritative,
+ * so there is no "stale local vs newer NAS" hazard to guard against (that guard
+ * is what would freeze saves when the NAS remounted). Kept as a no-op export so
+ * the save handlers that call it keep working.
+ */
+export function isSaveLocked(): string | null { return null }
 
-/** Returns the lock reason string if saves are locked, else null. */
-export function isSaveLocked(): string | null { return saveLockReason }
-
-/** One-way lock. Idempotent; only the first call records the reason. */
-function lockSaves(reason: string): void {
-  if (saveLockReason) return
-  saveLockReason = reason
-  console.warn(`[state] SAVES LOCKED: ${reason}`)
-}
-
-/** Start the NAS-reconnect watcher. Only effective when we booted in
- *  local-fallback mode (STATE_IS_NAS=false). The watcher polls every 5s
- *  for the NAS mount; the first time it appears, saves get locked.
- *  `onLock` lets the caller emit an IPC event to the renderer. */
-export function startNasReconnectWatcher(onLock: (reason: string) => void): void {
-  if (STATE_IS_NAS) return  // booted on NAS; mount drops are handled at the save-error layer
-  let timer: NodeJS.Timeout | null = setInterval(() => {
-    if (saveLockReason) {
-      if (timer) { clearInterval(timer); timer = null }
-      return
-    }
-    try {
-      if (existsSync(NAS_STATE_DIR)) {
-        const reason = 'NAS reconnected while running in local-fallback mode. Saves refused to prevent overwriting NAS with stale state. Restart JakeTunes to resync from NAS.'
-        lockSaves(reason)
-        try { onLock(reason) } catch { /* renderer might not be ready; we still log */ }
-      }
-    } catch { /* still unreachable */ }
-  }, 5000)
-  timer.unref()
+/**
+ * No-op under local-primary. The old watcher locked saves when the NAS
+ * reappeared (to avoid clobbering other-machine edits on the shared NAS). With
+ * local as the source of truth that hazard is gone, and locking saves on a NAS
+ * remount is exactly the misbehavior we're removing. Signature preserved for
+ * the bootstrap caller.
+ */
+export function startNasReconnectWatcher(_onLock: (reason: string) => void): void {
+  /* intentionally empty — local-primary */
 }
