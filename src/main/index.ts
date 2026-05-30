@@ -2557,31 +2557,51 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     } catch { /* file briefly missing during atomic replace — proceed */ }
   }
   try {
-    if ((!tracks || (tracks as unknown[]).length === 0) && !force) {
-      // Check if there's already a non-empty library on disk; refuse to overwrite.
-      try {
-        const existing = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
-        if ((existing.tracks || []).length > 0) {
-          console.warn('save-library: refusing to overwrite non-empty library with empty tracks')
-          return { ok: false, error: 'refused-empty-overwrite' }
-        }
-      } catch { /* no existing file — writing an empty one is fine */ }
+    // Read the current on-disk library ONCE — reused by the empty/shrink
+    // data-loss guards and the deleted-paths diff below.
+    let prevTracks: Array<{ path?: string }> = []
+    try {
+      const prevLib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ path?: string }> }
+      prevTracks = Array.isArray(prevLib.tracks) ? prevLib.tracks : []
+    } catch { /* first save / unreadable — no prior state to protect */ }
+    const prevCount = prevTracks.length
+    const newCount = Array.isArray(tracks) ? tracks.length : 0
+
+    // ── Data-loss circuit-breaker (2026-05-29 shedding incident) ──
+    // Refuse to PERSIST a catastrophic shrink. A drop to empty, or to less
+    // than half the library in one save, is never a legitimate non-forced
+    // action — it's the signature of a torn load, a stale/partial in-memory
+    // list, or a reconcile gone wrong. Gates on count as a circuit-breaker
+    // only; per-track identity is protected by the no-mass-unlink rule
+    // below. `force` is the recovery escape hatch. On refusal we tell the
+    // renderer to reload, so its view re-syncs from the intact disk copy.
+    if (!force && prevCount > 0 && newCount === 0) {
+      console.warn(`[save-library] REFUSED: would overwrite ${prevCount} tracks with an empty list.`)
+      libraryCache.invalidate()
+      mainWindow?.webContents.send('library-external-change')
+      return { ok: false, error: 'refused-empty-overwrite', prevCount, newCount }
+    }
+    if (!force && prevCount > 0 && newCount < prevCount * 0.5) {
+      console.warn(`[save-library] REFUSED suspicious shrink: ${prevCount} → ${newCount} tracks (>50% loss). Pass force to override.`)
+      libraryCache.invalidate()
+      mainWindow?.webContents.send('library-external-change')
+      return { ok: false, error: 'refused-suspicious-shrink', prevCount, newCount }
+    }
+    if (newCount < prevCount) {
+      console.warn(`[save-library] library shrinking ${prevCount} → ${newCount} (-${prevCount - newCount}); audio preserved unless small & deliberate (see unlink guard).`)
     }
 
     // ── Detect deleted paths so we can clean up disk + iPod ──
     // Compare the previous library.json on disk to the new track list.
-    // Any path that disappeared = a deletion to commit. This catches
-    // every removal mechanism (right-click delete, playlist removal,
-    // batch delete, Verify & Repair drop, etc.) without each call
-    // site having to remember to push to the iPod.
+    // Any path that disappeared = a candidate deletion. Catches every
+    // removal mechanism (right-click, playlist removal, batch delete)
+    // without each call site pushing to the iPod itself.
     let deletedPaths: string[] = []
-    try {
-      const prevRaw = await readFile(LIBRARY_PATH, 'utf-8')
-      const prev = JSON.parse(prevRaw) as { tracks?: Array<{ path?: string }> }
-      const prevPaths = new Set((prev.tracks || []).map(t => t.path).filter(Boolean) as string[])
-      const newPaths = new Set((tracks as Array<{ path?: string }>).map(t => t.path).filter(Boolean) as string[])
+    {
+      const prevPaths = new Set(prevTracks.map((t) => t.path).filter(Boolean) as string[])
+      const newPaths = new Set((tracks as Array<{ path?: string }>).map((t) => t.path).filter(Boolean) as string[])
       for (const p of prevPaths) if (!newPaths.has(p)) deletedPaths.push(p)
-    } catch { /* first save, no diff */ }
+    }
 
     // ── Atomic write: tmp file → rename ──
     // Without this, any other process reading library.json
@@ -2627,6 +2647,27 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
       lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
     } catch { /* non-fatal */ }
 
+    // ── Torn-write self-heal (NAS/SMB) ── A rename over an SMB share can
+    // leave library.json missing or zero-byte — the 2026-05-29 incident,
+    // where the NAS copy vanished mid-save and the app then loaded empty.
+    // Re-read what actually landed; if it's gone or doesn't match what we
+    // just wrote, rewrite it directly. Non-atomic, but there's no concurrent
+    // reader mid-incident and a correct-present file beats a missing one.
+    try {
+      const check = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: unknown[] }
+      const landed = Array.isArray(check.tracks) ? check.tracks.length : -1
+      if (landed !== newCount) throw new Error(`landed ${landed} vs expected ${newCount}`)
+    } catch (verifyErr) {
+      console.error(`[save-library] post-write verify failed (${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}); self-healing with direct write`)
+      try {
+        await writeFile(LIBRARY_PATH, JSON.stringify(library, null, 2))
+        const s2 = await stat(LIBRARY_PATH)
+        lastSelfWriteMtimeMs = Math.round(s2.mtimeMs)
+      } catch (healErr) {
+        console.error('[save-library] self-heal direct write also failed:', healErr)
+      }
+    }
+
     // Disk now reflects the current library — the session-level
     // fingerprint set existed only to bridge the gap between an
     // import succeeding and save-library flushing. Clear it so a
@@ -2640,11 +2681,21 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     // rebuild to push the deletion to the iPod (if mounted) without
     // hammering it on every individual delete in a batch.
     if (deletedPaths.length > 0) {
-      const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-      const pathSep = IS_WINDOWS ? '\\' : '/'
-      for (const colon of deletedPaths) {
-        const rel = colon.replace(/:/g, pathSep)
-        try { await unlinkFS(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
+      // ── Audio-preservation guard ── Only auto-delete the underlying
+      // masters for a SMALL, plausibly-deliberate batch. A large drop keeps
+      // the files on disk as orphans (recoverable via
+      // scripts/recover-orphans.mjs) rather than permanently unlinking
+      // precious audio. `force` (explicit recovery/cleanup) bypasses the cap.
+      const UNLINK_CAP = 50
+      if (!force && deletedPaths.length > UNLINK_CAP) {
+        console.warn(`[save-library] preserved ${deletedPaths.length} audio file(s) on disk (exceeds unlink cap ${UNLINK_CAP}); index updated, files kept as orphans.`)
+      } else {
+        const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+        const pathSep = IS_WINDOWS ? '\\' : '/'
+        for (const colon of deletedPaths) {
+          const rel = colon.replace(/:/g, pathSep)
+          try { await unlinkFS(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
+        }
       }
       scheduleDbRebuild(deletedPaths)
     }
@@ -8968,15 +9019,38 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
 })
 
 ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
+  // The LOCAL recommendations.json is the source of truth for the laptop's
+  // list (read-recommendations reads it). The homemini backend is only a
+  // best-effort mirror — it can be empty or out of sync (it got cleared to 0
+  // recos while the local file still had 7, so its DELETE returned 404 and
+  // stranded the user unable to remove anything). So: remove from the local
+  // file authoritatively (atomic write), and treat the backend DELETE as
+  // fire-and-forget (a 404 just means it's already gone there).
+  const recoPath = join(STATE_DIR, 'recommendations.json')
+  let removedLocally = false
   try {
-    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    })
-    if (!res.ok) return { ok: false, error: `backend ${res.status}` }
-    return { ok: true }
+    const parsed = JSON.parse(await readFile(recoPath, 'utf-8')) as RecommendationRecord[]
+    if (Array.isArray(parsed)) {
+      const next = parsed.filter((r) => String(r.id) !== String(id))
+      removedLocally = next.length !== parsed.length
+      if (removedLocally) {
+        const tmp = recoPath + '.tmp.json'
+        await writeFile(tmp, JSON.stringify(next, null, 2))
+        const { rename: renameFS } = await import('fs/promises')
+        await renameFS(tmp, recoPath)
+      }
+    }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'request failed' }
+    console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)
   }
+  // Best-effort backend sync — must never block the user's delete.
+  try {
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (!res.ok && res.status !== 404) console.warn('[reco] backend delete returned', res.status)
+  } catch (err) {
+    console.warn('[reco] backend delete unreachable:', err instanceof Error ? err.message : err)
+  }
+  return removedLocally ? { ok: true } : { ok: false, error: 'not found in list' }
 })
 
 // Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
@@ -9010,6 +9084,7 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
     const topGenres = Array.from(playsByGenre.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g]) => g)
 
     let existing: string[] = []
+    const listSongs = new Set<string>() // normalized artist|title already ON the list
     try {
       const raw = await readFile(join(STATE_DIR, 'recommendations.json'), 'utf-8')
       const parsed = JSON.parse(raw) as RecommendationRecord[]
@@ -9018,6 +9093,11 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
           .map((r) => `${r.song || r.matchedTitle || ''} — ${r.artist || r.matchedArtist || ''}`.trim())
           .filter((s) => s.length > 2)
           .slice(0, 50)
+        for (const r of parsed) {
+          const a = norm(String(r.artist || r.matchedArtist || ''))
+          const t = norm(String(r.song || r.matchedTitle || ''))
+          if (a && t) listSongs.add(`${a}|${t}`)
+        }
       }
     } catch { /* no list yet */ }
 
@@ -9044,9 +9124,14 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
     const suggestions = (Array.isArray(parsed) ? parsed : [])
       .map((s) => ({ song: String(s.song || '').trim(), artist: String(s.artist || '').trim(), note: String(s.note || '').trim() }))
       .filter((s) => s.song && s.artist)
-      // HARD guarantee: never suggest music they already own — drop any
-      // artist already in the library, or any exact owned song.
-      .filter((s) => !ownedArtists.has(norm(s.artist)) && !ownedSongs.has(`${norm(s.artist)}|${norm(s.song)}`))
+      // HARD guarantee: never suggest music they already own, NOR anything
+      // already on the Listen list. The prompt asks for this too, but the
+      // LLM ignores it (it kept suggesting "Common People"/"Connection" that
+      // were already on the list) — so we enforce it in code, not in prose.
+      .filter((s) => {
+        const key = `${norm(s.artist)}|${norm(s.song)}`
+        return !ownedArtists.has(norm(s.artist)) && !ownedSongs.has(key) && !listSongs.has(key)
+      })
       .slice(0, 3)
     if (suggestions.length === 0) console.warn('[reco] suggest: all candidates were already owned/filtered')
     return { ok: true, suggestions }
