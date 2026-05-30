@@ -370,6 +370,7 @@ declare global {
       loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
       addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
+      suggestRecommendations: () => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>

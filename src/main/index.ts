@@ -8979,6 +8979,68 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
   }
 })
 
+// Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
+// One Sonnet call grounded in the user's taste (top library artists/genres)
+// and the existing list (so it never repeats). Returns 3 {song,artist,note}.
+// claudeCall handles the daily ceiling + cached fallback; any failure is
+// fail-soft (ok:false → the UI just shows no suggestions).
+ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }> => {
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; genre?: string; playCount?: number }> }
+    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
+    const playsByArtist = new Map<string, number>()
+    const playsByGenre = new Map<string, number>()
+    for (const t of tracks) {
+      const a = (t.albumArtist || t.artist || '').trim()
+      if (a) playsByArtist.set(a, (playsByArtist.get(a) ?? 0) + (Number(t.playCount) || 0))
+      const g = (t.genre || '').trim()
+      if (g) playsByGenre.set(g, (playsByGenre.get(g) ?? 0) + (Number(t.playCount) || 0))
+    }
+    const topArtists = Array.from(playsByArtist.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([a]) => a)
+    const topGenres = Array.from(playsByGenre.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g]) => g)
+
+    let existing: string[] = []
+    try {
+      const raw = await readFile(join(STATE_DIR, 'recommendations.json'), 'utf-8')
+      const parsed = JSON.parse(raw) as RecommendationRecord[]
+      if (Array.isArray(parsed)) {
+        existing = parsed
+          .map((r) => `${r.song || r.matchedTitle || ''} — ${r.artist || r.matchedArtist || ''}`.trim())
+          .filter((s) => s.length > 2)
+          .slice(0, 50)
+      }
+    } catch { /* no list yet */ }
+
+    const user = [
+      `Top artists in this collection: ${topArtists.join(', ') || '(unknown)'}.`,
+      topGenres.length ? `Genres in rotation: ${topGenres.join(', ')}.` : '',
+      existing.length ? `Already on their Listen-to-the-List — do NOT repeat any of these: ${existing.join('; ')}.` : '',
+      '',
+      'Suggest exactly 3 records they should add to their Listen-to-the-List — music to go check out that fits their taste but ISN\'T the obvious #1-artist pick. Pull from adjacent corners, deep cuts, or the lineage of what they already love. Each suggestion: a real song + artist, plus a one-sentence note in your voice on why it belongs there.',
+      'Return ONLY JSON, no prose, no code fence: [{"song":"...","artist":"...","note":"..."},{"song":"...","artist":"...","note":"..."},{"song":"...","artist":"...","note":"..."}]',
+    ].filter(Boolean).join('\n')
+
+    const reply = await claudeCall('listen-list:suggest', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 500,
+      system: MUSIC_MAN_CORE,
+      messages: [{ role: 'user', content: user }],
+    })
+    const block = reply.content[0]
+    const text = block && block.type === 'text' ? block.text : ''
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    const parsed = JSON.parse((fence ? fence[1] : text).trim()) as Array<{ song?: unknown; artist?: unknown; note?: unknown }>
+    const suggestions = (Array.isArray(parsed) ? parsed : [])
+      .map((s) => ({ song: String(s.song || '').trim(), artist: String(s.artist || '').trim(), note: String(s.note || '').trim() }))
+      .filter((s) => s.song || s.artist)
+      .slice(0, 3)
+    return { ok: true, suggestions }
+  } catch (err) {
+    console.error('[reco] suggest failed:', err instanceof Error ? err.message : err)
+    return { ok: false, error: err instanceof Error ? err.message : 'suggest failed' }
+  }
+})
+
 // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
 // iTunes Search is public + key-less; hit it straight from the main process
 // (no CORS, and no per-keystroke round-trip to the Mini backend). Returns a

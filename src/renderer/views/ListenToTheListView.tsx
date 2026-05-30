@@ -16,6 +16,11 @@ import '../styles/listen-to-the-list.css'
 // renderer (in-session only), which is what we want.
 let recsCache: Recommendation[] | null = null
 
+// Music Man's 3 suggestions, cached for the session so reopening the view
+// doesn't fire a fresh Sonnet call each time (the ↻ refresh re-generates).
+interface MmSuggestion { song: string; artist: string; note: string }
+let suggestionsCache: MmSuggestion[] | null = null
+
 // Brief 122 Phase 1 — "Listen to the List". Mirrors the mobile app's
 // recommendations list on desktop and lets you add/delete from here too.
 // Reads recommendations.json fresh from the NAS state dir (via the main
@@ -29,6 +34,9 @@ export default function ListenToTheListView() {
   const [adding, setAdding] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Recommendation | null>(null)
   const [form, setForm] = useState({ song: '', artist: '', album: '', note: '' })
+  // Music Man's "3 to add" strip.
+  const [mmSuggestions, setMmSuggestions] = useState<MmSuggestion[]>(suggestionsCache ?? [])
+  const [suggLoading, setSuggLoading] = useState(suggestionsCache === null)
   // Preview plays in the now-playing pill (iTunes-style) via the shared
   // previewPlayer; this view just reflects which row is currently playing.
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
@@ -68,6 +76,26 @@ export default function ListenToTheListView() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Music Man's 3 suggestions. Fetched once per session (cached); ↻ refresh
+  // regenerates. Fail-soft — the strip just stays empty on error.
+  const fetchSuggestions = useCallback(async () => {
+    setSuggLoading(true)
+    try {
+      const res = await window.electronAPI.suggestRecommendations()
+      const list = res.ok && res.suggestions ? res.suggestions : []
+      suggestionsCache = list
+      setMmSuggestions(list)
+    } catch (err) {
+      console.error('[ltl] suggest failed', err)
+    } finally {
+      setSuggLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (suggestionsCache === null) void fetchSuggestions()
+  }, [fetchSuggestions])
 
   // Debounced iTunes search keyed on the song + artist fields.
   useEffect(() => {
@@ -169,6 +197,56 @@ export default function ListenToTheListView() {
     }
   }, [form, canAdd, adding, load])
 
+  // Add one of Music Man's suggestions. Mirrors handleAdd's optimistic flow
+  // (provisional row → backend → swap enriched); separate because rollback
+  // restores the strip card, not the form.
+  const handleAddSuggestion = useCallback(async (s: MmSuggestion) => {
+    setMmSuggestions((prev) => {
+      const next = prev.filter((x) => !(x.song === s.song && x.artist === s.artist))
+      suggestionsCache = next
+      return next
+    })
+    const tempId = `temp-sugg-${Date.now()}`
+    const provisional: Recommendation = {
+      id: tempId,
+      song: s.song || undefined,
+      artist: s.artist || undefined,
+      note: s.note || undefined,
+      createdAt: new Date().toISOString(),
+    }
+    const prev = recsRef.current
+    const withProvisional = [provisional, ...prev]
+    recsCache = withProvisional
+    setRecs(withProvisional)
+    try {
+      const res = await window.electronAPI.addRecommendation({
+        song: s.song || undefined, artist: s.artist || undefined, note: s.note || undefined,
+      })
+      if (!res?.ok) {
+        recsCache = prev
+        setRecs(prev)
+        setNotice(`Couldn't add that pick${res?.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
+        return
+      }
+      if (res.recommendation) {
+        const enriched = res.recommendation
+        setRecs((cur) => {
+          const swapped = cur.some((r) => r.id === tempId)
+            ? cur.map((r) => (r.id === tempId ? enriched : r))
+            : [enriched, ...cur]
+          recsCache = swapped
+          return swapped
+        })
+      } else {
+        await load()
+      }
+    } catch (err) {
+      recsCache = prev
+      setRecs(prev)
+      setNotice(`Add failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
+    }
+  }, [load])
+
   const handleDelete = useCallback(async (rec: Recommendation) => {
     // If a preview of this reco is playing, stop it so it isn't orphaned
     // (the row + its stop control are about to disappear).
@@ -245,6 +323,31 @@ export default function ListenToTheListView() {
           </div>
         )}
       </div>
+
+      {(suggLoading || mmSuggestions.length > 0) && (
+        <div className="ltl-mm-suggests">
+          <div className="ltl-mm-head">
+            <span className="ltl-mm-title">Music Man suggests</span>
+            <button className="ltl-mm-refresh" onClick={() => fetchSuggestions()} disabled={suggLoading} title="New suggestions">↻</button>
+          </div>
+          {suggLoading ? (
+            <div className="ltl-mm-loading">Music Man's digging through the crates…</div>
+          ) : (
+            <div className="ltl-mm-row">
+              {mmSuggestions.map((s, i) => (
+                <div className="ltl-mm-card" key={`${s.song}-${s.artist}-${i}`}>
+                  <div className="ltl-mm-card-text">
+                    <div className="ltl-mm-song">{s.song}</div>
+                    <div className="ltl-mm-artist">{s.artist}</div>
+                    {s.note && <div className="ltl-mm-note">{s.note}</div>}
+                  </div>
+                  <button className="ltl-mm-add" onClick={() => handleAddSuggestion(s)}>+ Add</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="ltl-loading">Loading…</div>

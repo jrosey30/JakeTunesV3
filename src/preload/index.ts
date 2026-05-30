@@ -176,6 +176,8 @@ const electronAPI = {
   addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) =>
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
+  // Brief 122 — Music Man suggests 3 things to add to the list.
+  suggestRecommendations: () => ipcRenderer.invoke('suggest-recommendations'),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
   // 4.5.0-82 — windowed play counts derived from the per-play event

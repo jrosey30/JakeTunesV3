@@ -283,3 +283,93 @@
 
 .ltl-row:hover .ltl-delete { opacity: 1; }
 .ltl-delete:hover { background: #e0e0e0; color: #c0392b; }
+
+/* ── Music Man's "3 to add" strip ────────────────────────────────── */
+.ltl-mm-suggests {
+  margin: 4px 0 18px;
+  padding: 12px 14px;
+  background: #2c2622;
+  border: 1px solid #4a3a2c;
+  border-radius: 10px;
+}
+.ltl-mm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.ltl-mm-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #d8a25a;
+}
+.ltl-mm-refresh {
+  appearance: none;
+  border: 1px solid #5a4632;
+  background: transparent;
+  color: #d8a25a;
+  font-size: 14px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ltl-mm-refresh:hover:not(:disabled) { background: #3a3026; }
+.ltl-mm-refresh:disabled { opacity: 0.4; cursor: default; }
+.ltl-mm-loading {
+  font-size: 13px;
+  color: #cdbfa9;
+  font-style: italic;
+  padding: 4px 2px;
+}
+.ltl-mm-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.ltl-mm-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f4ece0;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.ltl-mm-card-text { flex: 1; min-width: 0; }
+.ltl-mm-song {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2a2018;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ltl-mm-artist {
+  font-size: 12px;
+  color: #6a5a48;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ltl-mm-note {
+  font-size: 11px;
+  color: #8a7a64;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+.ltl-mm-add {
+  flex: 0 0 auto;
+  appearance: none;
+  border: none;
+  background: #d8a25a;
+  color: #2a1c10;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ltl-mm-add:hover { background: #e3b06a; }
