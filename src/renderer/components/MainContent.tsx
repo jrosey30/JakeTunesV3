@@ -4,6 +4,7 @@ import SongsView from '../views/SongsView'
 import ArtistsView from '../views/ArtistsView'
 import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
+import AlbumDetailView from '../views/AlbumDetailView'
 import GenresView from '../views/GenresView'
 import ListenToTheListView from '../views/ListenToTheListView'
 import MusicManView from '../views/MusicManView'
@@ -26,6 +27,7 @@ export default function MainContent() {
   const transitionKey =
     state.currentView === 'playlist' ? `playlist:${state.activePlaylistId}` :
     state.currentView === 'smart-playlist' ? `smart:${state.activeSmartPlaylist}` :
+    state.currentView === 'album-detail' ? `album:${state.pendingAlbumKey}` :
     state.currentView
 
   // Brief 023: MusicManView stays MOUNTED across navigation — its
@@ -46,6 +48,7 @@ export default function MainContent() {
     case 'artists': viewElement = <ArtistsView />; break
     case 'artist-detail': viewElement = <ArtistDetailView />; break
     case 'albums': viewElement = <AlbumsView />; break
+    case 'album-detail': viewElement = <AlbumDetailView />; break
     case 'genres': viewElement = <GenresView />; break
     case 'listen-to-the-list': viewElement = <ListenToTheListView />; break
     case 'musicman': break  // handled by the always-mounted wrapper below

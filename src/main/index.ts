@@ -9171,6 +9171,112 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
 // iTunes Search is public + key-less; hit it straight from the main process
 // (no CORS, and no per-keystroke round-trip to the Mini backend). Returns a
 // small normalized suggestion list. Does NOT touch the music library.
+// ── Album detail page (4.5.0-115): factual credits + Music Man blurb ──
+// Credits come from real lookups (iTunes Search + MusicBrainz), never the
+// LLM, so we never invent a producer or date. Honest gaps where the APIs
+// don't have it. Blurb is the Music Man's editorial take (opinion, grounded —
+// it's told NOT to state hard credits). Both cached in-memory per session.
+type AlbumCredits = { released?: string; label?: string; producer?: string; recorded?: string }
+const albumInfoCache = new Map<string, AlbumCredits>()
+const albumBlurbCache = new Map<string, string>()
+const albumCacheKey = (artist: string, album: string) => `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
+
+async function fetchItunesAlbum(artist: string, album: string): Promise<{ released?: string; label?: string } | null> {
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${album}`)}&entity=album&limit=5`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = await res.json() as { results?: Array<{ collectionName?: string; releaseDate?: string; copyright?: string }> }
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const want = norm(album)
+    const results = data.results || []
+    const best = results.find((r) => norm(r.collectionName || '') === want) || results[0]
+    if (!best) return null
+    const released = best.releaseDate ? best.releaseDate.slice(0, 10) : undefined
+    let label: string | undefined
+    if (best.copyright) {
+      // "℗ 1972 Curtom Records. Marketed by Rhino…" → "Curtom Records".
+      // Strip the ℗/© + year, then keep only the label name before the
+      // first sentence break / "Marketed by" / "Distributed by" legalese.
+      const stripped = best.copyright.replace(/^\s*[℗©]\s*/, '').replace(/^\d{4}\s*/, '').trim()
+      const name = stripped.split(/\s*[.;]\s|,\s|\s+Marketed\b|\s+Distributed\b|\s+under\b|\s+a\s+(?:division|Warner|Universal|Sony)\b/i)[0].trim()
+      if (name && name.length >= 2 && name.length < 60) label = name
+    }
+    return { released, label }
+  } catch { return null }
+}
+
+async function fetchMusicBrainzAlbumCredits(artist: string, album: string): Promise<{ released?: string; producer?: string } | null> {
+  // Separate from searchMusicBrainz() (that returns a prose facts string for
+  // the persona); this pulls STRUCTURED release-group data. Best-effort,
+  // single timeout-bounded pass. MB asks for a descriptive User-Agent.
+  const headers = { 'User-Agent': 'JakeTunes/4.5 ( jakerosenbaum30@gmail.com )' }
+  try {
+    const q = `releasegroup:"${album}" AND artist:"${artist}"`
+    const rgRes = await fetch(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`, { headers })
+    if (!rgRes.ok) return null
+    const rg = await rgRes.json() as { 'release-groups'?: Array<{ id: string; 'first-release-date'?: string }> }
+    const group = rg['release-groups']?.[0]
+    if (!group) return null
+    const released = group['first-release-date'] || undefined
+    let producer: string | undefined
+    try {
+      const relRes = await fetch(`https://musicbrainz.org/ws/2/release-group/${group.id}?inc=artist-rels&fmt=json`, { headers })
+      if (relRes.ok) {
+        const rel = await relRes.json() as { relations?: Array<{ type?: string; artist?: { name?: string } }> }
+        const prod = (rel.relations || []).find((r) => /producer/i.test(r.type || ''))
+        if (prod?.artist?.name) producer = prod.artist.name
+      }
+    } catch { /* relations are a bonus; ignore */ }
+    return { released, producer }
+  } catch { return null }
+}
+
+ipcMain.handle('get-album-info', async (_e, artist: string, album: string, _year?: string): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
+  if (!album) return { ok: true, credits: {} }
+  const key = albumCacheKey(artist, album)
+  const cached = albumInfoCache.get(key)
+  if (cached) return { ok: true, credits: cached }
+  try {
+    const [it, mb] = await Promise.all([fetchItunesAlbum(artist, album), fetchMusicBrainzAlbumCredits(artist, album)])
+    const merged: AlbumCredits = {}
+    const released = it?.released || mb?.released
+    if (released) merged.released = released
+    if (it?.label) merged.label = it.label
+    if (mb?.producer) merged.producer = mb.producer
+    albumInfoCache.set(key, merged)
+    return { ok: true, credits: merged }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'album-info failed' }
+  }
+})
+
+ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
+  if (!album) return { ok: true, blurb: '' }
+  const key = albumCacheKey(artist, album)
+  const cached = albumBlurbCache.get(key)
+  if (cached !== undefined) return { ok: true, blurb: cached }
+  try {
+    const user = [
+      `Give your take on the album "${album}" by ${artist}.`,
+      '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
+      'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
+    ].join('\n')
+    const reply = await claudeCall('album-blurb', {
+      model: 'claude-haiku-4-5',
+      max_tokens: 220,
+      system: MUSIC_MAN_CORE,
+      messages: [{ role: 'user', content: user }],
+    })
+    const block = reply.content[0]
+    const text = block && block.type === 'text' ? block.text.trim() : ''
+    albumBlurbCache.set(key, text)
+    return { ok: true, blurb: text }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'album-blurb failed' }
+  }
+})
+
 interface ItunesSuggestion {
   song: string
   artist: string

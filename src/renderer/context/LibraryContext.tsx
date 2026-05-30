@@ -215,7 +215,10 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
     case 'VIEW_ARTIST_DETAIL':
       return { ...state, currentView: 'artist-detail', activeArtist: action.artistName }
     case 'VIEW_ALBUM_DETAIL':
-      return { ...state, currentView: 'albums', pendingAlbumKey: action.albumKey }
+      // 4.5.0-115: route to the dedicated album-detail page (was: bounce to
+      // the Albums grid + highlight a card). pendingAlbumKey carries the
+      // canonical album key (albumKeyOf format) that AlbumDetailView reads.
+      return { ...state, currentView: 'album-detail', pendingAlbumKey: action.albumKey }
     case 'CLEAR_PENDING_ALBUM_KEY':
       return { ...state, pendingAlbumKey: null }
     case 'SET_ARTWORK_MAP':

@@ -90,7 +90,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list'
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on
@@ -372,6 +372,10 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: () => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
+      // Album detail page (4.5.0-115): factual credits (MusicBrainz + iTunes,
+      // honest gaps where unknown) and a grounded Music Man blurb.
+      getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
+      getAlbumBlurb: (artist: string, album: string) => Promise<{ ok: boolean; blurb?: string; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

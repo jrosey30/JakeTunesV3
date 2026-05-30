@@ -180,6 +180,9 @@ const electronAPI = {
   suggestRecommendations: () => ipcRenderer.invoke('suggest-recommendations'),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
+  // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
+  getAlbumInfo: (artist: string, album: string, year?: string) => ipcRenderer.invoke('get-album-info', artist, album, year),
+  getAlbumBlurb: (artist: string, album: string) => ipcRenderer.invoke('get-album-blurb', artist, album),
   // 4.5.0-82 — windowed play counts derived from the per-play event
   // log. Returns { trackIdString: count } for plays in the last
   // `windowMs` ms. Used by Top 25's Last Week / Last Month views to
