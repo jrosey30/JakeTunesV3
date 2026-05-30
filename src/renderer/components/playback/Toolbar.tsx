@@ -1650,6 +1650,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
                 </div>
               )
             })}
+            {!audioDevices.some(d => d.transport === 'airplay') && (
+              <div
+                className="airplay-menu-hint"
+                style={{ padding: '6px 12px 4px', fontSize: 11, color: '#9a9a9a', lineHeight: 1.4 }}
+              >
+                No AirPlay devices found. Pick one in macOS Control Center → Sound (or Sound Settings below), then reopen this menu — macOS only exposes a receiver once it's connected.
+              </div>
+            )}
             <div className="airplay-menu-divider" />
             <div
               className="airplay-menu-item airplay-menu-item--settings"
