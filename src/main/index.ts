@@ -19,6 +19,7 @@ import { CALLERS, buildCallerSegmentMode } from './cast'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { assessDeadTrackRemoval } from './reconcile-guard'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
@@ -3624,6 +3625,40 @@ async function resolveMusicDir(): Promise<string> {
   }
   console.log(`[library] no candidate dirs exist; will use default: ${DEFAULT_MUSIC_DIR}`)
   return DEFAULT_MUSIC_DIR
+}
+
+// All music ROOT mounts (the parent of iPod_Control/Music) that currently exist
+// on disk: the resolved root, the default + legacy auto-detect roots, an
+// explicit configured root, and a mounted iPod. Dead-track reconciliation
+// verifies a track against EVERY one of these, so a file present under ANY mount
+// keeps the track alive. A track is only ever flagged "dead" when its audio is
+// absent from all of them — this closes the single-resolved-root over-deletion
+// hole (a library that spans / migrated between ~/Music and ~/Music2, or whose
+// mirror landed in a different root than resolveMusicDir happened to pick).
+async function candidateMusicMounts(): Promise<string[]> {
+  const stripSuffix = (p: string): string => p.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const roots: string[] = [
+    stripSuffix(MUSIC_DIR),
+    stripSuffix(DEFAULT_MUSIC_DIR),
+    stripSuffix(LEGACY_MUSIC_DIR),
+  ]
+  try {
+    const settings = await readAppSettingsAsync()
+    const lib = (settings?.library ?? null) as { musicRoot?: string } | null
+    if (lib?.musicRoot && typeof lib.musicRoot === 'string') roots.push(lib.musicRoot)
+  } catch { /* settings unreadable — auto-detect roots still apply */ }
+  if (detectedIpodMount) roots.push(detectedIpodMount)
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const r of roots) {
+    if (!r || seen.has(r)) continue
+    seen.add(r)
+    // Only keep roots that actually hold an iPod_Control/Music tree — an
+    // unmounted drive or wrong path contributes nothing and must not count as
+    // a "checked" mount in the safety guard below.
+    if (existsSync(join(r, 'iPod_Control', 'Music'))) out.push(r)
+  }
+  return out
 }
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
@@ -11289,6 +11324,106 @@ app.whenReady().then(async () => {
       transcoded,
       total,
       cancelled: prepareCacheCancelled,
+    }
+  })
+
+  ipcMain.handle('scan-dead-tracks', async () => {
+    try {
+      let lib: { tracks?: Array<Record<string, unknown>> }
+      lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+      const tracks = lib.tracks || []
+      // Verify against every existing music root (resolved/default/legacy/
+      // explicit/iPod), not just the one resolveMusicDir picked — a file under
+      // ANY mount keeps the track alive. See candidateMusicMounts.
+      const mounts = await candidateMusicMounts()
+      const inputs: VerifyTrackInput[] = tracks.map((t) => ({
+        id: Number(t.id || 0),
+        path: String(t.path || ''),
+        duration: Number(t.duration || 0),
+        audioFingerprint: typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined,
+      }))
+      const updates = await verifyAndHealTracks(inputs, mounts)
+      const deadIds = new Set(updates.filter((u) => u.audioMissing).map((u) => u.id))
+      const deadTracks = tracks
+        .filter((t) => deadIds.has(Number(t.id)))
+        .map((t) => ({
+          id: Number(t.id),
+          title: String(t.title || ''),
+          artist: String(t.artist || ''),
+          path: String(t.path || ''),
+        }))
+      return { ok: true, count: deadTracks.length, tracks: deadTracks.slice(0, 20) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('remove-dead-tracks', async () => {
+    try {
+      const lib: { tracks?: Array<Record<string, unknown>>; playlists?: unknown[] } =
+        JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+      const tracks = lib.tracks || []
+      // Verify across ALL existing music roots — a track is dead only if its
+      // audio is absent from every mount (and its fingerprint can't be found).
+      const mounts = await candidateMusicMounts()
+      const inputs: VerifyTrackInput[] = tracks.map((t) => ({
+        id: Number(t.id || 0),
+        path: String(t.path || ''),
+        duration: Number(t.duration || 0),
+        audioFingerprint: typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined,
+      }))
+      const updates = await verifyAndHealTracks(inputs, mounts)
+      const deadIds = new Set(updates.filter((u) => u.audioMissing).map((u) => u.id))
+      if (deadIds.size === 0) return { ok: true, removed: 0 }
+
+      // ── Environmental safety net (workmini 7,447→7,182 incident) ──
+      // The per-track check above is identity-based (exact path + fingerprint),
+      // but a wrong/incomplete/unmounted music root makes it fail uniformly and
+      // turns a clean-up into a mass silent deletion. Refuse to write when the
+      // "missing" signal is untrustworthy. See reconcile-guard.ts.
+      let diskAudioCount = 0
+      for (const m of mounts) {
+        diskAudioCount += (await walkAudioFilesUnder(join(m, 'iPod_Control', 'Music'))).length
+      }
+      const guard = assessDeadTrackRemoval({
+        totalTracks: tracks.length,
+        deadCount: deadIds.size,
+        mountsChecked: mounts.length,
+        diskAudioCount,
+      })
+      if (!guard.safe) {
+        console.warn(`[remove-dead-tracks] REFUSED (${guard.reason}): ${guard.message}`)
+        return { ok: false, error: guard.message, reason: guard.reason, deadCount: deadIds.size }
+      }
+
+      // Back up library.json before mutating (parity with the CLI twin), then
+      // write atomically (tmp + rename) so a torn write can't leave a partial.
+      const prevCount = tracks.length
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      try {
+        await copyFile(LIBRARY_PATH, `${LIBRARY_PATH}.bak-dead-${stamp}`)
+      } catch (e) {
+        console.warn('[remove-dead-tracks] backup copy failed (proceeding):', e instanceof Error ? e.message : e)
+      }
+      lib.tracks = tracks.filter((t) => !deadIds.has(Number(t.id)))
+      const removed = prevCount - lib.tracks.length
+      const tmp = `${LIBRARY_PATH}.dead-remove.tmp`
+      await writeFile(tmp, JSON.stringify(lib, null, 2))
+      // Pre-stamp before the rename so the fsWatch handler treats this as our
+      // own write (matches save-library's ordering).
+      lastSelfWriteMtimeMs = Date.now()
+      const { rename: renameFS } = await import('fs/promises')
+      await renameFS(tmp, LIBRARY_PATH)
+      try {
+        const s = await stat(LIBRARY_PATH)
+        lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
+      } catch { /* non-fatal */ }
+      libraryCache.invalidate()
+      void mirrorLibraryToNas(lib)
+      console.log(`[remove-dead-tracks] removed ${removed} dead track(s) (${prevCount}→${lib.tracks.length}); backup library.json.bak-dead-${stamp}`)
+      return { ok: true, removed }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 
