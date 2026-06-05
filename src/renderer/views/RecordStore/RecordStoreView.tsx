@@ -21,7 +21,7 @@ import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkL
 import { useShelves } from './hooks/useShelves'
 import { DialogueBox } from './components/DialogueBox'
 import { CrateBrowse } from './components/CrateBrowse'
-import type { Blurb, Persona, ShelfId, ShelfItem } from '../../../main/record-store/types'
+import type { Blurb, Persona, ShelfId, ShelfItem } from './types'
 import storefrontBg from './art/storefront.png'
 import mmSmug from './art/musicman-smug.png'
 import mmThink from './art/musicman-think.png'

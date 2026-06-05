@@ -10,13 +10,14 @@
 // ════════════════════════════════════════════════════════════════════════
 
 import { ipcMain, WebContentsView, BrowserWindow, session } from 'electron'
-import { attachDownloadRouter, ImportedTrackRecord } from '../bandcamp-integration/acquisition/download-router'
+import { attachDownloadRouter, ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 
 export interface SquidDeps {
   getMainWindow: () => BrowserWindow | null
   /** Wraps importOneFile() — same one Bandcamp uses, with a 'squid'
-   *  source tag persisted onto each Track record. */
-  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[]>
+   *  source tag persisted onto each Track record. Matches the
+   *  download-router contract (BatchSummary or bare array). */
+  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
   /** Absolute directory where squid downloads land before import.
    *  Shared with Bandcamp's _pending-imports/ — same staging dir,
    *  source field on the Track distinguishes them later if anyone

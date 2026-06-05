@@ -16,14 +16,15 @@
 import { ipcMain, WebContentsView, BrowserWindow } from 'electron'
 import { BANDCAMP_PARTITION } from './partition'
 import { bandcampSession } from './acquisition/auth'
-import { attachDownloadRouter, ImportedTrackRecord } from './acquisition/download-router'
+import { attachDownloadRouter, ImportedTrackRecord, BatchSummary } from './acquisition/download-router'
 
 export interface BandcampDeps {
   getMainWindow: () => BrowserWindow | null
   /** Wraps importOneFile() for absolute audio paths. Receives a `source`
    *  tag (always 'bandcamp' from here) that gets persisted on each
-   *  track record. */
-  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[]>
+   *  track record. Matches the download-router contract: implementations
+   *  may return the richer BatchSummary or a bare array (router normalizes). */
+  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
   /** Absolute directory where Bandcamp downloads land; importOneFile
    *  copies them into the canonical library layout afterwards. */
   pendingImportsDir: string

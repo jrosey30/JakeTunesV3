@@ -9,7 +9,7 @@
 // down and we're showing a stale-but-cached bundle.
 
 import { useCallback, useEffect, useState } from 'react'
-import type { ShelfBundle } from '../../../../main/record-store/types'
+import type { ShelfBundle } from '../types'
 
 type State =
   | { status: 'loading' }

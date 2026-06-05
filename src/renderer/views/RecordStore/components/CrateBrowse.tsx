@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { Shelf, ShelfItem } from '../../../../main/record-store/types'
+import type { Shelf, ShelfItem } from '../types'
 
 const MAX_VISIBLE = 4 // covers fanned to each side before they fade out
 
