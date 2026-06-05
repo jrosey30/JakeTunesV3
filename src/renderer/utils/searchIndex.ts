@@ -34,7 +34,7 @@ export function normalize(s: string | null | undefined): string {
   return s
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')     // strip combining diacritics
-    .replace(/[''‛`]/g, '')               // strip smart-apostrophes (don't → dont)
+    .replace(/['''‛`]/g, '')              // strip straight + smart apostrophes (don't / don't → dont)
     .toLowerCase()
     .replace(/[^a-z0-9\s]+/g, ' ')        // ASCII punct + non-letter → space
     .replace(/\s+/g, ' ')
