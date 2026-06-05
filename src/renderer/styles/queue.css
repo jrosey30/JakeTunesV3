@@ -42,13 +42,63 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-left: auto;
 }
 
 .queue-shuffle:hover:not(:disabled) { color: #333; background: rgba(0,0,0,0.06); }
 .queue-shuffle:disabled { opacity: 0.3; cursor: default; }
 .queue-shuffle--active { color: #4a90d9; background: rgba(74,144,217,0.12); }
 .queue-shuffle--active:hover { color: #2a70b9; background: rgba(74,144,217,0.2); }
+
+/* Repeat toggle sits left of shuffle; it carries the auto-margin that
+   right-aligns the whole control cluster (title | … | repeat shuffle
+   clear close). */
+.queue-repeat {
+  position: relative;
+  color: #666;
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+
+.queue-repeat:hover:not(:disabled) { color: #333; background: rgba(0,0,0,0.06); }
+.queue-repeat--active { color: #4a90d9; background: rgba(74,144,217,0.12); }
+.queue-repeat--active:hover { color: #2a70b9; background: rgba(74,144,217,0.2); }
+
+.queue-repeat-badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  background: #4a90d9;
+  color: #fff;
+  border-radius: 6px;
+  padding: 1px 2px;
+  min-width: 8px;
+  text-align: center;
+}
+
+/* Honest "what plays next" notes — repeat one / repeat all behavior the
+   bare upcoming list can't show on its own. */
+.queue-repeat-note {
+  padding: 7px 12px;
+  margin: 2px 0;
+  font-size: 10px;
+  color: #4a6a8a;
+  background: rgba(74,144,217,0.08);
+  border-left: 2px solid #4a90d9;
+  line-height: 1.35;
+}
+
+.queue-repeat-note--loop {
+  color: #777;
+  background: rgba(0,0,0,0.04);
+  border-left-color: #b0b0b0;
+}
 
 .queue-clear {
   font-size: 10px;

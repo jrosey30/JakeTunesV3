@@ -17,7 +17,22 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
   const { state: libState } = useLibrary()
   const { playTrack } = useAudio()
   const upcoming = state.queue.slice(state.queueIndex + 1)
+  // Repeat state drives honest "Up Next" representation: under repeat one
+  // the natural-end handler replays the current track (it never advances),
+  // and under repeat all the queue loops back to index 0 after the tail.
+  // The visible list must say so or it's lying about what plays next.
+  const repeatOne = state.repeat === 'one'
+  const repeatAll = state.repeat === 'all'
   const [dropIndex, setDropIndex] = useState<number | null>(null)
+
+  // Mirror TransportControls.cycleRepeat so the queue panel can both
+  // SHOW and CHANGE repeat state — parity with the shuffle toggle that
+  // already lives in this header.
+  const cycleRepeat = useCallback(() => {
+    const modes = ['off', 'all', 'one'] as const
+    const idx = modes.indexOf(state.repeat)
+    dispatch({ type: 'SET_REPEAT', mode: modes[(idx + 1) % 3] })
+  }, [state.repeat, dispatch])
 
   const resolveTracks = useCallback((e: React.DragEvent) => {
     const data = e.dataTransfer.getData('application/jaketunes-tracks')
@@ -129,6 +144,23 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
       <div className="queue-header">
         <span className="queue-title">Up Next</span>
         <button
+          className={`queue-repeat ${state.repeat !== 'off' ? 'queue-repeat--active' : ''}`}
+          title={
+            state.repeat === 'one' ? 'Repeat One — current track replays (click to turn off)'
+            : state.repeat === 'all' ? 'Repeat All — queue loops (click for Repeat One)'
+            : 'Repeat is OFF — click to loop the queue'
+          }
+          onClick={cycleRepeat}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 5h7a3 3 0 0 1 3 3" />
+            <path d="M12 2.5L14.5 5 12 7.5" />
+            <path d="M12 11H5a3 3 0 0 1-3-3" />
+            <path d="M4 13.5L1.5 11 4 8.5" />
+          </svg>
+          {state.repeat === 'one' && <span className="queue-repeat-badge">1</span>}
+        </button>
+        <button
           className={`queue-shuffle ${state.shuffle ? 'queue-shuffle--active' : ''}`}
           title={state.shuffle ? 'Shuffle is ON — click to turn off' : 'Shuffle is OFF — click to turn on'}
           onClick={() => dispatch({ type: 'TOGGLE_SHUFFLE' })}
@@ -158,17 +190,25 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
       <div className="queue-section" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div className="queue-section-label">Up Next ({upcoming.length})</div>
         <div className="queue-list" style={{ flex: 1, overflowY: 'auto' }}>
-          {upcoming.length === 0 && dropIndex === null && (
+          {repeatOne && state.nowPlaying && (
+            <div className="queue-repeat-note">↻ Repeat One — “{state.nowPlaying.title}” keeps replaying until you skip.</div>
+          )}
+          {upcoming.length === 0 && dropIndex === null && state.repeat === 'off' && (
             <div className="queue-empty">No upcoming tracks</div>
           )}
           {dropIndex === 0 && <div className="queue-drop-indicator" />}
+          {/* freshContext=false: this track is already IN the queue, so a
+              double-click is queue NAVIGATION (jump to it in the current
+              order), NOT a fresh play context. Passing true here made the
+              shuffle reducer rebuild the queue from scratch, scrambling
+              the very list the user was looking at. */}
           {upcoming.slice(0, 100).map((track, i) => (
             <div key={`${track.id}-${i}`}>
               <div
                 className="queue-item"
                 draggable
                 onDragStart={(e) => handleItemDragStart(e, i)}
-                onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i, undefined, true)}
+                onDoubleClick={() => playTrack(track, state.queue, state.queueIndex + 1 + i, undefined, false)}
                 onDragOver={(e) => handleItemDragOver(e, i)}
               >
                 <div className="queue-item-num">{i + 1}</div>
@@ -190,6 +230,9 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
           ))}
           {upcoming.length === 0 && dropIndex !== null && (
             <div className="queue-drop-indicator" />
+          )}
+          {repeatAll && state.queue.length > 0 && (
+            <div className="queue-repeat-note queue-repeat-note--loop">↻ Repeat All — loops back to the top after the last track.</div>
           )}
         </div>
       </div>
