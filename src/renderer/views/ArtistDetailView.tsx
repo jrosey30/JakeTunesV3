@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay } from '../hooks/useAudio'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../utils/artworkLookup'
 import { canonicalArtist, isSameArtist } from '../utils/artistAlias'
+import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
 
@@ -85,6 +87,23 @@ export default function ArtistDetailView() {
   const { } = usePlayback()
   const { playTrack } = useAudio()
   const artist = lib.activeArtist || ''
+
+  // Contextual back navigation. Artist detail is reachable from Artists,
+  // the Bandcamp Store, and Search — mirror AlbumDetailView so "back"
+  // returns to wherever the user came from instead of always Artists.
+  const artistReturnView = lib.artistDetailReturnView || 'artists'
+  const backLabel = albumDetailBackLabel(artistReturnView)
+  const goBack = useCallback(() => {
+    dispatch({ type: 'SET_VIEW', view: artistReturnView })
+  }, [dispatch, artistReturnView])
+
+  // `.artist-detail` is itself the scroll container (overflow-y: auto in
+  // artist-detail.css). Persist its scrollTop per-artist so opening an
+  // album from a long discography and coming back lands the user where
+  // they left off. Keyed by artist name so a different artist's page
+  // opens fresh instead of inheriting a stale offset.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence(`artist-detail:${artist}`, scrollRef)
 
   // 4.5.0-45: Persona-aware aggregation. Match on either `artist` exact
   // OR contributingArtists.includes — canonicalize so "Paul McCartney
@@ -291,19 +310,19 @@ export default function ArtistDetailView() {
   if (!artist) {
     return (
       <div className="artist-detail">
-        <button className="artist-detail-back" onClick={() => dispatch({ type: 'SET_VIEW', view: 'artists' })}>‹ Artists</button>
+        <button className="artist-detail-back" onClick={goBack}>{backLabel}</button>
         <div className="artist-detail-empty">No artist selected.</div>
       </div>
     )
   }
 
   return (
-    <div className="artist-detail">
+    <div className="artist-detail" ref={scrollRef}>
       <button
         className="artist-detail-back"
-        onClick={() => dispatch({ type: 'SET_VIEW', view: 'artists' })}
+        onClick={goBack}
       >
-        ‹ Artists
+        {backLabel}
       </button>
 
       <header className="artist-detail-hero">

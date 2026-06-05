@@ -16,6 +16,10 @@ interface LibraryState {
   // into an album's detail row without coupling those views directly to
   // AlbumsView's internal selected state.
   pendingAlbumKey: string | null
+  // View to return to when the user taps back on the artist page. Mirrors
+  // albumDetailReturnView so artist detail reached from the Bandcamp Store
+  // or Search returns there instead of always dumping on Artists.
+  artistDetailReturnView: ViewName | null
   currentView: ViewName
   searchQuery: string
   sortColumn: SortColumn
@@ -65,6 +69,7 @@ const initialState: LibraryState = {
   activeSmartPlaylist: null,
   activeArtist: null,
   pendingAlbumKey: null,
+  artistDetailReturnView: null,
   currentView: 'songs',
   searchQuery: '',
   sortColumn: 'dateAdded',
@@ -213,7 +218,14 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
     case 'VIEW_SMART_PLAYLIST':
       return { ...state, currentView: 'smart-playlist', activeSmartPlaylist: action.id, activePlaylistId: null }
     case 'VIEW_ARTIST_DETAIL':
-      return { ...state, currentView: 'artist-detail', activeArtist: action.artistName }
+      return {
+        ...state,
+        currentView: 'artist-detail',
+        activeArtist: action.artistName,
+        artistDetailReturnView: state.currentView === 'artist-detail'
+          ? (state.artistDetailReturnView ?? 'artists')
+          : state.currentView,
+      }
     case 'VIEW_ALBUM_DETAIL':
       // 4.5.0-115: route to the dedicated album-detail page (was: bounce to
       // the Albums grid + highlight a card). pendingAlbumKey carries the
