@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
+import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../../utils/artworkLookup'
+import AlbumArtImage from '../AlbumArtImage'
 import { setNotice } from '../../activity'
 import ContextMenu from '../ContextMenu'
 import ConfirmDialog from '../ConfirmDialog'
@@ -30,22 +32,40 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
   const artKey = state.nowPlaying
     ? `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
     : null
-  const artHash = artKey ? libState.artworkMap[artKey] : null
+  const normalizedArtIndex = useMemo(
+    () => buildNormalizedArtworkIndex(libState.artworkMap),
+    [libState.artworkMap],
+  )
+  const artHash = artKey
+    ? lookupArtwork(libState.artworkMap, normalizedArtIndex, artist, album)
+    : undefined
 
-  // Auto-fetch artwork when a new track plays and art isn't cached
+  // Resolve missing art from disk (fast) before falling back to network fetch.
+  useEffect(() => {
+    if (!state.nowPlaying || !artKey || artHash) return
+    if (!artist || !album) return
+    requestArtworkResolution(artist, album, libDispatch)
+  }, [artKey, artHash, artist, album, state.nowPlaying, libDispatch])
+
+  // Auto-fetch from internet only when disk resolve also misses.
   useEffect(() => {
     if (!state.nowPlaying || !artKey || artHash) return
     if (fetchedRef.current.has(artKey)) return
     if (!artist || !album) return
 
-    fetchedRef.current.add(artKey)
-    window.electronAPI.fetchAlbumArt(artist, album)
-      .then((result) => {
-        if (result.ok && result.key && result.hash) {
-          libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        }
-      })
-      .catch(() => {})
+    const timer = window.setTimeout(() => {
+      if (fetchedRef.current.has(artKey)) return
+      fetchedRef.current.add(artKey)
+      window.electronAPI.fetchAlbumArt(artist, album)
+        .then((result) => {
+          if (result.ok && result.key && result.hash) {
+            libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+          }
+        })
+        .catch(() => {})
+    }, 800)
+
+    return () => window.clearTimeout(timer)
   }, [artKey, artHash, artist, album, state.nowPlaying, libDispatch])
 
   const handleAddArtwork = useCallback(async () => {
@@ -143,11 +163,11 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
         onDrop={handleDrop}
       >
         {artHash ? (
-          <img
-            src={`album-art://${artHash}.jpg`}
+          <AlbumArtImage
+            hash={artHash}
             alt={album}
             className="album-art-image"
-            draggable={false}
+            priority
           />
         ) : state.nowPlaying ? (
           <div className="album-art-placeholder">

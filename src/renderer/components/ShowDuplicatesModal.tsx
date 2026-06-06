@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import ConfirmDialog from './ConfirmDialog'
+import { setNotice } from '../activity'
 import { Track } from '../types'
 import '../styles/import-convert.css'
 import '../styles/show-duplicates.css'
@@ -98,7 +99,7 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
       }
       setDismissed(next)
     }).catch(() => {
-      // Non-fatal — modal still works for this session.
+      setNotice("Couldn't load duplicate-dismiss preferences.", { kind: 'error', durationMs: 4000 })
     }).finally(() => {
       if (!cancelled) setDismissedLoaded(true)
     })
@@ -114,8 +115,12 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
       window.electronAPI.saveUiState({
         ...existing,
         [DISMISSED_KEY]: Object.fromEntries(dismissed),
+      }).catch(() => {
+        setNotice("Couldn't save duplicate-dismiss preferences.", { kind: 'error', durationMs: 4000 })
       })
-    }).catch(() => {})
+    }).catch(() => {
+      setNotice("Couldn't save duplicate-dismiss preferences.", { kind: 'error', durationMs: 4000 })
+    })
     return () => { cancelled = true }
   }, [dismissed, dismissedLoaded])
 

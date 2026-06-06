@@ -59,7 +59,19 @@ const ALIAS_RULES: Array<[RegExp | string, string]> = [
 ]
 
 /**
- * Strip leading "The " and lowercase + trim for normalized comparison.
+ * Case-insensitive identity key for artist grouping, dedupe, and sync.
+ * All words — articles ("the", "a"), prepositions ("of", "in"), etc. —
+ * are folded so trivial casing drift does not split one artist into two.
+ *
+ * Example: "The Presidents of The United States Of America" and
+ * "The Presidents Of the United States of America" → same key.
+ */
+export function artistIdentityKey(name: string): string {
+  return canonicalArtist(name || '').toLowerCase().trim()
+}
+
+/**
+ * Strip leading "The " and lowercase + trim for alias-rule matching.
  * Note we DON'T strip "The " from the canonical OUTPUT — "The Beatles"
  * stays "The Beatles" in the Artists list.
  */
@@ -91,5 +103,5 @@ export function canonicalArtist(name: string): string {
  * should both match when viewing the canonical Paul page.
  */
 export function isSameArtist(a: string, b: string): boolean {
-  return canonicalArtist(a).toLowerCase().trim() === canonicalArtist(b).toLowerCase().trim()
+  return artistIdentityKey(a) === artistIdentityKey(b)
 }

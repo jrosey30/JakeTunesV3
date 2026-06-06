@@ -13,6 +13,7 @@ import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
+import { songsGridTemplate } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
 
 function formatDuration(ms: number): string {
@@ -118,7 +119,7 @@ export default function PlaylistView() {
 
   const visibleCols = ALL_COLUMN_DEFS.filter(c => !hiddenCols.has(c.key))
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
-  const gridTemplate = colWidths.map(w => `${w}px`).join(' ')
+  const gridTemplate = songsGridTemplate(visibleCols, colWidths)
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -536,7 +537,7 @@ export default function PlaylistView() {
       {playlist.commentary && (
         <div className="playlist-view-commentary">{playlist.commentary}</div>
       )}
-      <div className="songs-view" style={{ flex: 1, minHeight: 0 }}>
+      <div className="songs-view" style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>
         <div
           className="songs-header"
           style={{ gridTemplateColumns: gridTemplate }}
@@ -561,7 +562,7 @@ export default function PlaylistView() {
             </div>
           ))}
         </div>
-        <div className="songs-body" ref={songsBodyRef} onScroll={handleScroll}>
+        <div className="songs-body">
           {sortedTracks.map((track, i) => {
             const isPlaying = pb.nowPlaying?.id === track.id
             const isSelected = selectedIds.has(track.id)

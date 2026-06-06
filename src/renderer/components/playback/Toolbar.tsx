@@ -129,6 +129,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // after the opener). Counter is reset when Radio Mode toggles off.
   const radioTransitionCounterRef = useRef<number>(0)
   const radioPrefetchedKeyRef = useRef<string | null>(null)
+  // Guard against overlapping transition handlers (double onend → double banter).
+  const radioTransitionBusyRef = useRef(false)
+  // Tracks which cacheKey is currently being prefetched so we don't stampede.
+  const radioPrefetchInFlightRef = useRef<string | null>(null)
+  // Slot params (incl. callerId) pinned at prefetch time so live-fetch
+  // matches what Claude was asked for when the cache misses.
+  const radioTransitionParamsRef = useRef<Map<string, {
+    slot: number; hourCounter: number; useAnnouncer: boolean; miniId: boolean
+    callerSegment: boolean; djHandsSegment: boolean; archetypeId?: string; callerId?: string
+  }>>(new Map())
   const [djActive, setDjActive] = useState(false)
   const [djText, setDjText] = useState('')
   const [djLoading, setDjLoading] = useState(false)
@@ -242,12 +252,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // for paths that didn't pre-set (radio segments, etc.).
       const speaker = BUBBLE_SPEAKER_LABEL[djSpeaker]
       const current = getBroadcast()
-      if (current && current.text === djText && current.speaker === speaker && current.mode === 'speaking') return
+      if (current?.mode === 'speaking' && current.text === djText && current.speaker === speaker) return
       setBroadcast({ speaker, text: djText, mode: 'speaking' })
-    } else {
+    } else if (!djActive) {
+      // Speech finished — dismiss the now-playing caption. (An older
+      // guard blocked clear whenever mode==='speaking', which left the
+      // pill frozen on the last karaoke-highlighted word forever.)
       setBroadcast(null)
     }
-  }, [djText, djLoading, djSpeaker])
+  }, [djText, djLoading, djSpeaker, djActive])
 
   // Cancel DJ when user manually plays a track
   useEffect(() => {
@@ -353,6 +366,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setRadioMode(false)
       radioCacheRef.current.clear()
       radioPrefetchedKeyRef.current = null
+      radioTransitionParamsRef.current.clear()
       radioTransitionCounterRef.current = 0
       if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
       if (radioCapTimerRef.current) { clearTimeout(radioCapTimerRef.current); radioCapTimerRef.current = null }
@@ -463,76 +477,39 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }, RADIO_CAP_MS)
     console.log('[Radio] toggle ON — generating opener…')
 
-    // Hard timeout for the whole opener flow (IPC + TTS + segment
-    // playback). If anything in the chain hangs (Claude latency,
-    // ElevenLabs, network blip, decoder stall), we fall through to
-    // playTrack within 15s so the user is NEVER left staring at a
-    // dead radio button.
-    const TIMEOUT_MS = 15000
-    const openerDone = new Promise<void>((resolve) => {
-      let resolved = false
-      const finish = () => { if (!resolved) { resolved = true; resolve() } }
-      setTimeout(() => {
-        if (!resolved) console.warn(`[Radio] opener timeout after ${TIMEOUT_MS}ms — starting track`)
-        finish()
-      }, TIMEOUT_MS)
-
-      ;(async () => {
-        try {
-          console.log('[Radio] calling musicmanRadio (opener)…')
-          const r = await window.electronAPI.musicmanRadio(
-            { title: '', artist: '', album: '', genre: '', year: '' },
-            { title: firstTrack.title || '', artist: firstTrack.artist || '', album: firstTrack.album || '', genre: firstTrack.genre || '', year: firstTrack.year || '' },
-            true,
-            true,
-          )
-          console.log('[Radio] musicmanRadio returned ok=' + r.ok + ' text-length=' + (r.text?.length ?? 0))
-          if (!r.ok || !r.text) { finish(); return }
-          if (resolved) return  // timeout already fired
-          console.log('[Radio] OPENER FULL TEXT:\n' + r.text)
-          console.log('[Radio] synthesizing segments…')
-          const segments = await synthesizeRadioSegments(r.text)
-          console.log('[Radio] got ' + segments.length + ' segments, speakers:', segments.map(s => s.speaker))
-          if (resolved) return
-          if (segments.length === 0) { finish(); return }
-          let i = 0
-          const playOne = (): void => {
-            if (resolved) return
-            if (i >= segments.length) { finish(); return }
-            const seg = segments[i++]
-            const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
-            if (seg.speaker === 'announcer') {
-              // 4.3.3: opener announcer drops also get full broadcast
-              // FX + stinger treatment.
-              attachAnnouncerToBroadcast(audio)
-              djAudioRef.current = audio
-              const preType = randomPreStinger()
-              const preDur = playStinger(preType)
-              audio.onended = () => {
-                playStinger(randomEndStinger())
-                setTimeout(playOne, 200)
-              }
-              audio.onerror = () => { console.warn('[Radio] opener announcer errored, advancing'); playOne() }
-              setTimeout(() => {
-                audio.play().catch((e) => { console.warn('[Radio] opener announcer play() rejected:', e); playOne() })
-              }, Math.max(50, preDur * 700))
-            } else {
-              attachClipToBroadcast(audio)
-              djAudioRef.current = audio
-              audio.onended = playOne
-              audio.onerror = () => { console.warn('[Radio] segment ' + (i-1) + ' errored, advancing'); playOne() }
-              audio.play().catch((e) => { console.warn('[Radio] segment play() rejected:', e); playOne() })
-            }
-          }
-          playOne()
-        } catch (err) {
-          console.warn('[Radio] opener flow threw, starting track directly:', err)
-          finish()
+    // Timeout applies only to Claude fetch — never cut off mid-playback.
+    const OPENER_FETCH_TIMEOUT_MS = 20000
+    try {
+      const fetchPromise = window.electronAPI.musicmanRadio(
+        { title: '', artist: '', album: '', genre: '', year: '' },
+        { title: firstTrack.title || '', artist: firstTrack.artist || '', album: firstTrack.album || '', genre: firstTrack.genre || '', year: firstTrack.year || '' },
+        true,
+        true,
+      )
+      const timeout = new Promise<{ ok: false }>((resolve) => {
+        setTimeout(() => resolve({ ok: false }), OPENER_FETCH_TIMEOUT_MS)
+      })
+      const r = await Promise.race([fetchPromise, timeout])
+      console.log('[Radio] musicmanRadio returned ok=' + r.ok + ' text-length=' + ('text' in r ? r.text?.length ?? 0 : 0))
+      if (r.ok && 'text' in r && r.text) {
+        console.log('[Radio] OPENER FULL TEXT:\n' + r.text)
+        setDjActive(true)
+        setDjLoading(true)
+        const segments = await synthesizeRadioSegments(r.text)
+        console.log('[Radio] got ' + segments.length + ' opener segments')
+        if (segments.length > 0) {
+          setDjLoading(false)
+          await playRadioSegmentSequence(segments)
         }
-      })()
-    })
-    await openerDone
+      } else if (!r.ok) {
+        console.warn('[Radio] opener fetch timed out or failed — starting track')
+      }
+    } catch (err) {
+      console.warn('[Radio] opener flow threw, starting track directly:', err)
+    }
     djAudioRef.current = null
+    setDjActive(false)
+    setDjLoading(false)
     console.log('[Radio] starting first track:', firstTrack.title)
     // 4.2.15 critical bug fix: pass djTransition=TRUE here. Without it,
     // playTrack sees `autoDjMode && !djTransition` and dispatches
@@ -624,7 +601,192 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     return chosen
   }
 
-  // Parse a Claude-generated radio script into ordered speaker segments.
+  const RADIO_SPEAKER_LABEL: Record<RadioSpeaker, string> = {
+    mm: 'The Music Man',
+    megan: 'Megan',
+    announcer: 'WJLR',
+    djhands: 'Stephen Hands',
+    giovanni: 'Giovanni',
+    rajiv: 'Rajiv',
+    bernard: 'Bernard',
+    lashonte: 'LaShonte',
+    kristina: 'Kristina',
+    devin: 'Devin',
+    maya: 'Maya',
+    mike: 'Mike',
+    zoe: 'Zoe',
+  }
+
+  const stripRadioAudioTags = (s: string): string =>
+    s.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+
+  // Deterministic archetype per slot — prefetch and live transition MUST
+  // agree or the cache plays the wrong segment shape.
+  function archetypeForSlot(slot: number, transitionNum: number): string {
+    switch (slot) {
+      case 1:  return 'cold-open-hot-take'
+      case 2:  return 'back-announce'
+      case 3:  return transitionNum % 2 === 0 ? 'lateral-pivot' : 'lineage-bridge'
+      case 4:  {
+        const opts = ['brooklyn-texture', 'lyric-roast', 'lightning-round'] as const
+        return opts[transitionNum % opts.length]
+      }
+      case 6:  return 'recovery'
+      case 8:  return 'historian-dwell'
+      case 9:  return 'lightning-round'
+      case 10: return 'recovery'
+      case 11: return 'hour-out'
+      default: return 'back-announce'
+    }
+  }
+
+  function computeRadioSlotParams(transitionNum: number, callerId?: string) {
+    const slot = transitionNum % 12
+    const hourCounter = Math.floor(transitionNum / 12)
+    const stephenThisHour = hourCounter % 3 === 0
+    const forceAnnouncer = slot === 0
+    const miniId = slot === 7
+    const callerSegment = slot === 5
+    const djHandsSegment = slot === 9 && stephenThisHour
+    const useAnnouncer = forceAnnouncer
+    let archetypeId: string | undefined
+    if (!callerSegment && !djHandsSegment && !miniId && !forceAnnouncer) {
+      archetypeId = archetypeForSlot(slot, transitionNum)
+    }
+    return {
+      slot,
+      hourCounter,
+      useAnnouncer,
+      miniId,
+      callerSegment,
+      djHandsSegment,
+      archetypeId,
+      callerId: callerSegment ? callerId : undefined,
+    }
+  }
+
+  function voiceIdForRadioSpeaker(speaker: RadioSpeaker): string | undefined {
+    switch (speaker) {
+      case 'megan':     return MEGAN_VOICE_ID
+      case 'announcer': return ANNOUNCER_VOICE_ID
+      case 'djhands':   return DJ_HANDS_VOICE_ID
+      case 'giovanni':  return GIOVANNI_VOICE_ID
+      case 'rajiv':     return RAJIV_VOICE_ID
+      case 'bernard':   return BERNARD_VOICE_ID
+      case 'lashonte':  return LASHONTE_VOICE_ID
+      case 'kristina':  return KRISTINA_VOICE_ID
+      case 'devin':     return DEVIN_VOICE_ID
+      case 'maya':      return MAYA_VOICE_ID
+      case 'mike':      return MIKE_VOICE_ID
+      case 'zoe':       return ZOE_VOICE_ID
+      default:          return undefined
+    }
+  }
+
+  async function synthesizeOneRadioSegment(seg: { speaker: RadioSpeaker; line: string }): Promise<RadioSegment | null> {
+    const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceIdForRadioSpeaker(seg.speaker))
+    if (tts.ok && tts.audio) {
+      return { speaker: seg.speaker, line: seg.line, audioData: tts.audio }
+    }
+    console.warn(`[Radio] TTS dropped a [${seg.speaker.toUpperCase()}] segment:`, tts.error || '(no error reported)', '— line:', seg.line.slice(0, 80))
+    return null
+  }
+
+  // Parallel TTS with a small concurrency cap — 4× faster than serial
+  // without hammering the ElevenLabs rate limiter.
+  async function synthesizeRadioSegments(scriptText: string): Promise<RadioSegment[]> {
+    const parsed = parseRadioScript(scriptText)
+    console.log(`[Radio] parseRadioScript → ${parsed.length} segments:`, parsed.map(p => p.speaker))
+    if (parsed.length === 0) return []
+    const TTS_CONCURRENCY = 4
+    const results: (RadioSegment | null)[] = new Array(parsed.length).fill(null)
+    let nextIdx = 0
+    async function worker(): Promise<void> {
+      while (true) {
+        const i = nextIdx++
+        if (i >= parsed.length) break
+        results[i] = await synthesizeOneRadioSegment(parsed[i])
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(TTS_CONCURRENCY, parsed.length) }, () => worker()),
+    )
+    const out = results.filter((s): s is RadioSegment => s !== null)
+    console.log(`[Radio] synthesizeRadioSegments → ${out.length} usable segments`)
+    return out
+  }
+
+  // Synthesize then play each segment as soon as its audio is ready —
+  // first line drops while later lines are still rendering.
+  async function synthesizeAndPlayRadioScript(scriptText: string): Promise<RadioSegment[]> {
+    const parsed = parseRadioScript(scriptText)
+    if (parsed.length === 0) return []
+    const synthPromises = parsed.map(seg => synthesizeOneRadioSegment(seg))
+    const played: RadioSegment[] = []
+    for (let i = 0; i < parsed.length; i++) {
+      const seg = await synthPromises[i]
+      if (seg) {
+        await playSingleRadioSegment(seg)
+        played.push(seg)
+      }
+    }
+    return played
+  }
+
+  async function waitForAudioMetadata(audio: HTMLAudioElement): Promise<void> {
+    if (!isNaN(audio.duration) && audio.duration > 0) return
+    await new Promise<void>((resolve) => {
+      const onMeta = () => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }
+      audio.addEventListener('loadedmetadata', onMeta)
+      setTimeout(() => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }, 1000)
+    })
+  }
+
+  function playSingleRadioSegment(seg: RadioSegment): Promise<void> {
+    return new Promise((resolve) => {
+      const caption = stripRadioAudioTags(seg.line)
+      const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+      const finish = () => {
+        try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
+        resolve()
+      }
+      const syncCaption = async () => {
+        await waitForAudioMetadata(audio)
+        const durationMs = (audio.duration > 0 && !isNaN(audio.duration)) ? audio.duration * 1000 : 3000
+        setBroadcastTimed({ speaker: RADIO_SPEAKER_LABEL[seg.speaker], text: caption }, durationMs)
+        setDjText(caption)
+      }
+      if (seg.speaker === 'announcer') {
+        attachAnnouncerToBroadcast(audio)
+        djAudioRef.current = audio
+        const preType = randomPreStinger()
+        const preDur = playStinger(preType)
+        audio.onended = () => {
+          playStinger(randomEndStinger())
+          setTimeout(finish, 200)
+        }
+        audio.onerror = finish
+        void syncCaption()
+        setTimeout(() => {
+          audio.play().catch(() => finish())
+        }, Math.max(50, preDur * 700))
+      } else {
+        attachClipToBroadcast(audio)
+        djAudioRef.current = audio
+        audio.onended = finish
+        audio.onerror = finish
+        void syncCaption().then(() => {
+          audio.play().catch(() => finish())
+        })
+      }
+    })
+  }
+
+  async function playRadioSegmentSequence(segments: RadioSegment[]): Promise<void> {
+    for (const seg of segments) {
+      await playSingleRadioSegment(seg)
+    }
+  }
   // 4.4.0: full caller rolodex tag set.
   function parseRadioScript(text: string): Array<{ speaker: RadioSpeaker; line: string }> {
     const segments: Array<{ speaker: RadioSpeaker; line: string }> = []
@@ -661,147 +823,75 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     return segments
   }
 
-  // Synthesize each script line with the appropriate voice. Sequential
-  // (not parallel) to be polite to the ElevenLabs rate limiter and so
-  // the array stays ordered.
-  async function synthesizeRadioSegments(scriptText: string): Promise<RadioSegment[]> {
-    const parsed = parseRadioScript(scriptText)
-    console.log(`[Radio] parseRadioScript → ${parsed.length} segments:`, parsed.map(p => p.speaker))
-    const out: RadioSegment[] = []
-    for (const seg of parsed) {
-      const voiceId =
-        seg.speaker === 'megan' ? MEGAN_VOICE_ID :
-        seg.speaker === 'announcer' ? ANNOUNCER_VOICE_ID :
-        seg.speaker === 'djhands' ? DJ_HANDS_VOICE_ID :
-        seg.speaker === 'giovanni' ? GIOVANNI_VOICE_ID :
-        seg.speaker === 'rajiv'    ? RAJIV_VOICE_ID :
-        seg.speaker === 'bernard'  ? BERNARD_VOICE_ID :
-        seg.speaker === 'lashonte' ? LASHONTE_VOICE_ID :
-        seg.speaker === 'kristina' ? KRISTINA_VOICE_ID :
-        seg.speaker === 'devin'    ? DEVIN_VOICE_ID :
-        seg.speaker === 'maya'     ? MAYA_VOICE_ID :
-        seg.speaker === 'mike'     ? MIKE_VOICE_ID :
-        seg.speaker === 'zoe'      ? ZOE_VOICE_ID :
-        undefined  // mm → server-side default
-      const tts = await window.electronAPI.musicmanSpeak(seg.line, false, voiceId)
-      if (tts.ok && tts.audio) {
-        out.push({ speaker: seg.speaker, line: seg.line, audioData: tts.audio })
-      } else {
-        // 4.3.4: surface the dropped segment so we can debug. Previously
-        // a TTS failure (e.g. v3 not supporting a specific voice) silently
-        // dropped the segment from the array, so the user heard the rest
-        // of the script with the dropped speaker missing — manifested as
-        // "no station ID played" when announcer's TTS failed.
-        console.warn(`[Radio] TTS dropped a [${seg.speaker.toUpperCase()}] segment:`, tts.error || '(no error reported)', '— line:', seg.line.slice(0, 80))
+  // Pre-fetch radio dialog — starts at track change AND during the last
+  // ~120s so Claude + parallel TTS finish before the seam.
+  const kickRadioPrefetch = useCallback(async (prevTrack: { id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number }, nextTrack: { id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number }) => {
+    const cacheKey = `${prevTrack.id}-${nextTrack.id}`
+    if (radioCacheRef.current.has(cacheKey)) return
+    if (radioPrefetchedKeyRef.current === cacheKey) return
+    if (radioPrefetchInFlightRef.current === cacheKey) return
+    radioPrefetchedKeyRef.current = cacheKey
+    radioPrefetchInFlightRef.current = cacheKey
+    console.log('[Radio] prefetch starting', { cacheKey })
+    try {
+      const upcoming = radioTransitionCounterRef.current + 1
+      let params = radioTransitionParamsRef.current.get(cacheKey)
+      if (!params) {
+        const callerId = computeRadioSlotParams(upcoming).callerSegment ? pickCaller() : undefined
+        params = computeRadioSlotParams(upcoming, callerId)
+        radioTransitionParamsRef.current.set(cacheKey, params)
       }
+      const r = await window.electronAPI.musicmanRadio(
+        { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
+        { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+        false,
+        params.useAnnouncer,
+        params.callerSegment,
+        params.djHandsSegment,
+        params.callerId,
+        params.archetypeId,
+        params.slot,
+        params.hourCounter,
+        params.miniId,
+      )
+      if (!r.ok || !r.text) {
+        console.warn('[Radio] prefetch failed — clearing key for retry', { ok: r.ok, error: r.error })
+        if (radioPrefetchedKeyRef.current === cacheKey) radioPrefetchedKeyRef.current = null
+        return
+      }
+      const segments = await synthesizeRadioSegments(r.text)
+      if (segments.length === 0) {
+        console.warn('[Radio] prefetch synth returned no segments — clearing key')
+        if (radioPrefetchedKeyRef.current === cacheKey) radioPrefetchedKeyRef.current = null
+        return
+      }
+      radioCacheRef.current.set(cacheKey, { segments, fullText: r.text })
+      console.log('[Radio] prefetch cached', { cacheKey, segments: segments.length })
+    } catch (err) {
+      console.warn('[Radio] prefetch threw — clearing key for live-fetch fallback', err)
+      if (radioPrefetchedKeyRef.current === cacheKey) radioPrefetchedKeyRef.current = null
+    } finally {
+      if (radioPrefetchInFlightRef.current === cacheKey) radioPrefetchInFlightRef.current = null
     }
-    console.log(`[Radio] synthesizeRadioSegments → ${out.length} usable segments`)
-    return out
-  }
+  }, [])
 
-  // Pre-fetch radio dialog during the last ~30s of the current track.
-  // Result lands in the cache as an array of {speaker, line, audioData}
-  // segments ready for sequential playback.
+  // Kick prefetch as soon as a new track starts in radio mode.
+  useEffect(() => {
+    if (!radioMode || !pb.nowPlaying) return
+    const nextIdx = pb.queueIndex + 1
+    if (nextIdx >= pb.queue.length) return
+    void kickRadioPrefetch(pb.nowPlaying, pb.queue[nextIdx])
+  }, [radioMode, pb.nowPlaying?.id, pb.queueIndex, pb.queue, kickRadioPrefetch])
+
   useEffect(() => {
     if (!radioMode) return
     if (!pb.nowPlaying || pb.duration <= 0) return
     const remaining = pb.duration - pb.position
-    // 4.3.2: prefetch window pushed earlier (60s remaining instead of
-    // 30s) so Claude generation + per-segment ElevenLabs synthesis has
-    // headroom to complete before the song ends. Multi-segment radio
-    // dialog can take 15-25 seconds to fully synthesize; 30s of lead
-    // time was cutting it close and meant live-fetch fallback fired
-    // often, which is the slow path.
-    if (remaining > 60 || remaining < 5) return
+    if (remaining > 120) return
     const nextIdx = pb.queueIndex + 1
     if (nextIdx >= pb.queue.length) return
-    const nextTrack = pb.queue[nextIdx]
-    const cacheKey = `${pb.nowPlaying.id}-${nextTrack.id}`
-    if (radioPrefetchedKeyRef.current === cacheKey) return
-    if (radioCacheRef.current.has(cacheKey)) return
-    radioPrefetchedKeyRef.current = cacheKey
-    console.log('[Radio] prefetch starting', { cacheKey, remaining: remaining.toFixed(1) })
-    ;(async () => {
-      try {
-        const prev = pb.nowPlaying!
-        // Look ahead at what the counter WILL be when this transition
-        // fires (current + 1). Mirror the rotation logic from the
-        // transition handler so the prefetch matches what's actually
-        // requested live (otherwise the live-fetch path runs anyway).
-        // 4.4.1: mirror the hour clock from the transition handler so
-        // prefetch picks the same archetype + caller + slot flags. If
-        // these get out of sync, prefetch caches dialog with the wrong
-        // shape and the cache hit during the live transition plays
-        // mismatched content.
-        const upcoming = radioTransitionCounterRef.current + 1
-        const upcomingSlot = upcoming % 12
-        const upcomingHour = Math.floor(upcoming / 12)
-        const upcomingStephenHour = upcomingHour % 3 === 0
-        const upcomingForceAnn = upcomingSlot === 0
-        const upcomingMiniId   = upcomingSlot === 7
-        const upcomingCaller   = upcomingSlot === 5
-        const upcomingDjHands  = upcomingSlot === 9 && upcomingStephenHour
-        const upcomingUseAnn   = upcomingForceAnn
-        let upcomingArchetype: string | undefined = undefined
-        if (!upcomingCaller && !upcomingDjHands && !upcomingMiniId && !upcomingForceAnn) {
-          switch (upcomingSlot) {
-            case 1:  upcomingArchetype = 'cold-open-hot-take'; break
-            case 2:  upcomingArchetype = 'back-announce'; break
-            case 3:  upcomingArchetype = Math.random() < 0.5 ? 'lateral-pivot' : 'lineage-bridge'; break
-            case 4:  upcomingArchetype = ['brooklyn-texture', 'lyric-roast', 'lightning-round'][Math.floor(Math.random() * 3)]; break
-            case 6:  upcomingArchetype = 'recovery'; break
-            case 8:  upcomingArchetype = 'historian-dwell'; break
-            case 9:  upcomingArchetype = 'lightning-round'; break
-            case 10: upcomingArchetype = 'recovery'; break
-            case 11: upcomingArchetype = 'hour-out'; break
-            default: upcomingArchetype = 'back-announce'
-          }
-        }
-        // 4.4.0: pick caller now if upcoming slot is a caller slot, so the
-        // prefetch synthesizes with the right voice. The transition handler
-        // hits the cache and skips its own pickCaller call.
-        const upcomingCallerId = upcomingCaller ? pickCaller() : undefined
-        const r = await window.electronAPI.musicmanRadio(
-          { title: prev.title || '', artist: prev.artist || '', album: prev.album || '', genre: prev.genre || '', year: prev.year || '' },
-          { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
-          false,
-          upcomingUseAnn,
-          upcomingCaller,
-          upcomingDjHands,
-          upcomingCallerId,
-          upcomingArchetype,
-          upcomingSlot,
-          upcomingHour,
-          upcomingMiniId,
-        )
-        if (!r.ok || !r.text) {
-          console.warn('[Radio] prefetch failed — clearing key for retry', { ok: r.ok, error: r.error })
-          // 4.2.15: clear the key so the transition handler can live-fetch
-          // without thinking a prefetch is "in flight or already done."
-          if (radioPrefetchedKeyRef.current === cacheKey) {
-            radioPrefetchedKeyRef.current = null
-          }
-          return
-        }
-        const segments = await synthesizeRadioSegments(r.text)
-        if (segments.length === 0) {
-          console.warn('[Radio] prefetch synth returned no segments — clearing key')
-          if (radioPrefetchedKeyRef.current === cacheKey) {
-            radioPrefetchedKeyRef.current = null
-          }
-          return
-        }
-        radioCacheRef.current.set(cacheKey, { segments, fullText: r.text })
-        console.log('[Radio] prefetch cached', { cacheKey, segments: segments.length })
-      } catch (err) {
-        console.warn('[Radio] prefetch threw — clearing key for live-fetch fallback', err)
-        if (radioPrefetchedKeyRef.current === cacheKey) {
-          radioPrefetchedKeyRef.current = null
-        }
-      }
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [radioMode, pb.nowPlaying, pb.position, pb.duration, pb.queue, pb.queueIndex])
+    void kickRadioPrefetch(pb.nowPlaying, pb.queue[nextIdx])
+  }, [radioMode, pb.nowPlaying, pb.position, pb.duration, pb.queue, pb.queueIndex, kickRadioPrefetch])
 
   // Click mic: one-shot DJ comment on current track. Click again to stop.
   const handleDjClick = useCallback(async () => {
@@ -882,7 +972,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             setAutoDj(false)
             setTimeout(() => {
               setDjExiting(true)
-              setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
+              setTimeout(() => {
+                setDjText('')
+                setBroadcast(null)
+                setDjExiting(false)
+              }, 400)
             }, 3000)
           }
           audio.onerror = (err) => {
@@ -948,6 +1042,35 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Acknowledge so useAudio knows we're handling this
       window.dispatchEvent(new Event('musicman-dj-transition-ack'))
       const { prevTrack, nextTrack, nextIdx, queue } = (e as CustomEvent).detail
+
+      if (radioTransitionBusyRef.current) {
+        console.warn('[Radio] transition already in flight — advancing track')
+        playTrack(nextTrack, queue, nextIdx, true)
+        return
+      }
+      radioTransitionBusyRef.current = true
+
+      const cacheKey = `${prevTrack.id}-${nextTrack.id}`
+
+      const advanceAfterBanter = async (segments: RadioSegment[]) => {
+        savedVolumeRef.current = pb.volume
+        setDjLoading(false)
+        await playRadioSegmentSequence(segments)
+        djAudioRef.current = null
+        setDjActive(false)
+        isFadedRef.current = false
+        setVolume(savedVolumeRef.current)
+        playTrack(nextTrack, queue, nextIdx, true)
+        setTimeout(() => {
+          setDjExiting(true)
+          setTimeout(() => {
+            setDjText('')
+            setBroadcast(null)
+            setDjExiting(false)
+          }, 400)
+        }, 3000)
+      }
+
       console.log('[Radio] transition fired', {
         radioMode, autoDj,
         prev: prevTrack?.title, next: nextTrack?.title,
@@ -957,231 +1080,114 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjActive(true)
       setDjLoading(true)
       setDjText('')
-      // 4.4.49: the bubble only renders in !radioMode — i.e. DJ Mode,
-      // which is Stephen Hands' lane. Attribute it to him.
       setDjSpeaker('djhands')
 
-      // Helper: play an array of {speaker, line, audioData} segments
-      // over the next track at ducked volume — real-radio-DJ style.
-      //
-      // 4.3.2: REAL-RADIO TIMING. Dialog plays at the SEAM (in silence),
-      // next track starts AFTER the last segment. Previous (4.2.16)
-      // approach started the next track at ducked volume immediately
-      // and let dialog play over it — but TTS+API latency could leave
-      // the next song playing 30-45 seconds before banter actually
-      // dropped, which is the opposite of how real radio works. Real
-      // FM: previous song fades out → DJs talk in silence (or near-
-      // silence) → next song fades in. We do that now.
-      const playSegmentSequence = async (segments: RadioSegment[], displayText: string) => {
-        setDjText(displayText)
-        savedVolumeRef.current = pb.volume
-
-        // 1. Play segments in silence — no music underneath. The
-        //    previous song already ended naturally; we just don't
-        //    start the next one yet. ANNOUNCER segments get the
-        //    full broadcast-FX treatment + stingers (4.3.3).
-        let i = 0
-        await new Promise<void>((resolve) => {
-          const playOne = (): void => {
-            if (i >= segments.length) { resolve(); return }
-            const seg = segments[i++]
-            const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
-            if (seg.speaker === 'announcer') {
-              // Production-rated path: pre-stinger riser → broadcast-
-              // processed announcer voice → endcap stinger.
-              attachAnnouncerToBroadcast(audio)
-              djAudioRef.current = audio
-              const preType = randomPreStinger()
-              const preDur = playStinger(preType)
-              audio.onended = () => {
-                playStinger(randomEndStinger())
-                // Brief beat after the endcap, then continue.
-                setTimeout(playOne, 200)
-              }
-              audio.onerror = playOne
-              // Wait until ~70% through the riser before announcer
-              // voice kicks in — the riser builds INTO the drop.
-              setTimeout(() => {
-                audio.play().catch(() => playOne())
-              }, Math.max(50, preDur * 700))
-            } else {
-              // Normal MM / Megan / Giovanni / DJ Hands path — direct
-              // through preamp/EQ.
-              attachClipToBroadcast(audio)
-              djAudioRef.current = audio
-              audio.onended = playOne
-              audio.onerror = playOne
-              audio.play().catch(() => playOne())
-            }
-          }
-          playOne()
-        })
-
-        // 2. Segments done. Start the next track at the user's actual
-        //    volume — no ducking needed since dialog already finished.
-        djAudioRef.current = null
-        setDjActive(false)
-        isFadedRef.current = false
-        setVolume(savedVolumeRef.current)
-        playTrack(nextTrack, queue, nextIdx, true)
-
-        // 3. Bubble fade-out shortly after the new song starts.
-        setTimeout(() => {
-          setDjExiting(true)
-          setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
-        }, 3000)
-      }
-
-      // Bump the transition counter ONCE per real transition. Used by
-      // both the cache-hit and live-fetch paths to decide announcer
-      // scheduling. (The pre-fetch effect peeks at counter+1 to align
-      // its forceAnnouncer decision with what THIS transition will
-      // actually compute.)
-      if (radioMode) {
-        radioTransitionCounterRef.current += 1
-      }
-      // 4.2.19: rotation slot mapping (per-transition counter modulo 12,
-      // so the show feels like a real rotation rather than the same
-      // four-beat loop):
-      //   slot 0  → forceAnnouncer (campy station ID)
-      //   slot 4  → forceAnnouncer (second station ID in the dozen)
-      //   slot 5  → callerSegment (Giovanni phones in)
-      //   slot 9  → djHandsSegment (rare DJ Hands guest spot)
-      //   slot 11 → callerSegment (Giovanni again — he loves this show)
-      //   else    → pure MM + Megan banter
-      // Counter starts at 1 after the first increment, so transition 1 ≠
-      // slot 0 (slot 0 would only fire on a 12-counter wrap to 0). The
-      // "every 4th" announcer cadence is preserved because we're using
-      // counter % 4 below as a fallback for non-special slots.
-      // 4.4.1: HOUR CLOCK — see show bible §1. The 12 slots per hour
-      // each have a structural role. Stephen's slot-9 guest spot is
-      // rationed to ≈1 hour in 3 (otherwise slot 9 is a Lightning Round
-      // substitute so the slot-9 PEAK still lands).
-      const slot = radioTransitionCounterRef.current % 12
-      const hourCounter = Math.floor(radioTransitionCounterRef.current / 12)
-      const stephenThisHour = hourCounter % 3 === 0  // 1 in 3 hours has Stephen
-      const forceAnnouncerThisTransition = radioMode && slot === 0  // full ID at top of hour
-      const miniIdThisTransition         = radioMode && slot === 7  // mid-hour mini ID
-      const callerThisTransition         = radioMode && slot === 5  // caller bit (one per hour)
-      const djHandsThisTransition        = radioMode && slot === 9 && stephenThisHour
-      // Mutual-exclude: callers/Stephen/miniId suppress the announcer
-      // drop in their own segment so the structure doesn't get crowded.
-      const useAnnouncer = forceAnnouncerThisTransition
-      // Pick the structural archetype for this slot. Caller / Stephen /
-      // miniId / opener slots have their own dedicated segmentMode in
-      // the radio handler — for those we leave archetypeId undefined so
-      // the handler doesn't double up. For all other slots, the slot
-      // dictates the archetype per the hour clock.
-      let archetypeIdThisTransition: string | undefined = undefined
-      if (radioMode && !callerThisTransition && !djHandsThisTransition && !miniIdThisTransition && !forceAnnouncerThisTransition) {
-        switch (slot) {
-          case 1:  archetypeIdThisTransition = 'cold-open-hot-take'; break
-          case 2:  archetypeIdThisTransition = 'back-announce'; break
-          case 3:  archetypeIdThisTransition = Math.random() < 0.5 ? 'lateral-pivot' : 'lineage-bridge'; break
-          case 4:  archetypeIdThisTransition = ['brooklyn-texture', 'lyric-roast', 'lightning-round'][Math.floor(Math.random() * 3)]; break
-          case 6:  archetypeIdThisTransition = 'recovery'; break
-          case 8:  archetypeIdThisTransition = 'historian-dwell'; break
-          case 9:  archetypeIdThisTransition = 'lightning-round'; break  // Stephen-substitute hours
-          case 10: archetypeIdThisTransition = 'recovery'; break
-          case 11: archetypeIdThisTransition = 'hour-out'; break
-          default: archetypeIdThisTransition = 'back-announce'
-        }
-      }
-
-      // Radio Mode fast path: pre-fetched dialog cached as a segment array.
-      if (radioMode) {
-        const cacheKey = `${prevTrack.id}-${nextTrack.id}`
-        const cached = radioCacheRef.current.get(cacheKey)
-        if (cached && cached.segments.length > 0) {
-          radioCacheRef.current.delete(cacheKey)
-          radioPrefetchedKeyRef.current = null
-          setDjLoading(false)
-          await playSegmentSequence(cached.segments, cached.fullText)
-          return
-        }
-      }
-
-      // Live fetch path. Radio Mode → musicmanRadio + per-segment TTS;
-      // DJ Set autoDj → musicmanDj + single-clip TTS.
-      // 4.2.15: every failure mode is now logged. The empty catch was
-      // swallowing API errors, prefetch failures, and TTS issues — leaving
-      // the user with "they speak once and never come back" and no clue why.
       try {
         if (radioMode) {
-          // Pick caller live (cache missed — prefetch didn't supply one).
-          const liveCallerId = callerThisTransition ? pickCaller() : undefined
-          console.log('[Radio] live fetch starting...', { slot, hour: hourCounter, archetype: archetypeIdThisTransition, useAnnouncer, miniId: miniIdThisTransition, callerThisTransition, callerId: liveCallerId, djHandsThisTransition })
-          const r = await window.electronAPI.musicmanRadio(
-            { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
-            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
-            false,
-            useAnnouncer,
-            callerThisTransition,
-            djHandsThisTransition,
-            liveCallerId,
-            archetypeIdThisTransition,
-            slot,
-            hourCounter,
-            miniIdThisTransition,
+          radioTransitionCounterRef.current += 1
+        }
+
+        const params = radioTransitionParamsRef.current.get(cacheKey)
+          ?? computeRadioSlotParams(
+            radioTransitionCounterRef.current,
+            radioMode && (radioTransitionCounterRef.current % 12) === 5 ? pickCaller() : undefined,
           )
-          console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
-          if (r.ok && r.text) {
-            const segments = await synthesizeRadioSegments(r.text)
-            console.log('[Radio] synthesized segments', { count: segments.length, speakers: segments.map(s => s.speaker) })
-            setDjLoading(false)
-            if (segments.length > 0) {
-              await playSegmentSequence(segments, r.text)
-              return
-            }
-            console.warn('[Radio] no segments synthesized — TTS may have failed; falling through to silent advance')
-          } else {
-            console.warn('[Radio] musicmanRadio returned no text', r)
-          }
-        } else {
-          // 4.4.0: DJ Mode (autoDj && !radioMode) is Stephen Hands' lane.
-          // Pass persona='stephen' and route TTS through Stephen's voice.
-          const result = await window.electronAPI.musicmanDj(
-            { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
-            { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
-            'stephen',
-          )
-          if (result.ok && result.text) {
-            // 4.4.49: Stephen calls the transition style. 'cut' = slam
-            // straight into the next track, no talk. 'scratch' = a
-            // turntable scratch punches the change, then his line.
-            // 'talk' (default) = his line plays in the gap as before.
-            const transition = result.transition || 'talk'
-            if (transition === 'cut') {
-              setDjLoading(false)
-              setDjActive(false)
-              setDjText('')
-              isFadedRef.current = false
-              setVolume(savedVolumeRef.current)
-              playTrack(nextTrack, queue, nextIdx, true)
-              return
-            }
-            const tts = await window.electronAPI.musicmanSpeak(result.text, false, DJ_HANDS_VOICE_ID)
-            setDjLoading(false)
-            if (tts.ok && tts.audio) {
-              if (transition === 'scratch') {
-                // Punch the seam with the scratch, let it ride, THEN
-                // his line + the drop (playSegmentSequence).
-                const scratchDur = playStinger('scratch')
-                await new Promise(r => setTimeout(r, scratchDur * 1000))
-              }
-              await playSegmentSequence([{ speaker: 'djhands', line: result.text, audioData: tts.audio }], result.text)
-              return
-            }
+
+        // Radio Mode fast path: pre-fetched dialog cached as a segment array.
+        if (radioMode) {
+          const cached = radioCacheRef.current.get(cacheKey)
+          if (cached && cached.segments.length > 0) {
+            radioCacheRef.current.delete(cacheKey)
+            radioPrefetchedKeyRef.current = null
+            radioTransitionParamsRef.current.delete(cacheKey)
+            await advanceAfterBanter(cached.segments)
+            return
           }
         }
-      } catch (err) {
-        console.error('[Radio] transition handler threw', err)
+
+        try {
+          if (radioMode) {
+            console.log('[Radio] live fetch starting...', params)
+            const r = await window.electronAPI.musicmanRadio(
+              { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
+              { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+              false,
+              params.useAnnouncer,
+              params.callerSegment,
+              params.djHandsSegment,
+              params.callerId,
+              params.archetypeId,
+              params.slot,
+              params.hourCounter,
+              params.miniId,
+            )
+            console.log('[Radio] musicmanRadio result', { ok: r.ok, textLen: r.text?.length, error: r.error })
+            if (r.ok && r.text) {
+              setDjLoading(false)
+              savedVolumeRef.current = pb.volume
+              const played = await synthesizeAndPlayRadioScript(r.text)
+              if (played.length > 0) {
+                djAudioRef.current = null
+                setDjActive(false)
+                isFadedRef.current = false
+                setVolume(savedVolumeRef.current)
+                playTrack(nextTrack, queue, nextIdx, true)
+                setTimeout(() => {
+                  setDjExiting(true)
+                  setTimeout(() => {
+                    setDjText('')
+                    setBroadcast(null)
+                    setDjExiting(false)
+                  }, 400)
+                }, 3000)
+                return
+              }
+              console.warn('[Radio] no segments played — TTS may have failed; falling through to silent advance')
+            } else {
+              console.warn('[Radio] musicmanRadio returned no text', r)
+            }
+          } else {
+            // 4.4.0: DJ Mode (autoDj && !radioMode) is Stephen Hands' lane.
+            const result = await window.electronAPI.musicmanDj(
+              { title: prevTrack.title || '', artist: prevTrack.artist || '', album: prevTrack.album || '', genre: prevTrack.genre || '', year: prevTrack.year || '' },
+              { title: nextTrack.title || '', artist: nextTrack.artist || '', album: nextTrack.album || '', genre: nextTrack.genre || '', year: nextTrack.year || '' },
+              'stephen',
+            )
+            if (result.ok && result.text) {
+              const transition = result.transition || 'talk'
+              if (transition === 'cut') {
+                setDjLoading(false)
+                setDjActive(false)
+                setDjText('')
+                isFadedRef.current = false
+                setVolume(savedVolumeRef.current)
+                playTrack(nextTrack, queue, nextIdx, true)
+                return
+              }
+              const tts = await window.electronAPI.musicmanSpeak(result.text, false, DJ_HANDS_VOICE_ID)
+              setDjLoading(false)
+              if (tts.ok && tts.audio) {
+                if (transition === 'scratch') {
+                  const scratchDur = playStinger('scratch')
+                  await new Promise(r => setTimeout(r, scratchDur * 1000))
+                }
+                await advanceAfterBanter([{ speaker: 'djhands', line: result.text, audioData: tts.audio }])
+                return
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[Radio] transition handler threw', err)
+        }
+        console.warn('[Radio] falling through to silent track advance')
+        setDjActive(false)
+        setDjLoading(false)
+        setDjText('')
+        playTrack(nextTrack, queue, nextIdx, true)
+      } finally {
+        radioTransitionBusyRef.current = false
+        radioTransitionParamsRef.current.delete(cacheKey)
       }
-      console.warn('[Radio] falling through to silent track advance')
-      setDjActive(false)
-      setDjLoading(false)
-      setDjText('')
-      playTrack(nextTrack, queue, nextIdx, true)
     }
 
     window.addEventListener('musicman-dj-transition', handler)
@@ -1474,7 +1480,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // Fade out the intro text after a few seconds
       setTimeout(() => {
         setDjExiting(true)
-        setTimeout(() => { setDjText(''); setDjExiting(false) }, 400)
+        setTimeout(() => {
+          setDjText('')
+          setBroadcast(null)
+          setDjExiting(false)
+        }, 400)
       }, 4000)
 
     } catch (err) {

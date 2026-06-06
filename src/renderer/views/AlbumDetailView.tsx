@@ -5,7 +5,12 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { albumKeyOf } from '../utils/albumKey'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { albumCreditReleaseDate } from '../utils/albumReleaseDate'
+import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { lookupArtwork, buildNormalizedArtworkIndex, clearArtworkNegativeCache } from '../utils/artworkLookup'
+import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
+import AlbumArtImage from '../components/AlbumArtImage'
 import { ratingMenuEntries } from '../components/StarRating'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import GetInfoModal from '../components/GetInfoModal'
@@ -14,7 +19,7 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 import type { Track } from '../types'
 import '../styles/songs.css'
-import '../styles/album-detail.css'
+import '../styles/album-page.css'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -22,6 +27,17 @@ function formatDuration(ms: number): string {
   const mins = Math.floor(totalSecs / 60)
   const secs = totalSecs % 60
   return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+/** Music Man sometimes returns a meta "I don't know this album" riff — hide it. */
+function isWeakBlurb(text: string): boolean {
+  const lower = text.toLowerCase()
+  return (
+    lower.includes('drawing a blank')
+    || lower.includes("didn't stick")
+    || lower.includes('pulling a name')
+    || lower.includes('land a take worth hearing')
+  )
 }
 
 function formatTotalDuration(ms: number): string {
@@ -32,8 +48,8 @@ function formatTotalDuration(ms: number): string {
   return `${mins} min`
 }
 
-// 5-track-column grid for the album tracklist: # · Name · Time · Artist · Plays.
-const GRID = '34px 1fr 56px 200px 52px'
+// Album tracklist — #, name, duration only.
+const GRID_COLS = '40px minmax(0, 1fr) 52px'
 
 export default function AlbumDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -41,18 +57,21 @@ export default function AlbumDetailView() {
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
 
-  const albumKey = lib.pendingAlbumKey || ''
+  const albumKeyRef = useRef<string>('')
+  if (lib.pendingAlbumKey) albumKeyRef.current = lib.pendingAlbumKey
+  const albumKey = albumKeyRef.current || lib.pendingAlbumKey || ''
+
+  const returnView = lib.albumDetailReturnView || 'albums'
+  const backLabel = albumDetailBackLabel(lib.albumDetailReturnView)
+  const goBack = useCallback(() => {
+    libDispatch({ type: 'SET_VIEW', view: returnView })
+  }, [libDispatch, returnView])
 
   // The album's tracks, ordered by disc then track number — same ordering
   // AlbumsView uses so the tracklist reads top-to-bottom like the record.
   const tracks = useMemo(() => {
     const ts = lib.tracks.filter((t) => albumKeyOf(t) === albumKey)
-    return ts.slice().sort((a, b) => {
-      const da = Number(a.discNumber) || 0
-      const db = Number(b.discNumber) || 0
-      if (da !== db) return da - db
-      return (Number(a.trackNumber) || 0) - (Number(b.trackNumber) || 0)
-    })
+    return sortAlbumTracks(ts)
   }, [lib.tracks, albumKey])
 
   // Album-level facts derived from the track set (most-common / first non-empty).
@@ -65,6 +84,11 @@ export default function AlbumDetailView() {
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
   const artHash = lookupArtwork(lib.artworkMap, artIndex, albumArtist, albumName)
 
+  useEffect(() => {
+    if (artHash) prefetchAlbumArtHashes([artHash])
+  }, [artHash])
+
+  const [blurbExpanded, setBlurbExpanded] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
@@ -74,8 +98,11 @@ export default function AlbumDetailView() {
   const [credits, setCredits] = useState<{ released?: string; label?: string; producer?: string; recorded?: string } | null>(null)
   const [blurb, setBlurb] = useState<string>('')
   const [infoLoading, setInfoLoading] = useState(false)
+  const [infoError, setInfoError] = useState(false)
+  const [blurbOverflows, setBlurbOverflows] = useState(false)
 
   const lastClickedIdx = useRef<number>(-1)
+  const blurbRef = useRef<HTMLParagraphElement>(null)
 
   const handleClick = useCallback((id: number, idx: number, e: React.MouseEvent) => {
     window.getSelection()?.removeAllRanges()
@@ -241,75 +268,124 @@ export default function AlbumDetailView() {
   }, [ctxMenu, lib.selectedTrackIds, lib.tracks, tracks, playTrack, pbDispatch, libDispatch, openCynthia])
 
   // Fetch factual credits + Music Man blurb when the album changes.
+  // Deferred so the track list paints before Claude/MB IPC competes.
   useEffect(() => {
     if (tracks.length === 0) return
     let cancelled = false
-    setCredits(null); setBlurb(''); setInfoLoading(true)
-    void (async () => {
-      try {
-        const [info, b] = await Promise.all([
-          window.electronAPI.getAlbumInfo?.(albumArtist, albumName, String(year || '')),
-          window.electronAPI.getAlbumBlurb?.(albumArtist, albumName),
-        ])
-        if (cancelled) return
-        if (info?.ok && info.credits) setCredits(info.credits)
-        if (b?.ok && b.blurb) setBlurb(b.blurb)
-      } catch { /* fail-soft */ } finally { if (!cancelled) setInfoLoading(false) }
-    })()
-    return () => { cancelled = true }
+    setCredits(null); setBlurb(''); setInfoLoading(true); setInfoError(false); setBlurbExpanded(false); setBlurbOverflows(false)
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const [info, b] = await Promise.all([
+            window.electronAPI.getAlbumInfo?.(albumArtist, albumName, String(year || '')),
+            window.electronAPI.getAlbumBlurb?.(albumArtist, albumName),
+          ])
+          if (cancelled) return
+          if (info?.ok && info.credits) setCredits(info.credits)
+          if (b?.ok && b.blurb) setBlurb(b.blurb)
+          if (!(info?.ok && info.credits) && !(b?.ok && b.blurb)) setInfoError(true)
+        } catch {
+          if (!cancelled) setInfoError(true)
+        } finally { if (!cancelled) setInfoLoading(false) }
+      })()
+    }, 280)
+    return () => { cancelled = true; window.clearTimeout(timer) }
   }, [albumArtist, albumName, year, tracks.length])
+
+  // Show Read more / Show less only when the 3-line clamp actually hides text.
+  useEffect(() => {
+    if (!blurb || isWeakBlurb(blurb) || blurbExpanded) return
+    const el = blurbRef.current
+    if (!el) return
+    const check = () => {
+      setBlurbOverflows(el.scrollHeight > el.clientHeight + 1)
+    }
+    check()
+    const raf = requestAnimationFrame(check)
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [blurb, blurbExpanded])
 
   if (tracks.length === 0) {
     return (
-      <div className="album-detail album-detail--empty">
-        <button className="album-detail-back" onClick={() => libDispatch({ type: 'SET_VIEW', view: 'albums' })}>← Albums</button>
-        <p className="album-detail-notfound">That album isn't in your library anymore.</p>
+      <div className="album-page album-page--empty">
+        <div className="album-page-topbar">
+          <button type="button" className="album-page-back" onClick={goBack}>{backLabel}</button>
+        </div>
+        <p className="album-page-notfound">That album isn't in your library anymore.</p>
       </div>
     )
   }
 
   const hasCredits = credits && (credits.released || credits.label || credits.producer || credits.recorded)
 
+  const releaseDisplay = albumCreditReleaseDate(year, credits?.released)
+
+  const creditLine = hasCredits
+    ? [
+        releaseDisplay && `Released ${releaseDisplay}`,
+        credits!.label && credits!.label,
+        credits!.producer && `Produced by ${credits!.producer}`,
+      ].filter(Boolean).join(' · ')
+    : ''
+
   return (
-    <div className="album-detail">
-      <div className="album-detail-hero">
-        <div className="album-detail-cover">
+    <div className="album-page">
+      <div className="album-page-topbar">
+        <button type="button" className="album-page-back" onClick={goBack}>{backLabel}</button>
+      </div>
+      <div className="album-page-hero">
+        <div className="album-page-cover">
           {artHash
-            ? <img src={`album-art://${artHash}.jpg`} alt={albumName} />
-            : <div className="album-detail-cover-placeholder">♫</div>}
+            ? <AlbumArtImage hash={artHash} alt={albumName} priority />
+            : <div className="album-page-cover-placeholder">♫</div>}
         </div>
-        <div className="album-detail-meta">
-          <button className="album-detail-back" onClick={() => libDispatch({ type: 'SET_VIEW', view: 'albums' })}>← Albums</button>
-          <h1 className="album-detail-title">{albumName}</h1>
-          <div className="album-detail-artist">{albumArtist}</div>
-          <div className="album-detail-facts">
-            {[year && String(year), `${tracks.length} song${tracks.length === 1 ? '' : 's'}`, formatTotalDuration(totalMs), genre].filter(Boolean).join('  ·  ')}
+        <div className="album-page-meta">
+          <div className="album-page-artist">{albumArtist}</div>
+          <h1 className="album-page-title">{albumName}</h1>
+          <div className="album-page-facts">
+            {[year && String(year), `${tracks.length} song${tracks.length === 1 ? '' : 's'}`, formatTotalDuration(totalMs), genre].filter(Boolean).join(' · ')}
           </div>
-          <div className="album-detail-actions">
-            <button className="album-detail-play" onClick={() => playTrack(tracks[0], tracks, 0, undefined, true)}>▶ Play</button>
-            <button className="album-detail-shuffle" onClick={() => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>⤮ Shuffle</button>
+          <div className="album-page-actions">
+            <button type="button" className="album-page-play" onClick={() => playTrack(tracks[0], tracks, 0, undefined, true)}>▶ Play</button>
+            <button type="button" className="album-page-shuffle" onClick={() => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>⤮ Shuffle</button>
           </div>
-          {hasCredits && (
-            <dl className="album-detail-credits">
-              {credits!.released && (<><dt>Released</dt><dd>{credits!.released}</dd></>)}
-              {credits!.recorded && (<><dt>Recorded</dt><dd>{credits!.recorded}</dd></>)}
-              {credits!.producer && (<><dt>Produced by</dt><dd>{credits!.producer}</dd></>)}
-              {credits!.label && (<><dt>Label</dt><dd>{credits!.label}</dd></>)}
-            </dl>
+          {creditLine && <div className="album-page-creditline">{creditLine}</div>}
+          {infoLoading && !blurb && !creditLine && (
+            <p className="album-page-loading">The Music Man is checking the liner notes…</p>
           )}
-          {blurb && <p className="album-detail-blurb">{blurb}</p>}
-          {infoLoading && !blurb && !hasCredits && <p className="album-detail-loading">The Music Man is checking the liner notes…</p>}
+          {infoError && !infoLoading && !blurb && !creditLine && (
+            <p className="album-page-loading">Couldn&apos;t load album info.</p>
+          )}
         </div>
       </div>
 
-      <div className="album-detail-tracklist">
-        <div className="songs-header album-detail-track-header" style={{ gridTemplateColumns: GRID }}>
-          <div className="songs-header-cell" style={{ textAlign: 'center' }}>#</div>
+      {blurb && !isWeakBlurb(blurb) && (
+        <div className={`album-page-about ${blurbExpanded ? 'album-page-about--expanded' : ''}`}>
+          <p ref={blurbRef} className="album-page-blurb">{blurb}</p>
+          {blurbOverflows && (
+            <button
+              type="button"
+              className="album-page-blurb-toggle"
+              onClick={() => setBlurbExpanded((v) => !v)}
+            >
+              {blurbExpanded ? 'Show less' : 'Read more'}
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="album-page-tracklist songs-view">
+        <div className="songs-header" style={{ gridTemplateColumns: GRID_COLS }}>
+          <div className="songs-header-cell" style={{ textAlign: 'center', justifyContent: 'center' }}>#</div>
           <div className="songs-header-cell">Name</div>
           <div className="songs-header-cell">Time</div>
-          <div className="songs-header-cell">Artist</div>
-          <div className="songs-header-cell">Plays</div>
         </div>
+        <div className="album-page-track-body">
         {tracks.map((track, idx) => {
           const isPlaying = pb.nowPlaying?.id === track.id
           const isSelected = lib.selectedTrackIds.has(track.id)
@@ -318,14 +394,14 @@ export default function AlbumDetailView() {
             <div
               key={track.id}
               className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''}`}
-              style={{ gridTemplateColumns: GRID }}
+              style={{ gridTemplateColumns: GRID_COLS }}
               onClick={(e) => handleClick(track.id, idx, e)}
               onDoubleClick={() => handleDoubleClick(idx)}
               onMouseEnter={() => prefetchTrackForPlay(track)}
               onMouseDown={() => prefetchTrackImmediate(track)}
               onContextMenu={(e) => handleContextMenu(e, track, idx)}
             >
-              <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-detail-tracknum">{track.trackNumber || idx + 1}</span>}</div>
+              <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-page-tracknum">{track.trackNumber || idx + 1}</span>}</div>
               <div className="songs-cell songs-cell--title">
                 {track.audioMissing && <span className="songs-cell-missing-badge" title="Audio file missing — re-import to restore playback." aria-label="Audio file missing">!</span>}
                 <span className="title-row-text">{track.title || ''}</span>
@@ -342,11 +418,10 @@ export default function AlbumDetailView() {
                 </button>
               </div>
               <div className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
-              <div className="songs-cell">{track.artist || ''}</div>
-              <div className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
             </div>
           )
         })}
+        </div>
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={getContextMenuItems()} onClose={() => setCtxMenu(null)} />}

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useImperativeHandle, forwardRef } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
@@ -12,7 +12,9 @@ function formatDuration(ms: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-export default function QueuePanel({ onClose }: { onClose: () => void }) {
+export type QueuePanelHandle = { requestClose: () => void }
+
+const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(function QueuePanel({ onClose }, ref) {
   const { state, dispatch } = usePlayback()
   const { state: libState } = useLibrary()
   const { playTrack } = useAudio()
@@ -24,6 +26,15 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
   const repeatOne = state.repeat === 'one'
   const repeatAll = state.repeat === 'all'
   const [dropIndex, setDropIndex] = useState<number | null>(null)
+  const [exiting, setExiting] = useState(false)
+
+  const requestClose = useCallback(() => {
+    if (exiting) return
+    setExiting(true)
+    window.setTimeout(() => onClose(), 220)
+  }, [exiting, onClose])
+
+  useImperativeHandle(ref, () => ({ requestClose }), [requestClose])
 
   // Mirror TransportControls.cycleRepeat so the queue panel can both
   // SHOW and CHANGE repeat state — parity with the shuffle toggle that
@@ -136,7 +147,7 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="queue-panel"
+      className={`queue-panel${exiting ? ' queue-panel--exiting' : ''}`}
       onDragOver={handlePanelDragOver}
       onDragLeave={() => setDropIndex(null)}
       onDrop={handleDrop}
@@ -175,7 +186,7 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
           </svg>
         </button>
         <button className="queue-clear" onClick={() => dispatch({ type: 'CLEAR_QUEUE' })}>Clear</button>
-        <button className="queue-close" onClick={onClose}>&times;</button>
+        <button className="queue-close" onClick={requestClose}>&times;</button>
       </div>
       {state.nowPlaying && (
         <div className="queue-section">
@@ -238,4 +249,6 @@ export default function QueuePanel({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   )
-}
+})
+
+export default QueuePanel

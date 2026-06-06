@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut } from 'electron'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -18,12 +18,24 @@ import {
 import { CALLERS, buildCallerSegmentMode } from './cast'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
-import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
+import {
+  recoNorm,
+  recoTitleMatches,
+  recoArtistMatches,
+  evaluateMusicManVerification,
+} from './reco-match'
+import {
+  pickAlbumReleaseDate,
+  sanitizeAlbumCredits,
+  tagYearStr,
+} from '../common/albumReleaseDate'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
 import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
 import { autoUpdater } from 'electron-updater'
@@ -84,6 +96,13 @@ const isDev = !app.isPackaged
 
 if (isDev) {
   app.commandLine.appendSwitch('remote-debugging-port', '9222')
+}
+
+// macOS overlay scrollbars ignore ::-webkit-scrollbar styling and feel
+// broken (tiny pill, no drag). Force classic always-visible scrollbars
+// so our iTunes-style CSS actually applies.
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('disable-features', 'OverlayScrollbars')
 }
 
 // macOS GUI apps launched from Finder inherit only the system PATH
@@ -668,6 +687,55 @@ function sendMenuAction(action: string) {
   mainWindow?.webContents.send('menu-action', action)
 }
 
+// Hardware media keys (keyboard play/pause/next/prev). Menu F7/F8/F9
+// accelerators only fire for function-key layouts; dedicated media keys
+// need globalShortcut + before-input-event. Debounce so a key that
+// registers in both paths doesn't double-skip or double-toggle.
+let lastMediaKeyAt = 0
+let lastMediaKeyAction = ''
+
+function sendMediaKeyAction(action: string): void {
+  const now = Date.now()
+  if (action === lastMediaKeyAction && now - lastMediaKeyAt < 250) return
+  lastMediaKeyAction = action
+  lastMediaKeyAt = now
+  sendMenuAction(action)
+}
+
+const MEDIA_KEY_ACCELERATORS = ['MediaPlayPause', 'MediaNextTrack', 'MediaPreviousTrack'] as const
+const MEDIA_KEY_ACTIONS: Record<(typeof MEDIA_KEY_ACCELERATORS)[number], string> = {
+  MediaPlayPause: 'play-pause',
+  MediaNextTrack: 'next-track',
+  MediaPreviousTrack: 'prev-track',
+}
+
+function registerMediaKeyShortcuts(): void {
+  for (const accel of MEDIA_KEY_ACCELERATORS) {
+    try {
+      const ok = globalShortcut.register(accel, () => sendMediaKeyAction(MEDIA_KEY_ACTIONS[accel]))
+      if (!ok) console.warn(`[media-keys] could not register global ${accel}`)
+    } catch (err) {
+      console.warn(`[media-keys] register ${accel} threw:`, err)
+    }
+  }
+}
+
+function unregisterMediaKeyShortcuts(): void {
+  for (const accel of MEDIA_KEY_ACCELERATORS) {
+    try { globalShortcut.unregister(accel) } catch { /* ignore */ }
+  }
+}
+
+function mediaKeyActionFromInput(input: Electron.Input): string | null {
+  if (input.type !== 'keyDown') return null
+  const k = input.key
+  const c = input.code
+  if (k === 'MediaPlayPause' || c === 'MediaPlayPause') return 'play-pause'
+  if (k === 'MediaTrackNext' || c === 'MediaTrackNext' || k === 'MediaNextTrack' || c === 'MediaNextTrack') return 'next-track'
+  if (k === 'MediaTrackPrevious' || c === 'MediaTrackPrevious' || k === 'MediaPreviousTrack' || c === 'MediaPreviousTrack') return 'prev-track'
+  return null
+}
+
 // ── Window state persistence ──
 interface WindowState {
   x?: number
@@ -1182,6 +1250,13 @@ async function createWindow(): Promise<void> {
     if (mainWindow && !mainWindow.isDestroyed()) saveWindowState(mainWindow)
   })
 
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const action = mediaKeyActionFromInput(input)
+    if (!action) return
+    event.preventDefault()
+    sendMediaKeyAction(action)
+  })
+
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -1387,6 +1462,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // prewarm scanner with explicit user actions.
           { label: 'Prepare ALAC Tracks for Instant Play…', click: () => sendMenuAction('prepare-alac-cache') },
           { label: 'Prune Play-Cache…', click: () => sendMenuAction('prune-alac-cache') },
+          { label: 'Clean Orphan Files…', click: () => sendMenuAction('clean-orphan-files') },
           // Surface library entries that share artist+title+album so the
           // user can pick which copies to remove. Per-row delete only —
           // never bulk, never auto. Solves the "iPod Shuffle shows 4542
@@ -2212,6 +2288,7 @@ const STATE_FILE_NAMES = [
   'mobile-plays.json',
   'mobile-playlists.json',
   'playlist-additions.json',
+  'recommendations.json',
   'play-events.jsonl',
   'embeddings.bin',
 ] as const
@@ -2221,7 +2298,11 @@ interface StateConflict {
   nasMtimeMs: number
   localPath: string
   nasPath: string
+  /** Local file size (bytes) — used for push ETA and backup skip. */
+  localSizeBytes: number
 }
+/** Skip .reconcile-bak when pushing tiny sidecars — halves SMB round-trips. */
+const RECONCILE_BACKUP_MIN_BYTES = 64 * 1024
 let stateConflicts: StateConflict[] = []
 async function detectStateConflicts(): Promise<void> {
   stateConflicts = []
@@ -2239,11 +2320,11 @@ async function detectStateConflicts(): Promise<void> {
       if (!ns) {
         // NAS file missing entirely (first-run migration?) — local
         // wins by default. Worth surfacing so user can decide.
-        stateConflicts.push({ file: f, localMtimeMs: ls.mtimeMs, nasMtimeMs: 0, localPath, nasPath })
+        stateConflicts.push({ file: f, localMtimeMs: ls.mtimeMs, nasMtimeMs: 0, localPath, nasPath, localSizeBytes: ls.size })
         continue
       }
       if (ls.mtimeMs > ns.mtimeMs + CONFLICT_THRESHOLD_MS) {
-        stateConflicts.push({ file: f, localMtimeMs: ls.mtimeMs, nasMtimeMs: ns.mtimeMs, localPath, nasPath })
+        stateConflicts.push({ file: f, localMtimeMs: ls.mtimeMs, nasMtimeMs: ns.mtimeMs, localPath, nasPath, localSizeBytes: ls.size })
       }
     } catch { /* skip on stat error */ }
   }
@@ -2255,21 +2336,27 @@ async function detectStateConflicts(): Promise<void> {
   }
 }
 ipcMain.handle('get-state-conflicts', (): {
-  mode: 'NAS' | 'local-fallback'; nasDir: string; localDir: string; conflicts: StateConflict[];
+  mode: 'NAS' | 'local-primary'; nasDir: string; localDir: string; nasMounted: boolean; conflicts: StateConflict[];
 } => {
   return {
-    mode: STATE_IS_NAS ? 'NAS' : 'local-fallback',
+    mode: STATE_IS_NAS ? 'NAS' : 'local-primary',
     nasDir: NAS_STATE_DIR_PATH,
     localDir: app.getPath('userData'),
+    nasMounted: isNasMounted(),
     conflicts: stateConflicts,
   }
 })
-ipcMain.handle('reconcile-state-conflicts', async (): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
-  if (!STATE_IS_NAS) {
-    return { ok: false, pushed: 0, backups: [], error: 'Not in NAS storage mode — nothing to push to.' }
+ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
+  if (!isNasMounted()) {
+    return { ok: false, pushed: 0, backups: [], error: 'Synology not mounted — connect /Volumes/JakeShared and retry.' }
   }
   if (stateConflicts.length === 0) {
     return { ok: true, pushed: 0, backups: [] }
+  }
+  const total = stateConflicts.length
+  const totalBytes = stateConflicts.reduce((n, c) => n + c.localSizeBytes, 0)
+  const sendProgress = (phase: 'backup' | 'push' | 'verify', file: string, index: number) => {
+    event.sender.send('reconcile-state-progress', { phase, file, index, total, localSizeBytes: file ? stateConflicts[index - 1]?.localSizeBytes : undefined, totalBytes })
   }
   // Snapshot directory for the NAS copies we're about to overwrite —
   // single rollback point if the reconciliation itself is wrong.
@@ -2278,22 +2365,30 @@ ipcMain.handle('reconcile-state-conflicts', async (): Promise<{ ok: boolean; pus
   await mkdir(backupDir, { recursive: true }).catch(() => {})
   const backups: string[] = []
   let pushed = 0
+  let index = 0
   for (const c of stateConflicts) {
+    index++
     try {
-      // Back up NAS copy first (if it exists), then copy local → NAS.
-      try {
-        await copyFile(c.nasPath, join(backupDir, c.file))
-        backups.push(join(backupDir, c.file))
-      } catch { /* NAS file missing originally — nothing to back up */ }
+      // Back up NAS copy first when it exists and the push is non-trivial.
+      const backupNas = c.nasMtimeMs > 0 && c.localSizeBytes >= RECONCILE_BACKUP_MIN_BYTES
+      if (backupNas) {
+        sendProgress('backup', c.file, index)
+        try {
+          await copyFile(c.nasPath, join(backupDir, c.file))
+          backups.push(join(backupDir, c.file))
+        } catch { /* NAS file missing originally — nothing to back up */ }
+      }
+      sendProgress('push', c.file, index)
       await copyFile(c.localPath, c.nasPath)
       pushed++
-      console.log(`[state] reconciled "${c.file}" → NAS (local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer)`)
+      console.log(`[state] reconciled "${c.file}" → NAS (${(c.localSizeBytes / (1024 * 1024)).toFixed(1)} MB, local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer)`)
     } catch (err) {
       console.warn(`[state] reconcile failed for "${c.file}":`, err instanceof Error ? err.message : err)
     }
   }
   // Re-scan so the renderer's next get-state-conflicts returns the
-  // empty post-reconciliation state.
+  // empty post-reconciliation state (extra SMB stats — can be slow).
+  sendProgress('verify', '', total)
   await detectStateConflicts()
   return { ok: true, pushed, backups }
 })
@@ -2703,6 +2798,7 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     sessionImportedFingerprints.clear()
 
     // ── Commit deletions ──
+    let preservedOrphanCount = 0
     // Delete the audio file from the local mirror immediately so the
     // disk doesn't grow ghost orphans. Schedule a debounced iTunesDB
     // rebuild to push the deletion to the iPod (if mounted) without
@@ -2715,6 +2811,7 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
       // precious audio. `force` (explicit recovery/cleanup) bypasses the cap.
       const UNLINK_CAP = 50
       if (!force && deletedPaths.length > UNLINK_CAP) {
+        preservedOrphanCount = deletedPaths.length
         console.warn(`[save-library] preserved ${deletedPaths.length} audio file(s) on disk (exceeds unlink cap ${UNLINK_CAP}); index updated, files kept as orphans.`)
       } else {
         const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
@@ -2734,7 +2831,16 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     // library-snapshot.ts + library-overrides.ts modules they
     // depended on are all gone. Plex (via tag write-back, Brief
     // 020) is the path mobile consumes JakeTunes data through now.
-    return { ok: true, deletedPaths: deletedPaths.length }
+    // 4.5.0-115: debounced save-library is the most common path for
+    // library.json to change (edits, deletes, rating changes). Trigger
+    // homemini sync here — quick mode — so homemini isn't blocked on
+    // the 10-min safety-net full rsync that often times out mid-walk.
+    triggerSync('metadata-edit')
+    return {
+      ok: true,
+      deletedPaths: deletedPaths.length,
+      preservedOrphanCount,
+    }
   } catch (err) {
     return { ok: false, error: String(err) }
   }
@@ -3002,32 +3108,8 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     }
   } catch { /* best-effort */ }
 
-  // ⚠️ TWIN: this is a JS port of core/repair_mismatches.py::normalize.
-  // They MUST stay in lockstep. If you change this function (new rule,
-  // new regex), update the Python twin in the SAME commit. We learned
-  // this the hard way — fixed the Python side for "Pt. 1" vs "Part 1"
-  // and forgot this one, so sync still aborted with a false-positive
-  // mismatch banner on Pink Floyd. Don't repeat that.
-  //
-  // Special-case "Pt./Pt/Part" + (digit | roman) → "part <digit>" so
-  // library "Another Brick in the Wall, Part 1" and file tags
-  // "Another Brick In The Wall, Pt. 1" normalize to the same string.
-  const ROMAN_NUMERALS: Record<string, number> = {
-    i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10,
-  }
-  const normalize = (s: unknown): string => {
-    let str = String(s || '')
-    str = str.replace(/^\s*\d{1,2}\s*[-._]\s*/, '')                   // "01 - Title" → "Title"
-    str = str.replace(/\s*\b(feat(?:uring)?|ft)\b\.?[^)]*/ig, '')     // drop "feat. X"
-    str = str.replace(/\bp(?:ar)?t\.?\s+([ivx]+|\d+)\b/gi, (m: string, suf: string) => {
-      const k = suf.toLowerCase()
-      if (/^\d+$/.test(k)) return `part ${k}`
-      const n = ROMAN_NUMERALS[k]
-      return n != null ? `part ${n}` : m
-    })
-    str = str.replace(/[()[\]{}"',.\-!?:;#/\\]+/g, ' ')                // strip punct
-    return str.replace(/\s+/g, ' ').trim().toLowerCase()
-  }
+  // ⚠️ TWIN: normalize imported from ./normalize.ts — keep in sync with
+  // core/repair_mismatches.py::normalize.
 
   // First pass: determine candidate rewrites. Anything that resolves
   // to a basename match on the iPod is a candidate — we'll verify tags
@@ -3444,10 +3526,25 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           }
         }
 
+        // Post-sync iPod orphan cleanup — delete audio files on the device
+        // whose basename is not referenced by library.json (identity-safe).
+        let ipodOrphansDeleted = 0
+        try {
+          const ipodMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
+          const ipodResult = await cleanOrphansOnMusicRoot(ipodMusicRoot, tracks as Array<{ path?: string }>)
+          ipodOrphansDeleted = ipodResult.deleted
+          if (ipodOrphansDeleted > 0) {
+            console.log(`sync-to-ipod: cleaned ${ipodOrphansDeleted} iPod orphan file(s), freed ${(ipodResult.bytesFreed / 1e9).toFixed(2)} GB`)
+          }
+        } catch (ipodOrphErr) {
+          console.warn('sync-to-ipod: iPod orphan cleanup failed (non-fatal):', ipodOrphErr)
+        }
+
         resolve({
           ok: true,
           copied, copyErrors,
           totalTracks: tracks.length,
+          ipodOrphansDeleted,
           // Return the path rewrites so the renderer can update
           // library.json to match what actually ended up on the iPod.
           pathRewrites: pathRewrites.map(r => ({ id: r.id, newPath: r.newPath })),
@@ -3954,6 +4051,134 @@ async function verifyAndHealTracks(
     updates.push({ id: tr.id, audioMissing: true })
   }
   return updates
+}
+
+// ── Library orphan scan/purge (identity-safe: basename not in library.json) ──
+const ORPHAN_AUDIO_EXTS = new Set([
+  '.m4a', '.mp3', '.flac', '.aac', '.wav', '.alac', '.aiff', '.aif', '.m4p', '.m4b',
+])
+
+function colonPathBasename(colonPath: string): string {
+  const parts = colonPath.replace(/:/g, '/').split('/')
+  return parts[parts.length - 1] || ''
+}
+
+function indexedBasenamesFromTracks(tracks: Array<{ path?: string }>): Set<string> {
+  const indexed = new Set<string>()
+  for (const t of tracks) {
+    const fn = colonPathBasename(String(t.path || ''))
+    if (fn) indexed.add(fn)
+  }
+  return indexed
+}
+
+async function walkAudioFilesUnder(root: string): Promise<string[]> {
+  const { readdir } = await import('fs/promises')
+  let out: string[] = []
+  let ents: import('fs').Dirent[] = []
+  try { ents = await readdir(root, { withFileTypes: true }) } catch { return out }
+  for (const e of ents) {
+    const p = join(root, e.name)
+    if (e.isDirectory()) out = out.concat(await walkAudioFilesUnder(p))
+    else {
+      const ext = p.slice(p.lastIndexOf('.')).toLowerCase()
+      if (ORPHAN_AUDIO_EXTS.has(ext)) out.push(p)
+    }
+  }
+  return out
+}
+
+function isDiskOrphanFile(filePath: string, indexed: Set<string>): boolean {
+  const fn = filePath.split(/[/\\]/).pop() || ''
+  if (fn.startsWith('._')) return true
+  return !indexed.has(fn)
+}
+
+interface OrphanScanResult {
+  trackCount: number
+  diskCount: number
+  orphanCount: number
+  orphanBytes: number
+  samples: Array<{ basename: string; mtimeMs: number; size: number }>
+}
+
+async function scanLibraryOrphans(): Promise<OrphanScanResult> {
+  let lib: { tracks?: Array<{ path?: string }> }
+  try {
+    lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+  } catch (err) {
+    throw new Error(`library.json read failed: ${err instanceof Error ? err.message : err}`)
+  }
+  const tracks = lib.tracks || []
+  const indexed = indexedBasenamesFromTracks(tracks)
+  const files = await walkAudioFilesUnder(MUSIC_DIR)
+  const orphans: Array<{ path: string; mtimeMs: number; size: number }> = []
+  for (const f of files) {
+    if (!isDiskOrphanFile(f, indexed)) continue
+    const s = await stat(f).catch(() => null)
+    orphans.push({
+      path: f,
+      mtimeMs: s?.mtimeMs ?? 0,
+      size: s?.size ?? 0,
+    })
+  }
+  orphans.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const orphanBytes = orphans.reduce((sum, o) => sum + o.size, 0)
+  return {
+    trackCount: tracks.length,
+    diskCount: files.length,
+    orphanCount: orphans.length,
+    orphanBytes,
+    samples: orphans.slice(0, 8).map((o) => ({
+      basename: o.path.split(/[/\\]/).pop() || o.path,
+      mtimeMs: o.mtimeMs,
+      size: o.size,
+    })),
+  }
+}
+
+async function purgeLibraryOrphans(): Promise<{ deleted: number; bytesFreed: number }> {
+  let lib: { tracks?: Array<{ path?: string }> }
+  try {
+    lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+  } catch (err) {
+    throw new Error(`library.json read failed: ${err instanceof Error ? err.message : err}`)
+  }
+  const indexed = indexedBasenamesFromTracks(lib.tracks || [])
+  const files = await walkAudioFilesUnder(MUSIC_DIR)
+  let deleted = 0
+  let bytesFreed = 0
+  for (const f of files) {
+    if (!isDiskOrphanFile(f, indexed)) continue
+    const s = await stat(f).catch(() => null)
+    if (s) bytesFreed += s.size
+    try {
+      await unlink(f)
+      deleted++
+    } catch (err) {
+      console.warn(`[purge-orphans] failed to delete ${f}:`, err)
+    }
+  }
+  return { deleted, bytesFreed }
+}
+
+async function cleanOrphansOnMusicRoot(musicRoot: string, tracks: Array<{ path?: string }>): Promise<{ deleted: number; bytesFreed: number }> {
+  const indexed = indexedBasenamesFromTracks(tracks)
+  const files = await walkAudioFilesUnder(musicRoot)
+  let deleted = 0
+  let bytesFreed = 0
+  for (const f of files) {
+    if (!isDiskOrphanFile(f, indexed)) continue
+    const s = await stat(f).catch(() => null)
+    if (s) bytesFreed += s.size
+    try {
+      await unlink(f)
+      deleted++
+    } catch (err) {
+      console.warn(`[clean-orphans] failed to delete ${f}:`, err)
+    }
+  }
+  return { deleted, bytesFreed }
 }
 
 interface SingleImportResult {
@@ -4623,12 +4848,110 @@ function artworkHash(artist: string, album: string): string {
   return createHash('md5').update(`${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`).digest('hex')
 }
 
+// In-memory artwork index — avoids re-reading JSON on every resolve-artwork
+// / fetch-album-art / protocol miss. Invalidated on saveArtworkIndex.
+let artworkIndexMem: Record<string, string> | null = null
+// resolve-artwork result cache (exact artist|||album key → hash|null).
+const resolveArtworkCache = new Map<string, string | null>()
+/** O(1) normalized key → hash; rebuilt when artwork index changes. */
+let artworkNormIndexMem: Map<string, string> | null = null
+/** O(1) normalized artist|||album → hash from sidecars; rebuilt with index. */
+let artworkSidecarNormMem: Map<string, string> | null = null
+let artworkLookupRebuildPromise: Promise<void> | null = null
+
+function normalizeArtworkPartServer(s: string): string {
+  return (s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s*\((?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^)]*\)/g, '')
+    .replace(/\s*\[(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^\]]*\]/g, '')
+    .replace(/\s*\((?:feat\.?|featuring|with|prod\.?|produced by)[^)]+\)/g, '')
+    .replace(/\s*\[(?:feat\.?|featuring|with)[^\]]+\]/g, '')
+    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+async function rebuildArtworkLookupCaches(index: Record<string, string>): Promise<void> {
+  const normIndex = new Map<string, string>()
+  for (const [k, v] of Object.entries(index)) {
+    const [ka, kal] = k.split('|||')
+    const kn = `${normalizeArtworkPartServer(ka || '')}|||${normalizeArtworkPartServer(kal || '')}`
+    if (!normIndex.has(kn)) normIndex.set(kn, v)
+  }
+  artworkNormIndexMem = normIndex
+
+  const sidecarIndex = new Map<string, string>()
+  try {
+    const { readdir } = await import('fs/promises')
+    const dir = getArtworkDir()
+    const entries = await readdir(dir)
+    for (const name of entries) {
+      if (!name.endsWith('.meta.json')) continue
+      try {
+        const sidecar = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { artist?: string; album?: string }
+        const sa = normalizeArtworkPartServer(sidecar.artist || '')
+        const sal = normalizeArtworkPartServer(sidecar.album || '')
+        if (sa && sal) {
+          sidecarIndex.set(`${sa}|||${sal}`, name.replace(/\.meta\.json$/, ''))
+        }
+      } catch { /* malformed sidecar */ }
+    }
+  } catch { /* readdir failed */ }
+  artworkSidecarNormMem = sidecarIndex
+}
+
+function scheduleArtworkLookupRebuild(index: Record<string, string>): void {
+  artworkLookupRebuildPromise = rebuildArtworkLookupCaches(index).catch((err) => {
+    console.warn('[artwork-index] lookup cache rebuild failed:', err instanceof Error ? err.message : err)
+  })
+}
+// LRU byte cache for album-art:// protocol — skips repeated readFile for
+// the same cover when scrolling grids / revisiting views.
+const ART_BYTES_CACHE = new Map<string, ArrayBuffer>()
+const ART_BYTES_CACHE_MAX = 400
+
+function bareArtHash(hash: string): string {
+  return hash.replace(/_\d+$/, '')
+}
+
+function invalidateArtBytes(hash: string): void {
+  ART_BYTES_CACHE.delete(bareArtHash(hash))
+}
+
+function getCachedArtBytes(hash: string): ArrayBuffer | undefined {
+  const key = bareArtHash(hash)
+  const hit = ART_BYTES_CACHE.get(key)
+  if (!hit) return undefined
+  // Refresh LRU position
+  ART_BYTES_CACHE.delete(key)
+  ART_BYTES_CACHE.set(key, hit)
+  return hit
+}
+
+function putArtBytes(hash: string, body: ArrayBuffer): void {
+  const key = bareArtHash(hash)
+  if (ART_BYTES_CACHE.has(key)) ART_BYTES_CACHE.delete(key)
+  while (ART_BYTES_CACHE.size >= ART_BYTES_CACHE_MAX) {
+    const oldest = ART_BYTES_CACHE.keys().next().value
+    if (oldest === undefined) break
+    ART_BYTES_CACHE.delete(oldest)
+  }
+  ART_BYTES_CACHE.set(key, body)
+}
+
 async function loadArtworkIndex(): Promise<Record<string, string>> {
+  if (artworkIndexMem) return artworkIndexMem
   try {
     const data = await readFile(getArtworkIndexPath(), 'utf-8')
-    return JSON.parse(data)
+    artworkIndexMem = JSON.parse(data) as Record<string, string>
+    scheduleArtworkLookupRebuild(artworkIndexMem)
+    return artworkIndexMem
   } catch {
-    return {}
+    artworkIndexMem = {}
+    artworkNormIndexMem = new Map()
+    artworkSidecarNormMem = new Map()
+    return artworkIndexMem
   }
 }
 
@@ -4657,6 +4980,9 @@ async function saveArtworkIndex(index: Record<string, string>): Promise<void> {
     await writeFile(tmpPath, JSON.stringify(snapshot, null, 2), 'utf-8')
     const { rename } = await import('fs/promises')
     await rename(tmpPath, indexPath)
+    artworkIndexMem = snapshot
+    resolveArtworkCache.clear()
+    scheduleArtworkLookupRebuild(snapshot)
   }).catch((err) => {
     console.warn('[artwork-index] serialized write failed:', err instanceof Error ? err.message : err)
   })
@@ -4890,6 +5216,7 @@ async function extractAndSaveEmbeddedArtwork(
 
   try {
     const fmt = (pic.format || '').toLowerCase()
+    invalidateArtBytes(hash)
     if (fmt === 'image/jpeg' || fmt === 'image/jpg') {
       await writeFile(destPath, newBuf)
     } else {
@@ -5688,7 +6015,7 @@ ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: st
   const recentSet = new Set(recentIds)
   let candidateTracks: typeof tracks = tracks
   if (ragIsConfigured()) {
-    const idxCount = await ragEmbeddingsCount().catch(() => 0)
+    const idxCount = await ragIndexedCountForTracks(tracks)
     if (idxCount >= Math.max(50, Math.floor(tracks.length * 0.8))) {
       const hits = await ragRetrieveByQuery(
         'danceable high-energy party set with rhythm groove BPM-matched flow',
@@ -7598,7 +7925,7 @@ ipcMain.handle('musicman-playlist', async (_event, mood: string, tracks: { id: n
   let candidateTracks: typeof tracks = tracks
   let ragUsed = false
   if (ragIsConfigured()) {
-    const idxCount = await ragEmbeddingsCount().catch(() => 0)
+    const idxCount = await ragIndexedCountForTracks(tracks)
     if (idxCount >= Math.max(50, Math.floor(tracks.length * 0.8))) {
       const queryMatch = mood.match(/\b(\d{1,3})\s*(?:song|track|tune|cut|jam)/i)
       const queryTarget = queryMatch ? Math.max(5, Math.min(200, parseInt(queryMatch[1], 10))) : 25
@@ -8777,21 +9104,51 @@ import {
   setEmbedding as ragSetEmbedding,
   topK as ragTopK,
   isEmbeddingsConfigured as ragIsConfigured,
-  embeddingsCount as ragEmbeddingsCount,
+  analyzeEmbeddings as ragAnalyzeEmbeddings,
+  pruneStaleEmbeddings as ragPruneStaleEmbeddings,
   type EmbedTrackInput,
 } from './ai/embeddings'
 
+async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<number> {
+  const validIds = new Set(tracks.map(t => t.id))
+  const { indexed } = await ragAnalyzeEmbeddings(validIds).catch(() => ({ indexed: 0, stale: 0, missing: validIds.size }))
+  return indexed
+}
+
+// Settings → Library tab polls this on open. Without caching it re-reads
+// library.json + loads the full embeddings.bin map every time — beach ball.
+const EMBEDDING_STATUS_TTL_MS = 30_000
+let embeddingStatusCache: {
+  at: number
+  value: { configured: boolean; count: number; total: number; stale: number }
+} | null = null
+function invalidateEmbeddingStatusCache(): void {
+  embeddingStatusCache = null
+}
+
 ipcMain.handle('embedding-status', async (): Promise<{
-  configured: boolean; count: number; total: number;
+  configured: boolean; count: number; total: number; stale: number;
 }> => {
-  let total = 0
+  const now = Date.now()
+  if (embeddingStatusCache && now - embeddingStatusCache.at < EMBEDDING_STATUS_TTL_MS) {
+    return embeddingStatusCache.value
+  }
+  let tracks: Array<{ id: number }> = []
   try {
-    const raw = await readFile(LIBRARY_PATH, 'utf-8')
-    const lib = JSON.parse(raw) as { tracks?: unknown[] }
-    total = Array.isArray(lib.tracks) ? lib.tracks.length : 0
+    const lib = await libraryCache.get() as { tracks?: Array<{ id: number }> }
+    tracks = (lib.tracks || []).filter(t => typeof t?.id === 'number')
   } catch { /* no library yet */ }
-  const count = await ragEmbeddingsCount().catch(() => 0)
-  return { configured: ragIsConfigured(), count, total }
+  const validIds = new Set(tracks.map(t => t.id))
+  // Status read only — pruning runs on embedding-backfill, not on every
+  // Settings open (prune persisted a 40+ MB file and blocked the main proc).
+  const { indexed, stale } = await ragAnalyzeEmbeddings(validIds).catch(() => ({
+    indexed: 0,
+    stale: 0,
+    missing: validIds.size,
+  }))
+  const value = { configured: ragIsConfigured(), count: indexed, total: tracks.length, stale }
+  embeddingStatusCache = { at: now, value }
+  return value
 })
 
 ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
@@ -8802,6 +9159,8 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const lib = JSON.parse(raw) as { tracks?: Array<EmbedTrackInput & { id: number }> }
     const tracks = (lib.tracks || []).filter(t => typeof t?.id === 'number')
+    const validIds = new Set(tracks.map(t => t.id))
+    await ragPruneStaleEmbeddings(validIds).catch(() => 0)
     const existing = await ragGetEmbeddingsMap()
     const todo = opts?.force
       ? tracks
@@ -8831,7 +9190,8 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
         console.warn('[embedding-backfill] batch failed (continuing with next):', err instanceof Error ? err.message : err)
       }
     }
-    const total = (await ragGetEmbeddingsMap()).size
+    const total = (await ragAnalyzeEmbeddings(validIds)).indexed
+    invalidateEmbeddingStatusCache()
     return { ok: true, embedded: done, total }
   } catch (err) {
     return { ok: false, embedded: 0, total: 0, error: String(err) }
@@ -8877,7 +9237,7 @@ async function buildRagPoolForPicks<T extends { id: number }>(
   minPool: number = 100,
 ): Promise<{ pool: T[]; used: boolean }> {
   if (!ragIsConfigured()) return { pool: allTracks, used: false }
-  const idxCount = await ragEmbeddingsCount().catch(() => 0)
+  const idxCount = await ragIndexedCountForTracks(allTracks)
   if (idxCount < Math.max(50, Math.floor(allTracks.length * 0.8))) return { pool: allTracks, used: false }
   const hits = await ragRetrieveByQuery(seedQuery, k)
   if (hits.length < minPool) return { pool: allTracks, used: false }
@@ -9018,11 +9378,11 @@ ipcMain.handle('read-playlist-additions', async (): Promise<{ ok: boolean; addit
 })
 
 // Brief 122 — "Listen to the List". recommendations.json is a bare JSON
-// array of Recommendation objects, written next to library.json on the
-// NAS by the Mini backend (the single writer). We read it FRESH on every
-// invoke (no JsonFileCache): the file is tiny and only read when the view
-// opens or right after an edit, so freshness > caching here — a cached
-// copy would go stale the moment a desktop or mobile edit lands.
+// array of Recommendation objects. The Mini backend (homemini) is the
+// writer for phone adds; desktop reads/writes STATE_DIR/recommendations.json
+// under local-primary (4.5.0-114). Phone picks never appeared on desktop
+// because read-recommendations only read the local file (often missing)
+// while the backend + NAS held the canonical list — sync on every read.
 interface RecommendationRecord {
   id: string
   song?: string
@@ -9038,91 +9398,531 @@ interface RecommendationRecord {
   matchedAlbum?: string
   resolvedAt?: string
 }
-// The Mini backend owns add/delete (keeps its in-memory cache coherent and
-// runs the iTunes Search enrichment). Reachable on the tailnet; override
-// for a local dev backend via JAKETUNES_MOBILE_BACKEND.
+// The Mini backend owns enrichment for adds; reachable on the tailnet.
+// Override for a local dev backend via JAKETUNES_MOBILE_BACKEND.
 const MOBILE_BACKEND_URL = process.env.JAKETUNES_MOBILE_BACKEND || 'http://homemini:3000'
 
-ipcMain.handle('read-recommendations', async (): Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> => {
+function recommendationsPath(): string {
+  return join(STATE_DIR, 'recommendations.json')
+}
+
+function recommendationsDeletedPath(): string {
+  return join(STATE_DIR, 'recommendations-deleted.json')
+}
+
+async function readRecommendationTombstones(): Promise<Set<string>> {
   try {
-    const raw = await readFile(join(STATE_DIR, 'recommendations.json'), 'utf-8')
+    const raw = await readFile(recommendationsDeletedPath(), 'utf-8')
     const parsed = JSON.parse(raw) as unknown
-    const recommendations = Array.isArray(parsed) ? (parsed as RecommendationRecord[]) : []
-    // Newest first, matching the backend's GET /api/recommendations sort.
-    recommendations.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-    return { ok: true, recommendations }
-  } catch {
-    // Missing/torn file (first run) → empty list, never throws.
-    return { ok: true, recommendations: [] }
+    if (Array.isArray(parsed)) return new Set(parsed.map((id) => String(id)))
+  } catch { /* no tombstones yet */ }
+  return new Set()
+}
+
+async function addRecommendationTombstone(id: string): Promise<void> {
+  const tombstones = await readRecommendationTombstones()
+  tombstones.add(String(id))
+  const path = recommendationsDeletedPath()
+  const tmp = path + '.tmp.json'
+  await writeFile(tmp, JSON.stringify([...tombstones], null, 2))
+  const { rename: renameFS } = await import('fs/promises')
+  await renameFS(tmp, path)
+}
+
+async function mirrorRecommendationsToNas(list: RecommendationRecord[]): Promise<void> {
+  if (!isNasMounted()) return
+  try {
+    const nasPath = join(NAS_STATE_DIR_PATH, 'recommendations.json')
+    const tmp = nasPath + '.tmp.json'
+    await writeFile(tmp, JSON.stringify(sortRecommendations(list), null, 2))
+    const { rename: renameFS } = await import('fs/promises')
+    await renameFS(tmp, nasPath)
+  } catch (err) {
+    console.warn('[reco] NAS mirror failed:', err instanceof Error ? err.message : err)
   }
+}
+
+function sortRecommendations(list: RecommendationRecord[]): RecommendationRecord[] {
+  return [...list].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+}
+
+function parseRecommendationsPayload(parsed: unknown): RecommendationRecord[] {
+  if (Array.isArray(parsed)) return parsed as RecommendationRecord[]
+  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { items?: unknown }).items)) {
+    return (parsed as { items: RecommendationRecord[] }).items
+  }
+  return []
+}
+
+async function readRecommendationsFile(): Promise<RecommendationRecord[]> {
+  try {
+    const raw = await readFile(recommendationsPath(), 'utf-8')
+    return parseRecommendationsPayload(JSON.parse(raw) as unknown)
+  } catch {
+    return []
+  }
+}
+
+async function writeRecommendationsFile(list: RecommendationRecord[]): Promise<void> {
+  const recoPath = recommendationsPath()
+  const sorted = sortRecommendations(list)
+  const tmp = recoPath + '.tmp.json'
+  await writeFile(tmp, JSON.stringify(sorted, null, 2))
+  const { rename: renameFS } = await import('fs/promises')
+  await renameFS(tmp, recoPath)
+  void mirrorRecommendationsToNas(sorted)
+}
+
+function mergeRecommendationsById(...sources: RecommendationRecord[][]): RecommendationRecord[] {
+  const byId = new Map<string, RecommendationRecord>()
+  for (const src of sources) {
+    for (const r of src) {
+      if (!r?.id) continue
+      const id = String(r.id)
+      const prev = byId.get(id)
+      if (!prev || (r.createdAt || '').localeCompare(prev.createdAt || '') > 0) {
+        byId.set(id, r)
+      }
+    }
+  }
+  return sortRecommendations([...byId.values()])
+}
+
+const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
+
+function recoMatchKey(input: { song?: string; artist?: string; note?: string }): string {
+  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.note || '')}`
+}
+
+function recoRecordKey(r: RecommendationRecord): string {
+  return recoMatchKey({
+    song: r.song || r.matchedTitle,
+    artist: r.artist || r.matchedArtist,
+    note: r.note,
+  })
+}
+
+type RecoItunesRow = { song: string; artist: string; album?: string; artworkUrl?: string; previewUrl?: string; appleMusicUrl?: string }
+
+/** In-session iTunes Search cache — Listen-to-the-List verify hits the same queries repeatedly. */
+const recoItunesSearchCache = new Map<string, RecoItunesRow[]>()
+const recoItunesInflight = new Map<string, Promise<RecoItunesRow[]>>()
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  )
+  return results
+}
+
+async function fetchItunesRecoRows(term: string, limit = 25): Promise<RecoItunesRow[]> {
+  const q = term.trim()
+  if (q.length < 2) return []
+  const cacheKey = `${recoNorm(q)}|${limit}`
+  const cached = recoItunesSearchCache.get(cacheKey)
+  if (cached) return cached
+  const inflight = recoItunesInflight.get(cacheKey)
+  if (inflight) return inflight
+
+  const promise = (async (): Promise<RecoItunesRow[]> => {
+    try {
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=${limit}`
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      if (!res.ok) return []
+      const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+      const rows = (data.results || [])
+        .map((r) => ({
+          song: String(r.trackName ?? ''),
+          artist: String(r.artistName ?? ''),
+          album: r.collectionName ? String(r.collectionName) : undefined,
+          artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '600x600') : undefined,
+          previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+          appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+        }))
+        .filter((s) => s.song && s.artist && !RECO_ITUNES_JUNK.test(s.artist) && !RECO_ITUNES_JUNK.test(s.album || ''))
+      recoItunesSearchCache.set(cacheKey, rows)
+      return rows
+    } catch {
+      return []
+    } finally {
+      recoItunesInflight.delete(cacheKey)
+    }
+  })()
+  recoItunesInflight.set(cacheKey, promise)
+  return promise
+}
+
+/** Recommendations for suggest — reuse sync TTL so navigation does not re-pull homemini/NAS every time. */
+async function recommendationsForSuggest(): Promise<RecommendationRecord[]> {
+  const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
+  if (!stale && recommendationsSyncedAtMs > 0) {
+    const tombstones = await readRecommendationTombstones()
+    const local = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+    return local
+  }
+  return syncRecommendationsToLocal()
+}
+
+/** iTunes-verify a Music Man pick; return canonical song/artist or null if not real. */
+async function verifyMusicManSuggestion(s: { song: string; artist: string; note: string }): Promise<{ song: string; artist: string; note: string } | null> {
+  const strictCredit = await lookupItunesForRecommendation({ song: s.song, artist: s.artist }, { requireArtist: true })
+  let canonical = await lookupItunesForRecommendation({ song: s.song, artist: s.artist })
+  // Wrong-artist+title queries often return 0 rows (e.g. "Territorial Pissings
+  // Smashing Pumpkins"). Fall back to title-only so we can reject or correct.
+  if (!canonical.matchedTitle || !canonical.matchedArtist) {
+    canonical = await lookupItunesForRecommendation({ song: s.song })
+  }
+  const strictOk =
+    Boolean(strictCredit.matchedTitle) &&
+    Boolean(strictCredit.matchedArtist) &&
+    recoTitleMatches(s.song, strictCredit.matchedTitle!) &&
+    recoArtistMatches(s.artist, strictCredit.matchedArtist!)
+  const needsTitlePool =
+    Boolean(canonical.matchedTitle && canonical.matchedArtist) &&
+    !recoArtistMatches(s.artist, canonical.matchedArtist ?? '') &&
+    !strictOk
+  const titleOnlyRows = needsTitlePool ? await fetchItunesRecoRows(s.song, 25) : []
+  const verdict = evaluateMusicManVerification({
+    mm: { song: s.song, artist: s.artist },
+    strictCredit,
+    canonical,
+    titleOnlyRows,
+  })
+  if (!verdict.ok) {
+    if (verdict.reason === 'artist_hallucination') {
+      console.warn('[reco] suggest: rejected artist hallucination —', s.song, 'is not by', s.artist, canonical.matchedArtist ? `(iTunes: ${canonical.matchedArtist})` : '')
+    }
+    return null
+  }
+  if (verdict.mode === 'corrected') {
+    console.warn('[reco] suggest: corrected artist credit —', s.song, s.artist, '→', verdict.artist)
+  }
+  return { song: verdict.song, artist: verdict.artist, note: s.note }
+}
+
+/** iTunes Search best-match enrichment for a single reco add (local fallback). */
+async function lookupItunesForRecommendation(
+  input: { song?: string; artist?: string; album?: string },
+  opts?: { requireArtist?: boolean },
+): Promise<Pick<RecommendationRecord, 'artworkUrl' | 'appleMusicUrl' | 'previewUrl' | 'matchedTitle' | 'matchedArtist' | 'matchedAlbum'>> {
+  const q = [input.song, input.artist, input.album].filter(Boolean).join(' ').trim()
+  if (q.length < 2) return {}
+  try {
+    const raw = await fetchItunesRecoRows(q, 25)
+    if (raw.length === 0) return {}
+    const wantSong = recoNorm(input.song || '')
+    const wantArtist = recoNorm(input.artist || '')
+    const artistFreq = new Map<string, number>()
+    for (const s of raw) {
+      const k = s.artist.toLowerCase()
+      artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
+    }
+    const scoreOf = (s: RecoItunesRow): number => {
+      if (input.song && !recoTitleMatches(input.song, s.song)) return -1000
+      if (opts?.requireArtist && input.artist && !recoArtistMatches(input.artist, s.artist)) return -1000
+      const songN = recoNorm(s.song)
+      const artistN = recoNorm(s.artist)
+      let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 2
+      if (wantSong && songN === wantSong) score += 50
+      else if (wantSong && recoTitleMatches(input.song || '', s.song)) score += 35
+      if (wantArtist && artistN === wantArtist) score += 40
+      else if (wantArtist && (artistN.includes(wantArtist) || wantArtist.includes(artistN))) score += 15
+      const album = (s.album || '').toLowerCase()
+      const song = s.song.toLowerCase()
+      const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
+      if (!isLive && !/ - single$/.test(album)) score += 4
+      if (isLive) score -= 3
+      if (/ - single$/.test(album) && album.startsWith(song)) score -= 6
+      return score
+    }
+    const best = raw
+      .map((s, i) => ({ s, i, score: scoreOf(s) }))
+      .filter((x) => x.score >= 0)
+      .sort((a, b) => (b.score - a.score) || (a.i - b.i))[0]?.s
+    if (!best) return {}
+    return {
+      matchedTitle: best.song,
+      matchedArtist: best.artist,
+      matchedAlbum: best.album,
+      artworkUrl: best.artworkUrl,
+      previewUrl: best.previewUrl,
+      appleMusicUrl: best.appleMusicUrl,
+    }
+  } catch {
+    return {}
+  }
+}
+
+async function appendRecommendationLocal(recommendation: RecommendationRecord): Promise<void> {
+  const local = await readRecommendationsFile()
+  await writeRecommendationsFile(mergeRecommendationsById(local, [recommendation]))
+}
+
+async function buildLocalRecommendation(input: {
+  song?: string; artist?: string; album?: string; note?: string
+}): Promise<RecommendationRecord> {
+  const now = new Date().toISOString()
+  const enrichment = await lookupItunesForRecommendation(input)
+  const canonicalSong = enrichment.matchedTitle || input.song?.trim() || undefined
+  const canonicalArtist = enrichment.matchedArtist || input.artist?.trim() || undefined
+  return {
+    id: randomUUID(),
+    song: canonicalSong,
+    artist: canonicalArtist,
+    album: enrichment.matchedAlbum || input.album?.trim() || undefined,
+    note: input.note?.trim() || undefined,
+    createdAt: now,
+    ...enrichment,
+    resolvedAt: enrichment.matchedTitle ? now : undefined,
+  }
+}
+
+/** homemini sometimes returns 500 after persisting — find the row via GET. */
+async function recoverRecommendationFromBackend(input: {
+  song?: string; artist?: string; album?: string; note?: string
+}): Promise<RecommendationRecord | null> {
+  const backend = (await fetchRecommendationsFromBackend()) ?? []
+  if (backend.length === 0) return null
+  const key = recoMatchKey(input)
+  const cutoff = Date.now() - 5 * 60 * 1000
+  const matches = backend.filter((r) => recoRecordKey(r) === key)
+  const recent = matches.filter((r) => new Date(r.createdAt || 0).getTime() >= cutoff)
+  const pool = recent.length > 0 ? recent : matches
+  if (pool.length === 0) return null
+  return pool.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0]
+}
+
+async function fetchRecommendationsFromBackend(): Promise<RecommendationRecord[] | null> {
+  try {
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) {
+      console.warn('[reco] backend GET failed:', res.status)
+      return null
+    }
+    return parseRecommendationsPayload(await res.json() as unknown)
+  } catch (err) {
+    console.warn('[reco] backend GET unreachable:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | null> {
+  try {
+    const { existsSync } = await import('fs')
+    const nasPath = join(NAS_STATE_DIR_PATH, 'recommendations.json')
+    if (!existsSync(nasPath)) return null
+    const raw = await readFile(nasPath, 'utf-8')
+    return parseRecommendationsPayload(JSON.parse(raw) as unknown)
+  } catch {
+    return null
+  }
+}
+
+/** Merge homemini + NAS into local (additive only). Local + tombstones win. */
+let recommendationsSyncedAtMs = 0
+const RECOMMENDATIONS_SYNC_TTL_MS = 5 * 60 * 1000
+
+async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
+  const tombstones = await readRecommendationTombstones()
+  const rawLocal = await readRecommendationsFile()
+  let local = rawLocal.filter((r) => !tombstones.has(String(r.id)))
+  if (local.length !== rawLocal.length) {
+    await writeRecommendationsFile(local)
+  }
+
+  const localIds = new Set(local.map((r) => String(r.id)))
+  const backend = (await fetchRecommendationsFromBackend()) ?? []
+  const nas = (await readRecommendationsFromNas()) ?? []
+
+  // Additive pull: new phone/NAS picks only. Never resurrect tombstoned
+  // rows — homemini/NAS can stay stale after a laptop delete.
+  const incoming = [...nas, ...backend].filter((r) => {
+    if (!r?.id) return false
+    const id = String(r.id)
+    return !tombstones.has(id) && !localIds.has(id)
+  })
+
+  const merged = mergeRecommendationsById(local, incoming)
+  if (incoming.length > 0) {
+    await writeRecommendationsFile(merged)
+    console.log(`[reco] synced ${merged.length} recommendations to local (was ${local.length}, pulled ${incoming.length} new from remote)`)
+  }
+  recommendationsSyncedAtMs = Date.now()
+  return merged
+}
+
+let readRecoInflight: Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> | null = null
+
+ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }): Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> => {
+  if (!opts?.forceSync && readRecoInflight) return readRecoInflight
+  readRecoInflight = (async (): Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> => {
+    try {
+      const forceSync = opts?.forceSync === true
+      const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
+      const recommendations = (forceSync || stale || recommendationsSyncedAtMs === 0)
+        ? await syncRecommendationsToLocal()
+        : await readRecommendationsFile()
+      return { ok: true, recommendations }
+    } catch (err) {
+      console.warn('[reco] read/sync failed:', err instanceof Error ? err.message : err)
+      return { ok: true, recommendations: [] }
+    } finally {
+      readRecoInflight = null
+    }
+  })()
+  return readRecoInflight
 })
 
-ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string }> => {
+ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean }> => {
+  const trimmed = {
+    song: input.song?.trim() || undefined,
+    artist: input.artist?.trim() || undefined,
+    album: input.album?.trim() || undefined,
+    note: input.note?.trim() || undefined,
+  }
+  if (!trimmed.song && !trimmed.artist && !trimmed.album && !trimmed.note) {
+    return { ok: false, error: 'nothing to add' }
+  }
+
   const url = `${MOBILE_BACKEND_URL}/api/recommendations`
-  console.log('[reco] POST →', url, JSON.stringify(input))
+  console.log('[reco] POST →', url, JSON.stringify(trimmed))
+  let recommendation: RecommendationRecord | null = null
+  let backendStatus: number | null = null
+
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(trimmed),
+      signal: AbortSignal.timeout(10000),
     })
-    if (!res.ok) {
+    backendStatus = res.status
+    if (res.ok) {
+      try {
+        const parsed = await res.json() as RecommendationRecord | { item?: RecommendationRecord }
+        recommendation = ('id' in parsed && parsed.id)
+          ? parsed as RecommendationRecord
+          : (parsed as { item?: RecommendationRecord }).item ?? null
+      } catch {
+        recommendation = null
+      }
+    } else {
       console.warn('[reco] POST failed — backend', res.status)
-      return { ok: false, error: `backend ${res.status}` }
     }
-    const recommendation = (await res.json()) as RecommendationRecord
-    console.log('[reco] POST ok — added', recommendation?.id)
-    return { ok: true, recommendation }
   } catch (err) {
-    console.error('[reco] POST threw:', err instanceof Error ? err.message : err)
-    return { ok: false, error: err instanceof Error ? err.message : 'request failed' }
+    console.warn('[reco] POST threw:', err instanceof Error ? err.message : err)
+  }
+
+  // homemini can return 500 even after persisting — recover via GET before local fallback.
+  if (!recommendation?.id) {
+    recommendation = await recoverRecommendationFromBackend(trimmed)
+    if (recommendation?.id) {
+      console.log('[reco] recovered from backend after POST', backendStatus ?? 'error', '—', recommendation.id)
+    }
+  }
+
+  if (recommendation?.id) {
+    try {
+      const enriched = await buildLocalRecommendation({
+        song: recommendation.song || recommendation.matchedTitle,
+        artist: recommendation.artist || recommendation.matchedArtist,
+        album: recommendation.album || recommendation.matchedAlbum,
+        note: recommendation.note,
+      })
+      recommendation = { ...recommendation, ...enriched, id: recommendation.id, createdAt: recommendation.createdAt }
+      await appendRecommendationLocal(recommendation)
+    } catch (err) {
+      console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
+    }
+    return { ok: true, recommendation }
+  }
+
+  // Mini unreachable or broken — save locally with iTunes enrichment.
+  try {
+    const local = await buildLocalRecommendation(trimmed)
+    await appendRecommendationLocal(local)
+    console.log('[reco] saved locally (backend', backendStatus ?? 'unreachable', ') —', local.id)
+    return { ok: true, recommendation: local, savedLocally: true }
+  } catch (err) {
+    console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
+    return { ok: false, error: err instanceof Error ? err.message : 'could not save recommendation' }
   }
 })
 
 ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
-  // The LOCAL recommendations.json is the source of truth for the laptop's
-  // list (read-recommendations reads it). The homemini backend is only a
-  // best-effort mirror — it can be empty or out of sync (it got cleared to 0
-  // recos while the local file still had 7, so its DELETE returned 404 and
-  // stranded the user unable to remove anything). So: remove from the local
-  // file authoritatively (atomic write), and treat the backend DELETE as
-  // fire-and-forget (a 404 just means it's already gone there).
-  const recoPath = join(STATE_DIR, 'recommendations.json')
+  // LOCAL recommendations.json is authoritative for the laptop list. homemini
+  // DELETE is fire-and-forget (404/500 must never block the user — homemini
+  // currently returns 500 even when the delete succeeds). Tombstone the id
+  // so sync never pulls a stale NAS/backend copy back onto the list.
+  const rid = String(id)
+  await addRecommendationTombstone(rid)
+
+  const tryLocalDelete = async (): Promise<boolean> => {
+    const parsed = await readRecommendationsFile()
+    const next = parsed.filter((r) => String(r.id) !== rid)
+    const removed = next.length !== parsed.length
+    if (removed) await writeRecommendationsFile(next)
+    return removed
+  }
+
   let removedLocally = false
   try {
-    const parsed = JSON.parse(await readFile(recoPath, 'utf-8')) as RecommendationRecord[]
-    if (Array.isArray(parsed)) {
-      const next = parsed.filter((r) => String(r.id) !== String(id))
-      removedLocally = next.length !== parsed.length
-      if (removedLocally) {
-        const tmp = recoPath + '.tmp.json'
-        await writeFile(tmp, JSON.stringify(next, null, 2))
-        const { rename: renameFS } = await import('fs/promises')
-        await renameFS(tmp, recoPath)
-      }
-    }
+    removedLocally = await tryLocalDelete()
   } catch (err) {
     console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)
   }
-  // Best-effort backend sync — must never block the user's delete.
   try {
-    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-    if (!res.ok && res.status !== 404) console.warn('[reco] backend delete returned', res.status)
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(rid)}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok && res.status !== 404) {
+      console.warn('[reco] backend delete returned', res.status, '(local delete', removedLocally ? 'ok' : 'miss', ')')
+    }
   } catch (err) {
     console.warn('[reco] backend delete unreachable:', err instanceof Error ? err.message : err)
   }
-  return removedLocally ? { ok: true } : { ok: false, error: 'not found in list' }
+  // Tombstone guarantees the row stays gone even if homemini/NAS still has it.
+  return { ok: true }
 })
 
 // Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
-// This is a DISCOVERY list: the suggestions must be music the user does NOT
-// already own — new-to-them artists in the lineage of what they love. The
-// prompt steers toward that, and a HARD library filter guarantees it: any
-// suggestion by an artist already in the collection (or an exact owned
-// song) is dropped. We over-generate (8) so ≥3 survive the filter. Returns
-// up to 3 {song,artist,note}. claudeCall handles the daily ceiling + cached
-// fallback; any failure is fail-soft (ok:false → the UI shows no strip).
-ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }> => {
+// DISCOVERY only: artists/songs not already in the library or on the list.
+// Over-generates per attempt and retries up to 4× until ≥3 survive the hard
+// filter (large libraries eat most LLM picks). Returns a pool (up to 10) so
+// the UI can always show 3 and backfill when one is added.
+type SuggestRecoResult = { ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }
+let suggestResultCache: { at: number; suggestions: Array<{ song: string; artist: string; note: string }> } | null = null
+let suggestRecoInflight: Promise<SuggestRecoResult> | null = null
+const SUGGEST_RESULT_TTL_MS = 30 * 60 * 1000
+
+ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<SuggestRecoResult> => {
+  const force = opts?.force === true
+  const now = Date.now()
+  if (!force && suggestResultCache && now - suggestResultCache.at < SUGGEST_RESULT_TTL_MS) {
+    return { ok: true, suggestions: suggestResultCache.suggestions }
+  }
+  if (!force && suggestRecoInflight) return suggestRecoInflight
+  if (force) suggestResultCache = null
+
+  suggestRecoInflight = (async (): Promise<SuggestRecoResult> => {
   try {
     const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; title?: string; genre?: string; playCount?: number }> }
     const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
@@ -9147,9 +9947,8 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
     let existing: string[] = []
     const listSongs = new Set<string>() // normalized artist|title already ON the list
     try {
-      const raw = await readFile(join(STATE_DIR, 'recommendations.json'), 'utf-8')
-      const parsed = JSON.parse(raw) as RecommendationRecord[]
-      if (Array.isArray(parsed)) {
+      const parsed = await recommendationsForSuggest()
+      if (parsed.length > 0) {
         existing = parsed
           .map((r) => `${r.song || r.matchedTitle || ''} — ${r.artist || r.matchedArtist || ''}`.trim())
           .filter((s) => s.length > 2)
@@ -9162,44 +9961,81 @@ ipcMain.handle('suggest-recommendations', async (): Promise<{ ok: boolean; sugge
       }
     } catch { /* no list yet */ }
 
-    const user = [
-      `Artists this person ALREADY OWNS and loves: ${topArtists.join(', ') || '(unknown)'}.`,
-      topGenres.length ? `Genres in rotation: ${topGenres.join(', ')}.` : '',
-      existing.length ? `Already on their Listen-to-the-List: ${existing.join('; ')}.` : '',
-      '',
-      'This is a DISCOVERY list. Suggest 8 records they almost certainly do NOT own yet — artists NEW to this collection that sit in the lineage of, or just adjacent to, what they love (their influences, contemporaries, the bands they inspired or ripped off, the deeper scene). Do NOT suggest any artist listed above, and nothing already on the list — they HAVE those. The entire point is music they have not heard.',
-      'Each: a real song + the artist + a one-sentence note in your voice on why it\'s the right next step for them.',
-      'Return ONLY JSON, no prose, no code fence: an array of 8 objects [{"song":"...","artist":"...","note":"..."}, ...].',
-    ].filter(Boolean).join('\n')
+    const passesFilter = (s: { song: string; artist: string }) => {
+      const key = `${norm(s.artist)}|${norm(s.song)}`
+      return !ownedArtists.has(norm(s.artist)) && !ownedSongs.has(key) && !listSongs.has(key)
+    }
 
-    const reply = await claudeCall('listen-list:suggest', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 900,
-      system: MUSIC_MAN_CORE,
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = block && block.type === 'text' ? block.text : ''
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-    const parsed = JSON.parse((fence ? fence[1] : text).trim()) as Array<{ song?: unknown; artist?: unknown; note?: unknown }>
-    const suggestions = (Array.isArray(parsed) ? parsed : [])
-      .map((s) => ({ song: String(s.song || '').trim(), artist: String(s.artist || '').trim(), note: String(s.note || '').trim() }))
-      .filter((s) => s.song && s.artist)
-      // HARD guarantee: never suggest music they already own, NOR anything
-      // already on the Listen list. The prompt asks for this too, but the
-      // LLM ignores it (it kept suggesting "Common People"/"Connection" that
-      // were already on the list) — so we enforce it in code, not in prose.
-      .filter((s) => {
-        const key = `${norm(s.artist)}|${norm(s.song)}`
-        return !ownedArtists.has(norm(s.artist)) && !ownedSongs.has(key) && !listSongs.has(key)
+    const accumulated: Array<{ song: string; artist: string; note: string }> = []
+    const seenKeys = new Set<string>()
+    const bannedArtists = new Set<string>(topArtists.map((a) => a.toLowerCase().trim()))
+
+    for (let attempt = 0; attempt < 4 && accumulated.length < 3; attempt++) {
+      const excludeArtists = Array.from(bannedArtists).slice(0, 80)
+      const excludePicked = accumulated.map((s) => s.artist)
+      const user = [
+        `Artists this person ALREADY OWNS and loves: ${topArtists.join(', ') || '(unknown)'}.`,
+        topGenres.length ? `Genres in rotation: ${topGenres.join(', ')}.` : '',
+        existing.length ? `Already on their Listen-to-the-List: ${existing.join('; ')}.` : '',
+        excludeArtists.length ? `NEVER suggest these artists (owned, on-list, or already rejected): ${excludeArtists.join(', ')}.` : '',
+        excludePicked.length ? `Already picked this round — do NOT repeat: ${excludePicked.join(', ')}.` : '',
+        attempt > 0 ? 'Your last batch was mostly artists they already own. Dig deeper — smaller labels, regional scenes, one-album wonders.' : '',
+        '',
+        'This is a DISCOVERY list. Suggest 20 records they almost certainly do NOT own yet — artists NEW to this collection that sit in the lineage of, or just adjacent to, what they love (their influences, contemporaries, the bands they inspired or ripped off, the deeper scene). Do NOT suggest any artist listed above, and nothing already on the list — they HAVE those. The entire point is music they have not heard.',
+        'Each: a real song + the artist + a one-sentence note in your voice on why it\'s the right next step for them.',
+        'CRITICAL: song + artist must be a real recording on Apple Music/iTunes — the primary credited artist on that track. Never attribute a famous song to the wrong artist (e.g. Daft Punk\'s "Around the World" is not by Modjo; Chromeo\'s "Bonafide Lovin\'" is not by Röyksopp).',
+        'Return ONLY JSON, no prose, no code fence: an array of 20 objects [{"song":"...","artist":"...","note":"..."}, ...].',
+      ].filter(Boolean).join('\n')
+
+      const reply = await claudeCall(`listen-list:suggest:${attempt}`, {
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1200,
+        system: MUSIC_MAN_CORE,
+        messages: [{ role: 'user', content: user }],
       })
-      .slice(0, 3)
-    if (suggestions.length === 0) console.warn('[reco] suggest: all candidates were already owned/filtered')
+      const block = reply.content[0]
+      const text = block && block.type === 'text' ? block.text : ''
+      const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+      const parsed = JSON.parse((fence ? fence[1] : text).trim()) as Array<{ song?: unknown; artist?: unknown; note?: unknown }>
+      const candidates = (Array.isArray(parsed) ? parsed : [])
+        .map((s) => ({ song: String(s.song || '').trim(), artist: String(s.artist || '').trim(), note: String(s.note || '').trim() }))
+        .filter((s) => s.song && s.artist)
+
+      const verifiedBatch = await runWithConcurrency(candidates, 3, async (s) => ({
+        raw: s,
+        verified: await verifyMusicManSuggestion(s),
+      }))
+      for (const { raw: s, verified } of verifiedBatch) {
+        if (accumulated.length >= 10) break
+        if (!verified) {
+          console.warn('[reco] suggest: dropped unverified pick', s.artist, '—', s.song)
+          bannedArtists.add(s.artist.toLowerCase().trim())
+          continue
+        }
+        if (!passesFilter(verified)) {
+          bannedArtists.add(verified.artist.toLowerCase().trim())
+          continue
+        }
+        const key = `${norm(verified.artist)}|${norm(verified.song)}`
+        if (seenKeys.has(key)) continue
+        seenKeys.add(key)
+        accumulated.push(verified)
+        bannedArtists.add(verified.artist.toLowerCase().trim())
+      }
+    }
+
+    if (accumulated.length < 3) console.warn('[reco] suggest: only', accumulated.length, 'survived filter after retries (wanted ≥3)')
+    const suggestions = accumulated.slice(0, 10)
+    suggestResultCache = { at: Date.now(), suggestions }
     return { ok: true, suggestions }
   } catch (err) {
     console.error('[reco] suggest failed:', err instanceof Error ? err.message : err)
     return { ok: false, error: err instanceof Error ? err.message : 'suggest failed' }
+  } finally {
+    suggestRecoInflight = null
   }
+  })()
+  return suggestRecoInflight
 })
 
 // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
@@ -9267,20 +10103,24 @@ async function fetchMusicBrainzAlbumCredits(artist: string, album: string): Prom
   } catch { return null }
 }
 
-ipcMain.handle('get-album-info', async (_e, artist: string, album: string, _year?: string): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
+ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
   if (!album) return { ok: true, credits: {} }
-  const key = albumCacheKey(artist, album)
+  const tagYear = tagYearStr(year)
+  const key = `${albumCacheKey(artist, album)}|y:${tagYear || '?'}`
   const cached = albumInfoCache.get(key)
-  if (cached) return { ok: true, credits: cached }
+  if (cached) {
+    return { ok: true, credits: sanitizeAlbumCredits(tagYear, cached) }
+  }
   try {
     const [it, mb] = await Promise.all([fetchItunesAlbum(artist, album), fetchMusicBrainzAlbumCredits(artist, album)])
     const merged: AlbumCredits = {}
-    const released = it?.released || mb?.released
+    const released = pickAlbumReleaseDate(tagYear, mb?.released, it?.released)
     if (released) merged.released = released
     if (it?.label) merged.label = it.label
     if (mb?.producer) merged.producer = mb.producer
-    albumInfoCache.set(key, merged)
-    return { ok: true, credits: merged }
+    const sanitized = sanitizeAlbumCredits(tagYear, merged)
+    albumInfoCache.set(key, sanitized)
+    return { ok: true, credits: sanitized }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'album-info failed' }
   }
@@ -10008,6 +10848,7 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
     const imgRes = await fetch(artUrl, { redirect: 'follow' })
     if (!imgRes.ok) return { ok: false, error: 'Failed to download image' }
     const imgBuf = Buffer.from(await imgRes.arrayBuffer())
+    invalidateArtBytes(hash)
     await writeFile(filePath, imgBuf)
 
     // Append timestamp so renderer sees a new hash and re-renders the image
@@ -10040,6 +10881,7 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
     const hash = artworkHash(artist, album)
     const destPath = join(dir, `${hash}.jpg`)
 
+    invalidateArtBytes(hash)
     // Convert to JPEG using macOS sips (handles PNG, TIFF, BMP, GIF, etc.)
     const ext = imagePath.slice(imagePath.lastIndexOf('.')).toLowerCase()
     if (ext === '.jpg' || ext === '.jpeg') {
@@ -10272,49 +11114,42 @@ ipcMain.handle('load-artwork-map', async () => {
  * Returns the matching hash (versioned if present in the index) or null.
  * Renderer caches the result via ADD_ARTWORK so future lookups are sync.
  */
-function normalizeArtworkPartServer(s: string): string {
-  return (s || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/\s*\((?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^)]*\)/g, '')
-    .replace(/\s*\[(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^\]]*\]/g, '')
-    .replace(/\s*\((?:feat\.?|featuring|with|prod\.?|produced by)[^)]+\)/g, '')
-    .replace(/\s*\[(?:feat\.?|featuring|with)[^\]]+\]/g, '')
-    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, '')
-    .replace(/[^a-z0-9]+/g, '')
-}
-
 async function fileExists(absPath: string): Promise<boolean> {
   try { await stat(absPath); return true } catch { return false }
 }
 
 ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized' }> => {
   if (!artist || !album) return { ok: true, hash: null }
+  const resolveKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
+  if (resolveArtworkCache.has(resolveKey)) {
+    return { ok: true, hash: resolveArtworkCache.get(resolveKey)! }
+  }
   const dir = getArtworkDir()
   const index = await loadArtworkIndex()
+  if (artworkLookupRebuildPromise) {
+    await artworkLookupRebuildPromise.catch(() => {})
+  }
 
   // 1. Exact JSON key
   const exactKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
   if (index[exactKey]) {
     const bareHash = String(index[exactKey]).replace(/_\d+$/, '')
     if (await fileExists(join(dir, `${bareHash}.jpg`))) {
+      resolveArtworkCache.set(resolveKey, index[exactKey])
       return { ok: true, hash: index[exactKey], source: 'exact' }
     }
   }
 
-  // 2. Normalized JSON key match against every entry in the index
+  // 2. Normalized JSON key — O(1) via prebuilt index (was O(n) scan).
   const nArtist = normalizeArtworkPartServer(artist)
   const nAlbum = normalizeArtworkPartServer(album)
   const wantedNorm = `${nArtist}|||${nAlbum}`
-  for (const [k, v] of Object.entries(index)) {
-    const [ka, kal] = k.split('|||')
-    const kn = `${normalizeArtworkPartServer(ka || '')}|||${normalizeArtworkPartServer(kal || '')}`
-    if (kn === wantedNorm) {
-      const bareHash = String(v).replace(/_\d+$/, '')
-      if (await fileExists(join(dir, `${bareHash}.jpg`))) {
-        return { ok: true, hash: v, source: 'normalized' }
-      }
+  const normHit = artworkNormIndexMem?.get(wantedNorm)
+  if (normHit) {
+    const bareHash = String(normHit).replace(/_\d+$/, '')
+    if (await fileExists(join(dir, `${bareHash}.jpg`))) {
+      resolveArtworkCache.set(resolveKey, normHit)
+      return { ok: true, hash: normHit, source: 'normalized' }
     }
   }
 
@@ -10323,6 +11158,7 @@ ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string):
   // under a key we can recompute).
   const directHash = artworkHash(artist, album)
   if (await fileExists(join(dir, `${directHash}.jpg`))) {
+    resolveArtworkCache.set(resolveKey, directHash)
     return { ok: true, hash: directHash, source: 'disk-hash' }
   }
 
@@ -10334,35 +11170,18 @@ ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string):
     .update(`${nArtist}|||${nAlbum}`)
     .digest('hex')
   if (await fileExists(join(dir, `${normalizedHash}.jpg`))) {
+    resolveArtworkCache.set(resolveKey, normalizedHash)
     return { ok: true, hash: normalizedHash, source: 'disk-normalized' }
   }
 
-  // 5. Sidecar scan (4.5.0-55). Every artwork file written from -55
-  // onward carries a `${hash}.meta.json` sidecar with its (artist,
-  // album, key). When all hash-based strategies miss, scan sidecars
-  // for one whose normalized (artist, album) matches the query. This
-  // is the final defense — catches cases where the JSON index is
-  // missing the entry entirely BUT the JPG + sidecar are on disk.
-  // Linear scan over ~1000-5000 sidecars; bounded + fine for misses.
-  try {
-    const { readdir } = await import('fs/promises')
-    const entries = await readdir(dir)
-    for (const name of entries) {
-      if (!name.endsWith('.meta.json')) continue
-      try {
-        const sidecar = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { artist?: string; album?: string }
-        const sa = normalizeArtworkPartServer(sidecar.artist || '')
-        const sal = normalizeArtworkPartServer(sidecar.album || '')
-        if (sa === nArtist && sal === nAlbum) {
-          const sidecarHash = name.replace(/\.meta\.json$/, '')
-          if (await fileExists(join(dir, `${sidecarHash}.jpg`))) {
-            return { ok: true, hash: sidecarHash, source: 'disk-normalized' }
-          }
-        }
-      } catch { /* malformed sidecar, skip */ }
-    }
-  } catch { /* readdir failed, fall through */ }
+  // 5. Sidecar index — O(1) lookup (was linear readdir+parse per miss).
+  const sidecarHash = artworkSidecarNormMem?.get(wantedNorm)
+  if (sidecarHash && await fileExists(join(dir, `${sidecarHash}.jpg`))) {
+    resolveArtworkCache.set(resolveKey, sidecarHash)
+    return { ok: true, hash: sidecarHash, source: 'disk-normalized' }
+  }
 
+  resolveArtworkCache.set(resolveKey, null)
   return { ok: true, hash: null }
 })
 
@@ -10927,12 +11746,9 @@ app.whenReady().then(async () => {
   // if nothing matches — it never throws.
   MUSIC_DIR = await resolveMusicDir()
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
-  // 4.5.0-90 — surface which STATE backend the app booted into.
-  // "NAS" means all state files (library.json, overrides, playlists,
-  // mobile-stars, mobile-plays, play-events.jsonl, embeddings.bin)
-  // live on the Synology mount. "local" means the mount wasn't
-  // present at boot and we're operating from the userData fallback.
-  console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-fallback'} — dir=${STATE_DIR}${STATE_IS_NAS ? '' : ` (NAS expected at ${NAS_STATE_DIR_PATH} but not mounted)`}`)
+  // 4.5.0-114 — local SSD is canonical; NAS is async backup mirror only.
+  const nasUp = isNasMounted()
+  console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-primary'} — dir=${STATE_DIR}${nasUp ? ` (NAS backup mirror at ${NAS_STATE_DIR_PATH})` : ` (NAS backup unavailable — ${NAS_STATE_DIR_PATH} not mounted)`}`)
   // Bug #1 fix — NAS-reconnect watcher. Only arms when we booted into
   // local-fallback. If NAS later becomes reachable, saves get locked
   // to prevent overwriting NAS state with stale in-memory snapshots.
@@ -10952,9 +11768,19 @@ app.whenReady().then(async () => {
   // (>60s gap to filter timestamp jitter) gets logged + recorded in
   // stateConflicts so Settings → Library can surface a "Push local
   // edits to NAS" button rather than auto-overwriting either side.
-  if (STATE_IS_NAS) {
-    await detectStateConflicts()
+  // Compare local canonical state against the NAS backup mirror when
+  // Synology is reachable — surfaces divergence even in local-primary mode.
+  // Non-blocking: SMB stat storm before first paint caused launch beach balls.
+  if (isNasMounted()) {
+    void detectStateConflicts().catch((err) => {
+      console.warn('[state] conflict scan failed (non-fatal):', err instanceof Error ? err.message : err)
+    })
   }
+  // Brief 122 — warm recommendations.json from homemini/NAS so "Listen to
+  // the List" isn't empty when the phone wrote picks the laptop never pulled.
+  void syncRecommendationsToLocal().catch((err) => {
+    console.warn('[reco] boot sync failed (non-fatal):', err instanceof Error ? err.message : err)
+  })
 
   // 4.4.85: seed the codec-hint map BEFORE the ipod-audio:// protocol
   // handler registers so the very first play in this session can use it.
@@ -11034,37 +11860,27 @@ app.whenReady().then(async () => {
   await loadQueueFromDisk()
   kickAudioAnalysisWorker()
 
-  // 4.5.0-79 — startup visibility for user-locked artwork. Surfaces
-  // the count so the user can verify their hand-picked covers
-  // survived this launch. Cheap (one disk read of a small JSON file).
-  // 4.5.0-80 — also runs the self-heal pass that reconstructs
-  // user-locked.json from sidecars on disk (in case the lock file
-  // ever gets wiped) AND restores any locked JPGs from locked-backup/
-  // if the main file is missing.
-  try {
-    await selfHealUserLockedArtwork()
-    const locks = await loadArtworkLocks()
-    const idx = await loadArtworkIndex()
-    console.log(`[artwork] loaded ${locks.size} user-locked covers · ${Object.keys(idx).length} total index entries · dir=${getArtworkDir()}`)
-  } catch (err) {
-    console.warn('[artwork] startup load failed:', err)
-  }
-
-  // Load listener profile for Music Man
+  // Load listener profile for Music Man (sync, tiny file)
   loadListenerProfile()
-  // Load Music Man's cross-mode memory (things he's said recently)
-  await loadMusicManMemory()
-  // Load Cynthia's archivist memory (recent jobs she's finished)
-  await loadCynthiaMemory()
-  // Fetch Discogs collection for Music Man taste context
-  fetchDiscogsCollection()
 
-  // Serve album artwork images
+  // Serve album artwork images — register before createWindow so the
+  // renderer's first paint can resolve album-art:// URLs.
   protocol.handle('album-art', async (request) => {
     const url = request.url.replace('album-art://', '')
     const rawHash = decodeURIComponent(url.split('?')[0].replace('.jpg', ''))
     // Strip cache-bust suffix (e.g. "abc123_1713100000000" → "abc123")
     const hash = rawHash.replace(/_\d+$/, '')
+    const cached = getCachedArtBytes(hash)
+    if (cached) {
+      return new Response(cached, {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          // Versioned hash in the URL busts browser cache on art change;
+          // long max-age makes scroll-back instant within a session.
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      })
+    }
     const filePath = join(getArtworkDir(), `${hash}.jpg`)
     try {
       const data = await readFile(filePath)
@@ -11073,10 +11889,11 @@ app.whenReady().then(async () => {
       // a fresh ArrayBuffer so the body is unambiguously sized memory
       // backed by a real ArrayBuffer.
       const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
+      putArtBytes(hash, body)
       return new Response(body, {
         headers: {
           'Content-Type': 'image/jpeg',
-          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Cache-Control': 'public, max-age=31536000, immutable',
         },
       })
     } catch {
@@ -11112,6 +11929,27 @@ app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
+
+  // Show the window before heavy startup IO (artwork self-heal, memory
+  // loads, ipod-audio handler registration). Splash + library load give
+  // us ~3s before playback needs ipod-audio://.
+  createWindow()
+  registerMediaKeyShortcuts()
+  startLibraryWatcher()
+
+  void (async () => {
+    try {
+      await selfHealUserLockedArtwork()
+      const locks = await loadArtworkLocks()
+      const idx = await loadArtworkIndex()
+      console.log(`[artwork] loaded ${locks.size} user-locked covers · ${Object.keys(idx).length} total index entries · dir=${getArtworkDir()}`)
+    } catch (err) {
+      console.warn('[artwork] startup load failed:', err)
+    }
+    await loadMusicManMemory().catch(() => {})
+    await loadCynthiaMemory().catch(() => {})
+    fetchDiscogsCollection()
+  })()
 
   // Cache of transcoded AAC copies of ALAC sources. Chromium can't decode
   // ALAC, so when the renderer asks for one we detect it and hand back a
@@ -11324,6 +12162,24 @@ app.whenReady().then(async () => {
       transcoded,
       total,
       cancelled: prepareCacheCancelled,
+    }
+  })
+
+  ipcMain.handle('scan-library-orphans', async () => {
+    try {
+      const result = await scanLibraryOrphans()
+      return { ok: true, ...result }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('purge-library-orphans', async () => {
+    try {
+      const { deleted, bytesFreed } = await purgeLibraryOrphans()
+      return { ok: true, deleted, bytesFreed }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 
@@ -11569,12 +12425,11 @@ app.whenReady().then(async () => {
 
   const menu = Menu.buildFromTemplate(menuTemplate)
   Menu.setApplicationMenu(menu)
-  createWindow()
   // Start watching library.json for external modifications so any
   // Python-script edits or out-of-band rewrites propagate into the
   // running UI instead of getting silently overwritten. Fire after
   // createWindow so mainWindow is defined when the watcher emits.
-  startLibraryWatcher()
+  // (createWindow + startLibraryWatcher run earlier, right after artist-image protocol)
 
   // ── Bandcamp Store integration (Brief 036 v4) ──
   // Registered after createWindow so mainWindow is live for the embedded
@@ -11732,6 +12587,7 @@ app.on('window-all-closed', () => {
 // deferral and tears down normally.
 let quittingForFade = false
 app.on('before-quit', (e) => {
+  unregisterMediaKeyShortcuts()
   void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
   // 4.5.0-106 Phase 2.5: flush any pending NAS writes before we let the
   // process exit. Cache writes are backgrounded, so a fast quit could

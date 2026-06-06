@@ -78,13 +78,6 @@ img { display: block; }
   from { opacity: 0; transform: translateY(2px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-@media (prefers-reduced-motion: no-preference) {
-  .songs-view,
-  .albums-view,
-  .genres-view {
-    animation: app-view-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-}
 
 /* 4.5.0-75 — keyboard-navigation focus rings. Pre-fix the app had
  * literally one focus-visible rule (Cynthia popover) so tab-key users
@@ -127,8 +120,3 @@ input:focus-visible,
   outline: 1px solid var(--brand-orange);
   outline-offset: -1px;
 }
-
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #999; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #777; }

@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useAudio, prefetchTrackForPlay } from '../hooks/useAudio'
+import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../utils/artworkLookup'
+import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
+import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
+import AlbumArtImage from '../components/AlbumArtImage'
 import { canonicalArtist, isSameArtist } from '../utils/artistAlias'
+import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
 
@@ -144,12 +148,7 @@ export default function ArtistDetailView() {
       })
       // Track-level sort inside each album.
       for (const g of albums) {
-        g.tracks.sort((a, b) => {
-          const da = Number(a.discNumber) || 1
-          const db = Number(b.discNumber) || 1
-          if (da !== db) return da - db
-          return (Number(a.trackNumber) || 0) - (Number(b.trackNumber) || 0)
-        })
+        g.tracks = sortAlbumTracks(g.tracks)
       }
       let minY = Infinity, maxY = -Infinity
       for (const g of albums) for (const t of g.tracks) {
@@ -300,12 +299,23 @@ export default function ArtistDetailView() {
   // 4.5.0-51: on miss, fire a server-side resolver (deduped per pair)
   // that checks normalized JSON keys + disk-existence and caches the
   // hit via ADD_ARTWORK. Next render hits cleanly.
-  const findArtHash = (artistName: string, albumName: string): string | undefined => {
-    const hit = lookupArtwork(lib.artworkMap, normalizedArtIndex, artistName, albumName)
-    if (hit) return hit
-    requestArtworkResolution(artistName, albumName, dispatch)
-    return undefined
-  }
+  const findArtHash = useCallback((artistName: string, albumName: string): string | undefined => {
+    return lookupArtwork(lib.artworkMap, normalizedArtIndex, artistName, albumName)
+  }, [lib.artworkMap, normalizedArtIndex])
+
+  useEffect(() => {
+    const hashes: (string | undefined)[] = []
+    const missing: { artist: string; album: string }[] = []
+    for (const p of personas) {
+      for (const a of p.albums) {
+        const hit = findArtHash(p.name, a.name)
+        if (hit) hashes.push(hit)
+        else if (missing.length < 24) missing.push({ artist: p.name, album: a.name })
+      }
+    }
+    prefetchAlbumArtHashes(hashes.slice(0, 32))
+    if (missing.length > 0) queueArtworkResolutions(missing, dispatch)
+  }, [personas, lib.artworkMap, normalizedArtIndex, findArtHash, dispatch])
 
   if (!artist) {
     return (
@@ -492,15 +502,16 @@ export default function ArtistDetailView() {
                       key={album.name}
                       className="artist-detail-album-card"
                       onClick={() => {
-                        const first = album.tracks[0]
-                        if (first) playTrack(first, album.tracks, 0, undefined, true)
+                        dispatch({
+                          type: 'VIEW_ALBUM_DETAIL',
+                          albumKey: albumKeyFromStrings(persona.name, album.name),
+                        })
                       }}
-                      onMouseEnter={() => { const f = album.tracks[0]; if (f) prefetchTrackForPlay(f) }}
-                      title={`Play ${album.name}`}
+                      title={`Open ${album.name}`}
                     >
                       <div className="artist-detail-album-art">
                         {hash ? (
-                          <img src={`album-art://${hash}.jpg`} alt={album.name} />
+                          <AlbumArtImage hash={hash} alt={album.name} />
                         ) : (
                           <div className="artist-detail-album-art-placeholder" />
                         )}

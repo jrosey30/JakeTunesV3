@@ -370,7 +370,7 @@ declare global {
       loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
       addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
-      suggestRecommendations: () => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
+      suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       // Album detail page (4.5.0-115): factual credits (MusicBrainz + iTunes,
       // honest gaps where unknown) and a grounded Music Man blurb.
@@ -411,13 +411,22 @@ declare global {
       }>
       getArtworkLockCount: () => Promise<{ ok: boolean; count: number }>
       getStateConflicts: () => Promise<{
-        mode: 'NAS' | 'local-fallback'
+        mode: 'NAS' | 'local-primary'
         nasDir: string
         localDir: string
-        conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string }>
+        nasMounted: boolean
+        conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string; localSizeBytes: number }>
       }>
       reconcileStateConflicts: () => Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }>
-      embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number }>
+      onReconcileStateProgress: (callback: (p: {
+        phase: 'backup' | 'push' | 'verify'
+        file: string
+        index: number
+        total: number
+        localSizeBytes?: number
+        totalBytes: number
+      }) => void) => () => void
+      embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number; stale: number }>
       embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
       onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
@@ -460,7 +469,7 @@ declare global {
       onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => () => void
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
-      saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean }>
+      saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
       syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{
         ok: boolean
@@ -508,6 +517,23 @@ declare global {
       cancelAlacCache: () => void
       onPrepareAlacCacheProgress: (callback: (p: { processed: number; transcoded: number; total: number; title: string; artist: string }) => void) => () => void
       pruneAlacCache: () => Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; error?: string }>
+      scanLibraryOrphans: () => Promise<{
+        ok: boolean
+        trackCount?: number
+        diskCount?: number
+        orphanCount?: number
+        orphanBytes?: number
+        samples?: Array<{ basename: string; mtimeMs: number; size: number }>
+        error?: string
+      }>
+      purgeLibraryOrphans: () => Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string }>
+      scanDeadTracks: () => Promise<{
+        ok: boolean
+        count?: number
+        tracks?: Array<{ id: number; title: string; artist: string; path: string }>
+        error?: string
+      }>
+      removeDeadTracks: () => Promise<{ ok: boolean; removed?: number; error?: string }>
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
       // ── Bandcamp Store v4 (embedded WebContentsView lifecycle) ──

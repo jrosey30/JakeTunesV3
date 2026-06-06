@@ -134,12 +134,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: var(--font-body);
-  /* 4.5: slightly darker base color (#3a3520 → #2a2510) gives the pill
-   * text a hint more contrast against the amber background. Subtle
-   * enough that someone who isn't looking for it won't notice; just
-   * enough that the title reads more present. */
   color: #2a2510;
   line-height: 1.3;
+  animation: np-content-in var(--motion-ui) var(--ease-settle) both;
 }
 
 .now-playing-title {
@@ -1233,6 +1230,8 @@
   overflow: hidden;
   font-size: var(--font-body);
   padding: 3px 0;
+  transform-origin: top right;
+  animation: pop-in var(--motion-fast) var(--ease-snap) both;
 }
 .airplay-menu-header {
   padding: 5px 12px 4px;

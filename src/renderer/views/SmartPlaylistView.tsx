@@ -12,6 +12,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
 import { setNotice } from '../activity'
+import { songsGridTemplate } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
 import '../styles/songs.css'
 
@@ -222,7 +223,7 @@ export default function SmartPlaylistView() {
       if (cancelled) return
       const existing = (r.ok && r.state) ? r.state : {}
       window.electronAPI.saveUiState({ ...existing, 'musicman-picks': mmPicks })
-    }).catch(() => {})
+    }).catch(() => { setNotice("Couldn't save Music Man's Picks.", { kind: 'error', durationMs: 4000 }) })
     return () => { cancelled = true }
   }, [mmPicks, picksStateLoaded])
   useEffect(() => {
@@ -232,7 +233,7 @@ export default function SmartPlaylistView() {
       if (cancelled) return
       const existing = (r.ok && r.state) ? r.state : {}
       window.electronAPI.saveUiState({ ...existing, 'megan-picks': meganPicks })
-    }).catch(() => {})
+    }).catch(() => { setNotice("Couldn't save Megan's Picks.", { kind: 'error', durationMs: 4000 }) })
     return () => { cancelled = true }
   }, [meganPicks, picksStateLoaded])
   useEffect(() => {
@@ -242,7 +243,7 @@ export default function SmartPlaylistView() {
       if (cancelled) return
       const existing = (r.ok && r.state) ? r.state : {}
       window.electronAPI.saveUiState({ ...existing, 'dj-hands-picks': djHandsPicks })
-    }).catch(() => {})
+    }).catch(() => { setNotice("Couldn't save DJ Stephen Hands Picks.", { kind: 'error', durationMs: 4000 }) })
     return () => { cancelled = true }
   }, [djHandsPicks, picksStateLoaded])
 
@@ -278,9 +279,12 @@ export default function SmartPlaylistView() {
           date: new Date().toISOString(),
           v: PICKS_SCHEMA_V,
         })
+      } else if (!result.ok) {
+        setNotice(result.error || "Couldn't load picks.", { kind: 'error' })
       }
       setPicksLoading(false)
-    }).catch(() => {
+    }).catch((err) => {
+      setNotice(String(err) || "Couldn't load picks.", { kind: 'error' })
       setPicksLoading(false)
     })
   // picksConfig + setPicks + requestedRef are all derived from playlistId, so
@@ -575,7 +579,7 @@ export default function SmartPlaylistView() {
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>({})
 
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
-  const gridTemplate = colWidths.map(w => `${w}px`).join(' ')
+  const gridTemplate = songsGridTemplate(visibleCols, colWidths)
 
   const handleColResize = useCallback((colKey: string, colIndex: number, e: React.MouseEvent) => {
     e.preventDefault()
@@ -1027,7 +1031,7 @@ export default function SmartPlaylistView() {
           left header column labels desynced from row cells under
           horizontal scroll. Same { flex: 1, minHeight: 0 } sizing as
           PlaylistView's existing wrapper at line 533. */}
-      <div className="songs-view" style={{ flex: 1, minHeight: 0 }}>
+      <div className="songs-view" style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>
       <div
         className="songs-header"
         style={{ gridTemplateColumns: gridTemplate }}
@@ -1052,7 +1056,7 @@ export default function SmartPlaylistView() {
           </div>
         ))}
       </div>
-      <div className="songs-body" ref={songsBodyRef} onScroll={handleScroll}>
+      <div className="songs-body">
         {sortedTracks.map((track, i) => {
           const isPlaying = pbState.nowPlaying?.id === track.id
           const isSelected = selectedIds.has(track.id)

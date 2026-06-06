@@ -86,6 +86,7 @@
 
 .artist-album-card {
   text-align: center;
+  cursor: pointer;
 }
 
 /* 4.4.40: expanded-card layout is now CSS grid with named areas.

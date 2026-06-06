@@ -22,6 +22,7 @@
 
 import type { Track, Playlist } from '../types'
 import { albumKeyOf } from './albumKey'
+import { artistIdentityKey } from './artistAlias'
 
 // ── Normalization ───────────────────────────────────────────────────
 /**
@@ -115,14 +116,8 @@ export function buildIndex(tracks: Track[], playlists: Playlist[]): SearchIndex 
       nTitle, nArtist, nAlbum,
     })
 
-    // 4.5.0-73 — album key MUST match the one AlbumsView uses to
-    // group + match its `selected` state. Use the shared albumKeyOf
-    // helper. Pre-fix the search index built normalized keys
-    // (punctuation stripped, artist only — no albumArtist fallback);
-    // AlbumsView built unnormalized keys with `albumArtist || artist`.
-    // Click-through landed in AlbumsView with a `pendingAlbumKey` that
-    // matched nothing in its `albums` Map → no selection → user lost
-    // on the full grid.
+    // 4.5.0-73 — album key MUST match AlbumDetailView / AlbumsView.
+    // Route through shared `albumKeyOf` — never inline the format.
     const albumKey = albumKeyOf(t)
     if (t.album) {
       const existing = albumMap.get(albumKey)
@@ -139,11 +134,12 @@ export function buildIndex(tracks: Track[], playlists: Playlist[]): SearchIndex 
       })
     }
 
-    // Aggregate artist by normalized name
+    // Aggregate artist by identity key (case-insensitive, incl. the/of)
     if (t.artist) {
-      const existing = artistMap.get(nArtist)
+      const artistKey = artistIdentityKey(t.artist)
+      const existing = artistMap.get(artistKey)
       if (existing) existing.trackCount++
-      else artistMap.set(nArtist, {
+      else artistMap.set(artistKey, {
         kind: 'artist',
         name: t.artist || '',
         trackCount: 1,

@@ -1,4 +1,9 @@
 """
+SUPERSEDED — do not run for orphan cleanup.
+
+Use scripts/purge-orphans.mjs or File → Library → Clean Orphan Files… in the app.
+This script RE-ADDS tagged orphans to library.json (wrong direction for cleanup).
+
 Walk the local JakeTunes music mirror, find audio files that aren't
 referenced by any library.json entry, then:
 

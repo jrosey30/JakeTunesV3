@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
+import { setNotice } from '../../activity'
 import './store-header.css'
 
 // v4 Bandcamp Store: this view is just a layout placeholder for the
@@ -83,7 +84,7 @@ export default function StoreView() {
     const refresh = () => {
       window.electronAPI.bandcampNavState?.().then(r => {
         if (!cancelled && r) setNavState({ canGoBack: !!r.canGoBack, canGoForward: !!r.canGoForward })
-      }).catch(() => {})
+      }).catch(() => { setNotice("Couldn't read Bandcamp navigation state.", { kind: 'error', durationMs: 4000 }) })
     }
     refresh()
     // Re-check whenever the URL changes (navigation done) — but also a

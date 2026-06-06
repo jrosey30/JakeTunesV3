@@ -10,12 +10,10 @@ interface LibraryState {
   // VIEW_ARTIST_DETAIL action when the user clicks a row in
   // ArtistsView; cleared when navigating away.
   activeArtist: string | null
-  // 4.5: when set, AlbumsView consumes this on mount/update by selecting
-  // the matching album and then dispatching CLEAR_PENDING_ALBUM_KEY.
-  // Lets HomeView (and any future cross-view link) deep-link straight
-  // into an album's detail row without coupling those views directly to
-  // AlbumsView's internal selected state.
+  // 4.5.0-115: canonical album key for AlbumDetailView (`artist|||album`).
   pendingAlbumKey: string | null
+  // View to return to when the user taps back on the album page.
+  albumDetailReturnView: ViewName | null
   // View to return to when the user taps back on the artist page. Mirrors
   // albumDetailReturnView so artist detail reached from the Bandcamp Store
   // or Search returns there instead of always dumping on Artists.
@@ -69,6 +67,7 @@ const initialState: LibraryState = {
   activeSmartPlaylist: null,
   activeArtist: null,
   pendingAlbumKey: null,
+  albumDetailReturnView: null,
   artistDetailReturnView: null,
   currentView: 'songs',
   searchQuery: '',
@@ -227,10 +226,14 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
           : state.currentView,
       }
     case 'VIEW_ALBUM_DETAIL':
-      // 4.5.0-115: route to the dedicated album-detail page (was: bounce to
-      // the Albums grid + highlight a card). pendingAlbumKey carries the
-      // canonical album key (albumKeyOf format) that AlbumDetailView reads.
-      return { ...state, currentView: 'album-detail', pendingAlbumKey: action.albumKey }
+      return {
+        ...state,
+        currentView: 'album-detail',
+        pendingAlbumKey: action.albumKey,
+        albumDetailReturnView: state.currentView === 'album-detail'
+          ? (state.albumDetailReturnView ?? 'albums')
+          : state.currentView,
+      }
     case 'CLEAR_PENDING_ALBUM_KEY':
       return { ...state, pendingAlbumKey: null }
     case 'SET_ARTWORK_MAP':

@@ -377,6 +377,7 @@
   justify-content: center;
   z-index: 500;
   pointer-events: none;
+  animation: drop-overlay-in var(--motion-ui) var(--ease-settle) both;
 }
 
 .app-drop-overlay--importing {
@@ -393,6 +394,7 @@
   padding: 16px 32px;
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  animation: sheet-enter var(--motion-overlay) var(--ease-snap) both;
 }
 
 .app-drop-overlay--importing .app-drop-message {

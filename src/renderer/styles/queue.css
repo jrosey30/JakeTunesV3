@@ -1,6 +1,11 @@
 @keyframes queue-slide-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from { transform: translateX(100%); opacity: 0.85; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes queue-slide-out {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0.85; }
 }
 
 .queue-panel {
@@ -16,7 +21,18 @@
   z-index: 10;
   box-shadow: -2px 0 8px rgba(0,0,0,0.12);
   user-select: none;
-  animation: queue-slide-in 0.2s ease-out;
+  animation: queue-slide-in var(--motion-panel) var(--ease-settle) both;
+}
+
+.queue-panel--exiting {
+  animation: queue-slide-out var(--motion-panel) var(--ease-settle) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-panel,
+  .queue-panel--exiting {
+    animation: none;
+  }
 }
 
 .queue-header {

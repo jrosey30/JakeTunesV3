@@ -243,6 +243,7 @@
   height: 100%;
   object-fit: contain;
   background: #888;
+  animation: art-fade-in var(--motion-panel) var(--ease-settle) both;
 }
 
 .album-art-placeholder {

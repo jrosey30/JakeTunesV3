@@ -68,6 +68,13 @@ export default function GetInfoModal({
   const currentIdx = currentId != null ? allTracks.findIndex((t) => t.id === currentId) : -1
   const currentTrack = isMulti ? null : (currentIdx >= 0 ? allTracks[currentIdx] : null)
 
+  // Reset local art override when navigating to a different track —
+  // otherwise the previous track's hash can bleed into the new cover.
+  useEffect(() => {
+    setLocalArtHash(null)
+    setArtCacheBust('')
+  }, [currentId])
+
   // Focus first input on mount and after navigation. Auto-select-all only
   // on initial open (iTunes convention — type to overwrite title); on
   // prev/next navigation, focus without selecting. Earlier .select()-on-nav

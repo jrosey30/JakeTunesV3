@@ -25,6 +25,7 @@
  */
 
 import { app } from 'electron'
+import { existsSync } from 'fs'
 
 const NAS_STATE_DIR = '/Volumes/JakeShared/JakeTunesState'
 
@@ -38,6 +39,11 @@ export const STATE_IS_NAS = false
 
 /** The NAS path — used ONLY as the async backup-mirror target, never read. */
 export const NAS_STATE_DIR_PATH = NAS_STATE_DIR
+
+/** True when the Synology share is mounted at boot or check time. */
+export function isNasMounted(): boolean {
+  return existsSync(NAS_STATE_DIR_PATH)
+}
 
 /**
  * Saves are never locked under local-primary: the local copy is authoritative,

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
 import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import '../styles/import-convert.css'
@@ -28,6 +28,12 @@ const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'Audio', 'AI']
 // 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
 function bandLabel(hz: number): string {
   return hz >= 1000 ? `${hz / 1000}k` : String(hz)
+}
+
+function formatStateBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
 // 4.4.51: short transport suffix for the call-route speaker picker, so
@@ -112,7 +118,7 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   // OPENAI_API_KEY isn't set in .env; UI shows that explicitly so the
   // user knows what's missing. count/total drive the indexed-of-total
   // display. running flag locks the button + shows progress.
-  const [embedStatus, setEmbedStatus] = useState<{ configured: boolean; count: number; total: number } | null>(null)
+  const [embedStatus, setEmbedStatus] = useState<{ configured: boolean; count: number; total: number; stale: number } | null>(null)
   const [embedRunning, setEmbedRunning] = useState(false)
   const [embedProgress, setEmbedProgress] = useState<{ done: number; total: number } | null>(null)
   // 4.5.0-91 Phase 2.5 — storage-mode display + orphaned-edit
@@ -120,60 +126,91 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   // newer than NAS, meaning the user edited offline and those
   // changes haven't reached NAS yet. The button pushes them.
   const [stateConflictInfo, setStateConflictInfo] = useState<{
-    mode: 'NAS' | 'local-fallback'
+    mode: 'NAS' | 'local-primary'
     nasDir: string
     localDir: string
-    conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string }>
+    nasMounted: boolean
+    conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string; localSizeBytes: number }>
   } | null>(null)
   const [reconcileRunning, setReconcileRunning] = useState(false)
+  const [reconcileProgress, setReconcileProgress] = useState<{
+    phase: 'backup' | 'push' | 'verify'
+    file: string
+    index: number
+    total: number
+    localSizeBytes?: number
+    totalBytes: number
+  } | null>(null)
+
+  // Tab-scoped IPC: only fetch when the user opens that tab so Preferences
+  // paints immediately (default Playback tab has no main-process work).
+  const libraryDataLoaded = useRef(false)
+  const audioDataLoaded = useRef(false)
 
   useEffect(() => { setDraft(initial) }, [initial])
 
   useEffect(() => {
-    window.electronAPI.getDefaultInboxPath?.().then(r => {
-      if (r?.ok && r.path) setDefaultInboxPath(r.path)
-    }).catch(() => { /* fall back to empty placeholder */ })
-  }, [])
+    if (tab !== 'Library' || libraryDataLoaded.current) return
+    libraryDataLoaded.current = true
+    const t = window.setTimeout(() => {
+      window.electronAPI.getDefaultInboxPath?.().then(r => {
+        if (r?.ok && r.path) setDefaultInboxPath(r.path)
+      }).catch(() => { /* fall back to empty placeholder */ })
+      window.electronAPI.getArtworkLockCount?.().then(r => {
+        if (r?.ok) setArtworkLockCount(r.count)
+      }).catch(() => { /* leave null */ })
+      window.electronAPI.getStateConflicts?.().then(setStateConflictInfo).catch(() => { /* leave null */ })
+      window.electronAPI.embeddingStatus?.().then(setEmbedStatus).catch(() => { /* leave null */ })
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [tab])
 
   useEffect(() => {
-    window.electronAPI.listAudioDevices?.().then(r => {
-      if (r?.ok && Array.isArray(r.devices)) setAudioDevices(r.devices)
-    }).catch(() => { /* leave empty; UI still shows the saved label */ })
-  }, [])
+    if (tab !== 'Audio' || audioDataLoaded.current) return
+    audioDataLoaded.current = true
+    const t = window.setTimeout(() => {
+      window.electronAPI.listAudioDevices?.().then(r => {
+        if (r?.ok && Array.isArray(r.devices)) setAudioDevices(r.devices)
+      }).catch(() => { /* leave empty */ })
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [tab])
 
   useEffect(() => {
+    if (tab !== 'Sync') return
     const fetchSnap = () => {
       window.electronAPI.getLastLibrarySync?.().then(r => setLastSync(r)).catch(() => { /* leave null */ })
     }
-    fetchSnap()
+    const t = window.setTimeout(fetchSnap, 0)
     const id = window.setInterval(fetchSnap, 15_000)
-    return () => window.clearInterval(id)
-  }, [])
+    return () => {
+      window.clearTimeout(t)
+      window.clearInterval(id)
+    }
+  }, [tab])
 
   useEffect(() => {
-    window.electronAPI.getArtworkLockCount?.().then(r => {
-      if (r?.ok) setArtworkLockCount(r.count)
-    }).catch(() => { /* leave null; UI degrades to a single dash */ })
-  }, [])
-
-  useEffect(() => {
-    window.electronAPI.embeddingStatus?.().then(setEmbedStatus).catch(() => { /* leave null */ })
+    if (tab !== 'Library') return
     const unsub = window.electronAPI.onEmbeddingBackfillProgress?.((p) => setEmbedProgress(p))
     return () => { if (unsub) unsub() }
-  }, [])
+  }, [tab])
 
   useEffect(() => {
-    window.electronAPI.getStateConflicts?.().then(setStateConflictInfo).catch(() => { /* leave null */ })
-  }, [])
+    if (tab !== 'Library') return
+    const unsub = window.electronAPI.onReconcileStateProgress?.((p) => setReconcileProgress(p))
+    return () => { if (unsub) unsub() }
+  }, [tab])
 
   const reconcileStateNow = useCallback(async () => {
     setReconcileRunning(true)
+    setReconcileProgress(null)
     try {
       await window.electronAPI.reconcileStateConflicts?.()
       const fresh = await window.electronAPI.getStateConflicts?.()
       if (fresh) setStateConflictInfo(fresh)
     } finally {
       setReconcileRunning(false)
+      setReconcileProgress(null)
     }
   }, [])
 
@@ -461,28 +498,47 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <div style={{ borderTop: '1px solid #d0d0d0', margin: '20px 0 14px' }} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
                 <span style={{ color: '#3a3a3a', fontWeight: 600 }}>State storage:</span>
-                <span style={{ color: stateConflictInfo?.mode === 'NAS' ? '#2a6e2a' : '#a23a2a', fontFamily: 'var(--font-mono, monospace)' }}>
+                <span style={{ color: stateConflictInfo?.nasMounted ? '#2a6e2a' : '#a23a2a', fontFamily: 'var(--font-mono, monospace)' }}>
                   {!stateConflictInfo ? '—'
                     : stateConflictInfo.mode === 'NAS'
-                      ? `NAS (${stateConflictInfo.nasDir})`
-                      : `local fallback (${stateConflictInfo.localDir}) — NAS not mounted`}
+                      ? `NAS canonical (${stateConflictInfo.nasDir})`
+                      : stateConflictInfo.nasMounted
+                        ? `Local SSD canonical (${stateConflictInfo.localDir}) — NAS backup mounted`
+                        : `Local SSD canonical (${stateConflictInfo.localDir}) — NAS backup unavailable`}
                 </span>
               </div>
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 10 }}>
-                library.json, overrides, playlists, mobile-stars/plays, play-events, and embeddings.bin all live at the path above. NAS-mode = Synology is the canonical source of truth. Local-fallback fires when the NAS mount isn't present at app boot.
+                Since 4.5.0-114, library.json and other state files live on this Mac&apos;s SSD for reliability. The Synology at <code>{stateConflictInfo?.nasDir ?? '/Volumes/JakeShared/JakeTunesState'}</code> receives an async backup mirror after each save — it is not read at boot. Audio files are separate: playback reads from your local JakeTunesLibrary folder, not streamed from the NAS.
               </p>
-              {stateConflictInfo && stateConflictInfo.conflicts.length > 0 && (
+              {stateConflictInfo && stateConflictInfo.conflicts.length > 0 && (() => {
+                const pushTotalBytes = stateConflictInfo.conflicts.reduce((n, c) => n + (c.localSizeBytes ?? 0), 0)
+                const reconcileLabel = reconcileRunning && reconcileProgress
+                  ? reconcileProgress.phase === 'verify'
+                    ? 'Verifying on NAS…'
+                    : reconcileProgress.phase === 'backup'
+                      ? `Backing up ${reconcileProgress.file} (${reconcileProgress.index}/${reconcileProgress.total})…`
+                      : `Copying ${reconcileProgress.file}${reconcileProgress.localSizeBytes ? ` (${formatStateBytes(reconcileProgress.localSizeBytes)})` : ''} (${reconcileProgress.index}/${reconcileProgress.total})…`
+                  : reconcileRunning
+                    ? 'Pushing…'
+                    : 'Push local state to NAS backup'
+                return (
                 <div style={{ background: '#fff5e0', border: '1px solid #d6b34e', borderRadius: 6, padding: '10px 12px', marginBottom: 12, fontSize: 12 }}>
                   <div style={{ fontWeight: 600, marginBottom: 6, color: '#7a5a10' }}>
-                    {stateConflictInfo.conflicts.length} local file{stateConflictInfo.conflicts.length === 1 ? '' : 's'} newer than NAS — offline edits not yet pushed:
+                    {stateConflictInfo.conflicts.length} local file{stateConflictInfo.conflicts.length === 1 ? '' : 's'} newer than NAS backup — not yet mirrored
+                    {pushTotalBytes > 0 ? ` (~${formatStateBytes(pushTotalBytes)} to copy)` : ''}:
                   </div>
                   <ul style={{ margin: '0 0 8px 18px', padding: 0, color: '#3a3a3a' }}>
                     {stateConflictInfo.conflicts.map(c => (
                       <li key={c.file}>
-                        <code>{c.file}</code> — local +{Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer
+                        <code>{c.file}</code>
+                        {c.localSizeBytes > 0 ? ` (${formatStateBytes(c.localSizeBytes)})` : ''}
+                        {' '}— local +{Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer
                       </li>
                     ))}
                   </ul>
+                  <p className="imp-help" style={{ marginTop: 0, marginBottom: 8, fontSize: 11, color: '#7a5a10' }}>
+                    Copies run one file at a time over SMB to the Synology; large files (especially <code>embeddings.bin</code>) dominate wait time. The UI stays responsive — this runs in the main process, not the renderer.
+                  </p>
                   <button
                     type="button"
                     onClick={reconcileStateNow}
@@ -492,13 +548,14 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                       cursor: reconcileRunning ? 'default' : 'pointer',
                     }}
                   >
-                    {reconcileRunning ? 'Pushing…' : 'Push local edits to NAS'}
+                    {reconcileLabel}
                   </button>
                   <span style={{ marginLeft: 10, color: '#7a5a10', fontSize: 11 }}>
-                    (NAS copies get backed up to <code>.reconcile-bak/</code> first.)
+                    (Files ≥64 KB: NAS copy saved to <code>.reconcile-bak/</code> first.)
                   </span>
                 </div>
-              )}
+                )
+              })()}
 
               {/* 4.5.0-87 — RAG (per-track embeddings) status + manual
                   backfill. First Phase 1 hook is musicman-chat (replaces
@@ -514,7 +571,9 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     : !embedStatus.configured ? 'OPENAI_API_KEY not set'
                     : embedRunning && embedProgress
                       ? `embedding ${embedProgress.done.toLocaleString()} / ${embedProgress.total.toLocaleString()}…`
-                      : `${embedStatus.count.toLocaleString()} / ${embedStatus.total.toLocaleString()} tracks indexed`}
+                      : embedStatus.stale > 0
+                        ? `${Math.min(embedStatus.count, embedStatus.total).toLocaleString()} / ${embedStatus.total.toLocaleString()} indexed (${embedStatus.stale.toLocaleString()} stale — re-index to prune)`
+                        : `${embedStatus.count.toLocaleString()} / ${embedStatus.total.toLocaleString()} tracks indexed`}
                 </span>
               </div>
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 10 }}>
@@ -534,9 +593,11 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               >
                 {embedRunning
                   ? 'Indexing…'
-                  : embedStatus && embedStatus.count < embedStatus.total
-                    ? `Index ${(embedStatus.total - embedStatus.count).toLocaleString()} missing tracks`
-                    : 'Re-index library'}
+                  : embedStatus && embedStatus.stale > 0
+                    ? `Re-index library (${embedStatus.stale.toLocaleString()} stale)`
+                    : embedStatus && embedStatus.count < embedStatus.total
+                      ? `Index ${(embedStatus.total - embedStatus.count).toLocaleString()} missing tracks`
+                      : 'Re-index library'}
               </button>
 
               {/* 4.4.13 — Inbox auto-import. Lets users point Qobuz (or any

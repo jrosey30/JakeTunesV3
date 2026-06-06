@@ -4,6 +4,11 @@
 // and the disk-cache boundary. Keep this file dependency-free so it
 // can be imported from either side without dragging Electron-only or
 // renderer-only deps.
+//
+// ⚠️ TWIN: src/renderer/views/RecordStore/types.ts — keep in sync. The
+// renderer mirrors these shapes locally because its composite tsconfig
+// (rootDir src/renderer) can't import across the src/main boundary.
+// Change both sides in the SAME commit.
 
 export type Persona = 'music-man' | 'megan' | 'stephen-hands'
 

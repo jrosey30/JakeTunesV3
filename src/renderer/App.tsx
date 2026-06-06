@@ -7,11 +7,12 @@ import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
 import SplashScreen from './components/SplashScreen'
-import QueuePanel from './components/playback/QueuePanel'
+import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
 import PlayCacheModal from './components/PlayCacheModal'
+import OrphanCleanupModal from './components/OrphanCleanupModal'
 import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
 import StatusBar from './components/chrome/StatusBar'
@@ -33,15 +34,23 @@ import {
 import { setImport } from './activity'
 import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
 import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
-import { lookupArtworkOneShot } from './utils/artworkLookup'
+import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
+import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
 import './styles/variables.css'
+import './styles/motion.css'
 import './styles/reset.css'
+import './styles/scrollbars.css'
 import './styles/app.css'
 import './styles/toolbar.css'
 import './styles/sidebar.css'
+
+// Session cap — startup must not walk every missing album via fetchAlbumArt.
+const STARTUP_NETWORK_ART_CAP = 16
+const STARTUP_NETWORK_ART_CONCURRENCY = 2
+let startupNetworkArtStarted = false
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
@@ -54,9 +63,11 @@ function AppInner() {
   const { state: pbState } = usePlayback()
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
+  const queueRef = useRef<QueuePanelHandle>(null)
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
+  const [orphanCleanupOpen, setOrphanCleanupOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Brief 020: tag write-back batch UI state. Two phases:
@@ -75,8 +86,15 @@ function AppInner() {
   // Bug #1 data-loss guard: shown when NAS reconnects mid-session while
   // we're in local-fallback mode. Saves get refused in main until restart.
   const [saveLockReason, setSaveLockReason] = useState<string | null>(null)
+  const [preservedOrphanBanner, setPreservedOrphanBanner] = useState<number | null>(null)
+  const [stateConflictBanner, setStateConflictBanner] = useState(false)
   useEffect(() => {
     return window.electronAPI.onStateSaveLocked(({ reason }) => setSaveLockReason(reason))
+  }, [])
+  useEffect(() => {
+    window.electronAPI.getStateConflicts().then((r) => {
+      if (r.conflicts && r.conflicts.length > 0) setStateConflictBanner(true)
+    }).catch(() => {})
   }, [])
   const [uiReady, setUiReady] = useState(false)
   // 4.4.39: minimum splash display time. Even on a warm cache where the
@@ -505,6 +523,23 @@ function AppInner() {
       }
       if (typing) return
 
+      // Dedicated media keys (some keyboards deliver these to the renderer).
+      if (e.key === 'MediaPlayPause' || e.code === 'MediaPlayPause') {
+        e.preventDefault()
+        togglePlayPause()
+        return
+      }
+      if (e.key === 'MediaTrackNext' || e.code === 'MediaTrackNext' || e.key === 'MediaNextTrack' || e.code === 'MediaNextTrack') {
+        e.preventDefault()
+        nextTrack()
+        return
+      }
+      if (e.key === 'MediaTrackPrevious' || e.code === 'MediaTrackPrevious' || e.key === 'MediaPreviousTrack' || e.code === 'MediaPreviousTrack') {
+        e.preventDefault()
+        prevTrack()
+        return
+      }
+
       if (e.key === ' ') {
         e.preventDefault()
         togglePlayPause()
@@ -622,6 +657,9 @@ function AppInner() {
       window.electronAPI.loadMobilePlaylists?.().catch(() => ({ ok: false, playlists: [] as Array<{ id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }> })),
       window.electronAPI.loadPlaylistAdditions?.().catch(() => ({ ok: false, additions: {} as Record<string, string[]> })),
     ]).then(([dbResult, overridesResult, playlistsResult, uiResult, mobileStarsResult, mobilePlaylistsResult, playlistAdditionsResult]) => {
+      if (uiResult.ok && uiResult.state) {
+        hydrateScrollCacheFromUiState(uiResult.state as Record<string, unknown>)
+      }
       const tracks = dbResult.tracks || []
       const ipodPlaylists = dbResult.playlists || []
 
@@ -822,78 +860,71 @@ function AppInner() {
       setUiReady(true)
       // Load artwork map, then auto-fetch any missing album art in background
       if (typeof window.electronAPI.loadArtworkMap === 'function') {
-        window.electronAPI.loadArtworkMap().then(async (r) => {
+        window.electronAPI.loadArtworkMap().then((r) => {
           if (!r?.ok) return
           const map = r.map || {}
           dispatch({ type: 'SET_ARTWORK_MAP', map })
 
-          // 4.4.12: ONE-SHOT EMBEDDED-ART BACKFILL.
-          // Tracks imported before the import-time extractor landed (any
-          // build prior to 4.4.12) don't have their embedded covers on
-          // disk. Run a one-time pass that parseFile's every track,
-          // pulls the embedded picture, and writes it through the same
-          // (now atomic + single-flight) artwork pipeline. The backfill
-          // IPC writes a marker file when done; we check that first so
-          // we never re-run.
-          //
-          // We run this BEFORE the missing-art auto-fetch loop below so
-          // embedded-art recovery (free + offline) beats the network
-          // fetch (slow + can fail) when both could supply a cover.
-          try {
-            const status = await window.electronAPI.artworkBackfillStatus?.()
-            if (status?.ok && !status.done) {
-              const candidates = tracks
-                .filter(t => t.artist && t.album && t.path)
-                .map(t => ({ path: t.path, artist: t.artist, album: t.album }))
-              if (candidates.length > 0) {
+          // 4.4.12: ONE-SHOT EMBEDDED-ART BACKFILL — deferred so first paint
+          // never waits on parseFile across the whole library. Fire-and-forget
+          // after an idle window; views resolve disk misses on demand.
+          const scheduleIdle = typeof requestIdleCallback === 'function'
+            ? (cb: () => void, ms: number) => requestIdleCallback(cb, { timeout: ms })
+            : (cb: () => void, ms: number) => window.setTimeout(cb, Math.min(ms, 32))
+          scheduleIdle(() => {
+            void (async () => {
+              try {
+                const status = await window.electronAPI.artworkBackfillStatus?.()
+                if (!status?.ok || status.done) return
+                const candidates = tracks
+                  .filter(t => t.artist && t.album && t.path)
+                  .map(t => ({ path: t.path, artist: t.artist, album: t.album }))
+                if (candidates.length === 0) return
                 const result = await window.electronAPI.backfillEmbeddedArtwork(candidates)
                 if (result?.ok && result.artwork) {
                   for (const a of result.artwork) {
                     dispatch({ type: 'ADD_ARTWORK', key: a.key, hash: a.hash })
                   }
                 }
+              } catch { /* backfill best-effort */ }
+            })()
+          }, 12_000)
+
+          // Missing-art enrichment: disk resolve first (cheap), then a tiny
+          // capped network sample. Pre-fix walked EVERY missing album sequentially
+          // at launch — thousands of fetchAlbumArt IPCs pinned the main process.
+          if (startupNetworkArtStarted) return
+          startupNetworkArtStarted = true
+          scheduleIdle(() => {
+            const albums = new Map<string, { artist: string; album: string }>()
+            for (const t of tracks) {
+              if (t.artist && t.album) {
+                const k = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
+                if (!albums.has(k)) albums.set(k, { artist: t.artist, album: t.album })
               }
             }
-          } catch { /* backfill best-effort; never block app launch on it */ }
-
-          // Refresh the in-memory map so the missing-art scan below sees
-          // anything the backfill just added (avoids fetching covers from
-          // the network for albums we already have embedded).
-          let postBackfillMap = map
-          try {
-            const r2 = await window.electronAPI.loadArtworkMap?.()
-            if (r2?.ok && r2.map) {
-              postBackfillMap = r2.map
-              dispatch({ type: 'SET_ARTWORK_MAP', map: r2.map })
+            const missing: { artist: string; album: string }[] = []
+            for (const [k, v] of albums) {
+              if (!map[k]) missing.push(v)
             }
-          } catch { /* keep original map */ }
-
-          // Collect all unique artist+album pairs from the library
-          const albums = new Map<string, { artist: string; album: string }>()
-          for (const t of tracks) {
-            if (t.artist && t.album) {
-              const k = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
-              if (!albums.has(k)) albums.set(k, { artist: t.artist, album: t.album })
-            }
-          }
-
-          // Find which albums are missing artwork
-          const missing: { artist: string; album: string }[] = []
-          for (const [k, v] of albums) {
-            if (!postBackfillMap[k]) missing.push(v)
-          }
-
-          if (missing.length === 0) return
-
-          // Fetch missing artwork in background, one at a time to avoid hammering the API
-          for (const { artist, album } of missing) {
-            try {
-              const result = await window.electronAPI.fetchAlbumArt(artist, album)
-              if (result.ok && result.key && result.hash) {
-                dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+            if (missing.length === 0) return
+            queueArtworkResolutions(missing.slice(0, 48), dispatch)
+            const networkBatch = missing.slice(0, STARTUP_NETWORK_ART_CAP)
+            void (async () => {
+              for (let i = 0; i < networkBatch.length; i += STARTUP_NETWORK_ART_CONCURRENCY) {
+                const chunk = networkBatch.slice(i, i + STARTUP_NETWORK_ART_CONCURRENCY)
+                await Promise.all(chunk.map(async ({ artist, album }) => {
+                  try {
+                    const result = await window.electronAPI.fetchAlbumArt(artist, album)
+                    if (result.ok && result.key && result.hash) {
+                      dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
+                    }
+                  } catch { /* ignore individual failures */ }
+                }))
+                await new Promise(r => window.setTimeout(r, 400))
               }
-            } catch { /* ignore individual failures */ }
-          }
+            })()
+          }, 8_000)
         }).catch(() => {})
       }
       // 4.4.41: Music Man library summary now includes skipCount signals.
@@ -987,7 +1018,11 @@ function AppInner() {
     }
     if (librarySaveRef.current) clearTimeout(librarySaveRef.current)
     librarySaveRef.current = setTimeout(() => {
-      window.electronAPI.saveLibrary(libState.tracks, libState.playlists)
+      window.electronAPI.saveLibrary(libState.tracks, libState.playlists).then((r) => {
+        if (r.ok && (r.preservedOrphanCount ?? 0) > 0) {
+          setPreservedOrphanBanner(r.preservedOrphanCount ?? 0)
+        }
+      }).catch(() => {})
     }, 1000)
   }, [libState.tracks, libState.playlists])
 
@@ -1174,6 +1209,7 @@ function AppInner() {
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
         case 'prune-alac-cache':    setPlayCacheMode('prune'); break
+        case 'clean-orphan-files':  setOrphanCleanupOpen(true); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
         case 'open-preferences':    setSettingsOpen(true); break
         // Brief 023: 'export-mobile-snapshot' and 'apply-mobile-overrides'
@@ -1328,6 +1364,7 @@ function AppInner() {
     }
     const unsubExt = window.electronAPI.onLibraryExternalChange(() => {
       console.log('library.json changed externally, reloading in-memory state')
+      setNotice('Library updated on disk — reloaded.', { durationMs: 4000 })
       reloadHandler()
     })
     return () => {
@@ -1493,9 +1530,32 @@ function AppInner() {
           <button onClick={() => window.location.reload()}>Reload (restart this window)</button>
         </div>
       )}
+      {preservedOrphanBanner != null && preservedOrphanBanner > 0 && (
+        <div className="state-save-locked-banner" role="alert">
+          <strong>{preservedOrphanBanner} file{preservedOrphanBanner === 1 ? '' : 's'} removed from library but kept on disk.</strong>
+          {' '}Use File → Library → Clean Orphan Files to reclaim space.
+          <button onClick={() => { setOrphanCleanupOpen(true); setPreservedOrphanBanner(null) }}>Clean Now</button>
+          <button onClick={() => setPreservedOrphanBanner(null)}>Dismiss</button>
+        </div>
+      )}
+      {stateConflictBanner && (
+        <div className="state-save-locked-banner" role="alert">
+          <strong>Local state is ahead of NAS backup.</strong>
+          {' '}Open Settings → Library → Push local state to NAS backup.
+          <button onClick={() => { setSettingsOpen(true); setStateConflictBanner(false) }}>Open Settings</button>
+          <button onClick={() => setStateConflictBanner(false)}>Dismiss</button>
+        </div>
+      )}
       <div className="titlebar">JakeTunes</div>
       <div className="toolbar-area">
-        <Toolbar onToggleQueue={() => setShowQueue(q => !q)} onOpenQueue={() => setShowQueue(true)} showQueue={showQueue} />
+        <Toolbar
+          onToggleQueue={() => {
+            if (showQueue) queueRef.current?.requestClose()
+            else setShowQueue(true)
+          }}
+          onOpenQueue={() => setShowQueue(true)}
+          showQueue={showQueue}
+        />
       </div>
       <div className="sidebar-area" style={{ width: sidebarWidth }}>
         <Sidebar />
@@ -1503,10 +1563,20 @@ function AppInner() {
       </div>
       <div className="content-area" style={{ position: 'relative' }}>
         <MainContent />
-        {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
+        {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
         {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}
+        {orphanCleanupOpen && (
+          <OrphanCleanupModal
+            onClose={() => setOrphanCleanupOpen(false)}
+            onLibraryChanged={() => {
+              window.electronAPI.loadTracks().then((r) => {
+                if (r.tracks) dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+              }).catch(() => {})
+            }}
+          />
+        )}
         {settingsOpen && (
           <SettingsModal
             initial={appSettings}

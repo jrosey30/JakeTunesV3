@@ -226,6 +226,20 @@ export default function Sidebar() {
   const newPlaylistRef = useRef<HTMLInputElement>(null)
   const renameRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    if (creatingPlaylist) {
+      const t = setTimeout(() => newPlaylistRef.current?.select(), 0)
+      return () => clearTimeout(t)
+    }
+  }, [creatingPlaylist])
+
+  useEffect(() => {
+    if (editingPlaylistId) {
+      const t = setTimeout(() => renameRef.current?.select(), 0)
+      return () => clearTimeout(t)
+    }
+  }, [editingPlaylistId])
+
   const handleNewPlaylist = useCallback(() => {
     setCreatingPlaylist(true)
   }, [])

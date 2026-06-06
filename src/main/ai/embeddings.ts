@@ -247,6 +247,35 @@ export async function embeddingsCount(): Promise<number> {
   const m = await getEmbeddingsMap()
   return m.size
 }
+
+/** Count embeddings that match live library track IDs vs orphans in the file. */
+export async function analyzeEmbeddings(
+  validTrackIds: Set<number>,
+): Promise<{ indexed: number; stale: number; missing: number }> {
+  const m = await getEmbeddingsMap()
+  let indexed = 0
+  let stale = 0
+  for (const id of m.keys()) {
+    if (validTrackIds.has(id)) indexed++
+    else stale++
+  }
+  return { indexed, stale, missing: Math.max(0, validTrackIds.size - indexed) }
+}
+
+/** Drop embeddings whose track IDs no longer exist in library.json. */
+export async function pruneStaleEmbeddings(validTrackIds: Set<number>): Promise<number> {
+  const m = await getEmbeddingsMap()
+  let pruned = 0
+  for (const id of m.keys()) {
+    if (!validTrackIds.has(id)) {
+      m.delete(id)
+      pruned++
+    }
+  }
+  if (pruned > 0) await persistEmbeddingsMap()
+  return pruned
+}
+
 export async function hasEmbedding(trackId: number): Promise<boolean> {
   const m = await getEmbeddingsMap()
   return m.has(trackId)

@@ -1,0 +1,97 @@
+/* Shared motion vocabulary — iTunes-weight snap + warm settle. */
+
+@keyframes overlay-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes sheet-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes panel-slide-in-right {
+  from { transform: translateX(100%); opacity: 0.85; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes panel-slide-out-right {
+  from { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(100%); opacity: 0.85; }
+}
+
+@keyframes card-stagger-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes art-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes drop-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes np-content-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Modal / sheet chrome */
+.confirm-overlay,
+.getinfo-overlay,
+.imp-backdrop {
+  animation: overlay-backdrop-in var(--motion-overlay) var(--ease-settle) both;
+}
+
+.confirm-dialog,
+.getinfo-modal,
+.imp-modal {
+  animation: sheet-enter var(--motion-overlay) var(--ease-snap) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .now-playing-info {
+    animation: none;
+  }
+  .airplay-menu {
+    animation: none;
+  }
+  .album-art-image {
+    animation: none;
+  }
+  .ltl-suggestions,
+  .ltl-mm-card {
+    animation: none;
+  }
+  .ltl-mm-refresh[aria-busy="true"] {
+    animation: none;
+  }
+  .app-drop-overlay,
+  .app-drop-message {
+    animation: none;
+  }
+  .album-page {
+    animation: none;
+  }
+}

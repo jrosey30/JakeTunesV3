@@ -27,7 +27,10 @@ import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
-import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../utils/artworkLookup'
+import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
+import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
+import AlbumArtImage from '../components/AlbumArtImage'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import type { Track, MusicNewsItem, TourDate, UpcomingRelease } from '../types'
 import '../styles/home.css'
 
@@ -317,12 +320,7 @@ export default function HomeView() {
     // Sort tracks within each album the way AlbumsView does so click-to-play
     // hits track 1 first.
     for (const card of map.values()) {
-      card.tracks.sort((a, b) => {
-        const da = Number(a.discNumber) || 1, db = Number(b.discNumber) || 1
-        if (da !== db) return da - db
-        const ta = Number(a.trackNumber) || 0, tb = Number(b.trackNumber) || 0
-        return ta - tb
-      })
+      card.tracks = sortAlbumTracks(card.tracks)
     }
     return Array.from(map.values())
       .filter(c => c.newestAdded)
@@ -380,12 +378,7 @@ export default function HomeView() {
   const playFeatured = useCallback(() => {
     if (!featuredAlbum || featuredAlbum.tracks.length === 0) return
     // Reuse the existing album-play machinery (sorts by disc/track no.).
-    const sorted = [...featuredAlbum.tracks].sort((a, b) => {
-      const da = Number(a.discNumber) || 1, db = Number(b.discNumber) || 1
-      if (da !== db) return da - db
-      const ta = Number(a.trackNumber) || 0, tb = Number(b.trackNumber) || 0
-      return ta - tb
-    })
+    const sorted = sortAlbumTracks(featuredAlbum.tracks)
     flashCard(featuredAlbum.key)
     playTrack(sorted[0], sorted, 0, undefined, true)
   }, [featuredAlbum, playTrack, flashCard])
@@ -454,18 +447,38 @@ export default function HomeView() {
   // grouped card key is just "X"). lookupArtwork tries exact first
   // then falls back to a normalized scan that strips parens/diacritics.
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
-  const artHashForKey = (key: string | null): string | undefined => {
+  const artHashForKey = useCallback((key: string | null): string | undefined => {
     if (!key) return undefined
     if (lib.artworkMap[key]) return lib.artworkMap[key]
     const [artist, album] = key.split('|||')
-    const hit = lookupArtwork(lib.artworkMap, normalizedArtIndex, artist || '', album || '')
-    if (hit) return hit
-    // 4.5.0-51: server-side resolve on miss. Disk-existence check +
-    // recomputed-hash variants catch JPGs that exist but whose JSON
-    // index entry drifted.
-    requestArtworkResolution(artist || '', album || '', dispatch)
-    return undefined
-  }
+    return lookupArtwork(lib.artworkMap, normalizedArtIndex, artist || '', album || '')
+  }, [lib.artworkMap, normalizedArtIndex])
+
+  useEffect(() => {
+    if (lib.currentView !== 'home') return
+    const keys = [
+      featuredAlbum?.key,
+      ...recentAlbums.map(c => c.key),
+    ].filter((k): k is string => !!k)
+    const missing = keys.filter(k => !artHashForKey(k))
+    if (missing.length === 0) return
+    queueArtworkResolutions(
+      missing.map(k => {
+        const [artist, album] = k.split('|||')
+        return { artist: artist || '', album: album || '' }
+      }),
+      dispatch,
+    )
+  }, [lib.currentView, featuredAlbum?.key, recentAlbums, artHashForKey, dispatch])
+
+  useEffect(() => {
+    if (lib.currentView !== 'home') return
+    const hashes = [
+      featuredAlbum?.key && artHashForKey(featuredAlbum.key),
+      ...recentAlbums.map(c => artHashForKey(c.key)),
+    ]
+    prefetchAlbumArtHashes(hashes)
+  }, [lib.currentView, featuredAlbum?.key, recentAlbums, lib.artworkMap, normalizedArtIndex])
 
   const playAlbum = (card: AlbumCard) => {
     if (card.tracks.length === 0) return
@@ -505,10 +518,10 @@ export default function HomeView() {
             title={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
           >
             {artHashForKey(featuredAlbum.key) ? (
-              <img
-                src={`album-art://${artHashForKey(featuredAlbum.key)}.jpg`}
+              <AlbumArtImage
+                hash={artHashForKey(featuredAlbum.key)!}
                 alt={featuredAlbum.album}
-                draggable={false}
+                priority
                 onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
               />
             ) : (
@@ -614,10 +627,9 @@ export default function HomeView() {
                 >
                   <div className="home-album-art">
                     {hash ? (
-                      <img
-                        src={`album-art://${hash}.jpg`}
+                      <AlbumArtImage
+                        hash={hash}
                         alt={card.album}
-                        draggable={false}
                         onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
                       />
                     ) : (
@@ -672,10 +684,9 @@ export default function HomeView() {
                 >
                   <div className="home-artist-art">
                     {hash ? (
-                      <img
-                        src={`album-art://${hash}.jpg`}
+                      <AlbumArtImage
+                        hash={hash}
                         alt={card.name}
-                        draggable={false}
                         onLoad={(e) => e.currentTarget.classList.add('home-artist-art-loaded')}
                       />
                     ) : (

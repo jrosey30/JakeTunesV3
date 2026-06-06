@@ -11,6 +11,7 @@ import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
 import { setNotice } from '../activity'
+import { albumKeyOf } from '../utils/albumKey'
 import '../styles/genres.css'
 
 export default function GenresView() {
@@ -73,6 +74,11 @@ export default function GenresView() {
     setSelectedArtist(a)
     setSelectedAlbum(null)
   }, [])
+
+  const openAlbumInGenre = useCallback((albumName: string) => {
+    const first = filteredByArtist.find(t => t.album === albumName)
+    if (first) libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(first) })
+  }, [filteredByArtist, libDispatch])
 
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
     e.preventDefault()
@@ -180,7 +186,14 @@ export default function GenresView() {
   // into the track's location and scroll its row into view. Same idle-
   // gate pattern as SongsView.
   const viewRootRef = useRef<HTMLDivElement>(null)
-  useScrollPersistence('genres', viewRootRef)
+  const genreListRef = useRef<HTMLDivElement>(null)
+  const artistListRef = useRef<HTMLDivElement>(null)
+  const albumListRef = useRef<HTMLDivElement>(null)
+  const tracklistRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('genres-col-genre', genreListRef)
+  useScrollPersistence('genres-col-artist', artistListRef)
+  useScrollPersistence('genres-col-album', albumListRef)
+  useScrollPersistence('genres-tracklist', tracklistRef)
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -204,7 +217,7 @@ export default function GenresView() {
     setSelectedArtist(targetArtist)
     setSelectedAlbum(targetAlbum)
     requestAnimationFrame(() => {
-      const root = viewRootRef.current
+      const root = tracklistRef.current
       if (!root) return
       const row = root.querySelector(`[data-track-id="${t.id}"]`) as HTMLElement | null
       if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' })
@@ -223,7 +236,7 @@ export default function GenresView() {
       <div className="genres-browser">
         <div className="genres-column">
           <div className="genres-column-header">Genre</div>
-          <div className="genres-column-list">
+          <div className="genres-column-list" ref={genreListRef}>
             <div className={`genres-column-item ${!selectedGenre ? 'genres-column-item--selected' : ''}`} onClick={() => selectGenre(null)}>All ({genres.length})</div>
             {genres.map(g => (
               <div key={g} className={`genres-column-item ${selectedGenre === g ? 'genres-column-item--selected' : ''}`} onClick={() => selectGenre(g)}>{g}</div>
@@ -232,7 +245,7 @@ export default function GenresView() {
         </div>
         <div className="genres-column">
           <div className="genres-column-header">Artist</div>
-          <div className="genres-column-list">
+          <div className="genres-column-list" ref={artistListRef}>
             <div className={`genres-column-item ${!selectedArtist ? 'genres-column-item--selected' : ''}`} onClick={() => selectArtist(null)}>All ({artists.length})</div>
             {artists.map(a => (
               <div key={a} className={`genres-column-item ${selectedArtist === a ? 'genres-column-item--selected' : ''}`} onClick={() => selectArtist(a)}>{a}</div>
@@ -241,15 +254,23 @@ export default function GenresView() {
         </div>
         <div className="genres-column">
           <div className="genres-column-header">Album</div>
-          <div className="genres-column-list">
+          <div className="genres-column-list" ref={albumListRef}>
             <div className={`genres-column-item ${!selectedAlbum ? 'genres-column-item--selected' : ''}`} onClick={() => setSelectedAlbum(null)}>All ({albums.length})</div>
             {albums.map(a => (
-              <div key={a} className={`genres-column-item ${selectedAlbum === a ? 'genres-column-item--selected' : ''}`} onClick={() => setSelectedAlbum(a)}>{a}</div>
+              <div
+                key={a}
+                className={`genres-column-item ${selectedAlbum === a ? 'genres-column-item--selected' : ''}`}
+                onClick={() => setSelectedAlbum(a)}
+                onDoubleClick={() => openAlbumInGenre(a)}
+                title="Double-click to open album page"
+              >
+                {a}
+              </div>
             ))}
           </div>
         </div>
       </div>
-      <div className="genres-tracklist">
+      <div className="genres-tracklist" ref={tracklistRef}>
         {filteredTracks.length === 0 && (
           <EmptyState
             query={lib.searchQuery}

@@ -78,12 +78,12 @@ def _canon_part(match: 're.Match[str]') -> str:
     return f'part {n}' if n is not None else match.group(0)
 
 def normalize(s: str) -> str:
-    # ⚠️ TWIN: src/main/index.ts has a JS port of this function used by the
-    # sync preflight content-safety check. They MUST stay in lockstep. If
-    # you change this function (new normalization rule, new regex), update
-    # the JS twin in the SAME commit. The Pink Floyd "Pt. 1" vs "Part 1"
-    # bug shipped because the Python side got fixed and the JS twin was
-    # forgotten — sync aborted with a false-positive mismatch banner.
+    # ⚠️ TWIN: src/main/normalize.ts::normalize — sync preflight + repair.
+    # They MUST stay in lockstep. If you change this function (new
+    # normalization rule, new regex), update the JS twin in the SAME
+    # commit. The Pink Floyd "Pt. 1" vs "Part 1" bug shipped because
+    # the Python side got fixed and the JS twin was forgotten — sync
+    # aborted with a false-positive mismatch banner.
     if not s:
         return ''
     s = str(s)

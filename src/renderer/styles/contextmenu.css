@@ -2,10 +2,6 @@
   position: fixed;
   z-index: 100;
   min-width: 180px;
-  /* 4.5.0-107: cap width so a long Play "<title>" item can't blow the
-   * menu past the screen edge; cap height + scroll so a tall menu
-   * clipped below the viewport reveals the rest with a scrollbar
-   * instead of silently hiding Delete Song / Cynthia / etc. */
   max-width: 320px;
   max-height: calc(100vh - 60px);
   overflow-y: auto;
@@ -19,6 +15,12 @@
   color: #222;
   user-select: none;
   -webkit-user-select: none;
+  transform-origin: top left;
+  animation: pop-in var(--motion-fast) var(--ease-snap) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-menu { animation: none; }
 }
 
 .context-menu-item {

@@ -41,6 +41,16 @@ export function normalizedArtworkKey(artist: string, album: string): string {
   return `${normalizeArtworkPart(artist)}|||${normalizeArtworkPart(album)}`
 }
 
+/** Incremental cache — ADD_ARTWORK adds one key per dispatch; avoid O(n) rebuilds. */
+let normIndexCache: Map<string, string> | null = null
+let normIndexSource: Record<string, string> | null = null
+
+function addKeyToNormIndex(idx: Map<string, string>, k: string, hash: string): void {
+  const [a, al] = k.split('|||')
+  const nk = normalizedArtworkKey(a || '', al || '')
+  if (!idx.has(nk)) idx.set(nk, hash)
+}
+
 /**
  * Build a normalized-key → hash map from the raw artworkMap. Use this
  * once per render in a component (useMemo) and pass it to lookupArt
@@ -48,12 +58,43 @@ export function normalizedArtworkKey(artist: string, album: string): string {
  * lists with many rows that share an album.
  */
 export function buildNormalizedArtworkIndex(artworkMap: Record<string, string>): Map<string, string> {
+  if (normIndexCache && normIndexSource === artworkMap) return normIndexCache
+  if (normIndexCache && normIndexSource) {
+    const prevKeys = Object.keys(normIndexSource)
+    const nextKeys = Object.keys(artworkMap)
+    if (nextKeys.length === prevKeys.length) {
+      let unchanged = true
+      for (const k of prevKeys) {
+        if (artworkMap[k] !== normIndexSource[k]) { unchanged = false; break }
+      }
+      if (unchanged) {
+        normIndexSource = artworkMap
+        return normIndexCache
+      }
+    }
+    if (nextKeys.length === prevKeys.length + 1) {
+      let onlyAdd = true
+      for (const k of prevKeys) {
+        if (!(k in artworkMap) || artworkMap[k] !== normIndexSource[k]) {
+          onlyAdd = false
+          break
+        }
+      }
+      if (onlyAdd) {
+        for (const k of nextKeys) {
+          if (!(k in normIndexSource)) addKeyToNormIndex(normIndexCache, k, artworkMap[k])
+        }
+        normIndexSource = artworkMap
+        return normIndexCache
+      }
+    }
+  }
   const idx = new Map<string, string>()
   for (const [k, hash] of Object.entries(artworkMap)) {
-    const [a, al] = k.split('|||')
-    const nk = normalizedArtworkKey(a || '', al || '')
-    if (!idx.has(nk)) idx.set(nk, hash)
+    addKeyToNormIndex(idx, k, hash)
   }
+  normIndexCache = idx
+  normIndexSource = artworkMap
   return idx
 }
 
@@ -167,6 +208,52 @@ export function requestArtworkResolution(
     return null
   })
   inFlight.set(key, p)
+}
+
+const RESOLVE_BATCH = 4
+const resolveQueue: Array<{ artist: string; album: string; dispatch: ResolveDispatch }> = []
+const queuedKeys = new Set<string>()
+let resolveDrainScheduled = false
+
+function drainArtworkResolveQueue(): void {
+  resolveDrainScheduled = false
+  let sent = 0
+  while (sent < RESOLVE_BATCH && resolveQueue.length > 0) {
+    const item = resolveQueue.shift()!
+    queuedKeys.delete(cacheKey(item.artist, item.album))
+    requestArtworkResolution(item.artist, item.album, item.dispatch)
+    sent++
+  }
+  if (resolveQueue.length > 0) {
+    resolveDrainScheduled = true
+    const schedule = typeof requestIdleCallback === 'function'
+      ? (cb: () => void) => requestIdleCallback(cb, { timeout: 1500 })
+      : (cb: () => void) => window.setTimeout(cb, 32)
+    schedule(drainArtworkResolveQueue)
+  }
+}
+
+/** Idle-batched resolve — use from view effects, not during render. */
+export function queueArtworkResolutions(
+  pairs: Iterable<{ artist: string; album: string }>,
+  dispatch: ResolveDispatch,
+): void {
+  for (const { artist, album } of pairs) {
+    if (!artist || !album) continue
+    const key = cacheKey(artist, album)
+    const neg = negativeCache.get(key)
+    if (neg && neg > Date.now()) continue
+    if (inFlight.has(key) || queuedKeys.has(key)) continue
+    queuedKeys.add(key)
+    resolveQueue.push({ artist, album, dispatch })
+  }
+  if (resolveQueue.length > 0 && !resolveDrainScheduled) {
+    resolveDrainScheduled = true
+    const schedule = typeof requestIdleCallback === 'function'
+      ? (cb: () => void) => requestIdleCallback(cb, { timeout: 1500 })
+      : (cb: () => void) => window.setTimeout(cb, 16)
+    schedule(drainArtworkResolveQueue)
+  }
 }
 
 /**

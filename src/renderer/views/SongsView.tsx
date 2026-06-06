@@ -14,6 +14,7 @@ import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { clearArtworkNegativeCache } from '../utils/artworkLookup'
+import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import type { SortColumn, Track } from '../types'
 import { setNotice } from '../activity'
 import EmptyState from '../components/EmptyState'
@@ -481,7 +482,8 @@ export default function SongsView() {
     }
   }, [libDispatch])
 
-  const gridTemplate = colWidths.map(w => `${w}px`).join(' ')
+  const gridTemplate = songsGridTemplate(visibleCols, colWidths)
+  const gridTemplateFixed = songsGridTemplateFixed(colWidths)
 
   const viewRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -772,7 +774,12 @@ export default function SongsView() {
   }, [])
 
   return (
-    <div className="songs-view" ref={viewRef} onPointerDownCapture={markActivity}>
+    <div
+      className="songs-view"
+      ref={containerRef}
+      onScroll={handleScroll}
+      onPointerDownCapture={markActivity}
+    >
       <div
         className="songs-header"
         style={{ gridTemplateColumns: gridTemplate }}
@@ -805,12 +812,22 @@ export default function SongsView() {
           </div>
         ))}
       </div>
-      <div className="songs-body" ref={containerRef} onScroll={handleScroll}>
+      <div className="songs-body" ref={viewRef}>
         {sorted.length === 0 && (
           <EmptyState query={lib.searchQuery} noun="tracks" />
         )}
-        <div style={{ height: totalHeight, position: 'relative' }}>
-          <div style={{ position: 'absolute', top: offsetY, left: 0, right: 0 }}>
+        {sorted.length > 0 && (
+        <>
+        {/* In-flow width sizer: virtual rows are position:absolute so they
+            don't contribute to scrollWidth. This zero-height grid matches
+            the header columns and extends .songs-view scrollWidth. */}
+        <div
+          className="songs-body-width-sizer"
+          style={{ gridTemplateColumns: gridTemplateFixed }}
+          aria-hidden="true"
+        />
+        <div style={{ height: totalHeight, position: 'relative', width: '100%' }}>
+          <div style={{ position: 'absolute', top: offsetY, left: 0, width: '100%' }}>
             {sorted.slice(startIndex, endIndex).map((track, i) => {
               const idx = startIndex + i
               const isPlaying = pb.nowPlaying?.id === track.id
@@ -902,6 +919,8 @@ export default function SongsView() {
             })}
           </div>
         </div>
+        </>
+        )}
       </div>
       {ctxMenu && (
         <ContextMenu

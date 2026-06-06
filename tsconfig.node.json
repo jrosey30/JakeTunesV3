@@ -14,6 +14,7 @@
   "include": [
     "src/main/**/*",
     "src/preload/**/*",
+    "src/common/**/*",
     "electron.vite.config.ts"
   ],
   "exclude": [

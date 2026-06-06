@@ -4,6 +4,7 @@ import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { buildIndex, search, normalize, type SearchIndex, type SearchRow, type RankedRow } from '../../utils/searchIndex'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
+import AlbumArtImage from '../AlbumArtImage'
 import '../../styles/search-panel.css'
 
 /**
@@ -208,12 +209,11 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
   const renderArtThumb = (hash: string | undefined, fallback: string): JSX.Element => {
     if (hash) {
       return (
-        <img
+        <AlbumArtImage
           className="search-panel-row-art"
-          src={`album-art://${hash}.jpg`}
+          hash={hash}
           alt=""
-          draggable={false}
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }}
+          onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
         />
       )
     }

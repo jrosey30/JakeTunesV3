@@ -177,7 +177,7 @@ const electronAPI = {
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   // Brief 122 — Music Man suggests 3 things to add to the list.
-  suggestRecommendations: () => ipcRenderer.invoke('suggest-recommendations'),
+  suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
   // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
@@ -262,16 +262,36 @@ const electronAPI = {
     ipcRenderer.invoke('get-artwork-lock-count'),
   // 4.5.0-91 — Phase 2.5 storage-mode + conflict surface for the UI.
   getStateConflicts: (): Promise<{
-    mode: 'NAS' | 'local-fallback';
+    mode: 'NAS' | 'local-primary';
     nasDir: string;
     localDir: string;
-    conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string }>;
+    nasMounted: boolean;
+    conflicts: Array<{ file: string; localMtimeMs: number; nasMtimeMs: number; localPath: string; nasPath: string; localSizeBytes: number }>;
   }> => ipcRenderer.invoke('get-state-conflicts'),
   reconcileStateConflicts: (): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> =>
     ipcRenderer.invoke('reconcile-state-conflicts'),
+  onReconcileStateProgress: (callback: (p: {
+    phase: 'backup' | 'push' | 'verify'
+    file: string
+    index: number
+    total: number
+    localSizeBytes?: number
+    totalBytes: number
+  }) => void): () => void => {
+    const handler = (_e: unknown, p: {
+      phase: 'backup' | 'push' | 'verify'
+      file: string
+      index: number
+      total: number
+      localSizeBytes?: number
+      totalBytes: number
+    }) => callback(p)
+    ipcRenderer.on('reconcile-state-progress', handler)
+    return () => ipcRenderer.removeListener('reconcile-state-progress', handler)
+  },
   // 4.5.0-87 — RAG (per-track embeddings + cosine retrieval) status +
   // backfill controls. Settings → Library exposes both.
-  embeddingStatus: (): Promise<{ configured: boolean; count: number; total: number }> =>
+  embeddingStatus: (): Promise<{ configured: boolean; count: number; total: number; stale: number }> =>
     ipcRenderer.invoke('embedding-status'),
   embeddingBackfill: (opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> =>
     ipcRenderer.invoke('embedding-backfill', opts),
@@ -390,7 +410,7 @@ const electronAPI = {
     ipcRenderer.invoke('import-resolve-paths', paths),
   importPickFiles: (): Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }> =>
     ipcRenderer.invoke('import-pick-files'),
-  saveLibrary: (tracks: unknown[], playlists?: unknown[]): Promise<{ ok: boolean }> =>
+  saveLibrary: (tracks: unknown[], playlists?: unknown[]): Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }> =>
     ipcRenderer.invoke('save-library', tracks, playlists),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>
     ipcRenderer.invoke('sync-ipod', existingIds),
@@ -482,6 +502,25 @@ const electronAPI = {
   },
   pruneAlacCache: (): Promise<{ ok: boolean; pruned?: number; bytesFreed?: number; error?: string }> =>
     ipcRenderer.invoke('prune-alac-cache'),
+  scanLibraryOrphans: (): Promise<{
+    ok: boolean
+    trackCount?: number
+    diskCount?: number
+    orphanCount?: number
+    orphanBytes?: number
+    samples?: Array<{ basename: string; mtimeMs: number; size: number }>
+    error?: string
+  }> => ipcRenderer.invoke('scan-library-orphans'),
+  purgeLibraryOrphans: (): Promise<{ ok: boolean; deleted?: number; bytesFreed?: number; error?: string }> =>
+    ipcRenderer.invoke('purge-library-orphans'),
+  scanDeadTracks: (): Promise<{
+    ok: boolean
+    count?: number
+    tracks?: Array<{ id: number; title: string; artist: string; path: string }>
+    error?: string
+  }> => ipcRenderer.invoke('scan-dead-tracks'),
+  removeDeadTracks: (): Promise<{ ok: boolean; removed?: number; error?: string }> =>
+    ipcRenderer.invoke('remove-dead-tracks'),
   // Read the iPod's actual iTunesDB so the UI can show the real
   // device state (the "On This iPod" view from classic iTunes).
   getIpodDbTracks: (): Promise<{ ok: boolean; tracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }> =>

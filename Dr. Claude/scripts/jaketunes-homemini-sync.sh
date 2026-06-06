@@ -149,7 +149,94 @@ if [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
   exit 1
 fi
 
-# ── 2. rsync music to Synology ────────────────────────────────────────
+# 4.5.0-115 — local userData is the source of truth; NAS holds an
+# async backup mirror only (see src/main/state-dir.ts). Prefer LOCAL
+# when picking rsync sources so homemini always receives this machine's
+# freshest library.json, not a possibly-stale NAS copy.
+resolve_sync_src() {
+  if [ -f "$JT_DATA_LOCAL/$1" ]; then
+    echo "$JT_DATA_LOCAL/$1"
+  elif [ -f "$JT_STATE_NAS/$1" ]; then
+    echo "$JT_STATE_NAS/$1"
+  fi
+}
+
+# ── 2. JSON state → homemini FIRST (before the long music rsync) ─────
+#
+# 2026-06-06 — homemini sync was silently broken for hours: the
+# orchestrator's 10-min timeout SIGTERM'd full safety-net runs while
+# they were still walking the 73GB music tree (step 2, old order).
+# library.json never reached homemini because steps 3–4 sat AFTER the
+# music rsync. Pushing state first means metadata lands on homemini
+# even when the music walk is slow, partial, or killed.
+push_homemini_state() {
+  local lib_src
+  lib_src=$(resolve_sync_src "library.json")
+  if [ -z "$lib_src" ] || [ ! -f "$lib_src" ]; then
+    log "no library.json found (local or NAS) — skipping homemini state push"
+    return 0
+  fi
+
+  local local_fp="" remote_fp="" remote_fp_cmd f src m
+  for f in "${SYNC_FILES[@]}"; do
+    src=$(resolve_sync_src "$f")
+    if [ -n "$src" ] && [ -f "$src" ]; then
+      m=$(stat -f "%m" "$src" 2>/dev/null || echo 0)
+      local_fp="${local_fp}${f}:${m}|"
+    fi
+  done
+
+  remote_fp_cmd='for f in '"${SYNC_FILES[*]}"'; do
+  if [ -f "Library/Application Support/JakeTunes/$f" ]; then
+    m=$(stat -f "%m" "Library/Application Support/JakeTunes/$f" 2>/dev/null || echo 0)
+    printf "%s:%s|" "$f" "$m"
+  fi
+done'
+  remote_fp=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" "$remote_fp_cmd" 2>/dev/null || echo "")
+
+  if [ "$local_fp" = "$remote_fp" ] && [ -n "$local_fp" ]; then
+    log "library state unchanged — skipping homemini push"
+    return 0
+  fi
+  log "library state differs (local=$local_fp remote=$remote_fp) — pushing …"
+
+  local rsync_args=(-tz --no-perms --no-owner --no-group)
+  for f in "${SYNC_FILES[@]}"; do
+    src=$(resolve_sync_src "$f")
+    if [ -n "$src" ] && [ -f "$src" ]; then
+      rsync_args+=("$src")
+    fi
+  done
+  rsync "${rsync_args[@]}" "$HOMEMINI:$JT_DATA_REMOTE/" >> "$LOG" 2>&1
+  local scp_rc=$?
+  if [ $scp_rc -ne 0 ]; then
+    log "ERROR: rsync of JSON state failed (exit $scp_rc) — homemini may be offline"
+    notify "Library state sync to homemini failed. Music may still reach the NAS."
+    return 3
+  fi
+
+  log "restarting JakeTunes on homemini …"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" \
+    'pkill -f "JakeTunes.app/Contents/MacOS" 2>/dev/null; sleep 2; open /Applications/JakeTunes.app' \
+    >> "$LOG" 2>&1
+  local ssh_rc=$?
+  if [ $ssh_rc -ne 0 ]; then
+    log "WARNING: ssh restart returned $ssh_rc (library.json was pushed though)"
+    notify "library.json synced, but couldn't restart JakeTunes on homemini. Restart it manually."
+    return 4
+  fi
+  log "homemini JakeTunes restarted — new tracks/edits should be visible now"
+  return 0
+}
+
+homemini_rc=0
+push_homemini_state || homemini_rc=$?
+# Non-fatal: continue to NAS music rsync even if homemini push failed.
+if [ $homemini_rc -ne 0 ]; then
+  log "homemini state push returned $homemini_rc (continuing to NAS music rsync)"
+fi
+
+# ── 3. rsync music to Synology ────────────────────────────────────────
 # 4.4.36: --quick mode passes a `find -mmin -10` file list to rsync via
 # --files-from, so we only touch tracks that just landed (typical case
 # after an import). Skips the rsync stat-walk over the full 73GB
@@ -272,7 +359,7 @@ else
   fi
 fi
 
-# ── 2c. Artwork: rsync MacBook's artwork dir → homemini's. ────────────
+# ── 4. Artwork: rsync MacBook's artwork dir → homemini's. ────────────
 #
 # 2026-05-25 — the artwork-blank-on-mobile bug, closed once and for all.
 # Pre-fix: desktop V3 wrote new artwork JPGs to
@@ -311,90 +398,6 @@ if [ -d "$LOCAL_ARTWORK" ]; then
     notify "Artwork didn't reach homemini (rsync exit $art_rc). Mobile covers may be blank."
   fi
 fi
-
-# ── 3. JSON state: push to homemini only if anything actually changed ─
-if [ ! -f "$JT_DATA_LOCAL/library.json" ]; then
-  log "no local library.json at $JT_DATA_LOCAL — skipping homemini sync"
-  log "=== sync done ==="
-  exit 0
-fi
-
-# 4.5.0-90 Phase 2 — per-file source picker, used by both the mtime-
-# fingerprint diff and the rsync command below. NAS-first because in
-# Phase 2 the app boots in NAS-source mode and writes go there; the
-# userData copies are last-known fallbacks for offline mode. macOS
-# default bash is 3.2 (no associative arrays), so this is implemented
-# as a function called twice — once per loop — rather than via a
-# declared assoc array. Inline `case ... esac` so the function stays
-# fork-free.
-resolve_sync_src() {
-  if [ -f "$JT_STATE_NAS/$1" ]; then
-    echo "$JT_STATE_NAS/$1"
-  elif [ -f "$JT_DATA_LOCAL/$1" ]; then
-    echo "$JT_DATA_LOCAL/$1"
-  fi
-}
-
-# Build a quick fingerprint of every sync-target file's mtime so we can
-# bail without ssh churn when nothing changed. Format: "name:mtime|name:mtime|…"
-local_fp=""
-for f in "${SYNC_FILES[@]}"; do
-  src=$(resolve_sync_src "$f")
-  if [ -n "$src" ] && [ -f "$src" ]; then
-    m=$(stat -f "%m" "$src" 2>/dev/null || echo 0)
-    local_fp="${local_fp}${f}:${m}|"
-  fi
-done
-
-# Same fingerprint on homemini — one ssh call, returns same format.
-remote_fp_cmd='for f in '"${SYNC_FILES[*]}"'; do
-  if [ -f "Library/Application Support/JakeTunes/$f" ]; then
-    m=$(stat -f "%m" "Library/Application Support/JakeTunes/$f" 2>/dev/null || echo 0)
-    printf "%s:%s|" "$f" "$m"
-  fi
-done'
-remote_fp=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" "$remote_fp_cmd" 2>/dev/null || echo "")
-
-if [ "$local_fp" = "$remote_fp" ] && [ -n "$local_fp" ]; then
-  log "library state unchanged — no homemini work needed"
-  log "=== sync done ==="
-  exit 0
-fi
-log "library state differs (local=$local_fp remote=$remote_fp) — pushing …"
-
-# rsync the three files in one batch. -t preserves mtime so the next
-# fingerprint check on homemini reflects what was pushed. --inplace +
-# --no-whole-file would be tighter for large library.json files but
-# the simple form is fine for ~3 MB and avoids stat-quirks over SMB
-# (this is going via ssh, not SMB, so it's safe either way).
-rsync_args=(-tz --no-perms --no-owner --no-group)
-for f in "${SYNC_FILES[@]}"; do
-  src=$(resolve_sync_src "$f")
-  if [ -n "$src" ] && [ -f "$src" ]; then
-    rsync_args+=("$src")
-  fi
-done
-rsync "${rsync_args[@]}" "$HOMEMINI:$JT_DATA_REMOTE/" >> "$LOG" 2>&1
-scp_rc=$?
-if [ $scp_rc -ne 0 ]; then
-  log "ERROR: rsync of JSON state failed (exit $scp_rc) — homemini may be offline"
-  notify "Library state sync to homemini failed. Music IS on the NAS but homemini won't see new tracks/edits yet."
-  exit 3
-fi
-
-# ── 4. Restart JakeTunes on homemini so it re-reads the JSON state ────
-log "restarting JakeTunes on homemini …"
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" \
-  'pkill -f "JakeTunes.app/Contents/MacOS" 2>/dev/null; sleep 2; open /Applications/JakeTunes.app' \
-  >> "$LOG" 2>&1
-ssh_rc=$?
-if [ $ssh_rc -ne 0 ]; then
-  log "WARNING: ssh restart returned $ssh_rc (library.json was pushed though)"
-  notify "library.json synced, but couldn't restart JakeTunes on homemini. Restart it manually."
-  exit 4
-fi
-
-log "homemini JakeTunes restarted — new tracks should be visible now"
 
 # ── 5. BIDIRECTIONAL mobile-set sidecars (NAS ↔ homemini). ────────
 #

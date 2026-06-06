@@ -16,16 +16,56 @@ import '../styles/listen-to-the-list.css'
 // renderer (in-session only), which is what we want.
 let recsCache: Recommendation[] | null = null
 
-// Music Man's 3 suggestions, cached for the session so reopening the view
-// doesn't fire a fresh Sonnet call each time (the ↻ refresh re-generates).
+// Music Man's suggestion pool (≥3 visible; rest backfill when one is added).
 interface MmSuggestion { song: string; artist: string; note: string }
+const MM_VISIBLE = 3
 let suggestionsCache: MmSuggestion[] | null = null
+
+// Session guards survive MainContent unmount — stop duplicate heavy IPC on remount.
+const RECS_LOAD_COOLDOWN_MS = 5 * 60 * 1000
+const SUGGEST_AUTO_COOLDOWN_MS = 30 * 60 * 1000
+let loadInFlight: Promise<void> | null = null
+let lastLoadAt = 0
+let suggestModuleInFlight: Promise<void> | null = null
+let lastSuggestFetchAt = 0
+let sessionAutoSuggestAttempted = false
+
+function suggKey(s: { song: string; artist: string }): string {
+  return `${s.artist.toLowerCase().trim()}|${s.song.toLowerCase().trim()}`
+}
+
+function recsListUnchanged(a: Recommendation[], b: Recommendation[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false
+  }
+  return true
+}
+
+function dedupeSuggestions(incoming: MmSuggestion[], recs: Recommendation[]): MmSuggestion[] {
+  const onList = new Set(
+    recs.map((r) => {
+      const a = (r.artist || r.matchedArtist || '').toLowerCase().trim()
+      const t = (r.song || r.matchedTitle || '').toLowerCase().trim()
+      return a && t ? `${a}|${t}` : ''
+    }).filter(Boolean),
+  )
+  const seen = new Set<string>()
+  const out: MmSuggestion[] = []
+  for (const s of incoming) {
+    const k = suggKey(s)
+    if (!k || seen.has(k) || onList.has(k)) continue
+    seen.add(k)
+    out.push(s)
+  }
+  return out
+}
 
 // Brief 122 Phase 1 — "Listen to the List". Mirrors the mobile app's
 // recommendations list on desktop and lets you add/delete from here too.
-// Reads recommendations.json fresh from the NAS state dir (via the main
-// process); add/delete route through the Mini backend so it stays the
-// single writer (cache-coherent + iTunes-enriched). Does NOT touch the
+// Reads recommendations.json via main (syncs homemini + NAS → local SSD).
+// Add/delete route through the Mini backend for iTunes enrichment; main
+// keeps the local copy current. Does NOT touch the
 // music library, its metadata, or its artwork — reco artwork is external
 // (iTunes) URLs.
 export default function ListenToTheListView() {
@@ -34,9 +74,12 @@ export default function ListenToTheListView() {
   const [adding, setAdding] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Recommendation | null>(null)
   const [form, setForm] = useState({ song: '', artist: '', album: '', note: '' })
-  // Music Man's "3 to add" strip.
-  const [mmSuggestions, setMmSuggestions] = useState<MmSuggestion[]>(suggestionsCache ?? [])
-  const [suggLoading, setSuggLoading] = useState(suggestionsCache === null)
+  // Music Man's visible-3 / pool-N suggestion strip.
+  const [mmPool, setMmPool] = useState<MmSuggestion[]>(suggestionsCache ?? [])
+  const [suggLoading, setSuggLoading] = useState(false)
+  const mmPoolRef = useRef(mmPool)
+  mmPoolRef.current = mmPool
+  const visibleMm = mmPool.slice(0, MM_VISIBLE)
   // Preview plays in the now-playing pill (iTunes-style) via the shared
   // previewPlayer; this view just reflects which row is currently playing.
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
@@ -61,41 +104,142 @@ export default function ListenToTheListView() {
   // Monotonic search token: a slow response from an older query must not
   // overwrite the suggestions of a newer one (out-of-order results).
   const searchSeqRef = useRef(0)
+  const loadSeqRef = useRef(0)
+  const suggestInFlightRef = useRef(false)
+  // Cap silent top-ups so a thin filter result cannot spin Claude+iTunes forever.
+  const suggestTopUpAttemptsRef = useRef(0)
+  const MAX_SILENT_TOPUPS = 2
 
   const load = useCallback(async () => {
-    try {
-      const res = await window.electronAPI.loadRecommendations()
-      const list = res.ok ? res.recommendations : []
-      recsCache = list
-      setRecs(list)
-    } catch (err) {
-      console.error('[ltl] load failed', err)
-    } finally {
-      setLoading(false) // finally so a thrown IPC never strands "Loading…"
+    if (loadInFlight) {
+      await loadInFlight
+      return
     }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  // Music Man's 3 suggestions. Fetched once per session (cached); ↻ refresh
-  // regenerates. Fail-soft — the strip just stays empty on error.
-  const fetchSuggestions = useCallback(async () => {
-    setSuggLoading(true)
+    const seq = ++loadSeqRef.current
+    const run = (async () => {
+      try {
+        const res = await window.electronAPI.loadRecommendations()
+        if (seq !== loadSeqRef.current) return
+        const list = res.ok ? res.recommendations : []
+        recsCache = list
+        lastLoadAt = Date.now()
+        setRecs((prev) => (recsListUnchanged(prev, list) ? prev : list))
+      } catch (err) {
+        console.error('[ltl] load failed', err)
+      } finally {
+        if (seq === loadSeqRef.current) setLoading(false)
+      }
+    })()
+    loadInFlight = run
     try {
-      const res = await window.electronAPI.suggestRecommendations()
-      const list = res.ok && res.suggestions ? res.suggestions : []
-      suggestionsCache = list
-      setMmSuggestions(list)
-    } catch (err) {
-      console.error('[ltl] suggest failed', err)
+      await run
     } finally {
-      setSuggLoading(false)
+      if (loadInFlight === run) loadInFlight = null
     }
   }, [])
 
   useEffect(() => {
-    if (suggestionsCache === null) void fetchSuggestions()
-  }, [fetchSuggestions])
+    if (recsCache !== null && lastLoadAt === 0) lastLoadAt = Date.now()
+    const hasFreshCache = recsCache !== null && Date.now() - lastLoadAt < RECS_LOAD_COOLDOWN_MS
+    if (hasFreshCache) return
+    void load()
+  }, [load])
+
+  // Music Man suggestions — pool of up to 10; UI always shows 3 slots.
+  const mergeSuggestions = useCallback((replace: boolean, incoming: MmSuggestion[]) => {
+    setMmPool((prev) => {
+      const base = replace ? [] : prev
+      const merged = dedupeSuggestions([...base, ...incoming], recsRef.current)
+      suggestionsCache = merged
+      mmPoolRef.current = merged
+      return merged
+    })
+  }, [])
+
+  const fetchSuggestionsCore = useCallback(async (replace = false, force = false) => {
+    const res = await window.electronAPI.suggestRecommendations(force ? { force: true } : undefined)
+    const incoming = res.ok && res.suggestions ? res.suggestions : []
+    mergeSuggestions(replace, incoming)
+    lastSuggestFetchAt = Date.now()
+  }, [mergeSuggestions])
+
+  const ensureThreeVisible = useCallback(async (replace = false, silent = false) => {
+    if (suggestInFlightRef.current || suggestModuleInFlight) {
+      if (suggestModuleInFlight) await suggestModuleInFlight
+      return
+    }
+    if (silent && suggestTopUpAttemptsRef.current >= MAX_SILENT_TOPUPS) return
+    if (silent && Date.now() - lastSuggestFetchAt < SUGGEST_AUTO_COOLDOWN_MS) return
+    if (silent) suggestTopUpAttemptsRef.current++
+    else if (replace) suggestTopUpAttemptsRef.current = 0
+
+    suggestInFlightRef.current = true
+    if (!silent) setSuggLoading(true)
+    const run = (async () => {
+      try {
+        if (replace) {
+          suggestionsCache = []
+          mmPoolRef.current = []
+          setMmPool([])
+        }
+        // One suggest-recommendations IPC already retries Claude + iTunes up to 4×;
+        // a second invoke here doubled main-process work and caused the pinwheel.
+        await fetchSuggestionsCore(replace, replace)
+      } catch (err) {
+        console.error('[ltl] suggest failed', err)
+      } finally {
+        if (mmPoolRef.current.length >= MM_VISIBLE) suggestTopUpAttemptsRef.current = 0
+        suggestInFlightRef.current = false
+        if (!silent) setSuggLoading(false)
+      }
+    })()
+    suggestModuleInFlight = run
+    try {
+      await run
+    } finally {
+      if (suggestModuleInFlight === run) suggestModuleInFlight = null
+    }
+  }, [fetchSuggestionsCore])
+
+  const refreshSuggestions = useCallback(async () => {
+    sessionAutoSuggestAttempted = true
+    await ensureThreeVisible(true, false)
+  }, [ensureThreeVisible])
+
+  const ensureThreeVisibleRef = useRef(ensureThreeVisible)
+  ensureThreeVisibleRef.current = ensureThreeVisible
+
+  // Music Man loads after the list paints — one auto attempt per app session.
+  useEffect(() => {
+    if (loading) return
+    if (mmPoolRef.current.length >= MM_VISIBLE) return
+    if (sessionAutoSuggestAttempted) return
+    if (Date.now() - lastSuggestFetchAt < SUGGEST_AUTO_COOLDOWN_MS && (suggestionsCache?.length ?? 0) > 0) return
+
+    const isFirstLoad = suggestionsCache === null
+    const delayMs = isFirstLoad ? 400 : 0
+    const timer = setTimeout(() => {
+      sessionAutoSuggestAttempted = true
+      void ensureThreeVisibleRef.current(isFirstLoad, !isFirstLoad)
+    }, delayMs)
+    return () => clearTimeout(timer)
+  }, [loading])
+
+  // Drop anything from the pool that's now on the list; top up only when prune shrinks the pool.
+  useEffect(() => {
+    let pruned = false
+    setMmPool((prev) => {
+      const next = dedupeSuggestions(prev, recs)
+      if (next.length === prev.length) return prev
+      pruned = true
+      suggestionsCache = next
+      mmPoolRef.current = next
+      return next
+    })
+    if (pruned && mmPoolRef.current.length < MM_VISIBLE && !suggestInFlightRef.current && !suggestModuleInFlight) {
+      void ensureThreeVisibleRef.current(false, true)
+    }
+  }, [recs])
 
   // Debounced iTunes search keyed on the song + artist fields.
   useEffect(() => {
@@ -150,6 +294,7 @@ export default function ListenToTheListView() {
     const withProvisional = [provisional, ...prev]
     recsCache = withProvisional
     setRecs(withProvisional)
+    loadSeqRef.current++
     setForm({ song: '', artist: '', album: '', note: '' })
     setSuggestions([])
 
@@ -166,8 +311,8 @@ export default function ListenToTheListView() {
         setRecs(prev)
         setForm(draft)
         setNotice(
-          (res?.error?.includes('failed') || res?.error?.includes('fetch'))
-            ? "Couldn't reach the JakeTunes backend to save. Is the Mini up?"
+          res?.error?.includes('nothing to add')
+            ? 'Enter at least a song, artist, album, or note.'
             : `Couldn't save recommendation${res?.error ? `: ${res.error}` : ''}.`,
           { kind: 'error' }
         )
@@ -201,11 +346,13 @@ export default function ListenToTheListView() {
   // (provisional row → backend → swap enriched); separate because rollback
   // restores the strip card, not the form.
   const handleAddSuggestion = useCallback(async (s: MmSuggestion) => {
-    setMmSuggestions((prev) => {
-      const next = prev.filter((x) => !(x.song === s.song && x.artist === s.artist))
+    setMmPool((prev) => {
+      const next = prev.filter((x) => suggKey(x) !== suggKey(s))
       suggestionsCache = next
+      mmPoolRef.current = next
       return next
     })
+    void ensureThreeVisible(false, true)
     const tempId = `temp-sugg-${Date.now()}`
     const provisional: Recommendation = {
       id: tempId,
@@ -218,6 +365,7 @@ export default function ListenToTheListView() {
     const withProvisional = [provisional, ...prev]
     recsCache = withProvisional
     setRecs(withProvisional)
+    loadSeqRef.current++
     try {
       const res = await window.electronAPI.addRecommendation({
         song: s.song || undefined, artist: s.artist || undefined, note: s.note || undefined,
@@ -226,6 +374,13 @@ export default function ListenToTheListView() {
         recsCache = prev
         setRecs(prev)
         setNotice(`Couldn't add that pick${res?.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
+        // Restore the suggestion card so the user can retry.
+        setMmPool((prev) => {
+          const next = dedupeSuggestions([s, ...prev], recsRef.current)
+          suggestionsCache = next
+          mmPoolRef.current = next
+          return next
+        })
         return
       }
       if (res.recommendation) {
@@ -237,6 +392,7 @@ export default function ListenToTheListView() {
           recsCache = swapped
           return swapped
         })
+        // List row already updated above; pool backfill kicked off at click time.
       } else {
         await load()
       }
@@ -244,8 +400,14 @@ export default function ListenToTheListView() {
       recsCache = prev
       setRecs(prev)
       setNotice(`Add failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
+      setMmPool((prev) => {
+        const next = dedupeSuggestions([s, ...prev], recsRef.current)
+        suggestionsCache = next
+        mmPoolRef.current = next
+        return next
+      })
     }
-  }, [load])
+  }, [load, ensureThreeVisible])
 
   const handleDelete = useCallback(async (rec: Recommendation) => {
     // If a preview of this reco is playing, stop it so it isn't orphaned
@@ -256,16 +418,19 @@ export default function ListenToTheListView() {
     const next = prev.filter((x) => x.id !== rec.id)
     recsCache = next
     setRecs(next)
+    loadSeqRef.current++
     try {
       const res = await window.electronAPI.deleteRecommendation(rec.id)
       if (!res.ok) {
         recsCache = prev
-        setRecs(prev) // put it back exactly where it was
+        setRecs(prev)
+        loadSeqRef.current++
         setNotice(`Couldn't delete${res.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
       }
     } catch (err) {
       recsCache = prev
-      setRecs(prev) // a thrown IPC must not leave the row vanished
+      setRecs(prev)
+      loadSeqRef.current++
       setNotice(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
   }, [])
@@ -324,17 +489,16 @@ export default function ListenToTheListView() {
         )}
       </div>
 
-      {(suggLoading || mmSuggestions.length > 0) && (
-        <div className="ltl-mm-suggests">
-          <div className="ltl-mm-head">
-            <span className="ltl-mm-title">Music Man suggests</span>
-            <button className="ltl-mm-refresh" onClick={() => fetchSuggestions()} disabled={suggLoading} title="New suggestions">↻</button>
-          </div>
-          {suggLoading ? (
-            <div className="ltl-mm-loading">Music Man's digging through the crates…</div>
-          ) : (
-            <div className="ltl-mm-row">
-              {mmSuggestions.map((s, i) => (
+      <div className="ltl-mm-suggests">
+        <div className="ltl-mm-head">
+          <span className="ltl-mm-title">Music Man suggests</span>
+          <button className="ltl-mm-refresh" onClick={() => void refreshSuggestions()} disabled={suggLoading} aria-busy={suggLoading || undefined} title="New suggestions">↻</button>
+        </div>
+        <div className="ltl-mm-row">
+          {Array.from({ length: MM_VISIBLE }).map((_, i) => {
+            const s = visibleMm[i]
+            if (s) {
+              return (
                 <div className="ltl-mm-card" key={`${s.song}-${s.artist}-${i}`}>
                   <div className="ltl-mm-card-text">
                     <div className="ltl-mm-song">{s.song}</div>
@@ -343,11 +507,17 @@ export default function ListenToTheListView() {
                   </div>
                   <button className="ltl-mm-add" onClick={() => handleAddSuggestion(s)}>+ Add</button>
                 </div>
-              ))}
-            </div>
-          )}
+              )
+            }
+            if (!suggLoading) return null
+            return (
+              <div className="ltl-mm-card ltl-mm-card--loading" key={`loading-${i}`} aria-busy="true">
+                <div className="ltl-mm-loading">Finding another…</div>
+              </div>
+            )
+          })}
         </div>
-      )}
+      </div>
 
       {loading ? (
         <div className="ltl-loading">Loading…</div>
