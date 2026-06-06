@@ -19,6 +19,7 @@ import { CALLERS, buildCallerSegmentMode } from './cast'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -829,6 +830,21 @@ function appSettingsPath(): string {
 // so the user gets the current state without subscribing to push events.
 ipcMain.handle('get-last-library-sync', async () => {
   return getLastSyncSnapshot()
+})
+
+// 4.5.0-117 — library backup/restore (Phase 0). Logic in src/main/backup.ts.
+ipcMain.handle('list-backups', async () => {
+  return { ok: true, backups: await listBackups() }
+})
+ipcMain.handle('create-backup', async () => {
+  const info = await snapshotLibrary('manual')
+  return info ? { ok: true, backup: info } : { ok: false, error: 'Nothing to back up (library empty or unreadable).' }
+})
+ipcMain.handle('restore-backup', async (_e, file: string) => {
+  const res = await restoreBackup(file)
+  // On success, library.json was rewritten — tell the renderer to reload.
+  if (res.ok) mainWindow?.webContents.send('library-external-change')
+  return res
 })
 
 ipcMain.handle('load-app-settings', async () => {
@@ -2789,6 +2805,9 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     // forget — never blocks the save, never affects local, so a flaky/torn
     // NAS write here is harmless (the app never reads the NAS).
     void mirrorLibraryToNas(library)
+    // 4.5.0-117: throttled local backup snapshot (Phase 0). Best-effort, off
+    // the hot path — keeps a rotating restore history (≤1 snapshot / 30 min).
+    void maybeAutoSnapshot('save')
 
     // Disk now reflects the current library — the session-level
     // fingerprint set existed only to bridge the gap between an
@@ -11787,6 +11806,10 @@ app.whenReady().then(async () => {
   // Depends on MUSIC_DIR (resolved just above) for the colon-path -> abs
   // conversion.
   await loadCodecMapFromLibrary()
+
+  // 4.5.0-117: one library snapshot per launch (Phase 0 backup/restore).
+  // Fire-and-forget; skips an empty library.
+  void snapshotLibrary('launch')
 
   // 4.2.5: bootstrap the cached host preference so the very first
   // prompt build of the session picks the user's chosen persona,

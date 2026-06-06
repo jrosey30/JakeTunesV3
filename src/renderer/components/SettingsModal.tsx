@@ -103,6 +103,30 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   // refreshed every 15s while the modal stays open so the relative time
   // string ("3 min ago") stays roughly accurate without push wiring.
   const [lastSync, setLastSync] = useState<LastSync | null>(null)
+  // 4.5.0-117 — local library snapshots (Phase 0 backup/restore).
+  const [backups, setBackups] = useState<Array<{ file: string; date: string; trackCount: number; sizeBytes: number; reason: string }>>([])
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [restoreFile, setRestoreFile] = useState<string | null>(null)
+  const [backupMsg, setBackupMsg] = useState<string | null>(null)
+  useEffect(() => {
+    if (tab !== 'Sync') return
+    window.electronAPI.listBackups?.().then((r) => { if (r?.ok) setBackups(r.backups) }).catch(() => { /* leave list */ })
+  }, [tab])
+  const loadBackups = () => window.electronAPI.listBackups?.().then((r) => { if (r?.ok) setBackups(r.backups) }).catch(() => {})
+  const handleCreateBackup = async () => {
+    setBackupBusy(true); setBackupMsg(null)
+    try {
+      const r = await window.electronAPI.createBackup?.()
+      if (r?.ok) { setBackupMsg('Backed up ✓'); await loadBackups() } else setBackupMsg(r?.error || "Couldn't back up.")
+    } finally { setBackupBusy(false) }
+  }
+  const handleRestore = async (file: string) => {
+    setBackupBusy(true); setRestoreFile(null); setBackupMsg(null)
+    try {
+      const r = await window.electronAPI.restoreBackup?.(file)
+      setBackupMsg(r?.ok ? `Restored ${r.trackCount} tracks — your library is reloading.` : (r?.error || "Couldn't restore."))
+    } finally { setBackupBusy(false) }
+  }
   // 4.4.51: audio output devices for the call-route speaker picker. The
   // call-route feature moves music to a chosen speaker (e.g. an AirPlay
   // device) when a call grabs the mic, then restores it on hang-up.
@@ -716,6 +740,48 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     {!lastSync.ok && lastSync.error && (
                       <div style={{ color: '#a23a2a', fontSize: 11 }}>{lastSync.error}</div>
                     )}
+                  </div>
+                )}
+              </div>
+
+              {/* 4.5.0-117 — Local snapshots & restore (Phase 0). The manual
+                  .smbdelete rescue from the 2026-05-29 incident, now a button. */}
+              <div style={{ marginTop: 18, padding: '12px 14px', background: '#eef2f6', border: '1px solid #c5d2dd', borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>Local snapshots &amp; restore</span>
+                  <button
+                    disabled={backupBusy}
+                    onClick={handleCreateBackup}
+                    style={{ fontSize: 12, padding: '4px 12px', border: '1px solid #9bb0c2', borderRadius: 4, background: '#fff', cursor: backupBusy ? 'default' : 'pointer' }}
+                  >Back up now</button>
+                </div>
+                <p className="imp-help" style={{ marginTop: 0, marginBottom: 8, fontSize: 11 }}>
+                  Verified snapshots of your library, kept locally (newest 20), taken on launch and as it changes. Restoring backs up the current state first — it's reversible.
+                </p>
+                {backupMsg && (
+                  <div style={{ fontSize: 12, marginBottom: 8, color: backupMsg.startsWith("Couldn't") ? '#a23a2a' : '#2a7a2a' }}>{backupMsg}</div>
+                )}
+                {backups.length === 0 ? (
+                  <div style={{ fontSize: 12, color: '#7a8590' }}>No snapshots yet — they appear automatically as your library changes.</div>
+                ) : (
+                  <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #d5dee6', borderRadius: 4, background: '#fff' }}>
+                    {backups.map((b) => (
+                      <div key={b.file} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: '#2a2a2a' }}>{new Date(b.date).toLocaleString()} · <strong>{b.trackCount.toLocaleString()}</strong> tracks</div>
+                          <div style={{ color: '#9aa5af', fontSize: 10 }}>{b.reason}</div>
+                        </div>
+                        {restoreFile === b.file ? (
+                          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                            <span style={{ color: '#a23a2a', fontSize: 11 }}>Restore?</span>
+                            <button disabled={backupBusy} onClick={() => handleRestore(b.file)} style={{ fontSize: 11, padding: '2px 9px', border: '1px solid #c0392b', borderRadius: 4, background: '#fff', color: '#c0392b', cursor: 'pointer' }}>Yes</button>
+                            <button onClick={() => setRestoreFile(null)} style={{ fontSize: 11, padding: '2px 9px', border: '1px solid #b0b0b0', borderRadius: 4, background: '#fff', cursor: 'pointer' }}>No</button>
+                          </span>
+                        ) : (
+                          <button disabled={backupBusy} onClick={() => setRestoreFile(b.file)} style={{ fontSize: 11, padding: '2px 10px', border: '1px solid #b0b0b0', borderRadius: 4, background: '#fff', cursor: 'pointer', flexShrink: 0 }}>Restore</button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

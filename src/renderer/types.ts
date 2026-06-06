@@ -376,6 +376,10 @@ declare global {
       // honest gaps where unknown) and a grounded Music Man blurb.
       getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
       getAlbumBlurb: (artist: string, album: string) => Promise<{ ok: boolean; blurb?: string; error?: string }>
+      // 4.5.0-117 — library backup/restore (Phase 0).
+      listBackups: () => Promise<{ ok: boolean; backups: Array<{ file: string; date: string; mtimeMs: number; trackCount: number; sizeBytes: number; reason: string }> }>
+      createBackup: () => Promise<{ ok: boolean; backup?: { file: string; date: string; trackCount: number }; error?: string }>
+      restoreBackup: (file: string) => Promise<{ ok: boolean; trackCount?: number; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
