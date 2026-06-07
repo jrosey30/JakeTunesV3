@@ -3,6 +3,7 @@ import { useLibrary } from './LibraryContext'
 import type { ViewName, SmartPlaylistId } from '../types'
 import { recordLocation, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
 import type { NavLocation, NavHistory } from '../nav-history'
+import { reopenSearch } from '../searchNav'
 
 /**
  * Browser-style back/forward history for the app's views.
@@ -21,6 +22,9 @@ interface NavigationApi {
   canGoForward: boolean
   goBack: () => void
   goForward: () => void
+  /** Mark that the next navigation opens a detail FROM a search result, so the
+   *  first back out of it re-opens the search dropdown with this query. */
+  recordSearch: (query: string) => void
 }
 
 const NavigationContext = createContext<NavigationApi | null>(null)
@@ -45,6 +49,15 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const navRef = useRef<NavHistory>({ history: [loc], index: 0 })
   const [, tick] = useState(0)
   const repaint = useCallback(() => tick((n) => n + 1), [])
+
+  // Side-channel for search-as-destination: search isn't a view, so it can't
+  // live in the history stack. Instead we remember the query + the index the
+  // search-opened detail lands at; the first back from that index restores the
+  // origin view AND re-opens the search dropdown.
+  const searchReturnRef = useRef<{ query: string; atIndex: number } | null>(null)
+  const recordSearch = useCallback((query: string) => {
+    searchReturnRef.current = { query, atIndex: navRef.current.index + 1 }
+  }, [])
 
   const restore = useCallback((t: NavLocation) => {
     switch (t.view) {
@@ -83,7 +96,21 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   const goBack = useCallback(() => {
     const s = navRef.current
+    const sr = searchReturnRef.current
+    if (sr && sr.atIndex === s.index) {
+      // On a detail opened from search → first back returns to the results:
+      // restore the underlying origin view, then re-open the search dropdown.
+      searchReturnRef.current = null
+      if (s.index > 0) {
+        navRef.current = { history: s.history, index: s.index - 1 }
+        repaint()
+        restore(navRef.current.history[navRef.current.index])
+      }
+      reopenSearch(sr.query)
+      return
+    }
     if (s.index <= 0) return
+    searchReturnRef.current = null
     navRef.current = { history: s.history, index: s.index - 1 }
     repaint()
     restore(navRef.current.history[navRef.current.index])
@@ -115,6 +142,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     canGoForward: histCanForward(navRef.current),
     goBack,
     goForward,
+    recordSearch,
   }
 
   return <NavigationContext.Provider value={api}>{children}</NavigationContext.Provider>

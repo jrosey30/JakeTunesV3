@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import SearchPanel from './SearchPanel'
+import { onReopenSearch } from '../../searchNav'
 
 /**
  * Top-right search pill in the toolbar. 4.5: now hosts the universal-
@@ -69,6 +70,15 @@ export default function SearchPill() {
   useEffect(() => {
     requestAnimationFrame(updateCaretOffset)
   }, [query])
+
+  // Search-as-destination: when "back" lands on a detail that was opened from a
+  // search result, the NavigationContext fires reopenSearch — restore the query
+  // + focus so the SearchPanel re-appears with the same results.
+  useEffect(() => onReopenSearch((q) => {
+    setQuery(q)
+    setFocused(true)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }), [])
 
   const panelOpen = focused && query.trim().length > 0
 

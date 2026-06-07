@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
+import { useNavigation } from '../../context/NavigationContext'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { buildIndex, search, normalize, type SearchIndex, type SearchRow, type RankedRow } from '../../utils/searchIndex'
@@ -67,6 +68,7 @@ function HighlightedText({ text, query }: { text: string; query: string }): JSX.
 
 export default function SearchPanel({ query, inputEl, onClose }: Props) {
   const { state: lib, dispatch } = useLibrary()
+  const { recordSearch } = useNavigation()
   const { state: pb } = usePlayback()
   const { playTrack } = useAudio()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -149,15 +151,20 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
         // can pull in adjacent matches as a queue.
         playTrack(t, [t], 0, undefined, true)
       }
-    } else if (row.kind === 'album') {
-      dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: row.key })
-    } else if (row.kind === 'artist') {
-      dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: row.name })
-    } else if (row.kind === 'playlist') {
-      dispatch({ type: 'VIEW_PLAYLIST', id: row.id })
+    } else {
+      // Opening a detail/playlist from a result — remember the search so the
+      // first "back" out of it returns to these results (search-as-destination).
+      recordSearch(query)
+      if (row.kind === 'album') {
+        dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: row.key })
+      } else if (row.kind === 'artist') {
+        dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: row.name })
+      } else if (row.kind === 'playlist') {
+        dispatch({ type: 'VIEW_PLAYLIST', id: row.id })
+      }
     }
     onClose()
-  }, [lib.tracks, playTrack, dispatch, onClose])
+  }, [lib.tracks, playTrack, dispatch, onClose, recordSearch, query])
 
   // Keyboard nav — listens on the bound input so the user can type +
   // navigate without losing focus. The handler captures and stops
