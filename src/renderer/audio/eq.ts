@@ -44,6 +44,10 @@ export const EQ_PRESETS: Record<string, { preamp: number; bands: number[] }> = {
   'Acoustic':        { preamp: 0,  bands: [ 5,  4,  4,  2,  3,  2,  3,  4,  3,  2] },
   'Bass Booster':    { preamp: 0,  bands: [ 6,  5,  4,  2,  0,  0,  0,  0,  0,  0] },
   'Bass Reducer':    { preamp: 0,  bands: [-6, -5, -4, -2,  0,  0,  0,  0,  0,  0] },
+  // Gentle presence/definition lift (1–8 kHz) — pulls vocals, backing vocals,
+  // and instrument detail forward without touching the bass foundation or
+  // tipping into harshness. Subtle by design; the rest is the stereo-width pass.
+  'Clarity':         { preamp: 0,  bands: [ 0,  0,  0,  0,  0,  1,  2,  2,  1,  0] },
   'Classical':       { preamp: 0,  bands: [ 5,  4,  3,  2, -2, -2,  0,  3,  4,  4] },
   'Dance':           { preamp: 0,  bands: [ 4,  6,  4,  0,  2,  4,  6,  6,  4,  0] },
   'Deep':            { preamp: 0,  bands: [ 5,  3,  2,  1,  3,  2,  1,  0, -2, -4] },

@@ -352,6 +352,34 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
 
           {tab === 'EQ' && (
             <>
+              {/* Stereo-width enhancer — inserted at the master output, so unlike
+                  the EQ below it DOES affect normal (Web Audio) playback. */}
+              <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid #e0ded8' }}>
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
+                  <span>Stereo width</span>
+                  <span style={{ color: draft.audio.stereoWidth > 1.01 ? '#1f7a8c' : '#9a958c' }}>
+                    {draft.audio.stereoWidth > 1.01 ? `+${Math.round((draft.audio.stereoWidth - 1) * 100)}%` : 'Off'}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={1.0}
+                  max={1.8}
+                  step={0.05}
+                  value={draft.audio.stereoWidth}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    audio: { ...draft.audio, stereoWidth: Number(e.target.value) },
+                  })}
+                  style={{ width: '100%' }}
+                />
+                <p className="imp-help" style={{ marginTop: 6 }}>
+                  Widens panned instruments + backing vocals while keeping the center
+                  (lead vocal, bass, kick) solid. Far left = off (playback untouched).
+                  Subtle wins — try +20–30% and trust your ears.
+                </p>
+              </div>
+
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <input
                   type="checkbox"

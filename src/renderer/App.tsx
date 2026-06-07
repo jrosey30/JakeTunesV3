@@ -37,6 +37,7 @@ import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
 import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
 import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
+import { setStereoWidth } from './audio/audioEnhance'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
@@ -133,6 +134,7 @@ function AppInner() {
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
       setEqSettings(merged.eq)
+      setStereoWidth(merged.audio.stereoWidth)
     })
   }, [])
 
@@ -1593,6 +1595,7 @@ function AppInner() {
               setAppSettings(next)
               setCrossfadeSettings(next.crossfade)
               setEqSettings(next.eq)
+              setStereoWidth(next.audio.stereoWidth)
               setSettingsOpen(false)
             }}
           />

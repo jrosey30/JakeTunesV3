@@ -285,6 +285,9 @@ export interface AppSettings {
   audio: {
     callRouteEnabled: boolean
     callRouteDeviceLabel: string   // '' = not configured yet
+    // 4.5: opt-in master-output stereo-width enhancer. 1.0 = off (transparent);
+    // up to ~1.8 widens panned content while preserving the mono center.
+    stereoWidth: number
   }
   // Brief 023: removed `mobile.snapshotExportPath`. The mobile-sync
   // feature (Export Snapshot for Mobile / Apply Mobile Overrides) is
@@ -311,7 +314,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // Default-on with empty path → main resolves to ~/Music2/_inbox.
   inbox: { enabled: true, path: '' },
   // Off until the user picks a speaker in Preferences → Audio.
-  audio: { callRouteEnabled: false, callRouteDeviceLabel: '' },
+  audio: { callRouteEnabled: false, callRouteDeviceLabel: '', stereoWidth: 1.0 },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
