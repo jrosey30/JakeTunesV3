@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -6,7 +6,7 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
-import { canonicalArtist, isSameArtist } from '../utils/artistAlias'
+import { canonicalArtist, isSameArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useNavigation } from '../context/NavigationContext'
@@ -118,6 +118,7 @@ export default function ArtistDetailView() {
   // OR contributingArtists.includes — canonicalize so "Paul McCartney
   // & Wings" tracks land on the "Paul McCartney" page — then SPLIT by
   // the raw tag so each persona keeps its own discography.
+  const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
   const personas = useMemo<Persona[]>(() => {
     if (!artist) return []
     const canonicalActive = canonicalArtist(artist)
@@ -178,7 +179,7 @@ export default function ArtistDetailView() {
       return aMin - bMin
     })
     return out
-  }, [lib.tracks, artist])
+  }, [lib.tracks, artist, aliasVersion])
 
   // Flattened album list — kept for hero stats + genre chips.
   const albums = useMemo<AlbumGroup[]>(
@@ -219,7 +220,7 @@ export default function ArtistDetailView() {
   // 4.5.0-44: canonicalize before lookup so an alias-merged row (e.g.
   // "Paul McCartney & Wings") still pulls the real Paul McCartney photo
   // / wiki / discography instead of returning empty.
-  const lookupName = useMemo(() => canonicalArtist(artist), [artist])
+  const lookupName = useMemo(() => canonicalArtist(artist), [artist, aliasVersion])
   const [photoSlug, setPhotoSlug] = useState<string | null>(null)
   useEffect(() => {
     if (!lookupName) return

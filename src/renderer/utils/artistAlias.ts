@@ -22,6 +22,8 @@ const ALIAS_RULES: Array<[RegExp | string, string]> = [
   [/^paul mccartney( and| &| with)? wings$/i, 'Paul McCartney'],
   [/^wings$/i, 'Paul McCartney'],
   [/^paul mccartney( and| &) wings$/i, 'Paul McCartney'],
+  [/^paul( and| &) linda mccartney$/i, 'Paul McCartney'],
+  [/^paul mccartney( and| &) linda mccartney$/i, 'Paul McCartney'],
 
   // John Lennon side projects
   [/^john lennon( and| &) yoko ono$/i, 'John Lennon'],
@@ -58,6 +60,45 @@ const ALIAS_RULES: Array<[RegExp | string, string]> = [
   [/^elvis presley( and| &) the jordanaires$/i, 'Elvis Presley'],
 ]
 
+// ── User/AI-managed alias map — extends the curated ALIAS_RULES baseline. ──
+// Loaded from artist-aliases.json on boot (setUserAliases) and updated when the
+// user approves AI groupings or edits by hand. Keyed by the same
+// normalizeForCompare() form the rules use; value = canonical artist name. The
+// store version lets the Artists view + artist page regroup the instant it
+// changes (via useSyncExternalStore). This is what moves grouping out of code
+// and into the user's own data.
+let userAliases: Record<string, string> = {}
+let aliasVersion = 0
+const aliasListeners = new Set<() => void>()
+
+/** Replace the user/AI alias map (called on boot + after every approve/edit). */
+export function setUserAliases(map: Record<string, string>): void {
+  const next: Record<string, string> = {}
+  for (const [k, v] of Object.entries(map || {})) {
+    const key = normalizeForCompare(String(k))
+    const val = String(v ?? '').trim()
+    if (key && val) next[key] = val
+  }
+  userAliases = next
+  aliasVersion++
+  for (const l of aliasListeners) l()
+}
+
+/** Current map (raw, for the management UI). */
+export function getUserAliases(): Record<string, string> {
+  return userAliases
+}
+
+export function subscribeAliases(cb: () => void): () => void {
+  aliasListeners.add(cb)
+  return () => { aliasListeners.delete(cb) }
+}
+
+/** Snapshot for useSyncExternalStore — a version number that bumps on change. */
+export function getAliasVersion(): number {
+  return aliasVersion
+}
+
 /**
  * Case-insensitive identity key for artist grouping, dedupe, and sync.
  * All words — articles ("the", "a"), prepositions ("of", "in"), etc. —
@@ -87,6 +128,9 @@ export function canonicalArtist(name: string): string {
   if (!name) return name
   const trimmed = name.trim()
   if (!trimmed) return trimmed
+  // User/AI map wins over the curated baseline — it's the override layer.
+  const userHit = userAliases[normalizeForCompare(trimmed)]
+  if (userHit) return userHit
   for (const [pattern, canonical] of ALIAS_RULES) {
     if (typeof pattern === 'string') {
       if (normalizeForCompare(trimmed) === normalizeForCompare(pattern)) return canonical

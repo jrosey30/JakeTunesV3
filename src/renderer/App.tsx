@@ -38,6 +38,7 @@ import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
 import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
 import { setStereoWidth } from './audio/audioEnhance'
+import { setUserAliases } from './utils/artistAlias'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
@@ -136,6 +137,14 @@ function AppInner() {
       setEqSettings(merged.eq)
       setStereoWidth(merged.audio.stereoWidth)
     })
+  }, [])
+
+  // Load the user/AI artist-alias map once on boot so canonicalArtist groups
+  // (Wings, Paul & Linda McCartney → Paul McCartney) from the very first render.
+  useEffect(() => {
+    window.electronAPI.loadArtistAliases?.().then((r) => {
+      if (r?.ok) setUserAliases(r.aliases)
+    }).catch(() => { /* no overrides — the curated baseline still applies */ })
   }, [])
 
   // Subscribe the renderer-side recently-added store to the main-process

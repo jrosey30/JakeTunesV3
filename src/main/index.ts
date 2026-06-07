@@ -853,6 +853,42 @@ ipcMain.handle('restore-backup', async (_e, file: string) => {
   return res
 })
 
+// ── Artist aliases (metadata hierarchy) — user/AI grouping map. ──────
+// artist-aliases.json: { "<raw artist tag>": "<canonical artist>" }. The
+// renderer's canonicalArtist() consults it OVER the curated baseline, so Wings,
+// Paul & Linda McCartney, etc. roll up to a primary. Written by the AI-grouping
+// review + manual "Same as…". Small user data; atomic tmp+rename like the rest.
+function artistAliasesPath(): string {
+  return join(STATE_DIR, 'artist-aliases.json')
+}
+ipcMain.handle('load-artist-aliases', async (): Promise<{ ok: boolean; aliases: Record<string, string> }> => {
+  try {
+    const parsed = JSON.parse(await readFile(artistAliasesPath(), 'utf-8'))
+    const aliases = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed as Record<string, string> : {}
+    return { ok: true, aliases }
+  } catch {
+    return { ok: true, aliases: {} }   // missing/torn → empty map (no grouping overrides)
+  }
+})
+ipcMain.handle('save-artist-aliases', async (_e, aliases: Record<string, string>): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const clean: Record<string, string> = {}
+    for (const [k, v] of Object.entries(aliases || {})) {
+      const key = String(k).trim(); const val = String(v ?? '').trim()
+      if (key && val) clean[key] = val   // identity maps allowed (they override/undo a baseline grouping)
+    }
+    await mkdir(STATE_DIR, { recursive: true })
+    const path = artistAliasesPath()
+    const tmp = `${path}.tmp.json`
+    await writeFile(tmp, JSON.stringify(clean, null, 2), 'utf-8')
+    const { rename: renameFS } = await import('fs/promises')
+    await renameFS(tmp, path)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'save failed' }
+  }
+})
+
 // 4.5.0-118 — Discovery Brain Phase 1: the taste fingerprint (taste-model.ts).
 // Pure compute over the current library; Phase 2's radar grounds + ranks with it.
 ipcMain.handle('get-taste-fingerprint', async () => {

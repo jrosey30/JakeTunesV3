@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -14,7 +14,7 @@ import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { Track } from '../types'
 import { setNotice } from '../activity'
-import { artistIdentityKey, canonicalArtist } from '../utils/artistAlias'
+import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import '../styles/artists.css'
 
@@ -62,6 +62,8 @@ export default function ArtistsView() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
 
+  // Regroup when the user/AI alias map changes (boot load or an approve/edit).
+  const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
   const artists = useMemo((): ArtistGroup[] => {
     const map = new Map<string, Track[]>()
     const displayNames = new Map<string, string>()
@@ -110,7 +112,7 @@ export default function ArtistsView() {
           albums: Array.from(albumMap.entries()).map(([n, t]) => ({ name: n, tracks: t }))
         }
       })
-  }, [lib.tracks])
+  }, [lib.tracks, aliasVersion])
 
   // Filter against the global toolbar Search Pill. Matches artist
   // name, album name, or track title.

@@ -189,6 +189,8 @@ const electronAPI = {
   restoreBackup: (file: string) => ipcRenderer.invoke('restore-backup', file),
   // 4.5.0-118 — Discovery Brain Phase 1: taste fingerprint.
   getTasteFingerprint: () => ipcRenderer.invoke('get-taste-fingerprint'),
+  loadArtistAliases: () => ipcRenderer.invoke('load-artist-aliases'),
+  saveArtistAliases: (aliases: Record<string, string>) => ipcRenderer.invoke('save-artist-aliases', aliases),
   // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
   getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
   // 4.5.0-82 — windowed play counts derived from the per-play event
