@@ -74,6 +74,18 @@ use and genre deep-dives feel authoritative.
 
 ---
 
+## Backlog (requested 2026-06-06, do later)
+- **Merge Listen-to-the-List + New for You into one "Discovery" view.** They're
+  the two discovery surfaces (LTL = your jotted "want to hear" list; New for You
+  = the AI radar). Recommended shape: ONE sidebar entry → New for You radar feed
+  on top, "Your List" (LTL) below it (or a two-tab toggle). Collapses two entries
+  into one and unifies "add to list" (radar's Add + manual jots land in the same
+  place).
+- **Recolor New for You** — it's currently `#bb4308`, identical to The Music Man,
+  which is confusing. The merge resolves it: the single Discovery entry gets a
+  distinct, non-orange color (candidate: a teal/blue so "discovery" reads cool vs.
+  the Music Man's warm orange). Quick once we pick the hue.
+
 ## Open questions / risks
 - **API cost** of live web-search per query → cache aggressively; rate-limit.
 - **Feed ToS / scraping** for Phase 2b → prefer official RSS/APIs (Bandcamp, RA),

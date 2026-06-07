@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useSyncExternalStore } from 'react'
 import { setNotice } from '../activity'
+import { togglePreview, subscribePreview, getPreviewSnapshot, stopPreview } from '../previewPlayer'
 import '../styles/new-for-you.css'
 
 interface RadarCandidate {
@@ -12,10 +13,11 @@ interface RadarCandidate {
   reasons: string[]
 }
 
-// Module-level cache so the radar persists across view switches (same pattern
-// as ListenToTheListView). Cleared only by an explicit Refresh.
+// Module-level cache so the radar (and its iTunes enrichment) persist across
+// view switches. Cleared only by an explicit Refresh.
 let radarCache: RadarCandidate[] | null = null
 let radarAtCache: number | null = null
+const enrichCache: Record<string, { art?: string; preview?: string }> = {}
 
 export default function NewForYouView() {
   const [candidates, setCandidates] = useState<RadarCandidate[]>(radarCache ?? [])
@@ -23,6 +25,8 @@ export default function NewForYouView() {
   const [error, setError] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<number | null>(radarAtCache)
   const [added, setAdded] = useState<Set<string>>(new Set())
+  const [enriched, setEnriched] = useState<Record<string, { art?: string; preview?: string }>>({ ...enrichCache })
+  const previewState = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
 
   const fetchRadar = useCallback(async (force: boolean) => {
     setLoading(true); setError(null)
@@ -42,6 +46,29 @@ export default function NewForYouView() {
   }, [])
 
   useEffect(() => { if (radarCache === null) void fetchRadar(false) }, [fetchRadar])
+
+  // Lazily enrich each card with iTunes cover art + a 30s preview URL.
+  // Fires in parallel; cards fill in as results land. Cached across remounts.
+  useEffect(() => {
+    if (candidates.length === 0) return
+    let cancelled = false
+    for (const c of candidates) {
+      const key = `${c.artist}|${c.title}`
+      if (enrichCache[key]) continue
+      window.electronAPI.searchItunes?.(`${c.artist} ${c.title}`).then((r) => {
+        if (cancelled || !r?.ok) return
+        const best = r.results?.[0]
+        if (!best) return
+        const entry = { art: best.artworkUrl?.replace('100x100', '400x400'), preview: best.previewUrl }
+        enrichCache[key] = entry
+        setEnriched((prev) => ({ ...prev, [key]: entry }))
+      }).catch(() => { /* leave un-enriched */ })
+    }
+    return () => { cancelled = true }
+  }, [candidates])
+
+  // Stop any preview when leaving the view.
+  useEffect(() => () => stopPreview(), [])
 
   const handleAdd = useCallback(async (c: RadarCandidate) => {
     const key = `${c.artist}|${c.title}`
@@ -86,19 +113,34 @@ export default function NewForYouView() {
           const key = `${c.artist}|${c.title}`
           const pct = Math.round(c.score * 100)
           const isAdded = added.has(key)
+          const art = enriched[key]?.art
+          const previewUrl = enriched[key]?.preview
+          const isPlaying = previewState.playingId === key
           return (
             <div key={key} className="nfy-card">
-              <div className="nfy-card-head">
-                <div className="nfy-card-title" title={c.title}>{c.title}</div>
+              <div className="nfy-cover">
+                {art
+                  ? <img src={art} alt={c.title} loading="lazy" />
+                  : <div className="nfy-cover-ph">♫</div>}
                 <div className="nfy-match" title={`${pct}% taste match`}>{pct}%</div>
+                {previewUrl && (
+                  <button
+                    className={`nfy-preview ${isPlaying ? 'nfy-preview--on' : ''}`}
+                    onClick={() => togglePreview(key, previewUrl, c.title, c.artist)}
+                    title={isPlaying ? 'Stop preview' : 'Play 30s preview'}
+                    aria-label={isPlaying ? 'Stop preview' : 'Play preview'}
+                  >{isPlaying ? '⏹' : '▶'}</button>
+                )}
               </div>
-              <div className="nfy-artist">{c.artist}</div>
-              <div className="nfy-meta">{[c.genre, c.year].filter(Boolean).join('  ·  ')}</div>
-              {c.why && <p className="nfy-why">{c.why}</p>}
-              {c.reasons?.length > 0 && <div className="nfy-reasons">{c.reasons.join(' · ')}</div>}
-              <button className="nfy-add" disabled={isAdded} onClick={() => handleAdd(c)}>
-                {isAdded ? '✓ On your list' : '+ Add to List'}
-              </button>
+              <div className="nfy-card-body">
+                <div className="nfy-card-title" title={c.title}>{c.title}</div>
+                <div className="nfy-artist">{c.artist}</div>
+                <div className="nfy-meta">{[c.genre, c.year].filter(Boolean).join('  ·  ')}</div>
+                {c.why && <p className="nfy-why">{c.why}</p>}
+                <button className="nfy-add" disabled={isAdded} onClick={() => handleAdd(c)}>
+                  {isAdded ? '✓ On your list' : '+ Add to List'}
+                </button>
+              </div>
             </div>
           )
         })}
