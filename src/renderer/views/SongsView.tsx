@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useState, useEffect, useRef, useMemo, memo, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -98,6 +98,100 @@ const FOLLOW_IDLE_MS = 15000
 // Fixed row height (px) — matches the value passed to useVirtualScroll.
 const ROW_HEIGHT = 19
 
+// One row of the virtualized songs list. Memoized so that on a scroll event
+// that doesn't change THIS row's props (the common case — scrolling within a
+// 19px boundary, or a 1-row shift where most rows are unchanged), React skips
+// re-rendering it entirely. All handler props are stabilized in the parent
+// (useCallback + refs) so the shallow compare actually holds during a scroll.
+// idx is a track's ABSOLUTE position in `sorted`, so it's stable per track
+// across scrolls — only the alternating-stripe parity depends on it.
+interface SongRowProps {
+  track: Track
+  idx: number
+  isPlaying: boolean
+  isSelected: boolean
+  isRecent: boolean
+  gridTemplate: string
+  visibleCols: ColDef[]
+  onClick: (id: number, idx: number, e: React.MouseEvent) => void
+  onDoubleClick: (idx: number) => void
+  onContextMenu: (e: React.MouseEvent, track: Track, idx: number) => void
+  onDragStart: (track: Track, e: React.DragEvent) => void
+  onRatingChange: (id: number, rating: number) => void
+}
+
+const SongRow = memo(function SongRow({
+  track, idx, isPlaying, isSelected, isRecent, gridTemplate, visibleCols,
+  onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange,
+}: SongRowProps) {
+  return (
+    <div
+      className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${isRecent ? 'songs-row--recently-added' : ''}`}
+      style={{ gridTemplateColumns: gridTemplate }}
+      onClick={(e) => onClick(track.id, idx, e)}
+      onDoubleClick={() => onDoubleClick(idx)}
+      onMouseEnter={() => prefetchTrackForPlay(track)}
+      onMouseDown={() => prefetchTrackImmediate(track)}
+      onContextMenu={(e) => onContextMenu(e, track, idx)}
+      draggable
+      onDragStart={(e) => onDragStart(track, e)}
+    >
+      {visibleCols.map(col => {
+        switch (col.key) {
+          case 'playing':
+            return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
+          case 'title': {
+            const starred = (Number(track.rating) || 0) > 0
+            return (
+              <div key={col.key} className="songs-cell songs-cell--title">
+                {track.audioMissing && (
+                  <span
+                    className="songs-cell-missing-badge"
+                    title="JakeTunes can't find this track's audio file. The library entry is preserved — re-import the file to restore playback."
+                    aria-label="Audio file missing"
+                  >!</span>
+                )}
+                <span className="title-row-text">{track.title || ''}</span>
+                {/* 4.5: inline star to the RIGHT of the title.
+                    Hover-reveal when unstarred, always visible
+                    when starred. Click stops propagation so
+                    it doesn't trigger row select. */}
+                <button
+                  className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); onRatingChange(track.id, starred ? 0 : 5) }}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  title={starred ? 'Unstar' : 'Star'}
+                  aria-label={starred ? 'Unstar' : 'Star'}
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
+                    <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+                  </svg>
+                </button>
+              </div>
+            )
+          }
+          case 'time':
+            return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
+          case 'artist':
+            return <div key={col.key} className="songs-cell">{track.artist || ''}</div>
+          case 'album':
+            return <div key={col.key} className="songs-cell">{track.album || ''}</div>
+          case 'genre':
+            return <div key={col.key} className="songs-cell">{track.genre || ''}</div>
+          case 'year':
+            return <div key={col.key} className="songs-cell">{track.year || ''}</div>
+          case 'dateAdded':
+            return <div key={col.key} className="songs-cell">{formatDateAdded(track.dateAdded)}</div>
+          case 'playCount':
+            return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
+          default:
+            return null
+        }
+      })}
+    </div>
+  )
+})
+
 export default function SongsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
@@ -106,6 +200,13 @@ export default function SongsView() {
   // Subscribe to the Bandcamp recently-added store so the row class
   // re-renders when a new import lands or its 10s TTL expires.
   useSyncExternalStore(subscribeRecentlyAdded, recentlyAddedSnapshot)
+
+  // Mirror playTrack into a ref so the row callbacks stay stable across
+  // scroll-triggered re-renders without depending on useAudio's internal
+  // callback identity (it chains through loadAndPlay). Lets React.memo on
+  // the rows actually skip work during a scroll.
+  const playTrackRef = useRef(playTrack)
+  playTrackRef.current = playTrack
 
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set())
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
@@ -127,18 +228,24 @@ export default function SongsView() {
   // Any column NOT in columnOrder (e.g. a brand-new column added in a
   // future version that landed after the user's last save) gets
   // appended at the end so nothing silently disappears.
-  const byKey = ALL_COLUMN_DEFS.reduce<Record<string, ColDef>>((m, c) => { m[c.key] = c; return m }, {})
-  const orderedCols: ColDef[] = []
-  const seen = new Set<string>()
-  for (const k of columnOrder) {
-    const c = byKey[k]
-    if (c && !seen.has(k)) { orderedCols.push(c); seen.add(k) }
-  }
-  for (const c of ALL_COLUMN_DEFS) {
-    if (!seen.has(c.key)) orderedCols.push(c)
-  }
-  const visibleCols = orderedCols.filter(c => !hiddenCols.has(c.key))
-  const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
+  // Memoized so visibleCols/colWidths keep a STABLE identity across
+  // scroll-triggered re-renders — passing them to the memoized SongRow
+  // only works if their reference doesn't churn every render.
+  const { visibleCols, colWidths } = useMemo(() => {
+    const byKey = ALL_COLUMN_DEFS.reduce<Record<string, ColDef>>((m, c) => { m[c.key] = c; return m }, {})
+    const orderedCols: ColDef[] = []
+    const seen = new Set<string>()
+    for (const k of columnOrder) {
+      const c = byKey[k]
+      if (c && !seen.has(k)) { orderedCols.push(c); seen.add(k) }
+    }
+    for (const c of ALL_COLUMN_DEFS) {
+      if (!seen.has(c.key)) orderedCols.push(c)
+    }
+    const visibleCols = orderedCols.filter(c => !hiddenCols.has(c.key))
+    const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
+    return { visibleCols, colWidths }
+  }, [columnOrder, hiddenCols, colWidthMap])
 
   const sorted = useSortedTracks(lib.tracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
   // 4.4.22: seed useVirtualScroll's internal scrollTop from the persisted
@@ -168,8 +275,8 @@ export default function SongsView() {
   const handleDoubleClick = useCallback((idx: number) => {
     window.getSelection()?.removeAllRanges()
     const track = sorted[idx]
-    if (track) playTrack(track, sorted, idx, undefined, true)
-  }, [sorted, playTrack])
+    if (track) playTrackRef.current(track, sorted, idx, undefined, true)
+  }, [sorted])
 
   const lastClickedIdx = useRef<number>(-1)
   const selectedIdsRef = useRef(lib.selectedTrackIds)
@@ -198,12 +305,14 @@ export default function SongsView() {
 
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
     e.preventDefault()
-    // Select the track if not already selected
-    if (!lib.selectedTrackIds.has(track.id)) {
+    // Select the track if not already selected. Reads selectedIdsRef so this
+    // callback stays stable — depending on lib.selectedTrackIds would
+    // re-create it on every selection and re-render all memoized rows.
+    if (!selectedIdsRef.current.has(track.id)) {
       libDispatch({ type: 'SELECT_TRACK', id: track.id })
     }
     setCtxMenu({ x: e.clientX, y: e.clientY, track, idx })
-  }, [lib.selectedTrackIds, libDispatch])
+  }, [libDispatch])
 
   const getContextMenuItems = useCallback((): MenuEntry[] => {
     if (!ctxMenu) return []
@@ -482,8 +591,8 @@ export default function SongsView() {
     }
   }, [libDispatch])
 
-  const gridTemplate = songsGridTemplate(visibleCols, colWidths)
-  const gridTemplateFixed = songsGridTemplateFixed(colWidths)
+  const gridTemplate = useMemo(() => songsGridTemplate(visibleCols, colWidths), [visibleCols, colWidths])
+  const gridTemplateFixed = useMemo(() => songsGridTemplateFixed(colWidths), [colWidths])
 
   const viewRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -773,6 +882,26 @@ export default function SongsView() {
     })
   }, [])
 
+  // Stable drag-start for a row: reads selection + sorted from refs so the
+  // callback identity never changes (keeps the memoized rows from
+  // re-rendering during scroll). Builds the multi-select payload + the
+  // count-badge ghost — behavior-identical to the former inline handler.
+  const handleRowDragStart = useCallback((track: Track, e: React.DragEvent) => {
+    const sel = selectedIdsRef.current
+    const selected = sel.has(track.id) && sel.size > 1
+      ? sortedRef.current.filter(t => sel.has(t.id))
+      : [track]
+    e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(selected.map(t => t.id)))
+    e.dataTransfer.effectAllowed = 'copy'
+    // Custom drag image with count badge
+    const ghost = document.createElement('div')
+    ghost.className = 'drag-ghost'
+    ghost.textContent = selected.length === 1 ? track.title : `${selected.length} Songs`
+    document.body.appendChild(ghost)
+    e.dataTransfer.setDragImage(ghost, 0, 10)
+    requestAnimationFrame(() => document.body.removeChild(ghost))
+  }, [])
+
   return (
     <div
       className="songs-view"
@@ -830,91 +959,22 @@ export default function SongsView() {
           <div style={{ position: 'absolute', top: offsetY, left: 0, width: '100%' }}>
             {sorted.slice(startIndex, endIndex).map((track, i) => {
               const idx = startIndex + i
-              const isPlaying = pb.nowPlaying?.id === track.id
-              const isSelected = lib.selectedTrackIds.has(track.id)
-              const isRecent = isRecentlyAdded(track.id)
               return (
-                <div
+                <SongRow
                   key={track.id}
-                  className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${isRecent ? 'songs-row--recently-added' : ''}`}
-                  style={{ gridTemplateColumns: gridTemplate }}
-                  onClick={(e) => handleClick(track.id, idx, e)}
-                  onDoubleClick={() => handleDoubleClick(idx)}
-                  onMouseEnter={() => prefetchTrackForPlay(track)}
-                  onMouseDown={() => prefetchTrackImmediate(track)}
-                  onContextMenu={(e) => handleContextMenu(e, track, idx)}
-                  draggable
-                  onDragStart={(e) => {
-                    const selected = lib.selectedTrackIds.has(track.id) && lib.selectedTrackIds.size > 1
-                      ? sorted.filter(t => lib.selectedTrackIds.has(t.id))
-                      : [track]
-                    e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(selected.map(t => t.id)))
-                    e.dataTransfer.effectAllowed = 'copy'
-
-                    // Custom drag image with count badge
-                    const ghost = document.createElement('div')
-                    ghost.className = 'drag-ghost'
-                    ghost.textContent = selected.length === 1
-                      ? track.title
-                      : `${selected.length} Songs`
-                    document.body.appendChild(ghost)
-                    e.dataTransfer.setDragImage(ghost, 0, 10)
-                    requestAnimationFrame(() => document.body.removeChild(ghost))
-                  }}
-                >
-                  {visibleCols.map(col => {
-                    switch (col.key) {
-                      case 'playing':
-                        return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
-                      case 'title': {
-                        const starred = (Number(track.rating) || 0) > 0
-                        return (
-                          <div key={col.key} className="songs-cell songs-cell--title">
-                            {track.audioMissing && (
-                              <span
-                                className="songs-cell-missing-badge"
-                                title="JakeTunes can't find this track's audio file. The library entry is preserved — re-import the file to restore playback."
-                                aria-label="Audio file missing"
-                              >!</span>
-                            )}
-                            <span className="title-row-text">{track.title || ''}</span>
-                            {/* 4.5: inline star to the RIGHT of the title.
-                                Hover-reveal when unstarred, always visible
-                                when starred. Click stops propagation so
-                                it doesn't trigger row select. */}
-                            <button
-                              className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
-                              onClick={(e) => { e.stopPropagation(); handleRatingChange(track.id, starred ? 0 : 5) }}
-                              onDoubleClick={(e) => e.stopPropagation()}
-                              title={starred ? 'Unstar' : 'Star'}
-                              aria-label={starred ? 'Unstar' : 'Star'}
-                            >
-                              <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
-                                <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
-                              </svg>
-                            </button>
-                          </div>
-                        )
-                      }
-                      case 'time':
-                        return <div key={col.key} className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
-                      case 'artist':
-                        return <div key={col.key} className="songs-cell">{track.artist || ''}</div>
-                      case 'album':
-                        return <div key={col.key} className="songs-cell">{track.album || ''}</div>
-                      case 'genre':
-                        return <div key={col.key} className="songs-cell">{track.genre || ''}</div>
-                      case 'year':
-                        return <div key={col.key} className="songs-cell">{track.year || ''}</div>
-                      case 'dateAdded':
-                        return <div key={col.key} className="songs-cell">{formatDateAdded(track.dateAdded)}</div>
-                      case 'playCount':
-                        return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
-                      default:
-                        return null
-                    }
-                  })}
-                </div>
+                  track={track}
+                  idx={idx}
+                  isPlaying={pb.nowPlaying?.id === track.id}
+                  isSelected={lib.selectedTrackIds.has(track.id)}
+                  isRecent={isRecentlyAdded(track.id)}
+                  gridTemplate={gridTemplate}
+                  visibleCols={visibleCols}
+                  onClick={handleClick}
+                  onDoubleClick={handleDoubleClick}
+                  onContextMenu={handleContextMenu}
+                  onDragStart={handleRowDragStart}
+                  onRatingChange={handleRatingChange}
+                />
               )
             })}
           </div>
