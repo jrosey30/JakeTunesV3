@@ -314,7 +314,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // Default-on with empty path → main resolves to ~/Music2/_inbox.
   inbox: { enabled: true, path: '' },
   // Off until the user picks a speaker in Preferences → Audio.
-  audio: { callRouteEnabled: false, callRouteDeviceLabel: '', stereoWidth: 1.0 },
+  audio: { callRouteEnabled: false, callRouteDeviceLabel: '', stereoWidth: 1.3 },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
