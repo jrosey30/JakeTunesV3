@@ -23,6 +23,8 @@ import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from '
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint } from './taste-model'
 import type { TrackLike } from './taste-model'
+import { parseCandidates, rankCandidates } from './radar-core'
+import type { RankedCandidate } from './radar-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -858,6 +860,59 @@ ipcMain.handle('get-taste-fingerprint', async () => {
     return { ok: true, fingerprint: computeTasteFingerprint(Array.isArray(lib.tracks) ? lib.tracks : []) }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'taste failed' }
+  }
+})
+
+// 4.5.0-118 — Discovery Brain Phase 2: the new-music radar. Taste fingerprint
+// → live Exa search per top spine → Music Man extracts named releases from the
+// journalism → rank/filter against taste (drop owned). Cached 6h; force=true
+// from the refresh button. Honest fail-soft (ok:false → UI shows the reason).
+let radarCache: { candidates: RankedCandidate[]; generatedAt: number } | null = null
+const RADAR_TTL_MS = 6 * 60 * 60 * 1000
+const RADAR_SCENES: Record<string, string> = {
+  'Rock & Alternative': 'indie rock, alternative, and punk',
+  'Hip-Hop & Rap': 'hip-hop and rap',
+  'Electronic & Dance': 'electronic, house, and dance',
+  'Soul, Funk & R&B': 'soul, funk, and R&B',
+  'Pop': 'pop',
+  'Jazz, Blues & Classical': 'jazz and experimental',
+}
+ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
+  if (!force && radarCache && Date.now() - radarCache.generatedAt < RADAR_TTL_MS) {
+    return { ok: true, candidates: radarCache.candidates, generatedAt: radarCache.generatedAt, cached: true }
+  }
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
+    const fp = computeTasteFingerprint(Array.isArray(lib.tracks) ? lib.tracks : [])
+    if (fp.totalTracks === 0) return { ok: false, error: 'Your library is empty — nothing to base discovery on yet.' }
+    const year = String(new Date().getFullYear())
+    const scenes = fp.spines.slice(0, 3).map((s) => RADAR_SCENES[s.name] || s.name.toLowerCase())
+    const { exaNewMusic } = await import('./exa')
+    const blocks = await Promise.all(scenes.map((s) => exaNewMusic(s, year)))
+    const journalism = blocks.filter(Boolean).join('\n\n')
+    if (!journalism) return { ok: false, error: 'New for You needs web search for fresh releases. Add your Exa key in Settings → AI to activate live picks (no made-up recommendations without it).' }
+    const user = [
+      `This listener's taste: ${fp.summary}`,
+      `Top genres: ${fp.topGenres.slice(0, 8).map((g) => g.genre).join(', ')}.`,
+      '',
+      'Below is CURRENT music journalism about new releases:',
+      journalism,
+      '',
+      `From ONLY the releases named above, pick up to 15 NEW releases (${Number(year) - 1}–${year}) this listener would most likely love given their taste. For each give: artist, release title, its genre, the year, and a one-sentence "why" in your voice tying it to their taste. Do NOT invent releases that aren't named above. Return ONLY JSON — an array of objects [{"artist","title","genre","year","why"}], no prose, no code fence.`,
+    ].join('\n')
+    const reply = await claudeCall('new-music-radar', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: MUSIC_MAN_CORE,
+      messages: [{ role: 'user', content: user }],
+    })
+    const block = reply.content[0]
+    const text = block && block.type === 'text' ? block.text : ''
+    const candidates = rankCandidates(fp, parseCandidates(text), 12)
+    radarCache = { candidates, generatedAt: Date.now() }
+    return { ok: true, candidates, generatedAt: radarCache.generatedAt }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'radar failed' }
   }
 })
 

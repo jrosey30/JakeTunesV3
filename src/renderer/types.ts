@@ -90,7 +90,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list' | 'new-for-you'
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on
@@ -382,6 +382,8 @@ declare global {
       restoreBackup: (file: string) => Promise<{ ok: boolean; trackCount?: number; error?: string }>
       // 4.5.0-118 — Discovery Brain Phase 1: taste fingerprint.
       getTasteFingerprint: () => Promise<{ ok: boolean; fingerprint?: { totalTracks: number; totalPlays: number; summary: string; spines: Array<{ name: string; tracks: number; weight: number }>; topGenres: Array<{ genre: string; tracks: number; plays: number; weight: number }>; topArtists: Array<{ artist: string; tracks: number; plays: number }>; peakDecade: number | null; ownedArtists: string[] }; error?: string }>
+      // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
+      getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

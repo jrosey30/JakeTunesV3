@@ -56,6 +56,10 @@ export const EXA_QUERY_TEMPLATES = {
   /** Similar artists / discovery. Used for recommendations. */
   similarArtists: ({ artist }: { artist: string }) =>
     `Find artists musically similar to ${artist} — peers from the same scene, era, label, geographic micro-genre, or critical lineage. Search for music journalism that explicitly groups, compares, or names ${artist} alongside other artists; also find artists frequently cited as influences on ${artist} or influenced by ${artist}. Prioritize critical writing that explains why the comparison holds, not generic recommendation-engine output.`,
+
+  /** New-music discovery by scene/genre. Powers the Discovery Brain radar. */
+  newMusic: ({ scene, year }: { scene: string; year: string }) =>
+    `The best new music in ${scene} right now — albums, EPs, and singles released in ${year} (and the last few months) getting critical attention from Pitchfork, Stereogum, Resident Advisor, Bandcamp Daily, The Quietus, and Brooklyn Vegan. Name specific artists and specific releases with their titles. Focus on genuinely new/recent releases, not catalog reissues or anniversary editions.`,
 }
 
 // ── Cache + rate limit ──────────────────────────────────────────────
@@ -227,4 +231,13 @@ export function exaRecentNews(artist: string): Promise<string> {
 
 export function exaSimilarArtists(artist: string): Promise<string> {
   return exaSearch(EXA_QUERY_TEMPLATES.similarArtists({ artist }))
+}
+
+/** New-music discovery for a scene/genre, fresh (livecrawl) + day-cached. */
+export function exaNewMusic(scene: string, year: string): Promise<string> {
+  return exaSearch(EXA_QUERY_TEMPLATES.newMusic({ scene, year }), {
+    maxAgeHours: 0,
+    diskCacheTtlMs: EXA_NEWS_TTL_MS,
+    numResults: 6,
+  })
 }

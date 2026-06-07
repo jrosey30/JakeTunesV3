@@ -16,6 +16,11 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
   albums: <AlbumsIcon />,
   genres: <GenresIcon />,
   'listen-to-the-list': <ListenIcon />,
+  'new-for-you': (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" />
+    </svg>
+  ),
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
@@ -27,6 +32,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Albums', view: 'albums' },
   { label: 'Genres', view: 'genres' },
   { label: 'Listen to the List', view: 'listen-to-the-list' },
+  { label: 'New for You', view: 'new-for-you', highlight: '#bb4308' },
   { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
 
