@@ -20,6 +20,7 @@ import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
+import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -2707,17 +2708,12 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     // only; per-track identity is protected by the no-mass-unlink rule
     // below. `force` is the recovery escape hatch. On refusal we tell the
     // renderer to reload, so its view re-syncs from the intact disk copy.
-    if (!force && prevCount > 0 && newCount === 0) {
-      console.warn(`[save-library] REFUSED: would overwrite ${prevCount} tracks with an empty list.`)
+    const refusal = shouldRefuseSave(prevCount, newCount, force)
+    if (refusal) {
+      console.warn(`[save-library] REFUSED (${refusal.error}): ${prevCount} → ${newCount} tracks. Pass force to override.`)
       libraryCache.invalidate()
       mainWindow?.webContents.send('library-external-change')
-      return { ok: false, error: 'refused-empty-overwrite', prevCount, newCount }
-    }
-    if (!force && prevCount > 0 && newCount < prevCount * 0.5) {
-      console.warn(`[save-library] REFUSED suspicious shrink: ${prevCount} → ${newCount} tracks (>50% loss). Pass force to override.`)
-      libraryCache.invalidate()
-      mainWindow?.webContents.send('library-external-change')
-      return { ok: false, error: 'refused-suspicious-shrink', prevCount, newCount }
+      return { ok: false, ...refusal }
     }
     if (newCount < prevCount) {
       console.warn(`[save-library] library shrinking ${prevCount} → ${newCount} (-${prevCount - newCount}); audio preserved unless small & deliberate (see unlink guard).`)
@@ -2828,17 +2824,16 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
       // the files on disk as orphans (recoverable via
       // scripts/recover-orphans.mjs) rather than permanently unlinking
       // precious audio. `force` (explicit recovery/cleanup) bypasses the cap.
-      const UNLINK_CAP = 50
-      if (!force && deletedPaths.length > UNLINK_CAP) {
-        preservedOrphanCount = deletedPaths.length
-        console.warn(`[save-library] preserved ${deletedPaths.length} audio file(s) on disk (exceeds unlink cap ${UNLINK_CAP}); index updated, files kept as orphans.`)
-      } else {
+      if (mayUnlinkDeletions(deletedPaths.length, force)) {
         const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
         const pathSep = IS_WINDOWS ? '\\' : '/'
         for (const colon of deletedPaths) {
           const rel = colon.replace(/:/g, pathSep)
           try { await unlinkFS(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
         }
+      } else {
+        preservedOrphanCount = deletedPaths.length
+        console.warn(`[save-library] preserved ${deletedPaths.length} audio file(s) on disk (exceeds unlink cap ${UNLINK_CAP}); index updated, files kept as orphans.`)
       }
       scheduleDbRebuild(deletedPaths)
     }
