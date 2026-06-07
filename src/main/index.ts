@@ -9903,7 +9903,8 @@ async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
   }
 
   const localIds = new Set(local.map((r) => String(r.id)))
-  const backend = (await fetchRecommendationsFromBackend()) ?? []
+  const backendRaw = await fetchRecommendationsFromBackend()   // null = homemini unreachable
+  const backend = backendRaw ?? []
   const nas = (await readRecommendationsFromNas()) ?? []
 
   // Additive pull: new phone/NAS picks only. Never resurrect tombstoned
@@ -9920,7 +9921,64 @@ async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
     console.log(`[reco] synced ${merged.length} recommendations to local (was ${local.length}, pulled ${incoming.length} new from remote)`)
   }
   recommendationsSyncedAtMs = Date.now()
-  return merged
+  // Reconcile UP: re-push any recommendations homemini is missing (e.g. added
+  // while it was offline, so the original POST never landed) so the mobile app
+  // sees them. No-op when homemini already has them all, or is unreachable.
+  const reconciled = await pushLocalOnlyRecommendations(merged, backendRaw, tombstones)
+  return reconciled ?? merged
+}
+
+// Re-push local recommendations that homemini lacks. Additive — never deletes
+// on homemini. Skips anything homemini already has by id OR by song+artist
+// identity (so we never double-create), and adopts homemini's returned id for
+// each pushed reco (swapping our local-only copy) so the next additive pull
+// can't re-add it as a duplicate. Capped per run; failures retry next sync.
+async function pushLocalOnlyRecommendations(
+  local: RecommendationRecord[],
+  backendRaw: RecommendationRecord[] | null,
+  tombstones: Set<string>,
+): Promise<RecommendationRecord[] | null> {
+  if (backendRaw === null) return null   // unreachable — can't distinguish local-only from "homemini has none"
+  const backendIds = new Set(backendRaw.map((r) => String(r.id)))
+  const backendIdentity = new Set(
+    backendRaw.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)),
+  )
+  const localOnly = local.filter((r) => {
+    if (tombstones.has(String(r.id)) || backendIds.has(String(r.id))) return false
+    if (!(r.song || r.artist || r.album || r.note)) return false
+    const idk = recoRecordIdentityKey(r)
+    return !(idk && backendIdentity.has(idk))
+  }).slice(0, 20)   // cap so a backlog doesn't hammer homemini in one pass
+  if (localOnly.length === 0) return null
+
+  const byId = new Map(local.map((r) => [String(r.id), r] as const))
+  let pushed = 0
+  for (const r of localOnly) {
+    try {
+      const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song: r.song, artist: r.artist, album: r.album, note: r.note }),
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) continue
+      const parsed = (await res.json().catch(() => null)) as RecommendationRecord | { item?: RecommendationRecord } | null
+      const adopted = (parsed && typeof parsed === 'object' && 'id' in parsed && (parsed as RecommendationRecord).id)
+        ? (parsed as RecommendationRecord)
+        : ((parsed as { item?: RecommendationRecord } | null)?.item ?? null)
+      if (adopted?.id && String(adopted.id) !== String(r.id)) {
+        // Adopt homemini's id; keep our enrichment where homemini's is sparse.
+        byId.delete(String(r.id))
+        byId.set(String(adopted.id), { ...r, ...adopted, id: adopted.id })
+        pushed++
+      }
+    } catch { /* homemini hiccup — leave the reco; retry next sync */ }
+  }
+  if (pushed === 0) return null
+  const reconciled = sortRecommendations([...byId.values()])
+  await writeRecommendationsFile(reconciled)
+  console.log(`[reco] reconciled ${pushed} local-only recommendation(s) up to homemini`)
+  return reconciled
 }
 
 let readRecoInflight: Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> | null = null
