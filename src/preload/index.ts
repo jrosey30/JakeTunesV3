@@ -187,6 +187,8 @@ const electronAPI = {
   listBackups: () => ipcRenderer.invoke('list-backups'),
   createBackup: () => ipcRenderer.invoke('create-backup'),
   restoreBackup: (file: string) => ipcRenderer.invoke('restore-backup', file),
+  // 4.5.0-118 — Discovery Brain Phase 1: taste fingerprint.
+  getTasteFingerprint: () => ipcRenderer.invoke('get-taste-fingerprint'),
   // 4.5.0-82 — windowed play counts derived from the per-play event
   // log. Returns { trackIdString: count } for plays in the last
   // `windowMs` ms. Used by Top 25's Last Week / Last Month views to

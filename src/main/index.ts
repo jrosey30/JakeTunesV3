@@ -21,6 +21,8 @@ import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
+import { computeTasteFingerprint } from './taste-model'
+import type { TrackLike } from './taste-model'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -846,6 +848,17 @@ ipcMain.handle('restore-backup', async (_e, file: string) => {
   // On success, library.json was rewritten — tell the renderer to reload.
   if (res.ok) mainWindow?.webContents.send('library-external-change')
   return res
+})
+
+// 4.5.0-118 — Discovery Brain Phase 1: the taste fingerprint (taste-model.ts).
+// Pure compute over the current library; Phase 2's radar grounds + ranks with it.
+ipcMain.handle('get-taste-fingerprint', async () => {
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
+    return { ok: true, fingerprint: computeTasteFingerprint(Array.isArray(lib.tracks) ? lib.tracks : []) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'taste failed' }
+  }
 })
 
 ipcMain.handle('load-app-settings', async () => {

@@ -380,6 +380,8 @@ declare global {
       listBackups: () => Promise<{ ok: boolean; backups: Array<{ file: string; date: string; mtimeMs: number; trackCount: number; sizeBytes: number; reason: string }> }>
       createBackup: () => Promise<{ ok: boolean; backup?: { file: string; date: string; trackCount: number }; error?: string }>
       restoreBackup: (file: string) => Promise<{ ok: boolean; trackCount?: number; error?: string }>
+      // 4.5.0-118 — Discovery Brain Phase 1: taste fingerprint.
+      getTasteFingerprint: () => Promise<{ ok: boolean; fingerprint?: { totalTracks: number; totalPlays: number; summary: string; spines: Array<{ name: string; tracks: number; weight: number }>; topGenres: Array<{ genre: string; tracks: number; plays: number; weight: number }>; topArtists: Array<{ artist: string; tracks: number; plays: number }>; peakDecade: number | null; ownedArtists: string[] }; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
