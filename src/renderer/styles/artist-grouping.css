@@ -1,0 +1,105 @@
+/* Metadata hierarchy Phase 2 — AI artist-grouping review modal. */
+
+.agm-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(20, 18, 14, 0.42);
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px;
+}
+.agm-dialog {
+  width: 560px; max-width: 100%; max-height: 80vh;
+  display: flex; flex-direction: column;
+  background: #f7f6f3;
+  border: 1px solid #c9c6bf;
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+}
+.agm-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #e2e0da;
+  background: linear-gradient(#fbfaf8, #efeee9);
+}
+.agm-title { margin: 0 0 3px; font-size: 17px; font-weight: 700; color: #2a2a2a; }
+.agm-sub { margin: 0; font-size: 12px; color: #8a857c; max-width: 440px; line-height: 1.4; }
+.agm-x {
+  flex-shrink: 0; appearance: none; border: none; background: none;
+  font-size: 15px; color: #9a958c; cursor: pointer; padding: 2px 6px; border-radius: 5px;
+}
+.agm-x:hover { background: #e7e5df; color: #555; }
+
+.agm-loading, .agm-error, .agm-empty {
+  padding: 32px 20px; text-align: center; font-size: 13.5px;
+}
+.agm-loading { color: #8a857c; font-style: italic; }
+.agm-error { color: #a23a2a; }
+.agm-empty { color: #6a665d; }
+
+.agm-section { overflow-y: auto; }
+.agm-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 18px 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+  color: #8a857c;
+}
+.agm-count { color: #1f7a8c; letter-spacing: 0; }
+.agm-toggle { width: 100%; appearance: none; border: none; background: none; cursor: pointer; font: inherit; }
+.agm-toggle:hover { color: #5a554d; }
+
+.agm-list { display: flex; flex-direction: column; }
+.agm-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 18px;
+  border-top: 1px solid #ecebe5;
+  cursor: pointer;
+}
+.agm-row:hover:not(.agm-row--readonly) { background: #f1f0ec; }
+.agm-row--on { background: #f2f8f9; }
+.agm-row--on:hover { background: #eaf4f6; }
+.agm-row--readonly { cursor: default; opacity: 0.82; }
+.agm-row input[type="checkbox"] { margin-top: 3px; accent-color: #1f7a8c; }
+.agm-row-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.agm-merge { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.agm-tag { font-size: 13.5px; font-weight: 600; color: #2a2018; }
+.agm-arrow { color: #b3aea4; font-size: 13px; }
+.agm-canon { font-size: 13.5px; font-weight: 700; color: #1f7a8c; }
+.agm-why { font-size: 11.5px; color: #8a857c; line-height: 1.35; }
+.agm-badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  padding: 1px 6px; border-radius: 9px;
+}
+.agm-badge--collaboration { background: #fbeee5; color: #bb4308; }
+.agm-badge--standalone { background: #e9e7e0; color: #8a857c; }
+
+.agm-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 18px; border-top: 1px solid #e2e0da; background: #f1f0ec;
+}
+.agm-btn {
+  appearance: none; border-radius: 7px; font-size: 13px; font-weight: 600;
+  padding: 7px 16px; cursor: pointer; border: 1px solid transparent;
+}
+.agm-btn--ghost { background: #fff; border-color: #cfccc4; color: #5a554d; }
+.agm-btn--ghost:hover:not(:disabled) { background: #f6f5f2; }
+.agm-btn--primary { background: #1f7a8c; border-color: #186475; color: #fff; }
+.agm-btn--primary:hover:not(:disabled) { background: #186475; }
+.agm-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* "Group artists" trigger in the Artists view. */
+.artists-toolbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; justify-content: flex-end;
+  padding: 8px 14px;
+  background: var(--white, #f9f8f5);
+  border-bottom: 1px solid #ecebe5;
+}
+.artists-group-btn {
+  appearance: none;
+  border: 1px solid #186475;
+  background: #1f7a8c;
+  color: #fff;
+  font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 6px; cursor: pointer;
+}
+.artists-group-btn:hover { background: #186475; }

@@ -97,6 +97,15 @@ export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums'
 // the NAS, next to library.json) and mirrored to desktop. The optional
 // matched* / *Url fields are filled by the backend's iTunes Search
 // resolve at creation time (Brief 094); absent when no confident match.
+// Metadata hierarchy Phase 2 — one AI classification of an artist tag.
+export interface ArtistGroupProposal {
+  tag: string
+  type: 'persona' | 'collaboration' | 'standalone'
+  canonical?: string
+  contributors?: string[]
+  why?: string
+}
+
 export interface Recommendation {
   id: string
   song?: string
@@ -391,6 +400,7 @@ declare global {
       getTasteFingerprint: () => Promise<{ ok: boolean; fingerprint?: { totalTracks: number; totalPlays: number; summary: string; spines: Array<{ name: string; tracks: number; weight: number }>; topGenres: Array<{ genre: string; tracks: number; plays: number; weight: number }>; topArtists: Array<{ artist: string; tracks: number; plays: number }>; peakDecade: number | null; ownedArtists: string[] }; error?: string }>
       loadArtistAliases: () => Promise<{ ok: boolean; aliases: Record<string, string> }>
       saveArtistAliases: (aliases: Record<string, string>) => Promise<{ ok: boolean; error?: string }>
+      classifyArtistGroups: () => Promise<{ ok: boolean; proposals?: ArtistGroupProposal[]; candidateCount?: number; error?: string }>
       // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
       getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>

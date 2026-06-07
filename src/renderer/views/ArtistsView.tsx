@@ -11,6 +11,7 @@ import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
+import ArtistGroupingModal from '../components/ArtistGroupingModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { Track } from '../types'
 import { setNotice } from '../activity'
@@ -62,6 +63,7 @@ export default function ArtistsView() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
 
+  const [groupingOpen, setGroupingOpen] = useState(false)
   // Regroup when the user/AI alias map changes (boot load or an approve/edit).
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
   const artists = useMemo((): ArtistGroup[] => {
@@ -391,6 +393,13 @@ export default function ArtistsView() {
       onScrollCapture={noteUserActivity}
       onKeyDownCapture={noteUserActivity}
     >
+      <div className="artists-toolbar">
+        <button
+          className="artists-group-btn"
+          onClick={() => setGroupingOpen(true)}
+          title="Let the Music Man group bands, side projects & aliases under one artist"
+        >✦ Group artists</button>
+      </div>
       {filteredArtists.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="artists" />
       )}
@@ -518,6 +527,7 @@ export default function ArtistsView() {
           onSetCustomArt={handleSetCustomArt}
         />
       )}
+      {groupingOpen && <ArtistGroupingModal onClose={() => setGroupingOpen(false)} />}
       {deleteConfirm && (
         <ConfirmDialog
           message="Are you sure you want to delete this song from your library?"

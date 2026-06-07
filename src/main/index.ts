@@ -26,6 +26,8 @@ import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
+import { computeArtistCandidates, parseGroupingResponse } from './artist-groups-core'
+import type { GroupingProposal } from './artist-groups-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -886,6 +888,46 @@ ipcMain.handle('save-artist-aliases', async (_e, aliases: Record<string, string>
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'save failed' }
+  }
+})
+
+// Metadata hierarchy Phase 2 — AI-assisted artist grouping. Claude classifies
+// the library's marker tags ("X & Y") as persona / collaboration / standalone
+// and names the canonical primary for personas. Nothing is applied here — the
+// renderer shows the proposals for the user to approve, then writes the
+// approved personas to artist-aliases.json. Conservative system prompt: prefer
+// "standalone"/"collaboration" over a wrong merge.
+ipcMain.handle('classify-artist-groups', async (): Promise<{ ok: boolean; proposals?: GroupingProposal[]; candidateCount?: number; error?: string }> => {
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
+    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
+    const { candidates, primaries } = computeArtistCandidates(tracks, { maxCandidates: 150, maxPrimaries: 400 })
+    if (candidates.length === 0) return { ok: true, proposals: [], candidateCount: 0 }
+    const user = [
+      'Below are artist tags from a personal music library that contain a join marker ("&", "and", "/", "feat", "with", a comma, etc.). Each is exactly ONE of:',
+      '  • "persona" — the SAME act/musician as a primary artist (their band, alias, "X & His Band", a spouse duo). e.g. Wings → Paul McCartney; Paul & Linda McCartney → Paul McCartney; Bruce Springsteen & The E Street Band → Bruce Springsteen.',
+      '  • "collaboration" — distinct artists who collaborated; the track belongs to each but the tag is not one act. e.g. Paul McCartney & Stevie Wonder; "Rihanna, Kanye West, and Paul McCartney".',
+      '  • "standalone" — the tag IS a single artist/band whose NAME merely contains those words; do NOT merge. e.g. Hall & Oates; King Gizzard & The Lizard Wizard; AC/DC; Simon & Garfunkel; Earth, Wind & Fire; Polo & Pan.',
+      '',
+      'For a "persona", set "canonical" to the primary. PREFER an exact name from this list of existing primary artists when one fits:',
+      primaries.join(' | ') || '(none)',
+      '',
+      'Tags to classify (with track counts):',
+      candidates.map((c) => `- ${c.tag} (${c.count})`).join('\n'),
+      '',
+      'Return ONLY JSON — an array of {"tag","type","canonical","contributors","why"}: "canonical" only for persona, "contributors" (array) only for collaboration, "why" = one short sentence. No prose, no code fence.',
+    ].join('\n')
+    const reply = await claudeCall('artist-groups:classify', {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 6000,
+      system: 'You are a meticulous music-metadata expert. You know artist relationships precisely — a musician\'s bands/aliases/side-projects vs. one-off collaborations vs. standalone groups whose name simply contains "&"/"and"/"/". Be conservative: when unsure whether two tags are the SAME act, prefer "standalone" or "collaboration" over a wrong merge.',
+      messages: [{ role: 'user', content: user }],
+    })
+    const block = reply.content[0]
+    const text = block && block.type === 'text' ? block.text : ''
+    return { ok: true, proposals: parseGroupingResponse(text), candidateCount: candidates.length }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'classify failed' }
   }
 })
 
