@@ -37,7 +37,7 @@
  * store's setNotice (the 4.4.12 LCD-pill mode 4).
  */
 
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -52,8 +52,13 @@ const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
 // "instant" feel possible — paired with --quick mode rsync, the whole
 // chain runs in 10-15 sec for a typical album drop.
 const DEBOUNCE_MS = 5_000
-const SAFETY_NET_INTERVAL_MS = 600_000  // 10 min — full sync, catches deletes / out-of-band edits
-const RUN_TIMEOUT_MS = 600_000          // kill a hung sync after 10 min
+// 4.5.0-119: the full reconcile (rsync stat-walk over the ~73GB library) is
+// heavy + flaky over SMB. It's a SAFETY NET, not the main path — quick syncs
+// (on every import/edit, ~15s) carry new music. So run the full one rarely,
+// nice'd + preemptible, so it never blocks or hogs. A timeout on it is now
+// harmless: quick syncs keep new music flowing regardless.
+const SAFETY_NET_INTERVAL_MS = 3_600_000  // 60 min — rare full reconcile (was 10 min)
+const RUN_TIMEOUT_MS = 600_000            // kill a hung sync after 10 min
 
 export type SyncReason =
   | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork'
@@ -63,6 +68,14 @@ let debounceTimer: NodeJS.Timeout | null = null
 let safetyNetTimer: NodeJS.Timeout | null = null
 let inFlight = false
 let pendingReason: SyncReason | null = null
+// 4.5.0-119: handle to the in-flight sync child + its mode, so a fresh IMPORT
+// can PREEMPT a slow full reconcile instead of queuing behind it (single-flight
+// starvation made new music wait up to 10 min). `preempted` marks a deliberate
+// kill so the exit isn't reported as a failure.
+let currentChild: ChildProcess | null = null
+let currentReason: SyncReason | null = null
+let preempted = false
+const isQuickReason = (r: SyncReason): boolean => r === 'import' || r === 'metadata-edit' || r === 'playlist'
 
 // 4.5: persist the last sync outcome in process memory so the renderer
 // can read "last backed up: 3 min ago" in Settings → Sync. Cleared on
@@ -131,10 +144,15 @@ function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string;
     // from the parent's lifecycle — we don't call child.unref(), so
     // the orchestrator still tracks exit normally and the bash process
     // dies if the orchestrator does.
-    const child = spawn('/bin/bash', args, {
+    // 4.5.0-119: run under `nice` so the sync never competes with playback /
+    // the UI for CPU. nice becomes the process-group leader; the group-kill
+    // (timeout + preempt) still takes down nice → bash → rsync together.
+    const child = spawn('nice', ['-n', '10', '/bin/bash', ...args], {
       detached: true,
       stdio: 'ignore',
     })
+    currentChild = child
+    preempted = false
 
     const killTimer = setTimeout(() => {
       timedOut = true
@@ -170,7 +188,13 @@ function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string;
 
     child.on('exit', (code, signal) => {
       clearTimeout(killTimer)
+      currentChild = null
       const durationMs = Date.now() - startedAt
+      if (preempted) {
+        console.log('[sync-orchestrator] full sync preempted by a fresh import — quick sync runs next')
+        resolve({ ok: true, durationMs })
+        return
+      }
       if (timedOut) {
         console.warn(`[sync-orchestrator] sync TIMED OUT after ${durationMs}ms (reason=${reason})`)
         resolve({ ok: false, error: 'Sync timed out after 10 min', durationMs })
@@ -196,6 +220,7 @@ function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string;
 
     child.on('error', (err) => {
       clearTimeout(killTimer)
+      currentChild = null
       const durationMs = Date.now() - startedAt
       console.warn('[sync-orchestrator] spawn error:', err)
       resolve({ ok: false, error: String(err), durationMs })
@@ -214,8 +239,10 @@ async function flushDebounce(): Promise<void> {
   const reason = pendingReason || 'manual'
   pendingReason = null
   inFlight = true
+  currentReason = reason
   const result = await runSyncOnce(reason)
   inFlight = false
+  currentReason = null
 
   lastSync.ok = result.ok
   lastSync.reason = reason
@@ -252,6 +279,19 @@ export function triggerSync(reason: SyncReason): void {
   // surface an error Notice for not doing so.
   if (!existsSync(SYNC_SCRIPT)) return
   pendingReason = reason
+  // 4.5.0-119: if a fresh import/edit lands while a slow FULL reconcile is
+  // grinding, preempt it — kill the full sync so the quick one runs now
+  // rather than queuing behind a 73GB walk. The killed run resolves cleanly
+  // (preempted) and this pending quick reason fires right after.
+  if (isQuickReason(reason) && inFlight && currentReason && !isQuickReason(currentReason) && currentChild) {
+    preempted = true
+    try {
+      if (currentChild.pid !== undefined) process.kill(-currentChild.pid, 'SIGTERM')
+      else currentChild.kill('SIGTERM')
+    } catch {
+      try { currentChild.kill('SIGTERM') } catch { /* already gone */ }
+    }
+  }
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(flushDebounce, DEBOUNCE_MS)
 }
