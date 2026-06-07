@@ -90,7 +90,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list' | 'new-for-you'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'recordstore' | 'listen-to-the-list' | 'new-for-you' | 'discovery'
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on

@@ -74,17 +74,15 @@ use and genre deep-dives feel authoritative.
 
 ---
 
-## Backlog (requested 2026-06-06, do later)
-- **Merge Listen-to-the-List + New for You into one "Discovery" view.** They're
-  the two discovery surfaces (LTL = your jotted "want to hear" list; New for You
-  = the AI radar). Recommended shape: ONE sidebar entry → New for You radar feed
-  on top, "Your List" (LTL) below it (or a two-tab toggle). Collapses two entries
-  into one and unifies "add to list" (radar's Add + manual jots land in the same
-  place).
-- **Recolor New for You** — it's currently `#bb4308`, identical to The Music Man,
-  which is confusing. The merge resolves it: the single Discovery entry gets a
-  distinct, non-orange color (candidate: a teal/blue so "discovery" reads cool vs.
-  the Music Man's warm orange). Quick once we pick the hue.
+## Backlog
+- ✅ **DONE (4.5.0-120) — Merged Listen-to-the-List + New for You into one
+  "Discovery" view.** ONE sidebar entry → two-tab toggle ("New for You" radar /
+  "Your List" jots). `DiscoveryView.tsx` renders each existing leaf view
+  unchanged (both keep their own module caches + scroll). Old `new-for-you` /
+  `listen-to-the-list` view names still resolve to the right tab (back-compat).
+- ✅ **DONE (4.5.0-120) — Recolored Discovery teal (`#1f7a8c`).** Sidebar entry
+  (compass icon), tab bar, and the New for You accents (refresh / preview / add)
+  are all teal now — cool, distinct from the Music Man's warm `#bb4308`.
 
 ## Open questions / risks
 - **API cost** of live web-search per query → cache aggressively; rate-limit.

@@ -1,5 +1,6 @@
 /* "New for You" — the Discovery Brain's radar feed. Cover-forward release
-   cards (iTunes art + 30s preview), ranked by taste-fit. #bb4308 accent. */
+   cards (iTunes art + 30s preview), ranked by taste-fit. Teal (#1f7a8c)
+   accent to match the merged Discovery surface. */
 
 .nfy {
   height: 100%;
@@ -22,8 +23,8 @@
 .nfy-refresh {
   flex-shrink: 0;
   appearance: none;
-  border: 1px solid #963505;
-  background: #bb4308;
+  border: 1px solid #186475;
+  background: #1f7a8c;
   color: #fff;
   font-size: 12.5px;
   font-weight: 600;
@@ -31,7 +32,7 @@
   border-radius: 6px;
   cursor: pointer;
 }
-.nfy-refresh:hover:not(:disabled) { background: #a63a06; }
+.nfy-refresh:hover:not(:disabled) { background: #186475; }
 .nfy-refresh:disabled { opacity: 0.55; cursor: default; }
 
 .nfy-loading, .nfy-empty { font-size: 13.5px; color: #8a8780; font-style: italic; padding: 24px 2px; }
@@ -94,8 +95,8 @@
   transition: opacity 0.12s ease, background 0.12s ease;
 }
 .nfy-cover:hover .nfy-preview, .nfy-preview--on { opacity: 1; }
-.nfy-preview:hover { background: #bb4308; }
-.nfy-preview--on { background: #bb4308; }
+.nfy-preview:hover { background: #1f7a8c; }
+.nfy-preview--on { background: #1f7a8c; }
 
 .nfy-card-body { padding: 9px 11px 11px; display: flex; flex-direction: column; min-width: 0; }
 .nfy-card-title {
@@ -121,14 +122,14 @@
 .nfy-add {
   margin-top: auto;
   appearance: none;
-  border: 1px solid #c7a06a;
-  background: #f4ece0;
-  color: #6a4a1c;
+  border: 1px solid #a9cdd5;
+  background: #e7f1f3;
+  color: #186475;
   font-size: 12px;
   font-weight: 600;
   padding: 5px 0;
   border-radius: 6px;
   cursor: pointer;
 }
-.nfy-add:hover:not(:disabled) { background: #efe2cf; }
+.nfy-add:hover:not(:disabled) { background: #dceaed; }
 .nfy-add:disabled { color: #2a7a2a; border-color: #bcd6bc; background: #eef6ee; cursor: default; }

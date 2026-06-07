@@ -8,6 +8,7 @@ const BACK_LABELS: Partial<Record<ViewName, string>> = {
   songs: '← Songs',
   genres: '← Genres',
   'listen-to-the-list': '← Listen to the List',
+  discovery: '← Discovery',
   playlist: '← Playlist',
   'smart-playlist': '← Playlist',
   musicman: '← Music Man',

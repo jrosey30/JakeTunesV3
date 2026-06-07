@@ -15,12 +15,7 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
   artists: <ArtistsIcon />,
   albums: <AlbumsIcon />,
   genres: <GenresIcon />,
-  'listen-to-the-list': <ListenIcon />,
-  'new-for-you': (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" />
-    </svg>
-  ),
+  discovery: <DiscoveryIcon />,
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
@@ -31,8 +26,10 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
   { label: 'Genres', view: 'genres' },
-  { label: 'Listen to the List', view: 'listen-to-the-list' },
-  { label: 'New for You', view: 'new-for-you', highlight: '#bb4308' },
+  // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
+  // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the
+  // Music Man's #bb4308 below, which used to clash with New for You's orange.
+  { label: 'Discovery', view: 'discovery', highlight: '#1f7a8c' },
   { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
 
@@ -69,6 +66,8 @@ const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
 // 4.4.47: the brand orange, sampled from the app logo (#bb4308). Used
 // for the Home icon and the Music Man sidebar entry's icon + highlight.
 const ICON_HOME_ORANGE = '#bb4308'  // Home — warm color, distinct from the cooler library icons.
+// Backlog 2026-06-06: Discovery's cool teal — deliberately unlike Music Man's #bb4308.
+const ICON_DISCOVERY_TEAL = '#1f7a8c'
 
 function HomeIcon() {
   // Simple gable-roof house silhouette — instantly readable at 12 px,
@@ -118,12 +117,14 @@ function GenresIcon() {
   )
 }
 
-function ListenIcon() {
-  // List lines with a play glyph — "Listen to the List".
+function DiscoveryIcon() {
+  // Compass — "Discovery". Teal needle (NE filled pointer / SW faded tail)
+  // reads cool, distinct from the Music Man's warm orange sparkle.
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={ICON_GREEN} strokeWidth="1.2">
-      <path d="M1 2.5h7M1 5.5h7M1 8.5h4" strokeLinecap="round" />
-      <path d="M8.4 7.2v3.2l2.6-1.6z" fill={ICON_GREEN} stroke="none" />
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke={ICON_DISCOVERY_TEAL} strokeWidth="1.2">
+      <circle cx="7" cy="7" r="5.6" />
+      <path d="M7 7L10 4L8.1 7.8Z" fill={ICON_DISCOVERY_TEAL} stroke="none" />
+      <path d="M7 7L4 10L5.9 6.2Z" fill={ICON_DISCOVERY_TEAL} stroke="none" opacity="0.4" />
     </svg>
   )
 }

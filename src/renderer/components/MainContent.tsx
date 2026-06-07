@@ -6,8 +6,7 @@ import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
 import AlbumDetailView from '../views/AlbumDetailView'
 import GenresView from '../views/GenresView'
-import ListenToTheListView from '../views/ListenToTheListView'
-import NewForYouView from '../views/NewForYouView'
+import DiscoveryView from '../views/DiscoveryView'
 import MusicManView from '../views/MusicManView'
 import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
@@ -51,8 +50,12 @@ export default function MainContent() {
     case 'albums': viewElement = <AlbumsView />; break
     case 'album-detail': viewElement = <AlbumDetailView />; break
     case 'genres': viewElement = <GenresView />; break
-    case 'listen-to-the-list': viewElement = <ListenToTheListView />; break
-    case 'new-for-you': viewElement = <NewForYouView />; break
+    case 'discovery': viewElement = <DiscoveryView />; break
+    // Back-compat: the old standalone view names still resolve, landing on
+    // the matching Discovery tab (nothing dispatches them now but the sidebar
+    // 'discovery' entry — kept so any stray/deep-linked nav still works).
+    case 'listen-to-the-list': viewElement = <DiscoveryView initialTab="your-list" />; break
+    case 'new-for-you': viewElement = <DiscoveryView initialTab="new-for-you" />; break
     case 'musicman': break  // handled by the always-mounted wrapper below
     case 'playlist': viewElement = <PlaylistView />; break
     case 'smart-playlist': viewElement = <SmartPlaylistView />; break

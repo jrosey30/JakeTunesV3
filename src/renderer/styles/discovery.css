@@ -1,0 +1,36 @@
+/* "Discovery" — unifies the New for You radar + your saved List behind one
+   sidebar entry via a two-tab toggle. Teal accent (#1f7a8c) so the whole
+   discovery surface reads cool, distinct from the Music Man's warm orange. */
+
+.discovery {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--white, #f9f8f5);
+}
+
+.discovery-tabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 10px 22px 0;
+  border-bottom: 1px solid #e0ddd6;
+}
+
+.discovery-tab {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 7px 14px 9px;
+  margin-bottom: -1px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a8780;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.discovery-tab:hover { color: #5a554d; }
+.discovery-tab--on { color: #1f7a8c; border-bottom-color: #1f7a8c; }
+
+/* Hosts whichever leaf view is active; each is height:100% + own scroll. */
+.discovery-body { flex: 1; min-height: 0; }
