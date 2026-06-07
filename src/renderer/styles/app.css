@@ -465,6 +465,7 @@
 
 .titlebar {
   grid-area: titlebar;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -481,6 +482,35 @@
   user-select: none;
   text-shadow: 0 1px 0 rgba(255,255,255,0.5);
 }
+
+/* Back/forward history controls, pinned left of the centered title. The
+   titlebar itself is a window-drag region, so the buttons opt OUT of drag. */
+.titlebar-nav {
+  position: absolute;
+  left: 78px;
+  display: flex;
+  gap: 3px;
+  -webkit-app-region: no-drag;
+}
+.titlebar-nav-btn {
+  width: 22px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: linear-gradient(180deg, #fdfdfc, #e7e5e0);
+  color: #555;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.titlebar-nav-btn:hover:not(:disabled) { background: linear-gradient(180deg, #ffffff, #dddbd5); }
+.titlebar-nav-btn:active:not(:disabled) { background: #d4d2cc; }
+.titlebar-nav-btn:disabled { opacity: 0.35; cursor: default; }
 
 .toolbar-area {
   grid-area: toolbar;

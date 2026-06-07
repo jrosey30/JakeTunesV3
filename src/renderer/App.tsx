@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
+import { NavigationProvider, useNavigation } from './context/NavigationContext'
 import { useAudio } from './hooks/useAudio'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
@@ -54,6 +55,7 @@ let startupNetworkArtStarted = false
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
+  const { canGoBack, canGoForward, goBack, goForward } = useNavigation()
   // Brief 033c: App is the single "primary" useAudio consumer — it owns
   // the heartbeat diagnostic/recovery interval. App never unmounts, so
   // exactly one interval runs regardless of how many other components
@@ -1546,7 +1548,13 @@ function AppInner() {
           <button onClick={() => setStateConflictBanner(false)}>Dismiss</button>
         </div>
       )}
-      <div className="titlebar">JakeTunes</div>
+      <div className="titlebar">
+        <div className="titlebar-nav">
+          <button className="titlebar-nav-btn" disabled={!canGoBack} onClick={goBack} title="Back  ⌘[" aria-label="Back">‹</button>
+          <button className="titlebar-nav-btn" disabled={!canGoForward} onClick={goForward} title="Forward  ⌘]" aria-label="Forward">›</button>
+        </div>
+        <span className="titlebar-label">JakeTunes</span>
+      </div>
       <div className="toolbar-area">
         <Toolbar
           onToggleQueue={() => {
@@ -1808,11 +1816,13 @@ function AppInner() {
 export default function App() {
   return (
     <LibraryProvider>
-      <PlaybackProvider>
-        <CynthiaProvider>
-          <AppInner />
-        </CynthiaProvider>
-      </PlaybackProvider>
+      <NavigationProvider>
+        <PlaybackProvider>
+          <CynthiaProvider>
+            <AppInner />
+          </CynthiaProvider>
+        </PlaybackProvider>
+      </NavigationProvider>
     </LibraryProvider>
   )
 }
