@@ -25,6 +25,7 @@ import { computeTasteFingerprint } from './taste-model'
 import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
+import { mergeStarIds } from './mobile-stars-merge'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -9437,7 +9438,42 @@ async function writeMobileStarSidecar(trackId: number, starred: boolean): Promis
     return { trackIds: Array.from(set).sort() }
   })
 }
+
+// Sync B-pass (2026-06-07) — fold phone-side stars in under local-primary.
+// The app is the SOLE writer of the local mobile-stars.json (via the cache), so
+// the sync script must NOT write it directly (that would race the cache). The
+// script instead stages homemini's set at mobile-stars.incoming.json; this
+// unions it into the local set on the app's own terms, then consumes the file.
+// Additive (mobile-stars-merge.ts) — a star on either device survives. Returns
+// the count of NEW ids added (0 = nothing was pending).
+async function mergeIncomingMobileStars(): Promise<number> {
+  const incomingPath = join(STATE_DIR, 'mobile-stars.incoming.json')
+  let incoming: string[] = []
+  try {
+    const parsed = JSON.parse(await readFile(incomingPath, 'utf-8')) as { trackIds?: unknown }
+    incoming = Array.isArray(parsed?.trackIds)
+      ? parsed.trackIds.filter((x): x is string => typeof x === 'string')
+      : []
+  } catch {
+    return 0   // no staging file (the common case) — nothing to merge
+  }
+  let added = 0
+  if (incoming.length > 0) {
+    await mobileStarsCache.update((current) => {
+      const local = Array.isArray(current?.trackIds) ? current.trackIds : []
+      const merged = mergeStarIds(local, incoming)
+      added = merged.length - new Set(local).size
+      return { trackIds: merged }
+    })
+  }
+  // Consume the staging file so the same set isn't re-merged on every read.
+  await unlink(incomingPath).catch(() => { /* already gone — fine */ })
+  if (added > 0) console.log(`[mobile-stars] merged ${added} incoming phone star(s) from sync`)
+  return added
+}
+
 ipcMain.handle('load-mobile-stars', async (): Promise<{ ok: boolean; trackIds: string[] }> => {
+  await mergeIncomingMobileStars()   // fold in any phone stars the last sync staged
   const set = await readMobileStarsSet()
   return { ok: true, trackIds: Array.from(set) }
 })
