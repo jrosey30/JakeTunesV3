@@ -9,6 +9,7 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { canonicalArtist, isSameArtist } from '../utils/artistAlias'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
+import { useNavigation } from '../context/NavigationContext'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
@@ -95,11 +96,15 @@ export default function ArtistDetailView() {
   // Contextual back navigation. Artist detail is reachable from Artists,
   // the Bandcamp Store, and Search — mirror AlbumDetailView so "back"
   // returns to wherever the user came from instead of always Artists.
+  const { canGoBack, goBack: navBack } = useNavigation()
   const artistReturnView = lib.artistDetailReturnView || 'artists'
   const backLabel = albumDetailBackLabel(artistReturnView)
+  // Prefer real history (matches the titlebar ‹ and ⌘[); fall back to the
+  // stored return view only when there's nothing to go back to.
   const goBack = useCallback(() => {
-    dispatch({ type: 'SET_VIEW', view: artistReturnView })
-  }, [dispatch, artistReturnView])
+    if (canGoBack) navBack()
+    else dispatch({ type: 'SET_VIEW', view: artistReturnView })
+  }, [canGoBack, navBack, dispatch, artistReturnView])
 
   // `.artist-detail` is itself the scroll container (overflow-y: auto in
   // artist-detail.css). Persist its scrollTop per-artist so opening an

@@ -86,6 +86,10 @@
   margin: 0 0 6px;
   line-height: 1.2;
 }
+/* Clickable when the album has a single resolvable artist — drills to the
+   artist detail page (album → artist navigation). */
+.album-page-artist--link { cursor: pointer; width: fit-content; }
+.album-page-artist--link:hover { color: #bb4308; text-decoration: underline; }
 
 .album-page-title {
   margin: 0 0 8px;

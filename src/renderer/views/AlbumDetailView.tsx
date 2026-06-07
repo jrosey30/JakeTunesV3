@@ -8,6 +8,7 @@ import { albumKeyOf } from '../utils/albumKey'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { albumCreditReleaseDate } from '../utils/albumReleaseDate'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
+import { useNavigation } from '../context/NavigationContext'
 import { lookupArtwork, buildNormalizedArtworkIndex, clearArtworkNegativeCache } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -61,11 +62,15 @@ export default function AlbumDetailView() {
   if (lib.pendingAlbumKey) albumKeyRef.current = lib.pendingAlbumKey
   const albumKey = albumKeyRef.current || lib.pendingAlbumKey || ''
 
+  const { canGoBack, goBack: navBack } = useNavigation()
   const returnView = lib.albumDetailReturnView || 'albums'
   const backLabel = albumDetailBackLabel(lib.albumDetailReturnView)
+  // Prefer the real history (so this matches the titlebar ‹ and ⌘[); fall back
+  // to the stored return view only when there's nothing to go back to.
   const goBack = useCallback(() => {
-    libDispatch({ type: 'SET_VIEW', view: returnView })
-  }, [libDispatch, returnView])
+    if (canGoBack) navBack()
+    else libDispatch({ type: 'SET_VIEW', view: returnView })
+  }, [canGoBack, navBack, libDispatch, returnView])
 
   // The album's tracks, ordered by disc then track number — same ordering
   // AlbumsView uses so the tracklist reads top-to-bottom like the record.
@@ -345,7 +350,12 @@ export default function AlbumDetailView() {
             : <div className="album-page-cover-placeholder">♫</div>}
         </div>
         <div className="album-page-meta">
-          <div className="album-page-artist">{albumArtist}</div>
+          <div
+            className={`album-page-artist${albumArtist ? ' album-page-artist--link' : ''}`}
+            onClick={albumArtist ? () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: albumArtist }) : undefined}
+            role={albumArtist ? 'button' : undefined}
+            title={albumArtist ? `Go to ${albumArtist}` : undefined}
+          >{albumArtist}</div>
           <h1 className="album-page-title">{albumName}</h1>
           <div className="album-page-facts">
             {[year && String(year), `${tracks.length} song${tracks.length === 1 ? '' : 's'}`, formatTotalDuration(totalMs), genre].filter(Boolean).join(' · ')}
