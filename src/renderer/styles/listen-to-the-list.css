@@ -174,6 +174,26 @@
   flex-direction: column;
 }
 
+/* Labeled groups inside the saved list: "Your jots" vs "Suggested for you". */
+.ltl-section { display: flex; flex-direction: column; }
+.ltl-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 13px 14px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #8a8780;
+}
+.ltl-section-count {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #b0ada4;
+}
+
 .ltl-row {
   display: flex;
   align-items: center;

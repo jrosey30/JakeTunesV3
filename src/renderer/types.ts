@@ -111,6 +111,10 @@ export interface Recommendation {
   matchedArtist?: string
   matchedAlbum?: string
   resolvedAt?: string
+  // Who added it: 'user' = you jotted it; 'mm' = a Music Man suggestion you
+  // accepted; 'radar' = added from New for You. Legacy rows have no source →
+  // shown under "Your jots". Drives the Your List sections.
+  source?: 'user' | 'mm' | 'radar'
 }
 
 // Brief 122 Phase 2 — an iTunes Search autocomplete suggestion for the
@@ -368,7 +372,7 @@ declare global {
       // from the NAS state dir; add/delete route through the Mini backend
       // so it stays the single writer (cache-coherent + iTunes-enriched).
       loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
-      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string }>
+      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; deduped?: boolean }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>

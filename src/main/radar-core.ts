@@ -40,9 +40,16 @@ export function parseCandidates(text: string): RawCandidate[] {
 /**
  * Rank raw candidates against the taste fingerprint: drop entries missing
  * artist/title, dedupe by artist+title, drop artists the user already OWNS
- * (this is discovery), score the rest, sort high→low, take top `limit`.
+ * (this is discovery), drop anything already on the user's list (optional
+ * `isOnList` predicate — keeps the radar from re-suggesting a saved jot),
+ * score the rest, sort high→low, take top `limit`.
  */
-export function rankCandidates(fp: TasteFingerprint, raw: RawCandidate[], limit = 12): RankedCandidate[] {
+export function rankCandidates(
+  fp: TasteFingerprint,
+  raw: RawCandidate[],
+  limit = 12,
+  isOnList?: (artist: string, title: string) => boolean,
+): RankedCandidate[] {
   const seen = new Set<string>()
   const out: RankedCandidate[] = []
   for (const c of raw) {
@@ -52,6 +59,7 @@ export function rankCandidates(fp: TasteFingerprint, raw: RawCandidate[], limit 
     const key = `${norm(artist)}|${norm(title)}`
     if (seen.has(key)) continue
     seen.add(key)
+    if (isOnList && isOnList(artist, title)) continue
     const s: CandidateScore = scoreCandidate(fp, { artist, genre: c.genre, year: c.year })
     if (s.owned) continue
     out.push({

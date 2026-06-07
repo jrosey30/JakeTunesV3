@@ -173,7 +173,7 @@ const electronAPI = {
   // (next to library.json on the NAS); add/delete route through the Mini
   // backend so it stays the single writer.
   loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
-  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string }) =>
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) =>
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   // Brief 122 — Music Man suggests 3 things to add to the list.

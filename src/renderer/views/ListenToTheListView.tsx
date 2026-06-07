@@ -303,7 +303,7 @@ export default function ListenToTheListView() {
     try {
       const res = await window.electronAPI.addRecommendation({
         song: provisional.song, artist: provisional.artist,
-        album: provisional.album, note: provisional.note,
+        album: provisional.album, note: provisional.note, source: 'user',
       })
       if (!res?.ok) {
         // Roll the provisional row back out + restore the form to retry.
@@ -316,6 +316,18 @@ export default function ListenToTheListView() {
             : `Couldn't save recommendation${res?.error ? `: ${res.error}` : ''}.`,
           { kind: 'error' }
         )
+        return
+      }
+      if (res.deduped && res.recommendation) {
+        // Already on the list — drop the provisional, keep the canonical row once.
+        const canon = res.recommendation
+        setRecs((cur) => {
+          const withoutTemp = cur.filter((r) => r.id !== tempId)
+          const next = withoutTemp.some((r) => r.id === canon.id) ? withoutTemp : [canon, ...withoutTemp]
+          recsCache = next
+          return next
+        })
+        setNotice(`“${canon.song || canon.matchedTitle || draft.song || 'That'}” is already on your list.`, { kind: 'success' })
         return
       }
       if (res.recommendation) {
@@ -368,7 +380,7 @@ export default function ListenToTheListView() {
     loadSeqRef.current++
     try {
       const res = await window.electronAPI.addRecommendation({
-        song: s.song || undefined, artist: s.artist || undefined, note: s.note || undefined,
+        song: s.song || undefined, artist: s.artist || undefined, note: s.note || undefined, source: 'mm',
       })
       if (!res?.ok) {
         recsCache = prev
@@ -381,6 +393,18 @@ export default function ListenToTheListView() {
           mmPoolRef.current = next
           return next
         })
+        return
+      }
+      if (res.deduped && res.recommendation) {
+        // Already on the list — drop the provisional, keep the canonical row once.
+        const canon = res.recommendation
+        setRecs((cur) => {
+          const withoutTemp = cur.filter((r) => r.id !== tempId)
+          const next = withoutTemp.some((r) => r.id === canon.id) ? withoutTemp : [canon, ...withoutTemp]
+          recsCache = next
+          return next
+        })
+        setNotice(`“${canon.song || s.song}” is already on your list.`, { kind: 'success' })
         return
       }
       if (res.recommendation) {
@@ -441,6 +465,50 @@ export default function ListenToTheListView() {
     if (title && artist) return `${title} — ${artist}`
     return title || artist || rec.album || rec.note || 'Untitled'
   }
+
+  const renderRow = (rec: Recommendation) => {
+    const artwork = rec.artworkUrl
+    const isPlaying = preview.playingId === rec.id
+    return (
+      <div key={rec.id} className="ltl-row">
+        <div className="ltl-art">
+          {artwork
+            ? <img src={artwork} alt="" loading="lazy" />
+            : <div className="ltl-art-placeholder" aria-hidden="true">♪</div>}
+          {rec.previewUrl && (
+            <button
+              className={`ltl-preview-btn ${isPlaying ? 'ltl-preview-btn--playing' : ''}`}
+              onClick={() => togglePreview(
+                rec.id,
+                rec.previewUrl!,
+                rec.matchedTitle || rec.song || rec.album || 'Preview',
+                rec.matchedArtist || rec.artist || ''
+              )}
+              title={isPlaying ? 'Stop preview' : 'Play preview in player'}
+            >
+              {isPlaying ? '❚❚' : '▶'}
+            </button>
+          )}
+        </div>
+        <div className="ltl-meta">
+          <div className="ltl-name">{displayName(rec)}</div>
+          {(rec.matchedAlbum || rec.album) && (
+            <div className="ltl-album">{rec.matchedAlbum || rec.album}</div>
+          )}
+          {rec.note && <div className="ltl-note">{rec.note}</div>}
+          <div className="ltl-sub">
+            <span className="ltl-date">{new Date(rec.createdAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+        <button className="ltl-delete" onClick={() => setDeleteTarget(rec)} title="Remove from list">✕</button>
+      </div>
+    )
+  }
+
+  // Split the saved list into "Your jots" (you typed it) vs "Suggested for you"
+  // (accepted Music Man / radar picks). Legacy rows have no source → Your jots.
+  const jots = recs.filter((r) => (r.source ?? 'user') === 'user')
+  const suggested = recs.filter((r) => r.source === 'mm' || r.source === 'radar')
 
   return (
     <div className="ltl-view" ref={viewRef}>
@@ -525,47 +593,18 @@ export default function ListenToTheListView() {
         <EmptyState noun="recommendations" />
       ) : (
         <div className="ltl-list">
-          {recs.map(rec => {
-            const artwork = rec.artworkUrl
-            const isPlaying = preview.playingId === rec.id
-            return (
-              <div key={rec.id} className="ltl-row">
-                <div className="ltl-art">
-                  {artwork
-                    ? <img src={artwork} alt="" loading="lazy" />
-                    : <div className="ltl-art-placeholder" aria-hidden="true">♪</div>}
-                  {rec.previewUrl && (
-                    <button
-                      className={`ltl-preview-btn ${isPlaying ? 'ltl-preview-btn--playing' : ''}`}
-                      onClick={() => togglePreview(
-                        rec.id,
-                        rec.previewUrl!,
-                        rec.matchedTitle || rec.song || rec.album || 'Preview',
-                        rec.matchedArtist || rec.artist || ''
-                      )}
-                      title={isPlaying ? 'Stop preview' : 'Play preview in player'}
-                    >
-                      {isPlaying ? '❚❚' : '▶'}
-                    </button>
-                  )}
-                </div>
-                <div className="ltl-meta">
-                  <div className="ltl-name">{displayName(rec)}</div>
-                  {(rec.matchedAlbum || rec.album) && (
-                    <div className="ltl-album">{rec.matchedAlbum || rec.album}</div>
-                  )}
-                  {rec.note && <div className="ltl-note">{rec.note}</div>}
-                  <div className="ltl-sub">
-                    <span className="ltl-date">{new Date(rec.createdAt).toLocaleDateString()}</span>
-                    {/* Preview plays in the now-playing pill with its scrubber
-                        (see NowPlaying). No "open in Apple Music" link by
-                        design — we never send the user out to the app. */}
-                  </div>
-                </div>
-                <button className="ltl-delete" onClick={() => setDeleteTarget(rec)} title="Remove from list">✕</button>
-              </div>
-            )
-          })}
+          {jots.length > 0 && (
+            <div className="ltl-section">
+              <div className="ltl-section-head">Your jots<span className="ltl-section-count">{jots.length}</span></div>
+              {jots.map(renderRow)}
+            </div>
+          )}
+          {suggested.length > 0 && (
+            <div className="ltl-section">
+              <div className="ltl-section-head">Suggested for you<span className="ltl-section-count">{suggested.length}</span></div>
+              {suggested.map(renderRow)}
+            </div>
+          )}
         </div>
       )}
 

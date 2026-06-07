@@ -67,16 +67,43 @@ export default function NewForYouView() {
     return () => { cancelled = true }
   }, [candidates])
 
+  // Mark candidates already on the user's list as "added" (button reads "On
+  // your list", can't re-add) — covers a stale radar cache served from a prior
+  // day/session where the in-session `added` set is empty. The radar IPC also
+  // filters fresh generations against the list; this is the cache-reuse backstop.
+  useEffect(() => {
+    if (candidates.length === 0) return
+    let cancelled = false
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    window.electronAPI.loadRecommendations?.().then((res) => {
+      if (cancelled || !res?.ok) return
+      const onList = new Set<string>()
+      for (const r of res.recommendations || []) {
+        const a = norm(r.artist || r.matchedArtist || '')
+        const t = norm(r.song || r.matchedTitle || '')
+        if (a && t) onList.add(`${a}|${t}`)
+      }
+      setAdded((prev) => {
+        const next = new Set(prev)
+        for (const c of candidates) {
+          if (onList.has(`${norm(c.artist)}|${norm(c.title)}`)) next.add(`${c.artist}|${c.title}`)
+        }
+        return next
+      })
+    }).catch(() => { /* list unavailable — leave as-is */ })
+    return () => { cancelled = true }
+  }, [candidates])
+
   // Stop any preview when leaving the view.
   useEffect(() => () => stopPreview(), [])
 
   const handleAdd = useCallback(async (c: RadarCandidate) => {
     const key = `${c.artist}|${c.title}`
     try {
-      const res = await window.electronAPI.addRecommendation?.({ song: c.title, artist: c.artist, note: c.why })
+      const res = await window.electronAPI.addRecommendation?.({ song: c.title, artist: c.artist, note: c.why, source: 'radar' })
       if (res?.ok) {
         setAdded((prev) => new Set(prev).add(key))
-        setNotice(`Added “${c.title}” to your list.`, { kind: 'success' })
+        setNotice(res.deduped ? `“${c.title}” is already on your list.` : `Added “${c.title}” to your list.`, { kind: 'success' })
       } else {
         setNotice(res?.error || "Couldn't add to your list.", { kind: 'error' })
       }

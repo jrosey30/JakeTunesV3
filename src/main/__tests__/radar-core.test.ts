@@ -54,4 +54,16 @@ describe('radar-core — rankCandidates', () => {
     assert.ok(out[0].score >= out[1].score)
     assert.ok(out.every((c) => c.genre !== 'Polka'), 'weakest dropped by the limit')
   })
+
+  it('drops candidates already on the list via isOnList (no re-suggesting jots)', () => {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const onList = new Set(['overmono|goodlies'])
+    const isOnList = (a: string, t: string) => onList.has(`${norm(a)}|${norm(t)}`)
+    const out = rankCandidates(fp, [
+      { artist: 'Overmono', title: 'Good Lies', genre: 'Electronic', year: 2023 }, // on list → drop
+      { artist: 'Jamie xx', title: 'Gosh', genre: 'Electronic', year: 2024 },      // new → keep
+    ], 12, isOnList)
+    assert.equal(out.length, 1)
+    assert.equal(out[0].artist, 'Jamie xx')
+  })
 })

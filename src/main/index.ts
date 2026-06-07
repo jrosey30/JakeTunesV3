@@ -908,7 +908,23 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
     })
     const block = reply.content[0]
     const text = block && block.type === 'text' ? block.text : ''
-    const candidates = rankCandidates(fp, parseCandidates(text), 12)
+    // Don't surface anything already on the user's list (hand-jots + prior
+    // picks) — radar is for NEW discovery. Same recoNorm identity the add
+    // handler + MM verify use, so the three surfaces agree on "same song".
+    const listKeys = new Set<string>()
+    try {
+      const tombstones = await readRecommendationTombstones()
+      const recos = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+      for (const r of recos) {
+        const k = recoRecordIdentityKey(r)
+        if (k) listKeys.add(k)
+      }
+    } catch { /* list unavailable — show all candidates */ }
+    const isOnList = (a: string, t: string): boolean => {
+      const k = recoIdentityKey(a, t)
+      return k != null && listKeys.has(k)
+    }
+    const candidates = rankCandidates(fp, parseCandidates(text), 12, isOnList)
     radarCache = { candidates, generatedAt: Date.now() }
     return { ok: true, candidates, generatedAt: radarCache.generatedAt }
   } catch (err) {
@@ -9465,6 +9481,11 @@ ipcMain.handle('read-playlist-additions', async (): Promise<{ ok: boolean; addit
 // under local-primary (4.5.0-114). Phone picks never appeared on desktop
 // because read-recommendations only read the local file (often missing)
 // while the backend + NAS held the canonical list — sync on every read.
+// Who put a recommendation on the list. 'user' = you jotted it; 'mm' = added
+// from a Music Man suggestion; 'radar' = added from the New for You feed.
+// Drives the "Your jots" vs "Suggested for you" sections in the UI. Legacy
+// records have no source → treated as 'user' (the original jot-it-down flow).
+type RecoSource = 'user' | 'mm' | 'radar'
 interface RecommendationRecord {
   id: string
   song?: string
@@ -9479,6 +9500,7 @@ interface RecommendationRecord {
   matchedArtist?: string
   matchedAlbum?: string
   resolvedAt?: string
+  source?: RecoSource
 }
 // The Mini backend owns enrichment for adds; reachable on the tailnet.
 // Override for a local dev backend via JAKETUNES_MOBILE_BACKEND.
@@ -9583,6 +9605,20 @@ function recoRecordKey(r: RecommendationRecord): string {
     artist: r.artist || r.matchedArtist,
     note: r.note,
   })
+}
+
+// Cross-surface "same song" identity — song+artist only (NOT note), so a radar
+// pick and a hand-jot of the same track collapse to one. Null when we lack both
+// fields (e.g. a note-only or album-only jot), in which case callers fall back
+// to the stricter recoMatchKey. Shares recoNorm with iTunes verify + the UI.
+function recoIdentityKey(song?: string, artist?: string): string | null {
+  const s = recoNorm(song || '')
+  const a = recoNorm(artist || '')
+  return s && a ? `${s}|${a}` : null
+}
+
+function recoRecordIdentityKey(r: RecommendationRecord): string | null {
+  return recoIdentityKey(r.song || r.matchedTitle, r.artist || r.matchedArtist)
 }
 
 type RecoItunesRow = { song: string; artist: string; album?: string; artworkUrl?: string; previewUrl?: string; appleMusicUrl?: string }
@@ -9757,7 +9793,7 @@ async function appendRecommendationLocal(recommendation: RecommendationRecord): 
 
 async function buildLocalRecommendation(input: {
   song?: string; artist?: string; album?: string; note?: string
-}): Promise<RecommendationRecord> {
+}, source: RecoSource = 'user'): Promise<RecommendationRecord> {
   const now = new Date().toISOString()
   const enrichment = await lookupItunesForRecommendation(input)
   const canonicalSong = enrichment.matchedTitle || input.song?.trim() || undefined
@@ -9771,6 +9807,7 @@ async function buildLocalRecommendation(input: {
     createdAt: now,
     ...enrichment,
     resolvedAt: enrichment.matchedTitle ? now : undefined,
+    source,
   }
 }
 
@@ -9872,7 +9909,7 @@ ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boole
   return readRecoInflight
 })
 
-ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean }> => {
+ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> => {
   const trimmed = {
     song: input.song?.trim() || undefined,
     artist: input.artist?.trim() || undefined,
@@ -9882,6 +9919,27 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
   if (!trimmed.song && !trimmed.artist && !trimmed.album && !trimmed.note) {
     return { ok: false, error: 'nothing to add' }
   }
+  const source: RecoSource = input.source || 'user'
+
+  // Idempotency: if this song is already on the list (song+artist identity, or
+  // exact song|artist|note for note-only jots), return the existing record
+  // instead of creating a duplicate. Covers double-clicks, retries after a
+  // timeout, and a radar pick the user already jotted by hand. Checked BEFORE
+  // the backend POST so homemini never mints a duplicate id either.
+  try {
+    const tombstones = await readRecommendationTombstones()
+    const existing = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+    const idKey = recoIdentityKey(trimmed.song, trimmed.artist)
+    const fullKey = recoMatchKey(trimmed)
+    const dupe = existing.find((r) => {
+      const rid = recoRecordIdentityKey(r)
+      return idKey && rid ? rid === idKey : recoRecordKey(r) === fullKey
+    })
+    if (dupe) {
+      console.log('[reco] add deduped — already on list:', dupe.id)
+      return { ok: true, recommendation: dupe, deduped: true }
+    }
+  } catch { /* fall through to normal add */ }
 
   const url = `${MOBILE_BACKEND_URL}/api/recommendations`
   console.log('[reco] POST →', url, JSON.stringify(trimmed))
@@ -9928,8 +9986,9 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
         album: recommendation.album || recommendation.matchedAlbum,
         note: recommendation.note,
       })
-      recommendation = { ...recommendation, ...enriched, id: recommendation.id, createdAt: recommendation.createdAt }
+      recommendation = { ...recommendation, ...enriched, id: recommendation.id, createdAt: recommendation.createdAt, source: recommendation.source || source }
       await appendRecommendationLocal(recommendation)
+      suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
     } catch (err) {
       console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
     }
@@ -9938,8 +9997,9 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
 
   // Mini unreachable or broken — save locally with iTunes enrichment.
   try {
-    const local = await buildLocalRecommendation(trimmed)
+    const local = await buildLocalRecommendation(trimmed, source)
     await appendRecommendationLocal(local)
+    suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
     console.log('[reco] saved locally (backend', backendStatus ?? 'unreachable', ') —', local.id)
     return { ok: true, recommendation: local, savedLocally: true }
   } catch (err) {
