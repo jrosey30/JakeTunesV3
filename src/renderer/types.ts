@@ -106,6 +106,13 @@ export interface ArtistGroupProposal {
   why?: string
 }
 
+// Related-artists graph — a distinct artist linked to this one (associate,
+// not merge): a band, its members, side projects, key collaborators.
+export interface RelatedArtist {
+  name: string
+  relation: string // 'band' | 'member' | 'sideProject' | 'bandmate' | 'collaborator' | 'related'
+}
+
 export interface Recommendation {
   id: string
   song?: string
@@ -401,6 +408,7 @@ declare global {
       loadArtistAliases: () => Promise<{ ok: boolean; aliases: Record<string, string> }>
       saveArtistAliases: (aliases: Record<string, string>) => Promise<{ ok: boolean; error?: string }>
       classifyArtistGroups: () => Promise<{ ok: boolean; proposals?: ArtistGroupProposal[]; candidateCount?: number; error?: string }>
+      getRelatedArtists: (artist: string) => Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }>
       // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
       getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>

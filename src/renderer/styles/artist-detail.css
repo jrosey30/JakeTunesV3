@@ -188,12 +188,33 @@
 }
 
 /* Inner page sections sit on the warm cream below the hero. */
+.artist-detail-related,
 .artist-detail-wiki,
 .artist-detail-albums,
 .artist-detail-discography {
   padding-left: 28px;
   padding-right: 28px;
 }
+
+/* ── Related artists (associate, not merge) ── */
+.artist-detail-related { padding-top: 16px; }
+.artist-detail-related-head {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+  color: #8a857c; margin-bottom: 9px;
+}
+.artist-detail-related-loading { font-size: 12.5px; color: #9a958c; font-style: italic; }
+.artist-detail-related-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.artist-detail-related-chip {
+  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  appearance: none; text-align: left;
+  padding: 6px 11px; border-radius: 8px;
+  border: 1px solid #d8d5cd; background: #fff; cursor: pointer;
+}
+.artist-detail-related-chip.is-owned:hover { border-color: #1f7a8c; background: #f2f8f9; }
+.artist-detail-related-chip.is-unowned { opacity: 0.55; cursor: default; background: #f4f3ef; }
+.artist-detail-related-name { font-size: 13px; font-weight: 600; color: #2a2018; }
+.artist-detail-related-chip.is-owned .artist-detail-related-name { color: #1f7a8c; }
+.artist-detail-related-rel { font-size: 10px; color: #a09a90; text-transform: uppercase; letter-spacing: 0.3px; }
 
 /* ── Wikipedia card ── */
 .artist-detail-wiki {

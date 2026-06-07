@@ -26,8 +26,8 @@ import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
-import { computeArtistCandidates, parseGroupingResponse } from './artist-groups-core'
-import type { GroupingProposal } from './artist-groups-core'
+import { computeArtistCandidates, parseGroupingResponse, parseRelatedArtists } from './artist-groups-core'
+import type { GroupingProposal, RelatedArtist } from './artist-groups-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -928,6 +928,35 @@ ipcMain.handle('classify-artist-groups', async (): Promise<{ ok: boolean; propos
     return { ok: true, proposals: parseGroupingResponse(text), candidateCount: candidates.length }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'classify failed' }
+  }
+})
+
+// Metadata hierarchy — related-artists graph (associate, don't merge). On-demand
+// per artist page, cached a day (band lineups don't change). Claude (Haiku —
+// factual + cheap) names the band(s), bandmates, side projects + key collabs;
+// the renderer cross-references which are in the library.
+const relatedArtistsCache = new Map<string, { related: RelatedArtist[]; at: number }>()
+const RELATED_TTL_MS = 24 * 60 * 60 * 1000
+ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }> => {
+  const name = String(artist || '').trim()
+  if (!name) return { ok: true, related: [] }
+  const key = name.toLowerCase()
+  const cached = relatedArtistsCache.get(key)
+  if (cached && Date.now() - cached.at < RELATED_TTL_MS) return { ok: true, related: cached.related }
+  try {
+    const reply = await claudeCall('related-artists', {
+      model: 'claude-haiku-4-5',
+      max_tokens: 800,
+      system: 'You are a precise music encyclopedia. Return only real, well-established artist relationships — bands, their members, members\' side projects/aliases, and frequent collaborators. Never invent a relationship.',
+      messages: [{ role: 'user', content: `List the artists most directly related to "${name}": the band(s) they are or were in, that band's other members, their notable side projects/aliases, and a few key collaborators. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","bandmate","collaborator". 8–14 entries, most relevant first. No prose, no code fence.` }],
+    })
+    const block = reply.content[0]
+    const text = block && block.type === 'text' ? block.text : ''
+    const related = parseRelatedArtists(text).slice(0, 16)
+    relatedArtistsCache.set(key, { related, at: Date.now() })
+    return { ok: true, related }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'related-artists failed' }
   }
 })
 

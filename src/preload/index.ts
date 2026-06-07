@@ -192,6 +192,7 @@ const electronAPI = {
   loadArtistAliases: () => ipcRenderer.invoke('load-artist-aliases'),
   saveArtistAliases: (aliases: Record<string, string>) => ipcRenderer.invoke('save-artist-aliases', aliases),
   classifyArtistGroups: () => ipcRenderer.invoke('classify-artist-groups'),
+  getRelatedArtists: (artist: string) => ipcRenderer.invoke('get-related-artists', artist),
   // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
   getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
   // 4.5.0-82 — windowed play counts derived from the per-play event

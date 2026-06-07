@@ -72,6 +72,36 @@ export function computeArtistCandidates(
   return { candidates, primaries }
 }
 
+// ── Related-artists graph (associate, don't merge) ───────────────────────
+export interface RelatedArtist { name: string; relation: string }
+
+/** Tolerant parse of the model's JSON array of {name, relation}. Dedupes by
+ *  name (case-insensitive), keeps order (most-relevant first). */
+export function parseRelatedArtists(text: string): RelatedArtist[] {
+  if (!text) return []
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const body = (fence ? fence[1] : text).trim()
+  const start = body.indexOf('[')
+  const end = body.lastIndexOf(']')
+  if (start < 0 || end <= start) return []
+  let arr: unknown
+  try { arr = JSON.parse(body.slice(start, end + 1)) } catch { return [] }
+  if (!Array.isArray(arr)) return []
+  const seen = new Set<string>()
+  const out: RelatedArtist[] = []
+  for (const raw of arr) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const name = String(r.name ?? '').trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ name, relation: typeof r.relation === 'string' ? r.relation.trim() : 'related' })
+  }
+  return out
+}
+
 /** Tolerant parse of the model's JSON array of classifications. */
 export function parseGroupingResponse(text: string): GroupingProposal[] {
   if (!text) return []

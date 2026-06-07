@@ -6,7 +6,8 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
-import { canonicalArtist, isSameArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
+import { canonicalArtist, isSameArtist, artistIdentityKey, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
+import type { RelatedArtist } from '../types'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useNavigation } from '../context/NavigationContext'
@@ -85,6 +86,21 @@ function normTitle(s: string): string {
     .replace(/\s*\((?:remaster(?:ed)?|deluxe|bonus|live|single version|album version|edit|mono|stereo|reissue|expanded|remix|alternate|demo)[^)]*\)/g, '')
     .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|single version|album version|edit|mono|stereo|reissue|expanded|remix|alternate|demo)[^-]*$/g, '')
     .replace(/[^a-z0-9]+/g, '')
+}
+
+// Related artists cached per canonical name across visits (main caches a day
+// too; this avoids even the round-trip on re-open).
+const relatedArtistsCache: Record<string, RelatedArtist[]> = {}
+
+function relationLabel(rel: string): string {
+  switch (rel) {
+    case 'band': return 'band'
+    case 'member': return 'member'
+    case 'sideProject': return 'side project'
+    case 'bandmate': return 'bandmate'
+    case 'collaborator': return 'collab'
+    default: return rel || 'related'
+  }
 }
 
 export default function ArtistDetailView() {
@@ -229,6 +245,33 @@ export default function ArtistDetailView() {
       if (cancelled) return
       setPhotoSlug(r.ok ? r.slug : null)
     }).catch(() => { /* keep null — UI shows the monogram fallback */ })
+    return () => { cancelled = true }
+  }, [lookupName])
+
+  // Related-artists graph (associate, not merge): this artist's band(s),
+  // bandmates, side projects + key collaborators. The ones you OWN are
+  // clickable; the rest show as connections you don't have yet.
+  const [related, setRelated] = useState<RelatedArtist[]>(() => relatedArtistsCache[lookupName] || [])
+  const [relatedLoading, setRelatedLoading] = useState(false)
+  const ownedArtistKeys = useMemo(() => {
+    const s = new Set<string>()
+    for (const t of lib.tracks) {
+      const a = (t.artist || '').trim()
+      if (a) s.add(artistIdentityKey(canonicalArtist(a)))
+    }
+    return s
+  }, [lib.tracks, aliasVersion])
+  useEffect(() => {
+    if (!lookupName) { setRelated([]); return }
+    if (relatedArtistsCache[lookupName]) { setRelated(relatedArtistsCache[lookupName]); return }
+    let cancelled = false
+    setRelatedLoading(true)
+    window.electronAPI.getRelatedArtists?.(lookupName).then((r) => {
+      if (cancelled) return
+      const list = (r?.ok && r.related) ? r.related : []
+      relatedArtistsCache[lookupName] = list
+      setRelated(list)
+    }).catch(() => { /* leave empty */ }).finally(() => { if (!cancelled) setRelatedLoading(false) })
     return () => { cancelled = true }
   }, [lookupName])
 
@@ -407,6 +450,33 @@ export default function ArtistDetailView() {
           </div>
         </div>
       </header>
+
+      {(related.length > 0 || relatedLoading) && (
+        <section className="artist-detail-related">
+          <div className="artist-detail-related-head">Related artists</div>
+          {relatedLoading && related.length === 0 ? (
+            <div className="artist-detail-related-loading">Finding connections…</div>
+          ) : (
+            <div className="artist-detail-related-row">
+              {related.map((r) => {
+                const owned = ownedArtistKeys.has(artistIdentityKey(canonicalArtist(r.name)))
+                return (
+                  <button
+                    key={r.name}
+                    className={`artist-detail-related-chip ${owned ? 'is-owned' : 'is-unowned'}`}
+                    onClick={() => { if (owned) dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(r.name) }) }}
+                    disabled={!owned}
+                    title={owned ? `Go to ${r.name}` : `${r.name} — not in your library yet`}
+                  >
+                    <span className="artist-detail-related-name">{r.name}</span>
+                    <span className="artist-detail-related-rel">{relationLabel(r.relation)}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="artist-detail-wiki">
         {wikiLoading ? (
