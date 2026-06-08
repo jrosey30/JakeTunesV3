@@ -477,6 +477,10 @@ declare global {
       checkIpodMounted: () => Promise<{ mounted: boolean; name: string | null }>
       getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
+      trackLocalState: (ipodPath: string) => Promise<'local' | 'streamed' | 'unknown'>
+      loadDownloadsState: () => Promise<{ pinned: string[]; streaming: boolean }>
+      downloadTrack: (ipodPath: string) => Promise<{ ok: boolean; error?: string }>
+      removeDownload: (ipodPath: string) => Promise<{ ok: boolean; error?: string }>
       ejectIpod: () => Promise<{ ok: boolean; error?: string }>
       importTracks: (filePaths: string[], nextId: number, format?: string) => Promise<{ ok: boolean; tracks: Track[]; skippedDupes?: Array<{ src: string; matchedTitle: string; matchedArtist: string }>; artwork?: Array<{ key: string; hash: string }> }>
       importTrack: (srcPath: string, id: number, format?: string) => Promise<{ ok: boolean; track?: Track; dupe?: { src: string; matchedTitle: string; matchedArtist: string }; error?: string; artwork?: { key: string; hash: string } }>

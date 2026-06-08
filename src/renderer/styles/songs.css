@@ -239,6 +239,22 @@
 }
 .title-row-star--filled:hover { transform: scale(1.15); }
 
+/* Spotify-style "Downloaded" indicator — a small filled down-arrow on tracks
+ * the user pinned for offline. Sits after the inline star; muted green
+ * (#4fa37f) so it reads as "available offline" without competing with the
+ * title. Always visible when present (unlike the hover-reveal star). */
+.title-row-downloaded {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 2px;
+  color: #4fa37f;
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
 /* 4.5: numeric columns right-align — iTunes convention. Header label
  * matches so the column letterheads read as a vertical block, not a
  * left-aligned heading with right-floating digits underneath. */

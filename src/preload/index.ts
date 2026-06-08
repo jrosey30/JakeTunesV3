@@ -341,6 +341,15 @@ const electronAPI = {
     ipcRenderer.invoke('get-ipod-capacity'),
   getMusicLibraryPath: (): Promise<string> =>
     ipcRenderer.invoke('get-music-library-path'),
+  // Spotify-style offline "Download" (streaming/cache machines only)
+  trackLocalState: (ipodPath: string): Promise<'local' | 'streamed' | 'unknown'> =>
+    ipcRenderer.invoke('track-local-state', ipodPath),
+  loadDownloadsState: (): Promise<{ pinned: string[]; streaming: boolean }> =>
+    ipcRenderer.invoke('load-downloads-state'),
+  downloadTrack: (ipodPath: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('download-track', ipodPath),
+  removeDownload: (ipodPath: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('remove-download', ipodPath),
   ejectIpod: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-ipod'),
   // 4.4.12: import results now include an `artwork` field when the

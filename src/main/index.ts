@@ -43,7 +43,7 @@ import {
 } from '../common/albumReleaseDate'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
-import { stat, open, readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises'
+import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
@@ -2604,6 +2604,94 @@ ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean
 
 ipcMain.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
+})
+
+// ── "Download" (offline pin) — Spotify-style, streaming/cache machines only ──
+// On a streaming machine (e.g. workmini) the library is a "cache farm": each
+// track file under musicRoot is either a real local file (instant) or a
+// symlink to the NAS mount (streamed). "Download" copies a streamed track's
+// bytes local; "Remove download" reverts it to a symlink. Pinned paths are
+// recorded in downloads-state.json so the cache manager never evicts them.
+// Fully inert on all-local libraries: no library.streamRoot configured →
+// remove-download refuses and the renderer hides the controls.
+function trackFarmPath(ipodPath: string): string {
+  const root = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  return join(root, ipodPath.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+}
+async function readStreamRoot(): Promise<string | null> {
+  try {
+    const s = JSON.parse(await readFile(getSettingsPath(), 'utf-8'))
+    const r = s?.library?.streamRoot
+    return typeof r === 'string' && r.length > 0 ? r : null
+  } catch { return null }
+}
+function downloadsStatePath(): string {
+  return join(app.getPath('userData'), 'downloads-state.json')
+}
+async function readPins(): Promise<string[]> {
+  try {
+    const s = JSON.parse(await readFile(downloadsStatePath(), 'utf-8'))
+    return Array.isArray(s?.pinned) ? (s.pinned as string[]) : []
+  } catch { return [] }
+}
+async function writePins(pinned: string[]): Promise<void> {
+  await mkdir(app.getPath('userData'), { recursive: true })
+  const p = downloadsStatePath()
+  const tmp = p + '.tmp'
+  await writeFile(tmp, JSON.stringify({ pinned, updatedAt: new Date().toISOString() }, null, 2), 'utf-8')
+  await rename(tmp, p)
+}
+
+ipcMain.handle('track-local-state', async (_e, ipodPath: string): Promise<'local' | 'streamed' | 'unknown'> => {
+  try {
+    const st = await lstat(trackFarmPath(ipodPath))
+    return st.isSymbolicLink() ? 'streamed' : 'local'
+  } catch { return 'unknown' }
+})
+
+ipcMain.handle('load-downloads-state', async (): Promise<{ pinned: string[]; streaming: boolean }> => {
+  return { pinned: await readPins(), streaming: (await readStreamRoot()) !== null }
+})
+
+ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const fp = trackFarmPath(ipodPath)
+    const st = await lstat(fp)
+    if (st.isSymbolicLink()) {
+      const target = await readlink(fp)
+      await stat(target)                       // NAS source must be reachable
+      const tmp = fp + '.dl.tmp'
+      await unlink(tmp).catch(() => {})
+      await copyFile(target, tmp)              // pull the real bytes local
+      await rename(tmp, fp)                    // atomic: symlink → real file
+    }
+    const pins = await readPins()
+    if (!pins.includes(ipodPath)) { pins.push(ipodPath); await writePins(pins) }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const root = await readStreamRoot()
+    if (!root) return { ok: false, error: 'This library is fully local — nothing to un-download.' }
+    const fp = trackFarmPath(ipodPath)
+    const target = join(root, ipodPath.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+    await stat(target)                         // never orphan: NAS must have it first
+    const st = await lstat(fp)
+    if (!st.isSymbolicLink()) {
+      const tmp = fp + '.rm.tmp'
+      await unlink(tmp).catch(() => {})
+      await symlink(target, tmp)
+      await rename(tmp, fp)                     // atomic: real file → symlink
+    }
+    await writePins((await readPins()).filter((p) => p !== ipodPath))
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 })
 
 // 4.4.85: at app boot, read library.json and seed the codecByAbsPath map

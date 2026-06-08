@@ -12,6 +12,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
+import { subscribeDownloads, downloadsVersion, isStreamingLibrary, isDownloaded, isDownloading, initDownloads, downloadPaths, removeDownloadPaths } from '../utils/downloadStore'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
@@ -118,11 +119,12 @@ interface SongRowProps {
   onContextMenu: (e: React.MouseEvent, track: Track, idx: number) => void
   onDragStart: (track: Track, e: React.DragEvent) => void
   onRatingChange: (id: number, rating: number) => void
+  downloaded?: boolean
 }
 
 const SongRow = memo(function SongRow({
   track, idx, isPlaying, isSelected, isRecent, gridTemplate, visibleCols,
-  onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange,
+  onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange, downloaded,
 }: SongRowProps) {
   return (
     <div
@@ -167,6 +169,17 @@ const SongRow = memo(function SongRow({
                     <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
                   </svg>
                 </button>
+                {downloaded && (
+                  <span
+                    className="title-row-downloaded"
+                    title="Downloaded for offline — plays instantly"
+                    aria-label="Downloaded"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M7 2.2v6M4.3 5.6 7 8.4l2.7-2.8M3.2 11h7.6" />
+                    </svg>
+                  </span>
+                )}
               </div>
             )
           }
@@ -200,6 +213,8 @@ export default function SongsView() {
   // Subscribe to the Bandcamp recently-added store so the row class
   // re-renders when a new import lands or its 10s TTL expires.
   useSyncExternalStore(subscribeRecentlyAdded, recentlyAddedSnapshot)
+  useSyncExternalStore(subscribeDownloads, downloadsVersion)
+  useEffect(() => { void initDownloads() }, [])
 
   // Mirror playTrack into a ref so the row callbacks stay stable across
   // scroll-triggered re-renders without depending on useAudio's internal
@@ -441,6 +456,18 @@ export default function SongsView() {
         },
       },
       ...artworkItems,
+      ...(isStreamingLibrary() ? (() => {
+        const dlPaths = selectedTracks.map((t) => t.path).filter(Boolean) as string[]
+        if (!dlPaths.length) return [] as MenuEntry[]
+        const anyDownloading = dlPaths.some((p) => isDownloading(p))
+        const allDownloaded = dlPaths.every((p) => isDownloaded(p))
+        const entry: MenuEntry = anyDownloading
+          ? { label: count > 1 ? `Downloading ${count}…` : 'Downloading…', onClick: () => {}, disabled: true }
+          : allDownloaded
+            ? { label: count > 1 ? `Remove ${count} Downloads` : 'Remove Download', onClick: () => { void removeDownloadPaths(dlPaths) } }
+            : { label: count > 1 ? `Download ${count} Songs` : 'Download', onClick: () => { void downloadPaths(dlPaths) } }
+        return [{ separator: true as const }, entry] as MenuEntry[]
+      })() : []),
       { separator: true as const },
       {
         label: 'Cynthia!!',
@@ -974,6 +1001,7 @@ export default function SongsView() {
                   onContextMenu={handleContextMenu}
                   onDragStart={handleRowDragStart}
                   onRatingChange={handleRatingChange}
+                  downloaded={isDownloaded(track.path)}
                 />
               )
             })}
