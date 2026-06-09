@@ -1220,6 +1220,7 @@ function AppInner() {
         case 'volume-down': setVolume(Math.max(0, pbState.volume - 0.1)); break
         case 'get-info': window.dispatchEvent(new Event('jaketunes-get-info')); break
         case 'new-playlist': window.dispatchEvent(new Event('jaketunes-new-playlist')); break
+        case 'import-files': window.dispatchEvent(new Event('jaketunes-import-files')); break
         case 'show-now-playing': window.dispatchEvent(new Event('jaketunes-show-now-playing')); break
         case 'view-songs': dispatch({ type: 'SET_VIEW', view: 'songs' }); break
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
@@ -1526,6 +1527,24 @@ function AppInner() {
     if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
       setDropActive(false)
     }
+  }, [])
+
+  // File → Import… (⌘O): native file picker feeding the EXACT same
+  // enqueueFiles() pipeline as drag-and-drop (format pref honored, dedupe,
+  // queue panel progress).
+  useEffect(() => {
+    const handler = async () => {
+      const r = await window.electronAPI.importPickFiles()
+      if (!r?.ok || !r.paths || r.paths.length === 0) return
+      const ui = await window.electronAPI.loadUiState().catch(() => ({ ok: false as const, state: null }))
+      const importFormat = (ui.ok && ui.state && typeof (ui.state as Record<string, unknown>).importFormat === 'string')
+        ? (ui.state as Record<string, unknown>).importFormat as string
+        : undefined
+      void enqueueFiles(r.paths, importFormat)
+    }
+    const listener = () => { void handler() }
+    window.addEventListener('jaketunes-import-files', listener)
+    return () => window.removeEventListener('jaketunes-import-files', listener)
   }, [])
 
   // 4.4.39: hold splash until BOTH library is loaded AND minimum display
