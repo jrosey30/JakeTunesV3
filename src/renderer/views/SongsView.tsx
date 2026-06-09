@@ -160,10 +160,9 @@ const SongRow = memo(function SongRow({
                     title="Downloaded for offline — plays instantly"
                     aria-label="Downloaded"
                   >
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <circle cx="8" cy="8" r="6.3" />
-                      <path d="M8 4.7v4.4" />
-                      <path d="M5.7 7.2 8 9.4 10.3 7.2" />
+                    <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+                      <circle cx="8" cy="8" r="7" fill="currentColor" />
+                      <path className="dl-arrow" d="M8 4.8v6M5.4 8.2 8 10.8l2.6-2.6" />
                     </svg>
                   </span>
                 )}
