@@ -1219,6 +1219,7 @@ function AppInner() {
         case 'volume-up': setVolume(Math.min(1, pbState.volume + 0.1)); break
         case 'volume-down': setVolume(Math.max(0, pbState.volume - 0.1)); break
         case 'get-info': window.dispatchEvent(new Event('jaketunes-get-info')); break
+        case 'new-playlist': window.dispatchEvent(new Event('jaketunes-new-playlist')); break
         case 'show-now-playing': window.dispatchEvent(new Event('jaketunes-show-now-playing')); break
         case 'view-songs': dispatch({ type: 'SET_VIEW', view: 'songs' }); break
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break

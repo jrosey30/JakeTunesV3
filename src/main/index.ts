@@ -1655,7 +1655,7 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
   {
     label: 'File',
     submenu: [
-      { label: 'New Playlist', accelerator: 'CmdOrCtrl+N' },
+      { label: 'New Playlist', accelerator: 'CmdOrCtrl+N', click: () => sendMenuAction('new-playlist') },
       { label: 'Import...', accelerator: 'CmdOrCtrl+O' },
       { label: 'Import and Convert...', accelerator: 'Shift+CmdOrCtrl+O', click: () => sendMenuAction('open-import-convert') },
       { type: 'separator' },

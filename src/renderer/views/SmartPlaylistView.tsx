@@ -771,6 +771,21 @@ export default function SmartPlaylistView() {
     }
   }
 
+  // Keyboard: ⌘A selects every visible track (parity with SongsView).
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.querySelector('.getinfo-overlay')) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && sortedTracks.length > 0) {
+        e.preventDefault()
+        setSelectedIds(new Set(sortedTracks.map(t => t.id)))
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [sortedTracks])
+
   const handleContextMenu = (e: React.MouseEvent, track: Track, idx: number) => {
     e.preventDefault()
     if (!selectedIds.has(track.id)) setSelectedIds(new Set([track.id]))

@@ -251,6 +251,13 @@ export default function Sidebar() {
     setCreatingPlaylist(true)
   }, [])
 
+  // File → New Playlist (⌘N) arrives here via App's menu-action bridge.
+  useEffect(() => {
+    const handler = () => handleNewPlaylist()
+    window.addEventListener('jaketunes-new-playlist', handler)
+    return () => window.removeEventListener('jaketunes-new-playlist', handler)
+  }, [handleNewPlaylist])
+
   const handleNewPlaylistSubmit = useCallback((name: string) => {
     setCreatingPlaylist(false)
     if (!name.trim()) return

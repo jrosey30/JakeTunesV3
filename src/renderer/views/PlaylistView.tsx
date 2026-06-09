@@ -245,12 +245,18 @@ export default function PlaylistView() {
     setConfirmAction(null)
   }, [playlist, confirmAction, dispatch])
 
-  // Keyboard: Delete/Backspace to remove selected tracks
+  // Keyboard: Delete/Backspace to remove selected tracks; ⌘A selects every
+  // visible track (parity with SongsView).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (confirmAction) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && sortedTracks.length > 0) {
+        e.preventDefault()
+        setSelectedIds(new Set(sortedTracks.map(t => t.id)))
+        return
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0 && playlist) {
         e.preventDefault()
         removeSelected()
@@ -258,7 +264,7 @@ export default function PlaylistView() {
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [selectedIds, playlist, removeSelected, confirmAction])
+  }, [selectedIds, playlist, removeSelected, confirmAction, sortedTracks])
 
   // Get Info save handler
   const handleGetInfoSave = useCallback(

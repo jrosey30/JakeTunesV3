@@ -184,6 +184,40 @@ export default function ArtistsView() {
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
+      // Mirrors SongsView's "Start X Radio" (contributing-artists aware) so the
+      // action exists where it's most natural — browsing an artist's albums.
+      ...(() => {
+        const trackArtist = (track.artist || '').trim()
+        const sourceContribs = (
+          track.contributingArtists && track.contributingArtists.length > 0
+            ? track.contributingArtists
+            : [trackArtist]
+        )
+          .map(s => (s || '').trim().toLowerCase())
+          .filter(s => s.length > 0)
+        const artistTracks = sourceContribs.length
+          ? lib.tracks.filter(t => {
+              const candidates = (t.contributingArtists && t.contributingArtists.length > 0
+                ? t.contributingArtists
+                : [(t.artist || '').trim()]
+              )
+                .map(s => (s || '').trim().toLowerCase())
+                .filter(s => s.length > 0)
+              return candidates.some(c => sourceContribs.includes(c))
+            })
+          : []
+        return trackArtist && artistTracks.length > 0 ? [
+          { separator: true as const },
+          {
+            label: `Start ${trackArtist} Radio`,
+            onClick: () => {
+              window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', {
+                detail: { tracks: artistTracks, label: trackArtist },
+              }))
+            },
+          },
+        ] : []
+      })(),
       ...ratingMenuEntries([track], libDispatch),
       { separator: true as const },
       { label: 'Get Info', onClick: () => setGetInfoState({ tracks: [track], index: idx }) },
@@ -206,7 +240,7 @@ export default function ArtistsView() {
       { separator: true as const },
       { label: 'Delete Song', onClick: () => setDeleteConfirm({ ids: [track.id], count: 1 }) },
     ]
-  }, [ctxMenu, playTrack, pbDispatch, libDispatch, openCynthia])
+  }, [ctxMenu, playTrack, pbDispatch, libDispatch, openCynthia, lib.tracks])
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
