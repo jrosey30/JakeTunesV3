@@ -55,11 +55,12 @@ export default function NewForYouView() {
     for (const c of candidates) {
       const key = `${c.artist}|${c.title}`
       if (enrichCache[key]) continue
-      window.electronAPI.searchItunes?.(`${c.artist} ${c.title}`).then((r) => {
-        if (cancelled || !r?.ok) return
-        const best = r.results?.[0]
-        if (!best) return
-        const entry = { art: best.artworkUrl?.replace('100x100', '400x400'), preview: best.previewUrl }
+      // Artist-verified art: main accepts a cover ONLY from an iTunes row whose
+      // artist matches this candidate. No match → leave un-enriched so the card
+      // shows its ♪ placeholder instead of a confidently-wrong cover.
+      window.electronAPI.lookupRecoArtwork?.({ artist: c.artist, title: c.title }).then((r) => {
+        if (cancelled || !r?.artworkUrl) return
+        const entry = { art: r.artworkUrl, preview: r.previewUrl }
         enrichCache[key] = entry
         setEnriched((prev) => ({ ...prev, [key]: entry }))
       }).catch(() => { /* leave un-enriched */ })

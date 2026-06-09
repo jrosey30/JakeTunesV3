@@ -9916,6 +9916,28 @@ async function fetchItunesRecoRows(term: string, limit = 25): Promise<RecoItunes
   return promise
 }
 
+// Verified cover-art lookup for radar / discovery cards. The renderer used to
+// hit search-itunes and take results[0] blindly — which is how a Vince Staples
+// card ended up wearing a Guns N' Roses cover. Reuse the SAME matchers the reco
+// add-path uses (recoArtistMatches / recoTitleMatches) and accept art ONLY from
+// a row whose ARTIST matches the candidate; prefer a row whose title also
+// matches (exact cover) but fall back to any same-artist row. No match → return
+// nothing, so the card keeps its honest ♪ placeholder rather than wrong art.
+ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> => {
+  const artist = (input?.artist || '').trim()
+  const title = (input?.title || '').trim()
+  if (artist.length < 2 || title.length < 1) return {}
+  try {
+    const rows = await fetchItunesRecoRows(`${artist} ${title}`, 25)
+    const sameArtist = rows.filter((r) => recoArtistMatches(artist, r.artist))
+    if (!sameArtist.length) return {}
+    const best = sameArtist.find((r) => recoTitleMatches(title, r.song)) || sameArtist[0]
+    return { artworkUrl: best.artworkUrl, previewUrl: best.previewUrl }
+  } catch {
+    return {}
+  }
+})
+
 /** Recommendations for suggest — reuse sync TTL so navigation does not re-pull homemini/NAS every time. */
 async function recommendationsForSuggest(): Promise<RecommendationRecord[]> {
   const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
