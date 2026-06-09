@@ -5,6 +5,7 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { downloadMenuEntries } from '../utils/downloadStore'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -456,6 +457,7 @@ export default function PlaylistView() {
         onClick: () => setGetInfoState({ tracks: selected, index: idx }),
       },
       ...artworkItems,
+      ...downloadMenuEntries(selected),
       { separator: true as const },
       {
         label: 'Cynthia!!',

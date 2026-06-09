@@ -39,6 +39,7 @@ import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLo
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
 import { setStereoWidth } from './audio/audioEnhance'
 import { setUserAliases } from './utils/artistAlias'
+import { initDownloads } from './utils/downloadStore'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
@@ -146,6 +147,11 @@ function AppInner() {
       if (r?.ok) setUserAliases(r.aliases)
     }).catch(() => { /* no overrides — the curated baseline still applies */ })
   }, [])
+
+  // Init the offline-download (pin) store app-wide so the Download controls work
+  // in any song-list view (not just Songs), even if a playlist is the first view
+  // opened after launch. Idempotent (guarded inside initDownloads).
+  useEffect(() => { void initDownloads() }, [])
 
   // Subscribe the renderer-side recently-added store to the main-process
   // Bandcamp download-router events. Idempotent.

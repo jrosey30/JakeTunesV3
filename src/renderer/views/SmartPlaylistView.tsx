@@ -8,6 +8,7 @@ import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { downloadMenuEntries } from '../utils/downloadStore'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
@@ -844,6 +845,7 @@ export default function SmartPlaylistView() {
       { separator: true as const },
       { label: `Get Info`, onClick: () => setGetInfoState({ tracks: selected, index: idx }) },
       ...artworkItems,
+      ...downloadMenuEntries(selected),
       { separator: true as const },
       {
         label: count > 1 ? `Delete ${count} Songs` : 'Delete Song',

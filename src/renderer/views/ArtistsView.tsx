@@ -5,6 +5,7 @@ import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { consumeDrillIn } from '../utils/drillIn'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { downloadMenuEntries } from '../utils/downloadStore'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { clearArtworkNegativeCache } from '../utils/artworkLookup'
@@ -187,6 +188,7 @@ export default function ArtistsView() {
       { separator: true as const },
       { label: 'Get Info', onClick: () => setGetInfoState({ tracks: [track], index: idx }) },
       ...artworkItems,
+      ...downloadMenuEntries([track]),
       { separator: true as const },
       {
         label: 'Cynthia!! (this album)',

@@ -1,3 +1,5 @@
+import type { MenuEntry } from '../components/ContextMenu'
+
 // ── Offline "Download" (pin) store — Spotify-style ───────────────────────
 // Streaming/cache machines (e.g. workmini) keep most of the library as
 // stream-links to the NAS with a capped auto-cache of the hot rotation.
@@ -81,4 +83,23 @@ export async function removeDownloadPaths(paths: string[]): Promise<void> {
     }
   }
   emit()
+}
+
+// Build the Download / Remove Download context-menu entries for a set of
+// tracks. Returns [] on all-local libraries (streaming=false), so it's a no-op
+// there. Shared by every song-list view's right-click menu so the behavior is
+// identical everywhere (one source of truth for the label/onClick logic).
+export function downloadMenuEntries(tracks: Array<{ path?: string }>): MenuEntry[] {
+  if (!streaming) return []
+  const paths = tracks.map((t) => t.path).filter(Boolean) as string[]
+  if (!paths.length) return []
+  const n = paths.length
+  const anyDownloading = paths.some((p) => inProgress.has(p))
+  const allDownloaded = paths.every((p) => pinned.has(p))
+  const entry: MenuEntry = anyDownloading
+    ? { label: n > 1 ? `Downloading ${n}…` : 'Downloading…', onClick: () => {}, disabled: true }
+    : allDownloaded
+      ? { label: n > 1 ? `Remove ${n} Downloads` : 'Remove Download', onClick: () => { void removeDownloadPaths(paths) } }
+      : { label: n > 1 ? `Download ${n} Songs` : 'Download', onClick: () => { void downloadPaths(paths) } }
+  return [{ separator: true as const }, entry]
 }

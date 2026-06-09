@@ -14,6 +14,7 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { ratingMenuEntries } from '../components/StarRating'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { downloadMenuEntries } from '../utils/downloadStore'
 import GetInfoModal from '../components/GetInfoModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
@@ -262,6 +263,7 @@ export default function AlbumDetailView() {
       { separator: true as const },
       { label: 'Get Info', onClick: () => setGetInfoState({ tracks: selectedTracks, index: idx }) },
       ...artworkItems,
+      ...downloadMenuEntries(selectedTracks),
       { separator: true as const },
       {
         label: 'Cynthia!!',
