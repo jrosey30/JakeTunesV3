@@ -36,6 +36,7 @@ import {
   recoArtistMatches,
   evaluateMusicManVerification,
 } from './reco-match'
+import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory'
 import {
   pickAlbumReleaseDate,
   sanitizeAlbumCredits,
@@ -43,7 +44,7 @@ import {
 } from '../common/albumReleaseDate'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
-import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename } from 'fs/promises'
+import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
@@ -6484,8 +6485,66 @@ function saveListenerProfile() {
   listenerProfileCache.set(listenerProfile as unknown as Record<string, unknown>)
 }
 
+// ── Listening memory — durable play log ──────────────────────────────────
+// The listener profile caps recentPlays at 200, which is plenty for Music Man
+// prompts but useless for streaks/habit analytics over months. Every play and
+// skip ALSO appends one compact JSON line to listening-log.jsonl in STATE_DIR
+// (local, per-machine; the deploy script doesn't sync it, so workmini keeps
+// its own history). The log seeds once from the profile's recentPlays/
+// recentSkips so the Home card has data from day one.
+function listeningLogPath(): string {
+  return join(STATE_DIR, 'listening-log.jsonl')
+}
+let listeningLogCache: PlayEvent[] | null = null
+let listeningLogSeeded = false
+async function seedListeningLogOnce(): Promise<void> {
+  if (listeningLogSeeded) return
+  listeningLogSeeded = true
+  try {
+    await stat(listeningLogPath())
+    return // already exists
+  } catch { /* missing — seed from the profile's recent history */ }
+  try {
+    const p = await loadListenerProfile()
+    const events: PlayEvent[] = [
+      ...p.recentPlays.map((r) => ({ t: 'p' as const, ts: r.ts, ar: r.artist, al: r.album, g: r.genre, ti: r.title })),
+      ...p.recentSkips.map((r) => ({ t: 's' as const, ts: r.ts, ar: r.artist, ti: r.title })),
+    ].filter((e) => e.ts && !Number.isNaN(Date.parse(e.ts)))
+      .sort((a, b) => a.ts.localeCompare(b.ts))
+    await writeFile(listeningLogPath(), events.map((e) => JSON.stringify(e)).join('\n') + (events.length ? '\n' : ''), 'utf-8')
+  } catch { /* an empty log is fine — it fills from here on */ }
+}
+async function appendListeningEvent(e: PlayEvent): Promise<void> {
+  try {
+    await seedListeningLogOnce()
+    await appendFile(listeningLogPath(), JSON.stringify(e) + '\n', 'utf-8')
+    if (listeningLogCache) listeningLogCache.push(e)
+  } catch { /* losing one log line beats blocking playback */ }
+}
+
+ipcMain.handle('get-listening-memory', async () => {
+  try {
+    await seedListeningLogOnce()
+    if (!listeningLogCache) {
+      const raw = await readFile(listeningLogPath(), 'utf-8').catch(() => '')
+      listeningLogCache = parseLogLines(raw)
+    }
+    const insights = computeListeningMemory(listeningLogCache, new Date())
+    const p = await loadListenerProfile()
+    return {
+      ok: true,
+      insights,
+      lifetime: { totalPlays: p.totalPlays, firstSeen: p.firstSeen },
+      observations: p.observations.slice(-5).reverse(),
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
 // Called when a song finishes playing (not skipped)
 ipcMain.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string }) => {
+  void appendListeningEvent({ t: 'p', ts: new Date().toISOString(), ar: track.artist, al: track.album, g: track.genre, ti: track.title })
   if (!listenerProfile.firstSeen) listenerProfile.firstSeen = new Date().toISOString().split('T')[0]
   listenerProfile.totalPlays++
   if (track.artist) listenerProfile.artistPlays[track.artist] = (listenerProfile.artistPlays[track.artist] || 0) + 1
@@ -6506,6 +6565,7 @@ ipcMain.handle('record-play', async (_event, track: { title: string; artist: str
 
 // Called when a song is skipped (next button pressed before song finishes)
 ipcMain.handle('record-skip', async (_event, track: { title: string; artist: string }) => {
+  void appendListeningEvent({ t: 's', ts: new Date().toISOString(), ar: track.artist, ti: track.title })
   listenerProfile.totalSkips++
   if (track.artist) listenerProfile.artistSkips[track.artist] = (listenerProfile.artistSkips[track.artist] || 0) + 1
   listenerProfile.recentSkips.unshift({ title: track.title, artist: track.artist, ts: new Date().toISOString() })

@@ -334,6 +334,23 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
+// Brain #1 — Listening Memory. Mirrors ListeningMemoryInsights in
+// src/main/listening-memory.ts (the IPC payload shape).
+export interface ListeningMemoryData {
+  insights: {
+    totals: { plays: number; skips: number; skipRatePct: number; distinctArtists: number; daysActive: number; sinceTs: string | null }
+    streak: { currentDays: number; bestDays: number; bestEndedOn: string | null }
+    clock: { byHour: number[]; byWeekday: number[]; peakHourLabel: string | null; peakWeekdayLabel: string | null }
+    topArtists7d: Array<{ artist: string; plays: number }>
+    topArtists30d: Array<{ artist: string; plays: number }>
+    rising: { artist: string; plays7d: number } | null
+    comeback: { artist: string; gapDays: number } | null
+    binge: { artist: string; plays: number; date: string } | null
+  }
+  lifetime: { totalPlays: number; firstSeen: string }
+  observations: string[]
+}
+
 export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode'
 export type SortDirection = 'asc' | 'desc'
 
@@ -547,6 +564,7 @@ declare global {
       recordPlay?: (track: { title: string; artist: string; album: string; genre: string }) => Promise<{ ok: boolean }>
       recordSkip?: (track: { title: string; artist: string }) => Promise<{ ok: boolean }>
       recordRating?: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
+      getListeningMemory?: () => Promise<{ ok: boolean; error?: string } & Partial<ListeningMemoryData>>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>

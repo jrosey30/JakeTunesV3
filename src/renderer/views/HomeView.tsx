@@ -31,7 +31,7 @@ import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } f
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
-import type { Track, MusicNewsItem, TourDate, UpcomingRelease } from '../types'
+import type { Track, MusicNewsItem, TourDate, UpcomingRelease, ListeningMemoryData } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -106,6 +106,17 @@ export default function HomeView() {
   useScrollPersistence('home-row-releases', releasesRowRef)
   useScrollPersistence('home-row-tours', tourDatesRowRef)
   useScrollPersistence('home-row-upcoming', upcomingRowRef)
+
+  // Brain #1 — Listening Memory. One fetch per mount; main computes streaks/
+  // habits from the local play log (no network). Null → card hidden.
+  const [memory, setMemory] = useState<ListeningMemoryData | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.getListeningMemory?.().then((r) => {
+      if (!cancelled && r?.ok && r.insights) setMemory(r as ListeningMemoryData)
+    }).catch(() => { /* card just doesn't render */ })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -589,6 +600,69 @@ export default function HomeView() {
               <div className="home-stat-value" title={stats.topGenre}>{stats.topGenre}</div>
               <div className="home-stat-label">Top Genre</div>
             </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Listening Memory (brain #1) — habits from the local play log:
+            streak, golden hour, this week's artist, comebacks, binges —
+            plus Music Man's latest observation about the listener. ──── */}
+      {memory && memory.insights.totals.plays > 0 && (
+        <section className="home-section home-memory">
+          <div className="home-section-header">
+            <h2 className="home-section-title">Listening Memory</h2>
+            <span className="home-memory-since">
+              {memory.insights.totals.daysActive} active day{memory.insights.totals.daysActive === 1 ? '' : 's'}
+              {memory.lifetime.firstSeen ? ` · since ${memory.lifetime.firstSeen}` : ''}
+            </span>
+          </div>
+          <div className="home-stats home-stats--memory">
+            <div className="home-stat">
+              <div className="home-stat-value">
+                {memory.insights.streak.currentDays > 0
+                  ? `${memory.insights.streak.currentDays} day${memory.insights.streak.currentDays === 1 ? '' : 's'}`
+                  : '—'}
+              </div>
+              <div className="home-stat-label">
+                Current Streak{memory.insights.streak.bestDays > 1 ? ` · Best ${memory.insights.streak.bestDays}` : ''}
+              </div>
+            </div>
+            {memory.insights.clock.peakHourLabel && (
+              <div className="home-stat">
+                <div className="home-stat-value">{memory.insights.clock.peakHourLabel}</div>
+                <div className="home-stat-label">Golden Hour</div>
+              </div>
+            )}
+            {memory.insights.clock.peakWeekdayLabel && (
+              <div className="home-stat">
+                <div className="home-stat-value">{memory.insights.clock.peakWeekdayLabel}</div>
+                <div className="home-stat-label">Biggest Day</div>
+              </div>
+            )}
+            {memory.insights.topArtists7d[0] && (
+              <div className="home-stat">
+                <div className="home-stat-value" title={memory.insights.topArtists7d[0].artist}>{memory.insights.topArtists7d[0].artist}</div>
+                <div className="home-stat-label">This Week · {memory.insights.topArtists7d[0].plays} Play{memory.insights.topArtists7d[0].plays === 1 ? '' : 's'}</div>
+              </div>
+            )}
+            {memory.insights.comeback && (
+              <div className="home-stat">
+                <div className="home-stat-value" title={memory.insights.comeback.artist}>{memory.insights.comeback.artist}</div>
+                <div className="home-stat-label">Comeback · {memory.insights.comeback.gapDays} Days Away</div>
+              </div>
+            )}
+            {memory.insights.binge && (
+              <div className="home-stat">
+                <div className="home-stat-value" title={memory.insights.binge.artist}>{memory.insights.binge.artist}</div>
+                <div className="home-stat-label">Binge Record · {memory.insights.binge.plays} in a Day</div>
+              </div>
+            )}
+          </div>
+          {memory.observations[0] && (
+            <blockquote className="home-memory-obs">
+              “{memory.observations[0]}”
+              <cite> — Music Man’s notebook</cite>
+            </blockquote>
           )}
         </section>
       )}
