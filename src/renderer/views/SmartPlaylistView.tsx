@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -8,7 +8,7 @@ import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import { downloadMenuEntries } from '../utils/downloadStore'
+import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
@@ -408,6 +408,9 @@ export default function SmartPlaylistView() {
     }
   }, [playlistId])
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(defaultHidden)
+  // Re-render when download pins/progress change so the title-cell disc tracks
+  // state (store is app-init'd in App.tsx; inert on all-local machines).
+  useSyncExternalStore(subscribeDownloads, downloadsVersion)
   // When the user switches between smart playlists, reset hiddenCols
   // to that playlist's defaults — otherwise carrying over the previous
   // playlist's hide-set means each view doesn't get the right columns.
@@ -1171,6 +1174,18 @@ export default function SmartPlaylistView() {
                             <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
                           </svg>
                         </button>
+                        {(isDownloaded(track.path) || isDownloading(track.path)) && (
+                          <span
+                            className={isDownloading(track.path) ? 'title-row-dl title-row-dl--loading' : 'title-row-dl'}
+                            title={isDownloading(track.path) ? 'Downloading…' : 'Downloaded for offline — plays instantly'}
+                            aria-label={isDownloading(track.path) ? 'Downloading' : 'Downloaded'}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+                              <circle cx="8" cy="8" r="7" fill="currentColor" />
+                              <path className="dl-arrow" d="M8 4.8v6M5.4 8.2 8 10.8l2.6-2.6" />
+                            </svg>
+                          </span>
+                        )}
                       </div>
                     )
                   }

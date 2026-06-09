@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import { downloadMenuEntries } from '../utils/downloadStore'
+import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -115,6 +115,9 @@ export default function PlaylistView() {
   // Column visibility & width state. Rating column stays visible by
   // default so ratings can be edited inline from any playlist.
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount', 'channelMode']))
+  // Re-render when download pins/progress change so the title-cell disc tracks
+  // state (store is app-init'd in App.tsx; inert on all-local machines).
+  useSyncExternalStore(subscribeDownloads, downloadsVersion)
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -652,6 +655,18 @@ export default function PlaylistView() {
                               <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
                             </svg>
                           </button>
+                          {(isDownloaded(track.path) || isDownloading(track.path)) && (
+                            <span
+                              className={isDownloading(track.path) ? 'title-row-dl title-row-dl--loading' : 'title-row-dl'}
+                              title={isDownloading(track.path) ? 'Downloading…' : 'Downloaded for offline — plays instantly'}
+                              aria-label={isDownloading(track.path) ? 'Downloading' : 'Downloaded'}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+                                <circle cx="8" cy="8" r="7" fill="currentColor" />
+                                <path className="dl-arrow" d="M8 4.8v6M5.4 8.2 8 10.8l2.6-2.6" />
+                              </svg>
+                            </span>
+                          )}
                         </div>
                       )
                     }
