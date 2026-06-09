@@ -1,40 +1,42 @@
 // ════════════════════════════════════════════════════════════════════════
-//  squid.wtf embedded view
+//  lucida.to embedded view
 //
-//  Parallel to bandcamp-integration but stripped down — no download
-//  router, no library wiring. Just a secure WebContentsView on its own
-//  persist:squid partition (independent cookies from Bandcamp's), with
-//  the same Chrome-UA spoof + popup-redirect that defuses Fastly bot
-//  challenges and keeps any window.open() navigation inside the same
-//  embedded view rather than spawning a separate BrowserWindow.
+//  Replaces the old squid.wtf store (squid went 502/dead). Same machinery:
+//  a secure WebContentsView on its own persist:lucida partition (independent
+//  cookies from Bandcamp's), a modern-Chrome UA spoof + popup-redirect that
+//  clears Cloudflare's JS challenge and keeps any window.open() navigation
+//  inside the embedded view, and the shared Bandcamp download-router so any
+//  file lucida.to hands the browser lands in _pending-imports/, unzips if
+//  needed, and imports through importOneFile() tagged source='lucida'.
 // ════════════════════════════════════════════════════════════════════════
 
 import { ipcMain, WebContentsView, BrowserWindow, session } from 'electron'
 import { attachDownloadRouter, ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 
-export interface SquidDeps {
+export interface LucidaDeps {
   getMainWindow: () => BrowserWindow | null
-  /** Wraps importOneFile() — same one Bandcamp uses, with a 'squid'
+  /** Wraps importOneFile() — same one Bandcamp uses, with a 'lucida'
    *  source tag persisted onto each Track record. Matches the
    *  download-router contract (BatchSummary or bare array). */
   importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
-  /** Absolute directory where squid downloads land before import.
-   *  Shared with Bandcamp's _pending-imports/ — same staging dir,
-   *  source field on the Track distinguishes them later if anyone
-   *  needs it. */
+  /** Absolute directory where lucida downloads land before import.
+   *  Shared with Bandcamp's _pending-imports/ — same staging dir, the
+   *  source field on the Track distinguishes them later if needed. */
   pendingImportsDir: string
 }
 
-function send(deps: SquidDeps, channel: string, payload: unknown): void {
+function send(deps: LucidaDeps, channel: string, payload: unknown): void {
   const win = deps.getMainWindow()
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
 
-const SQUID_PARTITION = 'persist:squid'
-const SQUID_HOME = 'https://squid.wtf'
+const LUCIDA_PARTITION = 'persist:lucida'
+const LUCIDA_HOME = 'https://lucida.to'
 
 // Same UA the Bandcamp view uses — modern Chrome on macOS. Defeats most
-// bot-detection heuristics that flag Electron's default UA.
+// bot-detection heuristics that flag Electron's default UA, and lets the
+// embedded Chromium clear Cloudflare's "Just a moment" JS challenge the
+// same way a real browser does (curl gets a 403; a JS-running view passes).
 const REAL_BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
@@ -53,7 +55,7 @@ function ensureView(): WebContentsView {
   if (view && !view.webContents.isDestroyed()) return view
   view = new WebContentsView({
     webPreferences: {
-      partition: SQUID_PARTITION,
+      partition: LUCIDA_PARTITION,
       webSecurity: true,
       allowRunningInsecureContent: false,
       contextIsolation: true,
@@ -62,10 +64,9 @@ function ensureView(): WebContentsView {
     },
   })
   view.webContents.setUserAgent(REAL_BROWSER_UA)
-  // Same popup-containment pattern as Bandcamp: redirect any window.open
-  // navigation into THIS webContents instead of spawning a new
-  // BrowserWindow (which wouldn't inherit the UA + would live outside
-  // the JakeTunes app frame).
+  // Popup containment: redirect any window.open navigation into THIS
+  // webContents instead of spawning a new BrowserWindow (which wouldn't
+  // inherit the UA + would live outside the JakeTunes app frame).
   view.webContents.setWindowOpenHandler(({ url }) => {
     if (view && !view.webContents.isDestroyed()) {
       void view.webContents.loadURL(url)
@@ -76,7 +77,7 @@ function ensureView(): WebContentsView {
   return view
 }
 
-function attachView(deps: SquidDeps, bounds: Bounds): void {
+function attachView(deps: LucidaDeps, bounds: Bounds): void {
   const win = deps.getMainWindow()
   if (!win || win.isDestroyed()) return
   const v = ensureView()
@@ -86,12 +87,12 @@ function attachView(deps: SquidDeps, bounds: Bounds): void {
   }
   v.setBounds(bounds)
   if (!viewLoaded) {
-    void v.webContents.loadURL(SQUID_HOME)
+    void v.webContents.loadURL(LUCIDA_HOME)
     viewLoaded = true
   }
 }
 
-function detachView(deps: SquidDeps): void {
+function detachView(deps: LucidaDeps): void {
   const win = deps.getMainWindow()
   if (view && attached && win && !win.isDestroyed()) {
     win.contentView.removeChildView(view)
@@ -99,47 +100,46 @@ function detachView(deps: SquidDeps): void {
   attached = false
 }
 
-export function registerSquidStore(deps: SquidDeps): void {
-  // Set the partition's UA at startup so the first request a renderer
-  // makes already presents as Chrome — matches the Bandcamp pattern.
-  const squidSession = session.fromPartition(SQUID_PARTITION)
-  squidSession.setUserAgent(REAL_BROWSER_UA)
+export function registerLucidaStore(deps: LucidaDeps): void {
+  // Set the partition's UA at startup so the first request a renderer makes
+  // already presents as Chrome — matches the Bandcamp pattern.
+  const lucidaSession = session.fromPartition(LUCIDA_PARTITION)
+  lucidaSession.setUserAgent(REAL_BROWSER_UA)
 
-  // Mirror Bandcamp: attach the download-router so any download from
-  // squid.wtf (zip album or single track) lands in _pending-imports/,
-  // unzips if needed, and routes audio through importOneFile() with
-  // source='squid'. Emits on the same bandcamp:* event channels the
-  // renderer is already subscribed to — pill progress, library
-  // ADD_IMPORTED_TRACKS dispatch, recently-added marker, and toast
-  // all fire identically.
-  attachDownloadRouter(squidSession, {
+  // Mirror Bandcamp: any download from lucida.to (zip album or single
+  // track) lands in _pending-imports/, unzips if needed, and routes audio
+  // through importOneFile() with source='lucida'. Emits on the same
+  // bandcamp:* event channels the renderer already listens on — pill
+  // progress, library ADD_IMPORTED_TRACKS dispatch, recently-added marker,
+  // and toast all fire identically.
+  attachDownloadRouter(lucidaSession, {
     pendingImportsDir: deps.pendingImportsDir,
-    importDownloaded: (paths) => deps.importDownloaded(paths, 'squid'),
+    importDownloaded: (paths) => deps.importDownloaded(paths, 'lucida'),
     onTrackImported: (track) => send(deps, 'bandcamp:track-imported', track),
     onImportFailed: (reason) => send(deps, 'bandcamp:import-failed', reason),
     onAllDuplicates: (info) => send(deps, 'bandcamp:all-duplicates', info),
   })
 
-  ipcMain.handle('squid:mount', (_e, bounds: Bounds) => {
+  ipcMain.handle('lucida:mount', (_e, bounds: Bounds) => {
     attachView(deps, bounds)
     return { ok: true as const }
   })
 
-  ipcMain.handle('squid:resize', (_e, bounds: Bounds) => {
+  ipcMain.handle('lucida:resize', (_e, bounds: Bounds) => {
     if (view && !view.webContents.isDestroyed() && attached) view.setBounds(bounds)
     return { ok: true as const }
   })
 
-  ipcMain.handle('squid:unmount', () => {
+  ipcMain.handle('lucida:unmount', () => {
     detachView(deps)
     return { ok: true as const }
   })
 
-  // 4.5.0-76 — back/forward nav, mirror of the Bandcamp store. Lets the
-  // renderer paint a real back arrow above the embedded view so users
-  // aren't trapped in the iframe with no way out. canGoBack/Forward
-  // returned so the UI can dim buttons with no history to walk.
-  ipcMain.handle('squid:nav-state', () => {
+  // Back/forward nav, mirror of the Bandcamp store. Lets the renderer paint
+  // a real back arrow above the embedded view so users aren't trapped on
+  // whatever page a link landed them on. canGoBack/Forward returned so the
+  // UI can dim buttons with no history to walk.
+  ipcMain.handle('lucida:nav-state', () => {
     if (!view || view.webContents.isDestroyed()) {
       return { ok: false as const, canGoBack: false, canGoForward: false }
     }
@@ -150,13 +150,13 @@ export function registerSquidStore(deps: SquidDeps): void {
     }
   })
 
-  ipcMain.handle('squid:go-back', () => {
+  ipcMain.handle('lucida:go-back', () => {
     if (!view || view.webContents.isDestroyed()) return { ok: false as const }
     if (view.webContents.canGoBack()) view.webContents.goBack()
     return { ok: true as const }
   })
 
-  ipcMain.handle('squid:go-forward', () => {
+  ipcMain.handle('lucida:go-forward', () => {
     if (!view || view.webContents.isDestroyed()) return { ok: false as const }
     if (view.webContents.canGoForward()) view.webContents.goForward()
     return { ok: true as const }

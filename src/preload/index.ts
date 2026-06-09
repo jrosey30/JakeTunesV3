@@ -572,16 +572,16 @@ const electronAPI = {
     ipcRenderer.invoke('bandcamp:nav-state'),
   bandcampGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-back'),
   bandcampGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-forward'),
-  // ── squid.wtf embedded view (separate partition, no download routing) ──
-  squidMount: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
-    ipcRenderer.invoke('squid:mount', bounds),
-  squidResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
-    ipcRenderer.invoke('squid:resize', bounds),
-  squidUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('squid:unmount'),
-  squidNavState: (): Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }> =>
-    ipcRenderer.invoke('squid:nav-state'),
-  squidGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('squid:go-back'),
-  squidGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('squid:go-forward'),
+  // ── lucida.to embedded view (separate partition + shared download router) ──
+  lucidaMount: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('lucida:mount', bounds),
+  lucidaResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('lucida:resize', bounds),
+  lucidaUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('lucida:unmount'),
+  lucidaNavState: (): Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }> =>
+    ipcRenderer.invoke('lucida:nav-state'),
+  lucidaGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('lucida:go-back'),
+  lucidaGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('lucida:go-forward'),
 
   // ── Music Man's Record Store (Brief 037) ──
   // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/

@@ -67,7 +67,7 @@ import {
   type AudioFormat,
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
-import { registerSquidStore } from './squid-store'
+import { registerLucidaStore } from './lucida-store'
 import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
@@ -13057,11 +13057,12 @@ app.whenReady().then(async () => {
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
   })
 
-  // squid.wtf embedded view — separate partition, same download routing
-  // pipeline as Bandcamp (importDownloaded + pendingImportsDir wired so
-  // downloads land in library with source='squid'). Reuses the
-  // bandcamp:* event channels the renderer is already subscribed to.
-  registerSquidStore({
+  // lucida.to embedded view (replaces dead squid.wtf) — separate partition,
+  // same download-routing pipeline as Bandcamp (importDownloaded +
+  // pendingImportsDir wired so downloads land in library with
+  // source='lucida'). Reuses the bandcamp:* event channels the renderer is
+  // already subscribed to.
+  registerLucidaStore({
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),

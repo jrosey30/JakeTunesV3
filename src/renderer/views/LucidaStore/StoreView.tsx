@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import '../BandcampStore/store-header.css'
 
-// squid.wtf embedded view. The renderer paints the header chrome
-// (back/forward arrows) above the native WebContentsView which the
-// main process draws over the rest of the viewport. Unmount detaches
-// the view but doesn't destroy it, so session state (login, scroll
-// position, current URL) survives sidebar navigation round-trips.
+// lucida.to embedded view (replaces the dead squid.wtf store). The renderer
+// paints the header chrome (back/forward arrows) above the native
+// WebContentsView the main process draws over the rest of the viewport.
+// Unmount detaches the view but doesn't destroy it, so session state
+// (Cloudflare clearance cookie, scroll position, current URL) survives
+// sidebar navigation round-trips.
 //
-// 4.5.0-76 — back/forward arrows added (mirror of BandcampStore). The
-// embedded squid.wtf view has its own browser history; without these
-// the user got trapped on whatever page a link landed them on. Nav
-// state is polled every 500 ms — squid.wtf uses client-side routing
-// that doesn't fire reliable did-navigate events.
+// Nav state is polled every 500 ms — lucida.to uses client-side routing
+// that doesn't fire reliable did-navigate events, so without polling the
+// back arrow would only update on re-mount.
 
 export default function StoreView() {
   const ref = useRef<HTMLDivElement>(null)
@@ -33,22 +32,22 @@ export default function StoreView() {
       }
     }
 
-    void window.electronAPI.squidMount(bounds())
+    void window.electronAPI.lucidaMount(bounds())
 
     const ro = new ResizeObserver(() => {
-      void window.electronAPI.squidResize(bounds())
+      void window.electronAPI.lucidaResize(bounds())
     })
     ro.observe(el)
 
     const onWindowResize = () => {
-      void window.electronAPI.squidResize(bounds())
+      void window.electronAPI.lucidaResize(bounds())
     }
     window.addEventListener('resize', onWindowResize)
 
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', onWindowResize)
-      void window.electronAPI.squidUnmount()
+      void window.electronAPI.lucidaUnmount()
     }
   }, [])
 
@@ -58,7 +57,7 @@ export default function StoreView() {
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
-      window.electronAPI.squidNavState?.().then(r => {
+      window.electronAPI.lucidaNavState?.().then(r => {
         if (!cancelled && r) setNavState({ canGoBack: !!r.canGoBack, canGoForward: !!r.canGoForward })
       }).catch(() => { /* ignore */ })
     }
@@ -73,21 +72,21 @@ export default function StoreView() {
         <div className="store-library-header__nav">
           <button
             className="store-library-header__navbtn"
-            onClick={() => window.electronAPI.squidGoBack?.()}
+            onClick={() => window.electronAPI.lucidaGoBack?.()}
             disabled={!navState.canGoBack}
             title="Back"
             aria-label="Back"
           >‹</button>
           <button
             className="store-library-header__navbtn"
-            onClick={() => window.electronAPI.squidGoForward?.()}
+            onClick={() => window.electronAPI.lucidaGoForward?.()}
             disabled={!navState.canGoForward}
             title="Forward"
             aria-label="Forward"
           >›</button>
         </div>
       </div>
-      <div ref={ref} className="store-view-embed" aria-label="squid.wtf" />
+      <div ref={ref} className="store-view-embed" aria-label="lucida.to" />
     </div>
   )
 }
