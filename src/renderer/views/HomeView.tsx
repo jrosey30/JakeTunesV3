@@ -894,7 +894,8 @@ export default function HomeView() {
                 </div>
                 <div className="home-album-info">
                   <div className="home-album-title">{item.title}</div>
-                  <div className="home-album-artist">{formatDate(item.pubDate)}</div>
+                  {item.artist && <div className="home-album-artist">{item.artist}</div>}
+                  <div className="home-release-meta">{[item.genre, formatDate(item.pubDate)].filter(Boolean).join(' · ')}</div>
                 </div>
               </div>
             ))}

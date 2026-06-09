@@ -205,6 +205,10 @@ export interface MusicNewsItem {
    *  surfaced on Home's "Notable Releases" row; everything else
    *  shows under "Music News". */
   isReleaseReview: boolean
+  /** Release reviews only — pulled from the review page itself (the feed
+   *  carries just the album name). Absent when enrichment fails. */
+  artist?: string
+  genre?: string
 }
 
 const newsCache = makeCache<MusicNewsItem[]>(60 * 60 * 1000)  // 1 hour
@@ -356,6 +360,36 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
  * release," and the card is cover-led so the lost BNA curation isn't
  * visible. News URLs are pinned to their post-redirect targets to
  * avoid the extra round-trip. */
+// The album-reviews feed gives ONLY the album name (<dc:creator> is the
+// review author, <category> is "Reviews / Albums"). The artist and genre
+// live on the review page: og:title is "Artist: Album" and the embedded
+// page JSON carries "genre":"...". One bounded fetch per release item —
+// they're capped at ~12 and the whole batch sits behind the 1-hour news
+// cache, so this adds at most a dozen page fetches per hour. Best-effort:
+// a failed enrichment just leaves the card as it was.
+async function enrichReleaseReview(item: MusicNewsItem): Promise<void> {
+  try {
+    const res = await fetch(item.link, {
+      headers: { 'User-Agent': 'JakeTunes/4.4' },
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) return
+    const html = await res.text()
+    const og = decodeEntities(html.match(/<meta property="og:title" content="([^"]*)"/i)?.[1] || '')
+    const suffix = `: ${item.title}`
+    if (og.toLowerCase().endsWith(suffix.toLowerCase())) {
+      item.artist = og.slice(0, og.length - suffix.length).trim()
+    } else {
+      // Title drifted from og:title (deluxe markers etc.) — split on the
+      // LAST ": " so artists with colons in their name stay intact.
+      const idx = og.lastIndexOf(': ')
+      if (idx > 0) item.artist = og.slice(0, idx).trim()
+    }
+    const g = html.match(/"genre":"([^"]{2,40})"/)?.[1]
+    if (g) item.genre = decodeEntities(g)
+  } catch { /* leave un-enriched */ }
+}
+
 async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
   const cached = newsCache.get('all')
   if (cached) return cached
@@ -377,6 +411,9 @@ async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
     sources.map(s => fetchStructuredFeed(s.url, s.name, s.isReleaseReview))
   )
   const flat = results.flat().sort((a, b) => b.pubDate.localeCompare(a.pubDate))
+  // Enrich the release-review cards with artist + genre off their review
+  // pages (parallel, bounded — see enrichReleaseReview).
+  await Promise.all(flat.filter((i) => i.isReleaseReview).map((i) => enrichReleaseReview(i)))
   newsCache.set('all', flat)
   return flat
 }

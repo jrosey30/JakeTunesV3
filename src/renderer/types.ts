@@ -665,6 +665,9 @@ export interface MusicNewsItem {
   pubDate: string
   imageUrl?: string
   isReleaseReview: boolean
+  /** Release reviews only — enriched from the review page (artist + genre). */
+  artist?: string
+  genre?: string
 }
 
 // 4.4.32 — Tour date shape from Bandsintown.
