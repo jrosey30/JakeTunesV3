@@ -2620,7 +2620,7 @@ function trackFarmPath(ipodPath: string): string {
 }
 async function readStreamRoot(): Promise<string | null> {
   try {
-    const s = JSON.parse(await readFile(getSettingsPath(), 'utf-8'))
+    const s = JSON.parse(await readFile(appSettingsPath(), 'utf-8'))
     const r = s?.library?.streamRoot
     return typeof r === 'string' && r.length > 0 ? r : null
   } catch { return null }
