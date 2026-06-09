@@ -11989,6 +11989,12 @@ ipcMain.handle('rip-cd-tracks', async (_e,
 
     try {
       const yearStr = metadata.year ? String(parseInt(metadata.year, 10) || '') : ''
+      // CD reads run at ~realtime on a slow drive/disc (measured 341s of
+      // ffmpeg for a 4:50 track on a 1988 disc), so a fixed 300s timeout
+      // was killing EVERY track ("Importing 0 of 8 — 16 skipped"). Scale
+      // the hang-watchdog to the track: 4× duration + 2 min, min 5 min.
+      // Slow-but-progressing rips finish; a truly hung encoder still dies.
+      const ripTimeoutMs = Math.max(300000, Math.round((cdTrack.duration || 0) * 1000 * 4) + 120000)
       await convertAudio(cdTrack.filePath, destPath, fmt, {
         title: cdTrack.title,
         artist: metadata.artist,
@@ -12000,7 +12006,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
         trackCount: cdTracks.length,
         discNumber: 1,
         discCount: 1,
-      })
+      }, { timeoutMs: ripTimeoutMs })
 
       const fileStats = await stat(destPath)
       const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)

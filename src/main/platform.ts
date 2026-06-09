@@ -407,7 +407,7 @@ async function embedTags(path: string, tags: AudioTags): Promise<void> {
  * with iPod's decoder. But afconvert can't easily force 16-bit from
  * a 32-bit input in one shot, hence the WAV intermediate.
  */
-async function convertToIpodSafeAlac(src: string, dest: string): Promise<void> {
+async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 300000): Promise<void> {
   const { unlink } = await import('fs/promises')
   const { randomBytes } = await import('crypto')
   const os = await import('os')
@@ -417,6 +417,8 @@ async function convertToIpodSafeAlac(src: string, dest: string): Promise<void> {
   try {
     // Step 1: decode to 16-bit PCM WAV. Let ffmpeg pick sample rate
     // up to 48kHz; only downsample if the source is higher-res.
+    // readTimeoutMs is caller-scaled when the SOURCE is slow media (CD
+    // rips read at ~realtime on a slow drive/disc — see convertAudio).
     await execP('ffmpeg', [
       '-y', '-i', src,
       '-map', '0:a:0',
@@ -425,7 +427,7 @@ async function convertToIpodSafeAlac(src: string, dest: string): Promise<void> {
       '-f', 'wav',
       '-loglevel', 'error',
       wavTmp,
-    ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
+    ], { timeout: readTimeoutMs, maxBuffer: 64 * 1024 * 1024 })
 
     // Step 2: afconvert → ALAC
     await execP('afconvert', [
@@ -454,7 +456,15 @@ export async function convertAudio(
   dest: string,
   fmt: AudioFormat,
   tags?: AudioTags,
+  opts?: { timeoutMs?: number },
 ): Promise<void> {
+  // The timeout exists to catch HUNG encoders, not to police slow media.
+  // A fixed 300s ceiling has now twice killed legitimate CD rips (120s ate
+  // an 8-minute James Brown track; 300s ate every track of a 1988 disc
+  // reading at ~realtime — ffmpeg measured 341s for a 4:50 track). Callers
+  // ripping from slow sources pass a duration-scaled timeoutMs; local-file
+  // conversions keep the 300s default.
+  const timeoutMs = opts?.timeoutMs ?? 300000
   if (fmt === 'aiff') {
     // AIFF is the native ripped format; no conversion needed.
     const { copyFile } = await import('fs/promises')
@@ -473,7 +483,7 @@ export async function convertAudio(
     // bitstream), not ffmpeg-direct-to-ALAC (which creates valid-
     // looking files that iPod's decoder chokes on).
     if (fmt === 'alac') {
-      await convertToIpodSafeAlac(src, dest)
+      await convertToIpodSafeAlac(src, dest, timeoutMs)
       if (tags) await embedTags(dest, tags)
       return
     }
@@ -491,11 +501,10 @@ export async function convertAudio(
         default:        return []
       }
     })()
-    // 5 min timeout — long tracks + slow CD reads can legitimately
-    // take 2-3 min; the old 120s limit was killing ~8-minute songs
-    // partway through and silently skipping them (e.g. the James
-    // Brown 'Get It Hot' rip that jumped from 1→3).
-    await execP('afconvert', [src, dest, ...args], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
+    // Timeout is caller-scaled for slow sources (CD rips); 300s default
+    // otherwise. The old fixed limits (120s, then 300s) each ended up
+    // killing legitimate slow rips — see the convertAudio doc comment.
+    await execP('afconvert', [src, dest, ...args], { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
     if (tags) await embedTags(dest, tags)
     return
   }
@@ -513,7 +522,7 @@ export async function convertAudio(
     }
   })()
   try {
-    await execP('ffmpeg', args, { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
+    await execP('ffmpeg', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('ENOENT')) {
