@@ -250,7 +250,7 @@
   justify-content: center;
   width: 15px;
   height: 15px;
-  margin: 0 3px 0 2px;
+  margin: 0 0 0 1px; /* sits right after the star slot, tight gap */
   color: var(--brand-orange); /* circle fill */
   flex-shrink: 0;
 }
