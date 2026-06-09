@@ -81,6 +81,9 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
+  // Mono/stereo tag (Get Info "Channels"). Hidden by default — enable via the
+  // header right-click column picker.
+  { key: 'channelMode', label: 'Channels', defaultWidth: 70, minWidth: 50, resizable: true },
   // 4.5: 'rating' column REMOVED — the star now renders inline next to
   // the song title (hover-reveal when unstarred, always-visible when
   // starred). Right-click Star/Unstar still works via ratingMenuEntries.
@@ -120,11 +123,12 @@ interface SongRowProps {
   onDragStart: (track: Track, e: React.DragEvent) => void
   onRatingChange: (id: number, rating: number) => void
   downloaded?: boolean
+  downloading?: boolean
 }
 
 const SongRow = memo(function SongRow({
   track, idx, isPlaying, isSelected, isRecent, gridTemplate, visibleCols,
-  onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange, downloaded,
+  onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange, downloaded, downloading,
 }: SongRowProps) {
   return (
     <div
@@ -169,11 +173,11 @@ const SongRow = memo(function SongRow({
                     <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
                   </svg>
                 </button>
-                {downloaded && (
+                {(downloaded || downloading) && (
                   <span
-                    className="title-row-dl"
-                    title="Downloaded for offline — plays instantly"
-                    aria-label="Downloaded"
+                    className={downloading ? 'title-row-dl title-row-dl--loading' : 'title-row-dl'}
+                    title={downloading ? 'Downloading…' : 'Downloaded for offline — plays instantly'}
+                    aria-label={downloading ? 'Downloading' : 'Downloaded'}
                   >
                     <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
                       <circle cx="8" cy="8" r="7" fill="currentColor" />
@@ -198,6 +202,8 @@ const SongRow = memo(function SongRow({
             return <div key={col.key} className="songs-cell">{formatDateAdded(track.dateAdded)}</div>
           case 'playCount':
             return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
+          case 'channelMode':
+            return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
           default:
             return null
         }
@@ -224,7 +230,10 @@ export default function SongsView() {
   const playTrackRef = useRef(playTrack)
   playTrackRef.current = playTrack
 
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set())
+  // channelMode starts hidden — it's a niche tag column; the header
+  // right-click picker reveals it. (colsV in the saved state marks that the
+  // user's hidden-set already knows about it.)
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['channelMode']))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -853,12 +862,18 @@ export default function SongsView() {
   // Restore column state from saved UI state
   useEffect(() => {
     const handler = (e: Event) => {
-      const { colWidthMap: savedWidths, hiddenCols: savedHidden, columnOrder: savedOrder } = (e as CustomEvent).detail
+      const { colWidthMap: savedWidths, hiddenCols: savedHidden, columnOrder: savedOrder, colsV } = (e as CustomEvent).detail
       if (savedWidths && typeof savedWidths === 'object') {
         setColWidthMap(prev => ({ ...prev, ...savedWidths }))
       }
       if (Array.isArray(savedHidden)) {
-        setHiddenCols(new Set(savedHidden))
+        // Saved state from before the channelMode column existed (colsV < 2)
+        // can't know it should be hidden — default it hidden once; states
+        // saved at colsV 2+ carry the user's real choice.
+        const merged = (typeof colsV === 'number' && colsV >= 2)
+          ? savedHidden
+          : [...savedHidden, 'channelMode']
+        setHiddenCols(new Set(merged))
       }
       if (Array.isArray(savedOrder) && savedOrder.length > 0) {
         setColumnOrder(savedOrder.filter((k: unknown): k is string => typeof k === 'string'))
@@ -874,7 +889,7 @@ export default function SongsView() {
     if (colSaveRef.current) clearTimeout(colSaveRef.current)
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
-        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder }
+        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 2 }
       }))
     }, 500)
   }, [colWidthMap, hiddenCols, columnOrder])
@@ -1003,6 +1018,7 @@ export default function SongsView() {
                   onDragStart={handleRowDragStart}
                   onRatingChange={handleRatingChange}
                   downloaded={isDownloaded(track.path)}
+                  downloading={isDownloading(track.path)}
                 />
               )
             })}

@@ -872,7 +872,7 @@ function AppInner() {
         // Column state is restored via custom event so SongsView can pick it up
         if (ui.colWidthMap || ui.hiddenCols || ui.columnOrder) {
           window.dispatchEvent(new CustomEvent('jaketunes-restore-columns', {
-            detail: { colWidthMap: ui.colWidthMap, hiddenCols: ui.hiddenCols, columnOrder: ui.columnOrder }
+            detail: { colWidthMap: ui.colWidthMap, hiddenCols: ui.hiddenCols, columnOrder: ui.columnOrder, colsV: ui.colsV }
           }))
         }
       }
@@ -1071,11 +1071,11 @@ function AppInner() {
   // Expose saveUiState for SongsView to piggyback column state
   useEffect(() => {
     const handler = (e: Event) => {
-      const { colWidthMap, hiddenCols, columnOrder } = (e as CustomEvent).detail
+      const { colWidthMap, hiddenCols, columnOrder, colsV } = (e as CustomEvent).detail
       // Merge column state into next save
       window.electronAPI.loadUiState().then(r => {
         const existing = (r.ok && r.state) ? r.state : {}
-        window.electronAPI.saveUiState({ ...existing, colWidthMap, hiddenCols, columnOrder })
+        window.electronAPI.saveUiState({ ...existing, colWidthMap, hiddenCols, columnOrder, colsV })
       })
     }
     window.addEventListener('jaketunes-save-columns', handler)

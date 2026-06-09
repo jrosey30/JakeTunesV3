@@ -334,7 +334,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'
-export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'dateAdded' | 'playCount' | 'rating'
+export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode'
 export type SortDirection = 'asc' | 'desc'
 
 declare global {

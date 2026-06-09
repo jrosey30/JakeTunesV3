@@ -46,6 +46,7 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
+  { key: 'channelMode', label: 'Channels', defaultWidth: 70, minWidth: 50, resizable: true },
   // 4.5: 'rating' column REMOVED — star renders inline next to title.
 ]
 
@@ -113,7 +114,7 @@ export default function PlaylistView() {
 
   // Column visibility & width state. Rating column stays visible by
   // default so ratings can be edited inline from any playlist.
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount']))
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount', 'channelMode']))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -160,6 +161,7 @@ export default function PlaylistView() {
         case 'dateAdded': av = a.dateAdded || ''; bv = b.dateAdded || ''; break
         case 'playCount': av = a.playCount || 0; bv = b.playCount || 0; break
         case 'rating': av = a.rating || 0; bv = b.rating || 0; break
+        case 'channelMode': av = a.channelMode || ''; bv = b.channelMode || ''; break
         default: return 0
       }
       const aStr = String(av).toLowerCase()
@@ -661,6 +663,8 @@ export default function PlaylistView() {
                       return <div key={col.key} className="songs-cell">{track.album}</div>
                     case 'genre':
                       return <div key={col.key} className="songs-cell">{track.genre}</div>
+                    case 'channelMode':
+                      return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
                     case 'year':
                       return <div key={col.key} className="songs-cell">{track.year || ''}</div>
                     case 'dateAdded': {
