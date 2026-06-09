@@ -154,6 +154,19 @@ const SongRow = memo(function SongRow({
                   >!</span>
                 )}
                 <span className="title-row-text">{track.title || ''}</span>
+                {downloaded && (
+                  <span
+                    className="title-row-dl"
+                    title="Downloaded for offline — plays instantly"
+                    aria-label="Downloaded"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="8" cy="8" r="6.3" />
+                      <path d="M8 4.7v4.4" />
+                      <path d="M5.7 7.2 8 9.4 10.3 7.2" />
+                    </svg>
+                  </span>
+                )}
                 {/* 4.5: inline star to the RIGHT of the title.
                     Hover-reveal when unstarred, always visible
                     when starred. Click stops propagation so
@@ -169,17 +182,6 @@ const SongRow = memo(function SongRow({
                     <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
                   </svg>
                 </button>
-                {downloaded && (
-                  <span
-                    className="title-row-downloaded"
-                    title="Downloaded for offline — plays instantly"
-                    aria-label="Downloaded"
-                  >
-                    <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M7 2.2v6M4.3 5.6 7 8.4l2.7-2.8M3.2 11h7.6" />
-                    </svg>
-                  </span>
-                )}
               </div>
             )
           }
