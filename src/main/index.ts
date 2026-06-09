@@ -11943,6 +11943,38 @@ ipcMain.handle('get-cd-info', async () => {
   }
 })
 
+// Stage a CDDA track to local disk with LARGE sequential reads before
+// converting. cddafs punishes small reads — measured on a real slow disc
+// (As We Bop, MCA 1988, GU90N drive): ffmpeg reading the mount directly
+// averaged ~150 KB/s (341s for one 4:50 track), while 4MB block reads
+// sustained 417-587 KB/s across the disc. Staging first cuts a full-CD rip
+// from ~40+ minutes to ~12-14 on that hardware; converting the local copy
+// then takes seconds per track. Each individual read gets a 120s guard so
+// a genuinely dead drive errors out instead of hanging the rip forever.
+async function stageCdTrackLocally(src: string, dest: string): Promise<void> {
+  const srcH = await open(src, 'r')
+  try {
+    const dstH = await open(dest, 'w')
+    try {
+      const buf = Buffer.allocUnsafe(4 * 1024 * 1024)
+      while (true) {
+        const read = srcH.read(buf, 0, buf.length, -1)
+        const guard = new Promise<never>((_, reject) => {
+          const t = setTimeout(() => reject(new Error('CD read stalled (no data for 120s) — drive or disc problem')), 120000)
+          void read.finally(() => clearTimeout(t))
+        })
+        const { bytesRead } = await Promise.race([read, guard])
+        if (bytesRead <= 0) break
+        await dstH.write(buf, 0, bytesRead)
+      }
+    } finally {
+      await dstH.close()
+    }
+  } finally {
+    await srcH.close()
+  }
+}
+
 ipcMain.handle('rip-cd-tracks', async (_e,
   cdTracks: Array<{ number: number; title: string; duration: number; filePath: string }>,
   metadata: { artist: string; album: string; year: string; genre: string },
@@ -11987,15 +12019,17 @@ ipcMain.handle('rip-cd-tracks', async (_e,
     const fileName = `imported_${id}${destExt}`
     const destPath = join(destDir, fileName)
 
+    const stagedPath = join(app.getPath('temp'), `jaketunes-cdstage-${id}.aiff`)
     try {
       const yearStr = metadata.year ? String(parseInt(metadata.year, 10) || '') : ''
-      // CD reads run at ~realtime on a slow drive/disc (measured 341s of
-      // ffmpeg for a 4:50 track on a 1988 disc), so a fixed 300s timeout
-      // was killing EVERY track ("Importing 0 of 8 — 16 skipped"). Scale
-      // the hang-watchdog to the track: 4× duration + 2 min, min 5 min.
-      // Slow-but-progressing rips finish; a truly hung encoder still dies.
+      // Read the track off the disc FIRST with big sequential reads (see
+      // stageCdTrackLocally — ~3x faster than letting ffmpeg/afconvert read
+      // the cddafs mount), then convert the local copy. The duration-scaled
+      // watchdog stays as belt-and-suspenders: 4× duration + 2 min, min
+      // 5 min — slow-but-progressing converts finish, hung encoders die.
       const ripTimeoutMs = Math.max(300000, Math.round((cdTrack.duration || 0) * 1000 * 4) + 120000)
-      await convertAudio(cdTrack.filePath, destPath, fmt, {
+      await stageCdTrackLocally(cdTrack.filePath, stagedPath)
+      await convertAudio(stagedPath, destPath, fmt, {
         title: cdTrack.title,
         artist: metadata.artist,
         album: metadata.album,
@@ -12056,6 +12090,8 @@ ipcMain.handle('rip-cd-tracks', async (_e,
         trackTitle: cdTrack.title,
         error: String(err),
       })
+    } finally {
+      await unlink(stagedPath).catch(() => {})
     }
   }
 
