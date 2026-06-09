@@ -263,6 +263,13 @@
 }
 .songs-row--selected .title-row-dl { color: #ffffff; }
 .songs-row--selected .title-row-dl .dl-arrow { stroke: var(--brand-orange); }
+/* In-flight download: same disc, pulsing opacity — "busy" reads at a glance
+ * and settles to the steady solid disc when the copy finishes. */
+.title-row-dl--loading { animation: dl-pulse 1.1s ease-in-out infinite; }
+@keyframes dl-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.95; }
+}
 
 /* 4.5: numeric columns right-align — iTunes convention. Header label
  * matches so the column letterheads read as a vertical block, not a
