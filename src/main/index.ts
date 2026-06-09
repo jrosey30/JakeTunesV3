@@ -9923,6 +9923,53 @@ async function fetchItunesRecoRows(term: string, limit = 25): Promise<RecoItunes
 // a row whose ARTIST matches the candidate; prefer a row whose title also
 // matches (exact cover) but fall back to any same-artist row. No match → return
 // nothing, so the card keeps its honest ♪ placeholder rather than wrong art.
+// MusicBrainz asks for ≤1 request/sec per client — radar enriches up to 12
+// cards in parallel, so serialize MB calls through a promise chain with a
+// 1.1s gap. CAA/archive.org has no such limit.
+let mbCallChain: Promise<unknown> = Promise.resolve()
+function mbThrottled<T>(fn: () => Promise<T>): Promise<T> {
+  const run = mbCallChain.then(fn, fn)
+  mbCallChain = run.then(
+    () => new Promise((r) => setTimeout(r, 1100)),
+    () => new Promise((r) => setTimeout(r, 1100)),
+  )
+  return run
+}
+
+/** Brand-new releases often hit MusicBrainz/Cover Art Archive before iTunes.
+ *  Artist+title verified against the release-group credit — same honesty rule
+ *  as the iTunes path: wrong art is worse than no art. Returns a CAA front
+ *  cover URL or null; null is cached too (don't re-ask MB every remount). */
+const caaArtCache = new Map<string, string | null>()
+async function fetchCaaArtwork(artist: string, title: string): Promise<string | null> {
+  const cacheKey = `${recoNorm(artist)}|${recoNorm(title)}`
+  const cached = caaArtCache.get(cacheKey)
+  if (cached !== undefined) return cached
+  const headers = { 'User-Agent': 'JakeTunes/4.5 ( jakerosenbaum30@gmail.com )' }
+  let result: string | null = null
+  try {
+    const q = `releasegroup:"${title}" AND artist:"${artist}"`
+    const res = await mbThrottled(() =>
+      fetch(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=3`, { headers, signal: AbortSignal.timeout(6000) })
+    )
+    if (res.ok) {
+      const data = await res.json() as { 'release-groups'?: Array<{ id: string; title?: string; 'artist-credit'?: Array<{ name?: string; artist?: { name?: string } }> }> }
+      const verified = (data['release-groups'] || []).find((g) => {
+        const credits = (g['artist-credit'] || []).map((c) => c.name || c.artist?.name || '')
+        return recoTitleMatches(title, g.title || '') && credits.some((c) => recoArtistMatches(artist, c))
+      })
+      if (verified) {
+        // HEAD-probe the front cover so the renderer never renders a 404 <img>.
+        const url = `https://coverartarchive.org/release-group/${verified.id}/front-500`
+        const head = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(6000) }).catch(() => null)
+        if (head?.ok) result = url
+      }
+    }
+  } catch { /* fall through to null */ }
+  caaArtCache.set(cacheKey, result)
+  return result
+}
+
 ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> => {
   const artist = (input?.artist || '').trim()
   const title = (input?.title || '').trim()
@@ -9930,9 +9977,19 @@ ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; t
   try {
     const rows = await fetchItunesRecoRows(`${artist} ${title}`, 25)
     const sameArtist = rows.filter((r) => recoArtistMatches(artist, r.artist))
-    if (!sameArtist.length) return {}
-    const best = sameArtist.find((r) => recoTitleMatches(title, r.song)) || sameArtist[0]
-    return { artworkUrl: best.artworkUrl, previewUrl: best.previewUrl }
+    if (sameArtist.length) {
+      // Radar candidates are usually releases — match the title against the
+      // ALBUM name too, so the right record's cover wins over a stray single.
+      const best =
+        sameArtist.find((r) => recoTitleMatches(title, r.album || '')) ||
+        sameArtist.find((r) => recoTitleMatches(title, r.song)) ||
+        sameArtist[0]
+      return { artworkUrl: best.artworkUrl, previewUrl: best.previewUrl }
+    }
+    // iTunes has nothing by this artist (common for week-old releases) —
+    // try MusicBrainz + Cover Art Archive before giving up.
+    const caa = await fetchCaaArtwork(artist, title)
+    return caa ? { artworkUrl: caa } : {}
   } catch {
     return {}
   }
