@@ -22,7 +22,7 @@ function initials(name: string): string {
 
 // Amicus speaks in Jake's chosen ElevenLabs voice (reuses the musicman-speak
 // pipeline, which takes a voiceId override).
-const AMICUS_VOICE = 'L0Dsvb3SLTyegXwtm47J'
+const AMICUS_VOICE = '8Ln42OXYupYsag45MAUy'
 
 export default function ScotusView() {
   const [data, setData] = useState<ScotusArchiveData | null>(null)
@@ -203,42 +203,61 @@ export default function ScotusView() {
         </div>
       </header>
 
-      {/* The colonnade — each Justice lights up while they speak */}
-      <section className="scotus-court" aria-label="The Court">
-        {(data.justices || []).map((j) => (
-          <div
-            key={j.slug}
-            className={`scotus-justice ${currentSpeaker === j.name ? 'scotus-justice--speaking' : ''}`}
-            title={`${j.name}\n${j.title}${j.note ? '\n' + j.note : ''}`}
-          >
-            {j.portrait
-              ? <img src={j.portrait} alt={j.name} draggable={false} />
-              : <div className="scotus-justice-ph">{initials(j.name)}</div>}
-            <div className="scotus-justice-name">{lastName(j.name)}</div>
-          </div>
-        ))}
-      </section>
-
-      <div className="scotus-nowspeaking">
-        {currentSpeaker ? (
-          <span className="scotus-nowspeaking-inner">
-            {currentPhoto && <img className="scotus-nowspeaking-av" src={currentPhoto} alt="" draggable={false} />}
-            <span>Now speaking: <strong>{currentSpeaker}</strong></span>
-          </span>
-        ) : 'Press play to step into the room.'}
-      </div>
-
-      <div className="scotus-player">
-        <button className="scotus-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
+      {/* The pill — the audio + who's speaking, in one place */}
+      <div className="scotus-pill">
+        <button className="scotus-pill-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? '❚❚' : '▶'}
         </button>
-        <span className="scotus-time">{fmt(time)}</span>
-        <input
-          className="scotus-seek" type="range" min={0} max={duration || 3635} step={0.1}
-          value={time} onChange={(e) => seekTo(+e.target.value)} aria-label="Seek"
-        />
-        <span className="scotus-time scotus-time--total">{fmt(duration || 3635)}</span>
+        {currentPhoto
+          ? <img className="scotus-pill-av" src={currentPhoto} alt="" draggable={false} />
+          : <div className="scotus-pill-av scotus-pill-av--empty">⚖</div>}
+        <div className="scotus-pill-main">
+          <div className="scotus-pill-name">
+            {currentSpeaker ? <>Now speaking: <strong>{currentSpeaker}</strong></> : 'Press play to step into the room.'}
+          </div>
+          <div className="scotus-pill-scrub">
+            <span className="scotus-pill-time">{fmt(time)}</span>
+            <input
+              className="scotus-pill-seek" type="range" min={0} max={duration || 3635} step={0.1}
+              value={time} onChange={(e) => seekTo(+e.target.value)} aria-label="Seek"
+            />
+            <span className="scotus-pill-time">{fmt(duration || 3635)}</span>
+          </div>
+        </div>
       </div>
+
+      {/* Below the pill — the Justices, then the two advocates; each lights up while speaking */}
+      <section className="scotus-court" aria-label="The Court and advocates">
+        <div className="scotus-court-row">
+          {(data.justices || []).map((j) => (
+            <div
+              key={j.slug}
+              className={`scotus-justice ${currentSpeaker === j.name ? 'scotus-justice--speaking' : ''}`}
+              title={`${j.name}\n${j.title}${j.note ? '\n' + j.note : ''}`}
+            >
+              {j.portrait
+                ? <img src={j.portrait} alt={j.name} draggable={false} />
+                : <div className="scotus-justice-ph">{initials(j.name)}</div>}
+              <div className="scotus-justice-name">{lastName(j.name)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="scotus-court-label">At the podium</div>
+        <div className="scotus-court-advocates">
+          {(data.advocates || []).map((a) => (
+            <div
+              key={a.name}
+              className={`scotus-justice scotus-justice--adv ${currentSpeaker === a.name ? 'scotus-justice--speaking' : ''}`}
+              title={`${a.name}\n${a.role}`}
+            >
+              {a.photo
+                ? <img src={a.photo} alt={a.name} draggable={false} />
+                : <div className="scotus-justice-ph">{initials(a.name)}</div>}
+              <div className="scotus-justice-name">{lastName(a.name)}</div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="scotus-main">
         <div className="scotus-transcript" ref={transcriptRef}>{transcriptEls}</div>
