@@ -339,7 +339,7 @@ export type RepeatMode = 'off' | 'all' | 'one'
 // ── SCOTUS Archive (Beck v. Prupis) — mirrors src/main/scotus-archive ──
 export interface ScotusSegment { start: number; stop: number; speaker: string; role: string; text: string }
 export interface ScotusJustice { name: string; slug: string; title: string; vote: string; note: string; portrait: string | null }
-export interface ScotusAdvocate { name: string; role: string; side: string; note: string }
+export interface ScotusAdvocate { name: string; role: string; side: string; note: string; slug?: string; photo?: string | null }
 export interface ScotusCase {
   name: string; citation: string; docket: string; argued: string; decided: string
   court: string; poppy: string; vote: string; opinionBy: string
@@ -448,6 +448,7 @@ declare global {
       // honest gaps where unknown) and a grounded Music Man blurb.
       getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
       getAlbumBlurb: (artist: string, album: string) => Promise<{ ok: boolean; blurb?: string; error?: string }>
+      getAlbumTake: (artist: string, album: string) => Promise<{ ok: boolean; take?: string; error?: string }>
       // 4.5.0-117 — library backup/restore (Phase 0).
       listBackups: () => Promise<{ ok: boolean; backups: Array<{ file: string; date: string; mtimeMs: number; trackCount: number; sizeBytes: number; reason: string }> }>
       createBackup: () => Promise<{ ok: boolean; backup?: { file: string; date: string; trackCount: number }; error?: string }>

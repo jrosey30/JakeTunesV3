@@ -6,7 +6,7 @@ import './scotus.css'
 // Court argument. The audio + transcript live in a private vault (never the
 // music library); this view is the hub: a synced player, the Justice colonnade
 // that lights up as each one speaks, the case story, and Amicus — a plain-
-// English guide you can ask anything as you listen.
+// English guide you can read or have read aloud, and ask anything.
 
 function fmt(s: number): string {
   if (!s || s < 0) return '0:00'
@@ -34,8 +34,8 @@ export default function ScotusView() {
   const [duration, setDuration] = useState(0)
   const [amicus, setAmicus] = useState<{ loading: boolean; answer: string } | null>(null)
   const [question, setQuestion] = useState('')
-  const [voiceOn, setVoiceOn] = useState(true)
   const [speaking, setSpeaking] = useState(false)
+  const [speakNote, setSpeakNote] = useState('')
   const amicusAudioRef = useRef<HTMLAudioElement | null>(null)
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const activeSegRef = useRef<HTMLDivElement | null>(null)
@@ -68,61 +68,84 @@ export default function ScotusView() {
   }, [segments, time])
   const currentSpeaker = activeIdx >= 0 ? segments[activeIdx].speaker : ''
 
+  // Every speaker (Justice OR advocate) → their portrait, for the now-speaking avatar.
+  const photoBySpeaker = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const j of data?.justices || []) if (j.portrait) m.set(j.name, j.portrait)
+    for (const a of data?.advocates || []) if (a.photo) m.set(a.name, a.photo)
+    return m
+  }, [data])
+  const currentPhoto = currentSpeaker ? photoBySpeaker.get(currentSpeaker) : undefined
+
   const seekTo = useCallback((t: number) => {
     const a = audioRef.current
     if (a) { a.currentTime = t; if (a.paused) void a.play() }
   }, [])
 
-  // Pin the live line near the TOP of the box — you read downward into what's
-  // coming, never scrolling up to find the current line. (offsetTop is
-  // box-relative because .scotus-transcript is position:relative.)
+  // Pin the live line to the TOP of the box so you read downward into what's
+  // coming. Bounding-rect math (not offsetTop) makes this correct regardless
+  // of the box's positioning context.
   useEffect(() => {
     const el = activeSegRef.current, box = transcriptRef.current
-    if (el && box) box.scrollTo({ top: Math.max(0, el.offsetTop - 14), behavior: 'smooth' })
+    if (!el || !box) return
+    const delta = el.getBoundingClientRect().top - box.getBoundingClientRect().top
+    box.scrollTo({ top: box.scrollTop + delta - 12, behavior: 'smooth' })
   }, [activeIdx])
 
   const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause() }
 
-  const stopAmicusVoice = useCallback(() => {
+  // ── Amicus voice: ON DEMAND, exactly like the Music Man mic button. The
+  // click is a fresh user gesture, so the browser lets it play (auto-speaking
+  // after the multi-second answer call loses the gesture and gets blocked). ──
+  const stopSpeak = useCallback(() => {
     const a = amicusAudioRef.current
     if (a) { a.pause(); a.src = ''; amicusAudioRef.current = null }
     setSpeaking(false)
   }, [])
-  const speakAmicus = useCallback(async (text: string) => {
-    stopAmicusVoice()
-    if (!voiceOn || !text) return
+  const speakAnswer = useCallback(async () => {
+    if (speaking) { stopSpeak(); return }
+    const text = amicus?.answer
+    if (!text) return
+    setSpeakNote('')
+    audioRef.current?.pause() // don't talk over the argument
+    setSpeaking(true)
     try {
       const tts = await window.electronAPI.musicmanSpeak(text, false, AMICUS_VOICE)
       if (tts?.ok && tts.audio) {
         const a = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
         amicusAudioRef.current = a
         a.onended = () => setSpeaking(false)
-        setSpeaking(true)
         await a.play().catch(() => setSpeaking(false))
+      } else {
+        setSpeaking(false)
+        setSpeakNote('Amicus’s voice needs the AI voice turned on (Preferences → AI).')
       }
-    } catch { setSpeaking(false) }
-  }, [voiceOn, stopAmicusVoice])
+    } catch {
+      setSpeaking(false)
+      setSpeakNote('Couldn’t reach the voice just now — try again.')
+    }
+  }, [speaking, amicus, stopSpeak])
   // Stop Amicus's voice when leaving the exhibit.
-  useEffect(() => () => stopAmicusVoice(), [stopAmicusVoice])
+  useEffect(() => () => stopSpeak(), [stopSpeak])
 
   const explain = useCallback(async () => {
-    audioRef.current?.pause() // don't let Amicus talk over the argument
+    stopSpeak()
+    audioRef.current?.pause()
+    setSpeakNote('')
     setAmicus({ loading: true, answer: '' })
     const r = await window.electronAPI.scotusAmicus?.({ mode: 'explain', time }).catch(() => null)
-    const ans = r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.')
-    setAmicus({ loading: false, answer: ans })
-    if (r?.ok) void speakAmicus(ans)
-  }, [time, speakAmicus])
+    setAmicus({ loading: false, answer: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') })
+  }, [time, stopSpeak])
   const ask = useCallback(async () => {
     const q = question.trim()
     if (!q) return
+    stopSpeak()
     audioRef.current?.pause()
+    setSpeakNote('')
     setAmicus({ loading: true, answer: '' }); setQuestion('')
     const r = await window.electronAPI.scotusAmicus?.({ mode: 'ask', time, question: q }).catch(() => null)
-    const ans = r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.')
-    setAmicus({ loading: false, answer: ans })
-    if (r?.ok) void speakAmicus(ans)
-  }, [question, time, speakAmicus])
+    setAmicus({ loading: false, answer: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') })
+  }, [question, time, stopSpeak])
 
   // Transcript list — memoized on activeIdx so it isn't rebuilt every time-tick.
   const transcriptEls = useMemo(() => segments.map((s, i) => (
@@ -180,7 +203,12 @@ export default function ScotusView() {
       </section>
 
       <div className="scotus-nowspeaking">
-        {currentSpeaker ? <>Now speaking: <strong>{currentSpeaker}</strong></> : 'Press play to step into the room.'}
+        {currentSpeaker ? (
+          <span className="scotus-nowspeaking-inner">
+            {currentPhoto && <img className="scotus-nowspeaking-av" src={currentPhoto} alt="" draggable={false} />}
+            <span>Now speaking: <strong>{currentSpeaker}</strong></span>
+          </span>
+        ) : 'Press play to step into the room.'}
       </div>
 
       <div className="scotus-player">
@@ -201,33 +229,31 @@ export default function ScotusView() {
           <div className="scotus-amicus-head">
             <span className="scotus-amicus-name">Amicus</span>
             <span className="scotus-amicus-tag">your guide in the room</span>
-            <button
-              className="scotus-amicus-voice"
-              onClick={() => { stopAmicusVoice(); setVoiceOn((v) => !v) }}
-              title={voiceOn ? 'Voice on — click to mute' : 'Voice off — click to unmute'}
-              aria-label="Toggle Amicus voice"
-            >
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <path d="M3.2 6h2L8 3.6v8.8L5.2 10h-2z" />
-                {voiceOn
-                  ? <path d="M10.4 5.4a3.4 3.4 0 0 1 0 5.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                  : <path d="M10.6 6.4 13.4 9.6M13.4 6.4 10.6 9.6" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}
-              </svg>
-            </button>
           </div>
           <button className="scotus-amicus-explain" onClick={() => void explain()}>Explain this moment</button>
           <div className="scotus-amicus-body">
             {amicus?.loading
               ? <div className="scotus-amicus-loading">Amicus is reading the room…</div>
               : amicus?.answer
-                ? <p>{amicus.answer}</p>
-                : <p className="scotus-amicus-hint">Lost in the legalese? Hit “Explain this moment” whenever you’re unsure — or ask me anything about what’s being argued.</p>}
+                ? <>
+                    <p>{amicus.answer}</p>
+                    <button
+                      className={`scotus-amicus-speak ${speaking ? 'is-speaking' : ''}`}
+                      onClick={() => void speakAnswer()}
+                    >
+                      {speaking
+                        ? <><span className="scotus-speak-ic">■</span> Stop</>
+                        : <><span className="scotus-speak-ic">▶</span> Hear it</>}
+                    </button>
+                    {speakNote && <div className="scotus-amicus-note">{speakNote}</div>}
+                  </>
+                : <p className="scotus-amicus-hint">Lost in the legalese? Hit “Explain this moment” whenever you’re unsure — read what Amicus says, tap <strong>Hear it</strong> to listen, or ask a follow-up below.</p>}
           </div>
           <div className="scotus-amicus-ask">
             <input
               value={question} onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void ask() }}
-              placeholder="Ask Amicus…" spellCheck={false}
+              placeholder="Ask Amicus a question…" spellCheck={false}
             />
             <button onClick={() => void ask()} disabled={!question.trim()}>Ask</button>
           </div>
@@ -249,6 +275,9 @@ export default function ScotusView() {
         <div className="scotus-advocates">
           {(data.advocates || []).map((a) => (
             <div key={a.name} className={`scotus-adv scotus-adv--${a.side}`}>
+              {a.photo
+                ? <img className="scotus-adv-photo" src={a.photo} alt={a.name} draggable={false} />
+                : <div className="scotus-adv-photo scotus-adv-photo--ph">{initials(a.name)}</div>}
               <div className="scotus-adv-name">{a.name}</div>
               <div className="scotus-adv-role">{a.role}</div>
               {a.note && <div className="scotus-adv-note">{a.note}</div>}

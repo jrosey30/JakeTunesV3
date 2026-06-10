@@ -54,8 +54,8 @@ const CASE_META = {
 }
 
 const ADVOCATES = [
-  { name: 'Michael M. Rosenbaum', role: 'For the Respondents', side: 'respondent', note: 'Jake’s grandfather — “Poppy”' },
-  { name: 'Jay Starkman', role: 'For the Petitioner', side: 'petitioner', note: '' },
+  { name: 'Michael M. Rosenbaum', slug: 'rosenbaum', role: 'For the Respondents', side: 'respondent', note: 'Jake’s grandfather — “Poppy”' },
+  { name: 'Jay Starkman', slug: 'starkman', role: 'For the Petitioner', side: 'petitioner', note: '' },
 ]
 
 const JUSTICES = [
@@ -98,21 +98,34 @@ async function justicesWithPortraits(): Promise<Array<typeof JUSTICES[number] & 
   }))
 }
 
+async function advocatesWithPhotos(): Promise<Array<typeof ADVOCATES[number] & { photo: string | null }>> {
+  return Promise.all(ADVOCATES.map(async (a) => {
+    for (const ext of ['jpg', 'png', 'webp'] as const) {
+      try {
+        const buf = await readFile(join(vaultDir(), 'advocates', `${a.slug}.${ext}`))
+        const mime = ext === 'jpg' ? 'jpeg' : ext
+        return { ...a, photo: `data:image/${mime};base64,${buf.toString('base64')}` }
+      } catch { /* try the next extension */ }
+    }
+    return { ...a, photo: null }
+  }))
+}
+
 const AMICUS_SYSTEM = `You are "Amicus" — a brilliant, warm Supreme Court law clerk acting as a real-time guide for someone WITHOUT a law degree as they listen to a 1999 oral argument.
 
 The case is Beck v. Prupis (529 U.S. 494). It is a CIVIL RICO case. The advocate Michael M. Rosenbaum is arguing for the RESPONDENTS — and he is the listener's late grandfather ("Poppy"). His side WON, 7–2; Justice Thomas wrote the opinion. The opposing advocate is Jay Starkman, for petitioner Robert Beck. The core issue: whether a person can sue under RICO's conspiracy provision for an injury caused by an act that ISN'T itself an act of racketeering (Beck's injury was being fired). The Court said no.
 
 Your job: translate the lawyer-speak into plain, vivid English. Explain what a Justice's question is really driving at, what a term means, and — when it's clear — whether Poppy is gaining or losing ground in an exchange. Be precise but human; never condescend, never pad. This is personal to the listener; treat the moment with the respect it deserves, but stay grounded in what the transcript actually says.
 
-Keep every answer SHORT — 2 or 3 punchy sentences. No preamble, no "essentially"/"basically," no restating the question; lead straight with the point. Only go longer if explicitly asked.`
+Answer in ONE short paragraph — at most 3 sentences, under ~55 words, no line breaks. No preamble, no "essentially"/"basically," no restating the question; lead straight with the point. Only go longer if the listener explicitly asks for more.`
 
 export function registerScotusArchive(deps: ScotusDeps): void {
   ipcMain.handle('scotus:get-archive', async () => {
     try {
       // Audio presence is the gate — without the recording there's no exhibit.
       await readFile(join(vaultDir(), 'argument.mp3')).then(() => {}, () => { throw new Error('no audio') }).catch(() => { throw new Error('no audio') })
-      const [segments, justices] = await Promise.all([loadSegments(), justicesWithPortraits()])
-      return { ok: true, exists: true, case: CASE_META, advocates: ADVOCATES, justices, segments }
+      const [segments, justices, advocates] = await Promise.all([loadSegments(), justicesWithPortraits(), advocatesWithPhotos()])
+      return { ok: true, exists: true, case: CASE_META, advocates, justices, segments }
     } catch {
       return { ok: true, exists: false }
     }
