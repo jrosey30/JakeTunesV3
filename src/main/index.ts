@@ -8062,6 +8062,9 @@ This response is shown as text in a chat panel, but the user may click a speaker
         body: JSON.stringify({ song: it.song, artist: it.artist, album: it.album, note: it.note }),
       })
       if (!r.ok) return null
+      // Explicit add via chat un-deletes the song — clear its identity
+      // tombstone so the next sync doesn't drop the pick as deleted.
+      void clearRecommendationIdentityTombstone(it.song, it.artist)
       return [it.song, it.artist].filter(Boolean).join(' — ') || it.album || 'item'
     } catch {
       return null
@@ -9897,14 +9900,42 @@ async function readRecommendationTombstones(): Promise<Set<string>> {
   return new Set()
 }
 
-async function addRecommendationTombstone(id: string): Promise<void> {
-  const tombstones = await readRecommendationTombstones()
-  tombstones.add(String(id))
+async function writeRecommendationTombstones(tombstones: Set<string>): Promise<void> {
   const path = recommendationsDeletedPath()
   const tmp = path + '.tmp.json'
   await writeFile(tmp, JSON.stringify([...tombstones], null, 2))
   const { rename: renameFS } = await import('fs/promises')
   await renameFS(tmp, path)
+}
+
+async function addRecommendationTombstones(entries: string[]): Promise<void> {
+  if (entries.length === 0) return
+  const tombstones = await readRecommendationTombstones()
+  for (const e of entries) tombstones.add(String(e))
+  await writeRecommendationTombstones(tombstones)
+}
+
+// Identity tombstones — deleting a song tombstones the SONG (normalized
+// song|artist), not just one row id. The list once grew 14 copies of one track
+// because homemini re-minted ids for the same song and the id-only pull filter
+// re-imported each as "new"; id-only delete then removed one copy at a time.
+const RECO_IDENTITY_TOMBSTONE_PREFIX = 'identity:'
+
+function isIdentityTombstoned(tombstones: Set<string>, r: RecommendationRecord): boolean {
+  const k = recoRecordIdentityKey(r)
+  return Boolean(k && tombstones.has(RECO_IDENTITY_TOMBSTONE_PREFIX + k))
+}
+
+// An explicit add un-deletes the song: without this, a deliberate re-add of a
+// previously deleted song would be silently dropped by the next sync.
+async function clearRecommendationIdentityTombstone(song?: string, artist?: string): Promise<void> {
+  try {
+    const k = recoIdentityKey(song, artist)
+    if (!k) return
+    const tombstones = await readRecommendationTombstones()
+    if (!tombstones.delete(RECO_IDENTITY_TOMBSTONE_PREFIX + k)) return
+    await writeRecommendationTombstones(tombstones)
+  } catch { /* best-effort */ }
 }
 
 async function mirrorRecommendationsToNas(list: RecommendationRecord[]): Promise<void> {
@@ -9964,6 +9995,23 @@ function mergeRecommendationsById(...sources: RecommendationRecord[][]): Recomme
     }
   }
   return sortRecommendations([...byId.values()])
+}
+
+// Collapse rows that are the same SONG under different ids (the duplication
+// disease). Keeps the resolved copy, else the newest. Rows without a
+// song+artist identity (note-only jots) dedupe by the stricter full key.
+function dedupeRecommendationsByIdentity(list: RecommendationRecord[]): RecommendationRecord[] {
+  const byIdentity = new Map<string, RecommendationRecord>()
+  const pick = (a: RecommendationRecord, b: RecommendationRecord): RecommendationRecord => {
+    if (Boolean(a.resolvedAt) !== Boolean(b.resolvedAt)) return a.resolvedAt ? a : b
+    return (a.createdAt || '').localeCompare(b.createdAt || '') >= 0 ? a : b
+  }
+  for (const r of list) {
+    const k = recoRecordIdentityKey(r) ?? `full:${recoRecordKey(r)}`
+    const prev = byIdentity.get(k)
+    byIdentity.set(k, prev ? pick(r, prev) : r)
+  }
+  return sortRecommendations([...byIdentity.values()])
 }
 
 const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
@@ -10314,25 +10362,45 @@ const RECOMMENDATIONS_SYNC_TTL_MS = 5 * 60 * 1000
 async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
   const tombstones = await readRecommendationTombstones()
   const rawLocal = await readRecommendationsFile()
-  let local = rawLocal.filter((r) => !tombstones.has(String(r.id)))
+  const afterTombstones = rawLocal.filter((r) => !tombstones.has(String(r.id)) && !isIdentityTombstoned(tombstones, r))
+  // Heal: collapse duplicate copies of the same song that the id-only dedup
+  // let accumulate. Tombstone the collapsed ids (so the pull can't re-import
+  // them) and fire-and-forget homemini deletes so every store converges.
+  const local = dedupeRecommendationsByIdentity(afterTombstones)
   if (local.length !== rawLocal.length) {
+    const keptIds = new Set(local.map((r) => String(r.id)))
+    const droppedDupeIds = afterTombstones.filter((r) => !keptIds.has(String(r.id))).map((r) => String(r.id))
+    if (droppedDupeIds.length > 0) {
+      await addRecommendationTombstones(droppedDupeIds)
+      for (const did of droppedDupeIds) {
+        void fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
+          method: 'DELETE', signal: AbortSignal.timeout(8000),
+        }).catch(() => { /* homemini converges on a later pass */ })
+      }
+      console.log(`[reco] healed ${droppedDupeIds.length} duplicate cop${droppedDupeIds.length === 1 ? 'y' : 'ies'} off the list`)
+    }
     await writeRecommendationsFile(local)
   }
 
   const localIds = new Set(local.map((r) => String(r.id)))
+  const localIdentities = new Set(local.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
   const backendRaw = await fetchRecommendationsFromBackend()   // null = homemini unreachable
   const backend = backendRaw ?? []
   const nas = (await readRecommendationsFromNas()) ?? []
 
-  // Additive pull: new phone/NAS picks only. Never resurrect tombstoned
-  // rows — homemini/NAS can stay stale after a laptop delete.
+  // Additive pull: new phone/NAS picks only — by id AND by song identity.
+  // The id-only filter was the resurrection machine: a stale remote copy of
+  // a song under a fresh id re-imported as "new" on every restart.
   const incoming = [...nas, ...backend].filter((r) => {
     if (!r?.id) return false
     const id = String(r.id)
-    return !tombstones.has(id) && !localIds.has(id)
+    if (tombstones.has(id) || localIds.has(id)) return false
+    if (isIdentityTombstoned(tombstones, r)) return false
+    const idk = recoRecordIdentityKey(r)
+    return !(idk && localIdentities.has(idk))
   })
 
-  const merged = mergeRecommendationsById(local, incoming)
+  const merged = dedupeRecommendationsByIdentity(mergeRecommendationsById(local, incoming))
   if (incoming.length > 0) {
     await writeRecommendationsFile(merged)
     console.log(`[reco] synced ${merged.length} recommendations to local (was ${local.length}, pulled ${incoming.length} new from remote)`)
@@ -10452,6 +10520,10 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
     }
   } catch { /* fall through to normal add */ }
 
+  // An explicit add un-deletes the song — clear its identity tombstone so the
+  // next sync doesn't drop the new row as a previously-deleted song.
+  await clearRecommendationIdentityTombstone(trimmed.song, trimmed.artist)
+
   const url = `${MOBILE_BACKEND_URL}/api/recommendations`
   console.log('[reco] POST →', url, JSON.stringify(trimmed))
   let recommendation: RecommendationRecord | null = null
@@ -10520,39 +10592,45 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
 })
 
 ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
-  // LOCAL recommendations.json is authoritative for the laptop list. homemini
-  // DELETE is fire-and-forget (404/500 must never block the user — homemini
-  // currently returns 500 even when the delete succeeds). Tombstone the id
-  // so sync never pulls a stale NAS/backend copy back onto the list.
+  // Identity-wide delete: removing a song removes EVERY copy of it (the list
+  // once carried 14 copies of one track under different ids) and tombstones
+  // the SONG, so no stale homemini/NAS copy can re-mint it under a fresh id.
+  // homemini DELETEs stay fire-and-forget (it 500s even on success). An
+  // explicit re-add clears the identity tombstone.
   const rid = String(id)
-  await addRecommendationTombstone(rid)
-
-  const tryLocalDelete = async (): Promise<boolean> => {
-    const parsed = await readRecommendationsFile()
-    const next = parsed.filter((r) => String(r.id) !== rid)
-    const removed = next.length !== parsed.length
-    if (removed) await writeRecommendationsFile(next)
-    return removed
-  }
-
-  let removedLocally = false
+  let doomedIds: string[] = [rid]
+  const tombstoneEntries: string[] = [rid]
   try {
-    removedLocally = await tryLocalDelete()
+    const all = await readRecommendationsFile()
+    const target = all.find((r) => String(r.id) === rid)
+    const identity = target ? recoRecordIdentityKey(target) : null
+    if (identity) {
+      doomedIds = all.filter((r) => String(r.id) === rid || recoRecordIdentityKey(r) === identity).map((r) => String(r.id))
+      tombstoneEntries.length = 0
+      tombstoneEntries.push(...doomedIds, RECO_IDENTITY_TOMBSTONE_PREFIX + identity)
+    }
+    await addRecommendationTombstones(tombstoneEntries)
+    const next = all.filter((r) => !doomedIds.includes(String(r.id)))
+    if (next.length !== all.length) await writeRecommendationsFile(next)
   } catch (err) {
     console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)
+    await addRecommendationTombstones(tombstoneEntries).catch(() => {})
   }
-  try {
-    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(rid)}`, {
-      method: 'DELETE',
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!res.ok && res.status !== 404) {
-      console.warn('[reco] backend delete returned', res.status, '(local delete', removedLocally ? 'ok' : 'miss', ')')
+  suggestResultCache = null   // deleting frees the Music Man to re-suggest
+  for (const did of doomedIds) {
+    try {
+      const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok && res.status !== 404) {
+        console.warn('[reco] backend delete returned', res.status, 'for', did)
+      }
+    } catch (err) {
+      console.warn('[reco] backend delete unreachable:', err instanceof Error ? err.message : err)
     }
-  } catch (err) {
-    console.warn('[reco] backend delete unreachable:', err instanceof Error ? err.message : err)
   }
-  // Tombstone guarantees the row stays gone even if homemini/NAS still has it.
+  // Tombstones guarantee the song stays gone even if homemini/NAS still has it.
   return { ok: true }
 })
 
