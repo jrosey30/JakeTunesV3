@@ -128,6 +128,15 @@ const QUOTES = [
     ],
   },
   {
+    title: '“In a way, Your Honor”', time: 1906.029,
+    note: 'Justice Kennedy reaches for precedent; Mr. Rosenbaum turns the case to his side in one breath — and draws a “Correct.” from Justice Breyer.',
+    lines: [
+      { speaker: 'Justice Kennedy', text: 'Sedima did say that, did it not?' },
+      { speaker: 'Mr. Rosenbaum', text: 'In a way, Your Honor, but Sedima ultimately stands for the proposition that there must be predicate act-type injury as opposed to the more amorphous concept of racketeering injury.' },
+      { speaker: 'Justice Breyer', text: 'Correct.' },
+    ],
+  },
+  {
     title: 'Double-teamed', time: 2147.235,
     note: 'Two Justices fighting over who grills him next — Scalia doesn’t even get to finish his sentence.',
     lines: [
@@ -158,13 +167,15 @@ const QUOTES = [
     ],
   },
   {
-    title: 'One-word answers', time: 3161.808,
-    note: 'Late in the hour, in full command — one-word answers to Justice O’Connor and the Chief Justice of the United States.',
+    title: '“Because?”', time: 3519.073,
+    note: 'Justice Breyer wants the policy answer and won’t settle for less — and Mr. Rosenbaum finally lands it.',
     lines: [
-      { speaker: 'Justice O’Connor', text: 'And could there be a criminal prosecution brought here without proof of any predicate act?' },
-      { speaker: 'Mr. Rosenbaum', text: 'Absolutely.' },
-      { speaker: 'Chief Justice Rehnquist', text: 'But is an overt act required for liability in a criminal conspiracy?' },
-      { speaker: 'Mr. Rosenbaum', text: 'No.' },
+      { speaker: 'Justice Breyer', text: 'It either is like the antitrust laws, or it isn’t.' },
+      { speaker: 'Mr. Rosenbaum', text: 'It certainly is like the anti...' },
+      { speaker: 'Justice Breyer', text: 'Because?' },
+      { speaker: 'Mr. Rosenbaum', text: 'It certainly is like the antitrust laws, because section 4 of the Clayton Act, the language is...' },
+      { speaker: 'Justice Breyer', text: 'No, the language is identical.' },
+      { speaker: 'Mr. Rosenbaum', text: 'If the law is to protect those who are improperly terminated, there are more than adequate State law remedies to protect that.' },
     ],
   },
   {
