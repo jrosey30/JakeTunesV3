@@ -640,38 +640,42 @@ export default function HomeView() {
                   ? `${memory.insights.streak.currentDays} day${memory.insights.streak.currentDays === 1 ? '' : 's'}`
                   : '—'}
               </div>
-              <div className="home-stat-label">
-                Current Streak{memory.insights.streak.bestDays > 1 ? ` · Best ${memory.insights.streak.bestDays}` : ''}
-              </div>
+              <div className="home-stat-label">Current Streak</div>
+              <div className="home-stat-sub">{memory.insights.streak.bestDays > 1 ? `Best: ${memory.insights.streak.bestDays} days` : ' '}</div>
             </div>
             {memory.insights.clock.peakHourLabel && (
               <div className="home-stat">
                 <div className="home-stat-value">{memory.insights.clock.peakHourLabel}</div>
                 <div className="home-stat-label">Golden Hour</div>
+                <div className="home-stat-sub">{' '}</div>
               </div>
             )}
             {memory.insights.clock.peakWeekdayLabel && (
               <div className="home-stat">
                 <div className="home-stat-value">{memory.insights.clock.peakWeekdayLabel}</div>
                 <div className="home-stat-label">Biggest Day</div>
+                <div className="home-stat-sub">{' '}</div>
               </div>
             )}
             {memory.insights.topArtists7d[0] && (
               <div className="home-stat">
                 <div className="home-stat-value" title={memory.insights.topArtists7d[0].artist}>{memory.insights.topArtists7d[0].artist}</div>
-                <div className="home-stat-label">This Week · {memory.insights.topArtists7d[0].plays} Play{memory.insights.topArtists7d[0].plays === 1 ? '' : 's'}</div>
+                <div className="home-stat-label">This Week</div>
+                <div className="home-stat-sub">{memory.insights.topArtists7d[0].plays} play{memory.insights.topArtists7d[0].plays === 1 ? '' : 's'}</div>
               </div>
             )}
             {memory.insights.comeback && (
               <div className="home-stat">
                 <div className="home-stat-value" title={memory.insights.comeback.artist}>{memory.insights.comeback.artist}</div>
-                <div className="home-stat-label">Comeback · {memory.insights.comeback.gapDays} Days Away</div>
+                <div className="home-stat-label">Comeback</div>
+                <div className="home-stat-sub">{memory.insights.comeback.gapDays} days away</div>
               </div>
             )}
             {memory.insights.binge && (
               <div className="home-stat">
                 <div className="home-stat-value" title={memory.insights.binge.artist}>{memory.insights.binge.artist}</div>
-                <div className="home-stat-label">Binge Record · {memory.insights.binge.plays} in a Day</div>
+                <div className="home-stat-label">Binge Record</div>
+                <div className="home-stat-sub">{memory.insights.binge.plays} in one day</div>
               </div>
             )}
           </div>
