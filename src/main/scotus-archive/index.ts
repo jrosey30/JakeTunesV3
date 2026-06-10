@@ -141,9 +141,9 @@ const QUOTES = [
     note: 'Two Justices fighting over who grills him next — Scalia doesn’t even get to finish his sentence.',
     lines: [
       { speaker: 'Justice Souter', text: 'What’s your answer to that?' },
-      { speaker: 'Mr. Rosenbaum', text: 'My answer to that, Your Honor, is that on this record... I think my adversary essentially conceded away his argument...' },
+      { speaker: 'Mr. Rosenbaum', text: 'My answer to that, Your Honor, is that on this record... on this record, and I think my adversary essentially conceded away his argument when stating that if it is a conspiracy which is interfered with as a result of the termination, you should have standing, but if it’s in retaliation for already having blown the whistle... he made that response to one of the questions... then obviously the retaliation is not in furtherance of the conspiracy.' },
       { speaker: 'Justice Scalia', text: 'Okay, but that’s...' },
-      { speaker: 'Justice Souter', text: 'That’s your only response to that argument?' },
+      { speaker: 'Justice Souter', text: 'That’s your only response to that argument? That in effect is saying, even if he’s right, I will still win, and my question is, why isn’t he right in his claim that to conspire under (d) must be read as broadly as he says?' },
     ],
   },
   {
@@ -151,9 +151,9 @@ const QUOTES = [
     note: 'Scalia’s famous bank-guard heist, aimed straight at him — and Mr. Rosenbaum stands his ground.',
     lines: [
       { speaker: 'Justice Scalia', text: 'Well, take a simple... no, you go.' },
-      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
-      { speaker: 'Justice Scalia', text: 'Some of the means along the end to that goal, killing the bank guard, happen to be unlawful acts covered by RICO... they didn’t intend to kill... the object wasn’t to kill the guard. It was to get the money in the bank.' },
-      { speaker: 'Mr. Rosenbaum', text: 'That may be so, Justice Scalia, but the answer to the question that I think is being posed to me is whether or not that goal... still provides a basis for RICO standing.' },
+      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum. It’s the statement you made earlier that these nonpredicate acts have nothing to do with the goal of the conspiracy, which is to commit the predicate acts. That’s simply not true.' },
+      { speaker: 'Justice Scalia', text: 'Some of the means along the end to that goal, killing the bank guard, happen to be unlawful acts covered by RICO, and therefore they become predicate acts, not because they are the goal of the conspiracy... they didn’t intend to kill... the object wasn’t to kill the guard. It was to get the money in the bank.' },
+      { speaker: 'Mr. Rosenbaum', text: 'That may be so, Justice Scalia, but the answer to the question that I think is being posed to me is whether or not that goal, albeit essential to the completion of the conspiracy, still provides a basis for RICO standing.' },
     ],
   },
   {
@@ -162,8 +162,9 @@ const QUOTES = [
     lines: [
       { speaker: 'Justice Scalia', text: 'I don’t see how you get there through the text, is my problem.' },
       { speaker: 'Mr. Rosenbaum', text: 'I’m sorry, Justice...' },
-      { speaker: 'Justice Scalia', text: 'I don’t see how you get there through the text.' },
+      { speaker: 'Justice Scalia', text: 'I don’t see how you get there through the text. I mean, it may be a very nice disposition, but how do you get there through the text of 1964 and 1962?' },
       { speaker: 'Mr. Rosenbaum', text: 'I get...' },
+      { speaker: 'Justice Scalia', text: '1964 makes a violation of (a), (b), (c), and (d) unlawful.' },
     ],
   },
   {
@@ -175,7 +176,7 @@ const QUOTES = [
       { speaker: 'Justice Breyer', text: 'Because?' },
       { speaker: 'Mr. Rosenbaum', text: 'It certainly is like the antitrust laws, because section 4 of the Clayton Act, the language is...' },
       { speaker: 'Justice Breyer', text: 'No, the language is identical.' },
-      { speaker: 'Mr. Rosenbaum', text: 'If the law is to protect those who are improperly terminated, there are more than adequate State law remedies to protect that.' },
+      { speaker: 'Mr. Rosenbaum', text: 'If the law is to protect those who are improperly terminated, there are more than adequate State law remedies to protect that. Virtually all, short of all of the States have wrongful discharge statutes, or have wrongful discharge common law that basically says that it’s tortious to discharge someone for the type of conduct that’s alleged here.' },
     ],
   },
   {
