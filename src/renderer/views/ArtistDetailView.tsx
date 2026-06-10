@@ -529,6 +529,33 @@ export default function ArtistDetailView() {
         const discoLoading = disco === 'loading'
         const discoList = (disco && disco !== 'loading' && disco !== 'empty') ? disco : null
         const discoEmpty = disco === 'empty'
+        // Merge MB's discography with the albums you actually OWN. Your library
+        // is ground truth: every owned album always appears (MusicBrainz buries
+        // A Hard Day's Night / Help! under hundreds of Beatles bootlegs), and
+        // any MB "album" that just repackages songs you already own on real
+        // albums (the US Capitol comps) drops out. MB still contributes the
+        // records you DON'T own, for discovery.
+        const ownedDisco: DiscographyAlbum[] = persona.albums.map(g => ({
+          title: g.name,
+          year: String(g.year || ''),
+          tracks: g.tracks.slice()
+            .sort((a, b) => (Number(a.trackNumber) || 0) - (Number(b.trackNumber) || 0))
+            .map(t => ({ title: t.title, position: Number(t.trackNumber) || 0 })),
+        }))
+        const ownedAlbumTitles = new Set(ownedDisco.map(a => normTitle(a.title)))
+        const ownedTrackTitles = new Set<string>()
+        for (const a of ownedDisco) for (const t of a.tracks) ownedTrackTitles.add(normTitle(t.title))
+        const mbExtra = (discoList || []).filter(album => {
+          if (ownedAlbumTitles.has(normTitle(album.title))) return false   // already shown as owned
+          const titles = album.tracks.map(t => normTitle(t.title)).filter(Boolean)
+          if (titles.length >= 4) {
+            const overlap = titles.filter(t => ownedTrackTitles.has(t)).length / titles.length
+            if (overlap > 0.5) return false   // a comp of songs you already own → drop
+          }
+          return true   // an album you don't own → keep for discovery
+        })
+        const mergedDisco: DiscographyAlbum[] = [...ownedDisco, ...mbExtra]
+          .sort((a, b) => (b.year || '').localeCompare(a.year || ''))
         return (
           <div key={persona.name} className={`artist-detail-chapter ${isMulti ? 'artist-detail-chapter--multi' : ''}`}>
             {isMulti && (
@@ -580,19 +607,19 @@ export default function ArtistDetailView() {
               <h2 className="artist-detail-section-title">
                 {isMulti ? `Full ${persona.name} discography` : 'Full discography'}
               </h2>
-              {discoLoading && (
+              {discoLoading && mergedDisco.length === 0 && (
                 <div className="artist-detail-disco-loading">
                   Loading from MusicBrainz… (first lookup per artist takes ~15s)
                 </div>
               )}
-              {discoEmpty && (
+              {discoEmpty && mergedDisco.length === 0 && (
                 <div className="artist-detail-disco-empty">
                   No canonical discography found for {persona.name}.
                 </div>
               )}
-              {discoList && (
+              {mergedDisco.length > 0 && (
                 <div className="artist-detail-disco-list">
-                  {discoList.map(album => {
+                  {mergedDisco.map(album => {
                     const ownedCount = album.tracks.reduce((n, t) => n + (ownedByTitle.has(normTitle(t.title)) ? 1 : 0), 0)
                     const total = album.tracks.length
                     const pct = total > 0 ? Math.round((ownedCount / total) * 100) : 0
