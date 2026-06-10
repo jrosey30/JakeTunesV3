@@ -658,10 +658,27 @@ const BANDSINTOWN_APP_ID = process.env.BANDSINTOWN_APP_ID || '999'
 const bandsintownPerArtistCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
 const bandsintownAggregateCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
 
+// "Near You" means near BROOKLYN — the section was showing Foo Fighters in
+// Norway and McCartney in London. Same home point the weather widget uses.
+// 125 mi covers the NYC metro, Long Island, North Jersey, New Haven, Philly.
+const HOME_LAT = 40.6782
+const HOME_LON = -73.9442
+const NEARBY_MILES = 125
+// Coord-less events (rare) fall back to a tri-state region check.
+const NEARBY_REGIONS = new Set(['NY', 'NJ', 'CT', 'NEW YORK', 'NEW JERSEY', 'CONNECTICUT'])
+
+function milesFromHome(lat: number, lon: number): number {
+  const R = 3959 // earth radius, miles
+  const p = Math.PI / 180
+  const a = Math.sin(((lat - HOME_LAT) * p) / 2) ** 2 +
+    Math.cos(HOME_LAT * p) * Math.cos(lat * p) * Math.sin(((lon - HOME_LON) * p) / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
 interface BitEvent {
   datetime?: string
   url?: string
-  venue?: { name?: string; city?: string; region?: string; country?: string }
+  venue?: { name?: string; city?: string; region?: string; country?: string; latitude?: string; longitude?: string }
   artist?: { thumb_url?: string; image_url?: string }
 }
 
@@ -692,6 +709,16 @@ export async function getBandsintownEventsForArtist(artist: string): Promise<Tou
       if (!ev.datetime || !ev.venue) continue
       const ts = new Date(ev.datetime).getTime()
       if (isNaN(ts) || ts < now) continue
+      // Near-Brooklyn only. Venue coords are present on essentially every
+      // BIT event; the region check is the coord-less fallback.
+      const lat = Number(ev.venue.latitude)
+      const lon = Number(ev.venue.longitude)
+      const hasCoords = Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0)
+      if (hasCoords) {
+        if (milesFromHome(lat, lon) > NEARBY_MILES) continue
+      } else if (!NEARBY_REGIONS.has((ev.venue.region || '').trim().toUpperCase())) {
+        continue
+      }
       const city = [ev.venue.city, ev.venue.region || ev.venue.country].filter(Boolean).join(', ')
       events.push({
         artist,

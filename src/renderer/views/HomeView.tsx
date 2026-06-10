@@ -609,13 +609,13 @@ export default function HomeView() {
           </div>
           {stats.topArtist && (
             <div className="home-stat">
-              <div className="home-stat-value" title={stats.topArtist}>{stats.topArtist}</div>
+              <div className="home-stat-value home-stat-value--name" title={stats.topArtist}>{stats.topArtist}</div>
               <div className="home-stat-label">Top Artist</div>
             </div>
           )}
           {stats.topGenre && (
             <div className="home-stat">
-              <div className="home-stat-value" title={stats.topGenre}>{stats.topGenre}</div>
+              <div className="home-stat-value home-stat-value--name" title={stats.topGenre}>{stats.topGenre}</div>
               <div className="home-stat-label">Top Genre</div>
             </div>
           )}
@@ -660,21 +660,21 @@ export default function HomeView() {
             )}
             {memory.insights.topArtists7d[0] && (
               <div className="home-stat">
-                <div className="home-stat-value" title={memory.insights.topArtists7d[0].artist}>{memory.insights.topArtists7d[0].artist}</div>
+                <div className="home-stat-value home-stat-value--name" title={memory.insights.topArtists7d[0].artist}>{memory.insights.topArtists7d[0].artist}</div>
                 <div className="home-stat-label">This Week</div>
                 <div className="home-stat-sub">{memory.insights.topArtists7d[0].plays} play{memory.insights.topArtists7d[0].plays === 1 ? '' : 's'}</div>
               </div>
             )}
             {memory.insights.comeback && (
               <div className="home-stat">
-                <div className="home-stat-value" title={memory.insights.comeback.artist}>{memory.insights.comeback.artist}</div>
+                <div className="home-stat-value home-stat-value--name" title={memory.insights.comeback.artist}>{memory.insights.comeback.artist}</div>
                 <div className="home-stat-label">Comeback</div>
                 <div className="home-stat-sub">{memory.insights.comeback.gapDays} days away</div>
               </div>
             )}
             {memory.insights.binge && (
               <div className="home-stat">
-                <div className="home-stat-value" title={memory.insights.binge.artist}>{memory.insights.binge.artist}</div>
+                <div className="home-stat-value home-stat-value--name" title={memory.insights.binge.artist}>{memory.insights.binge.artist}</div>
                 <div className="home-stat-label">Binge Record</div>
                 <div className="home-stat-sub">{memory.insights.binge.plays} in one day</div>
               </div>
@@ -844,7 +844,7 @@ export default function HomeView() {
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Coming to a Stage Near You</h2>
-            <span className="home-section-source">via Bandsintown · your library's artists</span>
+            <span className="home-section-source">via Bandsintown · your artists, within 125 mi of Brooklyn</span>
           </div>
           <div className="home-card-row" role="list" ref={tourDatesRowRef}>
             {tourDates.slice(0, 20).map((ev, i) => {
