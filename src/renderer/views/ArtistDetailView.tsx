@@ -451,33 +451,6 @@ export default function ArtistDetailView() {
         </div>
       </header>
 
-      {(related.length > 0 || relatedLoading) && (
-        <section className="artist-detail-related">
-          <div className="artist-detail-related-head">Related artists</div>
-          {relatedLoading && related.length === 0 ? (
-            <div className="artist-detail-related-loading">Finding connections…</div>
-          ) : (
-            <div className="artist-detail-related-row">
-              {related.map((r) => {
-                const owned = ownedArtistKeys.has(artistIdentityKey(canonicalArtist(r.name)))
-                return (
-                  <button
-                    key={r.name}
-                    className={`artist-detail-related-chip ${owned ? 'is-owned' : 'is-unowned'}`}
-                    onClick={() => { if (owned) dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(r.name) }) }}
-                    disabled={!owned}
-                    title={owned ? `Go to ${r.name}` : `${r.name} — not in your library yet`}
-                  >
-                    <span className="artist-detail-related-name">{r.name}</span>
-                    <span className="artist-detail-related-rel">{relationLabel(r.relation)}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </section>
-      )}
-
       <section className="artist-detail-wiki">
         {wikiLoading ? (
           <div className="artist-detail-wiki-loading">
@@ -668,6 +641,35 @@ export default function ArtistDetailView() {
           </div>
         )
       })}
+
+      {/* Related artists — at the very bottom of the page (after the full
+          discography), so the page leads with the artist's own music. */}
+      {(related.length > 0 || relatedLoading) && (
+        <section className="artist-detail-related artist-detail-related--bottom">
+          <div className="artist-detail-related-head">Related artists</div>
+          {relatedLoading && related.length === 0 ? (
+            <div className="artist-detail-related-loading">Finding connections…</div>
+          ) : (
+            <div className="artist-detail-related-row">
+              {related.map((r) => {
+                const owned = ownedArtistKeys.has(artistIdentityKey(canonicalArtist(r.name)))
+                return (
+                  <button
+                    key={r.name}
+                    className={`artist-detail-related-chip ${owned ? 'is-owned' : 'is-unowned'}`}
+                    onClick={() => { if (owned) dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(r.name) }) }}
+                    disabled={!owned}
+                    title={owned ? `Go to ${r.name}` : `${r.name} — not in your library yet`}
+                  >
+                    <span className="artist-detail-related-name">{r.name}</span>
+                    <span className="artist-detail-related-rel">{relationLabel(r.relation)}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   )
 }

@@ -630,3 +630,11 @@
 @media (prefers-reduced-motion: reduce) {
   .artist-detail-discography { animation: none; }
 }
+
+/* Related artists moved to the very bottom of the page — separate it from the
+   discography above with a top rule + breathing room. */
+.artist-detail-related--bottom {
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+}

@@ -69,6 +69,7 @@ import {
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
+import { registerScotusArchive } from './scotus-archive'
 import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
@@ -949,8 +950,8 @@ ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: 
     const reply = await claudeCall('related-artists', {
       model: 'claude-haiku-4-5',
       max_tokens: 800,
-      system: 'You are a precise music encyclopedia. Return only real, well-established artist relationships — bands, their members, members\' side projects/aliases, and frequent collaborators. Never invent a relationship.',
-      messages: [{ role: 'user', content: `List the artists most directly related to "${name}": the band(s) they are or were in, that band's other members, their notable side projects/aliases, and a few key collaborators. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","bandmate","collaborator". 8–14 entries, most relevant first. No prose, no code fence.` }],
+      system: 'You are a precise music encyclopedia listing artists a fan should explore. Return only real, well-established MUSICAL artists related to the subject — bands, their NOTABLE members (ones with real recording careers of their own), those members\' own bands/side projects, and a few genuinely similar or closely-allied recording artists. NEVER include producers, engineers, managers, songwriters-for-hire, or minor/early former members who left before the act\'s success or had no recording career of their own (e.g. for the Beatles: exclude George Martin, Pete Best, Stuart Sutcliffe). Never invent a relationship.',
+      messages: [{ role: 'user', content: `List the recording artists most directly related to "${name}" — for a fan who likes them and wants similar or adjacent artists to explore. Include: the band(s) they are/were in, that band's NOTABLE members (the ones with real careers of their own), those members' side projects/aliases/other bands, and a few genuinely similar artists. EXCLUDE producers, engineers, managers, and minor/early members. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","collaborator". 6–12 entries, most relevant first. No prose, no code fence.` }],
     })
     const block = reply.content[0]
     const text = block && block.type === 'text' ? block.text : ''
@@ -13120,6 +13121,22 @@ app.whenReady().then(async () => {
   registerStreamripStore({
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
+  })
+
+  // SCOTUS Archive — Poppy's Supreme Court argument (Beck v. Prupis). A
+  // one-of-one exhibit, never part of the music library. askClaude wraps
+  // claudeCall so the module stays free of the Anthropic SDK types.
+  registerScotusArchive({
+    askClaude: async (callKey, system, userText, maxTokens) => {
+      const reply = await claudeCall(callKey, {
+        model: 'claude-sonnet-4-6',
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: userText }],
+      })
+      const block = reply.content[0]
+      return block && block.type === 'text' ? block.text.trim() : ''
+    },
   })
 
   // ── Music Man's Record Store (Brief 037) ──
