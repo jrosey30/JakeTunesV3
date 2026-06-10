@@ -461,3 +461,49 @@
 }
 .artists-az-letter:hover:not(:disabled) { background: rgba(187, 67, 8, 0.14); }
 .artists-az-letter:disabled { color: #cdc8bf; cursor: default; }
+
+/* ── In-view list filter (Artists + Albums) — fast find without the toolbar
+   search pill. .list-filter is shared; artists.css loads at app start. ── */
+.artists-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.list-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 300px;
+  padding: 5px 10px;
+  background: var(--white, #fff);
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 16px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.list-filter:focus-within {
+  border-color: var(--brand-orange, #bb4308);
+  box-shadow: 0 0 0 2px rgba(187, 67, 8, 0.12);
+}
+.list-filter-icon { color: #9a958c; font-size: 14px; line-height: 1; }
+.list-filter-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font-size: 13px;
+  color: var(--text-primary, #2a2018);
+}
+.list-filter-input::placeholder { color: #b0aaa0; }
+.list-filter-clear {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #999;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.list-filter-clear:hover { color: var(--brand-orange, #bb4308); }

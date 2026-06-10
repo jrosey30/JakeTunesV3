@@ -125,16 +125,22 @@ export default function ArtistsView() {
   // Filter against the global toolbar Search Pill. Matches artist
   // name, album name, or track title.
   const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
+  const [listFilter, setListFilter] = useState('')
+  const lf = listFilter.trim().toLowerCase()
   const filteredArtists = useMemo(() => {
-    const q = effectiveQuery
-    if (!q) return artists
-    return artists.filter(a => {
-      if (a.name.toLowerCase().includes(q)) return true
-      if (a.albums.some(al => al.name.toLowerCase().includes(q))) return true
-      if (a.tracks.some(t => (t.title || '').toLowerCase().includes(q))) return true
-      return false
-    })
-  }, [artists, effectiveQuery])
+    let result = artists
+    if (effectiveQuery) {
+      const q = effectiveQuery
+      result = result.filter(a =>
+        a.name.toLowerCase().includes(q) ||
+        a.albums.some(al => al.name.toLowerCase().includes(q)) ||
+        a.tracks.some(t => (t.title || '').toLowerCase().includes(q)),
+      )
+    }
+    // In-view filter box — narrows by artist name (the fast-find case).
+    if (lf) result = result.filter(a => a.name.toLowerCase().includes(lf))
+    return result
+  }, [artists, effectiveQuery, lf])
 
   const toggleArtist = useCallback((name: string) => {
     // Brief 032 Decision 4: clicking a different artist collapses the
@@ -440,6 +446,22 @@ export default function ArtistsView() {
       onKeyDownCapture={noteUserActivity}
     >
       <div className="artists-toolbar">
+        <div className="list-filter">
+          <span className="list-filter-icon" aria-hidden="true">⌕</span>
+          <input
+            className="list-filter-input"
+            type="text"
+            placeholder="Filter artists…"
+            value={listFilter}
+            onChange={(e) => setListFilter(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setListFilter('') }}
+            spellCheck={false}
+            aria-label="Filter artists"
+          />
+          {listFilter && (
+            <button className="list-filter-clear" onClick={() => setListFilter('')} aria-label="Clear filter" title="Clear">×</button>
+          )}
+        </div>
         <button
           className="artists-group-btn"
           onClick={() => setGroupingOpen(true)}

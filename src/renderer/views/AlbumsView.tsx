@@ -67,17 +67,23 @@ export default function AlbumsView() {
   }, [lib.tracks])
 
   const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
+  const [albFilter, setAlbFilter] = useState('')
+  const af = albFilter.trim().toLowerCase()
   const filteredAlbums = useMemo(() => {
-    const q = effectiveQuery
-    if (!q) return albums
-    return albums.filter(a => {
-      if (a.name.toLowerCase().includes(q)) return true
-      if (a.artist.toLowerCase().includes(q)) return true
-      if (a.artists.some(art => art.toLowerCase().includes(q))) return true
-      if (a.tracks.some(t => (t.title || '').toLowerCase().includes(q))) return true
-      return false
-    })
-  }, [albums, effectiveQuery])
+    let result = albums
+    if (effectiveQuery) {
+      const q = effectiveQuery
+      result = result.filter(a =>
+        a.name.toLowerCase().includes(q) ||
+        a.artist.toLowerCase().includes(q) ||
+        a.artists.some(art => art.toLowerCase().includes(q)) ||
+        a.tracks.some(t => (t.title || '').toLowerCase().includes(q)),
+      )
+    }
+    // In-view filter box — album or artist name.
+    if (af) result = result.filter(a => a.name.toLowerCase().includes(af) || a.artist.toLowerCase().includes(af))
+    return result
+  }, [albums, effectiveQuery, af])
 
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
   const findArtHash = useCallback((album: Album): string | undefined => {
@@ -145,6 +151,24 @@ export default function AlbumsView() {
       onScrollCapture={noteUserActivity}
       onKeyDownCapture={noteUserActivity}
     >
+      <div className="albums-toolbar">
+        <div className="list-filter">
+          <span className="list-filter-icon" aria-hidden="true">⌕</span>
+          <input
+            className="list-filter-input"
+            type="text"
+            placeholder="Filter albums…"
+            value={albFilter}
+            onChange={(e) => setAlbFilter(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setAlbFilter('') }}
+            spellCheck={false}
+            aria-label="Filter albums"
+          />
+          {albFilter && (
+            <button className="list-filter-clear" onClick={() => setAlbFilter('')} aria-label="Clear filter" title="Clear">×</button>
+          )}
+        </div>
+      </div>
       {filteredAlbums.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="albums" />
       )}
