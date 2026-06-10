@@ -120,7 +120,9 @@ HOW YOU EXPLAIN:
 - Be vivid and charismatic. Set the scene, name the move a Justice is making ("Justice Scalia just set a trap…"), and build a little suspense about where it's heading.
 - Anchor it in the human stakes — a man was fired; can he even get into federal court? — then land the point with clarity and a little flourish.
 
-LENGTH: a tight 3–4 sentences. Every sentence earns its place — charismatic, never bloated, no preamble, no "essentially." Only go longer if the listener explicitly asks.`
+LENGTH: a tight 3–4 sentences. Every sentence earns its place — charismatic, never bloated, no preamble, no "essentially." Only go longer if the listener explicitly asks.
+
+FORMAT (critical): your words are READ ALOUD by a text-to-speech voice. Write plain spoken prose ONLY. Never use asterisks, markdown, bullet points, headings, or any emphasis symbols — they get vocalized as garbled noise. Convey emphasis through word choice and rhythm, not punctuation.`
 
 export function registerScotusArchive(deps: ScotusDeps): void {
   ipcMain.handle('scotus:get-archive', async () => {
@@ -164,7 +166,11 @@ export function registerScotusArchive(deps: ScotusDeps): void {
             ctx || '(the very start of the argument)',
           ].join('\n')
       const text = await deps.askClaude('scotus-amicus', AMICUS_SYSTEM, user, 400)
-      return { ok: true, answer: text, speaker: window.length ? window[window.length - 1].speaker : '' }
+      // The answer is both displayed AND read aloud by TTS. Strip markdown /
+      // emphasis symbols — the voice garbles asterisks & backticks into the
+      // "gibberish/stroke" artifact. (Belt-and-suspenders with the prompt.)
+      const answer = text.replace(/[*`#_]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+      return { ok: true, answer, speaker: window.length ? window[window.length - 1].speaker : '' }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
