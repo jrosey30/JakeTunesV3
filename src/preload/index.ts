@@ -489,6 +489,8 @@ const electronAPI = {
     ipcRenderer.invoke('record-skip', track),
   // Brain #1 — listening memory (streaks/habits computed from the play log).
   getListeningMemory: () => ipcRenderer.invoke('get-listening-memory'),
+  // Brain — Rediscover: owned-but-overlooked library picks + Music Man's pitch.
+  getRediscovery: (force?: boolean) => ipcRenderer.invoke('get-rediscovery', force),
   recordRating: (track: { title: string; artist: string; album: string; rating: number }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('record-rating', track),
   listAudioDevices: (): Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }> =>

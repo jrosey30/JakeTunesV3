@@ -31,7 +31,7 @@ import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } f
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
-import type { Track, MusicNewsItem, TourDate, UpcomingRelease, ListeningMemoryData } from '../types'
+import type { Track, MusicNewsItem, TourDate, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -117,6 +117,23 @@ export default function HomeView() {
     }).catch(() => { /* card just doesn't render */ })
     return () => { cancelled = true }
   }, [])
+
+  // Brain — Rediscover: owned-but-overlooked artists with Music Man's pitch.
+  const rediscoverRowRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('home-row-rediscover', rediscoverRowRef)
+  const [rediscovery, setRediscovery] = useState<RediscoveryPick[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.getRediscovery?.().then((r) => {
+      if (!cancelled && r?.ok && r.picks) setRediscovery(r.picks)
+    }).catch(() => { /* section just doesn't render */ })
+    return () => { cancelled = true }
+  }, [])
+  const playRediscovery = useCallback((pick: RediscoveryPick) => {
+    const norm = (s: string) => (s || '').trim().toLowerCase()
+    const tracks = lib.tracks.filter((t) => norm(t.albumArtist || t.artist) === norm(pick.artist))
+    if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true)
+  }, [lib.tracks, playTrack])
 
   useEffect(() => {
     let cancelled = false
@@ -664,6 +681,43 @@ export default function HomeView() {
               <cite> — Music Man’s notebook</cite>
             </blockquote>
           )}
+        </section>
+      )}
+
+      {/* ── Rediscover (Brain) — owned gems you've overlooked, in his voice ── */}
+      {rediscovery && rediscovery.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">Rediscover</h2>
+            <span className="home-section-source">overlooked in your own library · Music Man</span>
+          </div>
+          <div className="home-card-row" role="list" ref={rediscoverRowRef}>
+            {rediscovery.map((pick) => {
+              const hash = artHashForKey(`${pick.artist}|||${pick.album}`)
+              return (
+                <div
+                  key={`${pick.artist}|||${pick.album}`}
+                  className="home-rediscover-card"
+                  role="listitem"
+                  title={`${pick.artist}${pick.album ? ` — ${pick.album}` : ''}\nYou own ${pick.ownedTracks}, played ${pick.plays}× here`}
+                >
+                  <div className="home-rediscover-art" onClick={() => playRediscovery(pick)} title="Play">
+                    {hash ? (
+                      <AlbumArtImage hash={hash} alt={pick.artist} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} />
+                    ) : (
+                      <div className="home-album-art-placeholder home-rediscover-art-ph">{pick.artist.split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('')}</div>
+                    )}
+                    <div className="home-rediscover-play" aria-hidden="true">▶</div>
+                  </div>
+                  <button
+                    className="home-rediscover-artist"
+                    onClick={() => { requestDrillIn('artist', pick.artist); dispatch({ type: 'SET_VIEW', view: 'artists' }) }}
+                  >{pick.artist}</button>
+                  <div className="home-rediscover-pitch">“{pick.reason}”</div>
+                </div>
+              )
+            })}
+          </div>
         </section>
       )}
 

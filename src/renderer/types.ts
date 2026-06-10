@@ -336,6 +336,18 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 export type RepeatMode = 'off' | 'all' | 'one'
 // Brain #1 — Listening Memory. Mirrors ListeningMemoryInsights in
 // src/main/listening-memory.ts (the IPC payload shape).
+// Brain — Rediscover pick (mirrors RediscoveryPick in src/main/rediscovery.ts).
+export interface RediscoveryPick {
+  artist: string
+  album: string
+  genre: string
+  ownedTracks: number
+  plays: number
+  rating: number
+  addedAt: string
+  reason: string
+}
+
 export interface ListeningMemoryData {
   insights: {
     totals: { plays: number; skips: number; skipRatePct: number; distinctArtists: number; daysActive: number; sinceTs: string | null }
@@ -565,6 +577,7 @@ declare global {
       recordSkip?: (track: { title: string; artist: string }) => Promise<{ ok: boolean }>
       recordRating?: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
       getListeningMemory?: () => Promise<{ ok: boolean; error?: string } & Partial<ListeningMemoryData>>
+      getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: RediscoveryPick[]; error?: string }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>

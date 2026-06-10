@@ -37,6 +37,7 @@ import {
   evaluateMusicManVerification,
 } from './reco-match'
 import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory'
+import { computeRediscovery, type RediscoveryPick, type RediscoveryTrack } from './rediscovery'
 import {
   pickAlbumReleaseDate,
   sanitizeAlbumCredits,
@@ -1038,6 +1039,62 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
     return { ok: true, candidates, generatedAt: radarCache.generatedAt }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'radar failed' }
+  }
+})
+
+// ── Rediscover (Brain) — owned-but-overlooked library picks + Music Man's pitch.
+// Where the radar finds NEW external music, this mines what Jake already OWNS but
+// has overlooked in JakeTunes (his Spotify-shaped blind spot). ──
+let rediscoveryCache: { at: number; picks: RediscoveryPick[] } | null = null
+const REDISCOVERY_TTL_MS = 6 * 60 * 60 * 1000
+
+async function addMusicManRediscoveryPitches(picks: RediscoveryPick[]): Promise<RediscoveryPick[]> {
+  const list = picks.map((p, i) =>
+    `${i + 1}. ${p.artist}${p.album ? ` — "${p.album}"` : ''} (${p.genre || 'genre?'}; owns ${p.ownedTracks} track${p.ownedTracks === 1 ? '' : 's'}, played ${p.plays}× in JakeTunes${p.rating >= 4 ? ', starred' : ''})`,
+  ).join('\n')
+  const user = [
+    `These are artists in the listener's OWN library that they clearly bought into but have barely or never played INSIDE JakeTunes. Critical context: their real listening lives partly on Spotify, so "0 plays here" almost always means "loved elsewhere, just never spun in this app yet" — NOT "never heard" or "disliked".`,
+    ``,
+    `Write a ONE-sentence rediscovery nudge for EACH, in your voice — confident, opinionated, specific. Frame it as "you've been sleeping on this / it's sitting right here" — NEVER "you've never heard this". Lean on the facts (how much they own, the genre, that it's starred or freshly added) when it lands. Keep each under ~22 words.`,
+    ``,
+    list,
+    ``,
+    `Return ONLY a JSON array of strings — one per item, in order. No numbering, no prose, no code fence.`,
+  ].join('\n')
+  const reply = await claudeCall('rediscovery', {
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1400,
+    system: MUSIC_MAN_CORE,
+    messages: [{ role: 'user', content: user }],
+  })
+  const block = reply.content[0]
+  const text = block && block.type === 'text' ? block.text : ''
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+  const arr = JSON.parse(cleaned) as unknown[]
+  return picks.map((p, i) => {
+    const line = arr[i]
+    return typeof line === 'string' && line.trim() ? { ...p, reason: line.trim() } : p
+  })
+}
+
+ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
+  if (!force && rediscoveryCache && Date.now() - rediscoveryCache.at < REDISCOVERY_TTL_MS) {
+    return { ok: true, picks: rediscoveryCache.picks }
+  }
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: RediscoveryTrack[] }
+    const picks = computeRediscovery(Array.isArray(lib.tracks) ? lib.tracks : [], new Date(), 9)
+    if (picks.length === 0) return { ok: true, picks: [] }
+    // Music Man's pitch is the magic; if the API is capped/down, picks still
+    // show with their heuristic reason (graceful).
+    const pitched = await addMusicManRediscoveryPitches(picks).catch((err) => {
+      console.warn('[rediscovery] Music Man pitch failed, using heuristic reasons:', err instanceof Error ? err.message : err)
+      return picks
+    })
+    rediscoveryCache = { at: Date.now(), picks: pitched }
+    return { ok: true, picks: pitched }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'rediscovery failed' }
   }
 })
 
