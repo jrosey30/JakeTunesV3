@@ -400,7 +400,7 @@
 
 /* ── Albums in library grid ── */
 .artist-detail-albums {
-  padding-top: 8px;
+  padding-top: 4px;
   animation: artist-detail-fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: 60ms;
 }
@@ -408,12 +408,12 @@
   font-size: 16px;
   font-weight: 700;
   color: #1a1a1a;
-  margin: 0 0 12px;
+  margin: 0 0 8px;
 }
 .artist-detail-album-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
 }
 .artist-detail-album-card {
   background: transparent;
@@ -488,7 +488,7 @@
  * Click row → expands an inline tracklist where owned tracks are
  * clickable (play) and not-owned tracks are dimmed. */
 .artist-detail-discography {
-  margin-top: 36px;
+  margin-top: 18px;
   animation: artist-detail-fade-in 320ms ease-out 80ms both;
 }
 .artist-detail-disco-loading,
@@ -501,7 +501,7 @@
 .artist-detail-disco-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .artist-detail-disco-album {
   border-radius: 6px;
@@ -522,7 +522,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: transparent;
   border: none;
   cursor: pointer;
