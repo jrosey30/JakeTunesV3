@@ -128,20 +128,23 @@ const QUOTES = [
     ],
   },
   {
-    title: '“I think I know what your problem is”', time: 2364.437,
-    note: 'Scalia interrupts himself, then winds up. Mr. Rosenbaum is about to spend a few minutes in the barrel.',
+    title: 'Double-teamed', time: 2147.235,
+    note: 'Two Justices fighting over who grills him next — Scalia doesn’t even get to finish his sentence.',
     lines: [
-      { speaker: 'Justice Scalia', text: 'Well, take a simple... no, you go.' },
-      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
-      { speaker: 'Justice Scalia', text: 'It’s the statement you made earlier that these nonpredicate acts have nothing to do with the goal of the conspiracy... That’s simply not true.' },
+      { speaker: 'Justice Souter', text: 'What’s your answer to that?' },
+      { speaker: 'Mr. Rosenbaum', text: 'My answer to that, Your Honor, is that on this record... I think my adversary essentially conceded away his argument...' },
+      { speaker: 'Justice Scalia', text: 'Okay, but that’s...' },
+      { speaker: 'Justice Souter', text: 'That’s your only response to that argument?' },
     ],
   },
   {
-    title: 'The bank guard', time: 2393.988,
-    note: 'The hypothetical of the day — Scalia’s imaginary heist crew did nothing wrong, exactly.',
+    title: '“I think I know what your problem is”', time: 2364.437,
+    note: 'Scalia’s famous bank-guard heist, aimed straight at him — and Mr. Rosenbaum stands his ground.',
     lines: [
-      { speaker: 'Justice Scalia', text: 'Some of the means along the end to that goal, killing the bank guard, happen to be unlawful acts covered by RICO... they didn’t intend to kill... the object wasn’t to kill the guard.' },
-      { speaker: 'Justice Scalia', text: 'It was to get the money in the bank.' },
+      { speaker: 'Justice Scalia', text: 'Well, take a simple... no, you go.' },
+      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
+      { speaker: 'Justice Scalia', text: 'Some of the means along the end to that goal, killing the bank guard, happen to be unlawful acts covered by RICO... they didn’t intend to kill... the object wasn’t to kill the guard. It was to get the money in the bank.' },
+      { speaker: 'Mr. Rosenbaum', text: 'That may be so, Justice Scalia, but the answer to the question that I think is being posed to me is whether or not that goal... still provides a basis for RICO standing.' },
     ],
   },
   {
