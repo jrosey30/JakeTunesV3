@@ -234,4 +234,23 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
+
+  // Google-SSO Qobuz: there is no password, so authenticate with the
+  // user_auth_token Qobuz hands the logged-in web player (streamrip's
+  // use_auth_token=true mode → user_id + token). The token IS the credential,
+  // stored as-is; nothing to hash.
+  ipcMain.handle('streamrip:set-qobuz-token', async (_e, userId: string, token: string): Promise<{ ok: boolean; error?: string }> => {
+    const u = (userId || '').trim()
+    const t = (token || '').trim()
+    if (!u || !t) return { ok: false, error: 'Enter both your Qobuz user ID and auth token.' }
+    try {
+      const path = streamripConfigPath()
+      const cfg = await readFile(path, 'utf-8')
+      const next = writeQobuzFields(cfg, { use_auth_token: 'true', email_or_userid: u, password_or_token: t })
+      await writeFile(path, next, 'utf-8')
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
 }
