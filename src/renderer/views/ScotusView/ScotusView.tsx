@@ -347,10 +347,11 @@ export default function ScotusView() {
                     <span>{j.service}</span>
                   </div>
                 )}
-                {j.fate && (
+                {/* Only the deceased get this row — a living Justice simply has none. */}
+                {j.died && (
                   <div className="scotus-roster-fact">
-                    <span className="scotus-roster-fact-k">{/died/i.test(j.fate) ? 'In memoriam' : 'Today'}</span>
-                    <span>{j.fate}</span>
+                    <span className="scotus-roster-fact-k">Died</span>
+                    <span>{j.died}</span>
                   </div>
                 )}
               </div>
