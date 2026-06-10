@@ -652,20 +652,39 @@ export interface TourDate {
   url: string
   /** Optional artist thumbnail (square, often Spotify-sourced). */
   imageUrl?: string
+  /** Crow-flies miles from Brooklyn — set at parse time, used to sort
+   *  "the city" shows first. Internal; the renderer ignores it. */
+  miles?: number
 }
 
 const BANDSINTOWN_APP_ID = process.env.BANDSINTOWN_APP_ID || '999'
 const bandsintownPerArtistCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
 const bandsintownAggregateCache = makeCache<TourDate[]>(24 * 60 * 60 * 1000)
 
-// "Near You" means near BROOKLYN — the section was showing Foo Fighters in
-// Norway and McCartney in London. Same home point the weather widget uses.
-// 125 mi covers the NYC metro, Long Island, North Jersey, New Haven, Philly.
+// "Near You" = a quick trip from BROOKLYN — not Norway, not Philly, and not
+// the Jersey Shore (Asbury Park, Holmdel are close as the crow flies but a
+// 90-min trip). Same home point the weather widget uses.
+//
+// Radius is a rough proxy for TRAIN TIME, so reach is region-aware:
+//   NY & CT → 40 mi  full LIRR / Metro-North zone — Nassau, lower Westchester,
+//                     Greenwich + Stamford CT (Jake explicitly wanted CT).
+//   NJ      → 18 mi  PATH / north-Jersey ONLY (Newark, Jersey City, Hoboken,
+//                     Montclair). Cuts the shore/central spots that are near
+//                     in miles but transit-far.
+//   else    → excluded.
+// Within reach, the row sorts "the city" (≤12 mi — five boroughs + immediate,
+// the just-hop-the-subway shows) first, then small venues before arenas.
 const HOME_LAT = 40.6782
 const HOME_LON = -73.9442
-const NEARBY_MILES = 125
-// Coord-less events (rare) fall back to a tri-state region check.
-const NEARBY_REGIONS = new Set(['NY', 'NJ', 'CT', 'NEW YORK', 'NEW JERSEY', 'CONNECTICUT'])
+const REACH_BY_REGION: Record<string, number> = {
+  NY: 40, 'NEW YORK': 40,
+  CT: 40, CONNECTICUT: 40,
+  NJ: 18, 'NEW JERSEY': 18,
+}
+const IN_THE_CITY_MILES = 12
+// Unmistakable big-room keywords — used only to SORT arenas below clubs,
+// never to hide them. Deliberately tight (no "center"/"hall"/"garden").
+const MEGA_VENUE_RE = /\b(stadium|arena|amphitheat(?:er|re)|coliseum|ballpark|fairgrounds|speedway)\b/i
 
 function milesFromHome(lat: number, lon: number): number {
   const R = 3959 // earth radius, miles
@@ -709,16 +728,16 @@ export async function getBandsintownEventsForArtist(artist: string): Promise<Tou
       if (!ev.datetime || !ev.venue) continue
       const ts = new Date(ev.datetime).getTime()
       if (isNaN(ts) || ts < now) continue
-      // Near-Brooklyn only. Venue coords are present on essentially every
-      // BIT event; the region check is the coord-less fallback.
+      // NY/NJ/CT only, within the region-aware reach. Coords are present on
+      // essentially every BIT event; if we can't verify the location is close,
+      // we DROP it (better a missing maybe-near show than another Norway).
+      const reach = REACH_BY_REGION[(ev.venue.region || '').trim().toUpperCase()]
+      if (!reach) continue
       const lat = Number(ev.venue.latitude)
       const lon = Number(ev.venue.longitude)
-      const hasCoords = Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0)
-      if (hasCoords) {
-        if (milesFromHome(lat, lon) > NEARBY_MILES) continue
-      } else if (!NEARBY_REGIONS.has((ev.venue.region || '').trim().toUpperCase())) {
-        continue
-      }
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) continue
+      const miles = milesFromHome(lat, lon)
+      if (miles > reach) continue
       const city = [ev.venue.city, ev.venue.region || ev.venue.country].filter(Boolean).join(', ')
       events.push({
         artist,
@@ -727,6 +746,7 @@ export async function getBandsintownEventsForArtist(artist: string): Promise<Tou
         city,
         url: ev.url || '',
         imageUrl: ev.artist?.thumb_url || ev.artist?.image_url,
+        miles,
       })
     }
     bandsintownPerArtistCache.set(artist, events)
@@ -753,7 +773,15 @@ export async function getTourDatesForArtists(artists: string[]): Promise<TourDat
     const batchResults = await Promise.all(batch.map(getBandsintownEventsForArtist))
     results.push(...batchResults)
   }
-  const flat = results.flat().sort((a, b) => a.date.localeCompare(b.date))
+  // Order for "things I can just go to": the-city shows (≤12 mi) first, then
+  // small venues before arenas, then soonest date.
+  const cityTier = (e: TourDate) => ((e.miles ?? 999) <= IN_THE_CITY_MILES ? 0 : 1)
+  const megaTier = (e: TourDate) => (MEGA_VENUE_RE.test(e.venue) ? 1 : 0)
+  const flat = results.flat().sort((a, b) =>
+    cityTier(a) - cityTier(b) ||
+    megaTier(a) - megaTier(b) ||
+    a.date.localeCompare(b.date),
+  )
   bandsintownAggregateCache.set(aggregateKey, flat)
   return flat
 }

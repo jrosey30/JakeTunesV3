@@ -844,7 +844,7 @@ export default function HomeView() {
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Coming to a Stage Near You</h2>
-            <span className="home-section-source">via Bandsintown · your artists, within 125 mi of Brooklyn</span>
+            <span className="home-section-source">via Bandsintown · your artists · NYC metro (≈1hr), the city first</span>
           </div>
           <div className="home-card-row" role="list" ref={tourDatesRowRef}>
             {tourDates.slice(0, 20).map((ev, i) => {
