@@ -97,12 +97,19 @@ export default function ScotusView() {
   const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause() }
 
   // Smoothly fade the argument's volume (duck/restore) — like the Music Man mic.
+  // Generation counter: starting a new fade CANCELS any in-flight one. Without
+  // this, stopSpeak's fade-up (400ms) raced the duck's fade-down (300ms) and,
+  // finishing last, silently restored FULL volume under Amicus — the duck
+  // never held.
+  const fadeGenRef = useRef(0)
   const fadeVolume = useCallback((target: number, ms: number) => {
     const a = audioRef.current
     if (!a) return
+    const gen = ++fadeGenRef.current
     const from = a.volume
     const t0 = performance.now()
     const step = () => {
+      if (fadeGenRef.current !== gen) return // superseded by a newer fade
       const el = audioRef.current
       if (!el) return
       const p = Math.min(1, (performance.now() - t0) / ms)
