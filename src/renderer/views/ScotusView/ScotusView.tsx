@@ -94,43 +94,61 @@ export default function ScotusView() {
 
   const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause() }
 
-  // ── Amicus voice: ON DEMAND, exactly like the Music Man mic button. The
-  // click is a fresh user gesture, so the browser lets it play (auto-speaking
-  // after the multi-second answer call loses the gesture and gets blocked). ──
+  // Smoothly fade the argument's volume (duck/restore) — like the Music Man mic.
+  const fadeVolume = useCallback((target: number, ms: number) => {
+    const a = audioRef.current
+    if (!a) return
+    const from = a.volume
+    const t0 = performance.now()
+    const step = () => {
+      const el = audioRef.current
+      if (!el) return
+      const p = Math.min(1, (performance.now() - t0) / ms)
+      el.volume = from + (target - from) * p
+      if (p < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }, [])
+
+  // ── Amicus voice: ON DEMAND, exactly like the Music Man mic button. The click
+  // is a fresh user gesture (so playback isn't blocked), and the argument DUCKS
+  // — fades down, never pauses — while Amicus talks, then rises back. ──
   const stopSpeak = useCallback(() => {
     const a = amicusAudioRef.current
     if (a) { a.pause(); a.src = ''; amicusAudioRef.current = null }
     setSpeaking(false)
-  }, [])
+    fadeVolume(1, 400)
+  }, [fadeVolume])
   const speakAnswer = useCallback(async () => {
     if (speaking) { stopSpeak(); return }
     const text = amicus?.answer
     if (!text) return
     setSpeakNote('')
-    audioRef.current?.pause() // don't talk over the argument
     setSpeaking(true)
+    fadeVolume(0.15, 350) // duck the argument under Amicus — don't pause it
+    const restore = () => { setSpeaking(false); fadeVolume(1, 600) }
     try {
-      const tts = await window.electronAPI.musicmanSpeak(text, false, AMICUS_VOICE)
+      // fast=true → ElevenLabs flash: speech starts in ~1s, not ~10s.
+      const tts = await window.electronAPI.musicmanSpeak(text, true, AMICUS_VOICE)
       if (tts?.ok && tts.audio) {
         const a = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
         amicusAudioRef.current = a
-        a.onended = () => setSpeaking(false)
-        await a.play().catch(() => setSpeaking(false))
+        a.onended = restore
+        await a.play().catch(restore)
       } else {
-        setSpeaking(false)
+        restore()
         setSpeakNote('Amicus’s voice needs the AI voice turned on (Preferences → AI).')
       }
     } catch {
-      setSpeaking(false)
+      restore()
       setSpeakNote('Couldn’t reach the voice just now — try again.')
     }
-  }, [speaking, amicus, stopSpeak])
+  }, [speaking, amicus, stopSpeak, fadeVolume])
   // Stop Amicus's voice when leaving the exhibit.
   useEffect(() => () => stopSpeak(), [stopSpeak])
 
   const explain = useCallback(async () => {
     stopSpeak()
-    audioRef.current?.pause()
     setSpeakNote('')
     setAmicus({ loading: true, answer: '' })
     const r = await window.electronAPI.scotusAmicus?.({ mode: 'explain', time }).catch(() => null)
@@ -140,7 +158,6 @@ export default function ScotusView() {
     const q = question.trim()
     if (!q) return
     stopSpeak()
-    audioRef.current?.pause()
     setSpeakNote('')
     setAmicus({ loading: true, answer: '' }); setQuestion('')
     const r = await window.electronAPI.scotusAmicus?.({ mode: 'ask', time, question: q }).catch(() => null)
