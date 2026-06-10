@@ -144,18 +144,23 @@
   color: var(--text-primary, #1a1a1a);
   letter-spacing: -0.02em;
   line-height: 1.15;
-  white-space: nowrap;
+  /* Wrap to a second line before clipping: the 220px art gives the hero
+     plenty of vertical room, and a complete title beats a clipped one.
+     Two lines covers any real album name at this size. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .home-featured-artist {
   font-size: 16px;
   font-weight: 500;
   color: var(--text-primary, #2a2a2a);
   margin-bottom: 4px;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .home-featured-meta {
   font-size: 12px;
@@ -225,10 +230,22 @@
   font-weight: 700;
   color: var(--text-primary, #1a1a1a);
   letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   line-height: 1.1;
+  /* No nowrap/ellipsis: numeric values ("12,482", "365 days") always
+     fit a 160px tile. Tiles whose value is a NAME use the --name
+     modifier below — names never get clipped to "Rosenba…". */
+}
+/* Name-bearing tiles (Top Artist, Top Genre, This Week, Comeback,
+   Binge Record): smaller type on up to two lines so the whole name
+   renders. Two lines at 17px fits ~30 chars even at the 160px tile
+   minimum — the title= tooltip stays as the freak-case fallback. */
+.home-stat-value--name {
+  font-size: 17px;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .home-stat-label {
   font-size: 10.5px;
@@ -237,9 +254,8 @@
   letter-spacing: 0.08em;
   color: var(--text-secondary, #888);
   margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* No ellipsis: every label is a short hardcoded string that fits the
+     160px tile minimum. If a future label runs long it wraps complete. */
 }
 /* Secondary stat under a tile's label (Best streak, plays, etc.) on its own
  * tidy line so the label never wraps a "· N" suffix. Always rendered (a space
@@ -249,9 +265,8 @@
   font-weight: 500;
   color: var(--text-secondary, #a6a6a6);
   margin-top: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* No ellipsis: subs are short bounded phrases ("Best: 14 days",
+     "23 plays") that always fit. */
 }
 
 .home-section {
@@ -503,9 +518,14 @@
   line-height: 1.3;
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
-  white-space: nowrap;
+  /* Two centered lines under the circle. One nowrap line at 96px is
+     ~13 characters — half the library was rendering "Rosenba…"-style
+     stubs. Two lines (Apple Music's pattern) covers nearly every
+     artist name; only freak-length names still clamp. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .home-artist-plays {
   width: 100%;
@@ -886,14 +906,26 @@
 }
 .home-rediscover-art:hover .home-rediscover-play { opacity: 1; }
 .home-rediscover-artist {
-  display: block; margin-top: 8px; padding: 0; border: none; background: none;
+  margin-top: 8px; padding: 0; border: none; background: none;
   font-size: 13.5px; font-weight: 600; color: var(--text-primary, #1a1a1a);
   cursor: pointer; text-align: left; max-width: 200px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* Two lines, not "Rosenba…": 200px × 2 lines fits any real artist
+     name complete. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .home-rediscover-artist:hover { color: var(--brand-orange, #bb4308); }
 .home-rediscover-pitch {
   margin-top: 4px; font-size: 12px; font-style: italic; line-height: 1.42;
   color: var(--text-secondary, #6a6a6a);
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  /* No clamp: the generator bounds the pitch to ONE sentence under ~22
+     words, which is 4-5 lines at 200px — the old 3-line clamp clipped
+     prompt-compliant pitches mid-sentence. The row grows instead. */
+}
+
+/* Proximity hint on tour cards — "· 4 mi" from Brooklyn. Slightly more present
+   than the year suffix since distance is the useful bit. */
+.home-tour-miles {
+  opacity: 0.85;
+  font-weight: 600;
 }

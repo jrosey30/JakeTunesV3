@@ -866,7 +866,7 @@ export default function HomeView() {
                   <div className="home-tour-info">
                     <div className="home-tour-artist">{ev.artist}</div>
                     <div className="home-tour-venue">{ev.venue}</div>
-                    <div className="home-tour-city">{ev.city}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
+                    <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
                   </div>
                 </div>
               )

@@ -718,6 +718,7 @@ export interface TourDate {
   city: string         // "Brooklyn, NY"
   url: string
   imageUrl?: string
+  miles?: number       // crow-flies miles from Brooklyn — proximity hint on the card
 }
 
 // 4.4.34 — Upcoming-release shape from MusicBrainz.
