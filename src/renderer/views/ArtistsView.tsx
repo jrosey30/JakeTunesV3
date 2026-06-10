@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { artistSortName, artistSectionLetter } from '../utils/artistSort'
 import { consumeDrillIn } from '../utils/drillIn'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries } from '../utils/downloadStore'
@@ -19,6 +20,9 @@ import { setNotice } from '../activity'
 import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import '../styles/artists.css'
+
+// A–Z jump rail letters; '#' collects digits/symbols.
+const AZ_LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
 
 interface ArtistGroup {
   name: string
@@ -100,7 +104,8 @@ export default function ArtistsView() {
       }
     }
     return Array.from(map.entries())
-      .sort(([a], [b]) => (displayNames.get(a) || a).localeCompare(displayNames.get(b) || b))
+      // iTunes-style: ignore a leading "The"/"A"/"An" so The Beatles files under B.
+      .sort(([a], [b]) => artistSortName(displayNames.get(a) || a).localeCompare(artistSortName(displayNames.get(b) || b)))
       .map(([key, tracks]) => {
         const name = displayNames.get(key) || key
         const albumMap = new Map<string, Track[]>()
@@ -302,6 +307,11 @@ export default function ArtistsView() {
   // pattern as SongsView.
   const viewRootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('artists', viewRootRef)
+  // Letters present in the current (filtered) list — drive the A–Z rail.
+  const presentLetters = useMemo(
+    () => new Set(filteredArtists.map(a => artistSectionLetter(a.name))),
+    [filteredArtists],
+  )
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -439,8 +449,34 @@ export default function ArtistsView() {
       {filteredArtists.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="artists" />
       )}
-      {filteredArtists.map((artist) => (
+      {/* A–Z jump rail — pinned right; letters with no artists are greyed out. */}
+      {filteredArtists.length > 0 && (
+        <div className="artists-az-anchor">
+          <div className="artists-az-rail">
+            {AZ_LETTERS.map((L) => (
+              <button
+                key={L}
+                type="button"
+                className="artists-az-letter"
+                disabled={!presentLetters.has(L)}
+                onClick={() => {
+                  isAutoScrollAtRef.current = Date.now()
+                  const el = viewRootRef.current?.querySelector(`.artists-letter-header[data-letter="${L}"]`)
+                  if (el) el.scrollIntoView({ block: 'start', behavior: 'auto' })
+                }}
+              >{L}</button>
+            ))}
+          </div>
+        </div>
+      )}
+      {filteredArtists.map((artist, idx) => {
+        const letter = artistSectionLetter(artist.name)
+        const showLetterHeader = idx === 0 || artistSectionLetter(filteredArtists[idx - 1].name) !== letter
+        return (
         <div key={artist.name} className="artist-group" data-artist-name={artist.name}>
+          {showLetterHeader && (
+            <div className="artists-letter-header" data-letter={letter}>{letter}</div>
+          )}
           {/* 4.5: click navigates to the dedicated artist detail page
               (hero photo + Wikipedia summary + library albums) instead
               of expanding inline. The old inline-expand machinery
@@ -547,7 +583,8 @@ export default function ArtistsView() {
             </div>
           </div>
         </div>
-      ))}
+        )
+      })}
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={getContextMenuItems()} onClose={() => setCtxMenu(null)} />
       )}
