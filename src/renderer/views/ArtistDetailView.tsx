@@ -545,8 +545,14 @@ export default function ArtistDetailView() {
         const ownedAlbumTitles = new Set(ownedDisco.map(a => normTitle(a.title)))
         const ownedTrackTitles = new Set<string>()
         for (const a of ownedDisco) for (const t of a.tracks) ownedTrackTitles.add(normTitle(t.title))
-        const mbExtra = (discoList || []).filter(album => {
-          if (ownedAlbumTitles.has(normTitle(album.title))) return false   // already shown as owned
+        const mbTitles = new Set((discoList || []).map(a => normTitle(a.title)))
+        // Keep MB's CANONICAL tracklist for every kept album — that's what makes
+        // the bar read "2 of 12" instead of a misleading "2 / 2". (Earlier this
+        // used your owned tracks as the album's total, so owning 2 of From
+        // Chaos showed a full green 2/2.) Drop only unowned comps of songs you
+        // already have on real albums (e.g. the US Capitol Beatles repackagings).
+        const mbKept = (discoList || []).filter(album => {
+          if (ownedAlbumTitles.has(normTitle(album.title))) return true   // owned album — keep MB's full tracklist
           const titles = album.tracks.map(t => normTitle(t.title)).filter(Boolean)
           if (titles.length >= 4) {
             const overlap = titles.filter(t => ownedTrackTitles.has(t)).length / titles.length
@@ -554,7 +560,11 @@ export default function ArtistDetailView() {
           }
           return true   // an album you don't own → keep for discovery
         })
-        const mergedDisco: DiscographyAlbum[] = [...ownedDisco, ...mbExtra]
+        // Owned albums MB is missing ENTIRELY (it buried A Hard Day's Night /
+        // Help! under bootlegs) → add with your tracklist; no canonical count
+        // exists for these, so they read X/X, which is the best we can show.
+        const ownedMissing = ownedDisco.filter(a => !mbTitles.has(normTitle(a.title)))
+        const mergedDisco: DiscographyAlbum[] = [...mbKept, ...ownedMissing]
           .sort((a, b) => (b.year || '').localeCompare(a.year || ''))
         return (
           <div key={persona.name} className={`artist-detail-chapter ${isMulti ? 'artist-detail-chapter--multi' : ''}`}>
