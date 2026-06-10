@@ -13,6 +13,7 @@ import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { subscribeDownloads, downloadsVersion, isStreamingLibrary, isDownloaded, isDownloading, initDownloads, downloadPaths, removeDownloadPaths } from '../utils/downloadStore'
+import { formatAppDate } from '../utils/formatDate'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
@@ -38,11 +39,7 @@ interface ColDef {
 }
 
 function formatDateAdded(d: string): string {
-  if (!d) return ''
-  // Handle both full ISO timestamps and YYYY-MM-DD
-  const datePart = d.length > 10 ? d.substring(0, 10) : d
-  const [y, m, day] = datePart.split('-')
-  return `${m}-${day}-${y}`
+  return formatAppDate(d)
 }
 
 // 4.5.2: was an inline 5-star widget that shadowed the shared

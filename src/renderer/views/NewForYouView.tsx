@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useSyncExternalStore } from 'react'
 import { setNotice } from '../activity'
 import { togglePreview, subscribePreview, getPreviewSnapshot, stopPreview } from '../previewPlayer'
+import { formatAppDate } from '../utils/formatDate'
 import '../styles/new-for-you.css'
 
 interface RadarCandidate {
@@ -120,7 +121,7 @@ export default function NewForYouView() {
           <h1 className="nfy-title">New for You</h1>
           <p className="nfy-sub">
             The Music Man, scouring this week’s releases for your taste
-            {generatedAt ? ` · updated ${new Date(generatedAt).toLocaleDateString()}` : ''}
+            {generatedAt ? ` · updated ${formatAppDate(generatedAt)}` : ''}
           </p>
         </div>
         <button className="nfy-refresh" disabled={loading} onClick={() => fetchRadar(true)}>

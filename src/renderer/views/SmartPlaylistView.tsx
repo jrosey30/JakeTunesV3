@@ -9,6 +9,7 @@ import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
+import { formatAppDate } from '../utils/formatDate'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
@@ -1201,12 +1202,8 @@ export default function SmartPlaylistView() {
                     return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
                   case 'year':
                     return <div key={col.key} className="songs-cell">{track.year || ''}</div>
-                  case 'dateAdded': {
-                    const da = track.dateAdded || ''
-                    const dp = da.length > 10 ? da.substring(0, 10) : da
-                    const [y, mo, dy] = dp.split('-')
-                    return <div key={col.key} className="songs-cell">{dp ? `${mo}-${dy}-${y}` : ''}</div>
-                  }
+                  case 'dateAdded':
+                    return <div key={col.key} className="songs-cell">{formatAppDate(track.dateAdded)}</div>
                   case 'playCount':
                     return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
                   default:

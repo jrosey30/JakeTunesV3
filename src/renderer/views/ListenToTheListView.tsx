@@ -5,6 +5,7 @@ import { setNotice } from '../activity'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { togglePreview, subscribePreview, getPreviewSnapshot, stopPreview } from '../previewPlayer'
 import type { Recommendation, ItunesSuggestion } from '../types'
+import { formatAppDate } from '../utils/formatDate'
 import '../styles/listen-to-the-list.css'
 
 // In-session cache of the list. MainContent unmounts this view on
@@ -497,7 +498,7 @@ export default function ListenToTheListView() {
           )}
           {rec.note && <div className="ltl-note">{rec.note}</div>}
           <div className="ltl-sub">
-            <span className="ltl-date">{new Date(rec.createdAt).toLocaleDateString()}</span>
+            <span className="ltl-date">{formatAppDate(rec.createdAt)}</span>
           </div>
         </div>
         <button className="ltl-delete" onClick={() => setDeleteTarget(rec)} title="Remove from list">✕</button>

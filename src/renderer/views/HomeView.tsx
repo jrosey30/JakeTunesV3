@@ -27,6 +27,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
+import { formatAppDate } from '../utils/formatDate'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -630,7 +631,7 @@ export default function HomeView() {
             <h2 className="home-section-title">Listening Memory</h2>
             <span className="home-memory-since">
               {memory.insights.totals.daysActive} active day{memory.insights.totals.daysActive === 1 ? '' : 's'}
-              {memory.lifetime.firstSeen ? ` · since ${memory.lifetime.firstSeen}` : ''}
+              {memory.lifetime.firstSeen ? ` · since ${formatAppDate(memory.lifetime.firstSeen)}` : ''}
             </span>
           </div>
           <div className="home-stats home-stats--memory">
