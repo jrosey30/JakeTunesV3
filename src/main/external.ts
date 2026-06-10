@@ -774,6 +774,12 @@ function escapeLuceneValue(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
+// MusicBrainz's special-purpose "Various Artists" artist.
+const VARIOUS_ARTISTS_MBID = '89ad4ac3-39f7-470e-963a-56509c546377'
+function normArtist(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
 async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease[]> {
   if (artists.length === 0) return []
   const today = new Date().toISOString().split('T')[0]
@@ -795,31 +801,35 @@ async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease
         title?: string
         'first-release-date'?: string
         'primary-type'?: string
-        'artist-credit'?: Array<{ name?: string; artist?: { name?: string } }>
+        'secondary-types'?: string[]
+        'artist-credit'?: Array<{ name?: string; artist?: { name?: string; id?: string } }>
       }>
     }
     const groups = data['release-groups'] || []
     const now = new Date()
+    const ownedSet = new Set(artists.map(normArtist).filter(Boolean))
     const items: UpcomingRelease[] = []
     for (const g of groups) {
-      if (!g['first-release-date']) continue
-      // Skip non-album types (singles, EPs, compilations are noisy)
-      // — actually allow them: a single from a favorite artist is
-      // still newsworthy. Filter only Other / Audiobook / Spokenword.
+      // 1. Studio Albums/EPs only — drop Single / Broadcast / Other.
       const ptype = (g['primary-type'] || '').toLowerCase()
-      if (ptype === 'other' || ptype === 'audiobook' || ptype === 'spokenword') continue
-      // Parse partial dates conservatively: floor to start of period.
-      const dateStr = g['first-release-date']
-      const parsed = new Date(
-        dateStr.length === 4 ? `${dateStr}-12-31` :
-        dateStr.length === 7 ? `${dateStr}-28`     :
-                               dateStr
-      )
-      if (isNaN(parsed.getTime()) || parsed < now) continue
+      if (ptype !== 'album' && ptype !== 'ep') continue
+      // 2. No secondary types AT ALL — this is what kills the junk:
+      //    Compilation / Live / Soundtrack / Remix / DJ-mix / Demo / Interview.
+      if ((g['secondary-types'] || []).length > 0) continue
+      // 3. Drop Various Artists outright (it leaks comps in even after #2).
       const credit = g['artist-credit']?.[0]
-      const artist = credit?.name || credit?.artist?.name || ''
+      const artist = (credit?.name || credit?.artist?.name || '').trim()
+      if (!artist || artist.toLowerCase() === 'various artists' || credit?.artist?.id === VARIOUS_ARTISTS_MBID) continue
+      // 4. The credited artist must actually be one the listener OWNS — not a
+      //    fuzzy MB match to a tribute / "& Friends" / soundtrack credit.
+      if (!ownedSet.has(normArtist(artist))) continue
+      // 5. Real, month-level future date — a bare "2026" is a placeholder.
+      const dateStr = g['first-release-date'] || ''
+      if (dateStr.length < 7) continue
+      const parsed = new Date(dateStr.length === 7 ? `${dateStr}-28` : dateStr)
+      if (isNaN(parsed.getTime()) || parsed < now) continue
       const mbid = g.id || ''
-      if (!mbid || !artist || !g.title) continue
+      if (!mbid || !g.title) continue
       items.push({
         title: g.title,
         artist,
