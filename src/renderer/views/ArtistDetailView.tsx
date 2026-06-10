@@ -590,6 +590,18 @@ export default function ArtistDetailView() {
         const groupedDisco = mergedDisco
           .map(album => ({ album, g: discoGroup(album.title) }))
           .sort((a, b) => a.g - b.g || (b.album.year || '').localeCompare(a.album.year || ''))
+        // Group the owned-albums grid the same way (Past Masters → Compilations),
+        // so it matches the discography below. Sub-headers appear only when the
+        // library actually spans more than one type.
+        const ownedAlbumGroups = (() => {
+          const m = new Map<number, typeof persona.albums>()
+          for (const a of persona.albums) {
+            const g = discoGroup(a.name)
+            const arr = m.get(g)
+            if (arr) arr.push(a); else m.set(g, [a])
+          }
+          return [...m.entries()].sort((a, b) => a[0] - b[0])
+        })()
         return (
           <div key={persona.name} className={`artist-detail-chapter ${isMulti ? 'artist-detail-chapter--multi' : ''}`}>
             {isMulti && (
@@ -605,8 +617,13 @@ export default function ArtistDetailView() {
               <h2 className="artist-detail-section-title">
                 {isMulti ? 'In your library' : 'Albums in your library'}
               </h2>
-              <div className="artist-detail-album-grid">
-                {persona.albums.map(album => {
+              {ownedAlbumGroups.map(([g, albums]) => (
+                <Fragment key={g}>
+                  {ownedAlbumGroups.length > 1 && (
+                    <div className="artist-detail-album-subhead">{DISCO_GROUP_LABELS[g]}</div>
+                  )}
+                  <div className="artist-detail-album-grid">
+                {albums.map(album => {
                   const hash = findArtHash(persona.name, album.name)
                   return (
                     <button
@@ -634,7 +651,9 @@ export default function ArtistDetailView() {
                     </button>
                   )
                 })}
-              </div>
+                  </div>
+                </Fragment>
+              ))}
             </section>
 
             <section className="artist-detail-discography">

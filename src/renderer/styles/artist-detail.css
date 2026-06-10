@@ -650,3 +650,15 @@
   margin: 18px 0 7px;
 }
 .artist-detail-disco-subhead:first-child { margin-top: 2px; }
+
+/* Sub-header for the grouped "Albums in your library" grid (matches the
+   discography sections). Only rendered when the library spans >1 type. */
+.artist-detail-album-subhead {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9a857c;
+  margin: 14px 0 8px;
+}
+.artist-detail-album-subhead:first-child { margin-top: 0; }
