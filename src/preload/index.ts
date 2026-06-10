@@ -581,6 +581,10 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
+  streamripGetQobuz: (): Promise<{ ok: boolean; configured: boolean; email?: string }> =>
+    ipcRenderer.invoke('streamrip:get-qobuz'),
+  streamripSetQobuz: (email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('streamrip:set-qobuz', email, password),
 
   // ── Music Man's Record Store (Brief 037) ──
   // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/

@@ -34,12 +34,21 @@ export default function DownloadView() {
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
   const [pasteUrl, setPasteUrl] = useState('')
   const [pasteBusy, setPasteBusy] = useState(false)
+  const [qobuz, setQobuz] = useState<{ configured: boolean; email?: string } | null>(null)
+  const [qEmail, setQEmail] = useState('')
+  const [qPass, setQPass] = useState('')
+  const [qEditing, setQEditing] = useState(false)
+  const [qSaving, setQSaving] = useState(false)
+  const [qMsg, setQMsg] = useState<{ ok: boolean; msg: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
     window.electronAPI.streamripStatus?.().then((r) => {
       if (!cancelled && r?.ok) setStatus({ installed: !!r.installed, version: r.version })
     }).catch(() => { if (!cancelled) setStatus({ installed: false }) })
+    window.electronAPI.streamripGetQobuz?.().then((r) => {
+      if (!cancelled && r?.ok) setQobuz({ configured: r.configured, email: r.email })
+    }).catch(() => { /* leave the form shown */ })
     return () => { cancelled = true }
   }, [])
 
@@ -98,6 +107,28 @@ export default function DownloadView() {
       setNotice({ ok: false, msg: e instanceof Error ? e.message : 'Download failed.' })
     } finally {
       setPasteBusy(false)
+    }
+  }
+
+  const saveQobuz = async () => {
+    const e = qEmail.trim()
+    if (!e || !qPass || qSaving) return
+    setQSaving(true)
+    setQMsg(null)
+    try {
+      const r = await window.electronAPI.streamripSetQobuz?.(e, qPass)
+      if (r?.ok) {
+        setQobuz({ configured: true, email: e })
+        setQPass('')
+        setQEditing(false)
+        setQMsg({ ok: true, msg: 'Qobuz connected — pick Qobuz in the source dropdown to search it in hi-fi.' })
+      } else {
+        setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz login.' })
+      }
+    } catch (err) {
+      setQMsg({ ok: false, msg: err instanceof Error ? err.message : 'Couldn’t save Qobuz login.' })
+    } finally {
+      setQSaving(false)
     }
   }
 
@@ -178,9 +209,28 @@ export default function DownloadView() {
         </div>
 
         <div className="download-hint">
-          SoundCloud &amp; YouTube need no login. Qobuz, Tidal, and Deezer need your account —
-          add it once in streamrip’s <code>config.toml</code>.
+          SoundCloud &amp; YouTube need no login. For lossless Qobuz, connect your account below.
         </div>
+
+        {/* ── Qobuz account — password hashed locally, written to streamrip's config ── */}
+        <div className="download-accounts">
+          <div className="download-accounts-head">Qobuz account</div>
+          {qobuz?.configured && !qEditing ? (
+            <div className="download-account-row">
+              <span className="download-account-status">Connected{qobuz.email ? ` · ${qobuz.email}` : ''}</span>
+              <button className="download-link-btn" onClick={() => { setQEditing(true); setQEmail(qobuz.email || ''); setQMsg(null) }}>Change</button>
+            </div>
+          ) : (
+            <div className="download-account-form">
+              <input className="download-input" placeholder="Qobuz email" value={qEmail} onChange={(e) => setQEmail(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
+              <input className="download-input" type="password" placeholder="Qobuz password" value={qPass} onChange={(e) => setQPass(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuz() }} disabled={qSaving} autoComplete="off" />
+              <button className="download-btn" onClick={() => void saveQobuz()} disabled={qSaving || !qEmail.trim() || !qPass}>{qSaving ? 'Saving…' : 'Connect'}</button>
+            </div>
+          )}
+          {qMsg && <div className={`download-result ${qMsg.ok ? 'download-result--ok' : 'download-result--err'}`}>{qMsg.msg}</div>}
+          <div className="download-hint download-hint--sub">Your password is hashed on this Mac and saved to streamrip’s config — it never leaves your machine or goes through chat.</div>
+        </div>
+
         {status && !status.installed && (
           <div className="download-warn">
             streamrip (the <code>rip</code> command) wasn’t found. Install it with{' '}

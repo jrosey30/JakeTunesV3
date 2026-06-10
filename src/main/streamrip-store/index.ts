@@ -17,9 +17,10 @@
 
 import { ipcMain, BrowserWindow } from 'electron'
 import { execFile } from 'child_process'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import { homedir, tmpdir } from 'os'
-import { mkdtemp, readdir, readFile, rm } from 'fs/promises'
+import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 
 export interface StreamripDeps {
@@ -81,6 +82,44 @@ async function resolveRip(): Promise<{ bin: string; version: string } | null> {
 function tailMessage(res: RunResult): string {
   return (res.stderr || res.stdout || '')
     .split('\n').map((l) => l.trim()).filter(Boolean).slice(-3).join(' ').slice(0, 300)
+}
+
+// ── Qobuz credentials (written into streamrip's own config.toml) ──────────
+// streamrip stores Qobuz auth as email + the MD5 hash of the password (with
+// use_auth_token=false). We take the plaintext password from the app and hash
+// it HERE, so the user never has to compute an MD5 by hand and the password
+// never leaves their Mac. app_id/secrets stay blank — streamrip auto-fetches.
+function streamripConfigPath(): string {
+  return join(homedir(), 'Library', 'Application Support', 'streamrip', 'config.toml')
+}
+function readQobuzField(cfg: string, key: string): string {
+  let inQobuz = false
+  for (const ln of cfg.split('\n')) {
+    const sec = ln.match(/^\s*\[([^\]]+)\]/)
+    if (sec) { inQobuz = sec[1].trim() === 'qobuz'; continue }
+    if (!inQobuz) continue
+    const m = ln.match(new RegExp(`^\\s*${key}\\s*=\\s*"?([^"\\n]*)"?`))
+    if (m) return m[1].trim()
+  }
+  return ''
+}
+function writeQobuzFields(cfg: string, fields: Record<string, string>): string {
+  const quoted = new Set(['email_or_userid', 'password_or_token'])
+  const lines = cfg.split('\n')
+  let inQobuz = false
+  for (let i = 0; i < lines.length; i++) {
+    const sec = lines[i].match(/^\s*\[([^\]]+)\]/)
+    if (sec) { inQobuz = sec[1].trim() === 'qobuz'; continue }
+    if (!inQobuz) continue
+    for (const key of Object.keys(fields)) {
+      const m = lines[i].match(new RegExp(`^(\\s*${key}\\s*=\\s*)`))
+      if (m) {
+        const v = quoted.has(key) ? `"${fields[key].replace(/"/g, '\\"')}"` : fields[key]
+        lines[i] = m[1] + v
+      }
+    }
+  }
+  return lines.join('\n')
 }
 
 export interface SearchResult { source: string; mediaType: string; id: string; desc: string }
@@ -163,5 +202,36 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: false, error: 'Paste a full http(s) link — a Qobuz, Tidal, Deezer, SoundCloud, or YouTube URL.' }
     }
     return runDownload(['url', link])
+  })
+
+  // Is Qobuz configured? (email + password hash both present)
+  ipcMain.handle('streamrip:get-qobuz', async (): Promise<{ ok: boolean; configured: boolean; email?: string }> => {
+    try {
+      const cfg = await readFile(streamripConfigPath(), 'utf-8')
+      const email = readQobuzField(cfg, 'email_or_userid')
+      const pw = readQobuzField(cfg, 'password_or_token')
+      return { ok: true, configured: !!(email && pw), email }
+    } catch {
+      return { ok: true, configured: false }
+    }
+  })
+
+  // Save Qobuz creds: hash the password (MD5, what streamrip wants) and write
+  // email + hash into config.toml. use_auth_token forced false (email+password
+  // mode). Plaintext password is used only to compute the hash, never stored.
+  ipcMain.handle('streamrip:set-qobuz', async (_e, email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
+    const e = (email || '').trim()
+    const p = password || ''
+    if (!e || !p) return { ok: false, error: 'Enter both your Qobuz email and password.' }
+    try {
+      const path = streamripConfigPath()
+      const cfg = await readFile(path, 'utf-8')
+      const md5 = createHash('md5').update(p, 'utf8').digest('hex')
+      const next = writeQobuzFields(cfg, { use_auth_token: 'false', email_or_userid: e, password_or_token: md5 })
+      await writeFile(path, next, 'utf-8')
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 }

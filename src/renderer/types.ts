@@ -608,6 +608,8 @@ declare global {
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
       streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
+      streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
       // ── Bandcamp Store v4 (download -> library events) ──
       // Payload is the full Track record minted by importOneFile() — same
       // shape the drag-drop importQueue delivers. App.tsx dispatches it

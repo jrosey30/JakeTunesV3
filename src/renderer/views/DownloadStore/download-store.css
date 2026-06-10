@@ -163,3 +163,40 @@
   background: rgba(0, 0, 0, 0.08);
 }
 .download-divider span { padding: 0 12px; }
+
+/* ── Qobuz account ── */
+.download-accounts {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+.download-accounts-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  margin-bottom: 10px;
+}
+.download-account-form {
+  display: flex;
+  gap: 8px;
+}
+.download-account-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.download-account-status {
+  font-size: 13px;
+  color: #2c6b4f;
+  font-weight: 500;
+}
+.download-link-btn {
+  border: none;
+  background: none;
+  color: var(--brand-orange, #bb4308);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+}
+.download-link-btn:hover { text-decoration: underline; }
+.download-hint--sub { margin-top: 10px; }
