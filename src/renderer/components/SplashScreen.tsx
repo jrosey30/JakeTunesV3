@@ -9,8 +9,9 @@
  * - The logo DROPS in under gravity and lands with squash-and-stretch —
  *   squash on impact, rebound stretch, settle. A ground-contact shadow
  *   grows as it falls and squashes wide at the moment of impact.
- * - playIntroStinger() runs a drum pickup into a distorted power chord;
- *   the chord + crash hit at ~0.46s, the exact frame of the landing.
+ * - playIntroStinger() runs the "JakeTunes chord": eight voices converge
+ *   THX-style while the logo falls, and the chord BLOOMS at 0.9s — the
+ *   exact frame of the landing.
  * - Musical notes BURST out of the logo on impact, then keep rising in a
  *   staggered loop. EQ bars start dancing right after the chord hits.
  * - Wordmark springs up with overshoot; tagline/greeting/progress follow.
@@ -114,7 +115,7 @@ export default function SplashScreen({ isReady }: Props) {
             <div
               key={i}
               className="app-splash-eq-bar"
-              style={{ animationDelay: `${0.72 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
+              style={{ animationDelay: `${1.16 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
             />
           ))}
         </div>
