@@ -33,12 +33,31 @@ function send(deps: LucidaDeps, channel: string, payload: unknown): void {
 const LUCIDA_PARTITION = 'persist:lucida'
 const LUCIDA_HOME = 'https://lucida.to'
 
-// Same UA the Bandcamp view uses — modern Chrome on macOS. Defeats most
-// bot-detection heuristics that flag Electron's default UA, and lets the
-// embedded Chromium clear Cloudflare's "Just a moment" JS challenge the
-// same way a real browser does (curl gets a 403; a JS-running view passes).
-const REAL_BROWSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+// The embedded view must present a CONSISTENT browser identity or Cloudflare's
+// "are you human" challenge loops forever. setUserAgent() changes only the UA
+// STRING — NOT the Sec-CH-UA client-hint headers or navigator.userAgentData,
+// which keep reporting Electron's REAL Chromium. The old hardcoded "Chrome/131"
+// mismatched Electron 30's actual Chromium 124, and Cloudflare cross-checks
+// those: string says 131, fingerprint says 124 → "spoofing bot" → endless
+// challenge. Fix: derive the UA from Electron's own default and strip ONLY the
+// two bot tells (the app token and the Electron/<ver> token). The result
+// matches the real Chromium exactly AND auto-tracks future Electron upgrades.
+let cachedUA: string | null = null
+function realChromeUA(): string {
+  if (cachedUA) return cachedUA
+  const raw = session.fromPartition(LUCIDA_PARTITION).getUserAgent()
+  const cleaned = (raw || '')
+    .replace(/(\(KHTML, like Gecko\) ).*?(Chrome\/)/, '$1$2') // drop app token(s) before Chrome
+    .replace(/ Electron\/[^ ]+/, '')                         // drop the Electron/<ver> token
+    .trim()
+  cachedUA = /Chrome\/\d+/.test(cleaned)
+    ? cleaned
+    : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+  return cachedUA
+}
+function chromeMajor(): string {
+  return realChromeUA().match(/Chrome\/(\d+)/)?.[1] || '124'
+}
 
 interface Bounds {
   x: number
@@ -63,7 +82,7 @@ function ensureView(): WebContentsView {
       nodeIntegration: false,
     },
   })
-  view.webContents.setUserAgent(REAL_BROWSER_UA)
+  view.webContents.setUserAgent(realChromeUA())
   // Popup containment: redirect any window.open navigation into THIS
   // webContents instead of spawning a new BrowserWindow (which wouldn't
   // inherit the UA + would live outside the JakeTunes app frame).
@@ -104,7 +123,21 @@ export function registerLucidaStore(deps: LucidaDeps): void {
   // Set the partition's UA at startup so the first request a renderer makes
   // already presents as Chrome — matches the Bandcamp pattern.
   const lucidaSession = session.fromPartition(LUCIDA_PARTITION)
-  lucidaSession.setUserAgent(REAL_BROWSER_UA)
+  lucidaSession.setUserAgent(realChromeUA())
+
+  // Belt-and-suspenders for Cloudflare: rewrite the Sec-CH-UA client-hint so
+  // the brand list reads as plain Chrome (no "Electron" brand) at the version
+  // the UA string claims. Without this the UA string can say Chrome while the
+  // client hints still carry an Electron brand — the same kind of mismatch
+  // that loops the challenge. Scoped to the lucida partition only.
+  const chUA = `"Chromium";v="${chromeMajor()}", "Google Chrome";v="${chromeMajor()}", "Not-A.Brand";v="99"`
+  lucidaSession.webRequest.onBeforeSendHeaders((details, cb) => {
+    const h = details.requestHeaders
+    for (const key of Object.keys(h)) {
+      if (key.toLowerCase() === 'sec-ch-ua') h[key] = chUA
+    }
+    cb({ requestHeaders: h })
+  })
 
   // Mirror Bandcamp: any download from lucida.to (zip album or single
   // track) lands in _pending-imports/, unzips if needed, and routes audio
