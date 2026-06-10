@@ -75,8 +75,16 @@ export function computeArtistCandidates(
 // ── Related-artists graph (associate, don't merge) ───────────────────────
 export interface RelatedArtist { name: string; relation: string }
 
+// Relation kinds we keep. Small models (Haiku) ignore an exclusion list, so we
+// WHITELIST instead of blocklist — drop anything that isn't one of these. This
+// is what reliably removes producers ("collaborator") and minor/early members
+// ("bandmate") like George Martin, Pete Best, Stuart Sutcliffe, no matter what
+// the model returns.
+const KEEP_RELATIONS = new Set(['band', 'member', 'sideproject', 'similar'])
+
 /** Tolerant parse of the model's JSON array of {name, relation}. Dedupes by
- *  name (case-insensitive), keeps order (most-relevant first). */
+ *  name (case-insensitive), keeps order (most-relevant first). Drops any
+ *  relation kind not in KEEP_RELATIONS. */
 export function parseRelatedArtists(text: string): RelatedArtist[] {
   if (!text) return []
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -96,8 +104,10 @@ export function parseRelatedArtists(text: string): RelatedArtist[] {
     if (!name) continue
     const key = name.toLowerCase()
     if (seen.has(key)) continue
+    const relation = typeof r.relation === 'string' ? r.relation.trim() : 'related'
+    if (!KEEP_RELATIONS.has(relation.toLowerCase())) continue
     seen.add(key)
-    out.push({ name, relation: typeof r.relation === 'string' ? r.relation.trim() : 'related' })
+    out.push({ name, relation })
   }
   return out
 }

@@ -54,14 +54,13 @@ describe('artist-groups-core — parseGroupingResponse', () => {
 
 describe('artist-groups-core — parseRelatedArtists', () => {
   it('parses {name,relation} and dedupes by name (case-insensitive)', () => {
-    const out = parseRelatedArtists('[{"name":"The Beatles","relation":"band"},{"name":"John Lennon","relation":"bandmate"},{"name":"the beatles","relation":"band"}]')
+    const out = parseRelatedArtists('[{"name":"The Beatles","relation":"band"},{"name":"John Lennon","relation":"member"},{"name":"the beatles","relation":"band"}]')
     assert.deepEqual(out.map((r) => r.name), ['The Beatles', 'John Lennon'])
     assert.equal(out[0].relation, 'band')
   })
-  it('defaults a missing relation to "related" and skips nameless', () => {
-    const out = parseRelatedArtists('[{"name":"Wings"},{"relation":"band"}]')
-    assert.equal(out.length, 1)
-    assert.equal(out[0].relation, 'related')
+  it('whitelists relations — drops collaborator/bandmate (producers, minor members) and skips nameless', () => {
+    const out = parseRelatedArtists('[{"name":"George Martin","relation":"collaborator"},{"name":"Pete Best","relation":"bandmate"},{"name":"Wings","relation":"sideProject"},{"name":"Turnstile","relation":"similar"},{"relation":"band"}]')
+    assert.deepEqual(out.map((r) => r.name), ['Wings', 'Turnstile'])
   })
   it('returns [] on garbage', () => {
     assert.deepEqual(parseRelatedArtists('nope'), [])

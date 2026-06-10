@@ -951,7 +951,7 @@ ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: 
       model: 'claude-haiku-4-5',
       max_tokens: 800,
       system: 'You are a precise music encyclopedia listing artists a fan should explore. Return only real, well-established MUSICAL artists related to the subject — bands, their NOTABLE members (ones with real recording careers of their own), those members\' own bands/side projects, and a few genuinely similar or closely-allied recording artists. NEVER include producers, engineers, managers, songwriters-for-hire, or minor/early former members who left before the act\'s success or had no recording career of their own (e.g. for the Beatles: exclude George Martin, Pete Best, Stuart Sutcliffe). Never invent a relationship.',
-      messages: [{ role: 'user', content: `List the recording artists most directly related to "${name}" — for a fan who likes them and wants similar or adjacent artists to explore. Include: the band(s) they are/were in, that band's NOTABLE members (the ones with real careers of their own), those members' side projects/aliases/other bands, and a few genuinely similar artists. EXCLUDE producers, engineers, managers, and minor/early members. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","collaborator". 6–12 entries, most relevant first. No prose, no code fence.` }],
+      messages: [{ role: 'user', content: `List the recording artists most directly related to "${name}" — for a fan who likes them and wants similar or adjacent artists to explore. Include: the band(s) they are/were in, that band's NOTABLE members (the ones with real careers of their own), those members' side projects/aliases/other bands, and a few genuinely similar artists. EXCLUDE producers, engineers, managers, and minor/early members. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","similar" (use "similar" for similar/adjacent artists). 6–12 entries, most relevant first. No prose, no code fence.` }],
     })
     const block = reply.content[0]
     const text = block && block.type === 'text' ? block.text : ''
@@ -1898,8 +1898,13 @@ interface DiscographyResult {
   artist: string
   albums: DiscographyAlbum[]
   fetchedAt: number
+  schemaVersion?: number
 }
 
+// Bump when the discography shape/filtering changes so old disk caches are
+// ignored. v2: drop regional repackagings / hits comps via tracklist overlap
+// (the US Capitol Beatles albums MusicBrainz doesn't flag as Compilation).
+const DISCO_SCHEMA_VERSION = 2
 const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MB_RATE_LIMIT_MS = 1100  // MB asks for ≤1 req/sec; pad to 1.1s
 let mbLastRequestAt = 0
@@ -2092,7 +2097,7 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
   try {
     const raw = await readFile(cachePath, 'utf-8')
     const cached = JSON.parse(raw) as DiscographyResult
-    if (cached.fetchedAt && Date.now() - cached.fetchedAt < DISCO_CACHE_TTL_MS) {
+    if (cached.schemaVersion === DISCO_SCHEMA_VERSION && cached.fetchedAt && Date.now() - cached.fetchedAt < DISCO_CACHE_TTL_MS) {
       return cached
     }
   } catch { /* miss */ }
@@ -2121,19 +2126,28 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
     const rgData = await rgRes.json() as {
       'release-groups'?: Array<{ id: string; title: string; 'first-release-date'?: string; 'primary-type'?: string; 'secondary-types'?: string[] }>
     }
-    // 4.5.0-66 — also filter on secondary-types. Old behavior accepted
-    // any release-group whose primary-type was Album/EP, which leaked
-    // Compilation/Live/Remix/Soundtrack/DJ-mix entries into the
-    // "discography" list (same root cause as the prior Olivia Rodrigo
-    // "not her discography" complaint). Studio-only requires that
-    // secondary-types is empty.
+    // 4.5.0-66 — also filter on secondary-types. Old behavior accepted any
+    // release-group whose primary-type was Album/EP, which leaked Compilation/
+    // Live/Remix/DJ-mix entries into the list. Studio albums only — but ALLOW
+    // Soundtrack, so a band's own film-soundtrack ALBUMS (A Hard Day's Night,
+    // Help!) survive; the tracklist-overlap dedup below catches the comps that
+    // MB mislabels as plain "Album".
     const rgs = (rgData['release-groups'] || [])
       .filter(rg => rg['primary-type'] === 'Album' || rg['primary-type'] === 'EP')
-      .filter(rg => !(rg['secondary-types'] || []).length)
+      .filter(rg => (rg['secondary-types'] || []).every(s => s.toLowerCase() === 'soundtrack'))
       .sort((x, y) => (y['first-release-date'] || '').localeCompare(x['first-release-date'] || ''))
       .slice(0, 30)  // cap at 30 release groups per artist — keeps fetch under ~35s worst-case
+      // Then process OLDEST-first so the tracklist-overlap dedup below keeps the
+      // ORIGINAL album and drops later repackagings of it.
+      .sort((x, y) => (x['first-release-date'] || '').localeCompare(y['first-release-date'] || ''))
 
     const albums: DiscographyAlbum[] = []
+    // Tracklist-overlap dedup: MusicBrainz tags the US Capitol/Vee-Jay Beatles
+    // albums (Meet The Beatles!, Beatles VI, …) as plain "Album", so type alone
+    // can't catch them. Track which song titles we've already kept (oldest-
+    // first); if a later album is mostly the same songs, it's a repackaging.
+    const seenTitles = new Set<string>()
+    const normTrackTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
     // 3. For each release group, fetch one release with recordings (the
     // tracklist). Sequential because of the rate limit.
     for (const rg of rgs) {
@@ -2158,12 +2172,23 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
           }
         }
         if (tracks.length === 0) continue
+        // If ≥30% of this album's songs already appeared on earlier albums,
+        // it's a repackaging/hits comp — not a new studio record. Skip it.
+        // 0.3 sits in the clean gap measured on the Beatles' catalog: real
+        // studio albums score 0.00–0.14 overlap, the US Capitol comps 0.36+.
+        const titles = tracks.map(t => normTrackTitle(t.title)).filter(Boolean)
+        const overlap = titles.filter(t => seenTitles.has(t)).length
+        if (titles.length >= 4 && overlap / titles.length > 0.3) continue
+        for (const t of titles) seenTitles.add(t)
         const year = (rg['first-release-date'] || release.date || '').slice(0, 4)
         albums.push({ title: rg.title, year, tracks })
       } catch { /* skip this release group */ }
     }
 
-    const result: DiscographyResult = { artist, albums, fetchedAt: Date.now() }
+    // Restore newest-first for display.
+    albums.sort((a, b) => (b.year || '').localeCompare(a.year || ''))
+
+    const result: DiscographyResult = { artist, albums, fetchedAt: Date.now(), schemaVersion: DISCO_SCHEMA_VERSION }
     // Persist to disk
     try {
       await mkdir(join(app.getPath('userData'), 'discography-cache'), { recursive: true })

@@ -99,6 +99,7 @@ function relationLabel(rel: string): string {
     case 'sideProject': return 'side project'
     case 'bandmate': return 'bandmate'
     case 'collaborator': return 'collab'
+    case 'similar': return 'similar'
     default: return rel || 'related'
   }
 }
