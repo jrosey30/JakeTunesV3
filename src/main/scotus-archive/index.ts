@@ -133,9 +133,10 @@ const QUOTES = [
     ],
   },
   {
-    title: 'The honest concession to Souter', time: 2341.522,
+    title: 'The honest concession to Souter', time: 2330.235,
     note: 'Candor at the lectern. He admits the limits of his own position rather than bluffing — which is exactly what experienced advocates do in front of that Court.',
     lines: [
+      { speaker: 'Justice Souter', text: 'How about some, and the some that he proposes to be within the concept of the conspiracy are those without which you can’t effect your conspiracy.' },
       { speaker: 'Mr. Rosenbaum', text: 'I tried to think of examples, prior to coming here today... and I, at least within my own thinking, have been unable to come up with any...' },
     ],
   },
