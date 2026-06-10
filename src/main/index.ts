@@ -10703,6 +10703,31 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
 type AlbumCredits = { released?: string; label?: string; producer?: string; recorded?: string }
 const albumInfoCache = new Map<string, AlbumCredits>()
 const albumBlurbCache = new Map<string, string>()
+
+// Strip the markdown Haiku sometimes emits despite instructions (a "# Title"
+// heading, *emphasis*, code fences). Blurbs render as plain text, so leftover
+// tokens show literally — Jake saw "# Let It Be *Let It Be* was…" on the page.
+function cleanAiProse(raw: string, title?: string): string {
+  let t = (raw || '').trim()
+  t = t.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '')
+  const lines = t.split('\n')
+  while (lines.length > 0) {
+    const m = /^#{1,6}\s*(.*)$/.exec(lines[0].trim())
+    if (!m) break
+    const heading = m[1].replace(/[*_`"'“”‘’]/g, '').trim()
+    // A heading that's empty or just echoes the album title drops entirely;
+    // anything else keeps its text minus the # marker.
+    if (!heading || (title && heading.toLowerCase() === title.trim().toLowerCase())) lines.shift()
+    else { lines[0] = m[1]; break }
+  }
+  t = lines.join('\n')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^#+\s*/gm, '')
+  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+}
 const albumCacheKey = (artist: string, album: string) => `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
 
 async function fetchItunesAlbum(artist: string, album: string): Promise<{ released?: string; label?: string } | null> {
@@ -10790,6 +10815,7 @@ ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Pro
       'Cover what it is and why it matters: the era and context it was made in, its place in the artist\'s career and in music history, and what it is best known for (its sound, signature songs, and legacy).',
       '3-4 sentences. Neutral and encyclopedic — this is a HISTORY, not a review. Do NOT rate it, rank it, or editorialize ("masterpiece", "their best/worst", "overrated", "not the X people need it to be").',
       'Avoid hyper-specific facts you might get wrong (exact session dates, precise chart/sales figures) — factual credits are shown separately. No preamble.',
+      'Plain prose ONLY — no markdown of any kind (no # headings, no *asterisks*, no backticks), and do not begin by repeating the album title.',
     ].join('\n')
     const reply = await claudeCall('album-blurb', {
       model: 'claude-haiku-4-5',
@@ -10798,7 +10824,7 @@ ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Pro
       messages: [{ role: 'user', content: user }],
     })
     const block = reply.content[0]
-    const text = block && block.type === 'text' ? block.text.trim() : ''
+    const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
     albumBlurbCache.set(key, text)
     return { ok: true, blurb: text }
   } catch (err) {
@@ -10820,6 +10846,7 @@ ipcMain.handle('get-album-take', async (_e, artist: string, album: string): Prom
       `Give your take on the album "${album}" by ${artist}.`,
       '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
       'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
+      'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
     ].join('\n')
     const reply = await claudeCall('album-take', {
       model: 'claude-haiku-4-5',
@@ -10828,7 +10855,7 @@ ipcMain.handle('get-album-take', async (_e, artist: string, album: string): Prom
       messages: [{ role: 'user', content: user }],
     })
     const block = reply.content[0]
-    const text = block && block.type === 'text' ? block.text.trim() : ''
+    const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
     albumTakeCache.set(key, text)
     return { ok: true, take: text }
   } catch (err) {
