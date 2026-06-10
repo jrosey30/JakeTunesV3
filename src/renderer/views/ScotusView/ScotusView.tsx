@@ -338,7 +338,7 @@ export default function ScotusView() {
                 {j.nominatedBy && (
                   <div className="scotus-roster-fact">
                     <span className="scotus-roster-fact-k">Nominated by</span>
-                    <span>{j.nominatedBy}{j.party ? ` (${j.party})` : ''}</span>
+                    <span>{j.nominatedBy}</span>
                   </div>
                 )}
                 {j.service && (

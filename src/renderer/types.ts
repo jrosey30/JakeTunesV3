@@ -340,7 +340,7 @@ export type RepeatMode = 'off' | 'all' | 'one'
 export interface ScotusSegment { start: number; stop: number; speaker: string; role: string; text: string }
 export interface ScotusJustice {
   name: string; slug: string; title: string; vote: string; note: string; portrait: string | null
-  party?: string; nominatedBy?: string; service?: string; died?: string; bio?: string
+  nominatedBy?: string; service?: string; died?: string; bio?: string
 }
 export interface ScotusAdvocate { name: string; role: string; side: string; note: string; slug?: string; photo?: string | null }
 export interface ScotusCase {
