@@ -68,15 +68,6 @@ export default function ScotusView() {
   }, [segments, time])
   const currentSpeaker = activeIdx >= 0 ? segments[activeIdx].speaker : ''
 
-  // Every speaker (Justice OR advocate) → their portrait, for the now-speaking avatar.
-  const photoBySpeaker = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const j of data?.justices || []) if (j.portrait) m.set(j.name, j.portrait)
-    for (const a of data?.advocates || []) if (a.photo) m.set(a.name, a.photo)
-    return m
-  }, [data])
-  const currentPhoto = currentSpeaker ? photoBySpeaker.get(currentSpeaker) : undefined
-
   const seekTo = useCallback((t: number) => {
     const a = audioRef.current
     if (a) { a.currentTime = t; if (a.paused) void a.play() }
@@ -208,9 +199,6 @@ export default function ScotusView() {
         <button className="scotus-pill-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? '❚❚' : '▶'}
         </button>
-        {currentPhoto
-          ? <img className="scotus-pill-av" src={currentPhoto} alt="" draggable={false} />
-          : <div className="scotus-pill-av scotus-pill-av--empty">⚖</div>}
         <div className="scotus-pill-main">
           <div className="scotus-pill-name">
             {currentSpeaker ? <>Now speaking: <strong>{currentSpeaker}</strong></> : 'Press play to step into the room.'}
