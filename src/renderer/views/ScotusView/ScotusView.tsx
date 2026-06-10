@@ -135,7 +135,10 @@ export default function ScotusView() {
     if (!/[.!?]$/.test(text)) text += '.'
     setSpeakNote('')
     setSpeakingIdx(idx)
-    fadeVolume(0.15, 350) // duck the argument under Amicus — don't pause it
+    // Duck the argument under Amicus — don't pause it. 0.04, far deeper than
+    // the Music Man's 0.15 music duck: this is speech under speech, and two
+    // voices at once just fight each other. Near-mute, still audibly "there."
+    fadeVolume(0.04, 300)
     const restore = () => { setSpeakingIdx(-1); fadeVolume(1, 600) }
     try {
       // fast=true → ElevenLabs flash: speech starts in ~1s, not ~10s.
