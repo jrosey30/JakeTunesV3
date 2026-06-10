@@ -230,12 +230,16 @@
 
 .scotus-amicus {
   flex: 0 0 320px;
+  /* Hard height bound (matches the transcript): the panel NEVER grows the
+     page — the thread scrolls inside .scotus-chat instead. */
+  height: 460px;
   display: flex;
   flex-direction: column;
   background: #1a2744;
   color: #ece8df;
   border-radius: 10px;
   padding: 16px;
+  box-sizing: border-box;
 }
 .scotus-amicus-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
 .scotus-amicus-name { font-family: Georgia, serif; font-size: 19px; font-weight: 700; color: #e7c873; font-style: italic; }
@@ -254,7 +258,8 @@
 }
 .scotus-amicus-explain:hover { background: #b8924a; color: #1a2744; }
 /* ── The chat thread ── */
-.scotus-chat { flex: 1; overflow-y: auto; margin: 14px 0; font-size: 13px; line-height: 1.5; }
+/* min-height:0 lets the flex child actually shrink → overflow scrolls. */
+.scotus-chat { flex: 1; min-height: 0; overflow-y: auto; margin: 14px 0; font-size: 13px; line-height: 1.5; }
 .scotus-msg {
   border-radius: 10px;
   padding: 8px 11px;
