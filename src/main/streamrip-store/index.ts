@@ -142,10 +142,20 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         return { ok: false, error: tailMessage(res) || `streamrip downloaded nothing (exit ${res.code}). That service may need login in streamrip’s config.` }
       }
       const summary = await deps.importDownloaded(files, 'streamrip')
-      const s = summary as { tracks?: unknown[]; dupeCount?: number }
-      const imported = Array.isArray(summary) ? summary.length : (s.tracks?.length ?? 0)
-      const dupes = Array.isArray(summary) ? 0 : (s.dupeCount ?? 0)
-      return { ok: true, imported, dupes }
+      const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
+        ? (summary as unknown as Array<Record<string, unknown>>)
+        : ((summary as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
+      // CRITICAL: the importer writes to disk + library.json but does NOT tell
+      // the renderer to show the tracks — the Bandcamp/squid download-router
+      // emitted 'bandcamp:track-imported' per track to do that. We call the
+      // importer directly, so we must emit it ourselves, or songs land on disk
+      // and silently never appear in the live library (the exact bug reported).
+      const win = deps.getMainWindow()
+      if (win && !win.isDestroyed()) {
+        for (const t of importedTracks) win.webContents.send('bandcamp:track-imported', t)
+      }
+      const dupes = Array.isArray(summary) ? 0 : ((summary as { dupeCount?: number }).dupeCount ?? 0)
+      return { ok: true, imported: importedTracks.length, dupes }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     } finally {

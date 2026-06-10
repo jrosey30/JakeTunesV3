@@ -20,7 +20,17 @@ const SOURCES = [
 const TYPES = [
   { id: 'track', label: 'Tracks' },
   { id: 'album', label: 'Albums' },
+  { id: 'artist', label: 'Artists' },
 ]
+
+// streamrip result descs end with " by <artist>" ("Creep by Radiohead",
+// "Sub Urban - Cradles [NCS Release] by Sub Urban"). Split on the LAST " by "
+// to feed the app's artist-verified iTunes art lookup.
+function parseDesc(desc: string): { artist: string; title: string } {
+  const i = desc.lastIndexOf(' by ')
+  if (i > 0) return { title: desc.slice(0, i).trim(), artist: desc.slice(i + 4).trim() }
+  return { title: desc.trim(), artist: '' }
+}
 
 export default function DownloadView() {
   const [status, setStatus] = useState<RipStatus | null>(null)
@@ -29,6 +39,7 @@ export default function DownloadView() {
   const [mediaType, setMediaType] = useState('track')
   const [searching, setSearching] = useState(false)
   const [results, setResults] = useState<SearchResult[]>([])
+  const [art, setArt] = useState<Record<string, string>>({})
   const [searchErr, setSearchErr] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
@@ -55,12 +66,28 @@ export default function DownloadView() {
     return () => { cancelled = true }
   }, [])
 
+  // Lazily fetch cover art for each result (streamrip search returns none;
+  // reuse the app's artist-verified iTunes art lookup). Misses show the ♪.
+  useEffect(() => {
+    if (results.length === 0) return
+    let cancelled = false
+    for (const res of results) {
+      const { artist, title } = parseDesc(res.desc)
+      if (!artist || !title) continue
+      window.electronAPI.lookupRecoArtwork?.({ artist, title }).then((r) => {
+        if (!cancelled && r?.artworkUrl) setArt((prev) => (prev[res.id] ? prev : { ...prev, [res.id]: r.artworkUrl as string }))
+      }).catch(() => { /* leave placeholder */ })
+    }
+    return () => { cancelled = true }
+  }, [results])
+
   const runSearch = async () => {
     const q = query.trim()
     if (!q || searching) return
     setSearching(true)
     setSearchErr(null)
     setResults([])
+    setArt({})
     setNotice(null)
     try {
       const r = await window.electronAPI.streamripSearch?.({ query: q, source, mediaType, numResults: 25 })
@@ -197,13 +224,16 @@ export default function DownloadView() {
               const busy = downloadingId === res.id
               return (
                 <li key={res.id} className="download-result-row">
+                  {art[res.id]
+                    ? <img className="download-result-art" src={art[res.id]} alt="" loading="lazy" />
+                    : <span className="download-result-art download-result-art--ph" aria-hidden="true">♪</span>}
                   <span className="download-result-desc" title={res.desc}>{res.desc}</span>
                   <button
                     className="download-result-btn"
                     onClick={() => void downloadResult(res)}
                     disabled={!!downloadingId}
                   >
-                    {busy ? 'Downloading…' : 'Download'}
+                    {busy ? 'Downloading…' : res.mediaType === 'artist' ? 'Download all' : 'Download'}
                   </button>
                 </li>
               )
