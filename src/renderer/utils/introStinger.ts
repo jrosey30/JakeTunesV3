@@ -1,17 +1,18 @@
 /**
- * 4.5: the launch stinger, v3 — "the strut."
+ * 4.5: the launch stinger, v4 — "the climb."
  *
  * v2 was a THX-style swell; Jake wants the first 3 seconds of the Beastie Boys'
  * "(You Gotta) Fight for Your Right" — not a copy, but THAT energy: a cocky,
- * dumb-in-the-best-way DESCENDING power-chord stomp with drums. Memorable,
- * swaggering, a little goosebump from the big landing + tail.
+ * dumb-in-the-best-way power-chord stomp with drums. v3 descended; Jake wants it
+ * on the UPSWING, so v4 CLIMBS — rising into the slam, not falling into it.
+ * Memorable, swaggering, goosebump from the rising build + big landing + tail.
  *
- *   0.00s  pick-scrape + stick-count tick — "here we go"
- *   0.37s  B5  ┐ three descending power chords, each a kick+snare STOMP, spaced
- *   0.63s  A5  │ to strut (not rush). The splash logo is falling through these
- *   0.89s  G5  ┘ — it drops in time with the riff…
- *   1.15s  E5  …and SLAMS home: big sustained chord + crash + sub-E, the exact
- *               frame the logo lands. Rings out ~2.1s on a reverb tail.
+ *   0.00s  pick-scrape (sweeps up) + stick-count tick — "here we go"
+ *   0.37s  E  ┐ three ASCENDING power chords, each a kick+snare STOMP, spaced
+ *   0.63s  G  │ to build (not rush). The logo falls through these as the riff
+ *   0.89s  B  ┘ climbs up to meet it…
+ *   1.15s  E↑ …and SLAMS home UP HIGH: big sustained octave-E chord + crash +
+ *               deep sub-E, the exact frame the logo lands. Rings ~2.1s on a tail.
  *
  * Not annoying: the crunch is a CONTROLLED tanh (k≈7, not a fizzy k=14) into a
  * ~4 kHz lowpass — warm amp grit, not buzz. Modest master level.
@@ -164,17 +165,17 @@ export function playIntroStinger(): void {
       src.connect(bp).connect(g).connect(master); src.start(t); src.stop(t + 0.27)
     }
 
-    // ── The strut: pickup → descending B5·A5·G5 stomp → E5 landing ──
+    // ── The climb: pickup → ASCENDING E·G·B stomp → high-E landing ──
     pickScrape(t0 + 0.04)
     tick(t0 + 0.06)
     tick(t0 + 0.28)
-    // B2=123.47, A2=110.0, G2=98.0, E2=82.41 (power-chord roots, descending).
-    // Stomps spaced 0.26s — deliberate strut, not a rushed run.
-    chord(t0 + 0.37, 123.47, 0.24); kick(t0 + 0.37); snare(t0 + 0.37)
-    chord(t0 + 0.63, 110.00, 0.24); kick(t0 + 0.63); snare(t0 + 0.63)
-    chord(t0 + 0.89, 98.00, 0.24);  kick(t0 + 0.89); snare(t0 + 0.89)
-    // LANDING — the big one (logo slams home)
-    chord(LAND, 82.41, 2.1, true); kick(LAND); snare(LAND, 0.7); crash(LAND)
+    // E2=82.41, G2=98.0, B2=123.47 climbing; landing UP on E3=164.81 — an
+    // upswing that resolves home. Stomps spaced 0.26s — a deliberate build.
+    chord(t0 + 0.37, 82.41, 0.24);  kick(t0 + 0.37); snare(t0 + 0.37)
+    chord(t0 + 0.63, 98.00, 0.24);  kick(t0 + 0.63); snare(t0 + 0.63)
+    chord(t0 + 0.89, 123.47, 0.24); kick(t0 + 0.89); snare(t0 + 0.89)
+    // LANDING — the big one, up high (logo slams home as the riff peaks)
+    chord(LAND, 164.81, 2.1, true); kick(LAND); snare(LAND, 0.7); crash(LAND)
     {
       const sub = ctx.createOscillator(); const g = ctx.createGain()
       sub.type = 'sine'
