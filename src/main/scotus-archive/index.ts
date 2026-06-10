@@ -120,13 +120,6 @@ const JUSTICES = [
 // each card click-seeks the audio to its moment) ──
 const QUOTES = [
   {
-    title: 'The gavel falls', time: 0,
-    note: 'The first words of the morning — and of this exhibit.',
-    lines: [
-      { speaker: 'Chief Justice Rehnquist', text: 'We’ll hear argument first this morning in Number 98-1480, Robert A. Beck v. Ronald Prupis.' },
-    ],
-  },
-  {
     title: 'Poppy steps up', time: 1805.794,
     note: 'Thirty minutes in, it’s his turn — the family’s favorite ten words.',
     lines: [
@@ -159,6 +152,16 @@ const QUOTES = [
       { speaker: 'Mr. Rosenbaum', text: 'I’m sorry, Justice...' },
       { speaker: 'Justice Scalia', text: 'I don’t see how you get there through the text.' },
       { speaker: 'Mr. Rosenbaum', text: 'I get...' },
+    ],
+  },
+  {
+    title: 'One-word answers', time: 3161.808,
+    note: 'Late in the hour, in full command — one-word answers to Justice O’Connor and the Chief Justice of the United States.',
+    lines: [
+      { speaker: 'Justice O’Connor', text: 'And could there be a criminal prosecution brought here without proof of any predicate act?' },
+      { speaker: 'Mr. Rosenbaum', text: 'Absolutely.' },
+      { speaker: 'Chief Justice Rehnquist', text: 'But is an overt act required for liability in a criminal conspiracy?' },
+      { speaker: 'Mr. Rosenbaum', text: 'No.' },
     ],
   },
   {
