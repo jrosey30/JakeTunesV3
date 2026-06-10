@@ -20,6 +20,10 @@ function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('')
 }
 
+// Amicus speaks in Jake's chosen ElevenLabs voice (reuses the musicman-speak
+// pipeline, which takes a voiceId override).
+const AMICUS_VOICE = 'L0Dsvb3SLTyegXwtm47J'
+
 export default function ScotusView() {
   const [data, setData] = useState<ScotusArchiveData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -30,6 +34,9 @@ export default function ScotusView() {
   const [duration, setDuration] = useState(0)
   const [amicus, setAmicus] = useState<{ loading: boolean; answer: string } | null>(null)
   const [question, setQuestion] = useState('')
+  const [voiceOn, setVoiceOn] = useState(true)
+  const [speaking, setSpeaking] = useState(false)
+  const amicusAudioRef = useRef<HTMLAudioElement | null>(null)
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const activeSegRef = useRef<HTMLDivElement | null>(null)
 
@@ -74,18 +81,46 @@ export default function ScotusView() {
 
   const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause() }
 
+  const stopAmicusVoice = useCallback(() => {
+    const a = amicusAudioRef.current
+    if (a) { a.pause(); a.src = ''; amicusAudioRef.current = null }
+    setSpeaking(false)
+  }, [])
+  const speakAmicus = useCallback(async (text: string) => {
+    stopAmicusVoice()
+    if (!voiceOn || !text) return
+    try {
+      const tts = await window.electronAPI.musicmanSpeak(text, false, AMICUS_VOICE)
+      if (tts?.ok && tts.audio) {
+        const a = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        amicusAudioRef.current = a
+        a.onended = () => setSpeaking(false)
+        setSpeaking(true)
+        await a.play().catch(() => setSpeaking(false))
+      }
+    } catch { setSpeaking(false) }
+  }, [voiceOn, stopAmicusVoice])
+  // Stop Amicus's voice when leaving the exhibit.
+  useEffect(() => () => stopAmicusVoice(), [stopAmicusVoice])
+
   const explain = useCallback(async () => {
+    audioRef.current?.pause() // don't let Amicus talk over the argument
     setAmicus({ loading: true, answer: '' })
     const r = await window.electronAPI.scotusAmicus?.({ mode: 'explain', time }).catch(() => null)
-    setAmicus({ loading: false, answer: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') })
-  }, [time])
+    const ans = r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.')
+    setAmicus({ loading: false, answer: ans })
+    if (r?.ok) void speakAmicus(ans)
+  }, [time, speakAmicus])
   const ask = useCallback(async () => {
     const q = question.trim()
     if (!q) return
+    audioRef.current?.pause()
     setAmicus({ loading: true, answer: '' }); setQuestion('')
     const r = await window.electronAPI.scotusAmicus?.({ mode: 'ask', time, question: q }).catch(() => null)
-    setAmicus({ loading: false, answer: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') })
-  }, [question, time])
+    const ans = r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.')
+    setAmicus({ loading: false, answer: ans })
+    if (r?.ok) void speakAmicus(ans)
+  }, [question, time, speakAmicus])
 
   // Transcript list — memoized on activeIdx so it isn't rebuilt every time-tick.
   const transcriptEls = useMemo(() => segments.map((s, i) => (
@@ -160,10 +195,23 @@ export default function ScotusView() {
 
       <div className="scotus-main">
         <div className="scotus-transcript" ref={transcriptRef}>{transcriptEls}</div>
-        <aside className="scotus-amicus">
+        <aside className={`scotus-amicus ${speaking ? 'scotus-amicus--speaking' : ''}`}>
           <div className="scotus-amicus-head">
             <span className="scotus-amicus-name">Amicus</span>
             <span className="scotus-amicus-tag">your guide in the room</span>
+            <button
+              className="scotus-amicus-voice"
+              onClick={() => { stopAmicusVoice(); setVoiceOn((v) => !v) }}
+              title={voiceOn ? 'Voice on — click to mute' : 'Voice off — click to unmute'}
+              aria-label="Toggle Amicus voice"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="M3.2 6h2L8 3.6v8.8L5.2 10h-2z" />
+                {voiceOn
+                  ? <path d="M10.4 5.4a3.4 3.4 0 0 1 0 5.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  : <path d="M10.6 6.4 13.4 9.6M13.4 6.4 10.6 9.6" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}
+              </svg>
+            </button>
           </div>
           <button className="scotus-amicus-explain" onClick={() => void explain()}>Explain this moment</button>
           <div className="scotus-amicus-body">
