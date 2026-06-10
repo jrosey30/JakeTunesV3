@@ -150,7 +150,10 @@ const QUOTES = [
     title: '“I think I know what your problem is”', time: 2364.437,
     note: 'Scalia’s famous bank-guard heist, aimed straight at him — and Mr. Rosenbaum stands his ground.',
     lines: [
-      { speaker: 'Justice Scalia', text: 'Well, take a simple... no, you go.' },
+      // 39:24's "Well, take a simple... no, you go." is deliberately NOT
+      // printed: Oyez tags it Scalia, but the audio reads as two Justices
+      // colliding — attribution uncertain, so it stays off the card. The
+      // play-time still starts at 2364.4 so the collision is heard raw.
       { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum. It’s the statement you made earlier that these nonpredicate acts have nothing to do with the goal of the conspiracy, which is to commit the predicate acts. That’s simply not true.' },
       { speaker: 'Justice Scalia', text: 'Some of the means along the end to that goal, killing the bank guard, happen to be unlawful acts covered by RICO, and therefore they become predicate acts, not because they are the goal of the conspiracy... they didn’t intend to kill... the object wasn’t to kill the guard. It was to get the money in the bank.' },
       { speaker: 'Mr. Rosenbaum', text: 'That may be so, Justice Scalia, but the answer to the question that I think is being posed to me is whether or not that goal, albeit essential to the completion of the conspiracy, still provides a basis for RICO standing.' },
