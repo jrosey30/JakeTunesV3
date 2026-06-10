@@ -43,7 +43,10 @@
 .scotus-hero-cite { font-size: 13px; color: #b9c2d6; letter-spacing: 0.02em; }
 .scotus-hero-dates { font-size: 12.5px; color: #9aa6c0; margin-top: 4px; }
 .scotus-hero-poppy {
-  margin-top: 18px;
+  margin: 18px auto 0;
+  max-width: 620px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(201, 169, 97, 0.35);
   font-size: 15px;
   line-height: 1.5;
   color: #ece8df;
@@ -91,13 +94,6 @@
 }
 .scotus-pill-play:hover { background: #24345a; }
 .scotus-pill-play:active { transform: scale(0.94); }
-.scotus-pill-av {
-  flex-shrink: 0;
-  width: 40px; height: 40px; border-radius: 50%; object-fit: cover; object-position: center 18%;
-  border: 1.5px solid #b8924a;
-  display: flex; align-items: center; justify-content: center;
-}
-.scotus-pill-av--empty { background: #ece8df; color: #b8924a; font-size: 19px; }
 .scotus-pill-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 /* No ellipsis: every speaker name fits. min-width:0 on the parent plus a
    smaller-but-complete name beats a clipped one. */
@@ -105,7 +101,28 @@
 .scotus-pill-name strong { color: #1a2744; }
 .scotus-pill-scrub { display: flex; align-items: center; gap: 10px; }
 .scotus-pill-time { font-size: 11px; color: #8a8a8a; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.scotus-pill-seek { flex: 1; accent-color: #b8924a; cursor: pointer; }
+/* Gold-filled scrubber — --p (set inline from React) is the played fraction. */
+.scotus-pill-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #b8924a var(--p, 0%), rgba(26, 39, 68, 0.14) var(--p, 0%));
+  cursor: pointer;
+  outline: none;
+}
+.scotus-pill-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #1a2744;
+  border: 2px solid #b8924a;
+  box-shadow: 0 1px 4px rgba(26, 39, 68, 0.3);
+  transition: transform 0.12s ease;
+}
+.scotus-pill-seek:hover::-webkit-slider-thumb { transform: scale(1.18); }
 .scotus-justice {
   /* min-width, not width: a tile grows to fit its name. NOTHING in this
      exhibit gets truncated — least of all "Rosenbaum". */
@@ -136,6 +153,7 @@
   color: #5a5a5a;
   white-space: nowrap; /* a surname never wraps — the tile grows instead */
 }
+.scotus-justice:hover { opacity: 0.9; filter: grayscale(0.1); }
 .scotus-justice--speaking {
   opacity: 1;
   filter: none;
@@ -156,33 +174,6 @@
 }
 .scotus-nowspeaking strong { color: #1a2744; }
 
-/* ── Player ── */
-.scotus-player {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 0 24px 16px;
-}
-.scotus-play {
-  flex-shrink: 0;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: none;
-  background: #1a2744;
-  color: #e7c873;
-  font-size: 15px;
-  cursor: pointer;
-  transition: background 0.15s ease, transform 0.1s ease;
-}
-.scotus-play:hover { background: #24345a; }
-.scotus-play:active { transform: scale(0.94); }
-.scotus-time { font-size: 12px; color: #6a6a6a; font-variant-numeric: tabular-nums; width: 44px; }
-.scotus-time--total { text-align: right; }
-.scotus-seek { flex: 1; accent-color: #b8924a; cursor: pointer; }
-
 /* ── Transcript + Amicus ── */
 .scotus-main {
   display: flex;
@@ -201,7 +192,14 @@
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 10px;
   padding: 10px 14px;
+  /* soft fade at both edges hints there's more to scroll */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
+.scotus-transcript::-webkit-scrollbar { width: 8px; }
+.scotus-transcript::-webkit-scrollbar-thumb { background: rgba(184, 146, 74, 0.35); border-radius: 4px; }
+.scotus-transcript::-webkit-scrollbar-thumb:hover { background: rgba(184, 146, 74, 0.55); }
+.scotus-chat::-webkit-scrollbar { width: 7px; }
+.scotus-chat::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 4px; }
 .scotus-seg {
   padding: 7px 10px;
   border-radius: 6px;
@@ -331,6 +329,15 @@
   text-align: center;
   margin: 44px 0 20px;
 }
+.scotus-h2::after {
+  content: '';
+  display: block;
+  width: 56px;
+  height: 2px;
+  background: #b8924a;
+  margin: 10px auto 0;
+  border-radius: 1px;
+}
 .scotus-case { max-width: 880px; margin: 0 auto; padding: 0 24px; }
 .scotus-players { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
 .scotus-case-grid {
@@ -344,6 +351,11 @@
   border-left: 3px solid #b8924a;
   border-radius: 8px;
   padding: 14px 16px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.scotus-case-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(26, 39, 68, 0.1);
 }
 .scotus-case-card h3 {
   font-size: 12px;
@@ -485,6 +497,13 @@
   line-height: 1.6;
   color: #9a9a9a;
 }
+.scotus-footer::before {
+  content: '⚖';
+  display: block;
+  font-size: 17px;
+  color: #b8924a;
+  margin-bottom: 8px;
+}
 
 /* ── Amicus: hear-it button + speaking pulse ── */
 .scotus-amicus-speak {
@@ -527,3 +546,42 @@
   display: flex; align-items: center; justify-content: center;
   background: #d8d3c7; color: #6a6a6a; font-weight: 700; font-size: 24px;
 }
+
+
+/* ── Transport: ±15s skips + speed chip ── */
+.scotus-skip {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgba(26, 39, 68, 0.22);
+  border-radius: 15px;
+  background: transparent;
+  color: #1a2744;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.scotus-skip:hover { background: rgba(184, 146, 74, 0.12); border-color: #b8924a; }
+.scotus-skip:active { transform: scale(0.95); }
+.scotus-skip-arrow { font-size: 14px; line-height: 1; }
+.scotus-rate {
+  flex-shrink: 0;
+  height: 30px;
+  min-width: 46px;
+  padding: 0 8px;
+  border: 1px solid rgba(26, 39, 68, 0.22);
+  border-radius: 15px;
+  background: transparent;
+  color: #1a2744;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.scotus-rate:hover { background: rgba(184, 146, 74, 0.12); border-color: #b8924a; }

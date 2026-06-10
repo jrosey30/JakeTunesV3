@@ -24,6 +24,15 @@ function initials(name: string): string {
 // pipeline, which takes a voiceId override).
 const AMICUS_VOICE = '8Ln42OXYupYsag45MAUy'
 
+// Session caches (module scope). The hour-long MP3 is pulled over IPC once
+// per app session — the blob URL is deliberately never revoked while the app
+// runs. Position + speed survive tab switches: leave the exhibit, come back,
+// and you're exactly where you left off (paused).
+let cachedAudioUrl: string | null = null
+let savedPositionSec = 0
+let savedRate = 1
+const RATE_ORDER = [1, 1.25, 1.5, 0.75]
+
 export default function ScotusView() {
   const [data, setData] = useState<ScotusArchiveData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -53,16 +62,25 @@ export default function ScotusView() {
 
   useEffect(() => {
     let cancelled = false
-    let url: string | null = null
     window.electronAPI.scotusGetArchive?.().then((r) => {
       if (!cancelled && r?.ok) setData(r as ScotusArchiveData)
     }).catch(() => { /* empty state */ }).finally(() => { if (!cancelled) setLoading(false) })
-    window.electronAPI.scotusGetAudio?.().then((r) => {
-      if (cancelled || !r?.ok || !r.bytes) return
-      url = URL.createObjectURL(new Blob([r.bytes], { type: 'audio/mpeg' }))
-      setAudioUrl(url)
-    }).catch(() => { /* no audio */ })
-    return () => { cancelled = true; if (url) URL.revokeObjectURL(url) }
+    if (cachedAudioUrl) {
+      setAudioUrl(cachedAudioUrl)
+    } else {
+      window.electronAPI.scotusGetAudio?.().then((r) => {
+        if (cancelled || !r?.ok || !r.bytes) return
+        cachedAudioUrl = URL.createObjectURL(new Blob([r.bytes], { type: 'audio/mpeg' }))
+        setAudioUrl(cachedAudioUrl)
+      }).catch(() => { /* no audio */ })
+    }
+    return () => { cancelled = true }
+  }, [])
+
+  // Remember position + speed when leaving the exhibit (restored on return).
+  useEffect(() => () => {
+    const a = audioRef.current
+    if (a) { savedPositionSec = a.currentTime; savedRate = a.playbackRate }
   }, [])
 
   const segments: ScotusSegment[] = useMemo(() => data?.segments || [], [data])
@@ -83,6 +101,21 @@ export default function ScotusView() {
     const a = audioRef.current
     if (a) { a.currentTime = t; if (a.paused) void a.play() }
   }, [])
+  // Podcast-style transport: ±15s skip (buttons and ←/→) — keeps play state.
+  const seekBy = useCallback((delta: number) => {
+    const a = audioRef.current
+    if (!a) return
+    a.currentTime = Math.min(Math.max(0, a.currentTime + delta), (a.duration || 3635) - 0.5)
+  }, [])
+  const [rate, setRate] = useState(savedRate)
+  const cycleRate = useCallback(() => {
+    setRate((r) => {
+      const next = RATE_ORDER[(RATE_ORDER.indexOf(r) + 1) % RATE_ORDER.length]
+      const a = audioRef.current
+      if (a) a.playbackRate = next
+      return next
+    })
+  }, [])
 
   // Pin the live line to the TOP of the box so you read downward into what's
   // coming. Bounding-rect math (not offsetTop) makes this correct regardless
@@ -94,7 +127,26 @@ export default function ScotusView() {
     box.scrollTo({ top: box.scrollTop + delta - 12, behavior: 'smooth' })
   }, [activeIdx])
 
-  const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause() }
+  const toggle = useCallback(() => {
+    const a = audioRef.current
+    if (!a) return
+    if (a.paused) void a.play(); else a.pause()
+  }, [])
+
+  // Keyboard transport while the exhibit is open: Space = play/pause the
+  // ARGUMENT, ←/→ = ±15s. Capture-phase + stopPropagation so App.tsx's
+  // global space-toggles-music handler doesn't also fire underneath.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (e.code === 'Space') { e.preventDefault(); e.stopPropagation(); toggle() }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); seekBy(-15) }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); seekBy(15) }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [toggle, seekBy])
 
   // Smoothly fade the argument's volume (duck/restore) — like the Music Man mic.
   // Generation counter: starting a new fade CANCELS any in-flight one. Without
@@ -228,8 +280,14 @@ export default function ScotusView() {
 
       {/* The pill — the audio + who's speaking, in one place */}
       <div className="scotus-pill">
-        <button className="scotus-pill-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>
+        <button className="scotus-skip" onClick={() => seekBy(-15)} title="Back 15 seconds (←)" aria-label="Back 15 seconds">
+          <span className="scotus-skip-arrow">↺</span>15
+        </button>
+        <button className="scotus-pill-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'} title="Play / pause (space)">
           {playing ? '❚❚' : '▶'}
+        </button>
+        <button className="scotus-skip" onClick={() => seekBy(15)} title="Forward 15 seconds (→)" aria-label="Forward 15 seconds">
+          15<span className="scotus-skip-arrow">↻</span>
         </button>
         <div className="scotus-pill-main">
           <div className="scotus-pill-name">
@@ -240,10 +298,14 @@ export default function ScotusView() {
             <input
               className="scotus-pill-seek" type="range" min={0} max={duration || 3635} step={0.1}
               value={time} onChange={(e) => seekTo(+e.target.value)} aria-label="Seek"
+              style={{ '--p': `${((time / (duration || 3635)) * 100).toFixed(2)}%` } as React.CSSProperties}
             />
             <span className="scotus-pill-time">{fmt(duration || 3635)}</span>
           </div>
         </div>
+        <button className="scotus-rate" onClick={cycleRate} title="Playback speed" aria-label="Playback speed">
+          {rate}×
+        </button>
       </div>
 
       {/* Below the pill — the Justices, then the two advocates; each lights up while speaking */}
@@ -427,7 +489,16 @@ export default function ScotusView() {
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => {
+          const a = e.currentTarget
+          setDuration(a.duration)
+          a.playbackRate = rate
+          // Resume where you left off (paused) — unless you'd finished.
+          if (savedPositionSec > 1 && savedPositionSec < a.duration - 5) {
+            a.currentTime = savedPositionSec
+            setTime(savedPositionSec)
+          }
+        }}
       />
     </div>
   )
