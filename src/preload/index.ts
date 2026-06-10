@@ -577,6 +577,10 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:status'),
   streamripDownload: (url: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download', url),
+  streamripSearch: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }> =>
+    ipcRenderer.invoke('streamrip:search', opts),
+  streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
 
   // ── Music Man's Record Store (Brief 037) ──
   // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/
