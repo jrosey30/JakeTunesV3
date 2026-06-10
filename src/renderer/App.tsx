@@ -16,6 +16,7 @@ import PlayCacheModal from './components/PlayCacheModal'
 import OrphanCleanupModal from './components/OrphanCleanupModal'
 import SettingsModal from './components/SettingsModal'
 import ImportQueuePanel from './components/ImportQueuePanel'
+import Breadcrumb from './components/chrome/Breadcrumb'
 import StatusBar from './components/chrome/StatusBar'
 import ConfirmDialog from './components/ConfirmDialog'
 import BandcampImportToast from './components/BandcampImportToast'
@@ -1590,7 +1591,7 @@ function AppInner() {
           <button className="titlebar-nav-btn" disabled={!canGoBack} onClick={goBack} title="Back  ⌘[" aria-label="Back">‹</button>
           <button className="titlebar-nav-btn" disabled={!canGoForward} onClick={goForward} title="Forward  ⌘]" aria-label="Forward">›</button>
         </div>
-        <span className="titlebar-label">JakeTunes</span>
+        <Breadcrumb />
       </div>
       <div className="toolbar-area">
         <Toolbar

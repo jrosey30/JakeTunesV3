@@ -551,3 +551,55 @@
   font-size: var(--font-label);
   color: #3a3a3a;
 }
+
+/* Titlebar breadcrumb — replaces the static "JakeTunes" label. Left-aligned
+   right after the ‹ › history buttons; opts out of the window drag region so
+   segments are clickable. Long names truncate. */
+.titlebar-crumbs {
+  position: absolute;
+  left: 134px;
+  max-width: calc(100% - 150px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.titlebar-crumb-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.titlebar-crumb-sep {
+  color: #b3aea4;
+  font-weight: 400;
+  text-shadow: none;
+}
+.titlebar-crumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--brand-orange, #bb4308);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  -webkit-app-region: no-drag;
+}
+.titlebar-crumb-link:hover { text-decoration: underline; }
+.titlebar-crumb-current {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary, #2a2018);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
