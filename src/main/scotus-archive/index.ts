@@ -119,6 +119,10 @@ const JUSTICES = [
 // ── Hall of Fame — verbatim moments from the tape (times from transcript.json;
 // each card click-seeks the audio to its moment) ──
 const QUOTES = [
+  // Card standard (Jake's): tight selections; every printed line a complete
+  // verbatim segment (internal "..." = the source's own speech rendering);
+  // beats may be skipped BETWEEN lines, never cut WITHIN one; a trail-off may
+  // appear only mid-card, resolved by the next line; every card ENDS landed.
   {
     title: 'Poppy steps up', time: 1805.794,
     note: 'Thirty minutes in, it’s his turn — the family’s favorite ten words.',
@@ -128,10 +132,9 @@ const QUOTES = [
     ],
   },
   {
-    title: 'The honest concession', time: 2330.235,
+    title: 'The honest concession', time: 2341.522,
     note: 'Candor at the lectern — admitting the limits of his own position rather than bluffing. He never gets to finish the sentence: Scalia pounces.',
     lines: [
-      { speaker: 'Justice Souter', text: 'How about some, and the some that he proposes to be within the concept of the conspiracy are those without which you can’t effect your conspiracy.' },
       { speaker: 'Mr. Rosenbaum', text: 'I tried to think of examples, prior to coming here today, of where some nonpredicate acts could be the basis of RICO standing, and I, at least within my own thinking, have been unable to come up with any, based upon the underlying theme in my argument that any act not a predicate act, even an act which may be necessary for...' },
       { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
     ],
@@ -142,27 +145,19 @@ const QUOTES = [
     lines: [
       { speaker: 'Mr. Rosenbaum', text: 'In an interesting opinion from the D.C. Circuit, Justice Scalia, that... the Halberstam opinion, there was some interesting language.' },
       { speaker: 'Mr. Rosenbaum', text: 'You were on the panel together with Judge Bork and Judge Wall to issue the opinion.' },
-      { speaker: 'Mr. Rosenbaum', text: 'That was the case where a prominent Washington physician was murdered during the course of a burglary.' },
       { speaker: 'Justice Scalia', text: 'Cat burglar in suburban Virginia. It was a very prominent case around...' },
       { speaker: 'Mr. Rosenbaum', text: 'I thought you might remember it.' },
     ],
   },
   {
-    title: 'Scalia polices the argument', time: 3003.565,
-    note: 'Scalia says that’s not the question the Court took — then cuts him off twice more. Mr. Rosenbaum keeps his footing through all of it, Kennedy waves him on, and he lands the point.',
+    title: 'Scalia polices the argument', time: 3008.728,
+    note: 'Scalia says that’s not the question the Court took — then cuts him off again mid-answer. He keeps his footing and makes the point anyway.',
     lines: [
-      { speaker: 'Justice Scalia', text: 'What you’re now arguing to us is that the act was not in furtherance of a RICO conspiracy.' },
       { speaker: 'Justice Scalia', text: 'That’s not why we took the case.' },
       { speaker: 'Justice Scalia', text: 'Let’s assume that it was in furtherance of the RICO conspiracy and get on with the argument on that point.' },
       { speaker: 'Mr. Rosenbaum', text: 'I’m arguing, Justice Scalia, that even if it was in furtherance of, he doesn’t have standing, a) because this is not, as I said before, a...' },
       { speaker: 'Justice Scalia', text: 'Not in furtherance.' },
       { speaker: 'Mr. Rosenbaum', text: 'Not... no, this is not a whistleblower statute.' },
-      { speaker: 'Mr. Rosenbaum', text: 'There is no specific remedy in this statute for whistleblowers, as there are in other Federal statutes, environmental statutes, civil rights statutes... had Congress intended to create that breadth of a remedy...' },
-      { speaker: 'Justice Scalia', text: 'I thought you were arguing they were punishing him for past conduct.' },
-      { speaker: 'Mr. Rosenbaum', text: 'From a factual standpoint, yes, but I’m trying to respond to Your Honor’s question.' },
-      { speaker: 'Mr. Rosenbaum', text: 'Assuming that the facts were different, assuming that he was terminated because he threatened to blow the whistle and was terminated essentially to prevent him from doing so... not the facts in this case, but I’ll assume it for Your Honor’s question.' },
-      { speaker: 'Justice Kennedy', text: 'That’s fine.' },
-      { speaker: 'Mr. Rosenbaum', text: 'Even so, he lacks standing, a) because this is not a whistleblower statute... Congress has enacted whistleblower statutes in other contexts when seeking to enforce violations of other... other violations of other types of statutes, environmental statutes, civil rights statutes, so on and so forth, so had Congress intended to do that, it certainly knew how and could have.' },
     ],
   },
   {
@@ -172,8 +167,7 @@ const QUOTES = [
       { speaker: 'Justice O’Connor', text: 'Mr. Rosenbaum, section 1962(d) I gather has been held to give rise to criminal liability as well as a civil cause of action.' },
       { speaker: 'Mr. Rosenbaum', text: 'Absolutely, Justice O’Connor. Absolutely.' },
       { speaker: 'Justice O’Connor', text: 'And could there be a criminal prosecution brought here without proof of any predicate act?' },
-      { speaker: 'Mr. Rosenbaum', text: 'Absolutely. Under the criminal concepts of conspiracy, or...' },
-      { speaker: 'Justice O’Connor', text: 'Or an act... proof of an overt act would not be required if it were a criminal prosecution.' },
+      { speaker: 'Mr. Rosenbaum', text: 'Absolutely.' },
       { speaker: 'Mr. Rosenbaum', text: 'That’s correct. All that’s necessary for a criminal prosecution is proof of the unlawful agreement.' },
     ],
   },
@@ -184,7 +178,6 @@ const QUOTES = [
       { speaker: 'Justice Breyer', text: 'I can’t get anywhere beyond the policy.' },
       { speaker: 'Justice Breyer', text: 'It either is like the antitrust laws, or it isn’t.' },
       { speaker: 'Mr. Rosenbaum', text: 'If the law is to protect those who are improperly terminated, there are more than adequate State law remedies to protect that.' },
-      { speaker: 'Mr. Rosenbaum', text: 'Virtually all, short of all of the States have wrongful discharge statutes, or have wrongful discharge common law that basically says that it’s tortious to discharge someone for the type of conduct that’s alleged here.' },
       { speaker: 'Mr. Rosenbaum', text: 'To incorporate that State common law into the RICO statute would essentially be to federalize what are otherwise State law claims, so that’s my direct answer to your question, Your Honor.' },
     ],
   },
