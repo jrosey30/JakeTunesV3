@@ -495,7 +495,7 @@ const electronAPI = {
   // SCOTUS Archive — Poppy's Beck v. Prupis exhibit (one-of-one, not a song).
   scotusGetArchive: () => ipcRenderer.invoke('scotus:get-archive'),
   scotusGetAudio: () => ipcRenderer.invoke('scotus:get-audio'),
-  scotusAmicus: (input: { mode: 'explain' | 'ask'; time?: number; question?: string }) =>
+  scotusAmicus: (input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) =>
     ipcRenderer.invoke('scotus:amicus', input),
   recordRating: (track: { title: string; artist: string; album: string; rating: number }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('record-rating', track),

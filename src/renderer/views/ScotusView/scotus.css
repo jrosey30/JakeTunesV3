@@ -253,8 +253,41 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 .scotus-amicus-explain:hover { background: #b8924a; color: #1a2744; }
-.scotus-amicus-body { flex: 1; overflow-y: auto; margin: 14px 0; font-size: 13.5px; line-height: 1.55; }
-.scotus-amicus-body p { margin: 0; }
+/* ── The chat thread ── */
+.scotus-chat { flex: 1; overflow-y: auto; margin: 14px 0; font-size: 13px; line-height: 1.5; }
+.scotus-msg {
+  border-radius: 10px;
+  padding: 8px 11px;
+  margin-bottom: 8px;
+  max-width: 92%;
+  width: fit-content;
+}
+.scotus-msg p { margin: 0; }
+.scotus-msg--user {
+  background: #b8924a;
+  color: #1a2744;
+  font-weight: 500;
+  margin-left: auto;
+  border-bottom-right-radius: 3px;
+}
+.scotus-msg--amicus {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ece8df;
+  margin-right: auto;
+  border-bottom-left-radius: 3px;
+}
+.scotus-msg--thinking { background: transparent; color: #c9a961; font-style: italic; padding-left: 2px; }
+.scotus-chat-clear {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: #8a93a8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.scotus-chat-clear:hover { color: #e7c873; text-decoration: underline; }
+.scotus-amicus-speak--sm { margin-top: 8px; height: 24px; padding: 0 10px; font-size: 11px; border-radius: 6px; gap: 5px; }
 .scotus-amicus-hint { color: #9aa6c0; font-style: italic; }
 .scotus-amicus-loading { color: #c9a961; font-style: italic; }
 .scotus-amicus-ask { display: flex; gap: 6px; }

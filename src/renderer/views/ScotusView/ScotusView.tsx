@@ -32,11 +32,22 @@ export default function ScotusView() {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [amicus, setAmicus] = useState<{ loading: boolean; answer: string } | null>(null)
+  // Amicus chat thread — the back-and-forth is visible, and the history rides
+  // along on each call so follow-ups ("what does that mean?") resolve.
+  const [chat, setChat] = useState<Array<{ role: 'user' | 'amicus'; text: string }>>([])
+  const [thinking, setThinking] = useState(false)
   const [question, setQuestion] = useState('')
-  const [speaking, setSpeaking] = useState(false)
+  const [speakingIdx, setSpeakingIdx] = useState(-1)
   const [speakNote, setSpeakNote] = useState('')
   const amicusAudioRef = useRef<HTMLAudioElement | null>(null)
+  const chatBoxRef = useRef<HTMLDivElement | null>(null)
+  const chatRef = useRef<typeof chat>([])
+  useEffect(() => { chatRef.current = chat }, [chat])
+  // Keep the newest exchange in view.
+  useEffect(() => {
+    const el = chatBoxRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [chat, thinking])
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const activeSegRef = useRef<HTMLDivElement | null>(null)
 
@@ -107,12 +118,12 @@ export default function ScotusView() {
   const stopSpeak = useCallback(() => {
     const a = amicusAudioRef.current
     if (a) { a.pause(); a.src = ''; amicusAudioRef.current = null }
-    setSpeaking(false)
+    setSpeakingIdx(-1)
     fadeVolume(1, 400)
   }, [fadeVolume])
-  const speakAnswer = useCallback(async () => {
-    if (speaking) { stopSpeak(); return }
-    const raw = amicus?.answer
+  const speakBubble = useCallback(async (idx: number, raw: string) => {
+    if (speakingIdx === idx) { stopSpeak(); return }
+    stopSpeak()
     if (!raw) return
     // Flash TTS hallucinates a garbled "yelp" at the end when the text doesn't
     // finish on a clean, complete sentence. Trim any dangling tail to the last
@@ -123,9 +134,9 @@ export default function ScotusView() {
     if (lastEnd >= 20) text = text.slice(0, lastEnd + 1)
     if (!/[.!?]$/.test(text)) text += '.'
     setSpeakNote('')
-    setSpeaking(true)
+    setSpeakingIdx(idx)
     fadeVolume(0.15, 350) // duck the argument under Amicus — don't pause it
-    const restore = () => { setSpeaking(false); fadeVolume(1, 600) }
+    const restore = () => { setSpeakingIdx(-1); fadeVolume(1, 600) }
     try {
       // fast=true → ElevenLabs flash: speech starts in ~1s, not ~10s.
       const tts = await window.electronAPI.musicmanSpeak(text, true, AMICUS_VOICE)
@@ -142,26 +153,29 @@ export default function ScotusView() {
       restore()
       setSpeakNote('Couldn’t reach the voice just now — try again.')
     }
-  }, [speaking, amicus, stopSpeak, fadeVolume])
+  }, [speakingIdx, stopSpeak, fadeVolume])
   // Stop Amicus's voice when leaving the exhibit.
   useEffect(() => () => stopSpeak(), [stopSpeak])
 
-  const explain = useCallback(async () => {
+  // Shared send path: show the user's side of the exchange, call Amicus with
+  // the thread so far, append his reply.
+  const sendToAmicus = useCallback(async (mode: 'explain' | 'ask', userText: string, q?: string) => {
     stopSpeak()
     setSpeakNote('')
-    setAmicus({ loading: true, answer: '' })
-    const r = await window.electronAPI.scotusAmicus?.({ mode: 'explain', time }).catch(() => null)
-    setAmicus({ loading: false, answer: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') })
+    const history = chatRef.current.slice(-6)
+    setChat((c) => [...c, { role: 'user', text: userText }])
+    setThinking(true)
+    const r = await window.electronAPI.scotusAmicus?.({ mode, time, question: q, history }).catch(() => null)
+    setThinking(false)
+    setChat((c) => [...c, { role: 'amicus', text: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') }])
   }, [time, stopSpeak])
-  const ask = useCallback(async () => {
+  const explain = useCallback(() => sendToAmicus('explain', `Explain this moment — ${fmt(time)}`), [sendToAmicus, time])
+  const ask = useCallback(() => {
     const q = question.trim()
     if (!q) return
-    stopSpeak()
-    setSpeakNote('')
-    setAmicus({ loading: true, answer: '' }); setQuestion('')
-    const r = await window.electronAPI.scotusAmicus?.({ mode: 'ask', time, question: q }).catch(() => null)
-    setAmicus({ loading: false, answer: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') })
-  }, [question, time, stopSpeak])
+    setQuestion('')
+    void sendToAmicus('ask', q, q)
+  }, [question, sendToAmicus])
 
   // Transcript list — memoized on activeIdx so it isn't rebuilt every time-tick.
   const transcriptEls = useMemo(() => segments.map((s, i) => (
@@ -257,29 +271,38 @@ export default function ScotusView() {
 
       <div className="scotus-main">
         <div className="scotus-transcript" ref={transcriptRef}>{transcriptEls}</div>
-        <aside className={`scotus-amicus ${speaking ? 'scotus-amicus--speaking' : ''}`}>
+        <aside className={`scotus-amicus ${speakingIdx >= 0 ? 'scotus-amicus--speaking' : ''}`}>
           <div className="scotus-amicus-head">
             <span className="scotus-amicus-name">Amicus</span>
             <span className="scotus-amicus-tag">your guide in the room</span>
+            {chat.length > 0 && (
+              <button className="scotus-chat-clear" onClick={() => { stopSpeak(); setChat([]) }} title="Clear the conversation">
+                Clear
+              </button>
+            )}
           </div>
           <button className="scotus-amicus-explain" onClick={() => void explain()}>Explain this moment</button>
-          <div className="scotus-amicus-body">
-            {amicus?.loading
-              ? <div className="scotus-amicus-loading">Amicus is reading the room…</div>
-              : amicus?.answer
-                ? <>
-                    <p>{amicus.answer}</p>
-                    <button
-                      className={`scotus-amicus-speak ${speaking ? 'is-speaking' : ''}`}
-                      onClick={() => void speakAnswer()}
-                    >
-                      {speaking
-                        ? <><span className="scotus-speak-ic">■</span> Stop</>
-                        : <><span className="scotus-speak-ic">▶</span> Hear it</>}
-                    </button>
-                    {speakNote && <div className="scotus-amicus-note">{speakNote}</div>}
-                  </>
-                : <p className="scotus-amicus-hint">Lost in the legalese? Hit “Explain this moment” whenever you’re unsure — read what Amicus says, tap <strong>Hear it</strong> to listen, or ask a follow-up below.</p>}
+          <div className="scotus-chat" ref={chatBoxRef}>
+            {chat.length === 0 && !thinking && (
+              <p className="scotus-amicus-hint">Lost in the legalese? Hit “Explain this moment” whenever you’re unsure — or ask me anything. Our exchange stays right here, and I remember it, so follow-ups work.</p>
+            )}
+            {chat.map((m, i) => m.role === 'user'
+              ? <div key={i} className="scotus-msg scotus-msg--user">{m.text}</div>
+              : (
+                <div key={i} className="scotus-msg scotus-msg--amicus">
+                  <p>{m.text}</p>
+                  <button
+                    className={`scotus-amicus-speak scotus-amicus-speak--sm ${speakingIdx === i ? 'is-speaking' : ''}`}
+                    onClick={() => void speakBubble(i, m.text)}
+                  >
+                    {speakingIdx === i
+                      ? <><span className="scotus-speak-ic">■</span> Stop</>
+                      : <><span className="scotus-speak-ic">▶</span> Hear it</>}
+                  </button>
+                </div>
+              ))}
+            {thinking && <div className="scotus-msg scotus-msg--amicus scotus-msg--thinking">Amicus is reading the room…</div>}
+            {speakNote && <div className="scotus-amicus-note">{speakNote}</div>}
           </div>
           <div className="scotus-amicus-ask">
             <input

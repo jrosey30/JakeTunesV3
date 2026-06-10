@@ -601,7 +601,7 @@ declare global {
       getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: RediscoveryPick[]; error?: string }>
       scotusGetArchive?: () => Promise<{ ok: boolean } & ScotusArchiveData>
       scotusGetAudio?: () => Promise<{ ok: boolean; bytes?: Uint8Array; error?: string }>
-      scotusAmicus?: (input: { mode: 'explain' | 'ask'; time?: number; question?: string }) => Promise<{ ok: boolean; answer?: string; speaker?: string; error?: string }>
+      scotusAmicus?: (input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) => Promise<{ ok: boolean; answer?: string; speaker?: string; error?: string }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>

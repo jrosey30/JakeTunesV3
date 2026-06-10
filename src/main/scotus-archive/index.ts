@@ -192,7 +192,9 @@ export function registerScotusArchive(deps: ScotusDeps): void {
   })
 
   // Amicus — explain the moment at `time`, or answer a free-form question.
-  ipcMain.handle('scotus:amicus', async (_e, input: { mode: 'explain' | 'ask'; time?: number; question?: string }) => {
+  // `history` is the visible chat thread (renderer-truncated), so follow-ups
+  // like "what does that mean?" resolve against what Amicus already said.
+  ipcMain.handle('scotus:amicus', async (_e, input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) => {
     try {
       const segments = await loadSegments()
       const t = typeof input?.time === 'number' ? input.time : 0
@@ -200,17 +202,23 @@ export function registerScotusArchive(deps: ScotusDeps): void {
       const upto = segments.filter((s) => s.start <= t + 1)
       const window = upto.slice(-8)
       const ctx = window.map((s) => `${s.speaker}: ${s.text}`).join('\n')
+      const hist = (Array.isArray(input?.history) ? input.history : []).slice(-6)
+      const histBlock = hist.length
+        ? ['Your conversation with the listener so far:', ...hist.map((h) => `${h.role === 'user' ? 'Listener' : 'Amicus'}: ${h.text}`), ''].join('\n')
+        : ''
       const user = input.mode === 'ask'
         ? [
+            histBlock,
             `The listener is at ${fmtTime(t)} in the argument. Here's the exchange right before their question:`,
             ctx || '(start of argument)',
             ``,
             `Their question: ${(input.question || '').trim()}`,
-          ].join('\n')
+          ].filter(Boolean).join('\n')
         : [
+            histBlock,
             `Explain, in plain English, what's happening in this exchange at ${fmtTime(t)} — what's being argued and what the Justice is really getting at:`,
             ctx || '(the very start of the argument)',
-          ].join('\n')
+          ].filter(Boolean).join('\n')
       const text = await deps.askClaude('scotus-amicus', AMICUS_SYSTEM, user, 400)
       // The answer is both displayed AND read aloud by TTS. Strip markdown /
       // emphasis symbols — the voice garbles asterisks & backticks into the
