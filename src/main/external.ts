@@ -912,10 +912,16 @@ export async function getUpcomingReleasesForArtists(artists: string[]): Promise<
   for (let i = 0; i < slice.length; i += BATCH) {
     batches.push(slice.slice(i, i + BATCH))
   }
-  // Run batches in parallel — MB allows multiple concurrent requests
-  // from a single IP as long as we stay within ~50 / 10 sec total.
-  // Three batches in parallel is well under the limit.
-  const results = await Promise.all(batches.map(fetchUpcomingForBatch))
+  // Run batches SEQUENTIALLY with a ~1.1s gap. MusicBrainz rate-limits
+  // concurrent requests from one IP (~1 req/sec); the old Promise.all fired
+  // all batches at once, so some came back empty under load and "On the
+  // Horizon" showed nothing. Sequential is ~3s for a 60-artist library and
+  // the result is cached 24h, so it only pays that once a day.
+  const results: UpcomingRelease[][] = []
+  for (let i = 0; i < batches.length; i++) {
+    if (i > 0) await new Promise(resolve => setTimeout(resolve, 1100))
+    results.push(await fetchUpcomingForBatch(batches[i]))
+  }
   // Dedupe by MBID (same release-group can match multiple artist
   // OR clauses if an artist is in the artist-credit chain).
   const byMbid = new Map<string, UpcomingRelease>()
