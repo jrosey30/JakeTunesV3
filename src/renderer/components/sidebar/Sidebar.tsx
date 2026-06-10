@@ -415,6 +415,18 @@ export default function Sidebar() {
             selected={state.currentView === 'download'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
           />
+          <SidebarItem
+            label="Beck v. Prupis"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 6 8 2.3 14 6" />
+                <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
+                <path d="M1.4 13h13.2" />
+              </svg>
+            )}
+            selected={state.currentView === 'scotus'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
+          />
           {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
               release (shipping listen-to-the-list only; Phase-2 store held).
               Re-add this SidebarItem when RECORD_STORE_ENABLED flips back on:

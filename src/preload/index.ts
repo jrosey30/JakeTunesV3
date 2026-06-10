@@ -491,6 +491,11 @@ const electronAPI = {
   getListeningMemory: () => ipcRenderer.invoke('get-listening-memory'),
   // Brain — Rediscover: owned-but-overlooked library picks + Music Man's pitch.
   getRediscovery: (force?: boolean) => ipcRenderer.invoke('get-rediscovery', force),
+  // SCOTUS Archive — Poppy's Beck v. Prupis exhibit (one-of-one, not a song).
+  scotusGetArchive: () => ipcRenderer.invoke('scotus:get-archive'),
+  scotusGetAudio: () => ipcRenderer.invoke('scotus:get-audio'),
+  scotusAmicus: (input: { mode: 'explain' | 'ask'; time?: number; question?: string }) =>
+    ipcRenderer.invoke('scotus:amicus', input),
   recordRating: (track: { title: string; artist: string; album: string; rating: number }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('record-rating', track),
   listAudioDevices: (): Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }> =>

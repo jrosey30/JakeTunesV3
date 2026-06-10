@@ -90,7 +90,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery'
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on
@@ -336,6 +336,23 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 export type RepeatMode = 'off' | 'all' | 'one'
 // Brain #1 — Listening Memory. Mirrors ListeningMemoryInsights in
 // src/main/listening-memory.ts (the IPC payload shape).
+// ── SCOTUS Archive (Beck v. Prupis) — mirrors src/main/scotus-archive ──
+export interface ScotusSegment { start: number; stop: number; speaker: string; role: string; text: string }
+export interface ScotusJustice { name: string; slug: string; title: string; vote: string; note: string; portrait: string | null }
+export interface ScotusAdvocate { name: string; role: string; side: string; note: string }
+export interface ScotusCase {
+  name: string; citation: string; docket: string; argued: string; decided: string
+  court: string; poppy: string; vote: string; opinionBy: string
+  question: string; background: string; holding: string; significance: string
+}
+export interface ScotusArchiveData {
+  exists: boolean
+  case?: ScotusCase
+  advocates?: ScotusAdvocate[]
+  justices?: ScotusJustice[]
+  segments?: ScotusSegment[]
+}
+
 // Brain — Rediscover pick (mirrors RediscoveryPick in src/main/rediscovery.ts).
 export interface RediscoveryPick {
   artist: string
@@ -578,6 +595,9 @@ declare global {
       recordRating?: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
       getListeningMemory?: () => Promise<{ ok: boolean; error?: string } & Partial<ListeningMemoryData>>
       getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: RediscoveryPick[]; error?: string }>
+      scotusGetArchive?: () => Promise<{ ok: boolean } & ScotusArchiveData>
+      scotusGetAudio?: () => Promise<{ ok: boolean; bytes?: Uint8Array; error?: string }>
+      scotusAmicus?: (input: { mode: 'explain' | 'ask'; time?: number; question?: string }) => Promise<{ ok: boolean; answer?: string; speaker?: string; error?: string }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>

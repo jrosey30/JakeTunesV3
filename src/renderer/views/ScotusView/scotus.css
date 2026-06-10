@@ -1,0 +1,319 @@
+/* ════════════════════════════════════════════════════════════════════════
+   Beck v. Prupis — the SCOTUS exhibit. A reverent, one-of-one space:
+   marble + navy + gold, serif headings, Poppy's lines set apart in gold.
+   ════════════════════════════════════════════════════════════════════════ */
+.scotus-view {
+  height: 100%;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #f7f6f2 0%, #f2f1ec 100%);
+  color: #1f2937;
+  padding: 0 0 60px;
+}
+.scotus-loading,
+.scotus-empty {
+  padding: 80px 40px;
+  text-align: center;
+  color: #6a6a6a;
+  font-size: 15px;
+}
+
+/* ── Hero ── */
+.scotus-hero {
+  text-align: center;
+  padding: 44px 24px 28px;
+  background: linear-gradient(180deg, #1a2744 0%, #24345a 100%);
+  color: #f4f1ea;
+  border-bottom: 3px solid #b8924a;
+}
+.scotus-hero-kicker {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #c9a961;
+  margin-bottom: 12px;
+}
+.scotus-hero-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 38px;
+  font-weight: 700;
+  font-style: italic;
+  margin: 0 0 8px;
+  letter-spacing: 0.01em;
+}
+.scotus-hero-cite { font-size: 13px; color: #b9c2d6; letter-spacing: 0.02em; }
+.scotus-hero-dates { font-size: 12.5px; color: #9aa6c0; margin-top: 4px; }
+.scotus-hero-poppy {
+  margin-top: 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #ece8df;
+}
+.scotus-hero-poppy strong { color: #e7c873; }
+.scotus-won { color: #e7c873; font-weight: 700; white-space: nowrap; }
+
+/* ── The colonnade of Justices ── */
+.scotus-court {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  padding: 26px 24px 8px;
+}
+.scotus-justice {
+  width: 62px;
+  text-align: center;
+  opacity: 0.6;
+  filter: grayscale(0.4);
+  transition: opacity 0.25s ease, filter 0.25s ease, transform 0.25s ease;
+}
+.scotus-justice img,
+.scotus-justice-ph {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  background: #d8d3c7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #6a6a6a;
+  margin: 0 auto;
+}
+.scotus-justice-name {
+  font-size: 10.5px;
+  margin-top: 5px;
+  color: #5a5a5a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scotus-justice--speaking {
+  opacity: 1;
+  filter: none;
+  transform: translateY(-3px);
+}
+.scotus-justice--speaking img,
+.scotus-justice--speaking .scotus-justice-ph {
+  border-color: #b8924a;
+  box-shadow: 0 0 0 3px rgba(184, 146, 74, 0.35), 0 4px 14px rgba(184, 146, 74, 0.4);
+}
+.scotus-justice--speaking .scotus-justice-name { color: #1a2744; font-weight: 700; }
+
+.scotus-nowspeaking {
+  text-align: center;
+  font-size: 13px;
+  color: #6a6a6a;
+  padding: 6px 0 16px;
+}
+.scotus-nowspeaking strong { color: #1a2744; }
+
+/* ── Player ── */
+.scotus-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 24px 16px;
+}
+.scotus-play {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: #1a2744;
+  color: #e7c873;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.scotus-play:hover { background: #24345a; }
+.scotus-play:active { transform: scale(0.94); }
+.scotus-time { font-size: 12px; color: #6a6a6a; font-variant-numeric: tabular-nums; width: 44px; }
+.scotus-time--total { text-align: right; }
+.scotus-seek { flex: 1; accent-color: #b8924a; cursor: pointer; }
+
+/* ── Transcript + Amicus ── */
+.scotus-main {
+  display: flex;
+  gap: 18px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px;
+  align-items: stretch;
+}
+.scotus-transcript {
+  flex: 1;
+  height: 460px;
+  overflow-y: auto;
+  background: #fffefb;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.scotus-seg {
+  padding: 7px 10px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  line-height: 1.5;
+  transition: background 0.12s ease;
+}
+.scotus-seg:hover { background: rgba(0, 0, 0, 0.025); }
+.scotus-seg-speaker {
+  font-weight: 700;
+  font-size: 12px;
+  margin-right: 8px;
+  letter-spacing: 0.01em;
+}
+.scotus-seg-text { font-size: 13.5px; color: #2a2a2a; }
+.scotus-seg--justice .scotus-seg-speaker { color: #2a3a5c; }
+.scotus-seg--chief .scotus-seg-speaker { color: #1a2744; }
+.scotus-seg--advocate .scotus-seg-speaker { color: #5a5a5a; }
+.scotus-seg--poppy .scotus-seg-speaker { color: #9a7b3a; }
+.scotus-seg--poppy { background: rgba(184, 146, 74, 0.04); }
+.scotus-seg--active {
+  background: rgba(184, 146, 74, 0.13) !important;
+  box-shadow: inset 3px 0 0 #b8924a;
+}
+
+.scotus-amicus {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  background: #1a2744;
+  color: #ece8df;
+  border-radius: 10px;
+  padding: 16px;
+}
+.scotus-amicus-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.scotus-amicus-name { font-family: Georgia, serif; font-size: 19px; font-weight: 700; color: #e7c873; font-style: italic; }
+.scotus-amicus-tag { font-size: 11px; color: #9aa6c0; }
+.scotus-amicus-explain {
+  width: 100%;
+  height: 36px;
+  border: 1px solid #b8924a;
+  border-radius: 8px;
+  background: transparent;
+  color: #e7c873;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.scotus-amicus-explain:hover { background: #b8924a; color: #1a2744; }
+.scotus-amicus-body { flex: 1; overflow-y: auto; margin: 14px 0; font-size: 13.5px; line-height: 1.55; }
+.scotus-amicus-body p { margin: 0; }
+.scotus-amicus-hint { color: #9aa6c0; font-style: italic; }
+.scotus-amicus-loading { color: #c9a961; font-style: italic; }
+.scotus-amicus-ask { display: flex; gap: 6px; }
+.scotus-amicus-ask input {
+  flex: 1;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f1ea;
+  font-size: 13px;
+  outline: none;
+}
+.scotus-amicus-ask input::placeholder { color: #8a93a8; }
+.scotus-amicus-ask input:focus { border-color: #b8924a; }
+.scotus-amicus-ask button {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 7px;
+  background: #b8924a;
+  color: #1a2744;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.scotus-amicus-ask button:disabled { opacity: 0.45; cursor: default; }
+
+/* ── The case + players ── */
+.scotus-h2 {
+  font-family: Georgia, serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a2744;
+  text-align: center;
+  margin: 44px 0 20px;
+}
+.scotus-case, .scotus-players { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+.scotus-case-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+.scotus-case-card {
+  background: #fffefb;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-left: 3px solid #b8924a;
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+.scotus-case-card h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9a7b3a;
+  margin: 0 0 8px;
+}
+.scotus-case-card p { margin: 0; font-size: 14px; line-height: 1.6; color: #2f3540; }
+
+.scotus-advocates { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.scotus-adv {
+  flex: 0 1 320px;
+  background: #fffefb;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  padding: 16px 18px;
+  text-align: center;
+}
+.scotus-adv--respondent { border-top: 3px solid #b8924a; }
+.scotus-adv--petitioner { border-top: 3px solid #8a94a8; }
+.scotus-adv-name { font-family: Georgia, serif; font-size: 17px; font-weight: 700; color: #1a2744; }
+.scotus-adv-role { font-size: 12.5px; color: #6a6a6a; margin-top: 3px; }
+.scotus-adv-note { font-size: 12.5px; color: #9a7b3a; font-style: italic; margin-top: 6px; }
+
+.scotus-roster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+.scotus-roster-j {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fffefb;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.scotus-roster-j img, .scotus-roster-ph {
+  width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+  background: #d8d3c7; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #6a6a6a; border: 1px solid rgba(0, 0, 0, 0.1);
+}
+.scotus-roster-name { font-size: 13.5px; font-weight: 600; color: #1a2744; }
+.scotus-roster-title { font-size: 11px; color: #8a8a8a; }
+.scotus-roster-vote { font-size: 11px; margin-top: 2px; }
+.scotus-roster-vote--majority { color: #2c6b4f; }
+.scotus-roster-vote--dissent { color: #9a4a3a; }
+
+.scotus-footer {
+  max-width: 880px;
+  margin: 44px auto 0;
+  padding: 0 24px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #9a9a9a;
+}

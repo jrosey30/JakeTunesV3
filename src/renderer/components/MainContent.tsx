@@ -14,6 +14,7 @@ import DeviceView from '../views/DeviceView'
 import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
 import DownloadView from '../views/DownloadStore'
+import ScotusView from '../views/ScotusView'
 import RecordStoreView from '../views/RecordStore'
 import '../styles/main-content.css'
 
@@ -63,6 +64,7 @@ export default function MainContent() {
     case 'cd-import': viewElement = <CDImportView />; break
     case 'store': viewElement = <StoreView />; break
     case 'download': viewElement = <DownloadView />; break
+    case 'scotus': viewElement = <ScotusView />; break
     case 'recordstore': viewElement = <RecordStoreView />; break
     default: viewElement = <SongsView />
   }
