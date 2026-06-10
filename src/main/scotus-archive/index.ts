@@ -129,10 +129,11 @@ const QUOTES = [
   },
   {
     title: 'The honest concession', time: 2330.235,
-    note: 'Candor at the lectern — admitting the limits of his own position rather than bluffing, which is exactly what experienced advocates do in front of that Court.',
+    note: 'Candor at the lectern — admitting the limits of his own position rather than bluffing. He never gets to finish the sentence: Scalia pounces.',
     lines: [
       { speaker: 'Justice Souter', text: 'How about some, and the some that he proposes to be within the concept of the conspiracy are those without which you can’t effect your conspiracy.' },
       { speaker: 'Mr. Rosenbaum', text: 'I tried to think of examples, prior to coming here today, of where some nonpredicate acts could be the basis of RICO standing, and I, at least within my own thinking, have been unable to come up with any, based upon the underlying theme in my argument that any act not a predicate act, even an act which may be necessary for...' },
+      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
     ],
   },
   {
@@ -148,12 +149,20 @@ const QUOTES = [
   },
   {
     title: 'Scalia polices the argument', time: 3003.565,
-    note: 'Scalia says that’s not the question the Court took. He doesn’t fold — he reframes and keeps making his point under pressure.',
+    note: 'Scalia says that’s not the question the Court took — then cuts him off twice more. Mr. Rosenbaum keeps his footing through all of it, Kennedy waves him on, and he lands the point.',
     lines: [
       { speaker: 'Justice Scalia', text: 'What you’re now arguing to us is that the act was not in furtherance of a RICO conspiracy.' },
       { speaker: 'Justice Scalia', text: 'That’s not why we took the case.' },
       { speaker: 'Justice Scalia', text: 'Let’s assume that it was in furtherance of the RICO conspiracy and get on with the argument on that point.' },
       { speaker: 'Mr. Rosenbaum', text: 'I’m arguing, Justice Scalia, that even if it was in furtherance of, he doesn’t have standing, a) because this is not, as I said before, a...' },
+      { speaker: 'Justice Scalia', text: 'Not in furtherance.' },
+      { speaker: 'Mr. Rosenbaum', text: 'Not... no, this is not a whistleblower statute.' },
+      { speaker: 'Mr. Rosenbaum', text: 'There is no specific remedy in this statute for whistleblowers, as there are in other Federal statutes, environmental statutes, civil rights statutes... had Congress intended to create that breadth of a remedy...' },
+      { speaker: 'Justice Scalia', text: 'I thought you were arguing they were punishing him for past conduct.' },
+      { speaker: 'Mr. Rosenbaum', text: 'From a factual standpoint, yes, but I’m trying to respond to Your Honor’s question.' },
+      { speaker: 'Mr. Rosenbaum', text: 'Assuming that the facts were different, assuming that he was terminated because he threatened to blow the whistle and was terminated essentially to prevent him from doing so... not the facts in this case, but I’ll assume it for Your Honor’s question.' },
+      { speaker: 'Justice Kennedy', text: 'That’s fine.' },
+      { speaker: 'Mr. Rosenbaum', text: 'Even so, he lacks standing, a) because this is not a whistleblower statute... Congress has enacted whistleblower statutes in other contexts when seeking to enforce violations of other... other violations of other types of statutes, environmental statutes, civil rights statutes, so on and so forth, so had Congress intended to do that, it certainly knew how and could have.' },
     ],
   },
   {
@@ -166,17 +175,6 @@ const QUOTES = [
       { speaker: 'Mr. Rosenbaum', text: 'Absolutely. Under the criminal concepts of conspiracy, or...' },
       { speaker: 'Justice O’Connor', text: 'Or an act... proof of an overt act would not be required if it were a criminal prosecution.' },
       { speaker: 'Mr. Rosenbaum', text: 'That’s correct. All that’s necessary for a criminal prosecution is proof of the unlawful agreement.' },
-    ],
-  },
-  {
-    title: 'Taking a direct hit — and absorbing it', time: 3448.076,
-    note: 'Kennedy and Scalia pile on at once. Sometimes the smartest answer to Scalia is four words — concede the point and pivot, rather than die on that hill.',
-    lines: [
-      { speaker: 'Justice Kennedy', text: 'I disagree with that.' },
-      { speaker: 'Justice Scalia', text: 'That is simply wrong.' },
-      { speaker: 'Justice Scalia', text: 'It is not formed for the purpose of committing the predicate acts.' },
-      { speaker: 'Justice Scalia', text: 'It is formed for the purpose of robbing the bank, and the... now, that larceny, it may be one of the predicate acts, but other predicate acts on the way to it, such as killing the bank guard who unexpectedly shows up to try to prevent... that’s not the object of the conspiracy at all.' },
-      { speaker: 'Mr. Rosenbaum', text: 'That’s correct, Justice Scalia.' },
     ],
   },
   {
