@@ -146,6 +146,7 @@
   align-items: stretch;
 }
 .scotus-transcript {
+  position: relative; /* makes child offsetTop box-relative for the auto-scroll */
   flex: 1;
   height: 460px;
   overflow-y: auto;
@@ -245,18 +246,19 @@
   text-align: center;
   margin: 44px 0 20px;
 }
-.scotus-case, .scotus-players { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+.scotus-case { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+.scotus-players { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
 .scotus-case-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
+  grid-template-columns: 1fr 1fr; /* balanced 2×2 — no orphan card */
+  gap: 14px;
 }
 .scotus-case-card {
   background: #fffefb;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-left: 3px solid #b8924a;
   border-radius: 8px;
-  padding: 16px 18px;
+  padding: 14px 16px;
 }
 .scotus-case-card h3 {
   font-size: 12px;

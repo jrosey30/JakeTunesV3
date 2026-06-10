@@ -73,10 +73,12 @@ export default function ScotusView() {
     if (a) { a.currentTime = t; if (a.paused) void a.play() }
   }, [])
 
-  // Auto-scroll the transcript to the active line — fires only on a line change.
+  // Pin the live line near the TOP of the box — you read downward into what's
+  // coming, never scrolling up to find the current line. (offsetTop is
+  // box-relative because .scotus-transcript is position:relative.)
   useEffect(() => {
     const el = activeSegRef.current, box = transcriptRef.current
-    if (el && box) box.scrollTo({ top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2, behavior: 'smooth' })
+    if (el && box) box.scrollTo({ top: Math.max(0, el.offsetTop - 14), behavior: 'smooth' })
   }, [activeIdx])
 
   const toggle = () => { const a = audioRef.current; if (!a) return; if (a.paused) void a.play(); else a.pause() }

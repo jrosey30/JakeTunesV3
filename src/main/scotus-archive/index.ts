@@ -44,13 +44,13 @@ const CASE_META = {
   vote: '7–2 for the respondents',
   opinionBy: 'Justice Clarence Thomas',
   question:
-    'When a group conspires to violate the federal racketeering law (RICO), and to pull it off commits an act that harms someone — but that act isn’t itself one of the underlying racketeering crimes — can the victim sue under RICO for that harm? Robert Beck said his firing was that kind of harm. The Court had to decide whether a non-racketeering injury opens the RICO courthouse door.',
+    'Beck’s firing wasn’t itself a racketeering crime — yet he called it an injury from a RICO conspiracy. The question: can you sue under RICO when the act that hurt you is just an act furthering the conspiracy, not one of the racketeering crimes?',
   background:
-    'Robert A. Beck II was president, CEO, and a director of Southeastern Insurance Group. He alleged that the company’s other senior officers and directors were committing fraud, and that when he discovered it and reported them to regulators, they retaliated by orchestrating a scheme to force him out. Beck sued them under civil RICO, claiming their conspiracy had injured him. Michael Rosenbaum — Jake’s grandfather — represented those officers and directors: the respondents.',
+    'Robert Beck, president and CEO of Southeastern Insurance Group, said he caught the other officers committing fraud, reported them to regulators, and was fired in retaliation. He sued them under civil RICO. Poppy — Michael Rosenbaum — represented those officers: the respondents.',
   holding:
-    'No. Writing for a 7–2 Court, Justice Thomas held that to recover under RICO’s conspiracy provision, the injury must flow from an actual act of racketeering — not merely from some act taken to advance the conspiracy. Beck’s injury (his firing) wasn’t itself a racketeering act, so he had no RICO claim. The respondents — Rosenbaum’s clients — prevailed.',
+    'No — 7–2. Justice Thomas held the injury must come from an actual racketeering act, not just any act advancing the conspiracy. Beck’s firing didn’t qualify, so he had no RICO claim. Poppy’s clients won.',
   significance:
-    'The decision drew a hard line around civil RICO, stopping plaintiffs from turning ordinary business or workplace disputes into federal racketeering suits just by alleging a conspiracy. The Court anchored the rule in centuries-old common-law conspiracy principles — a plaintiff must be hurt by a wrongful (here, racketeering) act, not just any act in furtherance. It remains a foundational civil-RICO precedent, cited constantly today.',
+    'It walled off civil RICO: you can’t turn an ordinary business or firing dispute into a federal racketeering suit just by alleging a conspiracy. Rooted in old common-law conspiracy rules, it’s cited constantly to this day.',
 }
 
 const ADVOCATES = [
@@ -102,7 +102,9 @@ const AMICUS_SYSTEM = `You are "Amicus" — a brilliant, warm Supreme Court law 
 
 The case is Beck v. Prupis (529 U.S. 494). It is a CIVIL RICO case. The advocate Michael M. Rosenbaum is arguing for the RESPONDENTS — and he is the listener's late grandfather ("Poppy"). His side WON, 7–2; Justice Thomas wrote the opinion. The opposing advocate is Jay Starkman, for petitioner Robert Beck. The core issue: whether a person can sue under RICO's conspiracy provision for an injury caused by an act that ISN'T itself an act of racketeering (Beck's injury was being fired). The Court said no.
 
-Your job: translate the lawyer-speak into plain, vivid English. Explain what a Justice's question is really driving at, what a term means, and — when it's clear — whether Poppy is gaining or losing ground in an exchange. Be precise but human; never condescend, never pad. This is personal to the listener; treat the moment with the respect it deserves, but stay grounded in what the transcript actually says. Keep answers tight (2–5 sentences unless asked for more).`
+Your job: translate the lawyer-speak into plain, vivid English. Explain what a Justice's question is really driving at, what a term means, and — when it's clear — whether Poppy is gaining or losing ground in an exchange. Be precise but human; never condescend, never pad. This is personal to the listener; treat the moment with the respect it deserves, but stay grounded in what the transcript actually says.
+
+Keep every answer SHORT — 2 or 3 punchy sentences. No preamble, no "essentially"/"basically," no restating the question; lead straight with the point. Only go longer if explicitly asked.`
 
 export function registerScotusArchive(deps: ScotusDeps): void {
   ipcMain.handle('scotus:get-archive', async () => {
@@ -145,7 +147,7 @@ export function registerScotusArchive(deps: ScotusDeps): void {
             `Explain, in plain English, what's happening in this exchange at ${fmtTime(t)} — what's being argued and what the Justice is really getting at:`,
             ctx || '(the very start of the argument)',
           ].join('\n')
-      const text = await deps.askClaude('scotus-amicus', AMICUS_SYSTEM, user, 700)
+      const text = await deps.askClaude('scotus-amicus', AMICUS_SYSTEM, user, 320)
       return { ok: true, answer: text, speaker: window.length ? window[window.length - 1].speaker : '' }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
