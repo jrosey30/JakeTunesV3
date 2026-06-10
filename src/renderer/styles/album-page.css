@@ -231,3 +231,33 @@
   font-size: 14px;
   margin-top: 12px;
 }
+
+/* The Music Man's take — opt-in opinion, separate from the factual history.
+   Aligned to the same 32px gutter as .album-page-about above it. */
+.album-page-take {
+  flex-shrink: 0;
+  padding: 12px 32px 14px;
+  border-bottom: 1px solid #ddd9d2;
+}
+.album-page-take-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px 6px 11px;
+  background: rgba(187, 67, 8, 0.07);
+  border: 1px solid rgba(187, 67, 8, 0.22);
+  border-radius: 16px;
+  color: var(--brand-orange, #bb4308);
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background 140ms ease;
+}
+.album-page-take-toggle:hover { background: rgba(187, 67, 8, 0.13); }
+.album-page-take-icon { font-size: 13px; line-height: 1; }
+.album-page-take-caret { font-size: 15px; line-height: 1; margin-left: 1px; transition: transform 160ms ease; }
+.album-page-take-toggle.is-open .album-page-take-caret { transform: rotate(90deg); }
+.album-page-take-body {
+  margin-top: 9px; max-width: 780px; padding: 11px 14px;
+  background: rgba(187, 67, 8, 0.05);
+  border-left: 2px solid var(--brand-orange, #bb4308);
+  border-radius: 0 8px 8px 0;
+}
+.album-page-take-text { margin: 0; font-size: 13.5px; line-height: 1.5; font-style: italic; color: var(--text-primary, #2a2018); }
+.album-page-take-status { margin: 0; font-size: 12.5px; color: #9a958c; font-style: italic; }

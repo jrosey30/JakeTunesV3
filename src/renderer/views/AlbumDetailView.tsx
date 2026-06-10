@@ -106,6 +106,11 @@ export default function AlbumDetailView() {
   const [infoLoading, setInfoLoading] = useState(false)
   const [infoError, setInfoError] = useState(false)
   const [blurbOverflows, setBlurbOverflows] = useState(false)
+  // The Music Man's take — opt-in opinion, lazily fetched when the user opens it.
+  const [take, setTake] = useState<string>('')
+  const [takeOpen, setTakeOpen] = useState(false)
+  const [takeLoading, setTakeLoading] = useState(false)
+  const [takeError, setTakeError] = useState(false)
 
   const lastClickedIdx = useRef<number>(-1)
   const blurbRef = useRef<HTMLParagraphElement>(null)
@@ -280,6 +285,7 @@ export default function AlbumDetailView() {
     if (tracks.length === 0) return
     let cancelled = false
     setCredits(null); setBlurb(''); setInfoLoading(true); setInfoError(false); setBlurbExpanded(false); setBlurbOverflows(false)
+    setTake(''); setTakeOpen(false); setTakeLoading(false); setTakeError(false)
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
@@ -298,6 +304,18 @@ export default function AlbumDetailView() {
     }, 280)
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [albumArtist, albumName, year, tracks.length])
+
+  // Lazily fetch the Music Man's take the first time the user opens it.
+  const handleToggleTake = useCallback(() => {
+    if (!takeOpen && !take && !takeLoading) {
+      setTakeLoading(true); setTakeError(false)
+      window.electronAPI.getAlbumTake?.(albumArtist, albumName)
+        .then((r) => { if (r?.ok && r.take) setTake(r.take); else setTakeError(true) })
+        .catch(() => setTakeError(true))
+        .finally(() => setTakeLoading(false))
+    }
+    setTakeOpen((v) => !v)
+  }, [takeOpen, take, takeLoading, albumArtist, albumName])
 
   // Show Read more / Show less only when the 3-line clamp actually hides text.
   useEffect(() => {
@@ -368,7 +386,7 @@ export default function AlbumDetailView() {
           </div>
           {creditLine && <div className="album-page-creditline">{creditLine}</div>}
           {infoLoading && !blurb && !creditLine && (
-            <p className="album-page-loading">The Music Man is checking the liner notes…</p>
+            <p className="album-page-loading">Loading album history…</p>
           )}
           {infoError && !infoLoading && !blurb && !creditLine && (
             <p className="album-page-loading">Couldn&apos;t load album info.</p>
@@ -390,6 +408,28 @@ export default function AlbumDetailView() {
           )}
         </div>
       )}
+
+      {/* The Music Man's take — opt-in opinion, separate from the factual
+          history above. Collapsed by default; his voice lives behind a click. */}
+      <div className="album-page-take">
+        <button
+          type="button"
+          className={`album-page-take-toggle ${takeOpen ? 'is-open' : ''}`}
+          onClick={handleToggleTake}
+          aria-expanded={takeOpen}
+        >
+          <span className="album-page-take-icon" aria-hidden="true">♪</span>
+          The Music Man’s take
+          <span className="album-page-take-caret" aria-hidden="true">›</span>
+        </button>
+        {takeOpen && (
+          <div className="album-page-take-body">
+            {takeLoading && !take && <p className="album-page-take-status">The Music Man’s mulling it over…</p>}
+            {take && <p className="album-page-take-text">{take}</p>}
+            {takeError && !take && <p className="album-page-take-status">Couldn’t get his take right now.</p>}
+          </div>
+        )}
+      </div>
 
       <div className="album-page-tracklist songs-view">
         <div className="songs-header" style={{ gridTemplateColumns: GRID_COLS }}>

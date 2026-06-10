@@ -185,6 +185,7 @@ const electronAPI = {
   // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
   getAlbumInfo: (artist: string, album: string, year?: string) => ipcRenderer.invoke('get-album-info', artist, album, year),
   getAlbumBlurb: (artist: string, album: string) => ipcRenderer.invoke('get-album-blurb', artist, album),
+  getAlbumTake: (artist: string, album: string) => ipcRenderer.invoke('get-album-take', artist, album),
   // 4.5.0-117 — library backup/restore (Phase 0).
   listBackups: () => ipcRenderer.invoke('list-backups'),
   createBackup: () => ipcRenderer.invoke('create-backup'),

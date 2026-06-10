@@ -10786,14 +10786,15 @@ ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Pro
   if (cached !== undefined) return { ok: true, blurb: cached }
   try {
     const user = [
-      `Give your take on the album "${album}" by ${artist}.`,
-      '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
-      'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
+      `Write a short, factual history of the album "${album}" by ${artist}.`,
+      'Cover what it is and why it matters: the era and context it was made in, its place in the artist\'s career and in music history, and what it is best known for (its sound, signature songs, and legacy).',
+      '3-4 sentences. Neutral and encyclopedic — this is a HISTORY, not a review. Do NOT rate it, rank it, or editorialize ("masterpiece", "their best/worst", "overrated", "not the X people need it to be").',
+      'Avoid hyper-specific facts you might get wrong (exact session dates, precise chart/sales figures) — factual credits are shown separately. No preamble.',
     ].join('\n')
     const reply = await claudeCall('album-blurb', {
       model: 'claude-haiku-4-5',
-      max_tokens: 220,
-      system: MUSIC_MAN_CORE,
+      max_tokens: 260,
+      system: 'You are a precise, neutral music historian writing concise, encyclopedic album descriptions. Be factual and respect the work\'s significance. Never rate, rank, editorialize, or give opinions — just the history.',
       messages: [{ role: 'user', content: user }],
     })
     const block = reply.content[0]
@@ -10802,6 +10803,36 @@ ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Pro
     return { ok: true, blurb: text }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'album-blurb failed' }
+  }
+})
+
+// The Music Man's TAKE — his opinion, OPT-IN and separate from the factual
+// history blurb above. Jake didn't want a contrarian hot-take standing in for
+// the history of a landmark album; same voice, but now behind a button.
+const albumTakeCache = new Map<string, string>()
+ipcMain.handle('get-album-take', async (_e, artist: string, album: string): Promise<{ ok: boolean; take?: string; error?: string }> => {
+  if (!album) return { ok: true, take: '' }
+  const key = albumCacheKey(artist, album)
+  const cached = albumTakeCache.get(key)
+  if (cached !== undefined) return { ok: true, take: cached }
+  try {
+    const user = [
+      `Give your take on the album "${album}" by ${artist}.`,
+      '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
+      'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
+    ].join('\n')
+    const reply = await claudeCall('album-take', {
+      model: 'claude-haiku-4-5',
+      max_tokens: 220,
+      system: MUSIC_MAN_CORE,
+      messages: [{ role: 'user', content: user }],
+    })
+    const block = reply.content[0]
+    const text = block && block.type === 'text' ? block.text.trim() : ''
+    albumTakeCache.set(key, text)
+    return { ok: true, take: text }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'album-take failed' }
   }
 })
 
