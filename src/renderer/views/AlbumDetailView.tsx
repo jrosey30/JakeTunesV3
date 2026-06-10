@@ -87,6 +87,23 @@ export default function AlbumDetailView() {
   const genre = tracks.find((t) => t.genre)?.genre || ''
   const totalMs = tracks.reduce((s, t) => s + (Number(t.duration) || 0), 0)
 
+  // nav #4 — flip through this artist's other albums without backing out.
+  // Owned albums by the same artist, newest-first (matches the artist page).
+  const siblingAlbums = useMemo(() => {
+    const norm = (s: string) => (s || '').trim().toLowerCase()
+    const target = norm(albumArtist)
+    const byKey = new Map<string, { key: string; name: string; year: string }>()
+    for (const t of lib.tracks) {
+      if (norm(t.albumArtist || t.artist) !== target) continue
+      const k = albumKeyOf(t)
+      if (!byKey.has(k)) byKey.set(k, { key: k, name: t.album || 'Unknown', year: String(t.year || '') })
+    }
+    return [...byKey.values()].sort((a, b) => (b.year || '').localeCompare(a.year || '') || a.name.localeCompare(b.name))
+  }, [lib.tracks, albumArtist])
+  const curIdx = useMemo(() => siblingAlbums.findIndex(a => a.key === albumKey), [siblingAlbums, albumKey])
+  const prevAlbum = curIdx > 0 ? siblingAlbums[curIdx - 1] : null
+  const nextAlbum = curIdx >= 0 && curIdx < siblingAlbums.length - 1 ? siblingAlbums[curIdx + 1] : null
+
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
   const artHash = lookupArtwork(lib.artworkMap, artIndex, albumArtist, albumName)
 
@@ -362,6 +379,27 @@ export default function AlbumDetailView() {
     <div className="album-page">
       <div className="album-page-topbar">
         <button type="button" className="album-page-back" onClick={goBack}>{backLabel}</button>
+        {siblingAlbums.length > 1 && curIdx >= 0 && (
+          <div className="album-page-flip" title={`${albumArtist} — album ${curIdx + 1} of ${siblingAlbums.length}`}>
+            <button
+              type="button"
+              className="album-page-flip-btn"
+              disabled={!prevAlbum}
+              onClick={() => prevAlbum && libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: prevAlbum.key })}
+              title={prevAlbum ? `Newer: ${prevAlbum.name}${prevAlbum.year ? ` (${prevAlbum.year})` : ''}` : 'Newest album'}
+              aria-label="Newer album"
+            >‹</button>
+            <span className="album-page-flip-pos">{curIdx + 1} / {siblingAlbums.length}</span>
+            <button
+              type="button"
+              className="album-page-flip-btn"
+              disabled={!nextAlbum}
+              onClick={() => nextAlbum && libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: nextAlbum.key })}
+              title={nextAlbum ? `Older: ${nextAlbum.name}${nextAlbum.year ? ` (${nextAlbum.year})` : ''}` : 'Oldest album'}
+              aria-label="Older album"
+            >›</button>
+          </div>
+        )}
       </div>
       <div className="album-page-hero">
         <div className="album-page-cover">
