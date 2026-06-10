@@ -119,10 +119,11 @@ const JUSTICES = [
 // ── Hall of Fame — verbatim moments from the tape (times from transcript.json;
 // each card click-seeks the audio to its moment) ──
 const QUOTES = [
-  // Card standard (Jake's): tight selections; every printed line a complete
-  // verbatim segment (internal "..." = the source's own speech rendering);
-  // beats may be skipped BETWEEN lines, never cut WITHIN one; a trail-off may
-  // appear only mid-card, resolved by the next line; every card ENDS landed.
+  // ⚠️ JAKE'S CURATION — scene-selection style, BY HIS EXPLICIT REQUEST
+  // (2026-06-10): the concession/callback/polices cards use HIS condensed
+  // quote text (his "..." are intentional scene cuts, like a trailer). Do
+  // NOT "restore" them to full transcript segments — that was tried and
+  // rejected. The click-to-play time carries the full moment.
   {
     title: 'Poppy steps up', time: 1805.794,
     note: 'Thirty minutes in, it’s his turn — the family’s favorite ten words.',
@@ -132,32 +133,27 @@ const QUOTES = [
     ],
   },
   {
-    title: 'The honest concession', time: 2341.522,
-    note: 'Candor at the lectern — admitting the limits of his own position rather than bluffing. He never gets to finish the sentence: Scalia pounces.',
+    title: 'The honest concession to Souter', time: 2341.522,
+    note: 'Candor at the lectern. He admits the limits of his own position rather than bluffing — which is exactly what experienced advocates do in front of that Court.',
     lines: [
-      { speaker: 'Mr. Rosenbaum', text: 'I tried to think of examples, prior to coming here today, of where some nonpredicate acts could be the basis of RICO standing, and I, at least within my own thinking, have been unable to come up with any, based upon the underlying theme in my argument that any act not a predicate act, even an act which may be necessary for...' },
-      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
+      { speaker: 'Mr. Rosenbaum', text: 'I tried to think of examples, prior to coming here today... and I, at least within my own thinking, have been unable to come up with any...' },
     ],
   },
   {
     title: 'The Scalia callback', time: 2581.489,
-    note: 'Citing the Justice’s own opinion to his face — and getting Scalia to reminisce mid-argument. “I thought you might remember it”: dry, confident, and it landed.',
+    note: 'Citing the Justice’s own opinion to his face — a veteran move. “I thought you might remember it”: dry, confident, and it landed. Getting Scalia to reminisce mid-argument is no small thing.',
     lines: [
-      { speaker: 'Mr. Rosenbaum', text: 'In an interesting opinion from the D.C. Circuit, Justice Scalia, that... the Halberstam opinion, there was some interesting language.' },
-      { speaker: 'Mr. Rosenbaum', text: 'You were on the panel together with Judge Bork and Judge Wall to issue the opinion.' },
+      { speaker: 'Mr. Rosenbaum', text: 'In an interesting opinion from the D.C. Circuit, Justice Scalia... the Halberstam opinion, there was some interesting language. You were on the panel together with Judge Bork and Judge Wall...' },
       { speaker: 'Justice Scalia', text: 'Cat burglar in suburban Virginia. It was a very prominent case around...' },
       { speaker: 'Mr. Rosenbaum', text: 'I thought you might remember it.' },
     ],
   },
   {
     title: 'Scalia polices the argument', time: 3008.728,
-    note: 'Scalia says that’s not the question the Court took — then cuts him off again mid-answer. He keeps his footing and makes the point anyway.',
+    note: 'He didn’t fold — he reframed and kept making his point under pressure.',
     lines: [
-      { speaker: 'Justice Scalia', text: 'That’s not why we took the case.' },
-      { speaker: 'Justice Scalia', text: 'Let’s assume that it was in furtherance of the RICO conspiracy and get on with the argument on that point.' },
-      { speaker: 'Mr. Rosenbaum', text: 'I’m arguing, Justice Scalia, that even if it was in furtherance of, he doesn’t have standing, a) because this is not, as I said before, a...' },
-      { speaker: 'Justice Scalia', text: 'Not in furtherance.' },
-      { speaker: 'Mr. Rosenbaum', text: 'Not... no, this is not a whistleblower statute.' },
+      { speaker: 'Justice Scalia', text: 'That’s not why we took the case. Let’s assume that it was in furtherance of the RICO conspiracy and get on with the argument on that point.' },
+      { speaker: 'Mr. Rosenbaum', text: 'I’m arguing, Justice Scalia, that even if it was in furtherance of, he doesn’t have standing...' },
     ],
   },
   {
