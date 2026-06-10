@@ -1488,7 +1488,9 @@ async function createWindow(): Promise<void> {
     ...(IS_MAC
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 12, y: 12 } }
       : {}),
-    backgroundColor: '#d8d8d8',
+    // Pre-paint color = the splash's cream mid-tone, so the first frame
+    // before the renderer mounts doesn't flash a foreign gray.
+    backgroundColor: '#f4f0e4',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
