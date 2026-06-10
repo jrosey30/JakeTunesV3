@@ -338,7 +338,10 @@ export type RepeatMode = 'off' | 'all' | 'one'
 // src/main/listening-memory.ts (the IPC payload shape).
 // ── SCOTUS Archive (Beck v. Prupis) — mirrors src/main/scotus-archive ──
 export interface ScotusSegment { start: number; stop: number; speaker: string; role: string; text: string }
-export interface ScotusJustice { name: string; slug: string; title: string; vote: string; note: string; portrait: string | null }
+export interface ScotusJustice {
+  name: string; slug: string; title: string; vote: string; note: string; portrait: string | null
+  party?: string; nominatedBy?: string; service?: string; fate?: string; bio?: string
+}
 export interface ScotusAdvocate { name: string; role: string; side: string; note: string; slug?: string; photo?: string | null }
 export interface ScotusCase {
   name: string; citation: string; docket: string; argued: string; decided: string

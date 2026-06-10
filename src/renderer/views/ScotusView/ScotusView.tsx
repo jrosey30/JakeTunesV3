@@ -321,15 +321,38 @@ export default function ScotusView() {
         <div className="scotus-roster">
           {(data.justices || []).map((j) => (
             <div key={j.slug} className="scotus-roster-j">
-              {j.portrait
-                ? <img src={j.portrait} alt={j.name} draggable={false} />
-                : <div className="scotus-roster-ph">{initials(j.name)}</div>}
-              <div className="scotus-roster-info">
-                <div className="scotus-roster-name">{j.name}</div>
-                <div className="scotus-roster-title">{j.title}</div>
-                <div className={`scotus-roster-vote scotus-roster-vote--${j.vote}`}>
-                  {j.vote === 'majority' ? 'Majority' : 'Dissent'}{j.note ? ` · ${j.note}` : ''}
+              <div className="scotus-roster-head">
+                {j.portrait
+                  ? <img src={j.portrait} alt={j.name} draggable={false} />
+                  : <div className="scotus-roster-ph">{initials(j.name)}</div>}
+                <div className="scotus-roster-info">
+                  <div className="scotus-roster-name">{j.name}</div>
+                  <div className="scotus-roster-title">{j.title}</div>
+                  <div className={`scotus-roster-vote scotus-roster-vote--${j.vote}`}>
+                    {j.vote === 'majority' ? 'Majority' : 'Dissent'}{j.note ? ` · ${j.note}` : ''}
+                  </div>
                 </div>
+              </div>
+              {j.bio && <p className="scotus-roster-bio">{j.bio}</p>}
+              <div className="scotus-roster-facts">
+                {j.nominatedBy && (
+                  <div className="scotus-roster-fact">
+                    <span className="scotus-roster-fact-k">Nominated by</span>
+                    <span>{j.nominatedBy}{j.party ? ` (${j.party})` : ''}</span>
+                  </div>
+                )}
+                {j.service && (
+                  <div className="scotus-roster-fact">
+                    <span className="scotus-roster-fact-k">On the Court</span>
+                    <span>{j.service}</span>
+                  </div>
+                )}
+                {j.fate && (
+                  <div className="scotus-roster-fact">
+                    <span className="scotus-roster-fact-k">{/died/i.test(j.fate) ? 'In memoriam' : 'Today'}</span>
+                    <span>{j.fate}</span>
+                  </div>
+                )}
               </div>
             </div>
           ))}

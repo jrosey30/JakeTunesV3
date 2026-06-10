@@ -58,16 +58,62 @@ const ADVOCATES = [
   { name: 'Jay Starkman', slug: 'starkman', role: 'For the Petitioner', side: 'petitioner', note: '' },
 ]
 
+// Profiles verified June 2026 (Oyez/Justia + status check on the living).
 const JUSTICES = [
-  { name: 'William H. Rehnquist', slug: 'rehnquist', title: 'Chief Justice', vote: 'majority', note: '' },
-  { name: 'John Paul Stevens', slug: 'stevens', title: 'Associate Justice', vote: 'dissent', note: '' },
-  { name: 'Sandra Day O’Connor', slug: 'oconnor', title: 'Associate Justice', vote: 'majority', note: '' },
-  { name: 'Antonin Scalia', slug: 'scalia', title: 'Associate Justice', vote: 'majority', note: '' },
-  { name: 'Anthony M. Kennedy', slug: 'kennedy', title: 'Associate Justice', vote: 'majority', note: '' },
-  { name: 'David H. Souter', slug: 'souter', title: 'Associate Justice', vote: 'dissent', note: '' },
-  { name: 'Clarence Thomas', slug: 'thomas', title: 'Associate Justice', vote: 'majority', note: 'Wrote the opinion — yet never asked a single question' },
-  { name: 'Ruth Bader Ginsburg', slug: 'ginsburg', title: 'Associate Justice', vote: 'majority', note: '' },
-  { name: 'Stephen G. Breyer', slug: 'breyer', title: 'Associate Justice', vote: 'majority', note: '' },
+  {
+    name: 'William H. Rehnquist', slug: 'rehnquist', title: 'Chief Justice', vote: 'majority', note: '',
+    party: 'Republican', nominatedBy: 'Richard Nixon · elevated to Chief by Ronald Reagan',
+    service: '1972–2005 · Chief from 1986', fate: 'Died in office Sep 3, 2005 (age 80)',
+    bio: 'Ran the tightest courtroom in America for 19 years — presided over Bush v. Gore and a presidential impeachment trial.',
+  },
+  {
+    name: 'John Paul Stevens', slug: 'stevens', title: 'Associate Justice', vote: 'dissent', note: '',
+    party: 'Republican', nominatedBy: 'Gerald Ford',
+    service: '1975–2010', fate: 'Retired 2010 · died Jul 16, 2019 (age 99)',
+    bio: 'A Republican appointee who became leader of the Court’s liberal wing; served 35 years, third-longest ever.',
+  },
+  {
+    name: 'Sandra Day O’Connor', slug: 'oconnor', title: 'Associate Justice', vote: 'majority', note: '',
+    party: 'Republican', nominatedBy: 'Ronald Reagan',
+    service: '1981–2006', fate: 'Retired 2006 · died Dec 1, 2023 (age 93)',
+    bio: 'The first woman ever to sit on the Supreme Court — and the decisive swing vote of her era.',
+  },
+  {
+    name: 'Antonin Scalia', slug: 'scalia', title: 'Associate Justice', vote: 'majority', note: '',
+    party: 'Republican', nominatedBy: 'Ronald Reagan',
+    service: '1986–2016', fate: 'Died in office Feb 13, 2016 (age 79)',
+    bio: 'Father of modern originalism and the Court’s sharpest pen — the Justice who spars hardest with both lawyers on this tape.',
+  },
+  {
+    name: 'Anthony M. Kennedy', slug: 'kennedy', title: 'Associate Justice', vote: 'majority', note: '',
+    party: 'Republican', nominatedBy: 'Ronald Reagan',
+    service: '1988–2018', fate: 'Retired 2018 · living',
+    bio: 'For three decades the Court’s swing vote — the man both sides aimed every argument at.',
+  },
+  {
+    name: 'David H. Souter', slug: 'souter', title: 'Associate Justice', vote: 'dissent', note: '',
+    party: 'Republican', nominatedBy: 'George H. W. Bush',
+    service: '1990–2009', fate: 'Retired 2009 · died May 8, 2025 (age 85)',
+    bio: 'The famously frugal New Hampshire judge who surprised his appointers by joining the liberal wing.',
+  },
+  {
+    name: 'Clarence Thomas', slug: 'thomas', title: 'Associate Justice', vote: 'majority', note: 'Wrote the opinion — yet never asked a single question',
+    party: 'Republican', nominatedBy: 'George H. W. Bush',
+    service: '1991–present', fate: 'Still serving — the longest-tenured sitting Justice',
+    bio: 'The Court’s most conservative member and its quietest at argument — silent on this tape, then wrote the opinion that won Poppy’s case.',
+  },
+  {
+    name: 'Ruth Bader Ginsburg', slug: 'ginsburg', title: 'Associate Justice', vote: 'majority', note: '',
+    party: 'Democratic', nominatedBy: 'Bill Clinton',
+    service: '1993–2020', fate: 'Died in office Sep 18, 2020 (age 87)',
+    bio: 'Pioneering women’s-rights litigator turned liberal icon — later beloved as “the Notorious RBG.”',
+  },
+  {
+    name: 'Stephen G. Breyer', slug: 'breyer', title: 'Associate Justice', vote: 'majority', note: '',
+    party: 'Democratic', nominatedBy: 'Bill Clinton',
+    service: '1994–2022', fate: 'Retired 2022 · living',
+    bio: 'The Court’s pragmatist — famous for sprawling hypotheticals that make advocates sweat.',
+  },
 ]
 
 interface Segment { start: number; stop: number; speaker: string; role: string; text: string }

@@ -333,18 +333,33 @@
 
 .scotus-roster {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
   margin-top: 4px;
 }
 .scotus-roster-j {
-  display: flex;
-  align-items: center;
-  gap: 12px;
   background: #fffefb;
   border: 1px solid rgba(0, 0, 0, 0.07);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
+}
+.scotus-roster-head { display: flex; align-items: center; gap: 12px; }
+.scotus-roster-bio {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #4a505c;
+  font-style: italic;
+}
+.scotus-roster-facts { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.scotus-roster-fact { display: flex; gap: 8px; font-size: 12px; color: #3a404c; line-height: 1.45; }
+.scotus-roster-fact-k {
+  flex: 0 0 92px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9a7b3a;
+  padding-top: 1.5px;
 }
 .scotus-roster-j img, .scotus-roster-ph {
   width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
