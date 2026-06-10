@@ -7,11 +7,11 @@
  * swaggering, a little goosebump from the big landing + tail.
  *
  *   0.00s  pick-scrape + stick-count tick — "here we go"
- *   0.26s  B5  ┐ three descending power chords, each a kick+snare STOMP. The
- *   0.48s  A5  │ splash logo is falling through these — it drops in time with
- *   0.70s  G5  ┘ the riff…
- *   0.90s  E5  …and SLAMS home: big sustained chord + crash + sub-E, the exact
- *               frame the logo lands. Rings out ~1.9s on a reverb tail.
+ *   0.37s  B5  ┐ three descending power chords, each a kick+snare STOMP, spaced
+ *   0.63s  A5  │ to strut (not rush). The splash logo is falling through these
+ *   0.89s  G5  ┘ — it drops in time with the riff…
+ *   1.15s  E5  …and SLAMS home: big sustained chord + crash + sub-E, the exact
+ *               frame the logo lands. Rings out ~2.1s on a reverb tail.
  *
  * Not annoying: the crunch is a CONTROLLED tanh (k≈7, not a fizzy k=14) into a
  * ~4 kHz lowpass — warm amp grit, not buzz. Modest master level.
@@ -26,7 +26,7 @@
 let played = false
 
 /** Seconds from play start to the landing chord — the splash logo's impact. */
-export const STINGER_BLOOM_AT = 0.9
+export const STINGER_BLOOM_AT = 1.15
 
 export function playIntroStinger(): void {
   // Once per app launch; also guards React StrictMode's dev double-mount.
@@ -50,8 +50,8 @@ export function playIntroStinger(): void {
     comp.connect(ctx.destination)
     const master = ctx.createGain()
     master.gain.setValueAtTime(0.3, t0)
-    master.gain.setValueAtTime(0.3, LAND + 1.7)
-    master.gain.linearRampToValueAtTime(0.0001, LAND + 2.2)   // fade out, no hard stop
+    master.gain.setValueAtTime(0.3, LAND + 1.9)
+    master.gain.linearRampToValueAtTime(0.0001, LAND + 2.4)   // fade out, no hard stop
     master.connect(comp)
 
     // ── Reverb: 2.2s decaying-noise impulse — the goosebump tail on the landing ──
@@ -141,8 +141,8 @@ export function playIntroStinger(): void {
       const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9500   // dark — no sizzle
       const g = ctx.createGain()
       g.gain.setValueAtTime(0.26, t)
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.7)
-      src.connect(hp).connect(lp).connect(g).connect(master); sendToVerb(g); src.start(t); src.stop(t + 1.8)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.9)
+      src.connect(hp).connect(lp).connect(g).connect(master); sendToVerb(g); src.start(t); src.stop(t + 2.0)
     }
     const tick = (t: number): void => {   // closed hat / stick count
       const src = ctx.createBufferSource(); src.buffer = noiseBuffer(0.04)
@@ -165,25 +165,26 @@ export function playIntroStinger(): void {
     }
 
     // ── The strut: pickup → descending B5·A5·G5 stomp → E5 landing ──
-    pickScrape(t0 + 0.02)
-    tick(t0 + 0.04)
-    tick(t0 + 0.20)
-    // B2=123.47, A2=110.0, G2=98.0, E2=82.41 (power-chord roots, descending)
-    chord(t0 + 0.26, 123.47, 0.2); kick(t0 + 0.26); snare(t0 + 0.26)
-    chord(t0 + 0.48, 110.00, 0.2); kick(t0 + 0.48); snare(t0 + 0.48)
-    chord(t0 + 0.70, 98.00, 0.2);  kick(t0 + 0.70); snare(t0 + 0.70)
+    pickScrape(t0 + 0.04)
+    tick(t0 + 0.06)
+    tick(t0 + 0.28)
+    // B2=123.47, A2=110.0, G2=98.0, E2=82.41 (power-chord roots, descending).
+    // Stomps spaced 0.26s — deliberate strut, not a rushed run.
+    chord(t0 + 0.37, 123.47, 0.24); kick(t0 + 0.37); snare(t0 + 0.37)
+    chord(t0 + 0.63, 110.00, 0.24); kick(t0 + 0.63); snare(t0 + 0.63)
+    chord(t0 + 0.89, 98.00, 0.24);  kick(t0 + 0.89); snare(t0 + 0.89)
     // LANDING — the big one (logo slams home)
-    chord(LAND, 82.41, 1.9, true); kick(LAND); snare(LAND, 0.7); crash(LAND)
+    chord(LAND, 82.41, 2.1, true); kick(LAND); snare(LAND, 0.7); crash(LAND)
     {
       const sub = ctx.createOscillator(); const g = ctx.createGain()
       sub.type = 'sine'
       sub.frequency.setValueAtTime(82.41, LAND)
       sub.frequency.exponentialRampToValueAtTime(41.2, LAND + 0.08)   // drop to E1 — felt
       g.gain.setValueAtTime(0.6, LAND)
-      g.gain.exponentialRampToValueAtTime(0.0001, LAND + 1.6)
-      sub.connect(g).connect(master); sub.start(LAND); sub.stop(LAND + 1.7)
+      g.gain.exponentialRampToValueAtTime(0.0001, LAND + 1.8)
+      sub.connect(g).connect(master); sub.start(LAND); sub.stop(LAND + 1.9)
     }
 
-    window.setTimeout(() => { void ctx.close().catch(() => { /* already closed */ }) }, 3600)
+    window.setTimeout(() => { void ctx.close().catch(() => { /* already closed */ }) }, 4000)
   } catch { /* no audio is never an error worth surfacing on the splash */ }
 }

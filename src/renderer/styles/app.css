@@ -73,7 +73,7 @@
   inset: -46px -46px -28px;
   background: radial-gradient(circle at 50% 42%, rgba(224, 129, 46, 0.28) 0%, rgba(187, 67, 8, 0.10) 42%, rgba(187, 67, 8, 0) 68%);
   opacity: 0;
-  animation: splash-halo-breathe 3.2s ease-in-out 1.15s infinite;
+  animation: splash-halo-breathe 3.2s ease-in-out 1.40s infinite;
   pointer-events: none;
 }
 
@@ -87,7 +87,7 @@
 .app-splash-logo-drop {
   position: absolute;
   inset: 0 0 18px;
-  animation: splash-drop 0.9s cubic-bezier(0.5, 0, 0.82, 0.4) both;
+  animation: splash-drop 1.15s cubic-bezier(0.5, 0, 0.82, 0.4) both;
 }
 
 @keyframes splash-drop {
@@ -101,7 +101,7 @@
   width: 100%;
   height: 100%;
   transform-origin: 50% 100%;
-  animation: splash-squash 0.62s cubic-bezier(0.3, 0.6, 0.4, 1) 0.9s both;
+  animation: splash-squash 0.62s cubic-bezier(0.3, 0.6, 0.4, 1) 1.15s both;
 }
 
 @keyframes splash-squash {
@@ -139,7 +139,7 @@
   height: 160%;
   transform: rotate(18deg);
   background: linear-gradient(90deg, rgba(255, 250, 240, 0) 0%, rgba(255, 250, 240, 0.55) 50%, rgba(255, 250, 240, 0) 100%);
-  animation: splash-shine-sweep 3.4s ease-in-out 1.75s infinite;
+  animation: splash-shine-sweep 3.4s ease-in-out 2.00s infinite;
 }
 
 @keyframes splash-shine-sweep {
@@ -159,8 +159,8 @@
   background: radial-gradient(ellipse, rgba(90, 42, 12, 0.30) 0%, rgba(90, 42, 12, 0) 70%);
   transform: translateX(-50%) scale(0.3, 0.5);
   animation:
-    splash-shadow-land 1.5s cubic-bezier(0.3, 0.6, 0.4, 1) both,
-    splash-shadow-breathe 3.2s ease-in-out 1.75s infinite;
+    splash-shadow-land 1.75s cubic-bezier(0.3, 0.6, 0.4, 1) both,
+    splash-shadow-breathe 3.2s ease-in-out 2.00s infinite;
 }
 
 @keyframes splash-shadow-land {
@@ -187,11 +187,11 @@
   pointer-events: none;
   animation: splash-note-rise 2.8s ease-out infinite;
 }
-.splash-note--1 { --drift: -52px; animation-delay: 0.94s; font-size: 23px; color: #bb4308; }
-.splash-note--2 { --drift: 44px;  animation-delay: 1.00s; font-size: 19px; color: #e0812e; }
-.splash-note--3 { --drift: -30px; animation-delay: 1.60s; font-size: 21px; color: #d2641c; }
-.splash-note--4 { --drift: 58px;  animation-delay: 2.20s; font-size: 18px; color: #bb4308; }
-.splash-note--5 { --drift: 12px;  animation-delay: 2.75s; font-size: 20px; color: #e0812e; }
+.splash-note--1 { --drift: -52px; animation-delay: 1.19s; font-size: 23px; color: #bb4308; }
+.splash-note--2 { --drift: 44px;  animation-delay: 1.25s; font-size: 19px; color: #e0812e; }
+.splash-note--3 { --drift: -30px; animation-delay: 1.85s; font-size: 21px; color: #d2641c; }
+.splash-note--4 { --drift: 58px;  animation-delay: 2.45s; font-size: 18px; color: #bb4308; }
+.splash-note--5 { --drift: 12px;  animation-delay: 3.00s; font-size: 20px; color: #e0812e; }
 
 @keyframes splash-note-rise {
   0%   { transform: translate(-50%, 0) scale(0.3) rotate(0deg);                 opacity: 0; }
@@ -210,7 +210,7 @@
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: splash-spring-up 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 1.06s both;
+  animation: splash-spring-up 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 1.31s both;
 }
 
 @keyframes splash-spring-up {
@@ -223,7 +223,7 @@
   font-size: 13.5px;
   font-weight: 600;
   color: #8a6f5c;
-  animation: splash-fade-up 0.5s ease-out 1.24s both;
+  animation: splash-fade-up 0.5s ease-out 1.49s both;
 }
 
 .app-splash-greeting {
@@ -231,7 +231,7 @@
   font-size: 14.5px;
   font-weight: 700;
   color: #bb4308;
-  animation: splash-fade-up 0.5s ease-out 1.38s both;
+  animation: splash-fade-up 0.5s ease-out 1.63s both;
 }
 
 @keyframes splash-fade-up {
@@ -246,7 +246,7 @@
   gap: 5px;
   height: 30px;
   margin-top: 20px;
-  animation: splash-fade-up 0.4s ease-out 1.18s both;
+  animation: splash-fade-up 0.4s ease-out 1.43s both;
 }
 
 .app-splash-eq-bar {
@@ -275,7 +275,7 @@
   border-radius: 3px;
   background: rgba(187, 67, 8, 0.14);
   overflow: hidden;
-  animation: splash-fade-up 0.4s ease-out 1.48s both;
+  animation: splash-fade-up 0.4s ease-out 1.73s both;
 }
 
 .app-splash-progress-fill {
@@ -298,7 +298,7 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #9a8a76;
-  animation: splash-fade-up 0.4s ease-out 1.54s both;
+  animation: splash-fade-up 0.4s ease-out 1.79s both;
 }
 
 /* Reduced motion: everything lands settled and still. */

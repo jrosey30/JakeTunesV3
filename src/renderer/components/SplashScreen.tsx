@@ -115,7 +115,7 @@ export default function SplashScreen({ isReady }: Props) {
             <div
               key={i}
               className="app-splash-eq-bar"
-              style={{ animationDelay: `${1.16 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
+              style={{ animationDelay: `${1.41 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
             />
           ))}
         </div>
