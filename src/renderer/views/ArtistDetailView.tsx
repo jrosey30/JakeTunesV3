@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -91,6 +91,21 @@ function normTitle(s: string): string {
 // Related artists cached per canonical name across visits (main caches a day
 // too; this avoids even the round-trip on re-open).
 const relatedArtistsCache: Record<string, RelatedArtist[]> = {}
+
+// Spotify-style release-type bucket, inferred from the title. MusicBrainz's
+// types are accurate but the user's owned titles ("Past Masters, Vol. 1") don't
+// reliably match MB's ("Past Masters · Volume One"), so classifying by title is
+// the robust path — covers the common naming and needs no extra lookups.
+function releaseType(title: string): 'album' | 'ep' | 'single' | 'compilation' | 'live' {
+  const t = (title || '').toLowerCase()
+  if (/\blive\b|unplugged|in concert|live at|live from|live in|at the bbc|bbc sessions|live!/.test(t)) return 'live'
+  if (/past masters|greatest hits|\bbest of\b|the best of|\bhits\b|anthology|\bcollection\b|rarities|b-sides|b sides|\bessential\b|the very best|\bsingles\b|love songs|ballads|mixtape|compilation/.test(t)) return 'compilation'
+  if (/\bep\b|-\s*ep$|\(ep\)/.test(t)) return 'ep'
+  if (/-\s*single$|\(single\)|\bsingle\b/.test(t)) return 'single'
+  return 'album'
+}
+// Display sections, in order. index 0=albums, 1=singles/eps, 2=comps, 3=live.
+const DISCO_GROUP_LABELS = ['Albums', 'Singles & EPs', 'Compilations', 'Live']
 
 function relationLabel(rel: string): string {
   switch (rel) {
@@ -566,6 +581,15 @@ export default function ArtistDetailView() {
         const ownedMissing = ownedDisco.filter(a => !mbTitles.has(normTitle(a.title)))
         const mergedDisco: DiscographyAlbum[] = [...mbKept, ...ownedMissing]
           .sort((a, b) => (b.year || '').localeCompare(a.year || ''))
+        // Spotify-style sections: Albums → Singles & EPs → Compilations → Live,
+        // newest-first within each. Past Masters lands under Compilations.
+        const discoGroup = (title: string): number => {
+          const ty = releaseType(title)
+          return ty === 'album' ? 0 : (ty === 'ep' || ty === 'single') ? 1 : ty === 'compilation' ? 2 : 3
+        }
+        const groupedDisco = mergedDisco
+          .map(album => ({ album, g: discoGroup(album.title) }))
+          .sort((a, b) => a.g - b.g || (b.album.year || '').localeCompare(a.album.year || ''))
         return (
           <div key={persona.name} className={`artist-detail-chapter ${isMulti ? 'artist-detail-chapter--multi' : ''}`}>
             {isMulti && (
@@ -629,15 +653,18 @@ export default function ArtistDetailView() {
               )}
               {mergedDisco.length > 0 && (
                 <div className="artist-detail-disco-list">
-                  {mergedDisco.map(album => {
+                  {groupedDisco.map(({ album, g }, i) => {
                     const ownedCount = album.tracks.reduce((n, t) => n + (ownedByTitle.has(normTitle(t.title)) ? 1 : 0), 0)
                     const total = album.tracks.length
                     const pct = total > 0 ? Math.round((ownedCount / total) * 100) : 0
                     const expandKey = `${persona.name}|||${album.title}`
                     const expanded = expandedAlbumTitle === expandKey
                     const fullyOwned = ownedCount === total && total > 0
+                    const showHead = i === 0 || groupedDisco[i - 1].g !== g
                     return (
-                      <div key={expandKey} className={`artist-detail-disco-album ${expanded ? 'artist-detail-disco-album--expanded' : ''} ${fullyOwned ? 'artist-detail-disco-album--owned' : ''}`}>
+                      <Fragment key={expandKey}>
+                        {showHead && <div className="artist-detail-disco-subhead">{DISCO_GROUP_LABELS[g]}</div>}
+                        <div className={`artist-detail-disco-album ${expanded ? 'artist-detail-disco-album--expanded' : ''} ${fullyOwned ? 'artist-detail-disco-album--owned' : ''}`}>
                         <button
                           className="artist-detail-disco-album-header"
                           onClick={() => setExpandedAlbumTitle(expanded ? null : expandKey)}
@@ -670,7 +697,8 @@ export default function ArtistDetailView() {
                             })}
                           </ol>
                         )}
-                      </div>
+                        </div>
+                      </Fragment>
                     )
                   })}
                 </div>
