@@ -348,12 +348,14 @@ export interface ScotusCase {
   court: string; poppy: string; vote: string; opinionBy: string
   question: string; background: string; holding: string; significance: string
 }
+export interface ScotusQuote { title: string; time: number; note?: string; lines: Array<{ speaker: string; text: string }> }
 export interface ScotusArchiveData {
   exists: boolean
   case?: ScotusCase
   advocates?: ScotusAdvocate[]
   justices?: ScotusJustice[]
   segments?: ScotusSegment[]
+  quotes?: ScotusQuote[]
 }
 
 // Brain — Rediscover pick (mirrors RediscoveryPick in src/main/rediscovery.ts).

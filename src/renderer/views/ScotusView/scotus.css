@@ -354,6 +354,72 @@
 }
 .scotus-case-card p { margin: 0; font-size: 14px; line-height: 1.6; color: #2f3540; }
 
+/* ── From the Argument — the quotes hall of fame ── */
+.scotus-quotes { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+.scotus-quotes-sub {
+  text-align: center;
+  font-size: 12.5px;
+  color: #8a8a8a;
+  margin: -12px 0 18px;
+}
+.scotus-quotes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+.scotus-quote {
+  display: block;
+  text-align: left;
+  background: #fffefb;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-left: 3px solid #b8924a;
+  border-radius: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.scotus-quote:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(26, 39, 68, 0.12);
+}
+.scotus-quote-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.scotus-quote-title {
+  font-family: Georgia, serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a2744;
+}
+.scotus-quote-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #9a7b3a;
+  border: 1px solid rgba(184, 146, 74, 0.45);
+  border-radius: 20px;
+  padding: 2px 9px;
+}
+.scotus-quote:hover .scotus-quote-time { background: #b8924a; color: #fffefb; border-color: #b8924a; }
+.scotus-quote-line { margin: 0 0 6px; font-size: 13px; line-height: 1.5; color: #2f3540; }
+.scotus-quote-line:last-of-type { margin-bottom: 0; }
+.scotus-quote-speaker { font-weight: 700; font-size: 12px; color: #2a3a5c; }
+.scotus-quote-line--poppy .scotus-quote-speaker { color: #9a7b3a; }
+.scotus-quote-note {
+  margin-top: 10px;
+  font-size: 12px;
+  font-style: italic;
+  color: #8a8a8a;
+  border-top: 1px dashed rgba(0, 0, 0, 0.08);
+  padding-top: 8px;
+}
+
 .scotus-advocates { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
 .scotus-adv {
   flex: 0 1 320px;

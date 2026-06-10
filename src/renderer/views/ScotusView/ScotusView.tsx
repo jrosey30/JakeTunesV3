@@ -335,6 +335,29 @@ export default function ScotusView() {
         </div>
       </section>
 
+      {(data.quotes?.length ?? 0) > 0 && (
+        <section className="scotus-quotes">
+          <h2 className="scotus-h2">From the Argument</h2>
+          <p className="scotus-quotes-sub">The hall of fame — click any exchange to hear it.</p>
+          <div className="scotus-quotes-grid">
+            {data.quotes!.map((q) => (
+              <button key={q.time} className="scotus-quote" onClick={() => seekTo(q.time)} title={`Play from ${fmt(q.time)}`}>
+                <div className="scotus-quote-head">
+                  <span className="scotus-quote-title">{q.title}</span>
+                  <span className="scotus-quote-time">▶ {fmt(q.time)}</span>
+                </div>
+                {q.lines.map((l, i) => (
+                  <p key={i} className={`scotus-quote-line ${l.speaker.includes('Rosenbaum') ? 'scotus-quote-line--poppy' : ''}`}>
+                    <span className="scotus-quote-speaker">{l.speaker}:</span> “{l.text}”
+                  </p>
+                ))}
+                {q.note && <div className="scotus-quote-note">{q.note}</div>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="scotus-players">
         <h2 className="scotus-h2">The Advocates</h2>
         <div className="scotus-advocates">

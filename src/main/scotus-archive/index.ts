@@ -116,6 +116,62 @@ const JUSTICES = [
   },
 ]
 
+// ── Hall of Fame — verbatim moments from the tape (times from transcript.json;
+// each card click-seeks the audio to its moment) ──
+const QUOTES = [
+  {
+    title: 'The gavel falls', time: 0,
+    note: 'The first words of the morning — and of this exhibit.',
+    lines: [
+      { speaker: 'Chief Justice Rehnquist', text: 'We’ll hear argument first this morning in Number 98-1480, Robert A. Beck v. Ronald Prupis.' },
+    ],
+  },
+  {
+    title: 'Poppy steps up', time: 1805.794,
+    note: 'Thirty minutes in, it’s his turn — the family’s favorite ten words.',
+    lines: [
+      { speaker: 'Chief Justice Rehnquist', text: 'Mr. Rosenbaum, we’ll hear from you.' },
+      { speaker: 'Mr. Rosenbaum', text: 'Mr. Chief Justice, if it please the Court:' },
+    ],
+  },
+  {
+    title: '“I think I know what your problem is”', time: 2364.437,
+    note: 'Scalia interrupts himself, then winds up. Mr. Rosenbaum is about to spend a few minutes in the barrel.',
+    lines: [
+      { speaker: 'Justice Scalia', text: 'Well, take a simple... no, you go.' },
+      { speaker: 'Justice Scalia', text: 'I think I know what your problem is, Mr. Rosenbaum.' },
+      { speaker: 'Justice Scalia', text: 'It’s the statement you made earlier that these nonpredicate acts have nothing to do with the goal of the conspiracy... That’s simply not true.' },
+    ],
+  },
+  {
+    title: 'The bank guard', time: 2393.988,
+    note: 'The hypothetical of the day — Scalia’s imaginary heist crew did nothing wrong, exactly.',
+    lines: [
+      { speaker: 'Justice Scalia', text: 'Some of the means along the end to that goal, killing the bank guard, happen to be unlawful acts covered by RICO... they didn’t intend to kill... the object wasn’t to kill the guard.' },
+      { speaker: 'Justice Scalia', text: 'It was to get the money in the bank.' },
+    ],
+  },
+  {
+    title: 'Getting a word in', time: 2502.809,
+    note: 'Answering Justice Scalia is its own sport. Final score: Scalia 4 sentences, Mr. Rosenbaum 5 words.',
+    lines: [
+      { speaker: 'Justice Scalia', text: 'I don’t see how you get there through the text, is my problem.' },
+      { speaker: 'Mr. Rosenbaum', text: 'I’m sorry, Justice...' },
+      { speaker: 'Justice Scalia', text: 'I don’t see how you get there through the text.' },
+      { speaker: 'Mr. Rosenbaum', text: 'I get...' },
+    ],
+  },
+  {
+    title: '“The case is submitted.”', time: 3630.226,
+    note: 'The last words of the hour. Five months later: 7–2, for his clients.',
+    lines: [
+      { speaker: 'Chief Justice Rehnquist', text: 'Thank you.' },
+      { speaker: 'Mr. Rosenbaum', text: 'Thank you, Your Honor.' },
+      { speaker: 'Chief Justice Rehnquist', text: 'Thank you, Mr. Rosenbaum. The case is submitted.' },
+    ],
+  },
+]
+
 interface Segment { start: number; stop: number; speaker: string; role: string; text: string }
 let cachedSegments: Segment[] | null = null
 
@@ -181,7 +237,7 @@ export function registerScotusArchive(deps: ScotusDeps): void {
       // Audio presence is the gate — without the recording there's no exhibit.
       await readFile(join(vaultDir(), 'argument.mp3')).then(() => {}, () => { throw new Error('no audio') }).catch(() => { throw new Error('no audio') })
       const [segments, justices, advocates] = await Promise.all([loadSegments(), justicesWithPortraits(), advocatesWithPhotos()])
-      return { ok: true, exists: true, case: CASE_META, advocates, justices, segments }
+      return { ok: true, exists: true, case: CASE_META, advocates, justices, segments, quotes: QUOTES }
     } catch {
       return { ok: true, exists: false }
     }
