@@ -13,7 +13,7 @@ import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
 import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
-import LucidaStoreView from '../views/LucidaStore'
+import DownloadView from '../views/DownloadStore'
 import RecordStoreView from '../views/RecordStore'
 import '../styles/main-content.css'
 
@@ -62,7 +62,7 @@ export default function MainContent() {
     case 'device': viewElement = <DeviceView />; break
     case 'cd-import': viewElement = <CDImportView />; break
     case 'store': viewElement = <StoreView />; break
-    case 'lucida': viewElement = <LucidaStoreView />; break
+    case 'download': viewElement = <DownloadView />; break
     case 'recordstore': viewElement = <RecordStoreView />; break
     default: viewElement = <SongsView />
   }

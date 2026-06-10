@@ -404,7 +404,7 @@ export default function Sidebar() {
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
           />
           <SidebarItem
-            label="lucida.to"
+            label="Download"
             icon={(
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M8 2.5v6" />
@@ -412,8 +412,8 @@ export default function Sidebar() {
                 <path d="M3 11.5h10" />
               </svg>
             )}
-            selected={state.currentView === 'lucida'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'lucida' })}
+            selected={state.currentView === 'download'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
           />
           {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
               release (shipping listen-to-the-list only; Phase-2 store held).

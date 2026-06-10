@@ -572,16 +572,11 @@ const electronAPI = {
     ipcRenderer.invoke('bandcamp:nav-state'),
   bandcampGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-back'),
   bandcampGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-forward'),
-  // ── lucida.to embedded view (separate partition + shared download router) ──
-  lucidaMount: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
-    ipcRenderer.invoke('lucida:mount', bounds),
-  lucidaResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
-    ipcRenderer.invoke('lucida:resize', bounds),
-  lucidaUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('lucida:unmount'),
-  lucidaNavState: (): Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }> =>
-    ipcRenderer.invoke('lucida:nav-state'),
-  lucidaGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('lucida:go-back'),
-  lucidaGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('lucida:go-forward'),
+  // ── streamrip download store (paste-a-link → rip CLI → import) ──
+  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string }> =>
+    ipcRenderer.invoke('streamrip:status'),
+  streamripDownload: (url: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download', url),
 
   // ── Music Man's Record Store (Brief 037) ──
   // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/

@@ -67,7 +67,7 @@ import {
   type AudioFormat,
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
-import { registerLucidaStore } from './lucida-store'
+import { registerStreamripStore } from './streamrip-store'
 import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
@@ -13057,15 +13057,12 @@ app.whenReady().then(async () => {
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
   })
 
-  // lucida.to embedded view (replaces dead squid.wtf) — separate partition,
-  // same download-routing pipeline as Bandcamp (importDownloaded +
-  // pendingImportsDir wired so downloads land in library with
-  // source='lucida'). Reuses the bandcamp:* event channels the renderer is
-  // already subscribed to.
-  registerLucidaStore({
+  // streamrip download store (replaces the dead embedded web-store views —
+  // squid/lucida/dab). Shells out to the `rip` CLI and imports the result
+  // through the same pipeline Bandcamp uses, tagged source='streamrip'.
+  registerStreamripStore({
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
-    pendingImportsDir: join(libraryRoot, '_pending-imports'),
   })
 
   // ── Music Man's Record Store (Brief 037) ──

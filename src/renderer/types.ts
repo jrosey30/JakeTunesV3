@@ -90,7 +90,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'lucida' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery'
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on
@@ -603,13 +603,9 @@ declare global {
       bandcampNavState: () => Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }>
       bandcampGoBack: () => Promise<{ ok: boolean }>
       bandcampGoForward: () => Promise<{ ok: boolean }>
-      // ── lucida.to embedded view (parallel to Bandcamp, separate partition) ──
-      lucidaMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
-      lucidaResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
-      lucidaUnmount: () => Promise<{ ok: true }>
-      lucidaNavState: () => Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }>
-      lucidaGoBack: () => Promise<{ ok: boolean }>
-      lucidaGoForward: () => Promise<{ ok: boolean }>
+      // ── streamrip download store (paste-a-link → rip CLI → import) ──
+      streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string }>
+      streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       // ── Bandcamp Store v4 (download -> library events) ──
       // Payload is the full Track record minted by importOneFile() — same
       // shape the drag-drop importQueue delivers. App.tsx dispatches it
