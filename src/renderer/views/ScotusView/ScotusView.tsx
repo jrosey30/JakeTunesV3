@@ -112,8 +112,16 @@ export default function ScotusView() {
   }, [fadeVolume])
   const speakAnswer = useCallback(async () => {
     if (speaking) { stopSpeak(); return }
-    const text = amicus?.answer
-    if (!text) return
+    const raw = amicus?.answer
+    if (!raw) return
+    // Flash TTS hallucinates a garbled "yelp" at the end when the text doesn't
+    // finish on a clean, complete sentence. Trim any dangling tail to the last
+    // sentence-ending punctuation, and guarantee a terminal mark, so the voice
+    // always has a clean place to stop.
+    let text = raw.replace(/\s+/g, ' ').trim()
+    const lastEnd = Math.max(text.lastIndexOf('.'), text.lastIndexOf('!'), text.lastIndexOf('?'))
+    if (lastEnd >= 20) text = text.slice(0, lastEnd + 1)
+    if (!/[.!?]$/.test(text)) text += '.'
     setSpeakNote('')
     setSpeaking(true)
     fadeVolume(0.15, 350) // duck the argument under Amicus — don't pause it
