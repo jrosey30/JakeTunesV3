@@ -14,6 +14,8 @@ import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { subscribeDownloads, downloadsVersion, isStreamingLibrary, isDownloaded, isDownloading, initDownloads, downloadPaths, removeDownloadPaths } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
+import { canonicalArtist } from '../utils/artistAlias'
+import { albumKeyOf } from '../utils/albumKey'
 import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
@@ -444,6 +446,9 @@ export default function SongsView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      { separator: true as const },
+      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
+      { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
       ...(trackArtist && artistTracks.length > 0 ? [
         { separator: true as const },
         {

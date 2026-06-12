@@ -7,6 +7,8 @@ import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
+import { canonicalArtist } from '../utils/artistAlias'
+import { albumKeyOf } from '../utils/albumKey'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -462,6 +464,9 @@ export default function PlaylistView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
+      { separator: true as const },
+      { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
+      { label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
       ...ratingMenuEntries(selected, dispatch),
       { separator: true as const },
       {

@@ -5,6 +5,7 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { albumKeyOf } from '../utils/albumKey'
+import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { albumCreditReleaseDate } from '../utils/albumReleaseDate'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
@@ -277,6 +278,9 @@ export default function AlbumDetailView() {
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      { separator: true as const },
+      // Already on the album page — only Go to Artist makes sense here.
+      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
       ...(trackArtist && artistTracks.length > 0 ? [
         { separator: true as const },
         { label: `Start ${trackArtist} Radio`, onClick: () => { window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', { detail: { tracks: artistTracks, label: trackArtist } })) } },
