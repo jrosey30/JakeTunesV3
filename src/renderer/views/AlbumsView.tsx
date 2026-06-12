@@ -6,6 +6,9 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { albumKeyOf, albumKeyFromStrings } from '../utils/albumKey'
+import ScrollTopButton from '../components/ScrollTopButton'
+import FindBar from '../components/FindBar'
+import { useFindState } from '../hooks/useFindState'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
@@ -84,6 +87,41 @@ export default function AlbumsView() {
     if (af) result = result.filter(a => a.name.toLowerCase().includes(af) || a.artist.toLowerCase().includes(af))
     return result
   }, [albums, effectiveQuery, af])
+
+  // ⌘F find-in-view: jump to an album card + flash it (cards carry
+  // data-album-key, all in the DOM).
+  const find = useFindState()
+  const findMatches = useMemo(() => {
+    const q = find.query.trim().toLowerCase()
+    if (!q) return [] as string[]
+    return filteredAlbums
+      .filter(a => a.name.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q))
+      .map(a => albumKeyFromStrings(a.artist, a.name))
+  }, [filteredAlbums, find.query])
+  const jumpToFind = useCallback((c: number) => {
+    const key = findMatches[c]
+    if (!key) return
+    const el = viewRootRef.current?.querySelector(`[data-album-key="${CSS.escape(key)}"]`) as HTMLElement | null
+    if (!el) return
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('find-hit')
+    window.setTimeout(() => el.classList.remove('find-hit'), 1400)
+  }, [findMatches])
+  useEffect(() => {
+    if (!find.open || findMatches.length === 0) return
+    jumpToFind(Math.min(find.cursor, findMatches.length - 1))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [find.open, find.query, findMatches.length])
+  const findNext = useCallback(() => {
+    if (findMatches.length === 0) return
+    const c = (find.cursor + 1) % findMatches.length
+    find.setCursor(c); jumpToFind(c)
+  }, [findMatches.length, find, jumpToFind])
+  const findPrev = useCallback(() => {
+    if (findMatches.length === 0) return
+    const c = (find.cursor - 1 + findMatches.length) % findMatches.length
+    find.setCursor(c); jumpToFind(c)
+  }, [findMatches.length, find, jumpToFind])
 
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
   const findArtHash = useCallback((album: Album): string | undefined => {
@@ -169,6 +207,19 @@ export default function AlbumsView() {
           )}
         </div>
       </div>
+      <ScrollTopButton targetRef={viewRootRef} />
+      {find.open && (
+        <FindBar
+          query={find.query}
+          onQuery={find.setQuery}
+          current={find.cursor}
+          total={findMatches.length}
+          onNext={findNext}
+          onPrev={findPrev}
+          onClose={find.close}
+          placeholder="Find album or artist…"
+        />
+      )}
       {filteredAlbums.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="albums" />
       )}

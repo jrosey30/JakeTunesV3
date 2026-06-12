@@ -28,6 +28,7 @@ import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { requestDrillIn } from '../utils/drillIn'
 import { formatAppDate } from '../utils/formatDate'
+import ScrollTopButton from '../components/ScrollTopButton'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -517,6 +518,7 @@ export default function HomeView() {
 
   return (
     <div className="home-view" ref={rootRef}>
+      <ScrollTopButton targetRef={rootRef} />
       <div className="home-header">
         <h1 className="home-title">{greeting}, Jake.</h1>
         <div className="home-meta">

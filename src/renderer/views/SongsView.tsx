@@ -14,6 +14,9 @@ import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
 import { subscribeDownloads, downloadsVersion, isStreamingLibrary, isDownloaded, isDownloading, initDownloads, downloadPaths, removeDownloadPaths } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
+import ScrollTopButton from '../components/ScrollTopButton'
+import FindBar from '../components/FindBar'
+import { useFindState } from '../hooks/useFindState'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { clearArtworkNegativeCache } from '../utils/artworkLookup'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
@@ -112,6 +115,7 @@ interface SongRowProps {
   isPlaying: boolean
   isSelected: boolean
   isRecent: boolean
+  isFindHit: boolean
   gridTemplate: string
   visibleCols: ColDef[]
   onClick: (id: number, idx: number, e: React.MouseEvent) => void
@@ -124,12 +128,12 @@ interface SongRowProps {
 }
 
 const SongRow = memo(function SongRow({
-  track, idx, isPlaying, isSelected, isRecent, gridTemplate, visibleCols,
+  track, idx, isPlaying, isSelected, isRecent, isFindHit, gridTemplate, visibleCols,
   onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange, downloaded, downloading,
 }: SongRowProps) {
   return (
     <div
-      className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${isRecent ? 'songs-row--recently-added' : ''}`}
+      className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${isRecent ? 'songs-row--recently-added' : ''} ${isFindHit ? 'songs-row--find' : ''}`}
       style={{ gridTemplateColumns: gridTemplate }}
       onClick={(e) => onClick(track.id, idx, e)}
       onDoubleClick={() => onDoubleClick(idx)}
@@ -684,6 +688,46 @@ export default function SongsView() {
   // Refs mirror the latest values so the idle timer's (stale) setTimeout
   // closure always reads current state when it eventually fires.
   const sortedRef = useRef(sorted)
+
+  // ⌘F find-in-view — Word-style: jump + highlight matches in the current
+  // sort order, Enter/Shift+Enter to cycle. Distinct from the search pill
+  // (which FILTERS); find keeps the full list and walks it.
+  const find = useFindState()
+  const findMatches = useMemo(() => {
+    const q = find.query.trim().toLowerCase()
+    if (!q) return [] as number[]
+    const out: number[] = []
+    for (let i = 0; i < sorted.length; i++) {
+      const t = sorted[i]
+      if ((t.title || '').toLowerCase().includes(q) || (t.artist || '').toLowerCase().includes(q) || (t.album || '').toLowerCase().includes(q)) out.push(i)
+    }
+    return out
+  }, [sorted, find.query])
+  const [findHitId, setFindHitId] = useState<number | null>(null)
+  const jumpToFind = useCallback((c: number) => {
+    const idx = findMatches[c]
+    if (idx === undefined) return
+    const el = containerRef.current
+    if (el) el.scrollTop = Math.max(0, idx * ROW_HEIGHT - el.clientHeight / 2 + ROW_HEIGHT / 2)
+    setFindHitId(sorted[idx]?.id ?? null)
+  }, [findMatches, sorted, containerRef])
+  useEffect(() => {
+    if (!find.open) { setFindHitId(null); return }
+    if (findMatches.length === 0) { setFindHitId(null); return }
+    jumpToFind(Math.min(find.cursor, findMatches.length - 1))
+    // Live-jump as the query changes; cursor moves handled by next/prev.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [find.open, find.query, findMatches.length])
+  const findNext = useCallback(() => {
+    if (findMatches.length === 0) return
+    const c = (find.cursor + 1) % findMatches.length
+    find.setCursor(c); jumpToFind(c)
+  }, [findMatches.length, find, jumpToFind])
+  const findPrev = useCallback(() => {
+    if (findMatches.length === 0) return
+    const c = (find.cursor - 1 + findMatches.length) % findMatches.length
+    find.setCursor(c); jumpToFind(c)
+  }, [findMatches.length, find, jumpToFind])
   sortedRef.current = sorted
   const nowPlayingIdRef = useRef(pb.nowPlaying?.id)
   nowPlayingIdRef.current = pb.nowPlaying?.id
@@ -1007,6 +1051,7 @@ export default function SongsView() {
                   isPlaying={pb.nowPlaying?.id === track.id}
                   isSelected={lib.selectedTrackIds.has(track.id)}
                   isRecent={isRecentlyAdded(track.id)}
+                  isFindHit={findHitId === track.id}
                   gridTemplate={gridTemplate}
                   visibleCols={visibleCols}
                   onClick={handleClick}
@@ -1024,6 +1069,19 @@ export default function SongsView() {
         </>
         )}
       </div>
+      <ScrollTopButton targetRef={containerRef} />
+      {find.open && (
+        <FindBar
+          query={find.query}
+          onQuery={find.setQuery}
+          current={find.cursor}
+          total={findMatches.length}
+          onNext={findNext}
+          onPrev={findPrev}
+          onClose={find.close}
+          placeholder="Find song, artist, album…"
+        />
+      )}
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x}

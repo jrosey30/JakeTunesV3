@@ -4,6 +4,9 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { artistSortName, artistSectionLetter } from '../utils/artistSort'
+import ScrollTopButton from '../components/ScrollTopButton'
+import FindBar from '../components/FindBar'
+import { useFindState } from '../hooks/useFindState'
 import { consumeDrillIn } from '../utils/drillIn'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries } from '../utils/downloadStore'
@@ -318,6 +321,40 @@ export default function ArtistsView() {
     () => new Set(filteredArtists.map(a => artistSectionLetter(a.name))),
     [filteredArtists],
   )
+
+  // ⌘F find-in-view: jump to an artist row + flash it. Rows are all in the
+  // DOM (not virtualized) so an imperative scrollIntoView + class flash works.
+  const find = useFindState()
+  const findMatches = useMemo(() => {
+    const q = find.query.trim().toLowerCase()
+    if (!q) return [] as string[]
+    return filteredArtists.filter(a => a.name.toLowerCase().includes(q)).map(a => a.name)
+  }, [filteredArtists, find.query])
+  const jumpToFind = useCallback((c: number) => {
+    const name = findMatches[c]
+    if (!name) return
+    const el = viewRootRef.current?.querySelector(`[data-artist-name="${CSS.escape(name)}"]`) as HTMLElement | null
+    if (!el) return
+    isAutoScrollAtRef.current = Date.now()
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('find-hit')
+    window.setTimeout(() => el.classList.remove('find-hit'), 1400)
+  }, [findMatches])
+  useEffect(() => {
+    if (!find.open || findMatches.length === 0) return
+    jumpToFind(Math.min(find.cursor, findMatches.length - 1))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [find.open, find.query, findMatches.length])
+  const findNext = useCallback(() => {
+    if (findMatches.length === 0) return
+    const c = (find.cursor + 1) % findMatches.length
+    find.setCursor(c); jumpToFind(c)
+  }, [findMatches.length, find, jumpToFind])
+  const findPrev = useCallback(() => {
+    if (findMatches.length === 0) return
+    const c = (find.cursor - 1 + findMatches.length) % findMatches.length
+    find.setCursor(c); jumpToFind(c)
+  }, [findMatches.length, find, jumpToFind])
   const lastUserActivityAtRef = useRef<number>(0)
   const isAutoScrollAtRef = useRef<number>(0)
   const FOLLOW_IDLE_MS = 5000
@@ -468,6 +505,19 @@ export default function ArtistsView() {
           title="Let the Music Man group bands, side projects & aliases under one artist"
         >✦ Group artists</button>
       </div>
+      <ScrollTopButton targetRef={viewRootRef} />
+      {find.open && (
+        <FindBar
+          query={find.query}
+          onQuery={find.setQuery}
+          current={find.cursor}
+          total={findMatches.length}
+          onNext={findNext}
+          onPrev={findPrev}
+          onClose={find.close}
+          placeholder="Find artist…"
+        />
+      )}
       {filteredArtists.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="artists" />
       )}

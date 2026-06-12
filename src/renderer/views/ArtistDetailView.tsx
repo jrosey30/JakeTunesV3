@@ -8,6 +8,7 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { canonicalArtist, isSameArtist, artistIdentityKey, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import type { RelatedArtist } from '../types'
+import ScrollTopButton from '../components/ScrollTopButton'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useNavigation } from '../context/NavigationContext'
@@ -393,6 +394,7 @@ export default function ArtistDetailView() {
 
   return (
     <div className="artist-detail" ref={scrollRef}>
+      <ScrollTopButton targetRef={scrollRef} />
       <button
         className="artist-detail-back"
         onClick={goBack}
