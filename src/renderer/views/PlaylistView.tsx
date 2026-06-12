@@ -9,6 +9,9 @@ import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded
 import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
+import { suggestForPlaylist } from '../utils/playlistSuggest'
+import AlbumArtImage from '../components/AlbumArtImage'
+import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -153,6 +156,17 @@ export default function PlaylistView() {
     : allPlaylistTracks
 
   // Apply local sort AFTER search filter
+  // 4.5: suggestions strip — 5 library tracks that fit this playlist's
+  // artists/genres/era. Pure local compute (utils/playlistSuggest, tested);
+  // adding one re-ranks the rest automatically since it joins the profile.
+  const [suggestRotate, setSuggestRotate] = useState(0)
+  useEffect(() => { setSuggestRotate(0) }, [state.activePlaylistId])
+  const suggestions = useMemo(
+    () => suggestForPlaylist(tracks, state.tracks, 5, suggestRotate),
+    [tracks, state.tracks, suggestRotate],
+  )
+  const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
+
   const sortedTracks = useMemo(() => {
     if (!sortCol) return tracks // natural order
     return [...tracks].sort((a, b) => {
@@ -553,6 +567,42 @@ export default function PlaylistView() {
           </button>
         </div>
       </div>
+
+      {suggestions.length > 0 && (
+        <div className="pl-suggest">
+          <div className="pl-suggest-head">
+            <span className="pl-suggest-title">Suggested for this playlist</span>
+            <button
+              className="pl-suggest-refresh"
+              onClick={() => setSuggestRotate(r => r + 1)}
+              title="Show different suggestions"
+              aria-label="More suggestions"
+            >↻</button>
+          </div>
+          <div className="pl-suggest-row">
+            {suggestions.map(s => {
+              const hash = lookupArtwork(state.artworkMap, suggestArtIndex, s.albumArtist || s.artist, s.album)
+              return (
+                <div key={s.id} className="pl-suggest-chip" title={`${s.title} — ${s.artist}`}>
+                  <div className="pl-suggest-art">
+                    {hash ? <AlbumArtImage hash={hash} alt="" /> : <span className="pl-suggest-ph">♪</span>}
+                  </div>
+                  <div className="pl-suggest-meta">
+                    <div className="pl-suggest-song">{s.title}</div>
+                    <div className="pl-suggest-artist">{s.artist}</div>
+                  </div>
+                  <button
+                    className="pl-suggest-add"
+                    onClick={() => { if (playlist) dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [s.id] }) }}
+                    title={`Add "${s.title}" to this playlist`}
+                    aria-label={`Add ${s.title}`}
+                  >＋</button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
       {playlist.commentary && (
         <div className="playlist-view-commentary">{playlist.commentary}</div>
       )}

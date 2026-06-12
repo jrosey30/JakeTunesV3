@@ -1247,7 +1247,11 @@
 }
 
 .musicman-org-bar-label {
-  width: 80px;
+  /* 120px, not 80: the gutter holds GENRE names, not just decades —
+     "Singer/Songwriter" needs ~94px at 11px and was clipping. Fixed
+     width stays (bar origins must align across rows); ellipsis remains
+     only as the guard for pathological file-tag genres. */
+  width: 120px;
   font-size: 11px;
   color: #a89878;
   text-align: right;
@@ -1606,15 +1610,20 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  /* Take all the slack between the name and the pinned-right action so
+     a long artist name uses the whole row before it ever truncates. */
+  flex: 1;
 }
 .musicman-org-manual-artist {
   color: #e8d8b8;
   font-size: 12px;
   font-weight: 600;
+  /* No 200px cap: that clipped names while the row sat mostly empty.
+     min-width:0 + flex shrink truncates only when space truly runs out. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 200px;
 }
 .musicman-org-manual-count {
   color: #7a6a58;
@@ -1855,3 +1864,97 @@
 .musicman-restore-flagged-meta {
   color: #8a7a60;
 }
+
+/* ── Playlist suggestions strip ("Suggested for this playlist") ── */
+.pl-suggest {
+  padding: 10px 20px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  background: rgba(187, 67, 8, 0.035);
+}
+.pl-suggest-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pl-suggest-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9a857c;
+}
+.pl-suggest-refresh {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--brand-orange, #bb4308);
+  font-size: 14px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.pl-suggest-refresh:hover { background: rgba(187, 67, 8, 0.12); }
+.pl-suggest-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.pl-suggest-chip {
+  flex: 1 1 0;
+  min-width: 150px;
+  max-width: 230px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--white, #fff);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 8px;
+}
+.pl-suggest-art {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #eee8da;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pl-suggest-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pl-suggest-ph { color: #c0b8a8; font-size: 14px; }
+.pl-suggest-meta { flex: 1; min-width: 0; }
+.pl-suggest-song {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #2a2018);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-suggest-artist {
+  font-size: 11px;
+  color: var(--text-secondary, #8a8a8a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-suggest-add {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(187, 67, 8, 0.35);
+  background: rgba(187, 67, 8, 0.08);
+  color: var(--brand-orange, #bb4308);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pl-suggest-add:hover { background: var(--brand-orange, #bb4308); color: #fff; }
