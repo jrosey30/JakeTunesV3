@@ -352,6 +352,17 @@ export default function AlbumDetailView() {
     }
   }, [blurb, blurbExpanded])
 
+  // Drag-to-queue from the album page. This view never set the drag payload,
+  // so dragging a song into the queue silently did nothing — the "works
+  // (Songs view) then doesn't (album page)" glitch. Same multi-select
+  // semantics as SongsView: drag the selection if the grabbed row is in it.
+  const handleRowDragStart = useCallback((track: Track, e: React.DragEvent) => {
+    const sel = lib.selectedTrackIds
+    const chosen = sel.has(track.id) && sel.size > 1 ? tracks.filter(t => sel.has(t.id)) : [track]
+    e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(chosen.map(t => t.id)))
+    e.dataTransfer.effectAllowed = 'copy'
+  }, [lib.selectedTrackIds, tracks])
+
   if (tracks.length === 0) {
     return (
       <div className="album-page album-page--empty">
@@ -490,6 +501,8 @@ export default function AlbumDetailView() {
               onMouseEnter={() => prefetchTrackForPlay(track)}
               onMouseDown={() => prefetchTrackImmediate(track)}
               onContextMenu={(e) => handleContextMenu(e, track, idx)}
+              draggable
+              onDragStart={(e) => handleRowDragStart(track, e)}
             >
               <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-page-tracknum">{track.trackNumber || idx + 1}</span>}</div>
               <div className="songs-cell songs-cell--title">

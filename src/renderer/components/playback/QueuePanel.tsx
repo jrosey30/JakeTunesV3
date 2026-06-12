@@ -149,7 +149,13 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
     <div
       className={`queue-panel${exiting ? ' queue-panel--exiting' : ''}`}
       onDragOver={handlePanelDragOver}
-      onDragLeave={() => setDropIndex(null)}
+      onDragLeave={(e) => {
+        // dragleave fires when crossing INTO a child row too — only clear the
+        // drop indicator when the drag actually leaves the panel, or the drop
+        // position flickers away mid-aim and the drop lands at the end.
+        const next = e.relatedTarget as Node | null
+        if (!next || !(e.currentTarget as HTMLElement).contains(next)) setDropIndex(null)
+      }}
       onDrop={handleDrop}
     >
       <div className="queue-header">
