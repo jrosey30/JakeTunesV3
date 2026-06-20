@@ -13,6 +13,7 @@ import { albumKeyFromStrings } from '../utils/albumKey'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useNavigation } from '../context/NavigationContext'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
 
@@ -122,8 +123,19 @@ function relationLabel(rel: string): string {
 
 export default function ArtistDetailView() {
   const { state: lib, dispatch } = useLibrary()
-  const { } = usePlayback()
+  const { dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
+  const [albumCtx, setAlbumCtx] = useState<{ x: number; y: number; name: string; tracks: Track[] } | null>(null)
+  const albumCtxItems = useCallback((name: string, albumTracks: Track[]): MenuEntry[] => {
+    const ordered = sortAlbumTracks(albumTracks)
+    return [
+      { label: `Play "${name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
+      { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+      { separator: true as const },
+      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
+      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
+    ]
+  }, [playTrack, pbDispatch])
   const artist = lib.activeArtist || ''
 
   // Contextual back navigation. Artist detail is reachable from Artists,
@@ -637,6 +649,7 @@ export default function ArtistDetailView() {
                           albumKey: albumKeyFromStrings(persona.name, album.name),
                         })
                       }}
+                      onContextMenu={(e) => { e.preventDefault(); setAlbumCtx({ x: e.clientX, y: e.clientY, name: album.name, tracks: album.tracks }) }}
                       title={`Open ${album.name}`}
                     >
                       <div className="artist-detail-album-art">
@@ -756,6 +769,9 @@ export default function ArtistDetailView() {
             </div>
           )}
         </section>
+      )}
+      {albumCtx && (
+        <ContextMenu x={albumCtx.x} y={albumCtx.y} items={albumCtxItems(albumCtx.name, albumCtx.tracks)} onClose={() => setAlbumCtx(null)} />
       )}
     </div>
   )

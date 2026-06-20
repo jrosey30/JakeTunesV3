@@ -12,6 +12,9 @@ import { useFindState } from '../hooks/useFindState'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
+import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import { useAudio } from '../hooks/useAudio'
+import { canonicalArtist } from '../utils/artistAlias'
 import '../styles/albums.css'
 
 interface Album {
@@ -24,7 +27,21 @@ interface Album {
 
 export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
-  const { state: pb } = usePlayback()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
+  const { playTrack } = useAudio()
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; album: Album } | null>(null)
+  const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
+    const ordered = sortAlbumTracks(album.tracks)
+    return [
+      { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
+      { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+      { separator: true as const },
+      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
+      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
+      { separator: true as const },
+      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
+    ]
+  }, [playTrack, pbDispatch, libDispatch])
 
   // When returning from AlbumDetailView (← Albums), pendingAlbumKey is still
   // set — scroll that card into view, then clear so a later sidebar visit
@@ -233,6 +250,7 @@ export default function AlbumsView() {
               className="album-card"
               data-album-key={key}
               onClick={() => openAlbum(key)}
+              onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, album }) }}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAlbum(key) } }}
               role="button"
               tabIndex={0}
@@ -254,6 +272,9 @@ export default function AlbumsView() {
           )
         })}
       </div>
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={albumMenuItems(ctxMenu.album)} onClose={() => setCtxMenu(null)} />
+      )}
     </div>
   )
 }
