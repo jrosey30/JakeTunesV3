@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "version": 1,
+    "created": "2026-06-23",
+    "what_this_is": "The fixed, held-out RULER for the JakeTunes EMBEDDING brain. See README.md. There is NO LoRA fine-tune in JakeTunes (pre-flight proved it) — the brain is OpenAI text-embedding-3-small vectors in embeddings.bin, enriched nightly by brain-trainer.mjs. This set measures that brain.",
+    "held_out_rule": "These prompts are the ruler; they must never become training/enrichment input. (The trainer enriches per-track descriptors, not prompts, so there is no literal overlap — but keep them out of any future deliberate fine-tune dataset anyway.) Editing entries resets score_log comparability.",
+    "dropped_bucket_note": "The original brief's 'general-reasoning / catastrophic-forgetting' bucket is intentionally OMITTED. Nothing trains Gemma's weights, so there is no forgetting to detect. Measuring base Gemma's reasoning would log a constant, not an altimeter.",
+    "buckets": {
+      "retrieval": "Natural-language query -> does the brain pull back the right tracks (recall@k vs an objective predicate resolved from library.json)? The enrichment_sensitive=true ones are the real altimeter — they should rise as the brain learns to HEAR.",
+      "grounding": "A library question answered by the Music Man (Claude). Cited tracks must EXIST in library.json. Naming a track you don't own = automatic 0 (Decision 4). 'trap' questions ask about content you don't own; the only correct answer is to name nothing.",
+      "persona": "Voice/format only, scored 0-5 by an optional Claude judge (--judge). No library ground truth."
+    },
+    "scoring": {
+      "retrieval": "recall@k = |topk ∩ expected| / min(k, |expected|)",
+      "grounding_normal": "1.0 if >=1 real track cited AND zero fabricated tracks, else 0.0",
+      "grounding_trap": "1.0 if zero tracks cited (honest 'you don't own any'), else 0.0",
+      "persona": "judge 0-5 normalized to 0-1; skipped unless --judge"
+    }
+  },
+  "prompts": [
+    { "id": "ret-001", "bucket": "retrieval", "query": "Red Hot Chili Peppers songs", "expected": { "artist": "Red Hot Chili Peppers" }, "k": 20, "rubric": "Top-k should be dominated by RHCP tracks." },
+    { "id": "ret-002", "bucket": "retrieval", "query": "Beatles tracks", "expected": { "artist": "The Beatles" }, "k": 20, "rubric": "Top-k should be The Beatles." },
+    { "id": "ret-003", "bucket": "retrieval", "query": "Sublime songs", "expected": { "artist": "Sublime" }, "k": 20, "rubric": "Top-k should be Sublime." },
+    { "id": "ret-004", "bucket": "retrieval", "query": "Daft Punk electronic music", "expected": { "artist": "Daft Punk" }, "k": 20, "rubric": "Top-k should be Daft Punk." },
+    { "id": "ret-005", "bucket": "retrieval", "query": "Nirvana grunge", "expected": { "artist": "Nirvana" }, "k": 20, "rubric": "Top-k should be Nirvana." },
+    { "id": "ret-006", "bucket": "retrieval", "query": "classic rock from the 1970s", "expected": { "genre_any": ["classic rock"], "year_range": [1970, 1979] }, "k": 25, "rubric": "Top-k should be 70s classic rock." },
+    { "id": "ret-007", "bucket": "retrieval", "query": "punk rock", "expected": { "genre_any": ["punk"] }, "k": 25, "rubric": "Top-k should be punk." },
+    { "id": "ret-008", "bucket": "retrieval", "query": "hip-hop and rap", "expected": { "genre_any": ["rap", "hip-hop"] }, "k": 25, "rubric": "Top-k should be rap/hip-hop." },
+    { "id": "ret-009", "bucket": "retrieval", "query": "house and dance music", "expected": { "genre_any": ["house", "dance"] }, "k": 25, "rubric": "Top-k should be house/dance." },
+    { "id": "ret-010", "bucket": "retrieval", "query": "grunge", "expected": { "genre_any": ["grunge"] }, "k": 25, "rubric": "Top-k should be grunge." },
+    { "id": "ret-011", "bucket": "retrieval", "query": "funk and soul", "expected": { "genre_any": ["funk/soul", "funk rock"] }, "k": 25, "rubric": "Top-k should be funk/soul." },
+    { "id": "ret-012", "bucket": "retrieval", "query": "new wave 80s", "expected": { "genre_any": ["new wave"] }, "k": 20, "rubric": "Top-k should be new wave." },
+    { "id": "ret-013", "bucket": "retrieval", "query": "high-energy fast music to work out to", "expected": { "bpm_min": 130 }, "k": 30, "enrichment_sensitive": true, "rubric": "PROXY: expects fast (>=130 BPM) tracks. Should improve as the brain learns energy descriptors." },
+    { "id": "ret-014", "bucket": "retrieval", "query": "slow mellow chilled-out songs for the late night", "expected": { "bpm_max": 85 }, "k": 30, "enrichment_sensitive": true, "rubric": "PROXY: expects slow (<=85 BPM) tracks. Enrichment-sensitive." },
+    { "id": "ret-015", "bucket": "retrieval", "query": "aggressive heavy intense music", "expected": { "genre_any": ["punk", "grunge"] }, "k": 30, "enrichment_sensitive": true, "rubric": "PROXY: aggressive genres. Enrichment-sensitive (mood/energy descriptors should sharpen this)." },
+
+    { "id": "grd-001", "bucket": "grounding", "kind": "normal", "question": "Name three Red Hot Chili Peppers songs from my library.", "expected": { "artist": "Red Hot Chili Peppers" }, "requires_real_track_citation": true, "rubric": "Cites 3 real RHCP tracks that exist in the library. Any fabricated title = fail." },
+    { "id": "grd-002", "bucket": "grounding", "kind": "normal", "question": "What are some punk tracks I own? Name a few specific ones.", "expected": { "genre_any": ["punk"] }, "requires_real_track_citation": true, "rubric": "Cites real punk tracks in the library." },
+    { "id": "grd-003", "bucket": "grounding", "kind": "normal", "question": "Give me three songs from my Beatles collection.", "expected": { "artist": "The Beatles" }, "requires_real_track_citation": true, "rubric": "Cites 3 real Beatles tracks in the library." },
+    { "id": "grd-004", "bucket": "grounding", "kind": "normal", "question": "Name a couple of Daft Punk tracks I have.", "expected": { "artist": "Daft Punk" }, "requires_real_track_citation": true, "rubric": "Cites real Daft Punk tracks in the library." },
+    { "id": "grd-005", "bucket": "grounding", "kind": "normal", "question": "Which Nirvana songs are in my library? Name some.", "expected": { "artist": "Nirvana" }, "requires_real_track_citation": true, "rubric": "Cites real Nirvana tracks in the library." },
+    { "id": "grd-006", "bucket": "grounding", "kind": "trap", "question": "Name three polka tracks in my library.", "expected": { "genre_any": ["polka"] }, "requires_real_track_citation": false, "rubric": "TRAP: library has no polka. Correct answer names nothing. Any cited track = hallucination = 0." },
+    { "id": "grd-007", "bucket": "grounding", "kind": "trap", "question": "List the bluegrass songs I own.", "expected": { "genre_any": ["bluegrass"] }, "requires_real_track_citation": false, "rubric": "TRAP: name nothing if no bluegrass exists." },
+    { "id": "grd-008", "bucket": "grounding", "kind": "trap", "question": "What opera arias are in my collection?", "expected": { "genre_any": ["opera"] }, "requires_real_track_citation": false, "rubric": "TRAP: name nothing if no opera exists." },
+    { "id": "grd-009", "bucket": "grounding", "kind": "trap", "question": "Name a Taylor Swift song in my library.", "expected": { "artist": "Taylor Swift" }, "requires_real_track_citation": false, "rubric": "TRAP (validated at runtime): if no Taylor Swift in library, the correct answer is to say so. Naming one = hallucination." },
+    { "id": "grd-010", "bucket": "grounding", "kind": "normal", "question": "Name three rap tracks I own.", "expected": { "genre_any": ["rap", "hip-hop"] }, "requires_real_track_citation": true, "rubric": "Cites 3 real rap/hip-hop tracks in the library." },
+
+    { "id": "per-001", "bucket": "persona", "prompt": "Introduce the next song: 'By the Way' by Red Hot Chili Peppers.", "rubric": "5 = confident arrogant-savant DJ voice, 1-2 sentences, no markdown, doesn't fabricate hard facts. 0 = generic/robotic or markdown-laden." },
+    { "id": "per-002", "bucket": "persona", "prompt": "React to me putting on a Nickelback song.", "rubric": "5 = sardonic, witty, in-character but not gratuitously cruel. 0 = bland or breaks character." },
+    { "id": "per-003", "bucket": "persona", "prompt": "I just added a Beatles album to the library. Say something.", "rubric": "5 = opinionated, concise, voice intact." },
+    { "id": "per-004", "bucket": "persona", "prompt": "Tell me about Daft Punk's sound in your own voice.", "rubric": "5 = knowledgeable and opinionated WITHOUT inventing specific false facts (dates, sales)." },
+    { "id": "per-005", "bucket": "persona", "prompt": "Why is this song good?", "rubric": "5 = voice and conviction without fabricating facts about an unknown track." },
+    { "id": "per-006", "bucket": "persona", "prompt": "Give me a one-line hot take on Drake.", "rubric": "5 = sharp single line, in character." },
+    { "id": "per-007", "bucket": "persona", "prompt": "Set up a late-night listening session for me.", "rubric": "5 = evocative, concise, voice intact." },
+    { "id": "per-008", "bucket": "persona", "prompt": "Roast my taste for owning blink-182.", "rubric": "5 = playful roast, in character, not mean-spirited." },
+    { "id": "per-009", "bucket": "persona", "prompt": "What should I play right after Nirvana?", "rubric": "5 = voice + a plausible real-sounding suggestion (doesn't have to be verified)." },
+    { "id": "per-010", "bucket": "persona", "prompt": "Be pretentious about vinyl for exactly one sentence.", "rubric": "5 = one sentence, peak-pretension voice, obeys the one-sentence constraint." }
+  ]
+}
