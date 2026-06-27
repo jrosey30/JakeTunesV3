@@ -66,6 +66,9 @@ function getEmbeddingsPath(): string {
 // check on every getter is one stat call (~1 ms local SSD / ~5 ms
 // SMB) — cheap enough to run every retrieval without noticeable
 // latency, and guaranteed to surface external updates.
+// ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/rag.ts getEmbeddingsMap — the mobile
+// backend loads this SAME embeddings.bin off the NAS; both must mtime-reload so
+// every device (desktop, and homemini → phone) tracks one enriched brain.
 let cache: Map<number, Float32Array> | null = null
 let cachedMtimeMs = 0
 
@@ -163,7 +166,27 @@ export interface EmbedTrackInput {
   year?: number | string
   playCount?: number
   rating?: number
+  bpm?: number
 }
+
+// Grounded tempo/energy/use-case from REAL bpm + genre. The literary mood
+// descriptor scored ~random on tempo queries ("fast workout" / "mellow late
+// night") because bpm was never in the embed text. Adding this lifts mood
+// retrieval to recall@30 0.80–0.93 (validated 2026-06-26, /tmp/validate_mood.py).
+// Only CLEAR high/low get energy/use-case — bland mid-tempo filler dilutes
+// precise genre queries without helping any mood search.
+// ⚠️ TWIN: scripts/brain-trainer.mjs tempoEnergy() — keep these in sync.
+function tempoEnergyText(t: EmbedTrackInput): string {
+  const b = Number(t.bpm) || 0
+  if (b <= 0) return ''
+  const tempo = b >= 120 ? 'fast, up-tempo, driving' : b >= 90 ? 'mid-tempo, moderate groove' : 'slow, relaxed, downtempo'
+  const g = (t.genre || '').toLowerCase()
+  let mood = ''
+  if (b >= 130 || /punk|metal|grunge|hardcore|techno|drum/.test(g)) mood = '. energy: high-energy and intense. good for: working out, running, parties'
+  else if ((b > 0 && b <= 85) || /ambient|folk|acoustic|classical|jazz|soul/.test(g)) mood = '. energy: low-energy, mellow and calm. good for: late night, relaxing, winding down, chilling'
+  return `tempo: ${b} BPM, ${tempo}${mood}`
+}
+
 export function buildEmbeddingText(t: EmbedTrackInput): string {
   const lines: string[] = []
   const artist = (t.artist || '').trim()
@@ -175,6 +198,7 @@ export function buildEmbeddingText(t: EmbedTrackInput): string {
   if (album) lines.push(`album: ${album}${year ? ` (${year})` : ''}`)
   if (!album && year) lines.push(`year: ${year}`)
   if (genre) lines.push(`genre: ${genre}`)
+  const te = tempoEnergyText(t); if (te) lines.push(te)
   const rating = Number(t.rating) || 0
   const plays = Number(t.playCount) || 0
   const sig: string[] = []

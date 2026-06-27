@@ -3,11 +3,19 @@
   overflow-y: auto;
   display: flex;
   justify-content: center;
-  padding: 52px 24px;
+  padding: 48px 24px;
+  background: var(--home-canvas, #f0ebe1);   /* 4.5 upgrade: warm canvas, matches Home */
 }
 .download-card {
   width: 100%;
   max-width: 620px;
+  height: max-content;
+  /* 4.5 upgrade: warm panel surface so the store reads as a card, not bare text on a page. */
+  background: #fcfbf8;
+  border: 1px solid rgba(120, 90, 50, 0.12);
+  border-radius: 14px;
+  padding: 28px 30px 30px;
+  box-shadow: 0 1px 2px rgba(70, 55, 40, 0.05), 0 8px 24px rgba(70, 55, 40, 0.06);
 }
 .download-title {
   font-size: 26px;
@@ -107,6 +115,36 @@
   cursor: pointer;
   flex-shrink: 0;
 }
+
+/* 4.5 upgrade: source pills (replaced the source dropdown — one tap, all visible) */
+.download-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.download-source-pill {
+  height: 30px;
+  padding: 0 15px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border: 1px solid rgba(120, 90, 50, 0.20);
+  border-radius: 15px;
+  background: var(--white, #fff);
+  color: var(--text-secondary, #555049);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.download-source-pill:hover:not(:disabled) {
+  background: rgba(187, 67, 8, 0.06);
+  border-color: rgba(187, 67, 8, 0.30);
+}
+.download-source-pill.is-active {
+  background: var(--brand-orange, #bb4308);
+  color: #fff;
+  border-color: var(--brand-orange, #bb4308);
+}
+.download-source-pill:disabled { opacity: 0.5; cursor: default; }
 .download-results {
   list-style: none;
   margin: 14px 0 0;

@@ -5,6 +5,7 @@ import ArtistsView from '../views/ArtistsView'
 import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
 import AlbumDetailView from '../views/AlbumDetailView'
+import MixDetailView from '../views/MixDetailView'
 import GenresView from '../views/GenresView'
 import DiscoveryView from '../views/DiscoveryView'
 import MusicManView from '../views/MusicManView'
@@ -50,6 +51,7 @@ export default function MainContent() {
     case 'artist-detail': viewElement = <ArtistDetailView />; break
     case 'albums': viewElement = <AlbumsView />; break
     case 'album-detail': viewElement = <AlbumDetailView />; break
+    case 'mix-detail': viewElement = <MixDetailView />; break
     case 'genres': viewElement = <GenresView />; break
     case 'discovery': viewElement = <DiscoveryView />; break
     // Back-compat: the old standalone view names still resolve, landing on

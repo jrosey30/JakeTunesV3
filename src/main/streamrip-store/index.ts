@@ -172,7 +172,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   ipcMain.handle('streamrip:search', async (_e, opts: { query?: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: SearchResult[]; error?: string }> => {
     const query = (opts?.query || '').trim()
     if (!query) return { ok: false, error: 'Type something to search for.' }
-    const source = opts?.source || 'soundcloud'
+    const source = opts?.source || 'qobuz'   // 4.5: SoundCloud removed; Qobuz is the default
     const mediaType = opts?.mediaType || 'track'
     const n = Math.min(Math.max(Math.round(opts?.numResults || 25), 1), 50)
     const rip = await resolveRip()
@@ -209,7 +209,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   ipcMain.handle('streamrip:download', async (_e, url: string): Promise<DownloadResult> => {
     const link = (url || '').trim()
     if (!/^https?:\/\//i.test(link)) {
-      return { ok: false, error: 'Paste a full http(s) link — a Qobuz, Tidal, Deezer, SoundCloud, or YouTube URL.' }
+      return { ok: false, error: 'Paste a full http(s) link — a Qobuz, Tidal, Deezer, or YouTube URL.' }
+    }
+    if (/soundcloud\.com/i.test(link)) {   // 4.5: SoundCloud eliminated
+      return { ok: false, error: 'SoundCloud isn’t supported — use Qobuz, Tidal, Deezer, or YouTube.' }
     }
     return runDownload(['url', link])
   })

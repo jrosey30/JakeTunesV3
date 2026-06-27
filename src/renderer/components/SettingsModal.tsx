@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
 import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
+import { getCaptionsOn, setCaptionsOn } from '../activity'
 import '../styles/import-convert.css'
 
 /**
@@ -92,6 +93,7 @@ interface LastSync {
 
 export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial)
+  const [radioCaptions, setRadioCaptions] = useState(getCaptionsOn())  // 4.5 radioV2 CC toggle
   const [tab, setTab] = useState<Tab>('Playback')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -320,6 +322,20 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                   })}
                 />
                 <span>Crossfade Songs</span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <input
+                  type="checkbox"
+                  checked={radioCaptions}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    setRadioCaptions(on)
+                    setCaptionsOn(on)
+                    void window.electronAPI.saveUiState({ radioCC: on })
+                  }}
+                />
+                <span>Radio captions — show what the hosts are saying</span>
               </label>
 
               <div style={{ opacity: draft.crossfade.enabled ? 1 : 0.4, transition: 'opacity 0.15s' }}>

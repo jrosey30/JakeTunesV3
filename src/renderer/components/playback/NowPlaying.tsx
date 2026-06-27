@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
-import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast, getRadio } from '../../activity'
+import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast, getRadio, getCaptionsOn, setCaptionsOn } from '../../activity'
 import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../previewPlayer'
 import { getVisualizerWaveform } from '../../audio/eq'
 
@@ -173,6 +173,13 @@ export default function NowPlaying() {
   const notice = getNotice()
   const broadcast = getBroadcast()
   const radio = getRadio()
+  const captionsOn = getCaptionsOn()
+  // 4.5 radioV2: restore the radio-captions toggle from UI state, once on mount.
+  useEffect(() => {
+    window.electronAPI.loadUiState().then((r) => {
+      if (r?.ok && r.state && typeof r.state.radioCC === 'boolean') setCaptionsOn(r.state.radioCC)
+    }).catch(() => { /* default: captions on */ })
+  }, [])
   const ripActive = !!rip?.active
   const syncActive = !!syn?.active
   const importActive = !!imp?.active
@@ -481,15 +488,17 @@ export default function NowPlaying() {
           return (
             <div className="now-playing-info now-playing-info--activity now-playing-info--broadcast np-broadcast-cc">
               <div className="np-broadcast-speaker">{broadcast.speaker}</div>
-              <div className="np-broadcast-lines">
-                {lastTwo.length === 2 && (
-                  <div className="np-broadcast-line np-broadcast-line--older">{lastTwo[0]}</div>
-                )}
-                <div className="np-broadcast-line np-broadcast-line--current">
-                  {isFirstLine ? lastTwo[0] || '' : lastTwo[1]}
-                  {stillRevealing && <span className="np-caret" aria-hidden>▍</span>}
+              {captionsOn && (
+                <div className="np-broadcast-lines">
+                  {lastTwo.length === 2 && (
+                    <div className="np-broadcast-line np-broadcast-line--older">{lastTwo[0]}</div>
+                  )}
+                  <div className="np-broadcast-line np-broadcast-line--current">
+                    {isFirstLine ? lastTwo[0] || '' : lastTwo[1]}
+                    {stillRevealing && <span className="np-caret" aria-hidden>▍</span>}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )
         })()

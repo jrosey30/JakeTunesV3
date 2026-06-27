@@ -107,6 +107,49 @@
   line-height: 1.6;
 }
 
+/* 4.5: chat-only layout. The content becomes a flex column so the chat fills
+   the space and the BPM/key analysis sits as a slim footer strip. Overrides the
+   base content's scroll + padding (the chat scrolls internally now). */
+.musicman-content--chat {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.musicman-content--chat .musicman-chat-layout {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+.musicman-analysis-strip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 24px;
+  border-top: 1px solid rgba(var(--brand-orange-rgb),0.2);
+  background: rgba(0,0,0,0.18);
+  font-size: 12.5px;
+  color: #a89878;
+}
+.musicman-analysis-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex: 1;
+  justify-content: flex-end;
+  max-width: 62%;
+}
+.musicman-analysis-status { white-space: nowrap; }
+.musicman-analysis-strip .musicman-org-action-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  margin-top: 0;
+  white-space: nowrap;
+}
+.musicman-analysis-strip .musicman-org-bar-track { height: 6px; margin-top: 0; }
+
 /* Chat Layout */
 .musicman-chat-layout {
   display: flex;

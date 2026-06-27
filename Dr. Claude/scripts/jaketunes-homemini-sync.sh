@@ -98,7 +98,13 @@ JT_STATE_NAS='/Volumes/JakeShared/JakeTunesState'
 # the desktop reads/writes them there; for Mini (which doesn't mount
 # NAS yet) the sync pushes them locally so its mobile-backend sees
 # the same listener signal the desktop does.
-SYNC_FILES=(library.json metadata-overrides.json playlists.json embeddings.bin listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json mobile-playlists.json playlist-additions.json)
+# 2026-06-07 — added play-events.jsonl (append-only desktop-authored play log;
+# nothing on homemini writes it, so a one-way push is safe). Prepares the
+# mobile side for windowed play history. NOT added: recommendations.json — it's
+# written on BOTH sides (desktop + phone via homemini's backend), so a blunt
+# rsync overwrite could clobber a recent phone add; that one needs a merge-aware
+# push, handled separately.
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl embeddings.bin listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json mobile-playlists.json playlist-additions.json)
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
@@ -200,7 +206,11 @@ done'
   fi
   log "library state differs (local=$local_fp remote=$remote_fp) — pushing …"
 
-  local rsync_args=(-tz --no-perms --no-owner --no-group)
+  # --checksum: decide transfers by content hash, not mtime. Stops re-shipping
+  # embeddings.bin (~100MB) when it was rewritten with identical content (new
+  # mtime, same bytes). Hashing only runs when a push is already happening (the
+  # mtime fingerprint gate above skips no-op syncs), so the cost is bounded.
+  local rsync_args=(-tz --checksum --no-perms --no-owner --no-group)
   for f in "${SYNC_FILES[@]}"; do
     src=$(resolve_sync_src "$f")
     if [ -n "$src" ] && [ -f "$src" ]; then
@@ -399,41 +409,82 @@ if [ -d "$LOCAL_ARTWORK" ]; then
   fi
 fi
 
-# ── 5. BIDIRECTIONAL mobile-set sidecars (NAS ↔ homemini). ────────
+# ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
 #
-# 4.5.0-81 introduced a pull-only flow that wrote to JT_DATA_LOCAL
-# (the legacy userData path). When STATE_DIR moved to the NAS in
-# 4.5.0-90, the desktop started reading/writing mobile-stars.json
-# from JT_STATE_NAS, but the sync script kept dumping pulled files
-# into the (now-ignored) userData path AND never pushed NAS-side
-# changes back to homemini. Result: 285 desktop-set stars never
-# reached the iOS app for months.
+# 2026-06-07 sync B-pass. Pre-fix this synced the NAS copies, but under
+# local-primary (4.5.0-114) the app reads/writes mobile-stars.json LOCALLY and
+# never touches NAS — so a NAS-based sidecar sync was disconnected from the app
+# entirely: desktop stars never reached homemini, phone stars never reached the
+# desktop (the round-trip was severed).
 #
-# Fix: bidirectional rsync against JT_STATE_NAS, both directions,
-# both with --update so newer-mtime wins. Order matters: push first
-# so the desktop's "I just starred this song" reaches homemini
-# before the pull might overwrite it with an older Mini-side mtime.
-NAS_STATE="/Volumes/JakeShared/JakeTunesState"
-log "pushing mobile sidecars (NAS → homemini) …"
-for f in mobile-stars.json mobile-plays.json; do
-  if [ -f "$NAS_STATE/$f" ]; then
-    rsync -tz --update --no-perms --no-owner --no-group \
-      "$NAS_STATE/$f" "$HOMEMINI:$JT_DATA_REMOTE/$f" >> "$LOG" 2>&1
-    push_rc=$?
-    if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
-      log "WARNING: push of $f returned $push_rc (continuing)"
-    fi
-  fi
-done
-log "pulling mobile sidecars (homemini → NAS) …"
-for f in mobile-stars.json mobile-plays.json; do
+# Stars now round-trip through the LOCAL file with the APP as the SOLE writer,
+# so we never race its in-memory cache:
+#   PULL homemini's set → mobile-stars.incoming.json (staging). The app unions
+#        it into the local set on next launch (mergeIncomingMobileStars), then
+#        deletes it.
+#   PUSH the local set → homemini with --update (only when the desktop set is
+#        newer), so a just-set phone star on homemini isn't clobbered before the
+#        staging file has carried it back to the desktop.
+# PULL BEFORE PUSH so a phone star is captured into staging before the push
+# overwrites homemini. Additive union — cross-device un-star is best-effort
+# (mobile-stars-merge.ts). No permanent loss: a phone star lives in staging
+# until merged, then re-pushed next cycle.
+log "pulling phone stars (homemini → local staging) …"
+rsync -tz --no-perms --no-owner --no-group \
+  "$HOMEMINI:$JT_DATA_REMOTE/mobile-stars.json" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
+pull_rc=$?
+if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
+  log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
+  notify "Couldn't pull phone stars from homemini — desktop may be behind."
+fi
+log "pushing desktop stars (local → homemini) …"
+if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
-    "$HOMEMINI:$JT_DATA_REMOTE/$f" "$NAS_STATE/$f" >> "$LOG" 2>&1
-  pull_rc=$?
-  if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
-    log "WARNING: pull of $f returned $pull_rc (continuing)"
+    "$JT_DATA_LOCAL/mobile-stars.json" "$HOMEMINI:$JT_DATA_REMOTE/mobile-stars.json" >> "$LOG" 2>&1
+  push_rc=$?
+  if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
+    log "WARNING: push of mobile-stars returned $push_rc (continuing)"
+    notify "Couldn't push desktop stars to homemini — phone may be behind."
   fi
-done
+fi
+# Plays: one-way push of the desktop play log to homemini. The iOS app doesn't
+# write mobile-plays.json yet, so a full round-trip is a later iOS-side change;
+# this is harmless prep (no staging/merge).
+if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
+  rsync -tz --update --no-perms --no-owner --no-group \
+    "$JT_DATA_LOCAL/mobile-plays.json" "$HOMEMINI:$JT_DATA_REMOTE/mobile-plays.json" >> "$LOG" 2>&1 || true
+fi
+
+# ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
+#
+# 2026-06-10 — the phone's backend records every reco deletion as a
+# tombstone in JakeTunesState/recommendations-deleted.json. Desktop V3
+# merges its LOCAL recommendations.json ADDITIVELY (by id) and mirrors
+# the result back to the NAS, so without this prune a phone-deleted reco
+# resurrects on every desktop sync cycle (Jake: "if it is deleted on
+# phone it should be deleted on laptop, and vice versa" — the laptop→
+# phone direction already works via V3's own tombstones + the mirror).
+# V3 re-reads its local file on every reco IPC call, so a file-level
+# prune takes effect on the desktop's next read — no app restart needed.
+# Atomic write (tmp + os.replace) so a concurrent V3 read never sees a
+# partial file.
+TOMBSTONES="$MOUNT/JakeTunesState/recommendations-deleted.json"
+LOCAL_RECOS="$JT_DATA_LOCAL/recommendations.json"
+if [ -f "$TOMBSTONES" ] && [ -f "$LOCAL_RECOS" ]; then
+  python3 - "$TOMBSTONES" "$LOCAL_RECOS" >> "$LOG" 2>&1 <<'PY' || log "WARNING: reco tombstone prune failed (continuing)"
+import json, os, sys
+tomb_path, recos_path = sys.argv[1], sys.argv[2]
+tombs = set(map(str, json.load(open(tomb_path))))
+recos = json.load(open(recos_path))
+pruned = [r for r in recos if str(r.get("id")) not in tombs]
+if len(pruned) != len(recos):
+    tmp = recos_path + ".prune-tmp"
+    with open(tmp, "w") as f:
+        json.dump(pruned, f, indent=2)
+    os.replace(tmp, recos_path)
+    print(f"[reco-prune] removed {len(recos) - len(pruned)} phone-deleted reco(s) from the desktop copy")
+PY
+fi
 
 log "=== sync done ==="
 exit 0

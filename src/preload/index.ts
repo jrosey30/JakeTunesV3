@@ -77,6 +77,12 @@ const electronAPI = {
   // call sites that haven't been updated still compile.
   musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
     ipcRenderer.invoke('musicman-playlist', mood, tracks),
+  // 4.5: "Your Mixes" — fetch the SAME daily mixes / on-demand vibe the iOS app
+  // shows, from the mobile backend on homemini (one source of truth).
+  getMobileMixes: (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> =>
+    ipcRenderer.invoke('get-mobile-mixes'),
+  getMobileVibeMix: (vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> =>
+    ipcRenderer.invoke('get-mobile-vibe-mix', vibe),
   // 4.5: Radio Mode show planner. Generates a curated set list with a
   // theme + throughline before Radio playback starts, replacing the
   // random library shuffle that produced "jumpy with genres" shows.
@@ -89,6 +95,9 @@ const electronAPI = {
     ipcRenderer.invoke('radio-set-show-plan', plan),
   radioClearShowPlan: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('radio-clear-show-plan'),
+  // 4.5 radioV2: fetch the unified cast registry (speaker id → tag / pill label / voice id).
+  radioGetCast: (): Promise<{ ok: boolean; cast?: Array<{ id: string; tag: string; label: string; voiceId?: string; kind: string }> }> =>
+    ipcRenderer.invoke('radio-get-cast'),
   // 4.4.48: optional `force` bypasses the main-process weekly cache
   // (the Regenerate button passes it). Omitted/false → main returns
   // this week's cached picks with no Claude call.
@@ -184,8 +193,8 @@ const electronAPI = {
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
   // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
   getAlbumInfo: (artist: string, album: string, year?: string) => ipcRenderer.invoke('get-album-info', artist, album, year),
-  getAlbumBlurb: (artist: string, album: string) => ipcRenderer.invoke('get-album-blurb', artist, album),
-  getAlbumTake: (artist: string, album: string) => ipcRenderer.invoke('get-album-take', artist, album),
+  getAlbumBlurb: (artist: string, album: string, year?: string | number) => ipcRenderer.invoke('get-album-blurb', artist, album, year),
+  getAlbumTake: (artist: string, album: string, year?: string | number) => ipcRenderer.invoke('get-album-take', artist, album, year),
   // 4.5.0-117 — library backup/restore (Phase 0).
   listBackups: () => ipcRenderer.invoke('list-backups'),
   createBackup: () => ipcRenderer.invoke('create-backup'),
@@ -310,6 +319,11 @@ const electronAPI = {
     ipcRenderer.invoke('embedding-status'),
   embeddingBackfill: (opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> =>
     ipcRenderer.invoke('embedding-backfill', opts),
+  // 4.5: brain-driven playlist suggestions — the playlist's embedding centroid's
+  // nearest library tracks (vibe match). PlaylistView's "Suggested" strip filters
+  // these for freshness + diversity instead of the old artist-match heuristic.
+  playlistSimilar: (playlistIds: number[], clusters?: number): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }> }> =>
+    ipcRenderer.invoke('playlist-similar', playlistIds, clusters),
   onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void): () => void => {
     const handler = (_e: unknown, p: { done: number; total: number }) => callback(p)
     ipcRenderer.on('embedding-backfill-progress', handler)

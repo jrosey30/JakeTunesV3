@@ -10,8 +10,8 @@ import './download-store.css'
 interface RipStatus { installed: boolean; version?: string }
 interface SearchResult { source: string; mediaType: string; id: string; desc: string }
 
+// 4.5: SoundCloud removed at Jake's request.
 const SOURCES = [
-  { id: 'soundcloud', label: 'SoundCloud' },
   { id: 'qobuz', label: 'Qobuz' },
   { id: 'tidal', label: 'Tidal' },
   { id: 'deezer', label: 'Deezer' },
@@ -22,6 +22,17 @@ const TYPES = [
   { id: 'album', label: 'Albums' },
   { id: 'artist', label: 'Artists' },
 ]
+
+// 4.5: page memory — this view unmounts on navigate-away. A module-level cache
+// (same pattern as MadeForYou's sessionMixes) restores the working state — your
+// search, source, results, and pasted link — when you leave and come back.
+interface DownloadCache {
+  query: string; source: string; mediaType: string
+  results: SearchResult[]; art: Record<string, string>; pasteUrl: string
+}
+let pageCache: DownloadCache = {
+  query: '', source: 'qobuz', mediaType: 'track', results: [], art: {}, pasteUrl: '',
+}
 
 // streamrip result descs end with " by <artist>" ("Creep by Radiohead",
 // "Sub Urban - Cradles [NCS Release] by Sub Urban"). Split on the LAST " by "
@@ -34,16 +45,16 @@ function parseDesc(desc: string): { artist: string; title: string } {
 
 export default function DownloadView() {
   const [status, setStatus] = useState<RipStatus | null>(null)
-  const [query, setQuery] = useState('')
-  const [source, setSource] = useState('soundcloud')
-  const [mediaType, setMediaType] = useState('track')
+  const [query, setQuery] = useState(pageCache.query)
+  const [source, setSource] = useState(pageCache.source)
+  const [mediaType, setMediaType] = useState(pageCache.mediaType)
   const [searching, setSearching] = useState(false)
-  const [results, setResults] = useState<SearchResult[]>([])
-  const [art, setArt] = useState<Record<string, string>>({})
+  const [results, setResults] = useState<SearchResult[]>(pageCache.results)
+  const [art, setArt] = useState<Record<string, string>>(pageCache.art)
   const [searchErr, setSearchErr] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [pasteUrl, setPasteUrl] = useState('')
+  const [pasteUrl, setPasteUrl] = useState(pageCache.pasteUrl)
   const [pasteBusy, setPasteBusy] = useState(false)
   const [qobuz, setQobuz] = useState<{ configured: boolean; email?: string } | null>(null)
   const [qEmail, setQEmail] = useState('')
@@ -65,6 +76,11 @@ export default function DownloadView() {
     }).catch(() => { /* leave the form shown */ })
     return () => { cancelled = true }
   }, [])
+
+  // 4.5: page memory — persist the working state so leaving and returning restores it.
+  useEffect(() => {
+    pageCache = { query, source, mediaType, results, art, pasteUrl }
+  }, [query, source, mediaType, results, art, pasteUrl])
 
   // Lazily fetch cover art for each result (streamrip search returns none;
   // reuse the app's artist-verified iTunes art lookup). Misses show the ♪.
@@ -190,15 +206,22 @@ export default function DownloadView() {
       <div className="download-card">
         <h1 className="download-title">Download</h1>
         <p className="download-sub">
-          Search a catalog and click to grab it, or paste a direct link. Either way it
-          downloads and imports straight into your library.
+          Search a source and click to grab it — or paste a link. It imports straight into your library.
         </p>
 
-        {/* ── Browse: search → results → click ── */}
+        {/* ── Browse: source pills → search → results → click ── */}
+        <div className="download-sources" role="tablist" aria-label="Download source">
+          {SOURCES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`download-source-pill${source === s.id ? ' is-active' : ''}`}
+              onClick={() => setSource(s.id)}
+              disabled={searching}
+            >{s.label}</button>
+          ))}
+        </div>
         <div className="download-search">
-          <select className="download-select" value={source} onChange={(e) => setSource(e.target.value)} disabled={searching}>
-            {SOURCES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
           <select className="download-select" value={mediaType} onChange={(e) => setMediaType(e.target.value)} disabled={searching}>
             {TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
@@ -265,7 +288,7 @@ export default function DownloadView() {
         </div>
 
         <div className="download-hint">
-          SoundCloud &amp; YouTube need no login. For lossless Qobuz, connect your account below.
+          YouTube needs no login. For lossless Qobuz, connect your account below.
         </div>
 
         {/* ── Qobuz account — password hashed locally, written to streamrip's config ── */}

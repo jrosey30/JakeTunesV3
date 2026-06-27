@@ -26,14 +26,31 @@ export default function GenresView() {
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
 
   const genres = useMemo(() => {
-    const set = new Set<string>()
-    for (const t of lib.tracks) if (t.genre) set.add(t.genre)
-    return Array.from(set).sort()
+    // Case-insensitive grouping (2026-06-24 audit, with Jake's OK to touch this
+    // file): "Alternative Indie" and "Alternative indie" are ONE genre, not two.
+    // Bucket by lowercase, then label each bucket with its most common casing.
+    const byLower = new Map<string, Map<string, number>>()
+    for (const t of lib.tracks) {
+      if (!t.genre) continue
+      const lower = t.genre.toLowerCase()
+      let casings = byLower.get(lower)
+      if (!casings) { casings = new Map(); byLower.set(lower, casings) }
+      casings.set(t.genre, (casings.get(t.genre) ?? 0) + 1)
+    }
+    const labels: string[] = []
+    for (const casings of byLower.values()) {
+      let best = '', bestN = -1
+      for (const [casing, n] of casings) if (n > bestN) { best = casing; bestN = n }
+      labels.push(best)
+    }
+    return labels.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   }, [lib.tracks])
 
   const filteredByGenre = useMemo(() => {
     if (!selectedGenre) return lib.tracks
-    return lib.tracks.filter(t => t.genre === selectedGenre)
+    // Case-insensitive so a bucket matches every casing variant of the genre.
+    const sel = selectedGenre.toLowerCase()
+    return lib.tracks.filter(t => (t.genre || '').toLowerCase() === sel)
   }, [lib.tracks, selectedGenre])
 
   const artists = useMemo(() => {
@@ -239,7 +256,7 @@ export default function GenresView() {
           <div className="genres-column-list" ref={genreListRef}>
             <div className={`genres-column-item ${!selectedGenre ? 'genres-column-item--selected' : ''}`} onClick={() => selectGenre(null)}>All ({genres.length})</div>
             {genres.map(g => (
-              <div key={g} className={`genres-column-item ${selectedGenre === g ? 'genres-column-item--selected' : ''}`} onClick={() => selectGenre(g)}>{g}</div>
+              <div key={g} className={`genres-column-item ${selectedGenre?.toLowerCase() === g.toLowerCase() ? 'genres-column-item--selected' : ''}`} onClick={() => selectGenre(g)}>{g}</div>
             ))}
           </div>
         </div>

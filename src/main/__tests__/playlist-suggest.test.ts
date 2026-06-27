@@ -40,18 +40,34 @@ test('audioMissing tracks are excluded', () => {
   assert.deepEqual(suggestForPlaylist(pl, [missing], 5), [])
 })
 
-test('diversity: at most 2 picks per artist', () => {
+test('variety: 5 distinct artists when the pool has enough', () => {
   const pl = [t({ artist: 'Turnstile', genre: 'Hardcore', year: 2021 })]
   const lib = [
-    ...Array.from({ length: 8 }, () => t({ artist: 'Turnstile', genre: 'Hardcore', year: 2021 })),
+    ...Array.from({ length: 5 }, () => t({ artist: 'Turnstile', genre: 'Hardcore', year: 2021 })),
     t({ artist: 'Scowl', genre: 'Hardcore', year: 2021 }),
     t({ artist: 'Gel', genre: 'Hardcore', year: 2022 }),
     t({ artist: 'Spy', genre: 'Hardcore', year: 2021 }),
+    t({ artist: 'Drug Church', genre: 'Hardcore', year: 2018 }),
+    t({ artist: 'Militarie Gun', genre: 'Hardcore', year: 2023 }),
   ]
   const picks = suggestForPlaylist(pl, lib, 5)
   assert.equal(picks.length, 5)
-  const turnstileCount = picks.filter(p => p.artist === 'Turnstile').length
-  assert.ok(turnstileCount <= 2, `expected ≤2 Turnstile picks, got ${turnstileCount}`)
+  assert.equal(new Set(picks.map(p => p.artist)).size, 5, 'all 5 picks should be different artists')
+})
+
+test('variety: relaxes the per-artist cap only when artists are scarce', () => {
+  const pl = [t({ artist: 'Turnstile', genre: 'Hardcore', year: 2021 })]
+  const lib = [
+    ...Array.from({ length: 8 }, () => t({ artist: 'Turnstile', genre: 'Hardcore', year: 2021 })),
+    ...Array.from({ length: 4 }, () => t({ artist: 'Scowl', genre: 'Hardcore', year: 2021 })),
+    ...Array.from({ length: 4 }, () => t({ artist: 'Gel', genre: 'Hardcore', year: 2022 })),
+  ]
+  // only 3 distinct artists but several tracks each; limit 5 → cap relaxes evenly to ≤2
+  const picks = suggestForPlaylist(pl, lib, 5)
+  assert.equal(picks.length, 5)
+  const maxPer = Math.max(...[...new Set(picks.map(p => p.artist))]
+    .map(a => picks.filter(p => p.artist === a).length))
+  assert.ok(maxPer <= 2, `expected ≤2 per artist after relaxation, got ${maxPer}`)
 })
 
 test('rotate pages deeper into the pool (different leading pick)', () => {

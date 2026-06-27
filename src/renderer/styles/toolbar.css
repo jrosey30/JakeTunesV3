@@ -292,22 +292,23 @@
 .now-playing-pill--radio {
   padding-top: 1px;
 }
-.now-playing-pill--radio:not(.now-playing-pill--broadcast) {
-  height: 64px;
-}
-.now-playing-pill--radio.now-playing-pill--broadcast {
-  height: 82px;
-}
+/* 4.5: the pill NEVER resizes (Jake: "stay the same size as it always is").
+   It holds the base 52px in every mode — NO radio/broadcast height bump. The
+   radio strip is a thin top line and the caption shows speaker + ONE line
+   (.np-broadcast-line--older is hidden), so it all fits the 52px screen. */
 .np-radio-strip {
   display: flex;
   align-items: center;
+  justify-content: center;          /* center it like a real station header */
   gap: 6px;
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.7px;
+  letter-spacing: 0.2px;            /* was 0.7px — the wide spacing is what read as tick marks */
   text-transform: uppercase;
   color: #b81d2c;
-  margin: 0 auto 2px;
+  margin: 0 0 3px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(184, 29, 44, 0.18);  /* defines it as an intentional ON-AIR header, not floating glyphs */
   line-height: 1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -474,9 +475,8 @@
  * progress bar. Pre-4.5 a placeholder "is listening" string would
  * typewriter into the same bar in ~300 ms, which read as a UI spazz
  * before any real caption arrived. */
-.now-playing-pill--broadcast {
-  height: 70px;
-}
+/* 4.5: no broadcast (mic) height bump either — see the radio note above. The
+   pill stays 52px; the caption compacts to one line to fit. */
 
 .np-broadcast-cc {
   display: flex;
@@ -484,8 +484,10 @@
   justify-content: center;
   align-items: flex-start;
   text-align: left;
-  padding: 4px 14px;
-  gap: 3px;
+  /* 4.5: no vertical padding — the pill (52px) centers this block itself, and
+     dropping the 8px lets speaker + one caption line (+ radio strip) fit. */
+  padding: 0 14px;
+  gap: 2px;
 }
 
 .np-broadcast-speaker {
@@ -516,9 +518,10 @@
 }
 
 .np-broadcast-line--older {
-  opacity: 0.55;
-  font-size: 13px;
-  color: #5a5540;
+  /* 4.5: hidden — the pill stays a constant 52px, which fits the speaker +
+     ONE caption line. (Was the dimmed 2nd CC line back when the pill grew to
+     70-82px in broadcast mode.) */
+  display: none;
 }
 
 .np-broadcast-line--current {

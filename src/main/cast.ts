@@ -306,3 +306,67 @@ export function callerForTag(tag: string): Caller | null {
   }
   return null
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// 4.5 radioV2 rebuild — UNIFIED CAST REGISTRY (single source of truth).
+//
+// V1 scatters speaker routing across three places: this file (CALLERS), the main
+// TTS handler (host voiceId + voiceSettings, index.ts ~5808), and the renderer
+// (voiceIdForRadioSpeaker + RADIO_SPEAKER_LABEL + the parse switch, Toolbar).
+// RADIO_CAST collapses all of it into ONE list — hosts + announcer + the 9
+// callers, each with its tag, pill label, voice id, and delivery settings.
+// Adding a host or caller becomes ONE entry here. Consumed only by the radioV2
+// path; V1 is untouched (CALLERS / buildCallerSegmentMode still stand).
+//
+// ⚠️ The `id`s mirror the SpeakerId union in src/renderer/radio/types.ts — keep
+// the two id lists in sync. It's a flat list validated at the IPC boundary, not
+// a behavioral regex, so drift is caught loudly, not silently.
+// ───────────────────────────────────────────────────────────────────────────
+
+export type RadioCastKind = 'host' | 'announcer' | 'caller'
+
+export interface RadioCastMember {
+  id: string
+  name: string
+  /** [TAG] for any legacy text path; in V2 the structured `speaker` field IS the id. */
+  tag: string
+  /** Display label for the now-playing pill. */
+  label: string
+  kind: RadioCastKind
+  /** ElevenLabs voice id. undefined → the server-side default voice (The Music Man). */
+  voiceId?: string
+  voiceSettings?: { stability: number; similarity_boost: number; style: number; use_speaker_boost?: boolean }
+}
+
+/** The four fixed studio voices. voiceIds + settings are lifted verbatim from the
+ *  V1 TTS path so V2 sounds identical. (Verify `label`s against V1's
+ *  RADIO_SPEAKER_LABEL when the engine is wired in Phase 1's final step.) */
+const RADIO_HOSTS: RadioCastMember[] = [
+  { id: 'mm',        name: 'The Music Man',    tag: 'MM',        label: 'The Music Man', kind: 'host',      voiceId: undefined,              voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
+  { id: 'megan',     name: 'Megan',            tag: 'MEGAN',     label: 'Megan',         kind: 'host',      voiceId: 'T7eLpgAAhoXHlrNajG8v', voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
+  { id: 'announcer', name: 'Announcer',        tag: 'ANNOUNCER', label: 'WJLR',          kind: 'announcer', voiceId: 'CeNX9CMwmxDxUF5Q2Inm', voiceSettings: { stability: 0.75, similarity_boost: 0.85, style: 0.45 } },
+  { id: 'stephen',   name: 'DJ Stephen Hands', tag: 'STEPHEN',   label: 'Stephen Hands', kind: 'host',      voiceId: 'ApBE43wHy5MiZGz9ihqB', voiceSettings: { stability: 0.45, similarity_boost: 0.8,  style: 0.55 } },
+]
+
+/** Callers derived from CALLERS so there's never a second copy to drift. */
+const RADIO_CALLERS: RadioCastMember[] = Object.values(CALLERS).map((c) => ({
+  id: c.id,
+  name: c.name,
+  tag: c.tag,
+  label: c.name,
+  kind: 'caller' as const,
+  voiceId: c.voiceId,
+  voiceSettings: c.voiceSettings,
+}))
+
+export const RADIO_CAST: RadioCastMember[] = [...RADIO_HOSTS, ...RADIO_CALLERS]
+
+export const RADIO_CAST_BY_ID: Record<string, RadioCastMember> =
+  Object.fromEntries(RADIO_CAST.map((m) => [m.id, m]))
+
+export const RADIO_CAST_BY_TAG: Record<string, RadioCastMember> =
+  Object.fromEntries(RADIO_CAST.map((m) => [m.tag.toUpperCase(), m]))
+
+/** Valid speaker ids — handed to the generator so it can only emit a real cast
+ *  member, and used to validate the structured output. */
+export const RADIO_SPEAKER_IDS: string[] = RADIO_CAST.map((m) => m.id)

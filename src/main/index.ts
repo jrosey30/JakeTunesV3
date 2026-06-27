@@ -15,7 +15,7 @@ import {
   setHotTake, getHotTake,
   setShowPlan, clearShowPlan, formatPlanForPrompt, getShowPlan,
 } from './radio-memory'
-import { CALLERS, buildCallerSegmentMode } from './cast'
+import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
@@ -492,6 +492,52 @@ function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
   })
 }
 
+// 4.5: batch variant — analyze MANY paths in ONE python process. librosa's
+// numba-JIT + scipy warmup (~1.7s) is paid once per PROCESS, so a fresh
+// process per track (runAudioAnalysisScript) wasted that ~1.7s on EVERY track.
+// Passing N paths amortizes it: ~0.56s/track in a 12-batch vs 2.95s solo (~5x,
+// validated 2026-06-26). core/audio_analysis.py emits one JSON line per path
+// (JSONL, flushed per track), so we map results back by path and a mid-batch
+// timeout still keeps the tracks finished before the kill.
+function runAudioAnalysisBatch(paths: string[]): Promise<Map<string, AudioAnalysisResult>> {
+  return new Promise((resolve) => {
+    const out = new Map<string, AudioAnalysisResult>()
+    if (paths.length === 0) { resolve(out); return }
+    const scriptPath = getAudioAnalysisScriptPath()
+    const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, ...paths], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let killed = false
+    // Scale the ceiling with batch size: ~1.7s warmup + generous 20s/track of
+    // headroom for slow iPod-USB reads. Bounds a runaway without jamming the queue.
+    const timeoutMs = 30_000 + paths.length * 20_000
+    const killTimer = setTimeout(() => { killed = true; try { py.kill('SIGKILL') } catch { /* already exited */ } }, timeoutMs)
+    py.stdout.on('data', (chunk) => { stdout += String(chunk) })
+    py.stderr.on('data', (chunk) => { stderr += String(chunk) })
+    py.on('error', (err) => {
+      clearTimeout(killTimer)
+      console.warn(`[audio-analysis] batch spawn failed: ${err.message}`)
+      resolve(out)  // empty → each job is treated as a miss by the caller
+    })
+    py.on('close', () => {
+      clearTimeout(killTimer)
+      for (const line of stdout.split('\n')) {
+        const t = line.trim()
+        if (!t) continue
+        try {
+          const r = JSON.parse(t) as AudioAnalysisResult & { path?: string }
+          if (r.path) out.set(r.path, r)
+        } catch { /* skip a torn/partial line */ }
+      }
+      if (killed) console.warn(`[audio-analysis] batch timed out after ${timeoutMs / 1000}s (${out.size}/${paths.length} done before kill)`)
+      else if (out.size < paths.length && stderr.trim()) console.warn(`[audio-analysis] batch stderr: ${stderr.trim().split('\n').pop()}`)
+      resolve(out)
+    })
+  })
+}
+
 // 4.1.1: Serialized read-modify-write through a single Promise chain.
 // Without this, the analysis worker writing a BPM and a record-play IPC
 // firing at the same time (which happens whenever the user is listening
@@ -556,17 +602,10 @@ interface AudioAnalysisDispatch {
   ok: boolean
 }
 
-async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<AudioAnalysisDispatch | null> {
-  // Brief 010b: skip job entirely when no librosa-equipped Python was
-  // found at startup. Writing the audioAnalysisAt sentinel here would
-  // mask the failure as "analyzed, just no data" and prevent the user
-  // from re-running once librosa is installed. Loud-skip means the
-  // track stays unanalyzed and the next backfill attempt can pick it up.
-  if (!PYTHON_CMD) {
-    console.warn(`[audio-analysis] ${job.trackId} skipped — no Python with librosa available (see [python] log on startup)`)
-    return null
-  }
-  const result = await runAudioAnalysisScript(job.path)
+// Turn one analysis result into persisted override fields + a renderer
+// dispatch. Split out of the (now batched) runner so the run and the result-
+// handling are independent — the batch path reuses this verbatim per track.
+async function processAudioResult(job: AudioAnalysisJob, result: AudioAnalysisResult): Promise<AudioAnalysisDispatch> {
   const audioAnalysisAt = Date.now()
   const fields: Record<string, string> = {
     audioAnalysisAt: String(audioAnalysisAt),
@@ -594,6 +633,25 @@ async function processAudioAnalysisJob(job: AudioAnalysisJob): Promise<AudioAnal
     camelotKey: result.ok ? (result.camelotKey ?? null) : null,
     ok: result.ok,
   }
+}
+
+// 4.5: analyze a whole batch in ONE python process (amortizes librosa warmup).
+// Brief 010b null-guard preserved — skip entirely when no librosa Python was
+// found, so the tracks stay unanalyzed for a later backfill rather than being
+// falsely sentinel-marked. Returns one dispatch (or null when skipped) per job,
+// aligned to the input order.
+async function processAudioAnalysisBatch(jobs: AudioAnalysisJob[]): Promise<(AudioAnalysisDispatch | null)[]> {
+  if (!PYTHON_CMD) {
+    for (const j of jobs) console.warn(`[audio-analysis] ${j.trackId} skipped — no Python with librosa available (see [python] log on startup)`)
+    return jobs.map(() => null)
+  }
+  const results = await runAudioAnalysisBatch(jobs.map((j) => j.path))
+  const out: (AudioAnalysisDispatch | null)[] = []
+  for (const job of jobs) {
+    const result = results.get(job.path) ?? { ok: false, error: 'no result line from audio_analysis.py (batch)' }
+    out.push(await processAudioResult(job, result))
+  }
+  return out
 }
 
 async function audioAnalysisWorker(): Promise<void> {
@@ -626,36 +684,40 @@ async function audioAnalysisWorker(): Promise<void> {
         }
         break
       }
-      const job = audioAnalysisQueue.shift()!
-      let dispatch: AudioAnalysisDispatch | null = null
+      // 4.5: pull a BATCH and analyze it in ONE python process. librosa's
+      // ~1.7s numba/scipy warmup was paid per track when each was its own
+      // process; batching amortizes it to ~0.56s/track (~5x). The playback
+      // debounce above still gates the START of each batch (5s of silence),
+      // so a batch of 12 is a ~7s uninterrupted run only after the user stops.
+      const AUDIO_BATCH = 12
+      const batch = audioAnalysisQueue.splice(0, AUDIO_BATCH)
+      let dispatches: (AudioAnalysisDispatch | null)[] = []
       try {
-        dispatch = await processAudioAnalysisJob(job)
+        dispatches = await processAudioAnalysisBatch(batch)
       } catch (err) {
-        console.warn(`[audio-analysis] job error for ${job.trackId}:`, err instanceof Error ? err.message : err)
+        console.warn(`[audio-analysis] batch error (${batch.length} tracks):`, err instanceof Error ? err.message : err)
       }
-      // Brief 010: persist after each completion so a restart doesn't
-      // re-run already-processed jobs. processAudioAnalysisJob has
-      // already written the audioAnalysisAt sentinel; this just trims
-      // the in-flight queue file to match.
+      // Brief 010: persist after the batch so a restart doesn't re-run
+      // completed jobs (each result already wrote its audioAnalysisAt
+      // sentinel via persistOverrideFields); this trims the queue file to match.
       void persistQueue()
-      // Brief 010 Phase 3 + Brief 014a: notify the renderer so the
-      // MusicManView backfill UI counter updates after each track AND
-      // libState.tracks gets the new analysis fields. The dispatch object
-      // is null when the job was skipped (no librosa); in that case we
-      // send only `remaining` so the counter still ticks past the
-      // skipped slot. mainWindow may be null during very early startup
-      // or on shutdown, so guard.
-      mainWindow?.webContents.send('audio-analysis:progress', {
-        remaining: audioAnalysisQueue.length,
-        ...(dispatch ? {
-          trackId: dispatch.trackId,
-          audioAnalysisAt: dispatch.audioAnalysisAt,
-          bpm: dispatch.bpm,
-          keyRoot: dispatch.keyRoot,
-          keyMode: dispatch.keyMode,
-          camelotKey: dispatch.camelotKey,
-          ok: dispatch.ok,
-        } : {}),
+      // Brief 010 Phase 3 + Brief 014a: notify the renderer per track so the
+      // MusicManView backfill counter + libState.tracks analysis fields update.
+      // `remaining` counts down across the batch so the UI ticks smoothly; a
+      // null dispatch (skipped — no librosa) still advances the counter.
+      dispatches.forEach((dispatch, idx) => {
+        mainWindow?.webContents.send('audio-analysis:progress', {
+          remaining: audioAnalysisQueue.length + (dispatches.length - 1 - idx),
+          ...(dispatch ? {
+            trackId: dispatch.trackId,
+            audioAnalysisAt: dispatch.audioAnalysisAt,
+            bpm: dispatch.bpm,
+            keyRoot: dispatch.keyRoot,
+            keyMode: dispatch.keyMode,
+            camelotKey: dispatch.camelotKey,
+            ok: dispatch.ok,
+          } : {}),
+        })
       })
     }
   } finally {
@@ -2687,6 +2749,46 @@ ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean
   await detectStateConflicts()
   return { ok: true, pushed, backups }
 })
+
+// 4.5: automatic, silent NAS backup. Jake doesn't want a "local is ahead, go
+// click a button" banner — the backup should just happen. This pushes any
+// local-newer state file to the NAS mirror in the background (boot + on a
+// timer). It is a ROUTINE mirror, not the manual reconcile: no per-push
+// .reconcile-bak snapshots (those would bloat the NAS with 48 MB copies every
+// time embeddings.bin changes). It KEEPS the one guard that matters — a shrink
+// refusal: never overwrite a good NAS backup with a local copy that's
+// dramatically smaller (the torn-write / truncation signature). Suspicious
+// files are left untouched + logged, never silently destroyed.
+let autoBackupBusy = false
+async function autoBackupStateToNas(): Promise<void> {
+  if (!isNasMounted() || autoBackupBusy) return
+  autoBackupBusy = true
+  try {
+    await detectStateConflicts()
+    if (stateConflicts.length === 0) return
+    let pushed = 0, skipped = 0
+    for (const c of stateConflicts) {
+      try {
+        if (c.nasMtimeMs > 0) {
+          const ns = await stat(c.nasPath).catch(() => null)
+          if (ns && c.localSizeBytes < ns.size * 0.5) {
+            console.warn(`[state] auto-backup SKIPPED "${c.file}" — local ${(c.localSizeBytes / 1048576).toFixed(1)}MB ≪ NAS ${(ns.size / 1048576).toFixed(1)}MB (possible truncation; left for manual review)`)
+            skipped++
+            continue
+          }
+        }
+        await copyFile(c.localPath, c.nasPath)
+        pushed++
+      } catch (err) {
+        console.warn(`[state] auto-backup failed for "${c.file}":`, err instanceof Error ? err.message : err)
+      }
+    }
+    if (pushed) console.log(`[state] auto-backup → NAS: pushed ${pushed} file(s)${skipped ? `, skipped ${skipped} suspicious` : ''}`)
+    await detectStateConflicts()
+  } finally {
+    autoBackupBusy = false
+  }
+}
 
 ipcMain.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
@@ -6051,7 +6153,9 @@ ipcMain.handle('musicman-radio', async (_event,
     ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in.
 
 ALWAYS lead with TWO [ANNOUNCER] lines, in this exact order:
-  1. A campy WJLR station ID drop (call sign + frequency + LIVE FROM BROOKLYN energy).
+  1. The MANDATORY signature open — write it EXACTLY, verbatim, EVERY show (this is WJLR's cold open; it must be identical every single time, the way a real station opens the same way daily):
+     [ANNOUNCER] We are LIVE... live here in Greenpoint!
+     (Those exact words — "We are LIVE... live here in Greenpoint!" — OPEN every show, word for word. ALL CAPS the first "LIVE" so the TTS punches it. You may drop the "WJLR 330.9" call sign right after, but the Greenpoint line comes FIRST and unchanged.)
   2. The MANDATORY hosts intro line — write it EXACTLY like this, with this phrasing and emphasis:
      [ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!
      (You may replace "Here's" with synonyms like "It's" or "Welcome back to" but the rest of the line — "Megan, and the one, the only, the MUSIC MAN!" — stays verbatim. ALL CAPS on "MUSIC MAN" so the TTS punches it.)
@@ -6128,8 +6232,8 @@ Format for this segment:
 
   const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9, broadcasting LIVE FROM BROOKLYN) between two co-hosts who actively bicker:
 
-  • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. Loves big claims and historic context.
-  • Megan (tag: [MEGAN])  — sharp, witty, lower-key, takes the OPPOSITE position from MM whenever there's a position to take. Pricks his bubble. Doesn't pull punches but isn't mean.
+  • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. His knowledge comes out as strong OPINIONS and hot takes, NEVER as facts or history lessons. He'd rather be provocatively wrong than correctly boring.
+  • Megan (tag: [MEGAN])  — sharp, witty, lower-key. Often the counterweight to MM, but NOT reflexively: she agrees and builds on him when he's actually right, then pounces when he overreaches. Her pushback lands BECAUSE it isn't automatic. Pricks his bubble, doesn't pull punches, isn't mean.
   • CALLERS (tags: [GIOVANNI] / [RAJIV] / [BERNARD] / [LASHONTE] / [KRISTINA] / [DEVIN] / [MAYA] / [MIKE] / [ZOE]) — WJLR has a 9-person caller rolodex. The most frequent is Giovanni (Bay Ridge, earnest, rambling). The others occupy distinct conversational functions: Rajiv challenges the show's framing, Bernard is the elder who was actually there, LaShonte forces them out of the 1970s, Kristina demands they cover metal, Devin called the wrong show, Maya asks the questions that make them think, Mike has industry intel he won't quite source, Zoe announces wildly committed takes. EACH caller appears only when this segment's mode says THEY'RE calling in — the prompt will tell you which one and how MM and Megan should react.
   • DJ Stephen Hands (tag: [STEPHEN]) — RARE GUEST. JakeTunes' in-house DJ. Goes by Stephen, Hands, or Stephen Hands. PARTY-FIRST: house, rap, electronic, techno, disco, boogie — anything to make a room move. Loves the disco / boogie source-code lineage (Patrick Adams, Larry Levan, Paradise Garage, Salsoul) and modern dance (Daft Punk, Justice, Disclosure, Fred again..). Doesn't engage with rock or pop discourse on its own terms — pivots back to whether anyone could DANCE to it. Brief, hyped, "this fucking goes" energy. Not a man of many words. Only appears when this segment's mode says he's on the show.
 
@@ -6146,6 +6250,7 @@ This is a REAL conversation, not a script being read. Make it sound like two peo
   • Reference the same thing from different angles. If MM says "this album invented the genre," Megan replies about the SAME album from a different angle, not a totally new tangent.
 
 KILL VANILLA, KILL EXPOSITION (the most important rule on this page):
+  • You have NO notes, no Wikipedia, no liner notes in front of you — you're going off memory, instinct, and opinion. If you catch yourself about to STATE a fact, stop and REACT instead. The #1 failure is sounding like you're reading an encyclopedia: if a line could appear on a Wikipedia page, it is WRONG.
   • DO NOT recite biographical facts. NO "X was formed in Y in Z." NO "released in 1972 by RCA on the album…" NO "their fourth studio album, which featured…" That's Wikipedia talk, not radio talk.
   • DO NOT explain the song to the listener. The listener just heard it / is about to hear it. They don't need a synopsis.
   • DO NOT do the "fun fact" thing ("did you know X recorded this in Y?"). It reads as a teleprompter.
@@ -6208,18 +6313,22 @@ Capitals signal punched emphasis. Exclamation marks drive energy. Make it campy 
 When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
 
 Format the segment STRICTLY as speaker-tagged lines${callerSegment ? ' — caller mode is dictated above, follow that structure verbatim.' : djHandsSegment ? ' — DJ Stephen Hands guest mode is dictated above, follow that structure verbatim.' : ':'}
+MANDATORY FORMAT: EVERY line begins with exactly ONE bracketed speaker tag from the cast above (e.g. [MM], [MEGAN], the specific [CALLER] this segment allows, or [STEPHEN] only when he's on). NEVER output an untagged line, a "Name:" prefix, or a bare dash, and NEVER split one speaker's thought onto an untagged continuation line — one tag, then their words. An untagged line is dropped, so a missing tag = lost dialogue.
 ${opener
   ? `[ANNOUNCER] Campy WJLR station ID drop.
 [ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!  (mandatory verbatim — "Here's" / "It's" / "Welcome back to" interchangeable, rest of the line is fixed)`
   : forceAnnouncer
     ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).'
     : (callerSegment || djHandsSegment ? '' : '(NO [ANNOUNCER] line this segment.)')}
-${callerSegment || djHandsSegment ? '' : `[MM] First chatter line.
-[MEGAN] Reply that disagrees or undercuts MM.
-[MM] Comeback or pivot.
-[MEGAN] Final word, often dryly funny.`}
+${callerSegment || djHandsSegment ? '' : `Sound like two people who've co-hosted for years — NOT a fixed call-and-response. VARY the dynamic so no two segments feel alike:
+  • Sometimes they AGREE and pile on together, hyping the same thing.
+  • Sometimes Megan undercuts MM — but NOT every time; predictable disagreement is exactly what makes it stiff.
+  • Sometimes one gets ROLLING on a tangent and the other just punctuates it ("...mhm", "there it is", a laugh).
+  • Sometimes it's fast and overlapping — short cut-ins, [interrupts], one stepping on the tail of the other's line.
+  • Vary who STARTS — don't always open on [MM].
+It's a CONTINUING show, not a cold reset: they can call back to something from earlier in the broadcast and let a thread carry.`}
 
-3-5 lines total${wantsAnnouncer ? ' (NOT counting the [ANNOUNCER] drop)' : ''}. Each line is 1-2 sentences max. Lines should sound natural when read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover the same ground a real radio DJ pair would: back-announce what just played, hint at what's next, brief verified fact / opinion / roast / call-out.
+Vary the LENGTH and rhythm by segment${wantsAnnouncer ? ' (NOT counting the [ANNOUNCER] drop)' : ''}: sometimes a quick 2-line hit, sometimes a 5-6 line riff where one of them really gets going — never the same shape twice in a row. Lines usually run 1-2 sentences, but a clipped 3-word reaction or one longer mid-riff line is good — that variation IS flow. Sound natural read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover what a real DJ pair would: react to what just played, tease what's next, a hot take / roast / tangent / bit — opinions ABOUT the music, never facts about it.
 
 EXTERNAL CONTEXT — below the user message you may see Brooklyn weather, US Last.fm scrobble charts this week, recent music-press headlines (Pitchfork / Stereogum / The Quietus), Wikidata structured artist info, Discogs pressing detail, Last.fm "similar to" data, and MusicBrainz / Wikipedia background. Use these as TEXTURE AND REACTION HOOKS, not as a fact dump.
 
@@ -6272,26 +6381,25 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   } else {
     userMessage = `Now playing: "${track.title}" by ${track.artist} from the album "${track.album}" (${track.genre}, ${track.year})`
   }
-  if (artistFacts && !opener) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
-  if (nextArtistFacts && nextTrack) userMessage += `\nBackground on ${nextTrack.artist}: ${nextArtistFacts}`
+  // 4.5 radioV2: artist "Background" facts (Exa web search) REMOVED from the
+  // radio prompt — the #1 source of the "reading a Wikipedia page" feel. The
+  // hosts now run on opinion + reaction, not researched facts.
 
   // External-API enrichment — append only what came back. The prompt's
   // KILL VANILLA / HUMAN MOVES rules tell Claude to use these as
   // *texture and reaction hooks*, not facts to recite.
+  // 4.5 radioV2: the encyclopedic context — Wikidata bios, Discogs pressing
+  // detail, Last.fm "similar to" — was REMOVED from the radio prompt. Handing
+  // the model an encyclopedia entry made the hosts recite it (the "Wikipedia
+  // page" feel) no matter how hard KILL EXPOSITION pushed back. They now get
+  // ONLY reaction-bait — weather, the charts, press headlines — so they have to
+  // talk from opinion + chemistry. (wdCurrent/discogsCurrent/similarCurrent are
+  // still fetched above; a follow-up can stub those fetches for latency.)
   const weatherLine = formatWeatherForPrompt(weather)
   const chartLine = formatLastFmChartForPrompt(chart)
   const reviewsBlock = formatReviewsForPrompt(reviews)
-  const wdCurLine = formatWikidataForPrompt(wdCurrent)
-  const wdNextLine = formatWikidataForPrompt(wdNext)
-  const discogsCurLine = formatDiscogsForPrompt(discogsCurrent)
-  const discogsNextLine = formatDiscogsForPrompt(discogsNext)
   if (weatherLine) userMessage += `\n\n${weatherLine}`
   if (chartLine) userMessage += `\n${chartLine}`
-  if (similarCurrent.length) userMessage += `\nLast.fm similar to ${track.artist}: ${similarCurrent.slice(0, 4).join(', ')}.`
-  if (wdCurLine) userMessage += `\n${track.artist} — ${wdCurLine}`
-  if (wdNextLine && nextTrack) userMessage += `\n${nextTrack.artist} — ${wdNextLine}`
-  if (discogsCurLine) userMessage += `\n${track.artist} / ${track.album} — ${discogsCurLine}`
-  if (discogsNextLine && nextTrack) userMessage += `\n${nextTrack.artist} / ${nextTrack.album} — ${discogsNextLine}`
   if (reviewsBlock) userMessage += `\n\n${reviewsBlock}`
   // 4.3.2: persistent radio memory — recent angles + callback fuel.
   if (memoryBlock) userMessage += `\n\n${memoryBlock}`
@@ -6335,7 +6443,7 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     // affect the response.
     if (text) {
       const speakers: string[] = ['mm', 'megan']
-      if (callerSegment) speakers.push('giovanni')
+      if (callerSegment) speakers.push(callerId || 'giovanni')  // record the ACTUAL caller, not always Giovanni
       if (djHandsSegment) speakers.push('stephen')
       if (wantsAnnouncer) speakers.push('announcer')
       void appendMemory({
@@ -7172,7 +7280,7 @@ function logHiveMindInteraction(entry: HiveMindEntry): void {
 function recentUtterancesBlock(): string {
   if (recentMusicManUtterances.length === 0) return ''
   const lines = recentMusicManUtterances.map(u => `  [${u.mode}] ${u.text}`)
-  return `Recently you said (keep it consistent — don't contradict any of this):\n${lines.join('\n')}`
+  return `Recently you said — this is YOUR memory, kept here ONLY so you stay CONSISTENT (don't contradict any of it):\n${lines.join('\n')}\n\nThis log is NOT a cue to comment on repetition. If the user wants a take on a track you've already covered, find a genuinely FRESH angle — a different detail, a new comparison, another mood, a contrary read. NEVER tell the user you "already talked about this," that it's "still the same track," "we just did this," or otherwise give them attitude for asking again. They pressed the button because they want a NEW thought, not a complaint about pressing it.`
 }
 
 // ── Megan: the co-host persona (alternate to Music Man) ──
@@ -8024,95 +8132,21 @@ This response is shown as text in a chat panel, but the user may click a speaker
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 
-  // Brief 122 Phase 3a — Music Man can add to "Listen to the List". When
-  // the user asks him to recommend things to check out (or to "put that on
-  // my list"), he calls this tool and the picks land in recommendations.json
-  // via the Mini backend (single writer + iTunes enrichment), exactly like
-  // a manual add. He does NOT touch the music library.
-  const recoTool: Anthropic.Messages.ToolUnion = {
-    name: 'add_to_recommendations',
-    description: "Add one or more songs or albums to the user's \"Listen to the List\" — their personal running list of music to check out later. Call this ONLY when the user asks you to recommend things for their list, save a rec, or \"add that to my list\" — a deliberate addition, not a casual mention and not music they already own. Each item needs at least a song or an album.",
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        items: {
-          type: 'array',
-          description: 'The recommendations to add.',
-          items: {
-            type: 'object',
-            properties: {
-              song: { type: 'string', description: 'Song / track title (omit for an album rec)' },
-              artist: { type: 'string', description: 'Artist name' },
-              album: { type: 'string', description: 'Album title (use for album recs, or to disambiguate)' },
-              note: { type: 'string', description: 'Short why-you-recommended-it note (optional)' },
-            },
-          },
-        },
-      },
-      required: ['items'],
-    },
-  }
-
-  // Helper: push one reco through the backend (same path as the
-  // add-recommendation IPC). Returns a short label on success, null on fail.
-  const postReco = async (it: { song?: string; artist?: string; album?: string; note?: string }): Promise<string | null> => {
-    if (!it || (!it.song && !it.album)) return null
-    try {
-      const r = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ song: it.song, artist: it.artist, album: it.album, note: it.note }),
-      })
-      if (!r.ok) return null
-      // Explicit add via chat un-deletes the song — clear its identity
-      // tombstone so the next sync doesn't drop the pick as deleted.
-      void clearRecommendationIdentityTombstone(it.song, it.artist)
-      return [it.song, it.artist].filter(Boolean).join(' — ') || it.album || 'item'
-    } catch {
-      return null
-    }
-  }
+  // 4.5.0: Music Man recommends IN CONVERSATION only — he no longer writes to
+  // "Listen to the List". The old add_to_recommendations tool quietly stuffed
+  // the user's list with source-less picks they then had to delete forever
+  // (the list is the USER's; the assistant shouldn't auto-commit to it). He
+  // suggests; the user adds what they want via the list UI. (Tool + its
+  // backend POST helper removed.)
 
   try {
     const convo: Anthropic.Messages.MessageParam[] = messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-    // 4.5.0-50 kept chat at max_tokens 220 as a hard anti-ramble ceiling.
-    // With the reco tool in play we need headroom for the tool_use block
-    // (a multi-item add) — bumped to 600. Brevity is still governed by the
-    // prompt (1–3 sentences), not the token ceiling.
-    const callOpts = { model: 'claude-sonnet-4-6', max_tokens: 600, system: systemPrompt, tools: [recoTool] }
-    let response = await claudeCall('musicman-chat', { ...callOpts, messages: convo })
+    // 4.5.0-50 kept chat at max_tokens 220 as a hard anti-ramble ceiling;
+    // 600 gives a recommendation-heavy reply room to breathe. Brevity is
+    // governed by the prompt (1–3 sentences), not the token ceiling.
+    const response = await claudeCall('musicman-chat', { model: 'claude-sonnet-4-6', max_tokens: 600, system: systemPrompt, messages: convo })
 
-    const addedLabels: string[] = []
-    let safety = 0
-    while (response.stop_reason === 'tool_use' && safety++ < 3) {
-      convo.push({ role: 'assistant', content: response.content })
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
-      for (const block of response.content) {
-        if (block.type === 'tool_use' && block.name === 'add_to_recommendations') {
-          const input = block.input as { items?: Array<{ song?: string; artist?: string; album?: string; note?: string }> }
-          const items = Array.isArray(input.items) ? input.items : []
-          const addedNow: string[] = []
-          for (const it of items) {
-            const label = await postReco(it)
-            if (label) addedNow.push(label)
-          }
-          addedLabels.push(...addedNow)
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: addedNow.length
-              ? `Added ${addedNow.length} to the list: ${addedNow.join('; ')}`
-              : 'Nothing added (backend unreachable or no valid items).',
-          })
-        }
-      }
-      if (toolResults.length === 0) break
-      convo.push({ role: 'user', content: toolResults })
-      response = await claudeCall('musicman-chat-tool', { ...callOpts, messages: convo })
-    }
-
-    // Aggregate text across any blocks (a tool-use turn can leave the
-    // closing remark in a later text block).
+    // Aggregate text across any text blocks in the response.
     const textRaw = response.content
       .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
       .map(b => b.text)
@@ -8124,8 +8158,7 @@ This response is shown as text in a chat panel, but the user may click a speaker
     // or quoted strings (those have digits/punctuation inside).
     const text = textRaw.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
     if (text) noteMusicManUtterance('chat', text)
-    // `added` lets the renderer surface a toast / refresh the list view.
-    return { ok: true, text, textRaw, added: addedLabels }
+    return { ok: true, text, textRaw }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, text: `Error: ${msg}`, textRaw: `Error: ${msg}` }
@@ -8143,6 +8176,16 @@ ipcMain.handle('radio-set-show-plan', async (_e, plan: { theme: string; throughl
     return { ok: true }
   } catch (err: unknown) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// 4.5 radioV2: expose the unified cast registry to the renderer engine so it
+// resolves speaker → voice id + pill label from ONE source (no duplicated
+// renderer-side voice map). Returns the renderer-relevant subset only.
+ipcMain.handle('radio-get-cast', async () => {
+  return {
+    ok: true,
+    cast: RADIO_CAST.map((m) => ({ id: m.id, tag: m.tag, label: m.label, voiceId: m.voiceId, kind: m.kind })),
   }
 })
 
@@ -9545,6 +9588,7 @@ import {
   persistEmbeddingsMap as ragPersistEmbeddings,
   setEmbedding as ragSetEmbedding,
   topK as ragTopK,
+  cosine as ragCosine,
   isEmbeddingsConfigured as ragIsConfigured,
   analyzeEmbeddings as ragAnalyzeEmbeddings,
   pruneStaleEmbeddings as ragPruneStaleEmbeddings,
@@ -9556,6 +9600,109 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
   const { indexed } = await ragAnalyzeEmbeddings(validIds).catch(() => ({ indexed: 0, stale: 0, missing: validIds.size }))
   return indexed
 }
+
+// Tiny cosine k-means (Lloyd's, farthest-point init) to split a playlist's seed
+// vectors into its distinct SUB-VIBES. Bounded + cheap (~60 seeds × k × 10 iters).
+// Returns normalized cluster centroids. This is what lets a Brazilian-heavy but
+// eclectic playlist still surface its electronic / hip-hop / disco corners.
+function kmeansCentroids(vecs: Float32Array[], k: number, iters = 10): Float32Array[] {
+  const n = vecs.length
+  k = Math.max(1, Math.min(k, n))
+  const dim = vecs[0].length
+  const centroids: Float32Array[] = [vecs[0].slice()]
+  while (centroids.length < k) {
+    let far = 0, farD = -1
+    for (let i = 0; i < n; i++) {
+      let nearest = 2
+      for (const c of centroids) { const d = 1 - ragCosine(vecs[i], c); if (d < nearest) nearest = d }
+      if (nearest > farD) { farD = nearest; far = i }
+    }
+    centroids.push(vecs[far].slice())
+  }
+  for (let it = 0; it < iters; it++) {
+    const sums = centroids.map(() => new Float32Array(dim))
+    const counts = new Array(k).fill(0)
+    for (const v of vecs) {
+      let bi = 0, bs = -2
+      for (let c = 0; c < k; c++) { const s = ragCosine(v, centroids[c]); if (s > bs) { bs = s; bi = c } }
+      const sum = sums[bi]; for (let i = 0; i < dim; i++) sum[i] += v[i]; counts[bi]++
+    }
+    for (let c = 0; c < k; c++) {
+      if (counts[c] === 0) continue
+      const sum = sums[c]; let nm = 0
+      for (let i = 0; i < dim; i++) { sum[i] /= counts[c]; nm += sum[i] * sum[i] }
+      nm = Math.sqrt(nm) || 1
+      for (let i = 0; i < dim; i++) sum[i] /= nm
+      centroids[c] = sum
+    }
+  }
+  return centroids
+}
+
+// 4.5: brain-driven playlist suggestions. The old utils/playlistSuggest scored
+// library tracks by ARTIST/genre/decade string-match — so it just surfaced more
+// songs by the artists already on the playlist, and ↻ barely changed (it rotated
+// a tiny artist-clustered pool). This returns the tracks most similar to the
+// playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
+// regardless of artist. The renderer then filters for freshness (new artists,
+// no same-album) + diversity. We return a generous pool so ↻ has real variety.
+ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }> }> => {
+  try {
+    if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
+    const m = await ragGetEmbeddingsMap()
+    if (m.size === 0) return { ok: false, hits: [] }
+    const inPl = new Set(playlistIds)
+    let seeds: Float32Array[] = []
+    for (const id of playlistIds) { const v = m.get(id); if (v) seeds.push(v) }
+    if (seeds.length === 0) return { ok: false, hits: [] }
+    // Cap the seed set so a huge playlist can't blow up the scan.
+    if (seeds.length > 60) {
+      const step = seeds.length / 60
+      const sampled: Float32Array[] = []
+      for (let i = 0; i < 60; i++) sampled.push(seeds[Math.floor(i * step)])
+      seeds = sampled
+    }
+    // Global-center penalty: down-weight tracks near the library's overall mean —
+    // those generic "central" tracks were getting suggested for EVERY playlist.
+    let gdim = 0, gn = 0
+    let gc: Float32Array | null = null
+    for (const vec of m.values()) {
+      if (!gc) { gdim = vec.length; gc = new Float32Array(gdim) }
+      for (let i = 0; i < gdim; i++) gc[i] += vec[i]
+      gn++
+    }
+    if (gc && gn > 0) {
+      let gnorm = 0
+      for (let i = 0; i < gdim; i++) { gc[i] /= gn; gnorm += gc[i] * gc[i] }
+      gnorm = Math.sqrt(gnorm) || 1
+      for (let i = 0; i < gdim; i++) gc[i] /= gnorm
+    }
+    const LAMBDA = 0.3
+    // Cluster the seeds into the playlist's distinct SUB-VIBES, then score each
+    // candidate against its NEAREST sub-vibe (not the bland whole-playlist avg).
+    // The renderer round-robins the clusters → a Brazilian-heavy but eclectic
+    // playlist still surfaces its electronic / hip-hop / disco corners instead of
+    // collapsing onto the densest cluster. (Verified on the "Pool" playlist.)
+    const cents = kmeansCentroids(seeds, Math.max(1, Math.min(clusters, seeds.length)))
+    const perCluster: Array<Array<{ trackId: number; score: number }>> = cents.map(() => [])
+    for (const [tid, vec] of m) {
+      if (inPl.has(tid)) continue
+      let bi = 0, bs = -2
+      for (let c = 0; c < cents.length; c++) { const s = ragCosine(vec, cents[c]); if (s > bs) { bs = s; bi = c } }
+      const score = bs - (gc ? LAMBDA * ragCosine(vec, gc) : 0)
+      perCluster[bi].push({ trackId: tid, score })
+    }
+    const hits: Array<{ trackId: number; score: number; cluster: number }> = []
+    perCluster.forEach((list, c) => {
+      list.sort((a, b) => b.score - a.score)
+      for (const h of list.slice(0, 60)) hits.push({ trackId: h.trackId, score: h.score, cluster: c })
+    })
+    return { ok: true, hits }
+  } catch (err) {
+    console.warn('[playlist-similar] failed:', err instanceof Error ? err.message : err)
+    return { ok: false, hits: [] }
+  }
+})
 
 // Settings → Library tab polls this on open. Without caching it re-reads
 // library.json + loads the full embeddings.bin map every time — beach ball.
@@ -9639,6 +9786,42 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
     return { ok: false, embedded: 0, total: 0, error: String(err) }
   }
 })
+
+// 4.5: auto-index new songs into RAG. Jake wants EVERY imported track embedded
+// automatically — not only when the nightly brain-trainer runs. This embeds any
+// library track that has no vector yet (base embedding); the trainer then adds
+// the sound/mood enrichment on its nightly pass. Cheap when there's nothing new
+// (an in-memory membership check); bounded per pass. getEmbeddingsMap mtime-
+// reloads, so it builds on the trainer's latest file rather than reverting it.
+let autoIndexBusy = false
+async function autoIndexNewTracks(): Promise<void> {
+  if (!ragIsConfigured() || autoIndexBusy) return
+  autoIndexBusy = true
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<EmbedTrackInput & { id: number }> }
+    const tracks = (lib.tracks || []).filter((t) => typeof t?.id === 'number')
+    const existing = await ragGetEmbeddingsMap()
+    const todo = tracks.filter((t) => !existing.has(t.id) && (t.artist || t.title)).slice(0, 300)
+    if (todo.length === 0) return
+    let done = 0
+    for (let i = 0; i < todo.length; i += 100) {
+      const slice = todo.slice(i, i + 100)
+      try {
+        const vecs = await ragEmbedTexts(slice.map(ragBuildEmbedText))
+        for (let j = 0; j < slice.length && j < vecs.length; j++) await ragSetEmbedding(slice[j].id, vecs[j])
+        await ragPersistEmbeddings()
+        done += slice.length
+      } catch (err) {
+        console.warn('[rag] auto-index batch failed:', err instanceof Error ? err.message : err)
+      }
+    }
+    if (done) { console.log(`[rag] auto-indexed ${done} new track(s) into RAG`); invalidateEmbeddingStatusCache() }
+  } catch (err) {
+    console.warn('[rag] auto-index failed:', err instanceof Error ? err.message : err)
+  } finally {
+    autoIndexBusy = false
+  }
+}
 
 // Retrieve the K most-similar tracks to a free-text query. Used by
 // musicman-chat to build a focused context block in place of the
@@ -9833,6 +10016,53 @@ ipcMain.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlis
     return { ok: true, playlists }
   } catch {
     return { ok: true, playlists: [] }
+  }
+})
+
+// 4.5: "Your Mixes" — pull the SAME daily mixes the iOS app shows, from the
+// mobile backend on homemini (single source of truth so desktop ↔ mobile match
+// exactly). The backend themes + caches them daily and merges phone+desktop
+// play history. We return only trackIds; the renderer resolves them to local
+// Track objects for playback. Any failure (backend down / off-tailnet) → ok:false
+// and the Home section quietly hides. See JakeTunesMobile backend/src/routes/mixes.ts.
+const MOBILE_MIXES_BACKEND = 'http://homemini:3000'
+ipcMain.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
+  try {
+    const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, { signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return { ok: false, error: `backend ${res.status}` }
+    const body = await res.json() as { date?: string; mixes?: Array<{ id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }> }
+    const mixes = (body.mixes || []).map(m => ({
+      id: String(m.id ?? ''),
+      title: String(m.title ?? 'Mix'),
+      subtitle: String(m.subtitle ?? ''),
+      trackIds: (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n)),
+    })).filter(m => m.trackIds.length > 0)
+    return { ok: true, date: body.date, mixes }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'mobile backend unreachable' }
+  }
+})
+ipcMain.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> => {
+  try {
+    const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes/vibe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vibe: String(vibe ?? '').slice(0, 200) }),
+      signal: AbortSignal.timeout(25000),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({})) as { error?: string }
+      return { ok: false, error: err.error || `backend ${res.status}` }
+    }
+    const m = await res.json() as { id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }
+    return { ok: true, mix: {
+      id: String(m.id ?? ''),
+      title: String(m.title ?? vibe),
+      subtitle: String(m.subtitle ?? ''),
+      trackIds: (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n)),
+    } }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'mobile backend unreachable' }
   }
 })
 
@@ -10432,6 +10662,7 @@ async function pushLocalOnlyRecommendations(
   )
   const localOnly = local.filter((r) => {
     if (tombstones.has(String(r.id)) || backendIds.has(String(r.id))) return false
+    if (isIdentityTombstoned(tombstones, r)) return false   // never re-push a deleted SONG (resurrection fix)
     if (!(r.song || r.artist || r.album || r.note)) return false
     const idk = recoRecordIdentityKey(r)
     return !(idk && backendIdentity.has(idk))
@@ -10884,23 +11115,31 @@ ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?
   }
 })
 
-ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
+ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
   if (!album) return { ok: true, blurb: '' }
-  const key = albumCacheKey(artist, album)
+  const yr = year ? String(year).trim() : ''
+  const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
   const cached = albumBlurbCache.get(key)
   if (cached !== undefined) return { ok: true, blurb: cached }
   try {
+    // 4.5: ground in live web search + pass the real year. Without this, the
+    // model confabulates a history for any album it doesn't know — e.g. a 2026
+    // Sublime record got described as a "2006 album" with the wrong Nowell death
+    // year. Cached like the blurb so it's one search per album.
+    const search = await searchWebCached(`${artist} "${album}"${yr ? ` ${yr}` : ''} album`, album).catch(() => '')
     const user = [
-      `Write a short, factual history of the album "${album}" by ${artist}.`,
-      'Cover what it is and why it matters: the era and context it was made in, its place in the artist\'s career and in music history, and what it is best known for (its sound, signature songs, and legacy).',
-      '3-4 sentences. Neutral and encyclopedic — this is a HISTORY, not a review. Do NOT rate it, rank it, or editorialize ("masterpiece", "their best/worst", "overrated", "not the X people need it to be").',
-      'Avoid hyper-specific facts you might get wrong (exact session dates, precise chart/sales figures) — factual credits are shown separately. No preamble.',
-      'Plain prose ONLY — no markdown of any kind (no # headings, no *asterisks*, no backticks), and do not begin by repeating the album title.',
-    ].join('\n')
+      `Write a short, factual history of the album "${album}" by ${artist}${yr ? `, released in ${yr}` : ''}.`,
+      yr ? `The release year is ${yr} — anchor on it; never state a different year.` : '',
+      'Cover what it is and why it matters: the era/context, its place in the artist\'s career and music history, and what it is best known for.',
+      '3-4 sentences. Neutral and encyclopedic — a HISTORY, not a review. Do NOT rate, rank, or editorialize.',
+      'CRITICAL — accuracy over detail: only state facts you are certain of. If you do not actually recognize THIS specific album, describe it from the search results + the known year, and do NOT invent a release year, lineup changes, deaths, or events. A brief correct blurb beats a detailed wrong one.',
+      'Avoid hyper-specific facts (exact session dates, chart/sales figures). Plain prose only — no markdown — and do not begin by repeating the album title.',
+      search ? `\nLive web search results — TREAT AS GROUND TRUTH:\n${search}` : '',
+    ].filter(Boolean).join('\n')
     const reply = await claudeCall('album-blurb', {
-      model: 'claude-haiku-4-5',
-      max_tokens: 260,
-      system: 'You are a precise, neutral music historian writing concise, encyclopedic album descriptions. Be factual and respect the work\'s significance. Never rate, rank, editorialize, or give opinions — just the history.',
+      model: 'claude-sonnet-4-6',   // bumped off Haiku: factual history needs the stronger model; cached → one call/album
+      max_tokens: 300,
+      system: 'You are a precise, neutral music historian. Ground every claim in the provided search results and the known release year. NEVER invent dates, deaths, lineup changes, or events you are not certain of — omit rather than guess. No ratings, rankings, or opinions.',
       messages: [{ role: 'user', content: user }],
     })
     const block = reply.content[0]
@@ -10916,18 +11155,20 @@ ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string): Pro
 // history blurb above. Jake didn't want a contrarian hot-take standing in for
 // the history of a landmark album; same voice, but now behind a button.
 const albumTakeCache = new Map<string, string>()
-ipcMain.handle('get-album-take', async (_e, artist: string, album: string): Promise<{ ok: boolean; take?: string; error?: string }> => {
+ipcMain.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
   if (!album) return { ok: true, take: '' }
-  const key = albumCacheKey(artist, album)
+  const yr = year ? String(year).trim() : ''
+  const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
   const cached = albumTakeCache.get(key)
   if (cached !== undefined) return { ok: true, take: cached }
   try {
     const user = [
-      `Give your take on the album "${album}" by ${artist}.`,
+      `Give your take on the album "${album}" by ${artist}${yr ? ` (${yr})` : ''}.`,
+      yr ? `It's from ${yr} — place it correctly in that era of their run; never treat it as older or newer than it is.` : '',
       '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
       'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
       'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
-    ].join('\n')
+    ].filter(Boolean).join('\n')
     const reply = await claudeCall('album-take', {
       model: 'claude-haiku-4-5',
       max_tokens: 220,
@@ -12605,10 +12846,19 @@ app.whenReady().then(async () => {
   // Synology is reachable — surfaces divergence even in local-primary mode.
   // Non-blocking: SMB stat storm before first paint caused launch beach balls.
   if (isNasMounted()) {
-    void detectStateConflicts().catch((err) => {
-      console.warn('[state] conflict scan failed (non-fatal):', err instanceof Error ? err.message : err)
+    void autoBackupStateToNas().catch((err) => {
+      console.warn('[state] boot auto-backup failed (non-fatal):', err instanceof Error ? err.message : err)
     })
   }
+  // 4.5: keep the NAS backup current automatically — re-check + push every 2 min
+  // in the background, so local edits (including the nightly brain enrichment)
+  // mirror to the NAS without ever surfacing a "go push it" banner.
+  setInterval(() => { void autoBackupStateToNas() }, 120_000)
+  // 4.5: auto-index new songs into RAG (Jake: "every new song to auto index").
+  // Boot + every 30s — embeds anything imported that lacks a vector, so RAG /
+  // mixes / chat can use it within seconds, not at the nightly trainer pass.
+  void autoIndexNewTracks()
+  setInterval(() => { void autoIndexNewTracks() }, 30_000)
   // Brief 122 — warm recommendations.json from homemini/NAS so "Listen to
   // the List" isn't empty when the phone wrote picks the laptop never pulled.
   void syncRecommendationsToLocal().catch((err) => {

@@ -214,6 +214,9 @@
   color: #5a5650;
   font-variant-numeric: tabular-nums;
 }
+/* On a selected (blue) row the time must flip to white like every other cell —
+   the rule above is 2-classes specific, so it was out-ranking .songs-row--selected. */
+.album-page-tracklist .songs-row--selected .songs-cell--time { color: #fff; }
 
 .album-page--empty {
   padding: 0 0 28px;
