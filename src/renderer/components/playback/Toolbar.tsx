@@ -4,11 +4,36 @@ import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
 import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } from '../../audio/stingers'
+import { RadioEngine, type SegmentRequest } from '../../radio/RadioEngine'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
 import { setNotice, setBroadcast, streamBroadcast, setBroadcastTimed, setRadio, getBroadcast } from '../../activity'
+
+// 4.5 radioV2 rebuild — when true, Radio Mode routes through the new RadioEngine
+// (src/renderer/radio/); false = the original V1 path. Lets us A/B the two.
+const RADIO_V2 = true
+
+type Trackish = { title?: string; artist?: string; album?: string; genre?: string; year?: string | number }
+type SlotParams = { useAnnouncer?: boolean; callerSegment?: boolean; djHandsSegment?: boolean; callerId?: string; archetypeId?: string; slot?: number; hourCounter?: number; miniId?: boolean }
+
+/** Map a (prev, next, slot-params) triple to a RadioEngine SegmentRequest. */
+function buildSegmentReq(prev: Trackish, next: Trackish | undefined, params: SlotParams): SegmentRequest {
+  const meta = (t?: Trackish) => ({ title: t?.title || '', artist: t?.artist || '', album: t?.album || '', genre: t?.genre || '', year: t?.year ?? '' })
+  return {
+    track: meta(prev),
+    nextTrack: next ? meta(next) : undefined,
+    forceAnnouncer: params.useAnnouncer,
+    callerSegment: params.callerSegment,
+    djHandsSegment: params.djHandsSegment,
+    callerId: params.callerId,
+    archetypeId: params.archetypeId,
+    slot: params.slot,
+    hourCounter: params.hourCounter,
+    miniId: params.miniId,
+  }
+}
 
 function QueueIcon() {
   return (
@@ -104,6 +129,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const radioStartedAtRef = useRef(0)
   const radioTickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const radioCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const radioEngineRef = useRef<RadioEngine | null>(null)  // 4.5 radioV2 engine
   // 4.2.20: recording state — captures the broadcast (music + TTS routed
   // through the AudioContext via attachClipToBroadcast) into a single
   // audio file. Click Record to start, click again to stop. On stop we
@@ -240,6 +266,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // gone). One effect, no per-callsite changes; every existing setDjText
   // call flows through here.
   useEffect(() => {
+    // 4.5: In Radio Mode the radio-segment path (playSingleRadioSegment →
+    // setBroadcastTimed) is the SOLE owner of the pill's caption + speaker.
+    // This legacy DJ-bubble relay must NOT also write here during radio — the
+    // radio path calls setDjText(caption) (Toolbar ~757) which fires THIS effect,
+    // and with djSpeaker pinned to 'djhands' at the transition (~1083) it relabels
+    // every radio caption BUBBLE_SPEAKER_LABEL['djhands'] = "Stephen Hands",
+    // clobbering the correct per-host label. (The "Stephen Hands is speaking but
+    // it isn't" bug.) Radio owns the pill; the DJ-bubble stays out of its lane.
+    if (radioMode) return
     if (djLoading) {
       setBroadcast({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: '', mode: 'thinking' })
     } else if (djText) {
@@ -260,7 +295,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // pill frozen on the last karaoke-highlighted word forever.)
       setBroadcast(null)
     }
-  }, [djText, djLoading, djSpeaker, djActive])
+  }, [djText, djLoading, djSpeaker, djActive, radioMode])
 
   // Cancel DJ when user manually plays a track
   useEffect(() => {
@@ -364,6 +399,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (radioMode) {
       // OFF — clear caches, counters, and the cap timer.
       setRadioMode(false)
+      radioEngineRef.current?.stop()
       radioCacheRef.current.clear()
       radioPrefetchedKeyRef.current = null
       radioTransitionParamsRef.current.clear()
@@ -467,6 +503,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // useEffect handles the rest. Manually clear the timer/interval
       // so they don't double-fire if the user toggles fast after.
       setRadioMode(false)
+      radioEngineRef.current?.stop()
       radioCacheRef.current.clear()
       radioPrefetchedKeyRef.current = null
       radioTransitionCounterRef.current = 0
@@ -477,6 +514,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }, RADIO_CAP_MS)
     console.log('[Radio] toggle ON — generating opener…')
 
+    if (RADIO_V2) {
+      try {
+        const engine = await ensureRadioEngine()
+        setDjActive(true)
+        setDjLoading(true)
+        await engine.playOpener(buildSegmentReq({}, firstTrack, { useAnnouncer: true, slot: 0, hourCounter: 0 }))
+      } catch (err) {
+        console.warn('[radioV2] opener threw, starting track directly:', err)
+      }
+    } else {
     // Timeout applies only to Claude fetch — never cut off mid-playback.
     const OPENER_FETCH_TIMEOUT_MS = 20000
     try {
@@ -506,6 +553,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       }
     } catch (err) {
       console.warn('[Radio] opener flow threw, starting track directly:', err)
+    }
     }
     djAudioRef.current = null
     setDjActive(false)
@@ -638,6 +686,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       case 11: return 'hour-out'
       default: return 'back-announce'
     }
+  }
+
+  // 4.5 radioV2: lazily create + init the RadioEngine (loads the cast once).
+  async function ensureRadioEngine(): Promise<RadioEngine> {
+    if (!radioEngineRef.current) {
+      radioEngineRef.current = new RadioEngine()
+      await radioEngineRef.current.init()
+    }
+    return radioEngineRef.current
   }
 
   function computeRadioSlotParams(transitionNum: number, callerId?: string) {
@@ -818,7 +875,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           default:          speaker = 'mm'
         }
         segments.push({ speaker, line: m[2].trim() })
+      } else if (segments.length > 0) {
+        // 4.5: untagged line. The mandatory-[TAG] prompt rule makes these rare,
+        // but if the model drops a tag, DON'T lose the dialogue — the old code
+        // silently skipped it (a source of vanished lines). Best heuristic: an
+        // untagged line is a continuation of the previous speaker, so fold it in.
+        console.warn('[Radio] untagged line folded into previous speaker:', line.slice(0, 60))
+        segments[segments.length - 1]!.line += ' ' + line
       }
+      // (a leading untagged line, before any tagged line, has no speaker to
+      //  attach to — dropped, same as before. Rare; would be stray preamble.)
     }
     return segments
   }
@@ -827,6 +893,18 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   // ~120s so Claude + parallel TTS finish before the seam.
   const kickRadioPrefetch = useCallback(async (prevTrack: { id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number }, nextTrack: { id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number }) => {
     const cacheKey = `${prevTrack.id}-${nextTrack.id}`
+    if (RADIO_V2) {
+      const upcoming = radioTransitionCounterRef.current + 1
+      let params = radioTransitionParamsRef.current.get(cacheKey)
+      if (!params) {
+        const callerId = computeRadioSlotParams(upcoming).callerSegment ? pickCaller() : undefined
+        params = computeRadioSlotParams(upcoming, callerId)
+        radioTransitionParamsRef.current.set(cacheKey, params)
+      }
+      const engine = await ensureRadioEngine()
+      void engine.prefetch(buildSegmentReq(prevTrack, nextTrack, params), cacheKey)
+      return
+    }
     if (radioCacheRef.current.has(cacheKey)) return
     if (radioPrefetchedKeyRef.current === cacheKey) return
     if (radioPrefetchInFlightRef.current === cacheKey) return
@@ -1083,6 +1161,29 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjSpeaker('djhands')
 
       try {
+        if (RADIO_V2 && radioMode) {
+          radioTransitionCounterRef.current += 1
+          const params = radioTransitionParamsRef.current.get(cacheKey)
+            ?? computeRadioSlotParams(radioTransitionCounterRef.current, (radioTransitionCounterRef.current % 12) === 5 ? pickCaller() : undefined)
+          setDjActive(true); setDjLoading(true); setDjText(''); setDjSpeaker('djhands')
+          savedVolumeRef.current = pb.volume
+          let played = false
+          try {
+            const engine = await ensureRadioEngine()
+            played = await engine.handleTransition(buildSegmentReq(prevTrack, nextTrack, params), cacheKey)
+          } catch (err) { console.error('[radioV2] transition threw', err) }
+          if (!played) console.warn('[radioV2] transition produced no audio — advancing silently')
+          setDjLoading(false)
+          setDjActive(false)
+          isFadedRef.current = false
+          setVolume(savedVolumeRef.current)
+          playTrack(nextTrack, queue, nextIdx, true)
+          setTimeout(() => {
+            setDjExiting(true)
+            setTimeout(() => { setDjText(''); setBroadcast(null); setDjExiting(false) }, 400)
+          }, 3000)
+          return
+        }
         if (radioMode) {
           radioTransitionCounterRef.current += 1
         }
@@ -1625,6 +1726,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       </div>
       <div className="volume-group">
       <VolumeSlider />
+      <button
+        className="transport-toggle viz-btn"
+        onClick={() => window.dispatchEvent(new CustomEvent('toggle-visualizer'))}
+        title="Visualizer (⌘T) — fullscreen, reacts to what's playing"
+        aria-label="Visualizer"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+          <circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none" />
+          <path d="M8 1.6V3.6M8 12.4V14.4M1.6 8H3.6M12.4 8H14.4M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" />
+        </svg>
+      </button>
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
           className={`transport-toggle airplay-btn ${isExternalOutput ? 'airplay-btn--active' : ''}`}

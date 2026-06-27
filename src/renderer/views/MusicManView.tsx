@@ -1,12 +1,17 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import { usePlayback } from '../context/PlaybackContext'
-import { useAudio } from '../hooks/useAudio'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { setNotice } from '../activity'
-import { Track, MetadataIssue, ChatConversation, RestoreScanResult, RestoreApplyResult, RestoreDiff } from '../types'
+import { ChatConversation } from '../types'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
+
+// 4.5: the Music Man page is now just the chat. His old repertoire — building
+// playlists, recommendations, duplicate/genre/metadata cleanup, artwork — is
+// integrated throughout the app in its own places now (Your Mixes, Discovery,
+// GenresView, the dedup modal, Get Info, the art panel). The one thing with no
+// other home, the BPM/key analysis backfill, stays as a compact strip below the
+// chat. The dormant playlist/metadata IPC handlers in main are left untouched.
 
 const TAGLINES = [
   "I was into that before it was cool. And after. Because it's always been cool.",
@@ -59,97 +64,31 @@ const CHAT_INTROS = [
   "I've been told I'm 'a lot.' I prefer 'thorough.' Ask me anything about music — I dare you to stump me.",
 ]
 
-const TABS = ['Ask Me Anything', 'Recommendations', 'Build a Playlist', 'Organize Library', 'Fix Metadata'] as const
-type Tab = typeof TABS[number]
-
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   // 4.5: tagged version of the assistant's response (with ElevenLabs
-  // [scoff]/[laughs]/[softer]/etc. inline). Hidden from display —
-  // `content` is the stripped-clean version — but used by the speaker
-  // button so v3 still performs the dialogue expressively when the
-  // user opts into hearing it. Optional + only set on assistant
-  // messages; user messages don't need it.
+  // [scoff]/[laughs]/[softer]/etc. inline). Hidden from display — `content`
+  // is the stripped-clean version — but used by the speaker button so v3 still
+  // performs the dialogue expressively when the user opts into hearing it.
   contentRaw?: string
-}
-
-interface PlaylistResult {
-  name: string
-  commentary: string
-  tracks: Track[]
-}
-
-function formatDuration(ms: number): string {
-  if (!ms || ms <= 0) return ''
-  const totalSecs = Math.floor(ms / 1000)
-  const m = Math.floor(totalSecs / 60)
-  const s = totalSecs % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-interface Recommendation {
-  title: string
-  artist: string
-  year?: number
-  genre: string
-  source: string
-  why: string
-  artUrl?: string
 }
 
 export default function MusicManView() {
   const { state: libState, dispatch } = useLibrary()
-  const { playTrack } = useAudio()
-  const { state: pbState } = usePlayback()
-  const pbStateRef = useRef(pbState)
-  pbStateRef.current = pbState
-  const [activeTab, setActiveTab] = useState<Tab>('Ask Me Anything')
   const [chatInput, setChatInput] = useState('')
-  const [playlistInput, setPlaylistInput] = useState('')
   const [conversations, setConversations] = useState<ChatConversation[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [speakingIdx, setSpeakingIdx] = useState(-1)
-  const [speakingCommentary, setSpeakingCommentary] = useState(false)
-  const [playlistLoading, setPlaylistLoading] = useState(false)
-  const [playlistResult, setPlaylistResult] = useState<PlaylistResult | null>(null)
-  const [playlistSaved, setPlaylistSaved] = useState(false)
-  const [metaScanning, setMetaScanning] = useState(false)
-  const [metaIssues, setMetaIssues] = useState<MetadataIssue[]>([])
-  const [metaFixed, setMetaFixed] = useState<Set<number>>(new Set())
-  const [metaScanned, setMetaScanned] = useState(false)
-  const [restoreXmlPath, setRestoreXmlPath] = useState<string | null>(null)
-  const [restoreScan, setRestoreScan] = useState<RestoreScanResult | null>(null)
-  const [restoreScanning, setRestoreScanning] = useState(false)
-  const [restoreApplying, setRestoreApplying] = useState(false)
-  const [restoreApplied, setRestoreApplied] = useState<RestoreApplyResult | null>(null)
-  const [restoreApprovedIds, setRestoreApprovedIds] = useState<Set<number>>(new Set())
-  const [restoreExpandedGroups, setRestoreExpandedGroups] = useState<Set<string>>(new Set())
-  const [restoreError, setRestoreError] = useState<string | null>(null)
-  const [artFetching, setArtFetching] = useState<Set<string>>(new Set())
-  const [artProgress, setArtProgress] = useState<{ done: number; total: number } | null>(null)
-  const [orgApplied, setOrgApplied] = useState<Set<string>>(new Set())
-  const [recs, setRecs] = useState<Recommendation[]>([])
-  const [recsLoading, setRecsLoading] = useState(false)
-  const [recsLoaded, setRecsLoaded] = useState(false)
-  // Audio analysis backfill (4.0 §2.4b). Renderer drives the loop; per-track
-  // results persist via main's analyze-track IPC. Cancel uses a ref so the
-  // running loop can check it between tracks without state-closure issues.
+  // Audio analysis backfill (4.0 §2.4b). The main-side worker drains the queue
+  // (subprocess isolation + playback debounce); the renderer enqueues + tracks
+  // progress. Counter derives from audioAnalysisCounts (a memo over the live
+  // library), so it can't go stale on remount.
   const [analysisRunning, setAnalysisRunning] = useState(false)
   const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
-  // Brief 018: analysisProgress useState removed. The counter now derives
-  // directly from audioAnalysisCounts (a useMemo over libState.tracks),
-  // which is the authoritative state. Local-mirror state went negative
-  // on remount when the global counts had advanced past the session-
-  // local snapshot. Derived state can't go stale.
-  //
-  // analysisTotalRef is kept for the completion toast message only —
-  // it's a session-local count of "how many did I enqueue this run,"
-  // never used for any rendered counter, so the staleness bug doesn't
-  // reach it.
   const analysisTotalRef = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -159,10 +98,8 @@ export default function MusicManView() {
   }, [messages])
 
   // Stop any in-flight TTS when the view unmounts (e.g. navigating away).
-  // Without this, the audio element keeps playing and its source node stays
-  // wired into the broadcast graph — speech bleeds over the next view and
-  // dead nodes accumulate ("rattle"). Detach → pause → null, then tell the
-  // rest of the app speaking has ended so the avatar/EQ state resets.
+  // Detach → pause → null, then tell the rest of the app speaking has ended so
+  // the avatar/EQ state resets and dead nodes don't accumulate.
   useEffect(() => () => {
     if (audioRef.current) {
       detachClipFromBroadcast(audioRef.current)
@@ -217,10 +154,9 @@ export default function MusicManView() {
 
     try {
       const result = await window.electronAPI.musicmanChat(newMessages)
-      // 4.5: store BOTH the stripped text (for display) and the raw
-      // text with [scoff]/[laughs] tags intact (for the speaker button
-      // to feed to ElevenLabs v3 with full performance). textRaw defaults
-      // to text if main didn't return it — older builds + error paths.
+      // 4.5: store BOTH the stripped text (for display) and the raw text with
+      // [scoff]/[laughs] tags intact (for the speaker button to feed ElevenLabs
+      // v3). textRaw defaults to text on older builds + error paths.
       const finalMessages: ChatMessage[] = [...newMessages, {
         role: 'assistant',
         content: result.text,
@@ -242,8 +178,8 @@ export default function MusicManView() {
       setActiveChatId(chatId)
       saveConversations(updated)
     } catch (err) {
-      // Roll back the optimistic user bubble and restore their typed text
-      // so the message isn't lost when the chat IPC throws.
+      // Roll back the optimistic user bubble and restore their typed text so
+      // the message isn't lost when the chat IPC throws.
       setMessages(messages)
       setChatInput(text)
       setNotice(err instanceof Error ? err.message : 'The Music Man could not respond.', { kind: 'error' })
@@ -295,139 +231,18 @@ export default function MusicManView() {
     }
   }
 
-  const generatePlaylist = async () => {
-    const mood = playlistInput.trim()
-    if (!mood || playlistLoading) return
-    setPlaylistLoading(true)
-    setPlaylistResult(null)
-    setPlaylistSaved(false)
-
-    // 4.5: pass play signals so the Music Man can weight picks by your
-    // actual listening behaviour, not just metadata. Previously it saw
-    // only id/title/artist/album/genre/year and had no way to know
-    // which tracks you love vs. which you've never opened — hence
-    // playlists that felt blocky and ignored your taste. lastPlayedAt
-    // is ms; we ship it raw and let main convert to a relative bucket.
-    const compactTracks = libState.tracks.map(t => ({
-      id: t.id, title: t.title, artist: t.artist,
-      album: t.album, genre: t.genre, year: t.year,
-      playCount: Number(t.playCount) || 0,
-      rating: Number(t.rating) || 0,
-      lastPlayedAt: t.lastPlayedAt || 0,
-      dateAdded: t.dateAdded || '',
-    }))
-
-    try {
-      const result = await window.electronAPI.musicmanPlaylist(mood, compactTracks)
-
-      if (result.ok && result.trackIds) {
-        const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-        const playlistTracks = result.trackIds
-          .map(id => trackMap.get(id))
-          .filter((t): t is Track => t !== undefined)
-
-        setPlaylistResult({
-          name: result.name || 'Untitled',
-          commentary: result.commentary || '',
-          tracks: playlistTracks
-        })
-      }
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Playlist generation failed.', { kind: 'error' })
-    } finally {
-      setPlaylistLoading(false)
+  const handleChatKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
     }
   }
 
-  const savePlaylist = useCallback(() => {
-    if (!playlistResult || playlistSaved) return
-    const id = `mm-${Date.now()}`
-    dispatch({
-      type: 'ADD_PLAYLIST',
-      playlist: {
-        id,
-        name: playlistResult.name,
-        trackIds: playlistResult.tracks.map(t => t.id),
-        commentary: playlistResult.commentary,
-      }
-    })
-    setPlaylistSaved(true)
-  }, [playlistResult, playlistSaved, dispatch])
-
-  const speakCommentary = useCallback(async () => {
-    if (!playlistResult?.commentary) return
-    if (speakingCommentary && audioRef.current) {
-      detachClipFromBroadcast(audioRef.current)
-      audioRef.current.pause()
-      audioRef.current = null
-      setSpeakingCommentary(false)
-      window.dispatchEvent(new Event('musicman-speaking-end'))
-      return
-    }
-    setSpeakingCommentary(true)
-    try {
-      const tts = await window.electronAPI.musicmanSpeak(playlistResult.commentary)
-      if (tts.ok && tts.audio) {
-        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
-        attachClipToBroadcast(audio)
-        audioRef.current = audio
-        audio.onended = () => {
-          setSpeakingCommentary(false)
-          window.dispatchEvent(new Event('musicman-speaking-end'))
-        }
-        window.dispatchEvent(new Event('musicman-speaking-start'))
-        audio.play().catch(() => {
-          setSpeakingCommentary(false)
-          window.dispatchEvent(new Event('musicman-speaking-end'))
-        })
-      } else {
-        setSpeakingCommentary(false)
-      }
-    } catch (err) {
-      setSpeakingCommentary(false)
-      window.dispatchEvent(new Event('musicman-speaking-end'))
-      setNotice(err instanceof Error ? err.message : 'Could not play speech.', { kind: 'error' })
-    }
-  }, [playlistResult, speakingCommentary])
-
-  const scanMetadata = useCallback(async () => {
-    if (metaScanning) return
-    setMetaScanning(true)
-    setMetaIssues([])
-    setMetaFixed(new Set())
-    setMetaScanned(false)
-
-    const compactTracks = libState.tracks.map(t => ({
-      id: t.id, title: t.title, artist: t.artist,
-      album: t.album, genre: t.genre, year: t.year
-    }))
-
-    try {
-      const result = await window.electronAPI.musicmanScanMetadata(compactTracks)
-      if (result.ok && result.issues) {
-        setMetaIssues(result.issues as MetadataIssue[])
-      }
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Metadata scan failed.', { kind: 'error' })
-    } finally {
-      setMetaScanning(false)
-      setMetaScanned(true)
-    }
-  }, [metaScanning, libState.tracks])
-
-  // Audio analysis backfill (Brief 010). The renderer no longer drives
-  // the loop — it enqueues all unanalyzed tracks once and the main-side
-  // worker drains the queue with subprocess isolation + 5-second
-  // playback debounce + 90s per-job timeout. Resume-on-restart is now
-  // automatic via the persistent queue file in userData; cancel flows
-  // through the clear-queue IPC. The renderer subscribes to
-  // audio-analysis:progress for the counter and polls
-  // audio-analysis:status for the playback-paused state.
-  //
-  // The filter excludes tracks with both a timestamp AND a bpm (i.e.
-  // tracks that succeeded). Failed-but-timestamped tracks resurface
-  // on the next click so the user can retry them after fixing the
-  // file (re-import, codec swap, etc.).
+  // ── Audio analysis backfill (BPM + key) ────────────────────────────────
+  // Enqueue all unanalyzed tracks once; the main worker drains the queue with
+  // subprocess isolation + 5s playback debounce. The filter excludes tracks
+  // with both a timestamp AND a bpm; failed-but-timestamped tracks resurface so
+  // they can be retried.
   const runAudioAnalysisBackfill = useCallback(async () => {
     if (analysisRunning) return
     const tracksToAnalyze = libState.tracks.filter(t => t.path && (!t.audioAnalysisAt || !t.bpm))
@@ -447,8 +262,6 @@ export default function MusicManView() {
     try {
       await window.electronAPI.audioAnalysisEnqueueMany(jobs)
     } catch (err) {
-      // Enqueue failed — clear the running flag so the button isn't stuck
-      // spinning forever. (On success the progress effect drives it false.)
       setAnalysisRunning(false)
       setNotice(err instanceof Error ? err.message : 'Could not start audio analysis.', { kind: 'error' })
     }
@@ -461,27 +274,13 @@ export default function MusicManView() {
     setTimeout(() => setAnalysisStatus(null), 4000)
   }, [])
 
-  // Brief 010 Phase 4 + Brief 014a: subscribe to worker progress and
-  // pipe per-track results into libState. Progress events fire on
-  // every job completion with `remaining` (drives the counter) AND
-  // the new analysis fields (drive an UPDATE_TRACKS dispatch). The
-  // audioAnalysisCounts memo below recomputes in real time as the
-  // library state changes. Status poll fills in playback-paused
-  // state (the worker doesn't emit a separate paused event — it just
-  // keeps polling its own gate at 1-2s).
+  // Subscribe to worker progress: pipe per-track results into libState (so the
+  // counter recomputes live) and flip running→false on completion. Status poll
+  // surfaces the playback-paused state.
   useEffect(() => {
     if (!analysisRunning) return
     const unsubProgress = window.electronAPI.onAudioAnalysisProgress((payload) => {
       const { remaining, trackId, audioAnalysisAt, bpm, keyRoot, keyMode, camelotKey } = payload
-      // Brief 014a: dispatch per-track UPDATE_TRACKS so the
-      // audioAnalysisCounts memo recomputes immediately. The reducer
-      // partial-merges per field, so multiple { id, field, value }
-      // entries for the same id update multiple fields on one track.
-      // bpm/audioAnalysisAt are coerced to number via NUMERIC_FIELDS.
-      // null bpm means librosa failed — we still write
-      // audioAnalysisAt (matches the on-disk override sentinel) and
-      // skip the bpm/key writes so the memo's `if (t.audioAnalysisAt
-      // && t.bpm)` gate treats it as "tried but unsuccessful."
       if (typeof trackId === 'number' && typeof audioAnalysisAt === 'number') {
         const updates: { id: number; field: string; value: string | boolean }[] = [
           { id: trackId, field: 'audioAnalysisAt', value: String(audioAnalysisAt) },
@@ -492,10 +291,6 @@ export default function MusicManView() {
         if (camelotKey) updates.push({ id: trackId, field: 'camelotKey', value: camelotKey })
         dispatch({ type: 'UPDATE_TRACKS', updates })
       }
-      // Brief 018: progress-bar math removed — the counter now derives
-      // from audioAnalysisCounts. The completion toast still uses the
-      // session-local enqueue count for the "Done — N analyzed" message,
-      // which is the only place a session-local number is appropriate.
       if (remaining === 0) {
         setAnalysisRunning(false)
         const sessionTotal = analysisTotalRef.current
@@ -521,483 +316,19 @@ export default function MusicManView() {
     }
   }, [analysisRunning, dispatch])
 
-  // Tracks-needing-analysis count for the Organize Library section header.
-  // Recomputes when libState.tracks changes (i.e., per-track during a
-  // running backfill since dispatch updates them).
+  // Analyzed/total/remaining — "analyzed" means timestamp set AND bpm produced
+  // (a librosa failure leaves the timestamp but no bpm, so it stays "remaining"
+  // and can be retried). Recomputes live as progress dispatches land.
   const audioAnalysisCounts = useMemo(() => {
     let analyzed = 0
     let total = 0
     for (const t of libState.tracks) {
       if (!t.path) continue
       total++
-      // "Analyzed" means both timestamp set AND bpm produced. Tracks
-      // where librosa failed (timestamp set, no bpm) count as remaining
-      // so the user has a path to retry them.
       if (t.audioAnalysisAt && t.bpm) analyzed++
     }
     return { analyzed, total, remaining: total - analyzed }
   }, [libState.tracks])
-
-  const applyFix = useCallback(async (issueIdx: number) => {
-    const issue = metaIssues[issueIdx]
-    if (!issue || !issue.suggested) return
-
-    const allIds = [...issue.trackIds, ...(issue.altTrackIds || [])]
-    const updates = allIds.map(id => ({
-      id,
-      field: issue.field,
-      value: issue.suggested,
-    }))
-    dispatch({ type: 'UPDATE_TRACKS', updates })
-    setMetaFixed(prev => new Set([...prev, issueIdx]))
-
-    // Persist to disk — include a fingerprint so the override can be
-    // validated on future loads. Track IDs aren't stable across re-parses
-    // of the iTunesDB; without a fingerprint, an override for id=2963
-    // silently re-targets whatever track ends up at 2963 next time.
-    const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-    for (const id of allIds) {
-      const t = trackMap.get(id)
-      const fp = t
-        ? `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
-        : ''
-      await window.electronAPI.saveMetadataOverride(id, issue.field, issue.suggested, fp)
-    }
-  }, [metaIssues, dispatch, libState.tracks])
-
-  const restoreGroupedDiffs = useMemo(() => {
-    if (!restoreScan) return []
-    const byGroup = new Map<string, { album: string; artist: string; diffs: RestoreDiff[] }>()
-    for (const d of restoreScan.diffs) {
-      const existing = byGroup.get(d.groupKey)
-      if (existing) {
-        existing.diffs.push(d)
-      } else {
-        byGroup.set(d.groupKey, { album: d.groupAlbum, artist: d.groupArtist, diffs: [d] })
-      }
-    }
-    return Array.from(byGroup.entries())
-      .map(([key, val]) => ({ key, ...val }))
-      .sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album))
-  }, [restoreScan])
-
-  const pickAndScanXml = useCallback(async () => {
-    if (restoreScanning) return
-    setRestoreError(null)
-    setRestoreApplied(null)
-    const picked = await window.electronAPI.restoreXmlPickFile()
-    if (!picked.ok || !picked.path) return
-    setRestoreXmlPath(picked.path)
-    setRestoreScanning(true)
-    setRestoreScan(null)
-    try {
-      const result = await window.electronAPI.restoreXmlScan(picked.path)
-      if (!result.ok || !result.data) {
-        setRestoreError(result.error || 'Scan failed')
-        return
-      }
-      setRestoreScan(result.data)
-      // Default: everything approved
-      setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
-      setRestoreExpandedGroups(new Set())
-    } catch (err) {
-      setRestoreError(err instanceof Error ? err.message : 'Scan failed')
-    } finally {
-      setRestoreScanning(false)
-    }
-  }, [restoreScanning])
-
-  const rescanXml = useCallback(async () => {
-    if (!restoreXmlPath || restoreScanning) return
-    setRestoreError(null)
-    setRestoreApplied(null)
-    setRestoreScanning(true)
-    setRestoreScan(null)
-    try {
-      const result = await window.electronAPI.restoreXmlScan(restoreXmlPath)
-      if (!result.ok || !result.data) {
-        setRestoreError(result.error || 'Scan failed')
-        return
-      }
-      setRestoreScan(result.data)
-      setRestoreApprovedIds(new Set(result.data.diffs.map(d => d.id)))
-      setRestoreExpandedGroups(new Set())
-    } catch (err) {
-      setRestoreError(err instanceof Error ? err.message : 'Scan failed')
-    } finally {
-      setRestoreScanning(false)
-    }
-  }, [restoreXmlPath, restoreScanning])
-
-  const toggleRestoreTrack = useCallback((id: number) => {
-    setRestoreApprovedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  const toggleRestoreGroup = useCallback((diffs: RestoreDiff[]) => {
-    setRestoreApprovedIds(prev => {
-      const ids = diffs.map(d => d.id)
-      const allApproved = ids.every(id => prev.has(id))
-      const next = new Set(prev)
-      if (allApproved) ids.forEach(id => next.delete(id))
-      else ids.forEach(id => next.add(id))
-      return next
-    })
-  }, [])
-
-  const toggleRestoreExpanded = useCallback((key: string) => {
-    setRestoreExpandedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }, [])
-
-  const approveAllRestore = useCallback(() => {
-    if (!restoreScan) return
-    setRestoreApprovedIds(new Set(restoreScan.diffs.map(d => d.id)))
-  }, [restoreScan])
-
-  const approveNoneRestore = useCallback(() => {
-    setRestoreApprovedIds(new Set())
-  }, [])
-
-  const applyRestore = useCallback(async () => {
-    if (!restoreXmlPath || !restoreScan || restoreApplying) return
-    if (restoreApprovedIds.size === 0) return
-    setRestoreApplying(true)
-    setRestoreError(null)
-    try {
-      const result = await window.electronAPI.restoreXmlApply(
-        restoreXmlPath,
-        Array.from(restoreApprovedIds),
-      )
-      if (!result.ok || !result.data) {
-        setRestoreError(result.error || 'Apply failed')
-        return
-      }
-      setRestoreApplied(result.data)
-      // Reload library from iPod so the corrected metadata shows up
-      try {
-        const reloaded = await window.electronAPI.loadTracks()
-        if (reloaded?.tracks) {
-          dispatch({ type: 'SET_TRACKS', tracks: reloaded.tracks as Track[] })
-        }
-      } catch {
-        // Non-fatal; user can restart to see changes
-      }
-    } catch (err) {
-      setRestoreError(err instanceof Error ? err.message : 'Apply failed')
-    } finally {
-      setRestoreApplying(false)
-    }
-  }, [restoreXmlPath, restoreScan, restoreApprovedIds, restoreApplying, dispatch])
-
-  // Album art helpers
-  const uniqueAlbums = (() => {
-    const seen = new Map<string, { artist: string; album: string; trackCount: number }>()
-    for (const t of libState.tracks) {
-      if (!t.album) continue
-      const key = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
-      const existing = seen.get(key)
-      if (existing) {
-        existing.trackCount++
-      } else {
-        seen.set(key, { artist: t.artist, album: t.album, trackCount: 1 })
-      }
-    }
-    return Array.from(seen.entries()).map(([key, val]) => ({ key, ...val }))
-      .sort((a, b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album))
-  })()
-
-  const fetchSingleArt = useCallback(async (artist: string, album: string) => {
-    const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-    setArtFetching(prev => new Set([...prev, key]))
-    try {
-      const result = await window.electronAPI.fetchAlbumArt(artist, album)
-      if (result.ok && result.key && result.hash) {
-        dispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-      }
-      return result.ok
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Album art fetch failed.', { kind: 'error' })
-      return false
-    } finally {
-      // Always clear the in-flight key so the spinner doesn't stick on a throw.
-      setArtFetching(prev => { const next = new Set(prev); next.delete(key); return next })
-    }
-  }, [dispatch])
-
-  const fetchAllMissing = useCallback(async () => {
-    const missing = uniqueAlbums.filter(a => !libState.artworkMap[a.key])
-    if (missing.length === 0) return
-    setArtProgress({ done: 0, total: missing.length })
-    for (let i = 0; i < missing.length; i++) {
-      await fetchSingleArt(missing[i].artist, missing[i].album)
-      setArtProgress({ done: i + 1, total: missing.length })
-      // Small delay between requests
-      if (i < missing.length - 1) await new Promise(r => setTimeout(r, 200))
-    }
-    setArtProgress(null)
-  }, [uniqueAlbums, libState.artworkMap, fetchSingleArt])
-
-  const handleChatKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-  }
-
-  const handlePlaylistKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && playlistInput.trim()) {
-      e.preventDefault()
-      generatePlaylist()
-    }
-  }
-
-  const fetchRecommendations = useCallback(async () => {
-    if (recsLoading) return
-    setRecsLoading(true)
-    const compactTracks = libState.tracks.map(t => ({
-      id: t.id, title: t.title, artist: t.artist,
-      album: t.album, genre: t.genre, year: t.year
-    }))
-    const result = await window.electronAPI.musicmanRecommendations(compactTracks)
-    if (result.ok && result.recommendations) {
-      setRecs(result.recommendations)
-    }
-    setRecsLoading(false)
-    setRecsLoaded(true)
-  }, [recsLoading, libState.tracks])
-
-  // Auto-fetch recommendations on first tab visit
-  useEffect(() => {
-    if (activeTab === 'Recommendations' && !recsLoaded && !recsLoading && libState.tracks.length > 0) {
-      fetchRecommendations()
-    }
-  }, [activeTab, recsLoaded, recsLoading, libState.tracks.length, fetchRecommendations])
-
-  // Library analysis (computed client-side, instant)
-  const libraryAnalysis = useMemo(() => {
-    if (libState.tracks.length === 0) return null
-    const tracks = libState.tracks
-
-    // Stats
-    const uniqueArtists = new Set(tracks.map(t => t.artist?.toLowerCase().trim()).filter(Boolean))
-    const uniqueAlbums = new Set(tracks.map(t => `${t.artist?.toLowerCase().trim()}|||${t.album?.toLowerCase().trim()}`).filter(k => !k.startsWith('|||')))
-    const uniqueGenres = new Set(tracks.map(t => t.genre?.toLowerCase().trim()).filter(Boolean))
-
-    // Duplicates: same title + artist
-    const dupeMap = new Map<string, Track[]>()
-    for (const t of tracks) {
-      const key = `${t.title.toLowerCase().trim()}|||${t.artist.toLowerCase().trim()}`
-      const list = dupeMap.get(key) || []
-      list.push(t)
-      dupeMap.set(key, list)
-    }
-    const duplicates = Array.from(dupeMap.entries())
-      .filter(([, list]) => list.length > 1)
-      .map(([, list]) => list)
-      .sort((a, b) => b.length - a.length)
-
-    // Single-track albums (you only have 1 song from this album)
-    const albumTrackCount = new Map<string, { artist: string; album: string; count: number }>()
-    for (const t of tracks) {
-      if (!t.album) continue
-      const key = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
-      const existing = albumTrackCount.get(key)
-      if (existing) existing.count++
-      else albumTrackCount.set(key, { artist: t.artist, album: t.album, count: 1 })
-    }
-    const singleTrackAlbums = Array.from(albumTrackCount.values())
-      .filter(a => a.count === 1)
-      .sort((a, b) => a.artist.localeCompare(b.artist))
-
-    // Genre breakdown
-    const genreCounts = new Map<string, number>()
-    for (const t of tracks) {
-      const g = t.genre || '(none)'
-      genreCounts.set(g, (genreCounts.get(g) || 0) + 1)
-    }
-    const genres = Array.from(genreCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-
-    // Missing metadata
-    const missingArtist = tracks.filter(t => !t.artist || t.artist.trim() === '')
-    const missingAlbum = tracks.filter(t => !t.album || t.album.trim() === '')
-    const missingGenre = tracks.filter(t => !t.genre || t.genre.trim() === '')
-    const missingYear = tracks.filter(t => !t.year || t.year === 0 || t.year === '0')
-
-    // Decade breakdown
-    const decades = new Map<string, number>()
-    for (const t of tracks) {
-      const yr = typeof t.year === 'string' ? parseInt(t.year) : t.year
-      if (yr && yr > 1900) {
-        const dec = `${Math.floor(yr / 10) * 10}s`
-        decades.set(dec, (decades.get(dec) || 0) + 1)
-      }
-    }
-    const decadeList = Array.from(decades.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-
-    // Genre merge suggestions — find near-duplicates
-    const genreNames = Array.from(genreCounts.keys()).filter(g => g !== '(none)')
-    const genreMerges: { from: string; to: string; fromCount: number; toCount: number; trackIds: number[] }[] = []
-    const mergedSet = new Set<string>()
-    for (const g1 of genreNames) {
-      for (const g2 of genreNames) {
-        if (g1 >= g2) continue
-        if (mergedSet.has(g1) || mergedSet.has(g2)) continue
-        const lo1 = g1.toLowerCase().replace(/[^a-z0-9]/g, '')
-        const lo2 = g2.toLowerCase().replace(/[^a-z0-9]/g, '')
-        // Exact match after normalization (e.g. "Hip-Hop" vs "HipHop")
-        let isMerge = lo1 === lo2
-        // One is a short extension of the other (e.g. "Electronic" vs "Electronica")
-        if (!isMerge && lo1.length >= 4 && lo2.length >= 4) {
-          const shorter = lo1.length <= lo2.length ? lo1 : lo2
-          const longer = lo1.length <= lo2.length ? lo2 : lo1
-          if (longer.startsWith(shorter) && (longer.length - shorter.length) <= 3) {
-            isMerge = true
-          }
-        }
-        if (isMerge) {
-          const c1 = genreCounts.get(g1) || 0
-          const c2 = genreCounts.get(g2) || 0
-          const [keep, merge] = c1 >= c2 ? [g1, g2] : [g2, g1]
-          const ids = tracks.filter(t => t.genre === merge).map(t => t.id)
-          genreMerges.push({ from: merge, to: keep, fromCount: genreCounts.get(merge) || 0, toCount: genreCounts.get(keep) || 0, trackIds: ids })
-          mergedSet.add(merge)
-        }
-      }
-    }
-
-    // Auto-fill missing genres based on artist's most common genre
-    const artistGenreMap = new Map<string, Map<string, number>>()
-    for (const t of tracks) {
-      if (!t.artist || !t.genre) continue
-      const aKey = t.artist.toLowerCase().trim()
-      if (!artistGenreMap.has(aKey)) artistGenreMap.set(aKey, new Map())
-      const gm = artistGenreMap.get(aKey)!
-      gm.set(t.genre, (gm.get(t.genre) || 0) + 1)
-    }
-    const genreFills: { trackId: number; title: string; artist: string; suggestedGenre: string }[] = []
-    const manualGenreGroups: { artist: string; trackIds: number[]; titles: string[] }[] = []
-    const manualGroupMap = new Map<string, { artist: string; trackIds: number[]; titles: string[] }>()
-    for (const t of missingGenre) {
-      const aKey = t.artist?.toLowerCase().trim()
-      if (!aKey) continue
-      const gm = artistGenreMap.get(aKey)
-      if (gm && gm.size > 0) {
-        const best = Array.from(gm.entries()).sort((a, b) => b[1] - a[1])[0][0]
-        genreFills.push({ trackId: t.id, title: t.title, artist: t.artist, suggestedGenre: best })
-      } else {
-        // No auto-suggestion — group for manual fill
-        if (!manualGroupMap.has(aKey)) {
-          manualGroupMap.set(aKey, { artist: t.artist || 'Unknown', trackIds: [], titles: [] })
-        }
-        const g = manualGroupMap.get(aKey)!
-        g.trackIds.push(t.id)
-        g.titles.push(t.title)
-      }
-    }
-    for (const g of manualGroupMap.values()) {
-      manualGenreGroups.push(g)
-    }
-    manualGenreGroups.sort((a, b) => b.trackIds.length - a.trackIds.length)
-
-    return {
-      totalTracks: tracks.length,
-      totalArtists: uniqueArtists.size,
-      totalAlbums: uniqueAlbums.size,
-      totalGenres: uniqueGenres.size,
-      duplicates,
-      singleTrackAlbums,
-      genres,
-      decadeList,
-      genreMerges,
-      genreFills,
-      manualGenreGroups,
-      missing: {
-        artist: missingArtist,
-        album: missingAlbum,
-        genre: missingGenre,
-        year: missingYear,
-      }
-    }
-  }, [libState.tracks])
-
-  const [orgExpanded, setOrgExpanded] = useState<Set<string>>(new Set())
-  const [mergeTargets, setMergeTargets] = useState<Record<number, string>>({})
-  const [renamingGenre, setRenamingGenre] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
-  const [manualGenreInputs, setManualGenreInputs] = useState<Record<string, string>>({})
-  const toggleOrgSection = useCallback((section: string) => {
-    setOrgExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(section)) next.delete(section)
-      else next.add(section)
-      return next
-    })
-  }, [])
-
-  const applyGenreMerge = useCallback(async (idx: number, from: string, defaultTo: string, trackIds: number[]) => {
-    const to = (mergeTargets[idx] ?? defaultTo).trim()
-    if (!to) return
-    const key = `merge:${from}`
-    if (orgApplied.has(key)) return
-    const updates = trackIds.map(id => ({ id, field: 'genre', value: to }))
-    dispatch({ type: 'UPDATE_TRACKS', updates })
-    for (const id of trackIds) {
-      await window.electronAPI.saveMetadataOverride(id, 'genre', to)
-    }
-    setOrgApplied(prev => new Set([...prev, key]))
-  }, [dispatch, orgApplied, mergeTargets])
-
-  const renameGenre = useCallback(async (oldGenre: string, newGenre: string) => {
-    const trimmed = newGenre.trim()
-    if (!trimmed || trimmed === oldGenre) { setRenamingGenre(null); return }
-    const ids = libState.tracks.filter(t => t.genre === oldGenre).map(t => t.id)
-    if (ids.length === 0) { setRenamingGenre(null); return }
-    const updates = ids.map(id => ({ id, field: 'genre', value: trimmed }))
-    dispatch({ type: 'UPDATE_TRACKS', updates })
-    for (const id of ids) {
-      await window.electronAPI.saveMetadataOverride(id, 'genre', trimmed)
-    }
-    setRenamingGenre(null)
-    setOrgApplied(prev => new Set([...prev, `rename:${oldGenre}`]))
-  }, [dispatch, libState.tracks])
-
-  const applyManualGenre = useCallback(async (artistKey: string, trackIds: number[], genre: string) => {
-    const trimmed = genre.trim()
-    if (!trimmed) return
-    const key = `manual:${artistKey}`
-    if (orgApplied.has(key)) return
-    const updates = trackIds.map(id => ({ id, field: 'genre', value: trimmed }))
-    dispatch({ type: 'UPDATE_TRACKS', updates })
-    for (const id of trackIds) {
-      await window.electronAPI.saveMetadataOverride(id, 'genre', trimmed)
-    }
-    setOrgApplied(prev => new Set([...prev, key]))
-  }, [dispatch, orgApplied])
-
-  const applyGenreFill = useCallback(async (trackId: number, genre: string) => {
-    const key = `fill:${trackId}`
-    if (orgApplied.has(key)) return
-    dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: trackId, field: 'genre', value: genre }] })
-    await window.electronAPI.saveMetadataOverride(trackId, 'genre', genre)
-    setOrgApplied(prev => new Set([...prev, key]))
-  }, [dispatch, orgApplied])
-
-  const applyAllGenreFills = useCallback(async () => {
-    if (!libraryAnalysis) return
-    for (const fill of libraryAnalysis.genreFills) {
-      await applyGenreFill(fill.trackId, fill.suggestedGenre)
-    }
-  }, [libraryAnalysis, applyGenreFill])
 
   return (
     <div className="musicman">
@@ -1014,856 +345,114 @@ export default function MusicManView() {
         </div>
       </div>
 
-      <div className="musicman-tabs">
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            className={`musicman-tab ${activeTab === tab ? 'musicman-tab--active' : ''}`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      <div className="musicman-content">
-        {activeTab === 'Ask Me Anything' && (
-          <div className="musicman-chat-layout">
-            {conversations.length > 0 && (
-              <div className="musicman-chat-history">
-                <button className="musicman-chat-new" onClick={startNewChat}>+ New Chat</button>
-                <div className="musicman-chat-history-list">
-                  {conversations.map(conv => (
-                    <div
-                      key={conv.id}
-                      className={`musicman-chat-history-item ${activeChatId === conv.id ? 'musicman-chat-history-item--active' : ''}`}
-                      onClick={() => loadChat(conv)}
+      <div className="musicman-content musicman-content--chat">
+        <div className="musicman-chat-layout">
+          {conversations.length > 0 && (
+            <div className="musicman-chat-history">
+              <button className="musicman-chat-new" onClick={startNewChat}>+ New Chat</button>
+              <div className="musicman-chat-history-list">
+                {conversations.map(conv => (
+                  <div
+                    key={conv.id}
+                    className={`musicman-chat-history-item ${activeChatId === conv.id ? 'musicman-chat-history-item--active' : ''}`}
+                    onClick={() => loadChat(conv)}
+                  >
+                    <span className="musicman-chat-history-title">{conv.title}</span>
+                    <button
+                      className="musicman-chat-history-delete"
+                      onClick={(e) => { e.stopPropagation(); deleteChat(conv.id) }}
+                      title="Delete conversation"
                     >
-                      <span className="musicman-chat-history-title">{conv.title}</span>
-                      <button
-                        className="musicman-chat-history-delete"
-                        onClick={(e) => { e.stopPropagation(); deleteChat(conv.id) }}
-                        title="Delete conversation"
-                      >
-                        &times;
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="musicman-chat">
-              <div className="musicman-chat-messages">
-                <div className="musicman-chat-msg musicman-chat-msg--system">
-                  <p>{CHAT_INTROS[Math.floor(new Date().getDate() + new Date().getMonth() * 31) % CHAT_INTROS.length]}</p>
-                </div>
-                {messages.map((msg, i) => (
-                  <div key={i} className={`musicman-chat-msg ${msg.role === 'user' ? 'musicman-chat-msg--user' : 'musicman-chat-msg--assistant'}`}>
-                    {msg.role === 'assistant' ? (
-                      <>
-                        {msg.content.split('\n').map((line, j) => (
-                          <p key={j}>{line}</p>
-                        ))}
-                        <button
-                          className={`musicman-speak-btn ${isSpeaking && speakingIdx === i ? 'musicman-speak-btn--active' : ''}`}
-                          onClick={() => speakMessage(msg.contentRaw || msg.content, i)}
-                          title={isSpeaking && speakingIdx === i ? 'Stop' : 'Listen'}
-                        >
-                          {isSpeaking && speakingIdx === i ? (
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
-                              <path d="M1.5 5.5v3h2l3 3v-9l-3 3h-2z" fill="currentColor" stroke="none" />
-                              <path d="M9 5.5a2 2 0 010 3" />
-                              <path d="M10.5 4a4 4 0 010 6" />
-                            </svg>
-                          )}
-                        </button>
-                      </>
-                    ) : (
-                      <p>{msg.content}</p>
-                    )}
+                      &times;
+                    </button>
                   </div>
                 ))}
-                {isLoading && (
-                  <div className="musicman-chat-msg musicman-chat-msg--assistant">
-                    <p className="musicman-typing">thinking...</p>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-              <div className="musicman-chat-input-row">
-                <input
-                  className="musicman-chat-input"
-                  type="text"
-                  placeholder="Ask The Music Man anything..."
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={handleChatKeyDown}
-                  disabled={isLoading}
-                />
-                <button className="musicman-chat-send" disabled={!chatInput.trim() || isLoading} onClick={sendMessage}>Ask</button>
               </div>
             </div>
-          </div>
-        )}
-
-        {activeTab === 'Recommendations' && (
-          <div className="musicman-recs">
-            {recsLoading && (
-              <div className="musicman-recs-loading">
-                <p className="musicman-typing">The Music Man is evaluating your taste...</p>
+          )}
+          <div className="musicman-chat">
+            <div className="musicman-chat-messages">
+              <div className="musicman-chat-msg musicman-chat-msg--system">
+                <p>{CHAT_INTROS[Math.floor(new Date().getDate() + new Date().getMonth() * 31) % CHAT_INTROS.length]}</p>
               </div>
-            )}
-            {!recsLoading && recs.length > 0 && (
-              <>
-                <div className="musicman-recs-header">
-                  <div className="musicman-recs-intro">
-                    Based on your library, you clearly have <em>some</em> taste. Here's what you're missing:
-                  </div>
-                  <button className="musicman-recs-refresh" onClick={fetchRecommendations} title="Get new recommendations">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                      <path d="M1.5 7a5.5 5.5 0 019.5-3.5M12.5 7a5.5 5.5 0 01-9.5 3.5" />
-                      <path d="M11 1v3h-3M3 10v3h3" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="musicman-recs-grid">
-                  {recs.map((rec, i) => (
-                    <div key={i} className="musicman-rec-card">
-                      <div className="musicman-rec-art">
-                        {rec.artUrl ? (
-                          <img src={rec.artUrl} alt={rec.title} className="musicman-rec-art-img" />
+              {messages.map((msg, i) => (
+                <div key={i} className={`musicman-chat-msg ${msg.role === 'user' ? 'musicman-chat-msg--user' : 'musicman-chat-msg--assistant'}`}>
+                  {msg.role === 'assistant' ? (
+                    <>
+                      {msg.content.split('\n').map((line, j) => (
+                        <p key={j}>{line}</p>
+                      ))}
+                      <button
+                        className={`musicman-speak-btn ${isSpeaking && speakingIdx === i ? 'musicman-speak-btn--active' : ''}`}
+                        onClick={() => speakMessage(msg.contentRaw || msg.content, i)}
+                        title={isSpeaking && speakingIdx === i ? 'Stop' : 'Listen'}
+                      >
+                        {isSpeaking && speakingIdx === i ? (
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
                         ) : (
-                          <svg width="28" height="28" viewBox="0 0 28 28" fill="#bb4308" opacity="0.4">
-                            <circle cx="14" cy="14" r="12" fill="none" stroke="#bb4308" strokeWidth="1" />
-                            <circle cx="14" cy="14" r="4" fill="none" stroke="#bb4308" strokeWidth="1" />
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+                            <path d="M1.5 5.5v3h2l3 3v-9l-3 3h-2z" fill="currentColor" stroke="none" />
+                            <path d="M9 5.5a2 2 0 010 3" />
+                            <path d="M10.5 4a4 4 0 010 6" />
                           </svg>
                         )}
-                      </div>
-                      <div className="musicman-rec-info">
-                        <div className="musicman-rec-title">{rec.title}</div>
-                        <div className="musicman-rec-artist">{rec.artist}{rec.year ? ` (${rec.year})` : ''}</div>
-                        <div className="musicman-rec-tags">
-                          <span className={`musicman-rec-source musicman-rec-source--${rec.source}`}>{rec.source}</span>
-                          <span className="musicman-rec-tag">{rec.genre}</span>
-                        </div>
-                        <div className="musicman-rec-why">{rec.why}</div>
-                        <div className="musicman-rec-links">
-                          <a
-                            className="musicman-rec-link musicman-rec-link--bandcamp"
-                            href={`https://bandcamp.com/search?q=${encodeURIComponent(`${rec.artist} ${rec.title}`)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Bandcamp
-                          </a>
-                          <a
-                            className="musicman-rec-link musicman-rec-link--qobuz"
-                            href={`https://www.qobuz.com/us-en/search?q=${encodeURIComponent(`${rec.artist} ${rec.title}`)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Qobuz
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                      </button>
+                    </>
+                  ) : (
+                    <p>{msg.content}</p>
+                  )}
                 </div>
-              </>
-            )}
-            {!recsLoading && recsLoaded && recs.length === 0 && (
-              <div className="musicman-recs-loading">
-                <p>Even I'm stumped. Try again.</p>
-                <button className="musicman-chat-send" onClick={fetchRecommendations} style={{ marginTop: 12 }}>Retry</button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'Build a Playlist' && (
-          <div className="musicman-playlist">
-            <div className="musicman-playlist-input-row">
+              ))}
+              {isLoading && (
+                <div className="musicman-chat-msg musicman-chat-msg--assistant">
+                  <p className="musicman-typing">thinking...</p>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+            <div className="musicman-chat-input-row">
               <input
                 className="musicman-chat-input"
-                placeholder="e.g., 'Driving at 2am through empty streets'"
-                value={playlistInput}
-                onChange={(e) => setPlaylistInput(e.target.value)}
-                onKeyDown={handlePlaylistKeyDown}
-                disabled={playlistLoading}
+                type="text"
+                placeholder="Ask The Music Man anything..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleChatKeyDown}
+                disabled={isLoading}
               />
+              <button className="musicman-chat-send" disabled={!chatInput.trim() || isLoading} onClick={sendMessage}>Ask</button>
+            </div>
+          </div>
+        </div>
+
+        {/* The one piece of his old repertoire with no other home: BPM/key
+            analysis, which feeds DJ/vibe features. Compact strip, not a tab. */}
+        <div className="musicman-analysis-strip">
+          <span className="musicman-analysis-label">
+            Library analysis · {audioAnalysisCounts.analyzed.toLocaleString()} / {audioAnalysisCounts.total.toLocaleString()} tracks have BPM + key
+          </span>
+          {analysisRunning ? (
+            <div className="musicman-analysis-controls">
+              <div className="musicman-org-bar-track" style={{ flex: 1, minWidth: 80 }}>
+                <div className="musicman-org-bar-fill" style={{ width: `${(audioAnalysisCounts.analyzed / Math.max(audioAnalysisCounts.total, 1)) * 100}%` }} />
+              </div>
+              <button className="musicman-org-action-btn" onClick={cancelAudioAnalysisBackfill}>Cancel</button>
+            </div>
+          ) : (
+            <div className="musicman-analysis-controls">
               <button
-                className="musicman-chat-send"
-                disabled={!playlistInput.trim() || playlistLoading}
-                onClick={generatePlaylist}
+                className="musicman-org-action-btn"
+                onClick={runAudioAnalysisBackfill}
+                disabled={audioAnalysisCounts.remaining === 0}
               >
-                Build
+                {audioAnalysisCounts.remaining === 0
+                  ? 'All tracks analyzed'
+                  : `Analyze ${audioAnalysisCounts.remaining.toLocaleString()} remaining`}
               </button>
+              {analysisStatus && <span className="musicman-analysis-status">{analysisStatus}</span>}
             </div>
-
-            {playlistLoading && (
-              <div className="musicman-playlist-loading">
-                <p className="musicman-typing">The Music Man is curating...</p>
-              </div>
-            )}
-
-            {playlistResult && (
-              <div className="musicman-playlist-result">
-                <div className="musicman-playlist-header">
-                  <div className="musicman-playlist-name">{playlistResult.name}</div>
-                  <div className="musicman-playlist-actions">
-                    <button
-                      className="musicman-playlist-save"
-                      onClick={savePlaylist}
-                      disabled={playlistSaved}
-                    >
-                      {playlistSaved ? 'Saved' : 'Save'}
-                    </button>
-                    <button
-                      className="musicman-playlist-play-all"
-                      onClick={() => {
-                        if (playlistResult.tracks.length > 0) {
-                          playTrack(playlistResult.tracks[0], playlistResult.tracks, 0, undefined, true)
-                        }
-                      }}
-                    >
-                      Play All
-                    </button>
-                  </div>
-                </div>
-                <div className="musicman-playlist-commentary">
-                  {playlistResult.commentary}{' '}
-                  <button
-                    className={`musicman-commentary-play ${speakingCommentary ? 'musicman-commentary-play--active' : ''}`}
-                    onClick={speakCommentary}
-                    title={speakingCommentary ? 'Stop' : 'Listen'}
-                  >
-                    {speakingCommentary ? '■' : '▶'}
-                  </button>
-                </div>
-                <div className="musicman-playlist-tracks">
-                  {playlistResult.tracks.map((track, i) => (
-                    <div
-                      key={track.id}
-                      className="musicman-playlist-track"
-                      onDoubleClick={() => playTrack(track, playlistResult.tracks, i, undefined, true)}
-                    >
-                      <span className="musicman-playlist-num">{i + 1}</span>
-                      <span className="musicman-playlist-title">{track.title}</span>
-                      <span className="musicman-playlist-artist">{track.artist}</span>
-                      <span className="musicman-playlist-duration">{formatDuration(track.duration)}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="musicman-playlist-count">
-                  {playlistResult.tracks.length} tracks
-                </div>
-              </div>
-            )}
-
-            {!playlistLoading && !playlistResult && (
-              <p style={{ color: '#a89878', marginTop: 16 }}>
-                Tell me a mood, a memory, or a moment. I'll build you something you didn't know you needed.
-              </p>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'Organize Library' && libraryAnalysis && (
-          <div className="musicman-organize">
-            <div className="musicman-org-stats">
-              <div className="musicman-org-stat">
-                <div className="musicman-org-stat-num">{libraryAnalysis.totalTracks.toLocaleString()}</div>
-                <div className="musicman-org-stat-label">Tracks</div>
-              </div>
-              <div className="musicman-org-stat">
-                <div className="musicman-org-stat-num">{libraryAnalysis.totalArtists.toLocaleString()}</div>
-                <div className="musicman-org-stat-label">Artists</div>
-              </div>
-              <div className="musicman-org-stat">
-                <div className="musicman-org-stat-num">{libraryAnalysis.totalAlbums.toLocaleString()}</div>
-                <div className="musicman-org-stat-label">Albums</div>
-              </div>
-              <div className="musicman-org-stat">
-                <div className="musicman-org-stat-num">{libraryAnalysis.totalGenres}</div>
-                <div className="musicman-org-stat-label">Genres</div>
-              </div>
-            </div>
-
-            {/* Audio Analysis (4.0 §2.4b) */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('audio-analysis')}>
-                <span>
-                  Audio Analysis (BPM + Key) — {audioAnalysisCounts.analyzed.toLocaleString()} / {audioAnalysisCounts.total.toLocaleString()} analyzed
-                </span>
-                <span className="musicman-org-toggle">{orgExpanded.has('audio-analysis') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('audio-analysis') && (
-                <div style={{ padding: '12px 16px' }}>
-                  <p className="musicman-org-hint" style={{ marginTop: 0 }}>
-                    Detect each track's BPM, musical key, and Camelot wheel position locally via aubio + librosa.
-                    Background-only data — feeds Music Man's DJ recommendations and (eventually) harmonically-compatible smart playlists.
-                    Each track takes a few seconds. Cancel anytime; resume-on-restart picks up where you left off.
-                  </p>
-
-                  {analysisRunning ? (
-                    <>
-                      {/* Brief 018: counter derives from audioAnalysisCounts
-                          (authoritative state) instead of the deleted local
-                          analysisProgress. Survives remount truthfully —
-                          can't go negative because both numerator and
-                          denominator come from the same useMemo. */}
-                      <div style={{ marginTop: 12, fontSize: 13, color: '#a89878' }}>
-                        Analyzing {audioAnalysisCounts.analyzed.toLocaleString()} of {audioAnalysisCounts.total.toLocaleString()}…
-                      </div>
-                      <div className="musicman-org-bar-track" style={{ marginTop: 8 }}>
-                        <div className="musicman-org-bar-fill" style={{ width: `${(audioAnalysisCounts.analyzed / Math.max(audioAnalysisCounts.total, 1)) * 100}%` }} />
-                      </div>
-                      <button className="musicman-org-action-btn" onClick={cancelAudioAnalysisBackfill} style={{ marginTop: 12 }}>
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className="musicman-org-action-btn"
-                        onClick={runAudioAnalysisBackfill}
-                        disabled={audioAnalysisCounts.remaining === 0}
-                        style={{ marginTop: 12 }}
-                      >
-                        {audioAnalysisCounts.remaining === 0
-                          ? 'All tracks analyzed'
-                          : `Analyze ${audioAnalysisCounts.remaining.toLocaleString()} remaining track${audioAnalysisCounts.remaining === 1 ? '' : 's'}`}
-                      </button>
-                      {analysisStatus && (
-                        <div style={{ marginTop: 10, fontSize: 13, color: '#a89878' }}>{analysisStatus}</div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Decades */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('decades')}>
-                <span>Decades</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('decades') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('decades') && (
-                <div className="musicman-org-bars">
-                  {libraryAnalysis.decadeList.map(([decade, count]) => (
-                    <div key={decade} className="musicman-org-bar-row">
-                      <span className="musicman-org-bar-label">{decade}</span>
-                      <div className="musicman-org-bar-track">
-                        <div className="musicman-org-bar-fill" style={{ width: `${(count / Math.max(...libraryAnalysis.decadeList.map(d => d[1] as number))) * 100}%` }} />
-                      </div>
-                      <span className="musicman-org-bar-count">{count}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Genre Breakdown */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('genres')}>
-                <span>Genres ({libraryAnalysis.genres.length})</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('genres') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('genres') && (
-                <div className="musicman-org-bars">
-                  {libraryAnalysis.genres.slice(0, 30).map(([genre, count]) => (
-                    <div key={genre} className="musicman-org-bar-row">
-                      {renamingGenre === genre ? (
-                        <div className="musicman-org-rename-inline">
-                          <input
-                            className="musicman-org-rename-input"
-                            autoFocus
-                            value={renameValue}
-                            onChange={e => setRenameValue(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') renameGenre(genre, renameValue)
-                              if (e.key === 'Escape') setRenamingGenre(null)
-                            }}
-                            onBlur={() => setRenamingGenre(null)}
-                          />
-                          <button className="musicman-org-action-btn" onMouseDown={e => { e.preventDefault(); renameGenre(genre, renameValue) }}>Rename</button>
-                          <span className="musicman-org-bar-count">{count}</span>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="musicman-org-bar-label">{genre}</span>
-                          <div className="musicman-org-bar-track">
-                            <div className="musicman-org-bar-fill" style={{ width: `${(count / libraryAnalysis.genres[0][1]) * 100}%` }} />
-                          </div>
-                          <span className="musicman-org-bar-count">{count}</span>
-                          {genre !== '(none)' && (
-                            <button
-                              className="musicman-org-rename-btn"
-                              onClick={() => { setRenamingGenre(genre); setRenameValue(genre) }}
-                              title="Rename genre"
-                            >
-                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
-                                <path d="M7.5 2.5l2 2M2 8l5-5 2 2-5 5H2V8z" />
-                              </svg>
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  ))}
-                  {libraryAnalysis.genres.length > 30 && (
-                    <p className="musicman-org-more">+{libraryAnalysis.genres.length - 30} more</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Duplicates */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('dupes')}>
-                <span>Potential Duplicates ({libraryAnalysis.duplicates.length})</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('dupes') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('dupes') && (
-                <div className="musicman-org-list">
-                  {libraryAnalysis.duplicates.length === 0 ? (
-                    <p className="musicman-org-empty">No duplicates found. Impressive discipline.</p>
-                  ) : (
-                    libraryAnalysis.duplicates.slice(0, 50).map((group, i) => (
-                      <div key={i} className="musicman-org-dupe-group">
-                        <div className="musicman-org-dupe-title">"{group[0].title}" — {group[0].artist} <span className="musicman-org-dupe-count">×{group.length}</span></div>
-                        {group.map(t => (
-                          <div key={t.id} className="musicman-org-dupe-track">
-                            <span className="musicman-org-dupe-album">{t.album || '(no album)'}</span>
-                            <span className="musicman-org-dupe-genre">{t.genre || ''}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Single-Track Albums */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('singles')}>
-                <span>Single-Track Albums ({libraryAnalysis.singleTrackAlbums.length})</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('singles') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('singles') && (
-                <div className="musicman-org-list">
-                  {libraryAnalysis.singleTrackAlbums.slice(0, 60).map((a, i) => (
-                    <div key={i} className="musicman-org-single-row">
-                      <span className="musicman-org-single-album">{a.album}</span>
-                      <span className="musicman-org-single-artist">{a.artist}</span>
-                    </div>
-                  ))}
-                  {libraryAnalysis.singleTrackAlbums.length > 60 && (
-                    <p className="musicman-org-more">+{libraryAnalysis.singleTrackAlbums.length - 60} more</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Missing Metadata */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('missing')}>
-                <span>Missing Metadata</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('missing') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('missing') && (
-                <div className="musicman-org-missing">
-                  {[
-                    { label: 'No Artist', items: libraryAnalysis.missing.artist },
-                    { label: 'No Album', items: libraryAnalysis.missing.album },
-                    { label: 'No Genre', items: libraryAnalysis.missing.genre },
-                    { label: 'No Year', items: libraryAnalysis.missing.year },
-                  ].map(({ label, items }) => (
-                    <div key={label} className="musicman-org-missing-row">
-                      <span className="musicman-org-missing-label">{label}</span>
-                      <span className={`musicman-org-missing-count ${items.length === 0 ? 'musicman-org-missing-count--good' : ''}`}>
-                        {items.length === 0 ? '✓' : items.length}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Genre Merge Suggestions */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('merges')}>
-                <span>Genre Merge Suggestions ({libraryAnalysis.genreMerges.length})</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('merges') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('merges') && (
-                <div className="musicman-org-list">
-                  {libraryAnalysis.genreMerges.length === 0 ? (
-                    <p className="musicman-org-empty">No duplicate genres detected. Your naming is surprisingly consistent.</p>
-                  ) : (
-                    <>
-                      <p className="musicman-org-hint">These genres look like near-duplicates. Edit the target name to merge into a custom genre or subgenre.</p>
-                      {libraryAnalysis.genreMerges.map((merge, i) => {
-                        const key = `merge:${merge.from}`
-                        const applied = orgApplied.has(key)
-                        const targetValue = mergeTargets[i] ?? merge.to
-                        return (
-                          <div key={i} className={`musicman-org-merge-row ${applied ? 'musicman-org-merge-row--applied' : ''}`}>
-                            <div className="musicman-org-merge-info">
-                              <span className="musicman-org-merge-from">"{merge.from}"</span>
-                              <span className="musicman-org-merge-count">({merge.fromCount})</span>
-                              <span className="musicman-org-merge-arrow">→</span>
-                              {applied ? (
-                                <span className="musicman-org-merge-to">"{targetValue}"</span>
-                              ) : (
-                                <input
-                                  className="musicman-org-merge-target-input"
-                                  value={targetValue}
-                                  onChange={e => setMergeTargets(prev => ({ ...prev, [i]: e.target.value }))}
-                                  onKeyDown={e => { if (e.key === 'Enter') applyGenreMerge(i, merge.from, merge.to, merge.trackIds) }}
-                                />
-                              )}
-                            </div>
-                            {applied ? (
-                              <span className="musicman-org-applied-badge">Merged</span>
-                            ) : (
-                              <button
-                                className="musicman-org-action-btn"
-                                onClick={() => applyGenreMerge(i, merge.from, merge.to, merge.trackIds)}
-                              >
-                                Merge
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Fill Missing Genres */}
-            <div className="musicman-org-section">
-              <div className="musicman-org-section-header" onClick={() => toggleOrgSection('fills')}>
-                <span>Fill Missing Genres ({libraryAnalysis.missing.genre.length} tracks)</span>
-                <span className="musicman-org-toggle">{orgExpanded.has('fills') ? '−' : '+'}</span>
-              </div>
-              {orgExpanded.has('fills') && (
-                <div className="musicman-org-list">
-                  {libraryAnalysis.missing.genre.length === 0 ? (
-                    <p className="musicman-org-empty">Every track has a genre. Nothing to fill.</p>
-                  ) : (
-                    <>
-                      {libraryAnalysis.genreFills.length > 0 && (
-                        <>
-                          <div className="musicman-org-fill-header">
-                            <p className="musicman-org-hint">Auto-fill: these artists have genres on other tracks.</p>
-                            {libraryAnalysis.genreFills.some(f => !orgApplied.has(`fill:${f.trackId}`)) && (
-                              <button className="musicman-org-action-btn musicman-org-action-btn--all" onClick={applyAllGenreFills}>
-                                Apply All ({libraryAnalysis.genreFills.filter(f => !orgApplied.has(`fill:${f.trackId}`)).length})
-                              </button>
-                            )}
-                          </div>
-                          {libraryAnalysis.genreFills.map((fill) => {
-                            const key = `fill:${fill.trackId}`
-                            const applied = orgApplied.has(key)
-                            return (
-                              <div key={fill.trackId} className={`musicman-org-fill-row ${applied ? 'musicman-org-fill-row--applied' : ''}`}>
-                                <div className="musicman-org-fill-info">
-                                  <span className="musicman-org-fill-title">{fill.title}</span>
-                                  <span className="musicman-org-fill-artist">{fill.artist}</span>
-                                  <span className="musicman-org-fill-arrow">→</span>
-                                  <span className="musicman-org-fill-genre">{fill.suggestedGenre}</span>
-                                </div>
-                                {applied ? (
-                                  <span className="musicman-org-applied-badge">Applied</span>
-                                ) : (
-                                  <button
-                                    className="musicman-org-action-btn"
-                                    onClick={() => applyGenreFill(fill.trackId, fill.suggestedGenre)}
-                                  >
-                                    Apply
-                                  </button>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </>
-                      )}
-                      {libraryAnalysis.manualGenreGroups.length > 0 && (
-                        <>
-                          <p className="musicman-org-hint" style={{ marginTop: libraryAnalysis.genreFills.length > 0 ? 14 : 0 }}>
-                            Manual: type a genre for each artist and hit Apply. All their missing-genre tracks get updated.
-                          </p>
-                          {libraryAnalysis.manualGenreGroups.map((group) => {
-                            const aKey = group.artist.toLowerCase().trim()
-                            const applied = orgApplied.has(`manual:${aKey}`)
-                            const inputVal = manualGenreInputs[aKey] || ''
-                            return (
-                              <div key={aKey} className={`musicman-org-manual-row ${applied ? 'musicman-org-manual-row--applied' : ''}`}>
-                                <div className="musicman-org-manual-info">
-                                  <span className="musicman-org-manual-artist">{group.artist}</span>
-                                  <span className="musicman-org-manual-count">{group.trackIds.length} track{group.trackIds.length !== 1 ? 's' : ''}</span>
-                                </div>
-                                {applied ? (
-                                  <span className="musicman-org-applied-badge">Applied</span>
-                                ) : (
-                                  <div className="musicman-org-manual-action">
-                                    <input
-                                      className="musicman-org-merge-target-input"
-                                      placeholder="Genre..."
-                                      value={inputVal}
-                                      onChange={e => setManualGenreInputs(prev => ({ ...prev, [aKey]: e.target.value }))}
-                                      onKeyDown={e => { if (e.key === 'Enter' && inputVal.trim()) applyManualGenre(aKey, group.trackIds, inputVal) }}
-                                    />
-                                    <button
-                                      className="musicman-org-action-btn"
-                                      disabled={!inputVal.trim()}
-                                      onClick={() => applyManualGenre(aKey, group.trackIds, inputVal)}
-                                    >
-                                      Apply
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'Fix Metadata' && (
-          <div className="musicman-metadata">
-            <div className="musicman-restore">
-              <div className="musicman-restore-header">
-                <h3>Restore from XML library</h3>
-                <p>Your iTunesDB got scrambled during the storage-mod re-sync. Point me at your iTunes Library XML export and I'll rebuild every mangled title/artist/album from it.</p>
-              </div>
-
-              {!restoreScan && !restoreScanning && !restoreApplied && (
-                <button className="musicman-chat-send" onClick={pickAndScanXml}>
-                  Choose XML & Scan
-                </button>
-              )}
-
-              {restoreScanning && (
-                <p className="musicman-typing">Matching your iPod against the XML...</p>
-              )}
-
-              {restoreError && (
-                <div className="musicman-restore-error">Error: {restoreError}</div>
-              )}
-
-              {restoreApplied && (
-                <div className="musicman-restore-applied">
-                  <p><strong>Done.</strong> {restoreApplied.tracksRestored} tracks restored, {restoreApplied.tracksWritten} written to iTunesDB.</p>
-                  <p className="musicman-restore-backup">Backup saved: <code>{restoreApplied.backup}</code></p>
-                  <button className="musicman-chat-send" onClick={rescanXml} style={{ marginTop: 12 }}>Scan Again</button>
-                </div>
-              )}
-
-              {restoreScan && !restoreApplied && (
-                <>
-                  <div className="musicman-restore-summary">
-                    <div className="musicman-restore-stats">
-                      <span><strong>{restoreScan.total}</strong> total</span>
-                      <span><strong>{restoreScan.changed}</strong> will change</span>
-                      <span><strong>{restoreScan.unchanged}</strong> already correct</span>
-                      {restoreScan.unmatched.length > 0 && <span className="musicman-restore-flagged"><strong>{restoreScan.unmatched.length}</strong> unmatched</span>}
-                      {restoreScan.ambiguous.length > 0 && <span className="musicman-restore-flagged"><strong>{restoreScan.ambiguous.length}</strong> ambiguous</span>}
-                    </div>
-                    <div className="musicman-restore-actions">
-                      <button className="musicman-metadata-rescan" onClick={approveAllRestore}>Approve all</button>
-                      <button className="musicman-metadata-rescan" onClick={approveNoneRestore}>Clear</button>
-                      <button className="musicman-metadata-rescan" onClick={rescanXml}>Rescan</button>
-                      <button
-                        className="musicman-chat-send"
-                        onClick={applyRestore}
-                        disabled={restoreApprovedIds.size === 0 || restoreApplying}
-                      >
-                        {restoreApplying ? 'Applying...' : `Apply ${restoreApprovedIds.size} changes`}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="musicman-restore-groups">
-                    {restoreGroupedDiffs.map(group => {
-                      const isExpanded = restoreExpandedGroups.has(group.key)
-                      const approvedCount = group.diffs.filter(d => restoreApprovedIds.has(d.id)).length
-                      const allApproved = approvedCount === group.diffs.length
-                      return (
-                        <div key={group.key} className="musicman-restore-group">
-                          <div className="musicman-restore-group-header">
-                            <input
-                              type="checkbox"
-                              checked={allApproved}
-                              ref={el => { if (el) el.indeterminate = approvedCount > 0 && !allApproved }}
-                              onChange={() => toggleRestoreGroup(group.diffs)}
-                            />
-                            <button
-                              className="musicman-restore-group-toggle"
-                              onClick={() => toggleRestoreExpanded(group.key)}
-                            >
-                              {isExpanded ? '▾' : '▸'} <strong>{group.artist}</strong> — {group.album}
-                              <span className="musicman-restore-group-count">
-                                {approvedCount}/{group.diffs.length} track{group.diffs.length !== 1 ? 's' : ''}
-                              </span>
-                            </button>
-                          </div>
-                          {isExpanded && (
-                            <div className="musicman-restore-tracks">
-                              {group.diffs.map(d => {
-                                const approved = restoreApprovedIds.has(d.id)
-                                return (
-                                  <label key={d.id} className={`musicman-restore-track ${approved ? '' : 'musicman-restore-track--skip'}`}>
-                                    <input
-                                      type="checkbox"
-                                      checked={approved}
-                                      onChange={() => toggleRestoreTrack(d.id)}
-                                    />
-                                    <div className="musicman-restore-track-body">
-                                      {d.changed.map(field => (
-                                        <div key={field} className="musicman-restore-diff-row">
-                                          <span className="musicman-restore-field">{field}</span>
-                                          <span className="musicman-restore-old">{String(d.old[field] || '(empty)')}</span>
-                                          <span className="musicman-restore-arrow">→</span>
-                                          <span className="musicman-restore-new">{String(d.new[field] || '(empty)')}</span>
-                                        </div>
-                                      ))}
-                                      <div className="musicman-restore-match">matched by {d.matchMethod}</div>
-                                    </div>
-                                  </label>
-                                )
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {(restoreScan.unmatched.length > 0 || restoreScan.ambiguous.length > 0) && (
-                    <div className="musicman-restore-flagged-section">
-                      <h4>Flagged tracks ({restoreScan.unmatched.length + restoreScan.ambiguous.length})</h4>
-                      <p className="musicman-restore-flagged-hint">No confident XML match for these. They'll be left alone.</p>
-                      <div className="musicman-restore-flagged-list">
-                        {restoreScan.ambiguous.map(t => (
-                          <div key={`amb-${t.id}`} className="musicman-restore-flagged-item">
-                            <span className="musicman-restore-flagged-tag">ambiguous</span>
-                            <span>{t.currentTitle || '(no title)'}</span>
-                            {t.currentArtist && <span className="musicman-restore-flagged-meta">— {t.currentArtist}</span>}
-                          </div>
-                        ))}
-                        {restoreScan.unmatched.map(t => (
-                          <div key={`un-${t.id}`} className="musicman-restore-flagged-item">
-                            <span className="musicman-restore-flagged-tag">unmatched</span>
-                            <span>{t.currentTitle || '(no title)'}</span>
-                            {t.currentArtist && <span className="musicman-restore-flagged-meta">— {t.currentArtist}</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="musicman-restore-divider" />
-
-            {!metaScanned && !metaScanning && (
-              <div className="musicman-metadata-intro">
-                <p>Misspelled artist names? Wrong genres? "Track 01"? Let me fix your embarrassing metadata.</p>
-                <button className="musicman-chat-send" onClick={scanMetadata} style={{ marginTop: 12 }}>Scan for Issues</button>
-              </div>
-            )}
-
-            {metaScanning && (
-              <div className="musicman-metadata-intro">
-                <p className="musicman-typing">The Music Man is inspecting your library...</p>
-              </div>
-            )}
-
-            {metaScanned && metaIssues.length === 0 && (
-              <div className="musicman-metadata-intro">
-                <p>I hate to say it, but... your metadata is actually fine. Don't let it go to your head.</p>
-                <button className="musicman-chat-send" onClick={scanMetadata} style={{ marginTop: 12 }}>Scan Again</button>
-              </div>
-            )}
-
-            {metaIssues.length > 0 && (
-              <>
-                <div className="musicman-metadata-summary">
-                  Found {metaIssues.length} issue{metaIssues.length !== 1 ? 's' : ''}. {metaFixed.size > 0 && `${metaFixed.size} fixed.`}
-                  <button className="musicman-metadata-rescan" onClick={scanMetadata}>Rescan</button>
-                </div>
-                <div className="musicman-metadata-issues">
-                  {metaIssues.map((issue, idx) => {
-                    const fixed = metaFixed.has(idx)
-                    const trackMap = new Map(libState.tracks.map(t => [t.id, t]))
-                    const affectedTracks = issue.trackIds.map(id => trackMap.get(id)).filter(Boolean) as Track[]
-                    const altTracks = (issue.altTrackIds || []).map(id => trackMap.get(id)).filter(Boolean) as Track[]
-                    const typeLabels: Record<string, string> = {
-                      misspelling: 'Misspelling',
-                      inconsistent: 'Inconsistent',
-                      generic: 'Generic',
-                      missing: 'Missing',
-                      genre: 'Genre',
-                    }
-                    return (
-                      <div key={idx} className={`musicman-metadata-issue ${fixed ? 'musicman-metadata-issue--fixed' : ''}`}>
-                        <div className="musicman-metadata-issue-header">
-                          <span className={`musicman-metadata-type musicman-metadata-type--${issue.type}`}>
-                            {typeLabels[issue.type] || issue.type}
-                          </span>
-                          <span className="musicman-metadata-field">{issue.field}</span>
-                          {!fixed && issue.suggested && (
-                            <button className="musicman-metadata-fix" onClick={() => applyFix(idx)}>Fix</button>
-                          )}
-                          {fixed && <span className="musicman-metadata-fixed-badge">Fixed</span>}
-                        </div>
-                        <div className="musicman-metadata-detail">
-                          <span className="musicman-metadata-current">"{issue.current || '(empty)'}"</span>
-                          {issue.suggested && (
-                            <>
-                              <span className="musicman-metadata-arrow">→</span>
-                              <span className="musicman-metadata-suggested">"{issue.suggested}"</span>
-                            </>
-                          )}
-                          {issue.altCurrent && (
-                            <span className="musicman-metadata-alt"> / also appears as "{issue.altCurrent}"</span>
-                          )}
-                        </div>
-                        <div className="musicman-metadata-commentary">{issue.commentary}</div>
-                        <div className="musicman-metadata-tracks">
-                          {affectedTracks.slice(0, 5).map(t => (
-                            <span key={t.id} className="musicman-metadata-track-tag">{t.title} — {t.artist}</span>
-                          ))}
-                          {altTracks.slice(0, 3).map(t => (
-                            <span key={t.id} className="musicman-metadata-track-tag musicman-metadata-track-tag--alt">{t.title} — {t.artist}</span>
-                          ))}
-                          {affectedTracks.length + altTracks.length > 8 && (
-                            <span className="musicman-metadata-track-more">+{affectedTracks.length + altTracks.length - 8} more</span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

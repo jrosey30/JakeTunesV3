@@ -37,6 +37,7 @@
  */
 
 import type { Track, Playlist, SmartPlaylistId } from '../types'
+import { buildTasteProfile, tasteScore } from './tasteScore'
 
 /** The four built-in, sync-eligible smart playlists and their iPod /
  *  sidebar display names. Keep these names in lockstep with
@@ -46,6 +47,7 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
   { id: 'recently-played', name: 'Recently Played' },
   { id: 'top-25',          name: 'Top 25 Most Played' },
   { id: 'top-rated',       name: 'Starred' },
+  { id: 'youd-star',       name: "Songs You'd Star" },
 ]
 
 // Selection limits — ONE place. Display and sync read the same numbers
@@ -53,6 +55,8 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
 const RECENTLY_ADDED_LIMIT  = 50
 const RECENTLY_PLAYED_LIMIT = 50
 const TOP_25_LIMIT          = 25
+const YOUD_STAR_LIMIT       = 50
+const YOUD_STAR_PER_ARTIST  = 4   // diversity cap so the list spreads across artists
 // Starred has no limit — every starred track is in.
 
 /**
@@ -94,6 +98,32 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
           const bd = b.dateAdded ? new Date(b.dateAdded).getTime() : 0
           return bd - ad
         })
+    }
+
+    case 'youd-star': {
+      // 4.5: the taste model, deployed. The data-validated identity model
+      // (album > artist > genre > era affinity; AUC 0.78, 2026-06-26 study)
+      // surfaces UNSTARRED tracks Jake is most likely to star — the hidden
+      // gems in records/artists he already loves. Ranked best-first; the
+      // view preserves this order when no column header is clicked.
+      const profile = buildTasteProfile(tracks)
+      const ranked = tracks
+        .filter(t => (Number(t.rating) || 0) === 0)
+        .map(t => ({ t, s: tasteScore(t, profile) }))
+        .sort((a, b) => b.s - a.s)
+      // Diversity cap: at most a few per artist, so the list spreads across
+      // everything you love instead of 30 Beatles tracks in a row.
+      const perArtist = new Map<string, number>()
+      const out: Track[] = []
+      for (const { t } of ranked) {
+        const k = (t.albumArtist || t.artist || '?').trim().toLowerCase()
+        const n = perArtist.get(k) || 0
+        if (n >= YOUD_STAR_PER_ARTIST) continue
+        perArtist.set(k, n + 1)
+        out.push(t)
+        if (out.length >= YOUD_STAR_LIMIT) break
+      }
+      return out
     }
 
     default:

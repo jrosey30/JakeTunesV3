@@ -19,12 +19,17 @@
 }
 
 .main-content-view > * {
-  animation: view-mount-fade var(--motion-ui) var(--ease-settle);
+  /* 4.5 polish: opacity-only + shorter (was opacity + translateY over --motion-ui).
+     Animating a transform on a view's whole subtree forced the browser to
+     rasterize the entire (often non-virtualized) list into a compositor layer
+     right as it was doing the heavy first render — janking the fade on EVERY
+     switch. Opacity-only + 120ms is the lightest fade that still reads as motion. */
+  animation: view-mount-fade var(--motion-fast) var(--ease-settle);
 }
 
 @keyframes view-mount-fade {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

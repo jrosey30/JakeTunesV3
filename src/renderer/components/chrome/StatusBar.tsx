@@ -29,7 +29,9 @@ export default function StatusBar() {
     const gb = totalBytes / (1024 * 1024 * 1024)
     const sizeStr = gb >= 1 ? `${gb.toFixed(1)} GB` : `${(totalBytes / (1024 * 1024)).toFixed(0)} MB`
 
-    return `${count} song${count !== 1 ? 's' : ''}, ${timeStr}, ${sizeStr}`
+    // Thousands separator so the footer speaks the same number language as the
+    // rest of the app (Home, the iPod modal, etc. all use toLocaleString()).
+    return `${count.toLocaleString()} song${count !== 1 ? 's' : ''}, ${timeStr}, ${sizeStr}`
   }, [state.tracks])
 
   return (

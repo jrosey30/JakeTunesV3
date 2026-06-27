@@ -10,6 +10,7 @@ import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { compareNames } from '../utils/artistSort'
 import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -83,7 +84,7 @@ export default function AlbumsView() {
     for (const album of map.values()) {
       album.tracks = sortAlbumTracks(album.tracks)
     }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
+    return Array.from(map.values()).sort((a, b) => compareNames(a.name, b.name))
   }, [lib.tracks])
 
   const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()

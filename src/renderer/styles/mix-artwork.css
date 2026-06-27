@@ -1,0 +1,26 @@
+/* 4.5: 2×2 seamless mosaic for mix artwork (matches the iOS playlist mosaic).
+   Fills the caller's container; the caller rounds + clips the outer corners. */
+.mix-mosaic {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  width: 100%;
+  height: 100%;
+  gap: 0;            /* seamless — reads as one continuous square */
+}
+.mix-mosaic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mix-art-ph {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  color: #b7b0a2;
+  background: linear-gradient(180deg, #f0eee8 0%, #d4ccb8 100%);
+}

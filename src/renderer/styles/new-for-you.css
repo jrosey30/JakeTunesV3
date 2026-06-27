@@ -114,10 +114,11 @@
   line-height: 1.4;
   color: #3a352e;
   font-style: italic;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* No clamp: the pitch IS the card — Music Man writes 1-2 sentences
+     (prompt-bounded in radar generation) and they render complete, never
+     "…" mid-thought. Geometry already absorbs it: the grid stretches each
+     row to its tallest card and .nfy-add is bottom-pinned (margin-top:
+     auto), so Add buttons stay aligned across every row. */
 }
 .nfy-add {
   margin-top: auto;

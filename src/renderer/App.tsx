@@ -7,6 +7,7 @@ import { useAudio } from './hooks/useAudio'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
+import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
 import ImportConvertModal from './components/ImportConvertModal'
@@ -93,15 +94,11 @@ function AppInner() {
   // we're in local-fallback mode. Saves get refused in main until restart.
   const [saveLockReason, setSaveLockReason] = useState<string | null>(null)
   const [preservedOrphanBanner, setPreservedOrphanBanner] = useState<number | null>(null)
-  const [stateConflictBanner, setStateConflictBanner] = useState(false)
   useEffect(() => {
     return window.electronAPI.onStateSaveLocked(({ reason }) => setSaveLockReason(reason))
   }, [])
-  useEffect(() => {
-    window.electronAPI.getStateConflicts().then((r) => {
-      if (r.conflicts && r.conflicts.length > 0) setStateConflictBanner(true)
-    }).catch(() => {})
-  }, [])
+  // 4.5: the "local state is ahead of NAS" banner is gone — the NAS backup now
+  // pushes automatically + silently in the background (main: autoBackupStateToNas).
   const [uiReady, setUiReady] = useState(false)
   // 4.4.39: minimum splash display time. Even on a warm cache where the
   // library Promise.all settles in <500ms, we hold the splash for ≥1400ms
@@ -1578,14 +1575,6 @@ function AppInner() {
           <button onClick={() => setPreservedOrphanBanner(null)}>Dismiss</button>
         </div>
       )}
-      {stateConflictBanner && (
-        <div className="state-save-locked-banner" role="alert">
-          <strong>Local state is ahead of NAS backup.</strong>
-          {' '}Open Settings → Library → Push local state to NAS backup.
-          <button onClick={() => { setSettingsOpen(true); setStateConflictBanner(false) }}>Open Settings</button>
-          <button onClick={() => setStateConflictBanner(false)}>Dismiss</button>
-        </div>
-      )}
       <div className="titlebar">
         <div className="titlebar-nav">
           <button className="titlebar-nav-btn" disabled={!canGoBack} onClick={goBack} title="Back  ⌘[" aria-label="Back">‹</button>
@@ -1848,6 +1837,7 @@ function AppInner() {
         </div>
       )}
       <BandcampImportToast />
+      <Visualizer />
     </div>
   )
 }

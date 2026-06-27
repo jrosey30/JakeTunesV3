@@ -48,11 +48,13 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
   { label: 'Starred', id: 'top-rated' },
+  { label: "Songs You'd Star", id: 'youd-star' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them
 const SMART_PLAYLIST_NAMES = new Set([
   'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated', 'Starred',
+  "Songs You'd Star",
   'Classical Music', // empty iPod smart playlist
 ])
 

@@ -36,6 +36,7 @@ const TITLES: Record<string, string> = {
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
   'top-rated': 'Starred',
+  'youd-star': "Songs You'd Star",
   'musicman-picks': 'The Music Man Picks',
   'megan-picks': 'Megan Picks',
   'dj-hands-picks': 'DJ Stephen Hands Picks',

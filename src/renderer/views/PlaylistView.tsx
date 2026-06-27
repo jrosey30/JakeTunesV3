@@ -9,7 +9,7 @@ import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded
 import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
-import { suggestForPlaylist } from '../utils/playlistSuggest'
+import { suggestForPlaylist, suggestFromVibeHits } from '../utils/playlistSuggest'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import { useCynthia } from '../context/CynthiaContext'
@@ -156,14 +156,33 @@ export default function PlaylistView() {
     : allPlaylistTracks
 
   // Apply local sort AFTER search filter
-  // 4.5: suggestions strip — 5 library tracks that fit this playlist's
-  // artists/genres/era. Pure local compute (utils/playlistSuggest, tested);
-  // adding one re-ranks the rest automatically since it joins the profile.
+  // 4.5: brain-driven suggestions strip — the tracks most similar to this
+  // playlist's actual songs (vibe match), filtered for fresh artists + no
+  // same-album repeats. Replaces the old artist/genre string-match that just
+  // surfaced more songs by the artists already on the playlist.
   const [suggestRotate, setSuggestRotate] = useState(0)
+  const [vibeHits, setVibeHits] = useState<Array<{ trackId: number; score: number; cluster: number }>>([])
   useEffect(() => { setSuggestRotate(0) }, [state.activePlaylistId])
+  // Re-fetch whenever the playlist's MEMBERSHIP changes — adding a song (the +,
+  // or manually), removing one, or swapping one for another all re-center the
+  // suggestions. Keyed on the full trackIds content: NOT the search-filtered
+  // `tracks` (suggestions are for the whole playlist), and NOT just length (a
+  // same-size swap must still recompute). ↻ then re-pages this pool locally.
+  const plMembershipKey = (playlist?.trackIds ?? []).join(',')
+  useEffect(() => {
+    let cancelled = false
+    const ids = playlist?.trackIds ?? []
+    if (ids.length === 0) { setVibeHits([]); return }
+    window.electronAPI.playlistSimilar(ids, 5)
+      .then(r => { if (!cancelled) setVibeHits(r.ok ? r.hits : []) })
+      .catch(() => { if (!cancelled) setVibeHits([]) })
+    return () => { cancelled = true }
+  }, [state.activePlaylistId, plMembershipKey])
   const suggestions = useMemo(
-    () => suggestForPlaylist(tracks, state.tracks, 5, suggestRotate),
-    [tracks, state.tracks, suggestRotate],
+    () => vibeHits.length
+      ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate)
+      : suggestForPlaylist(allPlaylistTracks, state.tracks, 5, suggestRotate),
+    [allPlaylistTracks, state.tracks, vibeHits, suggestRotate],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
 

@@ -1,0 +1,46 @@
+/* 4.5: Fullscreen Visualizer mode (Visualizer.tsx). Covers the whole window;
+   the canvas paints the radial-bloom visualizer. Click or Esc to exit. */
+.visualizer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #0b0710;
+  cursor: pointer;
+  animation: viz-fade-in 280ms ease both;
+}
+.visualizer-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+.visualizer-np {
+  position: absolute;
+  left: 38px;
+  bottom: 36px;
+  pointer-events: none;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.65);
+}
+.visualizer-np-title {
+  font-size: 26px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+.visualizer-np-artist {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.72);
+  margin-top: 3px;
+}
+.visualizer-hint {
+  position: absolute;
+  top: 24px;
+  right: 28px;
+  pointer-events: none;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.42);
+  animation: viz-hint-fade 4.5s ease forwards;
+}
+@keyframes viz-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes viz-hint-fade { 0%, 65% { opacity: 0.45 } 100% { opacity: 0 } }

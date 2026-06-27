@@ -3,7 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
-import { artistSortName, artistSectionLetter } from '../utils/artistSort'
+import { compareNames, artistSectionLetter } from '../utils/artistSort'
 import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
@@ -107,8 +107,9 @@ export default function ArtistsView() {
       }
     }
     return Array.from(map.entries())
-      // iTunes-style: ignore a leading "The"/"A"/"An" so The Beatles files under B.
-      .sort(([a], [b]) => artistSortName(displayNames.get(a) || a).localeCompare(artistSortName(displayNames.get(b) || b)))
+      // iTunes-style shared comparator (article/punctuation-insensitive + numeric)
+      // so Artists and Albums sort identically. The Beatles files under B.
+      .sort(([a], [b]) => compareNames(displayNames.get(a) || a, displayNames.get(b) || b))
       .map(([key, tracks]) => {
         const name = displayNames.get(key) || key
         const albumMap = new Map<string, Track[]>()
@@ -583,7 +584,7 @@ export default function ArtistsView() {
               )
             })()}
             <span className="artist-name">{artist.name}</span>
-            <span className="artist-count">{artist.tracks.length} songs</span>
+            <span className="artist-count">{artist.tracks.length} {artist.tracks.length === 1 ? 'song' : 'songs'}</span>
             <svg className={`artist-chevron ${expandedArtist === artist.name ? 'open' : ''}`} width="10" height="10" viewBox="0 0 10 10" fill="#999">
               <path d="M3 1l5 4-5 4z" />
             </svg>

@@ -418,10 +418,91 @@ async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
   return flat
 }
 
-/** Music news items for the Home view — Stereogum + Quietus, newest first. */
+// ─── 4.5.0: collapse duplicate stories in the Music News row ───
+// Four outlets cover the same beat, so one big story (a festival
+// announcement, say) showed up 3-4 times back-to-back, crowding out
+// everything else — exactly the recycled-headlines complaint. We group
+// items that are clearly the SAME story and keep one per group (the
+// newest), so the row shows distinct stories.
+//
+// Heuristic, deterministic, no AI: reduce each headline to its
+// "significant" words — drop articles/prepositions and music-news
+// boilerplate ("announces / shares / tour / album") that appears in
+// almost every headline and so carries no which-story signal — then
+// treat two headlines as the same story when they share ≥3 of those
+// words. Three shared meaningful words is a strong same-subject signal
+// while staying clear of false merges: two unrelated stories about the
+// same artist share only the 1-2 words of the artist's name, not three.
+// Grouping is by connected components, so A–B and B–C collapse A/B/C
+// together even when A and B aren't directly over threshold.
+const NEWS_STOPWORDS = new Set<string>([
+  'the', 'a', 'an', 'and', 'or', 'of', 'for', 'with', 'to', 'in', 'on', 'at',
+  'by', 'from', 'his', 'her', 'their', 'its', 'out', 'new', 'as', 'is', 'are',
+  'be', 'it', 'that', 'this', 'w', 'via', 'feat', 'ft', 'featuring',
+  // music-news boilerplate verbs/nouns
+  'announce', 'announces', 'announced', 'announcement', 'share', 'shares',
+  'shared', 'release', 'releases', 'released', 'drop', 'drops', 'dropped',
+  'reveal', 'reveals', 'revealed', 'unveil', 'unveils', 'unveiled', 'debut',
+  'debuts', 'premiere', 'premieres', 'launch', 'launches', 'launched', 'tour',
+  'tours', 'touring', 'dates', 'album', 'albums', 'song', 'songs', 'single',
+  'singles', 'track', 'tracks', 'video', 'watch', 'listen', 'hear', 'stream',
+  'streaming', 'cover', 'covers', 'live', 'show', 'shows', 'fest', 'festival',
+  'music', 'set', 'sets', 'plays', 'played', 'returns', 'return', 'teases',
+  'teased', 'tease', 'reissue', 'inspired',
+])
+function significantWords(title: string): Set<string> {
+  return new Set(
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !NEWS_STOPWORDS.has(w)),
+  )
+}
+function sharedWordCount(a: Set<string>, b: Set<string>): number {
+  let n = 0
+  for (const w of a) if (b.has(w)) n++
+  return n
+}
+/** Collapse same-story duplicates, keeping the newest item per story.
+ *  Input is assumed newest-first; output preserves that order. */
+function dedupeNewsByStory(items: MusicNewsItem[]): MusicNewsItem[] {
+  const n = items.length
+  if (n < 2) return items
+  const sig = items.map((i) => significantWords(i.title))
+  const parent = Array.from({ length: n }, (_, i) => i)
+  const find = (x: number): number => {
+    let r = x
+    while (parent[r] !== r) r = parent[r]!
+    while (parent[x] !== r) { const nx = parent[x]!; parent[x] = r; x = nx }
+    return r
+  }
+  const union = (a: number, b: number): void => {
+    const ra = find(a), rb = find(b)
+    if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb)  // root = lowest index = newest
+  }
+  for (let i = 0; i < n; i++) {
+    const si = sig[i]!
+    for (let j = i + 1; j < n; j++) {
+      if (sharedWordCount(si, sig[j]!) >= 3) union(i, j)
+    }
+  }
+  const seenRoot = new Set<number>()
+  const out: MusicNewsItem[] = []
+  for (let i = 0; i < n; i++) {
+    const r = find(i)
+    if (seenRoot.has(r)) continue
+    seenRoot.add(r)
+    out.push(items[i]!)
+  }
+  return out
+}
+
+/** Music news items for the Home view — newest first, one card per story. */
 export async function getMusicNews(): Promise<MusicNewsItem[]> {
   const all = await getStructuredFeeds()
-  return all.filter(i => !i.isReleaseReview).slice(0, 12)
+  const news = all.filter(i => !i.isReleaseReview)
+  return dedupeNewsByStory(news).slice(0, 12)
 }
 
 /** Notable releases for the Home view — Pitchfork "Best New Albums",

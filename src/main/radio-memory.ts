@@ -241,7 +241,10 @@ export function extractCallbacks(script: string): string[] {
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean)
   const speakerLines: { speaker: string; text: string }[] = []
   for (const raw of lines) {
-    const m = raw.match(/^\[(MM|MEGAN|ANNOUNCER|GIOVANNI|STEPHEN|DJ_HANDS|DJ_STEPHEN_HANDS)\]\s*(.+)/i)
+    // ⚠️ TWIN: keep this tag set in sync with parseRadioScript() in
+    // src/renderer/components/playback/Toolbar.tsx. It was missing the 8
+    // non-Giovanni callers, so their lines never became callback fuel.
+    const m = raw.match(/^\[(MM|MEGAN|ANNOUNCER|STEPHEN|DJ_HANDS|DJ_STEPHEN|DJ_STEPHEN_HANDS|GIOVANNI|RAJIV|BERNARD|LASHONTE|KRISTINA|DEVIN|MAYA|MIKE|ZOE)\]\s*(.+)/i)
     if (m) speakerLines.push({ speaker: m[1].toUpperCase(), text: m[2].trim() })
   }
   if (speakerLines.length === 0) return []

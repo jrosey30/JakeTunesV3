@@ -813,6 +813,11 @@ export default function SongsView() {
       // Arrow Up / Arrow Down = move selection
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
+        // 4.5: CLAIM Up/Down so the global volume shortcut (App.tsx's document
+        // keydown handler) doesn't ALSO fire — without this, arrowing the song
+        // list nudged the volume on every keypress. We're a capture-phase window
+        // listener, so stopPropagation here keeps the event from reaching App.tsx.
+        e.stopPropagation()
         const dir = e.key === 'ArrowDown' ? 1 : -1
         let next = focusedIdx.current + dir
         if (focusedIdx.current < 0) {
@@ -847,6 +852,30 @@ export default function SongsView() {
           e.preventDefault()
           playTrack(track, sorted, idx, undefined, true)
         }
+        return
+      }
+
+      // Space: when NOTHING is loaded, start the highlighted song — the iTunes
+      // behavior (Space on an idle library plays your selection). When a track
+      // is already loaded (playing OR paused), leave Space to the global handler
+      // so it pauses/resumes the current track. Mid-search (typeBuffer non-empty)
+      // spaces fall through to type-to-search below so multi-word titles match.
+      if (e.key === ' ' && typeBuffer.current === '') {
+        if (!nowPlayingIdRef.current) {
+          const idx = focusedIdx.current >= 0
+            ? focusedIdx.current
+            : sorted.findIndex(t => selectedIdsRef.current.has(t.id))
+          const track = idx >= 0 ? sorted[idx] : null
+          if (track) {
+            e.preventDefault()
+            e.stopPropagation()   // we're starting playback; don't let App.tsx ALSO toggle
+            focusedIdx.current = idx
+            playTrack(track, sorted, idx, undefined, true)
+            return
+          }
+        }
+        // A track is loaded, or nothing is highlighted — let the global Space
+        // (play/pause) handle it; return so the space isn't typed into search.
         return
       }
 

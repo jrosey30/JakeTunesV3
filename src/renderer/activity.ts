@@ -123,6 +123,18 @@ export function getImport(): ImportActivity | null { return importing }
 export function getNotice(): NoticeActivity | null { return notice }
 export function getBroadcast(): BroadcastActivity | null { return broadcast }
 
+// 4.5 radioV2: closed-captions toggle for the radio hosts. When OFF, the pill
+// shows ON AIR + who's speaking, but not the spoken transcript. Reactive via the
+// shared notify() so NowPlaying re-renders on change. Persisted in UI state
+// (radioCC) + restored on load.
+let captionsOn = true
+export function getCaptionsOn(): boolean { return captionsOn }
+export function setCaptionsOn(on: boolean): void {
+  if (captionsOn === on) return
+  captionsOn = on
+  notify()
+}
+
 export function setRip(next: RipActivity | null): void {
   rip = next
   notify()

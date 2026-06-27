@@ -6,7 +6,10 @@
   height: 100%;
   overflow-y: auto;
   padding: 24px 0 32px 0;
-  background: var(--main-bg, var(--white));
+  /* 4.5 polish: warm cream canvas so the card panels (hero, stat tiles, memory)
+     lift off it. Pre-fix the page was --white and the panels were ALSO --white,
+     separated only by a 6% hairline — so nothing read as a card. */
+  background: var(--home-canvas, #f0ebe1);
   /* 4.4.35 smoother scroll: hint the compositor that this element
      is scrolled often, so it gets its own GPU layer and each scroll
      frame doesn't repaint the page-level background or trigger
@@ -18,10 +21,12 @@
    date + weather row, library stats. Replaces the bare "JakeTunes ·
    N tracks" line that felt like a debug printout. */
 .home-header {
-  padding: 32px 28px 24px 28px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 36px 28px 26px 28px;
+  border-bottom: 1px solid rgba(120, 90, 50, 0.10);
   margin-bottom: 28px;
-  background: linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.18) 0%, rgba(255, 255, 255, 0) 100%);
+  /* 4.5 polish: warmer welcome band — a soft cream wash (was a barely-there 18%)
+     that fades down into the canvas, so the greeting feels like a header, not a line. */
+  background: linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.6) 0%, rgba(var(--brand-cream-rgb), 0) 100%);
 }
 
 .home-title {
@@ -66,16 +71,49 @@
 
 /* ── 4.4.33: Featured Album hero ─────────────────────────────────────── */
 .home-featured {
-  margin: 0 28px 28px 28px;
-  padding: 20px;
+  margin: 0 28px 36px 28px;
+  padding: 22px;
   display: flex;
   gap: 24px;
   align-items: center;
-  background: linear-gradient(135deg, rgba(var(--brand-orange-rgb), 0.07) 0%, rgba(74, 144, 217, 0.07) 100%);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+  /* 4.5 polish: a real warm "featured" wash — a brand-orange hint melting into
+     cream — on a lifted panel, so Today's Pick reads as the centerpiece (was a
+     7% orange→blue tint that was effectively invisible). */
+  background: linear-gradient(135deg, rgba(var(--brand-orange-rgb), 0.12) 0%, rgba(var(--brand-cream-rgb), 0.65) 55%, rgba(var(--brand-cream-rgb), 0.42) 100%);
+  border: 1px solid rgba(120, 90, 50, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(70, 55, 40, 0.05), 0 10px 30px rgba(70, 55, 40, 0.08);
   animation: home-card-in 320ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
 }
+
+/* 4.5 polish: a soft, blurred bleed of the album's OWN art filling the hero's
+   right side — turns what was dead peach space into a wash of the record's own
+   color, like a now-playing backdrop. Sits behind the content and fades out
+   well before the text, so legibility is untouched. */
+.home-featured-bleed {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 56%;
+  z-index: 0;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to left, #000 6%, rgba(0, 0, 0, 0.5) 34%, transparent 72%);
+          mask-image: linear-gradient(to left, #000 6%, rgba(0, 0, 0, 0.5) 34%, transparent 72%);
+}
+.home-featured-bleed img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(38px) saturate(1.25);
+  transform: scale(1.3);   /* hide the blurred edges */
+  opacity: 0.5;
+}
+/* Art + text ride above the bleed. */
+.home-featured-art { z-index: 1; }
+.home-featured-info { position: relative; z-index: 1; }
 
 .home-featured-art {
   position: relative;
@@ -215,14 +253,18 @@
   animation: home-card-in 360ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
 }
 .home-stat {
-  background: var(--white);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 8px;
-  padding: 14px 16px;
+  /* 4.5 polish: lifted warm panel. Was --white on a --white page (a hairline
+     only) — now a lighter-than-canvas surface + soft drop shadow so each tile
+     reads as a real card resting on the page. */
+  background: #fcfbf8;
+  border: 1px solid rgba(120, 90, 50, 0.10);
+  border-radius: 9px;
+  padding: 15px 17px;
+  box-shadow: 0 1px 2px rgba(70, 55, 40, 0.04), 0 5px 14px rgba(70, 55, 40, 0.05);
   transition: box-shadow 180ms ease, transform 180ms ease;
 }
 .home-stat:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 6px rgba(70, 55, 40, 0.07), 0 10px 22px rgba(70, 55, 40, 0.08);
   transform: translateY(-1px);
 }
 .home-stat-value {
@@ -270,21 +312,24 @@
 }
 
 .home-section {
-  margin-bottom: 36px;
+  margin-bottom: 40px;
 }
 
 .home-section-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 0 28px 12px 28px;
+  padding: 0 28px 14px 28px;
 }
 
 .home-section-title {
-  font-size: 16px;
+  /* 4.5 polish: firmer "chapter" headers (was 16px) so the 12 stacked sections
+     read as distinct units instead of running together. */
+  font-size: 18px;
   font-weight: 600;
   margin: 0;
   color: var(--text-primary, #1a1a1a);
+  letter-spacing: -0.01em;
 }
 
 .home-section-more {
@@ -835,6 +880,22 @@
 .home-card-row > *:nth-child(10) { animation-delay: 252ms; }
 .home-card-row > *:nth-child(11) { animation-delay: 280ms; }
 .home-card-row > *:nth-child(12) { animation-delay: 308ms; }
+
+/* 4.5 polish: stagger the home SECTIONS so their entrance cascades instead of
+   ~8 firing simultaneously (8 concurrent subtree layer-rasterizations janked
+   the Home mount). Position-based ramp; non-animating children (scroll-top
+   button, header) simply ignore the delay. Keeps the subtle rise — just spreads
+   it over time so each frame composites one section, not eight. */
+.home-view > *:nth-child(3)  { animation-delay:  20ms; }
+.home-view > *:nth-child(4)  { animation-delay:  50ms; }
+.home-view > *:nth-child(5)  { animation-delay:  80ms; }
+.home-view > *:nth-child(6)  { animation-delay: 110ms; }
+.home-view > *:nth-child(7)  { animation-delay: 140ms; }
+.home-view > *:nth-child(8)  { animation-delay: 170ms; }
+.home-view > *:nth-child(9)  { animation-delay: 200ms; }
+.home-view > *:nth-child(10) { animation-delay: 230ms; }
+.home-view > *:nth-child(11) { animation-delay: 260ms; }
+.home-view > *:nth-child(12) { animation-delay: 290ms; }
 /* Respect users who turn down motion in System Settings. */
 @media (prefers-reduced-motion: reduce) {
   .home-album-card,
@@ -853,6 +914,25 @@
 }
 .home-stats--memory {
   margin-bottom: 14px;
+}
+/* 4.5 polish: the memory tiles reuse .home-stat, which made them a carbon copy
+   of the library-stats row right above — two near-identical white-card rows
+   reading as one idea printed twice. Drop them to a quieter FLAT treatment: a
+   faint warm wash, no elevation, slightly smaller — so Listening Memory reads as
+   its own softer "memory" strip beneath the primary, elevated stat cards. */
+.home-stats--memory .home-stat {
+  background: rgba(120, 90, 50, 0.045);
+  border-color: rgba(120, 90, 50, 0.09);
+  box-shadow: none;
+  padding: 12px 15px;
+}
+.home-stats--memory .home-stat:hover {
+  background: rgba(120, 90, 50, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+.home-stats--memory .home-stat-value {
+  font-size: 19px;
 }
 .home-memory-obs {
   margin: 0 28px;

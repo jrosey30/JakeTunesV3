@@ -312,7 +312,7 @@ export default function AlbumDetailView() {
         try {
           const [info, b] = await Promise.all([
             window.electronAPI.getAlbumInfo?.(albumArtist, albumName, String(year || '')),
-            window.electronAPI.getAlbumBlurb?.(albumArtist, albumName),
+            window.electronAPI.getAlbumBlurb?.(albumArtist, albumName, String(year || '')),
           ])
           if (cancelled) return
           if (info?.ok && info.credits) setCredits(info.credits)
@@ -330,7 +330,7 @@ export default function AlbumDetailView() {
   const handleToggleTake = useCallback(() => {
     if (!takeOpen && !take && !takeLoading) {
       setTakeLoading(true); setTakeError(false)
-      window.electronAPI.getAlbumTake?.(albumArtist, albumName)
+      window.electronAPI.getAlbumTake?.(albumArtist, albumName, String(year || ''))
         .then((r) => { if (r?.ok && r.take) setTake(r.take); else setTakeError(true) })
         .catch(() => setTakeError(true))
         .finally(() => setTakeLoading(false))

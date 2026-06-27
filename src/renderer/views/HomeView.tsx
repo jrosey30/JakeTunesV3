@@ -32,6 +32,7 @@ import ScrollTopButton from '../components/ScrollTopButton'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
+import MadeForYou from '../components/MadeForYou'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import type { Track, MusicNewsItem, TourDate, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
@@ -531,7 +532,7 @@ export default function HomeView() {
           )}
         </div>
         <p className="home-subtitle">
-          {lib.tracks.length.toLocaleString()} tracks in your library
+          {lib.tracks.length.toLocaleString()} songs in your library
           {recentAlbums.length > 0 && (
             <> · last import {new Date(recentAlbums[0].newestAdded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</>
           )}
@@ -541,6 +542,11 @@ export default function HomeView() {
       {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
       {featuredAlbum && (
         <section className="home-featured">
+          {artHashForKey(featuredAlbum.key) && (
+            <div className="home-featured-bleed" aria-hidden="true">
+              <AlbumArtImage hash={artHashForKey(featuredAlbum.key)!} alt="" />
+            </div>
+          )}
           <div
             className="home-featured-art"
             onClick={playFeatured}
@@ -597,6 +603,9 @@ export default function HomeView() {
           </div>
         </section>
       )}
+
+      {/* ── 4.5: Your Mixes — Spotify-style temporary vibe / daily mixes (below the hero) ── */}
+      <MadeForYou />
 
       {/* ── 4.4.33: Quick stats strip — total plays, library duration, top artist, top genre ── */}
       {lib.tracks.length > 0 && (

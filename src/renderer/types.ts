@@ -90,7 +90,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail'
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on
@@ -143,7 +143,7 @@ export interface ItunesSuggestion {
   previewUrl?: string
   appleMusicUrl?: string
 }
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
   id: string
@@ -405,6 +405,8 @@ declare global {
       musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>
       musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
       musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      getMobileMixes: () => Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }>
+      getMobileVibeMix: (vibe: string) => Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }>
       musicmanRadioPlan: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => Promise<{ ok: boolean; theme?: string; throughline?: string; trackIds?: number[]; error?: string }>
       radioSetShowPlan: (plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => Promise<{ ok: boolean; error?: string }>
       radioClearShowPlan: () => Promise<{ ok: boolean; error?: string }>
@@ -452,8 +454,8 @@ declare global {
       // Album detail page (4.5.0-115): factual credits (MusicBrainz + iTunes,
       // honest gaps where unknown) and a grounded Music Man blurb.
       getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
-      getAlbumBlurb: (artist: string, album: string) => Promise<{ ok: boolean; blurb?: string; error?: string }>
-      getAlbumTake: (artist: string, album: string) => Promise<{ ok: boolean; take?: string; error?: string }>
+      getAlbumBlurb: (artist: string, album: string, year?: string | number) => Promise<{ ok: boolean; blurb?: string; error?: string }>
+      getAlbumTake: (artist: string, album: string, year?: string | number) => Promise<{ ok: boolean; take?: string; error?: string }>
       // 4.5.0-117 — library backup/restore (Phase 0).
       listBackups: () => Promise<{ ok: boolean; backups: Array<{ file: string; date: string; mtimeMs: number; trackCount: number; sizeBytes: number; reason: string }> }>
       createBackup: () => Promise<{ ok: boolean; backup?: { file: string; date: string; trackCount: number }; error?: string }>

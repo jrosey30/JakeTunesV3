@@ -3,9 +3,13 @@
 <plist version="1.0">
 <dict>
     <!--
-        Brief 029 — Nightly auto-deploy of JakeTunes to workmini.
+        Brief 029 — Auto-deploy of JakeTunes to workmini.
+        (Schedule updated 2026-06-23 per Jake: 11:30 AM Mon–Fri, was 10:30 daily.)
 
-        Runs ~/bin/jaketunes-workmini-nightly.sh at 3:00 AM daily.
+        Runs ~/bin/jaketunes-workmini-nightly.sh at 11:30 AM local time,
+        Monday–Friday only. (System TZ is America/New_York, so 11:30 ET —
+        launchd uses local time and follows DST automatically.) The label is
+        still "...nightly" for continuity with Brief 029; it's a weekday job now.
         The wrapper script invokes the existing deploy script with
         the standard arguments (jacobrosenbaum --with-env) and logs
         to ~/Library/Logs/JakeTunes/workmini-nightly.log.
@@ -37,13 +41,36 @@
         <string>/Users/jacobrosenbaum/bin/jaketunes-workmini-nightly.sh</string>
     </array>
 
+    <!-- 11:30 local time, Monday(1) through Friday(5). launchd needs one
+         dict per weekday — a single dict can't express a weekday RANGE. -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>3</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Weekday</key><integer>1</integer>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>2</integer>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>3</integer>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>4</integer>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>5</integer>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+    </array>
 
     <!--
         RunAtLoad: false. We don't want this to fire the moment
