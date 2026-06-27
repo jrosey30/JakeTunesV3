@@ -80,6 +80,9 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'artist', label: 'Artist', defaultWidth: 180, minWidth: 60, resizable: true },
   { key: 'album', label: 'Album', defaultWidth: 180, minWidth: 60, resizable: true },
   { key: 'genre', label: 'Genre', defaultWidth: 100, minWidth: 50, resizable: true },
+  // 4.5: AI-assigned subgenre. Hidden by default (optional) — enable via the header
+  // right-click column picker; hover a cell to see the full general→specific path.
+  { key: 'subgenre', label: 'Subgenre', defaultWidth: 150, minWidth: 60, resizable: true },
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
@@ -199,6 +202,8 @@ const SongRow = memo(function SongRow({
             return <div key={col.key} className="songs-cell">{track.album || ''}</div>
           case 'genre':
             return <div key={col.key} className="songs-cell">{track.genre || ''}</div>
+          case 'subgenre':
+            return <div key={col.key} className="songs-cell" title={track.subgenrePath || ''}>{track.subgenre || ''}</div>
           case 'year':
             return <div key={col.key} className="songs-cell">{track.year || ''}</div>
           case 'dateAdded':
@@ -236,7 +241,7 @@ export default function SongsView() {
   // channelMode starts hidden — it's a niche tag column; the header
   // right-click picker reveals it. (colsV in the saved state marks that the
   // user's hidden-set already knows about it.)
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['channelMode']))
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['channelMode', 'subgenre']))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -942,12 +947,13 @@ export default function SongsView() {
         setColWidthMap(prev => ({ ...prev, ...savedWidths }))
       }
       if (Array.isArray(savedHidden)) {
-        // Saved state from before the channelMode column existed (colsV < 2)
-        // can't know it should be hidden — default it hidden once; states
-        // saved at colsV 2+ carry the user's real choice.
-        const merged = (typeof colsV === 'number' && colsV >= 2)
-          ? savedHidden
-          : [...savedHidden, 'channelMode']
+        // New columns can't appear in a hiddenCols saved before they existed, so
+        // default each hidden ONCE per version bump; saves at-or-after a version
+        // carry the user's real choice. colsV 2 = channelMode; colsV 3 = subgenre.
+        const v = typeof colsV === 'number' ? colsV : 0
+        const merged = [...savedHidden]
+        if (v < 2) merged.push('channelMode')
+        if (v < 3) merged.push('subgenre')
         setHiddenCols(new Set(merged))
       }
       if (Array.isArray(savedOrder) && savedOrder.length > 0) {
@@ -964,7 +970,7 @@ export default function SongsView() {
     if (colSaveRef.current) clearTimeout(colSaveRef.current)
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
-        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 2 }
+        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 3 }
       }))
     }, 500)
   }, [colWidthMap, hiddenCols, columnOrder])

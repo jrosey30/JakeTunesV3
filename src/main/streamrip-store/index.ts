@@ -150,7 +150,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const summary = await deps.importDownloaded(files, 'streamrip')
       const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
         ? (summary as unknown as Array<Record<string, unknown>>)
-        : ((summary as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
+        : ((summary as unknown as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
       // CRITICAL: the importer writes to disk + library.json but does NOT tell
       // the renderer to show the tracks — the Bandcamp/squid download-router
       // emitted 'bandcamp:track-imported' per track to do that. We call the

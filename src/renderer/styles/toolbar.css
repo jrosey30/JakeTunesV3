@@ -239,6 +239,9 @@
 .now-playing-info--notice-info {
   color: #4a3a18;
 }
+.now-playing-info--notice-success {
+  color: #2d6a3e;
+}
 
 /* 4.5.2: live broadcast caption — Music Man / Megan / DJ commentary
  * typed out in the pill character-by-character, replaces the floating

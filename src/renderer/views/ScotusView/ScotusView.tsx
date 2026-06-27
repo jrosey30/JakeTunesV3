@@ -70,7 +70,7 @@ export default function ScotusView() {
     } else {
       window.electronAPI.scotusGetAudio?.().then((r) => {
         if (cancelled || !r?.ok || !r.bytes) return
-        cachedAudioUrl = URL.createObjectURL(new Blob([r.bytes], { type: 'audio/mpeg' }))
+        cachedAudioUrl = URL.createObjectURL(new Blob([new Uint8Array(r.bytes)], { type: 'audio/mpeg' }))
         setAudioUrl(cachedAudioUrl)
       }).catch(() => { /* no audio */ })
     }

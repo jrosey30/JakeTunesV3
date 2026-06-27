@@ -46,7 +46,7 @@ export interface ImportActivity {
 // so they know it failed and can retry.
 export interface NoticeActivity {
   message: string
-  kind: 'error' | 'info'
+  kind: 'error' | 'info' | 'success'
 }
 
 /** 4.5.2: Music Man / Megan / DJ commentary rendered live inside the
@@ -165,7 +165,7 @@ export function setImport(next: ImportActivity | null): void {
 // 4.4.12: push a transient notice. Auto-clears after `durationMs`
 // (default 4 sec). Calling again before the timer fires replaces the
 // message and restarts the timer. Pass null to clear immediately.
-export function setNotice(message: string | null, opts?: { kind?: 'error' | 'info'; durationMs?: number }): void {
+export function setNotice(message: string | null, opts?: { kind?: 'error' | 'info' | 'success'; durationMs?: number }): void {
   if (noticeTimer) {
     clearTimeout(noticeTimer)
     noticeTimer = null

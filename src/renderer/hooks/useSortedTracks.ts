@@ -13,7 +13,7 @@ export function useSortedTracks(
       const words = searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 0)
       filtered = tracks.filter((t) => {
         // Combine all searchable fields into one string
-        const haystack = `${t.title || ''} ${t.artist || ''} ${t.album || ''} ${t.genre || ''} ${t.year || ''}`.toLowerCase()
+        const haystack = `${t.title || ''} ${t.artist || ''} ${t.album || ''} ${t.genre || ''} ${t.subgenre || ''} ${t.year || ''}`.toLowerCase()
         // Every word the user typed must appear somewhere in the combined fields
         return words.every(w => haystack.includes(w))
       })

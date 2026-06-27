@@ -72,6 +72,12 @@ export interface Track {
   // playback. Persisted via metadata-overrides.json like the rest of
   // the user-editable fields.
   channelMode?: 'mono' | 'stereo' | ''
+  // 4.5: AI taxonomy (additive, applied from metadata-overrides). subgenre = the
+  // broad subgenre shown in the Song View column; subgenrePath = the full
+  // general→specific path (hover tooltip); subgenreLean = the runner-up "web" link.
+  subgenre?: string
+  subgenrePath?: string
+  subgenreLean?: string
   // 4.5: epoch-ms timestamp of the most recent star toggle ON. Drives
   // the Starred smart playlist's default sort (recent-first). Cleared
   // is OK — legacy starred tracks without this field sort to the
@@ -385,7 +391,7 @@ export interface ListeningMemoryData {
   observations: string[]
 }
 
-export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode'
+export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode'
 export type SortDirection = 'asc' | 'desc'
 
 declare global {
@@ -410,6 +416,8 @@ declare global {
       musicmanRadioPlan: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => Promise<{ ok: boolean; theme?: string; throughline?: string; trackIds?: number[]; error?: string }>
       radioSetShowPlan: (plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => Promise<{ ok: boolean; error?: string }>
       radioClearShowPlan: () => Promise<{ ok: boolean; error?: string }>
+      // 4.5 radioV2: unified cast registry (speaker id → tag / pill label / voice id).
+      radioGetCast: () => Promise<{ ok: boolean; cast?: Array<{ id: string; tag: string; label: string; voiceId?: string; kind: string }> }>
       // 4.5: streaming mic-button path + hover prefetch.
       musicmanDjStreaming: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text?: string; error?: string }>
       onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => () => void
@@ -520,6 +528,8 @@ declare global {
       }) => void) => () => void
       embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number; stale: number }>
       embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
+      // 4.5: brain-driven playlist suggestions — centroid nearest library tracks.
+      playlistSimilar: (playlistIds: number[], clusters?: number) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }> }>
       onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
       // / mobileOverridesApply types — vestigial mobile-sync feature gone.
