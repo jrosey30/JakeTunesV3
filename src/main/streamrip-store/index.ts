@@ -136,7 +136,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     let staging = ''
     try {
       staging = await mkdtemp(join(tmpdir(), 'jaketunes-rip-'))
-      const res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-progress', ...ripSubcmd], 1000 * 60 * 20)
+      // --no-db: ignore streamrip's persistent "already downloaded" database.
+      // We stage to a throwaway temp dir (wiped every run) and dedupe at import
+      // by fingerprint, so that DB can only hurt us — once a track is logged in
+      // it, later attempts SKIP it and fetch nothing ("Skipping track … marked
+      // as downloaded in the database" → 0 files → 0 imported, no error shown).
+      // Always re-fetch; the app owns dedup, not streamrip.
+      const res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], 1000 * 60 * 20)
       const files = await collectAudio(staging)
       if (files.length === 0) {
         return { ok: false, error: tailMessage(res) || `streamrip downloaded nothing (exit ${res.code}). That service may need login in streamrip’s config.` }

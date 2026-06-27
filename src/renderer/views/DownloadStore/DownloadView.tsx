@@ -54,6 +54,8 @@ export default function DownloadView() {
   const [searchErr, setSearchErr] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
+  // 4.5: per-file import failures, kept on screen (not just the ~9s top-strip flash)
+  const [failures, setFailures] = useState<Array<{ filename: string; error: string }>>([])
   const [pasteUrl, setPasteUrl] = useState(pageCache.pasteUrl)
   const [pasteBusy, setPasteBusy] = useState(false)
   const [qobuz, setQobuz] = useState<{ configured: boolean; email?: string } | null>(null)
@@ -75,6 +77,16 @@ export default function DownloadView() {
       if (!cancelled && r?.ok) setQobuz({ configured: r.configured, email: r.email })
     }).catch(() => { /* leave the form shown */ })
     return () => { cancelled = true }
+  }, [])
+
+  // 4.5: keep per-file import failures visible on the Download screen. App.tsx
+  // also flashes each one in the top strip for ~9s, but on a multi-track album
+  // they blink past and you'd only catch the last — so accumulate the full list
+  // here until the next download starts.
+  useEffect(() => {
+    return window.electronAPI.onBandcampPerFileFailed((r) => {
+      setFailures((prev) => [...prev, r])
+    })
   }, [])
 
   // 4.5: page memory — persist the working state so leaving and returning restores it.
@@ -120,11 +132,16 @@ export default function DownloadView() {
     if (downloadingId) return
     setDownloadingId(res.id)
     setNotice(null)
+    setFailures([])
     try {
       const r = await window.electronAPI.streamripDownloadId?.(res.source, res.mediaType, res.id)
-      if (r?.ok) {
+      if (r?.ok && (r.imported ?? 0) > 0) {
         const dup = r.dupes ? `, ${r.dupes} already in library` : ''
         setNotice({ ok: true, msg: `Imported ${r.imported} track${r.imported === 1 ? '' : 's'}${dup} — ${res.desc}` })
+      } else if (r?.ok && r.dupes) {
+        setNotice({ ok: true, msg: `Already in your library — all ${r.dupes} track${r.dupes === 1 ? '' : 's'} skipped.` })
+      } else if (r?.ok) {
+        setNotice({ ok: false, msg: 'Downloaded, but no tracks made it into your library — see below.' })
       } else {
         setNotice({ ok: false, msg: r?.error || 'Download failed.' })
       }
@@ -140,12 +157,17 @@ export default function DownloadView() {
     if (!link || pasteBusy) return
     setPasteBusy(true)
     setNotice(null)
+    setFailures([])
     try {
       const r = await window.electronAPI.streamripDownload?.(link)
-      if (r?.ok) {
+      if (r?.ok && (r.imported ?? 0) > 0) {
         const dup = r.dupes ? `, ${r.dupes} already in library` : ''
         setNotice({ ok: true, msg: `Imported ${r.imported} track${r.imported === 1 ? '' : 's'}${dup}.` })
         setPasteUrl('')
+      } else if (r?.ok && r.dupes) {
+        setNotice({ ok: true, msg: `Already in your library — all ${r.dupes} track${r.dupes === 1 ? '' : 's'} skipped.` })
+      } else if (r?.ok) {
+        setNotice({ ok: false, msg: 'Downloaded, but no tracks made it into your library — see below.' })
       } else {
         setNotice({ ok: false, msg: r?.error || 'Download failed.' })
       }
@@ -267,6 +289,22 @@ export default function DownloadView() {
         {notice && (
           <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>
             {notice.msg}
+          </div>
+        )}
+
+        {failures.length > 0 && (
+          <div className="download-failures">
+            <div className="download-failures-head">
+              {failures.length} track{failures.length === 1 ? '' : 's'} couldn’t be imported:
+            </div>
+            <ul className="download-failures-list">
+              {failures.map((f, i) => (
+                <li key={`${f.filename}-${i}`}>
+                  <span className="download-failures-name">{f.filename}</span>
+                  <span className="download-failures-reason">{f.error}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
