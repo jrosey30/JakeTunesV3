@@ -279,3 +279,46 @@
   font-size: 16px;
   color: #b8b8b8;
 }
+
+/* ── Persistent per-file import failures (so the reason doesn't flash past) ── */
+.download-failures {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(187, 67, 8, 0.08);
+  border: 1px solid rgba(187, 67, 8, 0.18);
+}
+.download-failures-head {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #8a3206;
+  margin-bottom: 8px;
+}
+.download-failures-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.download-failures-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.4;
+}
+.download-failures-name {
+  color: var(--text-primary, #1a1a1a);
+  font-size: 12px;
+  font-weight: 500;
+  word-break: break-word;
+}
+.download-failures-reason {
+  color: #8a3206;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-word;
+}
