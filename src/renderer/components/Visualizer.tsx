@@ -13,7 +13,7 @@
  * click. App renders one <Visualizer/> and is otherwise untouched.
  */
 import { useEffect, useRef, useState } from 'react'
-import { getVisualizerBins } from '../audio/eq'
+import { getVisualizerBins, ensureVisualizerChain } from '../audio/eq'
 import { usePlayback } from '../context/PlaybackContext'
 import '../styles/visualizer.css'
 
@@ -36,9 +36,21 @@ function Stage({ onClose }: { onClose: () => void }) {
     size()
     window.addEventListener('resize', size)
 
+    // The chain only builds when a track routes through attachHowlToEq, which
+    // html5:false (Web Audio) Howls skip — so build it + tap Howler.masterGain
+    // now, when the visualizer opens, or the analyser stays empty and we'd
+    // render only the idle shimmer.
+    ensureVisualizerChain()
+
     const M = 96, HALF = 48
-    let t = 0, bassEnv = 0, prevBass = 0, raf = 0
-    const rings: Array<{ r: number; a: number }> = []
+    let t = 0, bassEnv = 0, bassVis = 0, lastRingT = -10, raf = 0
+    // Photosensitivity safety: nothing the eye sees may jump frame-to-frame.
+    // bassVis EASES toward the bass (size + brightness drift, never strobe),
+    // each spoke eases via spokeSmooth, and rings are throttled to under 3/sec
+    // (the WCAG flash limit) and kept dim — so the bloom can never flash on the
+    // beat. Brightness swings are small and steady; colors stay warm, no fast hue.
+    const spokeSmooth = new Float32Array(M)
+    const rings: Array<{ r: number; a: number; hue: number }> = []
 
     const frame = (): void => {
       t += 0.016
@@ -47,45 +59,52 @@ function Stage({ onClose }: { onClose: () => void }) {
       let bass = 0
       for (let i = 0; i < 6; i++) bass += bins[i] || 0
       bass = bass / 6 / 255
-      const kick = Math.max(0, bass - bassEnv)
       bassEnv = bassEnv * 0.92 + bass * 0.08
-      if (kick > 0.05 && bass - prevBass > 0.035) rings.push({ r: 38, a: 0.5 })
-      prevBass = bass
-      // A gentle idle shimmer so it stays alive when paused / silent.
-      const idle = 0.05 + 0.04 * Math.sin(t * 1.5)
+      bassVis += (bass - bassVis) * 0.09          // eased bass — the visuals follow THIS, not raw
+      const kick = Math.max(0, bass - bassEnv)
+      // Throttle: at most one ring per 0.4s (<3/sec) and dim, so ripples can't strobe.
+      if (kick > 0.07 && t - lastRingT > 0.4) {
+        lastRingT = t
+        rings.push({ r: 40, a: 0.2, hue: 26 + (t * 4) % 36 })
+      }
+      const idle = 0.05 + 0.03 * Math.sin(t * 1.2)
 
-      ctx.fillStyle = 'rgba(11,7,16,0.26)'
+      ctx.fillStyle = 'rgba(11,7,16,0.2)'
       ctx.fillRect(0, 0, W, H)
       ctx.globalCompositeOperation = 'lighter'
 
       for (let i = rings.length - 1; i >= 0; i--) {
         const rg = rings[i]!
-        rg.r += 4; rg.a *= 0.955
+        rg.r += 2.3; rg.a *= 0.952
         if (rg.a < 0.02) { rings.splice(i, 1); continue }
-        ctx.strokeStyle = `hsla(${(t * 18) % 360},85%,65%,${rg.a})`
+        ctx.strokeStyle = `hsla(${rg.hue},78%,60%,${rg.a})`
         ctx.lineWidth = 2
         ctx.beginPath(); ctx.arc(cx, cy, rg.r, 0, 7); ctx.stroke()
       }
 
-      const coreR = 30 + bass * 60 + 8 * Math.sin(t * 1.3)
+      // Core breathes on the EASED bass with a small, steady brightness swing —
+      // it glows and dims gently, it never flashes.
+      const coreR = 30 + bassVis * 46 + 6 * Math.sin(t * 1.1)
       for (let g = 3; g >= 1; g--) {
-        ctx.fillStyle = `hsla(28,95%,60%,${0.09 * g * (0.5 + bass)})`
+        ctx.fillStyle = `hsla(28,90%,57%,${0.05 * g * (0.6 + bassVis * 0.3)})`
         ctx.beginPath(); ctx.arc(cx, cy, coreR * g * 0.9, 0, 7); ctx.fill()
       }
 
-      const inner = coreR + 8, maxLen = Math.min(W, H) * 0.40
+      const inner = coreR + 8, maxLen = Math.min(W, H) * 0.38
       for (let i = 0; i < M; i++) {
         const bi = i < HALF ? i : (M - 1 - i)
-        const v = Math.max(idle, (bins[bi] || 0) / 255)
-        const ang = (i / M) * Math.PI * 2 + t * 0.12
-        const len = inner + v * maxLen, hue = 18 + (i / M) * 300
+        const target = Math.max(idle, (bins[bi] || 0) / 255)
+        spokeSmooth[i] = spokeSmooth[i]! + (target - spokeSmooth[i]!) * 0.16   // eased — no flicker
+        const v = spokeSmooth[i]!
+        const ang = (i / M) * Math.PI * 2 + t * 0.10
+        const len = inner + v * maxLen, hue = 22 + (i / M) * 278
         const x0 = cx + Math.cos(ang) * inner, y0 = cy + Math.sin(ang) * inner
         const x1 = cx + Math.cos(ang) * len, y1 = cy + Math.sin(ang) * len
-        ctx.strokeStyle = `hsla(${hue},88%,62%,0.82)`
-        ctx.lineWidth = 2.6
+        ctx.strokeStyle = `hsla(${hue},80%,58%,0.62)`
+        ctx.lineWidth = 2.4
         ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke()
-        ctx.fillStyle = `hsla(${hue},95%,72%,0.9)`
-        ctx.beginPath(); ctx.arc(x1, y1, 1.6 + v * 3, 0, 7); ctx.fill()
+        ctx.fillStyle = `hsla(${hue},86%,66%,0.68)`
+        ctx.beginPath(); ctx.arc(x1, y1, 1.3 + v * 2.2, 0, 7); ctx.fill()
       }
 
       ctx.globalCompositeOperation = 'source-over'

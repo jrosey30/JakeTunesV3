@@ -168,6 +168,18 @@ function tapHowlerMaster(): void {
   } catch { /* ignore — already connected, or ctx mismatch */ }
 }
 
+/** Build the EQ/analyser chain + tap Howler.masterGain on demand. The
+ *  visualizer calls this when it opens: an html5:false (Web Audio) Howl —
+ *  gapless preload, click-to-play promotion — has no <audio> element to route
+ *  through attachHowlToEq, so without this the chain (and the analyser the
+ *  visualizer reads) is never built, leaving the visualizer on its idle
+ *  shimmer. Safe to call repeatedly — buildChain no-ops once built, the tap
+ *  once tapped. */
+export function ensureVisualizerChain(): void {
+  buildChain()
+  tapHowlerMaster()
+}
+
 function applySettings(): void {
   if (!audioContext || !preampNode || filterNodes.length === 0) return
   // Preamp: convert dB to linear gain (10^(dB/20)).
