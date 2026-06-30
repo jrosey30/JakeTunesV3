@@ -22,6 +22,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
+import { pickBestStreamripMatch } from '../streamrip-match.ts'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -174,13 +175,17 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     return rip ? { ok: true, installed: true, version: rip.version } : { ok: true, installed: false }
   })
 
-  // Browse: search a source's catalog, return a results list to pick from.
-  ipcMain.handle('streamrip:search', async (_e, opts: { query?: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: SearchResult[]; error?: string }> => {
-    const query = (opts?.query || '').trim()
+  async function searchCatalog(opts: {
+    query: string
+    source?: string
+    mediaType?: string
+    numResults?: number
+  }): Promise<{ ok: boolean; results?: SearchResult[]; error?: string }> {
+    const query = opts.query.trim()
     if (!query) return { ok: false, error: 'Type something to search for.' }
-    const source = opts?.source || 'qobuz'   // 4.5: SoundCloud removed; Qobuz is the default
-    const mediaType = opts?.mediaType || 'track'
-    const n = Math.min(Math.max(Math.round(opts?.numResults || 25), 1), 50)
+    const source = opts.source || 'qobuz'
+    const mediaType = opts.mediaType || 'track'
+    const n = Math.min(Math.max(Math.round(opts.numResults || 25), 1), 50)
     const rip = await resolveRip()
     if (!rip) return { ok: false, error: 'streamrip isn’t installed. Run: pipx install streamrip' }
     let dir = ''
@@ -203,6 +208,35 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } finally {
       if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
     }
+  }
+
+  // Browse: search a source's catalog, return a results list to pick from.
+  ipcMain.handle('streamrip:search', async (_e, opts: { query?: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: SearchResult[]; error?: string }> => {
+    return searchCatalog({
+      query: opts?.query || '',
+      source: opts?.source,
+      mediaType: opts?.mediaType,
+      numResults: opts?.numResults,
+    })
+  })
+
+  // One-shot: search Qobuz for artist+title, pick the best match, download + import.
+  // Used by Listen to the List so the renderer doesn't round-trip search → pick → download.
+  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
+    const artist = (opts?.artist || '').trim()
+    const title = (opts?.title || opts?.song || '').trim()
+    if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
+    const query = [artist, title].filter(Boolean).join(' ')
+    const search = await searchCatalog({ query, source: 'qobuz', mediaType: 'track', numResults: 25 })
+    if (!search.ok || !search.results?.length) {
+      return { ok: false, error: search.error || `No Qobuz match for “${query}”.` }
+    }
+    const pick = pickBestStreamripMatch(title || query, artist, search.results)
+    if (!pick) {
+      return { ok: false, error: `No close Qobuz match for “${query}”. Try the Download view to search manually.` }
+    }
+    const dl = await runDownload(['id', pick.source, pick.mediaType, pick.id])
+    return { ...dl, matchDesc: pick.desc }
   })
 
   // Download a picked search result by its streamrip id.

@@ -452,7 +452,7 @@ declare global {
       // from the NAS state dir; add/delete route through the Mini backend
       // so it stays the single writer (cache-coherent + iTunes-enriched).
       loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
-      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; deduped?: boolean }>
+      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; savedLocally?: boolean; deduped?: boolean }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
@@ -474,8 +474,9 @@ declare global {
       saveArtistAliases: (aliases: Record<string, string>) => Promise<{ ok: boolean; error?: string }>
       classifyArtistGroups: () => Promise<{ ok: boolean; proposals?: ArtistGroupProposal[]; candidateCount?: number; error?: string }>
       getRelatedArtists: (artist: string) => Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }>
-      // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
-      getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; error?: string }>
+      // 4.5.0-118 — Discovery Brain Phase 2: new-music radar. anchor/anchors/
+      // fingerprintSummary feed the "Seeded from" chips + "because you play X" reasoning.
+      getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
@@ -659,6 +660,7 @@ declare global {
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
       streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
       streamripSetQobuzToken?: (userId: string, token: string) => Promise<{ ok: boolean; error?: string }>

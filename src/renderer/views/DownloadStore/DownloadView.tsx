@@ -89,6 +89,21 @@ export default function DownloadView() {
     })
   }, [])
 
+  // Prefill search when opened from Listen to the List (failed match fallback).
+  useEffect(() => {
+    const onPrefill = (e: Event) => {
+      const q = (e as CustomEvent<{ query?: string }>).detail?.query?.trim()
+      if (!q) return
+      setQuery(q)
+      setResults([])
+      setArt({})
+      setSearchErr(null)
+      setNotice(null)
+    }
+    window.addEventListener('jaketunes-download-prefill', onPrefill)
+    return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)
+  }, [])
+
   // 4.5: page memory — persist the working state so leaving and returning restores it.
   useEffect(() => {
     pageCache = { query, source, mediaType, results, art, pasteUrl }

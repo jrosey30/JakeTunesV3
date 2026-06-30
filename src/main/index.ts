@@ -21,7 +21,7 @@ import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
-import { computeTasteFingerprint } from './taste-model'
+import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
 import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
@@ -1040,7 +1040,7 @@ ipcMain.handle('get-taste-fingerprint', async () => {
 // → live Exa search per top spine → Music Man extracts named releases from the
 // journalism → rank/filter against taste (drop owned). Cached 6h; force=true
 // from the refresh button. Honest fail-soft (ok:false → UI shows the reason).
-let radarCache: { candidates: RankedCandidate[]; generatedAt: number } | null = null
+let radarCache: { candidates: RankedCandidate[]; generatedAt: number; fingerprintSummary?: string; anchors?: ReturnType<typeof getTasteAnchors> } | null = null
 const RADAR_TTL_MS = 6 * 60 * 60 * 1000
 const RADAR_SCENES: Record<string, string> = {
   'Rock & Alternative': 'indie rock, alternative, and punk',
@@ -1052,7 +1052,7 @@ const RADAR_SCENES: Record<string, string> = {
 }
 ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
   if (!force && radarCache && Date.now() - radarCache.generatedAt < RADAR_TTL_MS) {
-    return { ok: true, candidates: radarCache.candidates, generatedAt: radarCache.generatedAt, cached: true }
+    return { ok: true, candidates: radarCache.candidates, generatedAt: radarCache.generatedAt, cached: true, fingerprintSummary: radarCache.fingerprintSummary, anchors: radarCache.anchors }
   }
   try {
     const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
@@ -1064,15 +1064,21 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
     const blocks = await Promise.all(scenes.map((s) => exaNewMusic(s, year)))
     const journalism = blocks.filter(Boolean).join('\n\n')
     if (!journalism) return { ok: false, error: 'New for You needs web search for fresh releases. Add your Exa key in Settings → AI to activate live picks (no made-up recommendations without it).' }
+    // Taste anchors — top artists the listener actually engages with (plays
+    // weighted, skips penalized). Surfaced in the UI as "Seeded from" chips and
+    // used below to ask the brain for explicit "because you play X" picks.
+    const anchors = getTasteAnchors(Array.isArray(lib.tracks) ? lib.tracks : [], 6)
+    const anchorNames = anchors.map((a) => a.artist).join(', ')
     const user = [
       `This listener's taste: ${fp.summary}`,
       `Top genres: ${fp.topGenres.slice(0, 8).map((g) => g.genre).join(', ')}.`,
+      anchorNames ? `Artists they actually play most: ${anchorNames}.` : '',
       '',
       'Below is CURRENT music journalism about new releases:',
       journalism,
       '',
-      `From ONLY the releases named above, pick up to 15 NEW releases (${Number(year) - 1}–${year}) this listener would most likely love given their taste. For each give: artist, release title, its genre, the year, and a one-sentence "why" in your voice tying it to their taste. Do NOT invent releases that aren't named above. Return ONLY JSON — an array of objects [{"artist","title","genre","year","why"}], no prose, no code fence.`,
-    ].join('\n')
+      `From ONLY the releases named above, pick up to 15 NEW releases (${Number(year) - 1}–${year}) this listener would most likely love given their taste. For each give: artist, release title, its genre, the year, and a one-sentence "why" in your voice tying it to their taste. If a pick is genuinely comparable to one of the artists they actually play most (named above), set "anchor" to that artist's name — omit it otherwise (don't force a connection that isn't real). Do NOT invent releases that aren't named above. Return ONLY JSON — an array of objects [{"artist","title","genre","year","why","anchor"}] ("anchor" optional), no prose, no code fence.`,
+    ].filter(Boolean).join('\n')
     const reply = await claudeCall('new-music-radar', {
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
@@ -1097,9 +1103,9 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
       const k = recoIdentityKey(a, t)
       return k != null && listKeys.has(k)
     }
-    const candidates = rankCandidates(fp, parseCandidates(text), 12, isOnList)
-    radarCache = { candidates, generatedAt: Date.now() }
-    return { ok: true, candidates, generatedAt: radarCache.generatedAt }
+    const candidates = rankCandidates(fp, parseCandidates(text), 12, isOnList, anchors)
+    radarCache = { candidates, generatedAt: Date.now(), fingerprintSummary: fp.summary, anchors }
+    return { ok: true, candidates, generatedAt: radarCache.generatedAt, fingerprintSummary: fp.summary, anchors }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'radar failed' }
   }

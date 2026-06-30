@@ -57,9 +57,13 @@ export const EXA_QUERY_TEMPLATES = {
   similarArtists: ({ artist }: { artist: string }) =>
     `Find artists musically similar to ${artist} — peers from the same scene, era, label, geographic micro-genre, or critical lineage. Search for music journalism that explicitly groups, compares, or names ${artist} alongside other artists; also find artists frequently cited as influences on ${artist} or influenced by ${artist}. Prioritize critical writing that explains why the comparison holds, not generic recommendation-engine output.`,
 
-  /** New-music discovery by scene/genre. Powers the Discovery Brain radar. */
+  /** New-music discovery by scene/genre. */
   newMusic: ({ scene, year }: { scene: string; year: string }) =>
     `The best new music in ${scene} right now — albums, EPs, and singles released in ${year} (and the last few months) getting critical attention from Pitchfork, Stereogum, Resident Advisor, Bandcamp Daily, The Quietus, and Brooklyn Vegan. Name specific artists and specific releases with their titles. Focus on genuinely new/recent releases, not catalog reissues or anniversary editions.`,
+
+  /** New releases for fans of specific artists the listener already loves. */
+  newMusicForFans: ({ artists, year }: { artists: string[]; year: string }) =>
+    `New album, EP, and single releases in ${year} that fans of ${artists.join(', ')} would love — artists on the same labels, in the same scenes, cited as similar to or influenced by them, or reviewed alongside them. Name specific artists and release titles from Pitchfork, Stereogum, Resident Advisor, Bandcamp Daily, The Quietus. Recent releases only, not reissues.`,
 }
 
 // ── Cache + rate limit ──────────────────────────────────────────────
@@ -239,5 +243,15 @@ export function exaNewMusic(scene: string, year: string): Promise<string> {
     maxAgeHours: 0,
     diskCacheTtlMs: EXA_NEWS_TTL_MS,
     numResults: 6,
+  })
+}
+
+/** New releases tuned to artists the listener already plays. */
+export function exaNewMusicForFans(artists: string[], year: string): Promise<string> {
+  if (artists.length === 0) return Promise.resolve('')
+  return exaSearch(EXA_QUERY_TEMPLATES.newMusicForFans({ artists, year }), {
+    maxAgeHours: 0,
+    diskCacheTtlMs: EXA_NEWS_TTL_MS,
+    numResults: 8,
   })
 }

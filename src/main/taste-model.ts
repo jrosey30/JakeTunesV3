@@ -17,10 +17,12 @@ export interface TrackLike {
   genre?: string
   year?: string | number
   playCount?: number
+  skipCount?: number
+  rating?: number
 }
 
 export interface GenreWeight { genre: string; tracks: number; plays: number; weight: number }
-export interface ArtistAffinity { artist: string; tracks: number; plays: number }
+export interface ArtistAffinity { artist: string; tracks: number; plays: number; skips: number; primaryGenre: string }
 export interface Spine { name: string; tracks: number; weight: number }
 export interface EraBucket { decade: number; tracks: number }
 
@@ -36,8 +38,19 @@ export interface TasteFingerprint {
   summary: string                // one-paragraph, prompt-ready
 }
 
-export interface Candidate { artist?: string; genre?: string; year?: string | number }
+export interface Candidate { artist?: string; genre?: string; year?: string | number; anchor?: string; why?: string }
 export interface CandidateScore { score: number; reasons: string[]; owned: boolean }
+
+/** A top artist the listener actually engages with — seeds discovery searches. */
+export interface TasteAnchor {
+  artist: string
+  plays: number
+  tracks: number
+  skips: number
+  primaryGenre: string
+  /** Effective affinity: plays + ownership depth − skip penalty. */
+  score: number
+}
 
 export const norm = (s: string): string => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -60,9 +73,57 @@ function decadeOf(year: string | number | undefined): number | null {
   return y > 1900 && y < 2100 ? Math.floor(y / 10) * 10 : null
 }
 
+function topMapEntry(m: Map<string, number>): string {
+  let best = ''
+  let bestN = 0
+  for (const [k, n] of m) if (n > bestN) { bestN = n; best = k }
+  return best
+}
+
+/**
+ * Top artists by real listening signal — plays weighted, skips penalized,
+ * high skip-ratio artists excluded. These anchor Exa searches + MM prompts.
+ */
+export function getTasteAnchors(tracks: TrackLike[], limit = 8): TasteAnchor[] {
+  interface Agg { artist: string; plays: number; tracks: number; skips: number; genres: Map<string, number> }
+  const byArtist = new Map<string, Agg>()
+  for (const t of tracks) {
+    const name = (t.albumArtist || t.artist || '').trim()
+    if (!name) continue
+    const key = norm(name)
+    let a = byArtist.get(key)
+    if (!a) {
+      a = { artist: name, plays: 0, tracks: 0, skips: 0, genres: new Map() }
+      byArtist.set(key, a)
+    }
+    a.tracks++
+    a.plays += Number(t.playCount) || 0
+    a.skips += Number(t.skipCount) || 0
+    const g = (t.genre || '').trim()
+    if (g) a.genres.set(g, (a.genres.get(g) || 0) + 1)
+  }
+  const scored: TasteAnchor[] = []
+  for (const a of byArtist.values()) {
+    // Skip artists they actively reject (more skips than plays).
+    if (a.skips >= 3 && a.skips > a.plays) continue
+    const score = a.plays * 2 + Math.min(a.tracks, 15) - a.skips * 2
+    if (score <= 0 && a.plays === 0) continue
+    scored.push({
+      artist: a.artist,
+      plays: a.plays,
+      tracks: a.tracks,
+      skips: a.skips,
+      primaryGenre: topMapEntry(a.genres),
+      score,
+    })
+  }
+  scored.sort((x, y) => y.score - x.score || y.plays - x.plays)
+  return scored.slice(0, Math.max(0, limit))
+}
+
 export function computeTasteFingerprint(tracks: TrackLike[]): TasteFingerprint {
   const gT = new Map<string, number>(), gP = new Map<string, number>()
-  const aT = new Map<string, number>(), aP = new Map<string, number>()
+  const aT = new Map<string, number>(), aP = new Map<string, number>(), aS = new Map<string, number>(), aG = new Map<string, Map<string, number>>()
   const spineT = new Map<string, number>()
   const eraT = new Map<number, number>()
   const owned = new Set<string>()
@@ -82,6 +143,13 @@ export function computeTasteFingerprint(tracks: TrackLike[]): TasteFingerprint {
     if (a) {
       aT.set(a, (aT.get(a) || 0) + 1)
       aP.set(a, (aP.get(a) || 0) + plays)
+      aS.set(a, (aS.get(a) || 0) + (Number(t.skipCount) || 0))
+      const g = (t.genre || '').trim()
+      if (g) {
+        let gm = aG.get(a)
+        if (!gm) { gm = new Map(); aG.set(a, gm) }
+        gm.set(g, (gm.get(g) || 0) + 1)
+      }
       owned.add(norm(a))
     }
     const d = decadeOf(t.year)
@@ -101,9 +169,18 @@ export function computeTasteFingerprint(tracks: TrackLike[]): TasteFingerprint {
     .map((b) => ({ genre: b.genre, tracks: b.tracks, plays: b.plays, weight: Math.round((b.blend / maxBlend) * 100) / 100 }))
 
   const topArtists: ArtistAffinity[] = [...aP.keys()]
-    .map((a) => ({ artist: a, tracks: aT.get(a) || 0, plays: aP.get(a) || 0 }))
+    .map((a) => ({
+      artist: a,
+      tracks: aT.get(a) || 0,
+      plays: aP.get(a) || 0,
+      skips: aS.get(a) || 0,
+      primaryGenre: topMapEntry(aG.get(a) || new Map()),
+    }))
     .sort((a, b) => b.plays - a.plays || b.tracks - a.tracks)
     .slice(0, 20)
+
+  const anchors = getTasteAnchors(tracks, 6)
+  const anchorNames = anchors.map((a) => a.artist).join(', ')
 
   const spines: Spine[] = [...spineT.entries()]
     .filter(([name]) => name !== 'Other')
@@ -114,11 +191,14 @@ export function computeTasteFingerprint(tracks: TrackLike[]): TasteFingerprint {
   const peakDecade = eras.length ? eras.reduce((m, e) => (e.tracks > m.tracks ? e : m)).decade : null
 
   const topSpineNames = spines.slice(0, 3).map((s) => s.name).join(', ')
-  const topArtistNames = topArtists.slice(0, 6).map((a) => a.artist).join(', ')
+  const topArtistNames = anchors.length > 0
+    ? anchors.slice(0, 6).map((a) => `${a.artist} (${a.plays} plays)`).join(', ')
+    : topArtists.slice(0, 6).map((a) => a.artist).join(', ')
   const summary = [
     `${totalTracks.toLocaleString()} tracks.`,
+    anchors.length ? `Most played: ${anchorNames}.` : '',
     spines.length ? `Taste centers on ${topSpineNames}.` : '',
-    topArtists.length ? `Most-played: ${topArtistNames}.` : '',
+    topArtists.length && !anchors.length ? `Top artists: ${topArtistNames}.` : '',
     peakDecade ? `Heaviest era: the ${peakDecade}s.` : '',
   ].filter(Boolean).join(' ')
 
@@ -165,4 +245,48 @@ export function scoreCandidate(fp: TasteFingerprint, c: Candidate): CandidateSco
   const owned = !!c.artist && fp.ownedArtists.includes(norm(c.artist))
   if (owned) reasons.push('you already own this artist')
   return { score, reasons, owned }
+}
+
+/** Score a radar candidate with taste-anchor bonus (because-you-play-X). */
+export function scoreCandidateForRadar(
+  fp: TasteFingerprint,
+  c: Candidate,
+  anchors: TasteAnchor[],
+): CandidateScore {
+  const base = scoreCandidate(fp, c)
+  if (base.owned) return base
+  const reasons = [...base.reasons]
+  let bonus = 0
+
+  if (c.anchor) {
+    const idx = anchors.findIndex((a) => norm(a.artist) === norm(c.anchor!))
+    if (idx >= 0) {
+      bonus += 0.28
+      reasons.unshift(`because you play ${anchors[idx].artist}`)
+    }
+  }
+
+  const why = (c.why || '').toLowerCase()
+  for (const a of anchors.slice(0, 6)) {
+    if (why.includes(a.artist.toLowerCase())) {
+      bonus += 0.12
+      if (!reasons.some((r) => r.includes(a.artist))) {
+        reasons.unshift(`connects to ${a.artist}`)
+      }
+      break
+    }
+  }
+
+  if (c.genre && c.anchor) {
+    const anchor = anchors.find((a) => norm(a.artist) === norm(c.anchor!))
+    if (anchor?.primaryGenre && norm(anchor.primaryGenre) === norm(c.genre)) {
+      bonus += 0.08
+    }
+  }
+
+  return {
+    score: Math.min(1, Math.round((base.score + bonus) * 100) / 100),
+    reasons,
+    owned: false,
+  }
 }

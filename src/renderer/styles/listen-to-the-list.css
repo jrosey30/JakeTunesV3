@@ -29,6 +29,45 @@
   color: var(--text-secondary);
 }
 
+.ltl-download-all {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: var(--font-label);
+  font-weight: 600;
+  color: #fff;
+  background: #7a5ca8;
+  border: 1px solid #634a8a;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ltl-download-all:disabled {
+  background: #c9c9c9;
+  border-color: #b0b0b0;
+  cursor: default;
+}
+
+.ltl-download {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #7a5ca8;
+  background: transparent;
+  border: 1px solid #c8b8e0;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.ltl-row:hover .ltl-download { opacity: 1; }
+.ltl-download:hover:not(:disabled) { background: #f0eaf8; color: #634a8a; }
+.ltl-download:disabled { cursor: default; opacity: 1; color: #999; border-color: #ddd; }
+.ltl-download--done { opacity: 1; color: #2d8a4e; border-color: #a8d4b8; }
+.ltl-download--err { opacity: 1; color: #c0392b; border-color: #e8b4b0; }
+
 /* Add form */
 .ltl-add {
   display: flex;
@@ -420,3 +459,18 @@
   cursor: pointer;
 }
 .ltl-mm-add:hover { background: #e3b06a; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 24px;
+  color: var(--text-secondary, #6a6a6a);
+  text-align: center;
+}
+.empty-state-glyph { opacity: 0.45; margin-bottom: 4px; }
+.empty-state-title { font-size: 14px; font-weight: 600; color: #3a3a3a; }
+.empty-state-title strong { font-weight: 700; color: #2a2a2a; }
+.empty-state-sub { font-size: 12px; max-width: 280px; line-height: 1.4; }
