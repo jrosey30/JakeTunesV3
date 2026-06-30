@@ -1,0 +1,253 @@
+/* "New for You" — the Discovery Brain's radar feed. Cover-forward release
+   cards (iTunes art + 30s preview), ranked by taste-fit. Teal (#1f7a8c)
+   accent to match the merged Discovery surface. */
+
+.nfy {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--white, #f9f8f5);
+  padding: 18px 22px 32px;
+}
+
+.nfy-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.nfy-title { margin: 0 0 2px; font-size: 22px; font-weight: 700; color: #2a2a2a; }
+.nfy-sub { margin: 0; font-size: 12.5px; color: #8a8780; max-width: 560px; }
+
+.nfy-refresh {
+  flex-shrink: 0;
+  appearance: none;
+  border: 1px solid #186475;
+  background: #1f7a8c;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.nfy-refresh:hover:not(:disabled) { background: #186475; }
+.nfy-refresh:disabled { opacity: 0.55; cursor: default; }
+
+.nfy-loading, .nfy-empty { font-size: 13.5px; color: #8a8780; font-style: italic; padding: 24px 2px; }
+.nfy-error { font-size: 13px; color: #a23a2a; padding: 16px 2px; }
+
+.nfy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 16px;
+}
+
+.nfy-card {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e0ddd6;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.14s ease, transform 0.14s ease;
+}
+.nfy-card:hover { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.13); transform: translateY(-2px); }
+
+.nfy-cover {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: #e3e1db;
+}
+.nfy-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nfy-cover-ph {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 46px; color: #b3b0a8;
+}
+
+.nfy-match {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: rgba(20, 18, 14, 0.78);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.2px;
+}
+
+.nfy-preview {
+  position: absolute;
+  bottom: 8px; left: 8px;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(20, 18, 14, 0.6);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.nfy-cover:hover .nfy-preview, .nfy-preview--on { opacity: 1; }
+.nfy-preview:hover { background: #1f7a8c; }
+.nfy-preview--on { background: #1f7a8c; }
+
+.nfy-card-body { padding: 9px 11px 11px; display: flex; flex-direction: column; min-width: 0; }
+.nfy-card-title {
+  font-size: 13.5px; font-weight: 700; color: #2a2018;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nfy-artist {
+  font-size: 12.5px; color: #6a5a48;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nfy-meta { font-size: 11px; color: #a09c93; margin-top: 1px; }
+.nfy-why {
+  margin: 7px 0 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #3a352e;
+  font-style: italic;
+  /* No clamp: the pitch IS the card — Music Man writes 1-2 sentences
+     (prompt-bounded in radar generation) and they render complete, never
+     "…" mid-thought. Geometry already absorbs it: the grid stretches each
+     row to its tallest card and .nfy-add is bottom-pinned (margin-top:
+     auto), so Add buttons stay aligned across every row. */
+}
+.nfy-add {
+  margin-top: auto;
+  appearance: none;
+  border: 1px solid #a9cdd5;
+  background: #e7f1f3;
+  color: #186475;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.nfy-add:hover:not(:disabled) { background: #dceaed; }
+.nfy-add:disabled { color: #2a7a2a; border-color: #bcd6bc; background: #eef6ee; cursor: default; }
+
+.nfy-taste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  background: #f0f7f8;
+  border: 1px solid #c5dde2;
+  border-radius: 8px;
+}
+.nfy-taste-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #186475;
+  width: 100%;
+  margin-bottom: 2px;
+}
+.nfy-anchor-chip {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #c77b1a;
+  color: #8a5010;
+}
+.nfy-because {
+  font-size: 11px;
+  color: #8a5010;
+  margin-top: 3px;
+}
+.nfy-because strong { font-weight: 700; }
+
+.nfy-section { margin-bottom: 28px; }
+.nfy-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.nfy-section-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #2a2a2a;
+}
+.nfy-section-hint { font-size: 12px; color: #9a9690; }
+.nfy-section--redisco { border-top: 1px solid #e0ddd6; padding-top: 20px; }
+.nfy-empty--soft { font-style: normal; color: #a09c93; }
+
+.nfy-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+.nfy-reason-chip {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #f5f0e8;
+  color: #7a6a50;
+  border: 1px solid #e8dfd0;
+}
+
+.nfy-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+.nfy-actions .nfy-add { flex: 1; margin-top: 0; }
+.nfy-dl {
+  flex-shrink: 0;
+  width: 32px;
+  appearance: none;
+  border: 1px solid #c8b8e0;
+  background: #f8f4fc;
+  color: #7a5ca8;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.nfy-dl:hover:not(:disabled) { background: #efe8f8; }
+.nfy-dl:disabled { opacity: 0.6; cursor: default; }
+.nfy-dl--done { color: #2d8a4e; border-color: #a8d4b8; background: #eef8f1; }
+.nfy-dl--err { color: #c0392b; border-color: #e8b4b0; }
+
+.nfy-redisco-list { display: flex; flex-direction: column; gap: 10px; }
+.nfy-redisco-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  gap: 14px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e0ddd6;
+  border-radius: 8px;
+  align-items: start;
+}
+@media (max-width: 640px) {
+  .nfy-redisco-row { grid-template-columns: 1fr; }
+}
+.nfy-redisco-artist { font-size: 14px; font-weight: 700; color: #2a2018; }
+.nfy-redisco-album { font-size: 12.5px; color: #6a5a48; margin-top: 1px; }
+.nfy-redisco-stats { font-size: 11px; color: #a09c93; margin-top: 4px; }
+.nfy-redisco-why {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #3a352e;
+  font-style: italic;
+}

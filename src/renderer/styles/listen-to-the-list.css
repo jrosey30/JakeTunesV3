@@ -1,0 +1,476 @@
+/* Brief 122 Phase 1 — "Listen to the List" view. Matches the light
+   brushed-metal aesthetic of the other library views (Genres etc.). */
+
+.ltl-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ltl-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px 6px;
+  flex-shrink: 0;
+}
+
+.ltl-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #2a2a2a;
+}
+
+.ltl-count {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+}
+
+.ltl-download-all {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: var(--font-label);
+  font-weight: 600;
+  color: #fff;
+  background: #7a5ca8;
+  border: 1px solid #634a8a;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ltl-download-all:disabled {
+  background: #c9c9c9;
+  border-color: #b0b0b0;
+  cursor: default;
+}
+
+.ltl-download {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #7a5ca8;
+  background: transparent;
+  border: 1px solid #c8b8e0;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.ltl-row:hover .ltl-download { opacity: 1; }
+.ltl-download:hover:not(:disabled) { background: #f0eaf8; color: #634a8a; }
+.ltl-download:disabled { cursor: default; opacity: 1; color: #999; border-color: #ddd; }
+.ltl-download--done { opacity: 1; color: #2d8a4e; border-color: #a8d4b8; }
+.ltl-download--err { opacity: 1; color: #c0392b; border-color: #e8b4b0; }
+
+/* Add form */
+.ltl-add {
+  display: flex;
+  gap: 6px;
+  padding: 6px 14px 10px;
+  border-bottom: 1px solid #c0c0c0;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.ltl-add-input {
+  flex: 1;
+  min-width: 90px;
+  padding: 4px 8px;
+  font-size: var(--font-body);
+  border: 1px solid #b0b0b0;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.ltl-add-note { flex: 2; min-width: 140px; }
+
+.ltl-add-input:focus {
+  outline: none;
+  border-color: #888;
+  box-shadow: 0 0 0 2px rgba(187, 67, 8, 0.15);
+}
+
+.ltl-add-btn {
+  padding: 4px 14px;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #fff;
+  background: #bb4308;
+  border: 1px solid #963505;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ltl-add-btn:disabled {
+  background: #c9c9c9;
+  border-color: #b0b0b0;
+  cursor: default;
+}
+
+/* Phase 2 — iTunes autocomplete dropdown */
+.ltl-add-wrap { position: relative; flex-shrink: 0; z-index: 5; }
+
+.ltl-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 14px;
+  right: 14px;
+  margin-top: -4px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #b0b0b0;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  transform-origin: top center;
+  animation: pop-in var(--motion-fast) var(--ease-snap) both;
+}
+
+.ltl-suggest-empty {
+  padding: 8px 12px;
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+}
+
+.ltl-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ltl-suggest-row:last-child { border-bottom: none; }
+.ltl-suggest-row:hover { background: #f0f4fa; }
+
+.ltl-suggest-art {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  object-fit: cover;
+  background: #e0e0e0;
+}
+
+.ltl-suggest-art--ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a0a0a0;
+  font-size: 16px;
+}
+
+.ltl-suggest-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+
+.ltl-suggest-song {
+  font-size: var(--font-body);
+  color: #2a2a2a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Artist is the differentiator when every result shares the same title
+   (e.g. "Bulls on Parade" by RATM vs. a cover band) — make it bold and
+   dark so it can't be misread for the wrong artist. */
+.ltl-suggest-artist {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #bb4308;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-suggest-album {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* List */
+.ltl-loading {
+  padding: 20px 14px;
+  font-size: var(--font-body);
+  color: var(--text-secondary);
+}
+
+.ltl-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Labeled groups inside the saved list: "Your jots" vs "Suggested for you". */
+.ltl-section { display: flex; flex-direction: column; }
+.ltl-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 13px 14px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #8a8780;
+}
+.ltl-section-count {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #b0ada4;
+}
+
+.ltl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #e2e2e2;
+  transition: background-color var(--motion-instant) ease-out;
+}
+
+.ltl-row:hover { background: #f1f1f1; }
+
+.ltl-art {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e0e0e0;
+}
+
+.ltl-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.ltl-art-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: #a0a0a0;
+}
+
+.ltl-preview-btn {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.42);
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.ltl-art:hover .ltl-preview-btn,
+.ltl-preview-btn--playing { opacity: 1; }
+
+.ltl-meta { flex: 1; min-width: 0; }
+
+.ltl-name {
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #2a2a2a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-album {
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltl-note {
+  font-size: var(--font-label);
+  color: #555;
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.ltl-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+}
+
+.ltl-date {
+  font-size: var(--font-label);
+  color: #999;
+}
+
+.ltl-link {
+  font-size: var(--font-label);
+  color: #bb4308;
+  text-decoration: none;
+}
+
+.ltl-link:hover { text-decoration: underline; }
+
+.ltl-delete {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  color: #999;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.ltl-row:hover .ltl-delete { opacity: 1; }
+.ltl-delete:hover { background: #e0e0e0; color: #c0392b; }
+
+/* ── Music Man's "3 to add" strip ────────────────────────────────── */
+.ltl-mm-suggests {
+  margin: 4px 0 18px;
+  padding: 12px 14px;
+  background: #2c2622;
+  border: 1px solid #4a3a2c;
+  border-radius: 10px;
+}
+.ltl-mm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.ltl-mm-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #d8a25a;
+}
+.ltl-mm-refresh {
+  appearance: none;
+  border: 1px solid #5a4632;
+  background: transparent;
+  color: #d8a25a;
+  font-size: 14px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, transform var(--motion-ui) var(--ease-snap);
+}
+.ltl-mm-refresh[aria-busy="true"] {
+  animation: mm-refresh-spin 0.75s linear infinite;
+}
+@keyframes mm-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+.ltl-mm-refresh:hover:not(:disabled) { background: #3a3026; }
+.ltl-mm-refresh:disabled { opacity: 0.4; cursor: default; }
+.ltl-mm-loading {
+  font-size: 13px;
+  color: #cdbfa9;
+  font-style: italic;
+  padding: 4px 2px;
+}
+.ltl-mm-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.ltl-mm-card--loading {
+  justify-content: center;
+  min-height: 72px;
+  background: #3a3026;
+  border: 1px dashed #5a4632;
+}
+.ltl-mm-card--loading .ltl-mm-loading {
+  color: #cdbfa9;
+  font-style: italic;
+  text-align: center;
+}
+.ltl-mm-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f4ece0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  animation: card-stagger-in var(--motion-panel) var(--ease-lift) both;
+}
+.ltl-mm-card:nth-child(1) { animation-delay: 0ms; }
+.ltl-mm-card:nth-child(2) { animation-delay: var(--motion-stagger); }
+.ltl-mm-card:nth-child(3) { animation-delay: calc(var(--motion-stagger) * 2); }
+.ltl-mm-card--loading { animation: none; }
+.ltl-mm-card-text { flex: 1; min-width: 0; }
+.ltl-mm-song {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2a2018;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ltl-mm-artist {
+  font-size: 12px;
+  color: #6a5a48;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ltl-mm-note {
+  font-size: 11px;
+  color: #8a7a64;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+.ltl-mm-add {
+  flex: 0 0 auto;
+  appearance: none;
+  border: none;
+  background: #d8a25a;
+  color: #2a1c10;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ltl-mm-add:hover { background: #e3b06a; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 24px;
+  color: var(--text-secondary, #6a6a6a);
+  text-align: center;
+}
+.empty-state-glyph { opacity: 0.45; margin-bottom: 4px; }
+.empty-state-title { font-size: 14px; font-weight: 600; color: #3a3a3a; }
+.empty-state-title strong { font-weight: 700; color: #2a2a2a; }
+.empty-state-sub { font-size: 12px; max-width: 280px; line-height: 1.4; }

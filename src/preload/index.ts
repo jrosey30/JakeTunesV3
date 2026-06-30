@@ -60,6 +60,16 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-scan-metadata', tracks),
   musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string }[]; error?: string }> =>
     ipcRenderer.invoke('musicman-recommendations', tracks),
+  // Brief 122 — Listen to the List
+  loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) =>
+    ipcRenderer.invoke('add-recommendation', input),
+  deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
+  suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
+  searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
+  getTasteFingerprint: () => ipcRenderer.invoke('get-taste-fingerprint'),
+  getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
+  getRediscovery: (force?: boolean) => ipcRenderer.invoke('get-rediscovery', force),
   // ── Cynthia (digital file archivist sub-agent) ──
   cynthiaInvestigate: (input: {
     userPrompt: string
@@ -368,6 +378,25 @@ const electronAPI = {
   squidResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('squid:resize', bounds),
   squidUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('squid:unmount'),
+  // ── streamrip download store (search / paste link → rip CLI → import) ──
+  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string }> =>
+    ipcRenderer.invoke('streamrip:status'),
+  streamripDownload: (url: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download', url),
+  streamripSearch: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }> =>
+    ipcRenderer.invoke('streamrip:search', opts),
+  streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+    ipcRenderer.invoke('streamrip:download-by-query', opts),
+  streamripGetQobuz: (): Promise<{ ok: boolean; configured: boolean; email?: string }> =>
+    ipcRenderer.invoke('streamrip:get-qobuz'),
+  streamripSetQobuz: (email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('streamrip:set-qobuz', email, password),
+  streamripSetQobuzToken: (userId: string, token: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('streamrip:set-qobuz-token', userId, token),
+  lookupRecoArtwork: (input: { artist: string; title: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> =>
+    ipcRenderer.invoke('lookup-reco-artwork', input),
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)

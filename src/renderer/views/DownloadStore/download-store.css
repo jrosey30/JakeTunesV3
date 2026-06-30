@@ -1,0 +1,324 @@
+.download-view {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  padding: 48px 24px;
+  background: var(--home-canvas, #f0ebe1);   /* 4.5 upgrade: warm canvas, matches Home */
+}
+.download-card {
+  width: 100%;
+  max-width: 620px;
+  height: max-content;
+  /* 4.5 upgrade: warm panel surface so the store reads as a card, not bare text on a page. */
+  background: #fcfbf8;
+  border: 1px solid rgba(120, 90, 50, 0.12);
+  border-radius: 14px;
+  padding: 28px 30px 30px;
+  box-shadow: 0 1px 2px rgba(70, 55, 40, 0.05), 0 8px 24px rgba(70, 55, 40, 0.06);
+}
+.download-title {
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text-primary, #1a1a1a);
+  letter-spacing: -0.01em;
+}
+.download-sub {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-secondary, #6a6a6a);
+  margin: 0 0 22px;
+}
+.download-row {
+  display: flex;
+  gap: 8px;
+}
+.download-input {
+  flex: 1;
+  height: 40px;
+  padding: 0 13px;
+  font-size: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  background: var(--white, #fff);
+  color: var(--text-primary, #1a1a1a);
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+.download-input:focus { border-color: var(--brand-orange, #bb4308); }
+.download-btn {
+  height: 40px;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand-orange, #bb4308);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.12s ease;
+}
+.download-btn:disabled { opacity: 0.5; cursor: default; }
+.download-busy {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-secondary, #8a8a8a);
+}
+.download-result {
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.download-result--ok { background: rgba(79, 163, 127, 0.12); color: #2c6b4f; }
+.download-result--err { background: rgba(187, 67, 8, 0.10); color: #8a3206; }
+.download-hint {
+  margin-top: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary, #8a8a8a);
+}
+.download-warn {
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  background: rgba(187, 67, 8, 0.10);
+  color: #8a3206;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.download-hint code,
+.download-warn code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Browse: search row + results list ── */
+.download-search {
+  display: flex;
+  gap: 8px;
+}
+.download-select {
+  height: 40px;
+  padding: 0 8px;
+  font-size: 13px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  background: var(--white, #fff);
+  color: var(--text-primary, #1a1a1a);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* 4.5 upgrade: source pills (replaced the source dropdown — one tap, all visible) */
+.download-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.download-source-pill {
+  height: 30px;
+  padding: 0 15px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border: 1px solid rgba(120, 90, 50, 0.20);
+  border-radius: 15px;
+  background: var(--white, #fff);
+  color: var(--text-secondary, #555049);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.download-source-pill:hover:not(:disabled) {
+  background: rgba(187, 67, 8, 0.06);
+  border-color: rgba(187, 67, 8, 0.30);
+}
+.download-source-pill.is-active {
+  background: var(--brand-orange, #bb4308);
+  color: #fff;
+  border-color: var(--brand-orange, #bb4308);
+}
+.download-source-pill:disabled { opacity: 0.5; cursor: default; }
+.download-results {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.download-result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.download-result-row:last-child { border-bottom: none; }
+.download-result-row:nth-child(odd) { background: rgba(0, 0, 0, 0.015); }
+.download-result-desc {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary, #1a1a1a);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-result-btn {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid var(--brand-orange, #bb4308);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--brand-orange, #bb4308);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.download-result-btn:hover:not(:disabled) { background: var(--brand-orange, #bb4308); color: #fff; }
+.download-result-btn:disabled { opacity: 0.45; cursor: default; }
+.download-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 26px 0 14px;
+  color: var(--text-secondary, #9a9a9a);
+  font-size: 12px;
+}
+.download-divider::before,
+.download-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.08);
+}
+.download-divider span { padding: 0 12px; }
+
+/* ── Qobuz account ── */
+.download-accounts {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+.download-accounts-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  margin-bottom: 10px;
+}
+.download-account-form {
+  display: flex;
+  gap: 8px;
+}
+.download-account-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.download-account-status {
+  font-size: 13px;
+  color: #2c6b4f;
+  font-weight: 500;
+}
+.download-link-btn {
+  border: none;
+  background: none;
+  color: var(--brand-orange, #bb4308);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+}
+.download-link-btn:hover { text-decoration: underline; }
+.download-hint--sub { margin-top: 10px; }
+
+/* ── Qobuz token mode (Google sign-in) ── */
+.download-input--narrow { flex: 0 0 130px; }
+.download-toggle { display: inline-block; margin-top: 10px; }
+.download-steps {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary, #8a8a8a);
+}
+.download-steps summary {
+  cursor: pointer;
+  color: var(--brand-orange, #bb4308);
+  font-size: 12.5px;
+}
+.download-steps ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  line-height: 1.65;
+}
+.download-steps code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Result cover art ── */
+.download-result-art {
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #b8b8b8;
+}
+
+/* ── Persistent per-file import failures (so the reason doesn't flash past) ── */
+.download-failures {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(187, 67, 8, 0.08);
+  border: 1px solid rgba(187, 67, 8, 0.18);
+}
+.download-failures-head {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #8a3206;
+  margin-bottom: 8px;
+}
+.download-failures-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.download-failures-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.4;
+}
+.download-failures-name {
+  color: var(--text-primary, #1a1a1a);
+  font-size: 12px;
+  font-weight: 500;
+  word-break: break-word;
+}
+.download-failures-reason {
+  color: #8a3206;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-word;
+}

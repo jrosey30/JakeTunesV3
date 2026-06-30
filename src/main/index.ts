@@ -42,6 +42,9 @@ import {
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerSquidStore } from './squid-store'
+import { registerStreamripStore } from './streamrip-store'
+import { registerRecommendationsIpc, warmRecommendationsSync, getActiveRecommendationIdentityKeys } from './recommendations'
+import { registerDiscoveryBrainIpc } from './discovery-brain'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -5831,6 +5834,24 @@ Their top genres: ${topGenres}`
   }
 })
 
+// Brief 122 — Listen to the List (recommendations.json + homemini sync)
+registerRecommendationsIpc({
+  stateDir: app.getPath('userData'),
+  nasStateDir: '/Volumes/JakeShared/JakeTunesState',
+  isNasMounted: () => existsSync('/Volumes/JakeShared/JakeTunesState'),
+  libraryPath: LIBRARY_PATH,
+  claudeCall,
+  musicManCore: MUSIC_MAN_CORE,
+})
+
+registerDiscoveryBrainIpc({
+  libraryPath: LIBRARY_PATH,
+  claudeCall,
+  musicManCore: MUSIC_MAN_CORE,
+  getListIdentityKeys: getActiveRecommendationIdentityKeys,
+  getListenerTasteContext: async () => buildTasteProfile(),
+})
+
 // Music Man metadata scanner
 ipcMain.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
@@ -7304,6 +7325,8 @@ app.whenReady().then(async () => {
 
   // Load listener profile for Music Man
   loadListenerProfile()
+  // Brief 122 — warm recommendations from homemini/NAS in background
+  void warmRecommendationsSync()
   // Load Music Man's cross-mode memory (things he's said recently)
   await loadMusicManMemory()
   // Load Cynthia's archivist memory (recent jobs she's finished)
@@ -7746,6 +7769,13 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
+  })
+
+  // streamrip download store — search or paste-a-link → rip CLI → import.
+  // Same importDownloaded pipeline as Bandcamp, tagged source='streamrip'.
+  registerStreamripStore({
+    getMainWindow: () => mainWindow,
+    importDownloaded: importDownloadedFiles,
   })
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
