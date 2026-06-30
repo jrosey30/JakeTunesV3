@@ -5,6 +5,7 @@ import {
   dedupeSuggestions,
   getRecsCache,
   getSuggestionsCache,
+  invalidateRecsCache,
   isRecsCacheFresh,
   isSuggestionsCacheFresh,
   markAutoSuggestAttempted,
@@ -281,6 +282,8 @@ export function useListenToTheList() {
         updateRecs(prev)
         loadSeqRef.current++
         setNotice(`Couldn't delete${res.error ? `: ${res.error}` : ''}.`, { kind: 'error' })
+      } else {
+        invalidateRecsCache()
       }
     } catch (err) {
       updateRecs(prev)

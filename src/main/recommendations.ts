@@ -8,7 +8,6 @@
 
 import { ipcMain } from 'electron'
 import { readFile, writeFile } from 'fs/promises'
-import { existsSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
@@ -19,6 +18,17 @@ import {
   recoNorm,
   recoTitleMatches,
 } from './reco-match'
+import {
+  isRecordTombstoned,
+  recoIdentityKey,
+  recoMatchKey,
+  recoRecordIdentityKey,
+  recoRecordKey,
+  recordsMatchForDelete,
+  tombstoneKeysForRecord,
+  RECO_FULL_TOMBSTONE_PREFIX,
+  RECO_IDENTITY_TOMBSTONE_PREFIX,
+} from './reco-tombstone'
 
 export type RecoSource = 'user' | 'mm' | 'radar'
 
@@ -61,7 +71,6 @@ export interface RecommendationsHost {
 
 const MOBILE_BACKEND_URL = process.env.JAKETUNES_MOBILE_BACKEND || 'http://homemini:3000'
 const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
-const RECO_IDENTITY_TOMBSTONE_PREFIX = 'identity:'
 const RECOMMENDATIONS_SYNC_TTL_MS = 5 * 60 * 1000
 const SUGGEST_RESULT_TTL_MS = 30 * 60 * 1000
 
@@ -118,6 +127,20 @@ async function writeRecommendationTombstones(tombstones: Set<string>): Promise<v
   await writeFile(tmp, JSON.stringify([...tombstones], null, 2))
   const { rename: renameFS } = await import('fs/promises')
   await renameFS(tmp, path)
+  void mirrorTombstonesToNas(tombstones)
+}
+
+async function mirrorTombstonesToNas(tombstones: Set<string>): Promise<void> {
+  if (!host?.isNasMounted()) return
+  try {
+    const nasPath = join(host.nasStateDir, 'recommendations-deleted.json')
+    const tmp = nasPath + '.tmp.json'
+    await writeFile(tmp, JSON.stringify([...tombstones], null, 2))
+    const { rename: renameFS } = await import('fs/promises')
+    await renameFS(tmp, nasPath)
+  } catch (err) {
+    console.warn('[reco] NAS tombstone mirror failed:', err instanceof Error ? err.message : err)
+  }
 }
 
 async function addRecommendationTombstones(entries: string[]): Promise<void> {
@@ -127,18 +150,20 @@ async function addRecommendationTombstones(entries: string[]): Promise<void> {
   await writeRecommendationTombstones(tombstones)
 }
 
-function isIdentityTombstoned(tombstones: Set<string>, r: RecommendationRecord): boolean {
-  const k = recoRecordIdentityKey(r)
-  return Boolean(k && tombstones.has(RECO_IDENTITY_TOMBSTONE_PREFIX + k))
+async function filterTombstoned(list: RecommendationRecord[]): Promise<RecommendationRecord[]> {
+  const tombstones = await readRecommendationTombstones()
+  return list.filter((r) => !isRecordTombstoned(tombstones, r))
 }
 
-async function clearRecommendationIdentityTombstone(song?: string, artist?: string): Promise<void> {
+async function clearRecommendationIdentityTombstone(song?: string, artist?: string, note?: string): Promise<void> {
   try {
-    const k = recoIdentityKey(song, artist)
-    if (!k) return
     const tombstones = await readRecommendationTombstones()
-    if (!tombstones.delete(RECO_IDENTITY_TOMBSTONE_PREFIX + k)) return
-    await writeRecommendationTombstones(tombstones)
+    let changed = false
+    const identity = recoIdentityKey(song, artist)
+    if (identity && tombstones.delete(RECO_IDENTITY_TOMBSTONE_PREFIX + identity)) changed = true
+    const fullKey = recoMatchKey({ song, artist, note })
+    if (tombstones.delete(RECO_FULL_TOMBSTONE_PREFIX + fullKey)) changed = true
+    if (changed) await writeRecommendationTombstones(tombstones)
   } catch { /* best-effort */ }
 }
 
@@ -187,29 +212,6 @@ function mergeRecommendationsById(...sources: RecommendationRecord[][]): Recomme
     }
   }
   return sortRecommendations([...byId.values()])
-}
-
-function recoMatchKey(input: { song?: string; artist?: string; note?: string }): string {
-  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-  return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.note || '')}`
-}
-
-function recoRecordKey(r: RecommendationRecord): string {
-  return recoMatchKey({
-    song: r.song || r.matchedTitle,
-    artist: r.artist || r.matchedArtist,
-    note: r.note,
-  })
-}
-
-function recoIdentityKey(song?: string, artist?: string): string | null {
-  const s = recoNorm(song || '')
-  const a = recoNorm(artist || '')
-  return s && a ? `${s}|${a}` : null
-}
-
-function recoRecordIdentityKey(r: RecommendationRecord): string | null {
-  return recoIdentityKey(r.song || r.matchedTitle, r.artist || r.matchedArtist)
 }
 
 function dedupeRecommendationsByIdentity(list: RecommendationRecord[]): RecommendationRecord[] {
@@ -417,15 +419,30 @@ async function recoverRecommendationFromBackend(input: {
   return pool.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0]
 }
 
-async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | null> {
+async function deleteRemoteRecommendation(id: string): Promise<void> {
   try {
-    const nasPath = join(host.nasStateDir, 'recommendations.json')
-    if (!existsSync(nasPath)) return null
-    const raw = await readFile(nasPath, 'utf-8')
-    return parseRecommendationsPayload(JSON.parse(raw) as unknown)
-  } catch {
-    return null
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok && res.status !== 404) {
+      console.warn('[reco] backend delete returned', res.status, 'for', id)
+    }
+  } catch (err) {
+    console.warn('[reco] backend delete unreachable for', id, ':', err instanceof Error ? err.message : err)
   }
+}
+
+/** DELETE every homemini row that matches the deleted record (all ids for same song/note). */
+async function purgeRemoteMatches(target: RecommendationRecord): Promise<string[]> {
+  const backend = (await fetchRecommendationsFromBackend()) ?? []
+  const doomed = backend.filter((r) => recordsMatchForDelete(target, r) || String(r.id) === String(target.id))
+  const ids = [...new Set(doomed.map((r) => String(r.id)))]
+  await Promise.all(ids.map((id) => deleteRemoteRecommendation(id)))
+  if (ids.length > 0) {
+    console.log(`[reco] purged ${ids.length} remote cop${ids.length === 1 ? 'y' : 'ies'} for`, target.song || target.note || target.id)
+  }
+  return ids
 }
 
 async function pushLocalOnlyRecommendations(
@@ -439,8 +456,8 @@ async function pushLocalOnlyRecommendations(
     backendRaw.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)),
   )
   const localOnly = local.filter((r) => {
-    if (tombstones.has(String(r.id)) || backendIds.has(String(r.id))) return false
-    if (isIdentityTombstoned(tombstones, r)) return false
+    if (isRecordTombstoned(tombstones, r)) return false
+    if (backendIds.has(String(r.id))) return false
     if (!(r.song || r.artist || r.album || r.note)) return false
     const idk = recoRecordIdentityKey(r)
     return !(idk && backendIdentity.has(idk))
@@ -479,18 +496,16 @@ async function pushLocalOnlyRecommendations(
 async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
   const tombstones = await readRecommendationTombstones()
   const rawLocal = await readRecommendationsFile()
-  const afterTombstones = rawLocal.filter((r) => !tombstones.has(String(r.id)) && !isIdentityTombstoned(tombstones, r))
+  const afterTombstones = rawLocal.filter((r) => !isRecordTombstoned(tombstones, r))
   const local = dedupeRecommendationsByIdentity(afterTombstones)
-  if (local.length !== rawLocal.length) {
+
+  // Purge tombstoned rows still on disk (heals drift) and collapse dupes.
+  if (afterTombstones.length !== rawLocal.length || local.length !== afterTombstones.length) {
     const keptIds = new Set(local.map((r) => String(r.id)))
     const droppedDupeIds = afterTombstones.filter((r) => !keptIds.has(String(r.id))).map((r) => String(r.id))
     if (droppedDupeIds.length > 0) {
       await addRecommendationTombstones(droppedDupeIds)
-      for (const did of droppedDupeIds) {
-        void fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
-          method: 'DELETE', signal: AbortSignal.timeout(8000),
-        }).catch(() => {})
-      }
+      for (const did of droppedDupeIds) void deleteRemoteRecommendation(did)
       console.log(`[reco] healed ${droppedDupeIds.length} duplicate cop${droppedDupeIds.length === 1 ? 'y' : 'ies'} off the list`)
     }
     await writeRecommendationsFile(local)
@@ -500,32 +515,40 @@ async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
   const localIdentities = new Set(local.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
   const backendRaw = await fetchRecommendationsFromBackend()
   const backend = backendRaw ?? []
-  const nas = (await readRecommendationsFromNas()) ?? []
 
-  const incoming = [...nas, ...backend].filter((r) => {
+  // homemini is the only remote SOURCE. NAS is write-only mirror — reading it
+  // resurrected deletes when the mirror was stale or another machine hadn't
+  // caught up yet (the "delete then reappear" bug).
+  const incoming = backend.filter((r) => {
     if (!r?.id) return false
     const id = String(r.id)
-    if (tombstones.has(id) || localIds.has(id)) return false
-    if (isIdentityTombstoned(tombstones, r)) return false
+    if (isRecordTombstoned(tombstones, r) || localIds.has(id)) return false
     const idk = recoRecordIdentityKey(r)
     return !(idk && localIdentities.has(idk))
   })
 
+  // Remote still has tombstoned rows — purge so the next sync can't resurrect them.
+  const remoteStale = backend.filter((r) => isRecordTombstoned(tombstones, r))
+  if (remoteStale.length > 0) {
+    const staleIds = [...new Set(remoteStale.map((r) => String(r.id)))]
+    await Promise.all(staleIds.map((id) => deleteRemoteRecommendation(id)))
+    console.log(`[reco] purged ${staleIds.length} tombstoned row(s) still on homemini`)
+  }
+
   const merged = dedupeRecommendationsByIdentity(mergeRecommendationsById(local, incoming))
   if (incoming.length > 0) {
     await writeRecommendationsFile(merged)
-    console.log(`[reco] synced ${merged.length} recommendations to local (was ${local.length}, pulled ${incoming.length} new from remote)`)
+    console.log(`[reco] synced ${merged.length} recommendations to local (was ${local.length}, pulled ${incoming.length} new from homemini)`)
   }
   recommendationsSyncedAtMs = Date.now()
   const reconciled = await pushLocalOnlyRecommendations(merged, backendRaw, tombstones)
-  return reconciled ?? merged
+  return filterTombstoned(reconciled ?? merged)
 }
 
 async function recommendationsForSuggest(): Promise<RecommendationRecord[]> {
   const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
   if (!stale && recommendationsSyncedAtMs > 0) {
-    const tombstones = await readRecommendationTombstones()
-    return (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+    return filterTombstoned(await readRecommendationsFile())
   }
   return syncRecommendationsToLocal()
 }
@@ -575,7 +598,7 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
         const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
         const recommendations = (forceSync || stale || recommendationsSyncedAtMs === 0)
           ? await syncRecommendationsToLocal()
-          : await readRecommendationsFile()
+          : await filterTombstoned(await readRecommendationsFile())
         return { ok: true, recommendations }
       } catch (err) {
         console.warn('[reco] read/sync failed:', err instanceof Error ? err.message : err)
@@ -601,7 +624,7 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
 
     try {
       const tombstones = await readRecommendationTombstones()
-      const existing = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+      const existing = (await readRecommendationsFile()).filter((r) => !isRecordTombstoned(tombstones, r))
       const idKey = recoIdentityKey(trimmed.song, trimmed.artist)
       const fullKey = recoMatchKey(trimmed)
       const dupe = existing.find((r) => {
@@ -613,7 +636,7 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
       }
     } catch { /* fall through */ }
 
-    await clearRecommendationIdentityTombstone(trimmed.song, trimmed.artist)
+    await clearRecommendationIdentityTombstone(trimmed.song, trimmed.artist, trimmed.note)
 
     const url = `${MOBILE_BACKEND_URL}/api/recommendations`
     let recommendation: RecommendationRecord | null = null
@@ -675,34 +698,50 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
 
   ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
     const rid = String(id)
-    let doomedIds: string[] = [rid]
-    const tombstoneEntries: string[] = [rid]
     try {
       const all = await readRecommendationsFile()
       const target = all.find((r) => String(r.id) === rid)
-      const identity = target ? recoRecordIdentityKey(target) : null
-      if (identity) {
-        doomedIds = all.filter((r) => String(r.id) === rid || recoRecordIdentityKey(r) === identity).map((r) => String(r.id))
-        tombstoneEntries.length = 0
-        tombstoneEntries.push(...doomedIds, RECO_IDENTITY_TOMBSTONE_PREFIX + identity)
+      if (!target) {
+        // Row already gone locally — still purge homemini in case it lingers there.
+        void deleteRemoteRecommendation(rid)
+        await addRecommendationTombstones([rid])
+        recommendationsSyncedAtMs = 0
+        suggestResultCache = null
+        return { ok: true }
       }
-      await addRecommendationTombstones(tombstoneEntries)
-      const next = all.filter((r) => !doomedIds.includes(String(r.id)))
-      if (next.length !== all.length) await writeRecommendationsFile(next)
+
+      // Every local copy of this song/note (duplicate-id disease).
+      const localMatches = all.filter((r) => recordsMatchForDelete(target, r) || String(r.id) === rid)
+      const remoteIds = await purgeRemoteMatches(target)
+
+      const tombstoneEntries = new Set<string>()
+      const doomedIds = new Set<string>()
+      for (const r of localMatches) {
+        for (const k of tombstoneKeysForRecord(r)) tombstoneEntries.add(k)
+        doomedIds.add(String(r.id))
+      }
+      for (const remoteId of remoteIds) {
+        tombstoneEntries.add(remoteId)
+        doomedIds.add(remoteId)
+      }
+
+      await addRecommendationTombstones([...tombstoneEntries])
+      const next = all.filter((r) => !doomedIds.has(String(r.id)))
+      await writeRecommendationsFile(next)
+
+      // Belt-and-suspenders: DELETE every id we know about, not only local ones.
+      await Promise.all([...doomedIds].map((did) => deleteRemoteRecommendation(did)))
+
+      recommendationsSyncedAtMs = 0
+      suggestResultCache = null
+      console.log(`[reco] deleted`, target.song || target.note || rid, `(${doomedIds.size} id(s) tombstoned)`)
+      return { ok: true }
     } catch (err) {
       console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)
-      await addRecommendationTombstones(tombstoneEntries).catch(() => {})
+      await addRecommendationTombstones([rid]).catch(() => {})
+      recommendationsSyncedAtMs = 0
+      return { ok: false, error: err instanceof Error ? err.message : 'delete failed' }
     }
-    suggestResultCache = null
-    for (const did of doomedIds) {
-      try {
-        await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
-          method: 'DELETE',
-          signal: AbortSignal.timeout(8000),
-        })
-      } catch { /* homemini converges later */ }
-    }
-    return { ok: true }
   })
 
   ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }> => {
@@ -849,7 +888,7 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
   })
 }
 
-/** Warm-sync recommendations from homemini/NAS on app boot. */
+/** Warm-sync recommendations from homemini on app boot. */
 export async function warmRecommendationsSync(): Promise<void> {
   if (!host) return
   try {

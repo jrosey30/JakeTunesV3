@@ -34,6 +34,10 @@ export function isRecsCacheFresh(): boolean {
   return recs !== null && Date.now() - recsLoadedAt < RECS_TTL_MS
 }
 
+export function invalidateRecsCache(): void {
+  recsLoadedAt = 0
+}
+
 export function getSuggestionsCache(): MmSuggestion[] | null {
   return suggestions
 }
