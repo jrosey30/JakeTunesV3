@@ -2692,6 +2692,60 @@ async function detectStateConflicts(): Promise<void> {
     console.log('[state] no orphaned local edits detected')
   }
 }
+
+// ── Atomic NAS publish (2026-06-27 duplicated-tail fix) ────────────────────
+// The ONLY sanctioned way to overwrite a file on the SMB/NAS state dir. The
+// `stage` callback writes the new bytes into a unique sibling `.tmp` on the
+// SAME share (and fsyncs them); this helper then rename()s that tmp over the
+// destination. rename() is atomic at the filesystem layer, so a reader — the
+// homemini mobile backend loads library.json from here via LIBRARY_JSON_PATH —
+// sees either the whole old file or the whole new file, never a half-written
+// one.
+//
+// Why this exists: a direct copyFile()/writeFile() onto an existing NAS file
+// overwrites in place from offset 0 and, on SMB, does NOT reliably truncate to
+// the new length. When the new content is shorter than the old — a routine
+// one-track edit or delete — the previous file's trailing bytes survive,
+// producing the duplicated closing-brace tail ("...}\n  ]\n}  }\n  ]\n}") that
+// corrupted the NAS library.json on 2026-06-27 and made the mobile backend 500
+// on every library load. tmp+rename cannot produce that. On SMB the rename can
+// fail "Resource busy (16)"; that fails SAFE — the prior complete file stays
+// and the tmp is cleaned up, so a reader never observes a torn/duplicated file.
+//
+// `verifyJson` JSON.parses the STAGED tmp BEFORE it is renamed live, so a bad
+// stage is discarded WITHOUT clobbering the prior good copy (used for
+// library.json, which the mobile backend hard-depends on).
+async function atomicPublishToNas(
+  destPath: string,
+  stage: (tmpPath: string) => Promise<void>,
+  opts?: { verifyJson?: boolean },
+): Promise<void> {
+  const tmp = `${destPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`
+  try {
+    await stage(tmp)
+    if (opts?.verifyJson) {
+      // Parse the staged tmp before publishing. If it didn't round-trip we
+      // throw here and the prior good NAS file is left untouched.
+      JSON.parse(await readFile(tmp, 'utf-8'))
+    }
+    await rename(tmp, destPath)
+  } catch (err) {
+    try { await unlink(tmp) } catch { /* tmp may never have been created */ }
+    throw err
+  }
+}
+
+// Stage helper: copy a local source file into the NAS tmp, then fsync it to the
+// Synology (not just the local SMB write cache). fsync is best-effort — some
+// SMB configs reject it; atomicity comes from the rename, fsync is durability.
+async function stageCopyToTmp(srcPath: string, tmpPath: string): Promise<void> {
+  await copyFile(srcPath, tmpPath)
+  try {
+    const fh = await open(tmpPath, 'r+')
+    try { await fh.sync() } finally { await fh.close() }
+  } catch { /* fsync/open unsupported on this share — rename still makes it atomic */ }
+}
+
 ipcMain.handle('get-state-conflicts', (): {
   mode: 'NAS' | 'local-primary'; nasDir: string; localDir: string; nasMounted: boolean; conflicts: StateConflict[];
 } => {
@@ -2736,7 +2790,9 @@ ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean
         } catch { /* NAS file missing originally — nothing to back up */ }
       }
       sendProgress('push', c.file, index)
-      await copyFile(c.localPath, c.nasPath)
+      // Atomic publish (tmp+fsync+rename) — never overwrite the NAS file in
+      // place, which on SMB can leave a duplicated-tail torn write.
+      await atomicPublishToNas(c.nasPath, (tmp) => stageCopyToTmp(c.localPath, tmp), { verifyJson: c.file === 'library.json' })
       pushed++
       console.log(`[state] reconciled "${c.file}" → NAS (${(c.localSizeBytes / (1024 * 1024)).toFixed(1)} MB, local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer)`)
     } catch (err) {
@@ -2777,7 +2833,12 @@ async function autoBackupStateToNas(): Promise<void> {
             continue
           }
         }
-        await copyFile(c.localPath, c.nasPath)
+        // Atomic publish (tmp+fsync+rename) — never overwrite the NAS file in
+        // place. A direct copyFile here was the 2026-06-27 duplicated-tail
+        // corruption: a routine small shrink (one-track edit) sails past the
+        // >50% shrink-skip above, and the in-place overwrite left the prior
+        // file's longer tail behind, which the mobile backend then 500'd on.
+        await atomicPublishToNas(c.nasPath, (tmp) => stageCopyToTmp(c.localPath, tmp), { verifyJson: c.file === 'library.json' })
         pushed++
       } catch (err) {
         console.warn(`[state] auto-backup failed for "${c.file}":`, err instanceof Error ? err.message : err)
@@ -3105,16 +3166,36 @@ function scheduleDbRebuild(deletedPaths: string[]) {
 // missing mirror can't cause empty-display or loss. tmp+rename for atomicity
 // when it does land.
 async function mirrorLibraryToNas(library: unknown): Promise<void> {
-  try {
-    const { existsSync } = await import('fs')
-    if (!existsSync(NAS_STATE_DIR_PATH)) return
-    const nasPath = join(NAS_STATE_DIR_PATH, 'library.json')
-    const tmp = nasPath + '.mirror.tmp'
-    await writeFile(tmp, JSON.stringify(library, null, 2))
-    const { rename: renameFS } = await import('fs/promises')
-    await renameFS(tmp, nasPath)
-  } catch (err) {
-    console.warn('[mirror] NAS backup push skipped/failed (harmless — local is truth):', err instanceof Error ? err.message : err)
+  if (!isNasMounted()) return
+  const nasPath = join(NAS_STATE_DIR_PATH, 'library.json')
+  const json = JSON.stringify(library, null, 2)
+  // Two attempts: SMB rename intermittently fails "Resource busy"; a quick
+  // retry usually lands. Fire-and-forget — never throws, never blocks the save
+  // (local is the source of truth; a stale/missing mirror is harmless, the app
+  // never reads the NAS). atomicPublishToNas guarantees the file the mobile
+  // backend reads is either the whole old copy or the whole new copy — never a
+  // duplicated-tail torn write (the 2026-06-27 corruption).
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await atomicPublishToNas(
+        nasPath,
+        async (tmp) => {
+          const fh = await open(tmp, 'w')
+          try {
+            await fh.writeFile(json)
+            try { await fh.sync() } catch { /* fsync best-effort on SMB */ }
+          } finally {
+            await fh.close()
+          }
+        },
+        { verifyJson: true },
+      )
+      return // staged copy parsed clean and was renamed live
+    } catch (err) {
+      if (attempt === 2) {
+        console.warn('[mirror] NAS backup push failed after retry (harmless — local is truth):', err instanceof Error ? err.message : err)
+      }
+    }
   }
 }
 
