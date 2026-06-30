@@ -12,6 +12,7 @@ import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
 import SquidStoreView from '../views/SquidStore'
 import DownloadView from '../views/DownloadStore'
+import NewForYouView from '../views/NewForYouView'
 import ListenToTheListView from '../views/ListenToTheListView'
 import '../styles/main-content.css'
 
@@ -53,6 +54,7 @@ export default function MainContent() {
     case 'store': viewElement = <StoreView />; break
     case 'squid': viewElement = <SquidStoreView />; break
     case 'download': viewElement = <DownloadView />; break
+    case 'new-for-you': viewElement = <NewForYouView />; break
     case 'listen-to-the-list': viewElement = <ListenToTheListView />; break
     default: viewElement = <SongsView />
   }

@@ -67,6 +67,9 @@ const electronAPI = {
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
+  getTasteFingerprint: () => ipcRenderer.invoke('get-taste-fingerprint'),
+  getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
+  getRediscovery: (force?: boolean) => ipcRenderer.invoke('get-rediscovery', force),
   // ── Cynthia (digital file archivist sub-agent) ──
   cynthiaInvestigate: (input: {
     userPrompt: string

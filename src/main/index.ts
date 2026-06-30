@@ -43,7 +43,8 @@ import {
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerSquidStore } from './squid-store'
 import { registerStreamripStore } from './streamrip-store'
-import { registerRecommendationsIpc, warmRecommendationsSync } from './recommendations'
+import { registerRecommendationsIpc, warmRecommendationsSync, getActiveRecommendationIdentityKeys } from './recommendations'
+import { registerDiscoveryBrainIpc } from './discovery-brain'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -5841,6 +5842,13 @@ registerRecommendationsIpc({
   libraryPath: LIBRARY_PATH,
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
+})
+
+registerDiscoveryBrainIpc({
+  libraryPath: LIBRARY_PATH,
+  claudeCall,
+  musicManCore: MUSIC_MAN_CORE,
+  getListIdentityKeys: getActiveRecommendationIdentityKeys,
 })
 
 // Music Man metadata scanner

@@ -905,3 +905,15 @@ export async function warmRecommendationsSync(): Promise<void> {
     console.warn('[reco] warm sync failed:', err instanceof Error ? err.message : err)
   }
 }
+
+/** Identity keys for active recommendations — used by Discovery Brain to skip list dupes. */
+export async function getActiveRecommendationIdentityKeys(): Promise<Set<string>> {
+  const tombstones = await readRecommendationTombstones()
+  const recos = (await readRecommendationsFile()).filter((r) => !isRecordTombstoned(tombstones, r))
+  const keys = new Set<string>()
+  for (const r of recos) {
+    const k = recoRecordIdentityKey(r)
+    if (k) keys.add(k)
+  }
+  return keys
+}

@@ -16,6 +16,7 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
   albums: <AlbumsIcon />,
   genres: <GenresIcon />,
   'listen-to-the-list': <ListenListIcon />,
+  'new-for-you': <NewForYouIcon />,
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
@@ -26,6 +27,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
   { label: 'Genres', view: 'genres' },
+  { label: 'New for You', view: 'new-for-you', highlight: '#c77b1a' },
   { label: 'Listen to the List', view: 'listen-to-the-list', highlight: '#1f7a8c' },
   { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
@@ -64,6 +66,7 @@ const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
 // for the Home icon and the Music Man sidebar entry's icon + highlight.
 const ICON_HOME_ORANGE = '#bb4308'  // Home — warm color, distinct from the cooler library icons.
 const ICON_LISTEN_TEAL = '#1f7a8c'  // Listen to the List — cool discovery teal
+const ICON_NFY_AMBER = '#c77b1a'    // New for You — warm AI picks
 
 function HomeIcon() {
   // Simple gable-roof house silhouette — instantly readable at 12 px,
@@ -80,6 +83,15 @@ function ListenListIcon() {
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={ICON_LISTEN_TEAL} strokeWidth="1.2">
       <path d="M2 2.5h8M2 5.5h8M2 8.5h5" strokeLinecap="round" />
       <circle cx="9.5" cy="8.5" r="1.8" fill={ICON_LISTEN_TEAL} stroke="none" />
+    </svg>
+  )
+}
+
+function NewForYouIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke={ICON_NFY_AMBER} strokeWidth="1.1">
+      <path d="M6 1.2l1.1 2.4 2.6.4-1.9 1.8.4 2.6L6 7.1 4.8 8.4l.4-2.6-1.9-1.8 2.6-.4L6 1.2z" fill={ICON_NFY_AMBER} stroke="none" />
+      <circle cx="6" cy="10" r="0.9" fill={ICON_NFY_AMBER} stroke="none" opacity="0.5" />
     </svg>
   )
 }

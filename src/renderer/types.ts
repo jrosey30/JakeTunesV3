@@ -74,7 +74,7 @@ export interface Playlist {
   commentary?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'download' | 'listen-to-the-list'
+export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'download' | 'new-for-you' | 'listen-to-the-list'
 
 // Brief 122 — a "Listen to the List" recommendation.
 export interface Recommendation {
@@ -315,6 +315,10 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
+      // Discovery Brain — New for You
+      getTasteFingerprint?: () => Promise<{ ok: boolean; fingerprint?: { summary: string; topGenres: Array<{ genre: string; weight: number }>; spines: Array<{ name: string; weight: number }>; peakDecade: number | null; totalTracks: number }; error?: string }>
+      getNewMusicRadar?: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; error?: string }>
+      getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: Array<{ artist: string; album: string; genre: string; ownedTracks: number; plays: number; rating: number; addedAt: string; reason: string }>; cached?: boolean; error?: string }>
       lookupRecoArtwork?: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
       cynthiaInvestigate: (input: { userPrompt: string; scope: CynthiaScope }) => Promise<CynthiaResult>
       cynthiaChat: (input: { scope: CynthiaScope; messages: { role: 'user' | 'assistant'; content: string }[] }) => Promise<{
