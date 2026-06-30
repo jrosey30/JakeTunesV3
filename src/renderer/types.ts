@@ -74,7 +74,7 @@ export interface Playlist {
   commentary?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'listen-to-the-list'
+export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'download' | 'listen-to-the-list'
 
 // Brief 122 — a "Listen to the List" recommendation.
 export interface Recommendation {
@@ -315,6 +315,7 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
+      lookupRecoArtwork?: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
       cynthiaInvestigate: (input: { userPrompt: string; scope: CynthiaScope }) => Promise<CynthiaResult>
       cynthiaChat: (input: { scope: CynthiaScope; messages: { role: 'user' | 'assistant'; content: string }[] }) => Promise<{
         ok: boolean
@@ -445,6 +446,15 @@ declare global {
       squidMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       squidResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       squidUnmount: () => Promise<{ ok: true }>
+      // ── streamrip download store (search / paste link → rip CLI → import) ──
+      streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string }>
+      streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
+      streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
+      streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
+      streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
+      streamripSetQobuzToken?: (userId: string, token: string) => Promise<{ ok: boolean; error?: string }>
       // ── Bandcamp Store v4 (download -> library events) ──
       // Payload is the full Track record minted by importOneFile() — same
       // shape the drag-drop importQueue delivers. App.tsx dispatches it

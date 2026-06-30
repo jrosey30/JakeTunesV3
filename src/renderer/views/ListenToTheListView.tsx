@@ -1,16 +1,25 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useSyncExternalStore } from 'react'
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, stopPreview } from '../previewPlayer'
 import type { Recommendation } from '../types'
 import { MmSuggestions, RecoRow } from './components'
 import { useItunesAutocomplete } from './useItunesAutocomplete'
 import { useListenToTheList } from './useListenToTheList'
 import type { AddFormState } from './useListenToTheList'
+import {
+  canDownloadReco,
+  getLtlDownloadSnapshot,
+  prefillDownloadView,
+  queueAllRecoDownloads,
+  subscribeLtlDownload,
+} from './ltlDownload'
 import '../styles/listen-to-the-list.css'
 
 export default function ListenToTheListView() {
+  const { dispatch } = useLibrary()
   const {
     recs,
     loading,
@@ -50,12 +59,31 @@ export default function ListenToTheListView() {
 
   const jots = recs.filter((r) => (r.source ?? 'user') === 'user')
   const suggested = recs.filter((r) => r.source === 'mm' || r.source === 'radar')
+  const downloadable = recs.filter(canDownloadReco)
+  const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
+  const dlActive = [...dlMap.values()].some((s) => s.state === 'queued' || s.state === 'downloading')
+
+  const openDownloadForReco = (rec: Recommendation) => {
+    prefillDownloadView(rec)
+    dispatch({ type: 'SET_VIEW', view: 'download' })
+  }
 
   return (
     <div className="ltl-view" ref={viewRef}>
       <div className="ltl-header">
         <h1 className="ltl-title">Listen to the List</h1>
         <span className="ltl-count">{recs.length} {recs.length === 1 ? 'reco' : 'recos'}</span>
+        {downloadable.length > 0 && (
+          <button
+            type="button"
+            className="ltl-download-all"
+            onClick={() => queueAllRecoDownloads(downloadable)}
+            disabled={dlActive}
+            title="Download all via Qobuz (one at a time)"
+          >
+            {dlActive ? 'Downloading…' : `Download all (${downloadable.length})`}
+          </button>
+        )}
       </div>
 
       <div className="ltl-add-wrap">
@@ -136,7 +164,7 @@ export default function ListenToTheListView() {
                 Your jots<span className="ltl-section-count">{jots.length}</span>
               </div>
               {jots.map((rec) => (
-                <RecoRow key={rec.id} rec={rec} onDelete={() => setDeleteTarget(rec)} />
+                <RecoRow key={rec.id} rec={rec} onDelete={() => setDeleteTarget(rec)} onOpenDownload={openDownloadForReco} />
               ))}
             </div>
           )}
@@ -146,7 +174,7 @@ export default function ListenToTheListView() {
                 Suggested for you<span className="ltl-section-count">{suggested.length}</span>
               </div>
               {suggested.map((rec) => (
-                <RecoRow key={rec.id} rec={rec} onDelete={() => setDeleteTarget(rec)} />
+                <RecoRow key={rec.id} rec={rec} onDelete={() => setDeleteTarget(rec)} onOpenDownload={openDownloadForReco} />
               ))}
             </div>
           )}

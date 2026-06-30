@@ -29,6 +29,45 @@
   color: var(--text-secondary);
 }
 
+.ltl-download-all {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: var(--font-label);
+  font-weight: 600;
+  color: #fff;
+  background: #7a5ca8;
+  border: 1px solid #634a8a;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ltl-download-all:disabled {
+  background: #c9c9c9;
+  border-color: #b0b0b0;
+  cursor: default;
+}
+
+.ltl-download {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #7a5ca8;
+  background: transparent;
+  border: 1px solid #c8b8e0;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.ltl-row:hover .ltl-download { opacity: 1; }
+.ltl-download:hover:not(:disabled) { background: #f0eaf8; color: #634a8a; }
+.ltl-download:disabled { cursor: default; opacity: 1; color: #999; border-color: #ddd; }
+.ltl-download--done { opacity: 1; color: #2d8a4e; border-color: #a8d4b8; }
+.ltl-download--err { opacity: 1; color: #c0392b; border-color: #e8b4b0; }
+
 /* Add form */
 .ltl-add {
   display: flex;

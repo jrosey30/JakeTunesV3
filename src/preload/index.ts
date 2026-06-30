@@ -375,6 +375,25 @@ const electronAPI = {
   squidResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('squid:resize', bounds),
   squidUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('squid:unmount'),
+  // ── streamrip download store (search / paste link → rip CLI → import) ──
+  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string }> =>
+    ipcRenderer.invoke('streamrip:status'),
+  streamripDownload: (url: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download', url),
+  streamripSearch: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }> =>
+    ipcRenderer.invoke('streamrip:search', opts),
+  streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+    ipcRenderer.invoke('streamrip:download-by-query', opts),
+  streamripGetQobuz: (): Promise<{ ok: boolean; configured: boolean; email?: string }> =>
+    ipcRenderer.invoke('streamrip:get-qobuz'),
+  streamripSetQobuz: (email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('streamrip:set-qobuz', email, password),
+  streamripSetQobuzToken: (userId: string, token: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('streamrip:set-qobuz-token', userId, token),
+  lookupRecoArtwork: (input: { artist: string; title: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> =>
+    ipcRenderer.invoke('lookup-reco-artwork', input),
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)

@@ -3,6 +3,14 @@ import type { Recommendation } from '../types'
 import { formatAppDate } from '../utils/formatDate'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import type { MmSuggestion } from './store'
+import {
+  canDownloadReco,
+  getLtlDownloadStatus,
+  isLtlDownloadBusy,
+  queueRecoDownload,
+  subscribeLtlDownload,
+  getLtlDownloadSnapshot,
+} from './ltlDownload'
 
 export function displayRecoName(rec: Recommendation): string {
   const title = rec.matchedTitle || rec.song
@@ -14,12 +22,23 @@ export function displayRecoName(rec: Recommendation): string {
 interface RecoRowProps {
   rec: Recommendation
   onDelete: (rec: Recommendation) => void
+  onOpenDownload?: (rec: Recommendation) => void
 }
 
-export function RecoRow({ rec, onDelete }: RecoRowProps) {
+export function RecoRow({ rec, onDelete, onOpenDownload }: RecoRowProps) {
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
+  const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
+  const dl = dlMap.get(rec.id) ?? getLtlDownloadStatus(rec.id)
   const artwork = rec.artworkUrl
   const isPlaying = preview.playingId === rec.id
+  const canDl = canDownloadReco(rec)
+  const dlBusy = isLtlDownloadBusy(rec.id)
+
+  const dlLabel = dl.state === 'downloading' ? '…'
+    : dl.state === 'queued' ? '…'
+    : dl.state === 'done' ? '✓'
+    : dl.state === 'error' ? '!'
+    : '↓'
 
   return (
     <div className="ltl-row">
@@ -53,6 +72,26 @@ export function RecoRow({ rec, onDelete }: RecoRowProps) {
           <span className="ltl-date">{formatAppDate(rec.createdAt)}</span>
         </div>
       </div>
+      {canDl && (
+        <button
+          type="button"
+          className={`ltl-download${dl.state === 'done' ? ' ltl-download--done' : ''}${dl.state === 'error' ? ' ltl-download--err' : ''}`}
+          onClick={() => {
+            if (dl.state === 'error') onOpenDownload?.(rec)
+            else queueRecoDownload(rec)
+          }}
+          disabled={dlBusy}
+          title={
+            dl.state === 'downloading' ? 'Downloading…'
+            : dl.state === 'queued' ? 'Queued…'
+            : dl.state === 'done' ? (dl.imported ? `Imported ${dl.imported} track(s)` : 'Already in library')
+            : dl.state === 'error' ? `${dl.error || 'Failed'} — click to open Download view`
+            : 'Download to library'
+          }
+        >
+          {dlLabel}
+        </button>
+      )}
       <button type="button" className="ltl-delete" onClick={() => onDelete(rec)} title="Remove from list">✕</button>
     </div>
   )

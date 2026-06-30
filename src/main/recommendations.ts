@@ -886,6 +886,14 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
       return { ok: false, results: [] }
     }
   })
+
+  ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }) => {
+    const artist = (input?.artist || '').trim()
+    const title = (input?.title || '').trim()
+    if (!artist && !title) return {}
+    const hit = await lookupItunesForRecommendation({ song: title, artist })
+    return { artworkUrl: hit.artworkUrl, previewUrl: hit.previewUrl }
+  })
 }
 
 /** Warm-sync recommendations from homemini on app boot. */

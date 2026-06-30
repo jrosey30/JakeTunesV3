@@ -42,6 +42,7 @@ import {
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerSquidStore } from './squid-store'
+import { registerStreamripStore } from './streamrip-store'
 import { registerRecommendationsIpc, warmRecommendationsSync } from './recommendations'
 import {
   configureInboxWatcher,
@@ -7759,6 +7760,13 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
+  })
+
+  // streamrip download store — search or paste-a-link → rip CLI → import.
+  // Same importDownloaded pipeline as Bandcamp, tagged source='streamrip'.
+  registerStreamripStore({
+    getMainWindow: () => mainWindow,
+    importDownloaded: importDownloadedFiles,
   })
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new

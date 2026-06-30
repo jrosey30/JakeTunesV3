@@ -362,6 +362,18 @@ export default function Sidebar() {
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
           />
           <SidebarItem
+            label="Download"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 2.5v6" />
+                <path d="M5.5 6 8 8.7 10.5 6" />
+                <path d="M3 11.5h10" />
+              </svg>
+            )}
+            selected={state.currentView === 'download'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
+          />
+          <SidebarItem
             label="squid.wtf"
             icon={(
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
