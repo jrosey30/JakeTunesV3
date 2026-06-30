@@ -5,17 +5,17 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, stopPreview } from '../previewPlayer'
 import type { Recommendation } from '../types'
-import { MmSuggestions, RecoRow } from './components'
-import { useItunesAutocomplete } from './useItunesAutocomplete'
-import { useListenToTheList } from './useListenToTheList'
-import type { AddFormState } from './useListenToTheList'
+import { MmSuggestions, RecoRow } from '../listen-to-the-list/components'
+import { useItunesAutocomplete } from '../listen-to-the-list/useItunesAutocomplete'
+import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
+import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
 import {
   canDownloadReco,
   getLtlDownloadSnapshot,
   prefillDownloadView,
   queueAllRecoDownloads,
   subscribeLtlDownload,
-} from './ltlDownload'
+} from '../listen-to-the-list/ltlDownload'
 import '../styles/listen-to-the-list.css'
 
 export default function ListenToTheListView() {
