@@ -77,22 +77,26 @@ export function buildTasteProfile(library: Track[]): TasteProfile {
   }
 }
 
-/** Predicted star-probability (0..1). Weights echo the validated relative
- *  strengths: album > artist > genre > era. Unknown keys fall back to the prior
- *  (the cold-start floor). */
+// 4.5 taste v3 (2026-06-30) — LEARNED logistic weights from a raw-feature
+// regression over ★ vs unstarred-old (5×5 CV held-out AUC 0.804, up from the
+// hand-tuned 0.774). Album dominates — Jake stars whole records; recency is
+// mildly NEGATIVE (the old +0.07 was backwards); decade is ~noise. Re-derive via
+// scripts/taste-eval.py. ⚠️ TWIN: keep identical to the backend copy
+// JakeTunesMobile/backend/src/util/tasteScore.ts.
+const W = { bias: -4.455, album: 8.636, artist: 3.79, genre: 0.989, decade: -0.164, plays: 0.81, recency: -0.554 }
+
+/** Predicted star-probability (0..1): a logistic model over identity affinity
+ *  (album > artist > genre > era) + listening behavior, learned weights. Unknown
+ *  keys fall back to the prior (the cold-start floor). */
 export function tasteScore(t: Track, p: TasteProfile): number {
   const al = p.album.get(albumKey(t)) ?? p.prior
   const ar = p.artist.get(artistKey(t)) ?? p.prior
   const ge = p.genre.get(genreKey(t)) ?? p.prior
   const de = p.decade.get(decadeKey(t)) ?? p.prior
-  // identity affinity: album > artist > genre > era (0..1)
-  const affinity = 0.45 * al + 0.30 * ar + 0.15 * ge + 0.10 * de
-  // 4.5 taste v2: + listening BEHAVIOR. The held-out eval showed playCount +
-  // recency add a real +0.017 (→ ~0.80). playCount is the bigger signal; recency
-  // tilts toward what's actually in rotation now.
   const playNorm = p.playMax > 0 ? Math.log1p(Number(t.playCount) || 0) / p.playMax : 0
   const lp = Number(t.lastPlayedAt) || 0
   const daysAgo = lp > 0 ? (p.nowMs - lp) / 86400000 : 3650
   const recencyNorm = 1 - Math.min(daysAgo, 3650) / 3650
-  return 0.75 * affinity + 0.18 * playNorm + 0.07 * recencyNorm
+  const z = W.bias + W.album * al + W.artist * ar + W.genre * ge + W.decade * de + W.plays * playNorm + W.recency * recencyNorm
+  return 1 / (1 + Math.exp(-z))
 }
