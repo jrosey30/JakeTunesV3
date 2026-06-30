@@ -6,16 +6,17 @@
  * parse the LLM's candidate list, then rank it against the taste fingerprint
  * (drop owned, dedupe, score, sort). Pure so `node --test` drives it.
  */
-import { scoreCandidate, norm } from './taste-model.ts'
-import type { TasteFingerprint, CandidateScore } from './taste-model.ts'
+import { scoreCandidateForRadar, norm } from './taste-model.ts'
+import type { TasteFingerprint, TasteAnchor } from './taste-model.ts'
 
-export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string }
+export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string; anchor?: string }
 export interface RankedCandidate {
   artist: string
   title: string
   genre: string
   year: string
   why: string
+  anchor?: string
   score: number
   reasons: string[]
 }
@@ -49,6 +50,7 @@ export function rankCandidates(
   raw: RawCandidate[],
   limit = 12,
   isOnList?: (artist: string, title: string) => boolean,
+  anchors: TasteAnchor[] = [],
 ): RankedCandidate[] {
   const seen = new Set<string>()
   const out: RankedCandidate[] = []
@@ -60,7 +62,7 @@ export function rankCandidates(
     if (seen.has(key)) continue
     seen.add(key)
     if (isOnList && isOnList(artist, title)) continue
-    const s: CandidateScore = scoreCandidate(fp, { artist, genre: c.genre, year: c.year })
+    const s = scoreCandidateForRadar(fp, { artist, genre: c.genre, year: c.year, anchor: c.anchor, why: c.why }, anchors)
     if (s.owned) continue
     out.push({
       artist,
@@ -68,6 +70,7 @@ export function rankCandidates(
       genre: (c.genre ?? '').toString().trim(),
       year: (c.year ?? '').toString().trim(),
       why: (c.why ?? '').toString().trim(),
+      anchor: (c.anchor ?? '').toString().trim() || undefined,
       score: s.score,
       reasons: s.reasons,
     })

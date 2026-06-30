@@ -317,7 +317,7 @@ declare global {
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       // Discovery Brain — New for You
       getTasteFingerprint?: () => Promise<{ ok: boolean; fingerprint?: { summary: string; topGenres: Array<{ genre: string; weight: number }>; spines: Array<{ name: string; weight: number }>; peakDecade: number | null; totalTracks: number }; error?: string }>
-      getNewMusicRadar?: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; error?: string }>
+      getNewMusicRadar?: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
       getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: Array<{ artist: string; album: string; genre: string; ownedTracks: number; plays: number; rating: number; addedAt: string; reason: string }>; cached?: boolean; error?: string }>
       lookupRecoArtwork?: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
       cynthiaInvestigate: (input: { userPrompt: string; scope: CynthiaScope }) => Promise<CynthiaResult>

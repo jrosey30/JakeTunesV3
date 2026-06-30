@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeTasteFingerprint, scoreCandidate } from '../taste-model.ts'
+import { computeTasteFingerprint, scoreCandidate, getTasteAnchors } from '../taste-model.ts'
 
 const rep = (n: number, t: Record<string, unknown>) => Array.from({ length: n }, (_, i) => ({ ...t, title: `t${i}` }))
 const LIB = [
@@ -36,7 +36,18 @@ describe('taste-model — fingerprint', () => {
   it('finds the peak decade and writes a prompt-ready summary', () => {
     assert.equal(typeof fp.peakDecade, 'number')
     assert.match(fp.summary, /tracks\./)
-    assert.match(fp.summary, /Electronic|Rock/)
+    assert.match(fp.summary, /Daft Punk|Most played/)
+  })
+})
+
+describe('taste-model — getTasteAnchors', () => {
+  it('ranks by plays and excludes heavy skippers', () => {
+    const anchors = getTasteAnchors([
+      ...rep(5, { artist: 'Daft Punk', genre: 'House', playCount: 20 }),
+      ...rep(5, { artist: 'Hated Band', genre: 'Rock', playCount: 0, skipCount: 10 }),
+    ])
+    assert.equal(anchors[0].artist, 'Daft Punk')
+    assert.ok(!anchors.some((a) => a.artist === 'Hated Band'))
   })
 })
 

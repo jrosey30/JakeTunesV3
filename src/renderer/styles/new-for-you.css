@@ -152,16 +152,24 @@
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: #186475;
+  width: 100%;
+  margin-bottom: 2px;
 }
-.nfy-taste-text { font-size: 12.5px; color: #3a4a4e; flex: 1 1 200px; }
-.nfy-taste-chip {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
+.nfy-anchor-chip {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
   background: #fff;
-  border: 1px solid #b8d4da;
-  color: #186475;
+  border: 1px solid #c77b1a;
+  color: #8a5010;
 }
+.nfy-because {
+  font-size: 11px;
+  color: #8a5010;
+  margin-top: 3px;
+}
+.nfy-because strong { font-weight: 700; }
 
 .nfy-section { margin-bottom: 28px; }
 .nfy-section-head {

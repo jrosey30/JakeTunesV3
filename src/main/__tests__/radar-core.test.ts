@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseCandidates, rankCandidates } from '../radar-core.ts'
-import { computeTasteFingerprint } from '../taste-model.ts'
+import { computeTasteFingerprint, getTasteAnchors } from '../taste-model.ts'
 
 const rep = (n: number, t: Record<string, unknown>) => Array.from({ length: n }, (_, i) => ({ ...t, title: `t${i}` }))
 const fp = computeTasteFingerprint([
@@ -65,5 +65,19 @@ describe('radar-core — rankCandidates', () => {
     ], 12, isOnList)
     assert.equal(out.length, 1)
     assert.equal(out[0].artist, 'Jamie xx')
+  })
+
+  it('boosts candidates with a taste anchor', () => {
+    const anchors = getTasteAnchors([
+      ...rep(10, { artist: 'Daft Punk', genre: 'House', playCount: 8 }),
+    ])
+    const withAnchor = rankCandidates(fp, [
+      { artist: 'Overmono', title: 'Good Lies', genre: 'Electronic', year: 2023, anchor: 'Daft Punk', why: 'Same dancefloor energy as Daft Punk' },
+    ], 12, undefined, anchors)
+    const noAnchor = rankCandidates(fp, [
+      { artist: 'Overmono', title: 'Good Lies', genre: 'Electronic', year: 2023 },
+    ], 12, undefined, anchors)
+    assert.ok(withAnchor[0].score > noAnchor[0].score)
+    assert.ok(withAnchor[0].reasons.some((r) => /daft punk/i.test(r)))
   })
 })

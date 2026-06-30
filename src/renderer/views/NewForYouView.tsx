@@ -19,8 +19,16 @@ interface RadarCandidate {
   genre: string
   year: string
   why: string
+  anchor?: string
   score: number
   reasons: string[]
+}
+
+interface TasteAnchor {
+  artist: string
+  plays: number
+  tracks: number
+  primaryGenre: string
 }
 
 interface RediscoveryPick {
@@ -37,6 +45,7 @@ interface RediscoveryPick {
 interface TasteFingerprint {
   summary: string
   topGenres: Array<{ genre: string; weight: number }>
+  topArtists?: Array<{ artist: string; plays: number; tracks: number }>
   spines: Array<{ name: string; weight: number }>
   peakDecade: number | null
 }
@@ -44,6 +53,7 @@ interface TasteFingerprint {
 let radarCache: RadarCandidate[] | null = null
 let radarAtCache: number | null = null
 let radarSummaryCache: string | null = null
+let anchorsCache: TasteAnchor[] | null = null
 let rediscoveryCache: RediscoveryPick[] | null = null
 let rediscoveryAtCache: number | null = null
 let tasteCache: TasteFingerprint | null = null
@@ -69,6 +79,7 @@ export default function NewForYouView() {
   const [candidates, setCandidates] = useState<RadarCandidate[]>(radarCache ?? [])
   const [rediscovery, setRediscovery] = useState<RediscoveryPick[]>(rediscoveryCache ?? [])
   const [taste, setTaste] = useState<TasteFingerprint | null>(tasteCache)
+  const [anchors, setAnchors] = useState<TasteAnchor[]>(anchorsCache ?? [])
   const [radarLoading, setRadarLoading] = useState(radarCache === null)
   const [rediscoLoading, setRediscoLoading] = useState(rediscoveryCache === null)
   const [radarError, setRadarError] = useState<string | null>(null)
@@ -98,8 +109,10 @@ export default function NewForYouView() {
         radarCache = res.candidates
         radarAtCache = res.generatedAt ?? Date.now()
         radarSummaryCache = res.fingerprintSummary ?? null
+        anchorsCache = res.anchors ?? null
         setCandidates(res.candidates)
         setGeneratedAt(radarAtCache)
+        if (res.anchors) setAnchors(res.anchors)
         if (res.fingerprintSummary && !tasteCache) {
           setTaste((t) => t ?? { summary: res.fingerprintSummary!, topGenres: [], spines: [], peakDecade: null })
         }
@@ -218,7 +231,7 @@ export default function NewForYouView() {
         <div className="nfy-headtext">
           <h1 className="nfy-title">New for You</h1>
           <p className="nfy-sub">
-            The Music Man reads your taste, scans this week&apos;s releases, and surfaces what you&apos;d actually love
+            Picks based on what you actually play — not generic charts
             {generatedAt ? ` · updated ${formatAppDate(generatedAt)}` : ''}
           </p>
         </div>
@@ -233,10 +246,11 @@ export default function NewForYouView() {
 
       {summary && (
         <div className="nfy-taste">
-          <span className="nfy-taste-label">Your taste</span>
-          <span className="nfy-taste-text">{summary}</span>
-          {taste?.spines?.slice(0, 3).map((s) => (
-            <span key={s.name} className="nfy-taste-chip">{s.name}</span>
+          <span className="nfy-taste-label">Seeded from</span>
+          {(anchors.length > 0 ? anchors : taste?.topArtists?.slice(0, 6).map((a) => ({ artist: a.artist, plays: a.plays, tracks: a.tracks, primaryGenre: '' })) ?? []).slice(0, 6).map((a) => (
+            <span key={a.artist} className="nfy-anchor-chip" title={a.plays ? `${a.plays} plays` : undefined}>
+              {a.artist}{a.plays > 0 ? ` (${a.plays})` : ''}
+            </span>
           ))}
         </div>
       )}
@@ -248,7 +262,7 @@ export default function NewForYouView() {
       <section className="nfy-section">
         <div className="nfy-section-head">
           <h2 className="nfy-section-title">Fresh releases</h2>
-          <span className="nfy-section-hint">New music you don&apos;t own yet — grounded in live journalism</span>
+          <span className="nfy-section-hint">New music connected to artists you play most</span>
         </div>
         {radarError && candidates.length === 0 && (
           <div className="nfy-error">{radarError}</div>
@@ -288,6 +302,9 @@ export default function NewForYouView() {
                 <div className="nfy-card-body">
                   <div className="nfy-card-title" title={c.title}>{c.title}</div>
                   <div className="nfy-artist">{c.artist}</div>
+                  {c.anchor && (
+                    <div className="nfy-because">Because you play <strong>{c.anchor}</strong></div>
+                  )}
                   <div className="nfy-meta">{[c.genre, c.year].filter(Boolean).join('  ·  ')}</div>
                   {c.reasons.length > 0 && (
                     <div className="nfy-reasons">

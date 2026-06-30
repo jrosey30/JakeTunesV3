@@ -5849,6 +5849,7 @@ registerDiscoveryBrainIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
   getListIdentityKeys: getActiveRecommendationIdentityKeys,
+  getListenerTasteContext: async () => buildTasteProfile(),
 })
 
 // Music Man metadata scanner

@@ -1,19 +1,25 @@
 /**
  * Discovery Brain — taste fingerprint, new-music radar, and rediscovery.
  *
- * Phase 1: taste-model.ts computes the fingerprint from library.json.
- * Phase 2: Exa journalism + Music Man extraction → rankCandidates.
- * Phase 3: rediscovery.ts mines owned-but-overlooked artists + MM pitches.
+ * Radar is ANCHORED to what the listener actually plays — top artists by
+ * play count drive Exa searches ("new releases fans of X would love") and
+ * every pick must tie back to an anchor artist via the `anchor` field.
  */
 
 import { ipcMain } from 'electron'
 import { readFile } from 'fs/promises'
 import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
-import { computeTasteFingerprint, type TasteFingerprint, type TrackLike } from './taste-model.ts'
-import { parseCandidates, rankCandidates, type RankedCandidate } from './radar-core.ts'
+import {
+  computeTasteFingerprint,
+  getTasteAnchors,
+  type TasteFingerprint,
+  type TrackLike,
+  type TasteAnchor,
+} from './taste-model.ts'
+import { parseCandidates, rankCandidates, type RankedCandidate, type RawCandidate } from './radar-core.ts'
 import { computeRediscovery, type RediscoveryPick, type RediscoveryTrack } from './rediscovery.ts'
-import { exaNewMusic } from './exa.ts'
+import { exaNewMusic, exaNewMusicForFans, exaSimilarArtists } from './exa.ts'
 import { recoIdentityKey } from './reco-tombstone.ts'
 
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
@@ -23,6 +29,8 @@ export interface DiscoveryBrainHost {
   claudeCall: ClaudeCall
   musicManCore: string
   getListIdentityKeys: () => Promise<Set<string>>
+  /** Listener profile plays/skips from listener-profile.json — optional but sharpens taste. */
+  getListenerTasteContext?: () => Promise<string>
 }
 
 const RADAR_TTL_MS = 6 * 60 * 60 * 1000
@@ -37,7 +45,12 @@ const RADAR_SCENES: Record<string, string> = {
   'Jazz, Blues & Classical': 'jazz and experimental',
 }
 
-let radarCache: { candidates: RankedCandidate[]; generatedAt: number; fingerprintSummary: string } | null = null
+let radarCache: {
+  candidates: RankedCandidate[]
+  generatedAt: number
+  fingerprintSummary: string
+  anchors: TasteAnchor[]
+} | null = null
 let rediscoveryCache: { at: number; picks: RediscoveryPick[] } | null = null
 
 async function readLibraryTracks(libraryPath: string): Promise<TrackLike[]> {
@@ -48,6 +61,124 @@ async function readLibraryTracks(libraryPath: string): Promise<TrackLike[]> {
   } catch {
     return []
   }
+}
+
+function ownedAlbumSet(tracks: TrackLike[]): Set<string> {
+  const out = new Set<string>()
+  for (const t of tracks) {
+    const artist = (t.albumArtist || t.artist || '').trim().toLowerCase()
+    const album = ((t as { album?: string }).album || '').trim().toLowerCase()
+    if (artist && album) out.add(`${artist}|${album}`)
+  }
+  return out
+}
+
+async function gatherTasteJournalism(anchors: TasteAnchor[], fp: TasteFingerprint, year: string): Promise<string> {
+  const searches: Promise<string>[] = []
+
+  // Primary: new releases for fans of THEIR top artists (the whole point).
+  const fanArtists = anchors.slice(0, 5).map((a) => a.artist)
+  if (fanArtists.length > 0) {
+    searches.push(exaNewMusicForFans(fanArtists, year))
+  }
+
+  // Secondary: similar-artist journalism for top 3 anchors.
+  for (const a of anchors.slice(0, 3)) {
+    searches.push(exaSimilarArtists(a.artist))
+  }
+
+  // Tertiary: one genre-spine search for breadth (lowest priority).
+  const spine = fp.spines[0]
+  if (spine) {
+    const scene = RADAR_SCENES[spine.name] || spine.name.toLowerCase()
+    searches.push(exaNewMusic(scene, year))
+  }
+
+  const blocks = await Promise.all(searches)
+  return blocks.filter(Boolean).join('\n\n')
+}
+
+async function extractRadarCandidates(
+  host: DiscoveryBrainHost,
+  fp: TasteFingerprint,
+  anchors: TasteAnchor[],
+  journalism: string,
+  year: string,
+  listenerCtx: string,
+): Promise<RawCandidate[]> {
+  const anchorList = anchors.map((a, i) =>
+    `${i + 1}. ${a.artist} — ${a.plays} plays, ${a.tracks} tracks owned${a.primaryGenre ? `, usually ${a.primaryGenre}` : ''}`,
+  ).join('\n')
+
+  const user = [
+    listenerCtx ? `Listener behavior:\n${listenerCtx}\n` : '',
+    `Taste fingerprint: ${fp.summary}`,
+    `Top genres by rotation: ${fp.topGenres.slice(0, 8).map((g) => `${g.genre} (${g.plays} plays)`).join(', ')}.`,
+    '',
+    'ANCHOR ARTISTS — every pick MUST connect to one of these (the listener\'s most-played):',
+    anchorList || '(no strong play signal — use genre fit)',
+    '',
+    'Below is CURRENT music journalism about new releases and similar artists:',
+    journalism,
+    '',
+    `From ONLY the releases and artists named above, pick up to 15 NEW releases (${Number(year) - 1}–${year}) this listener would love.`,
+    'RULES:',
+    '- Each pick MUST include "anchor": the exact name of ONE anchor artist above that this pick connects to (same scene, cited as similar, fan crossover).',
+    '- "why" must say WHY in your voice — e.g. "Same dry funk as Chromeo, which you play constantly" — not generic hype.',
+    '- Do NOT invent releases not named in the journalism.',
+    '- Do NOT recommend artists they already own (see anchor list — those are owned).',
+    '',
+    'Return ONLY JSON — [{"artist","title","genre","year","why","anchor"}], no prose, no code fence.',
+  ].join('\n')
+
+  const reply = await host.claudeCall('new-music-radar', {
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1800,
+    system: host.musicManCore,
+    messages: [{ role: 'user', content: user }],
+  })
+  const block = reply.content[0]
+  const text = block && block.type === 'text' ? block.text : ''
+  return parseCandidates(text)
+}
+
+/** Fallback when Exa is unavailable — still taste-anchored, no hallucinated journalism. */
+async function tasteAnchoredFallback(
+  host: DiscoveryBrainHost,
+  fp: TasteFingerprint,
+  anchors: TasteAnchor[],
+  tracks: TrackLike[],
+  year: string,
+  listenerCtx: string,
+): Promise<RawCandidate[]> {
+  const owned = ownedAlbumSet(tracks)
+  const albumSample = [...owned].slice(0, 120).join('\n')
+  const anchorList = anchors.map((a) => `${a.artist} (${a.plays} plays)`).join(', ')
+
+  const user = [
+    listenerCtx ? `Listener behavior:\n${listenerCtx}\n` : '',
+    `Taste: ${fp.summary}`,
+    `Anchor artists (what they actually play): ${anchorList}`,
+    `Top genres: ${fp.topGenres.slice(0, 8).map((g) => g.genre).join(', ')}`,
+    '',
+    `Recommend 10 albums they DON'T own that connect to their anchor artists — same scene, influences, or critical lineage. Year range ${Number(year) - 2}–${year} preferred but classics they'd obviously love are OK if recent stuff isn't your strength.`,
+    '',
+    'Albums they already have (DO NOT recommend these):',
+    albumSample,
+    '',
+    'Each pick needs "anchor" (which of their anchor artists this connects to) and "why" (one sentence, specific, in your voice).',
+    'Return ONLY JSON — [{"artist","title","genre","year","why","anchor"}], no prose, no code fence.',
+  ].join('\n')
+
+  const reply = await host.claudeCall('new-music-radar-fallback', {
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    system: host.musicManCore,
+    messages: [{ role: 'user', content: user }],
+  })
+  const block = reply.content[0]
+  const text = block && block.type === 'text' ? block.text : ''
+  return parseCandidates(text)
 }
 
 async function addMusicManRediscoveryPitches(
@@ -103,6 +234,7 @@ export function registerDiscoveryBrainIpc(host: DiscoveryBrainHost): void {
     generatedAt?: number
     cached?: boolean
     fingerprintSummary?: string
+    anchors?: TasteAnchor[]
     error?: string
   }> => {
     if (!force && radarCache && Date.now() - radarCache.generatedAt < RADAR_TTL_MS) {
@@ -112,6 +244,7 @@ export function registerDiscoveryBrainIpc(host: DiscoveryBrainHost): void {
         generatedAt: radarCache.generatedAt,
         cached: true,
         fingerprintSummary: radarCache.fingerprintSummary,
+        anchors: radarCache.anchors,
       }
     }
     try {
@@ -120,45 +253,44 @@ export function registerDiscoveryBrainIpc(host: DiscoveryBrainHost): void {
       if (fp.totalTracks === 0) {
         return { ok: false, error: 'Your library is empty — nothing to base discovery on yet.' }
       }
+      const anchors = getTasteAnchors(tracks, 8)
+      if (anchors.length === 0) {
+        return { ok: false, error: 'No play history yet — spin some tracks so we know what you like.' }
+      }
       const year = String(new Date().getFullYear())
-      const scenes = fp.spines.slice(0, 3).map((s) => RADAR_SCENES[s.name] || s.name.toLowerCase())
-      const blocks = await Promise.all(scenes.map((s) => exaNewMusic(s, year)))
-      const journalism = blocks.filter(Boolean).join('\n\n')
-      if (!journalism) {
+      const listenerCtx = host.getListenerTasteContext ? await host.getListenerTasteContext() : ''
+
+      const journalism = await gatherTasteJournalism(anchors, fp, year)
+      const raw = journalism
+        ? await extractRadarCandidates(host, fp, anchors, journalism, year, listenerCtx)
+        : await tasteAnchoredFallback(host, fp, anchors, tracks, year, listenerCtx)
+
+      if (raw.length === 0) {
         return {
           ok: false,
-          error: 'New for You needs web search for fresh releases. Add your Exa key in Settings → AI to activate live picks (no made-up recommendations without it).',
+          error: journalism
+            ? 'Couldn\'t find picks from current journalism — try Refresh.'
+            : 'Add your Exa key in Settings → AI for live release picks, or try Refresh for taste-based suggestions.',
         }
       }
-      const user = [
-        `This listener's taste: ${fp.summary}`,
-        `Top genres: ${fp.topGenres.slice(0, 8).map((g) => g.genre).join(', ')}.`,
-        '',
-        'Below is CURRENT music journalism about new releases:',
-        journalism,
-        '',
-        `From ONLY the releases named above, pick up to 15 NEW releases (${Number(year) - 1}–${year}) this listener would most likely love given their taste. For each give: artist, release title, its genre, the year, and a one-sentence "why" in your voice tying it to their taste. Do NOT invent releases that aren't named above. Return ONLY JSON — an array of objects [{"artist","title","genre","year","why"}], no prose, no code fence.`,
-      ].join('\n')
-      const reply = await host.claudeCall('new-music-radar', {
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1500,
-        system: host.musicManCore,
-        messages: [{ role: 'user', content: user }],
-      })
-      const block = reply.content[0]
-      const text = block && block.type === 'text' ? block.text : ''
+
       const listKeys = await host.getListIdentityKeys()
       const isOnList = (a: string, t: string): boolean => {
         const k = recoIdentityKey(a, t)
         return k != null && listKeys.has(k)
       }
-      const candidates = rankCandidates(fp, parseCandidates(text), 12, isOnList)
-      radarCache = { candidates, generatedAt: Date.now(), fingerprintSummary: fp.summary }
+      const candidates = rankCandidates(fp, raw, 12, isOnList, anchors)
+      if (candidates.length === 0) {
+        return { ok: false, error: 'Everything we found you already own or have on your list — try Refresh later.' }
+      }
+
+      radarCache = { candidates, generatedAt: Date.now(), fingerprintSummary: fp.summary, anchors }
       return {
         ok: true,
         candidates,
         generatedAt: radarCache.generatedAt,
         fingerprintSummary: fp.summary,
+        anchors,
       }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'radar failed' }
