@@ -74,7 +74,34 @@ export interface Playlist {
   commentary?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid'
+export type ViewName = 'home' | 'songs' | 'artists' | 'albums' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'squid' | 'listen-to-the-list'
+
+// Brief 122 — a "Listen to the List" recommendation.
+export interface Recommendation {
+  id: string
+  song?: string
+  artist?: string
+  album?: string
+  note?: string
+  createdAt: string
+  artworkUrl?: string
+  appleMusicUrl?: string
+  previewUrl?: string
+  matchedTitle?: string
+  matchedArtist?: string
+  matchedAlbum?: string
+  resolvedAt?: string
+  source?: 'user' | 'mm' | 'radar'
+}
+
+export interface ItunesSuggestion {
+  song: string
+  artist: string
+  album?: string
+  artworkUrl?: string
+  previewUrl?: string
+  appleMusicUrl?: string
+}
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -282,6 +309,12 @@ declare global {
       saveRecordingMp3: (audioBytes: Uint8Array, mimeType: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>
       musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; issues?: MetadataIssue[]; error?: string }>
       musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string; artUrl?: string }[]; error?: string }>
+      // Brief 122 — Listen to the List
+      loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
+      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; savedLocally?: boolean; deduped?: boolean }>
+      deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
+      suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
+      searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       cynthiaInvestigate: (input: { userPrompt: string; scope: CynthiaScope }) => Promise<CynthiaResult>
       cynthiaChat: (input: { scope: CynthiaScope; messages: { role: 'user' | 'assistant'; content: string }[] }) => Promise<{
         ok: boolean

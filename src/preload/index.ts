@@ -60,6 +60,13 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-scan-metadata', tracks),
   musicmanRecommendations: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]): Promise<{ ok: boolean; recommendations?: { title: string; artist: string; year: number; genre: string; source: string; why: string }[]; error?: string }> =>
     ipcRenderer.invoke('musicman-recommendations', tracks),
+  // Brief 122 — Listen to the List
+  loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) =>
+    ipcRenderer.invoke('add-recommendation', input),
+  deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
+  suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
+  searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
   // ── Cynthia (digital file archivist sub-agent) ──
   cynthiaInvestigate: (input: {
     userPrompt: string
