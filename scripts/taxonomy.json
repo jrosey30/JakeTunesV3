@@ -1,0 +1,3091 @@
+{
+ "taxonomy": [
+  {
+   "name": "Rock",
+   "children": [
+    {
+     "name": "Classic Rock",
+     "children": [
+      {
+       "name": "British Invasion & Beat",
+       "children": [
+        {
+         "name": "Founders",
+         "anchors": [
+          "The Beatles",
+          "Paul McCartney",
+          "Paul McCartney & Wings"
+         ]
+        },
+        {
+         "name": "Mod & R&B-Rock",
+         "anchors": [
+          "The Who",
+          "Chuck Berry"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "American Roots & Southern Rock",
+       "children": [
+        {
+         "name": "Roots/Swamp Rock",
+         "anchors": [
+          "Creedence Clearwater Revival",
+          "The Beach Boys"
+         ]
+        },
+        {
+         "name": "Southern Rock",
+         "anchors": [
+          "Lynyrd Skynyrd",
+          "The Refreshments",
+          "Kings Of Leon"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Singer-Songwriter & Soft Rock",
+       "children": [
+        {
+         "name": "Piano Men",
+         "anchors": [
+          "Billy Joel",
+          "Elton John"
+         ]
+        },
+        {
+         "name": "Slick FM & Studio Craft",
+         "anchors": [
+          "Steely Dan",
+          "Dire Straits",
+          "Fleetwood Mac",
+          "Chris Rainbow"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Glam Rock",
+     "children": [
+      {
+       "name": "Art-Glam",
+       "anchors": [
+        "David Bowie",
+        "Queen"
+       ]
+      },
+      {
+       "name": "UK Glam Stomp",
+       "anchors": [
+        "T. Rex",
+        "Sweet"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Hard Rock",
+     "children": [
+      {
+       "name": "Classic Hard Rock",
+       "anchors": [
+        "Led Zeppelin",
+        "Van Halen",
+        "AC/DC"
+       ]
+      },
+      {
+       "name": "Stoner & Desert Rock",
+       "anchors": [
+        "Kyuss",
+        "Queens of the Stone Age",
+        "Primus"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Metal",
+     "children": [
+      {
+       "name": "Heavy Metal Foundations",
+       "children": [
+        {
+         "name": "Doom/Heavy Pioneers",
+         "anchors": [
+          "Black Sabbath",
+          "Ozzy Osbourne"
+         ]
+        },
+        {
+         "name": "NWOBHM",
+         "anchors": [
+          "Iron Maiden"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Groove & Industrial Metal",
+       "anchors": [
+        "Pantera",
+        "White Zombie"
+       ]
+      },
+      {
+       "name": "Nu-Metal & Metalcore",
+       "children": [
+        {
+         "name": "Nu-Metal",
+         "anchors": [
+          "Korn",
+          "Linkin Park",
+          "System Of A Down"
+         ]
+        },
+        {
+         "name": "Modern Metalcore",
+         "anchors": [
+          "I Prevail",
+          "TAKER"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Prog",
+     "children": [
+      {
+       "name": "Psychedelic & Space Prog",
+       "anchors": [
+        "Pink Floyd"
+       ]
+      },
+      {
+       "name": "Virtuoso Prog Rock",
+       "anchors": [
+        "Rush",
+        "Crown Lands"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Punk",
+     "children": [
+      {
+       "name": "Proto-Punk",
+       "anchors": [
+        "The Stooges",
+        "Iggy Pop",
+        "The Velvet Underground"
+       ]
+      },
+      {
+       "name": "First-Wave / UK '77",
+       "anchors": [
+        "Ramones",
+        "The Clash",
+        "Buzzcocks"
+       ]
+      },
+      {
+       "name": "Post-Punk",
+       "children": [
+        {
+         "name": "Angular Originators",
+         "anchors": [
+          "Gang of Four",
+          "Television"
+         ]
+        },
+        {
+         "name": "Modern Post-Punk",
+         "anchors": [
+          "Iceage",
+          "Fat Dog",
+          "Spiritual Cramp"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Hardcore",
+       "children": [
+        {
+         "name": "Melodic & Foundational HC",
+         "anchors": [
+          "Descendents",
+          "Minutemen",
+          "Refused"
+         ]
+        },
+        {
+         "name": "Modern Hardcore",
+         "anchors": [
+          "Turnstile",
+          "Koyo",
+          "IRKED"
+         ]
+        },
+        {
+         "name": "DIY Underground HC",
+         "anchors": [
+          "Early Humans",
+          "the cigarette bums",
+          "Death Lens"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Ska-Punk",
+       "children": [
+        {
+         "name": "SoCal Ska-Punk",
+         "anchors": [
+          "Sublime",
+          "311",
+          "Mustard Plug"
+         ]
+        },
+        {
+         "name": "Novelty & Themed Ska",
+         "anchors": [
+          "The Aquabats!",
+          "YidCore"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Garage-Punk",
+       "children": [
+        {
+         "name": "Garage-Punk Revival",
+         "anchors": [
+          "The Hives",
+          "The Creem",
+          "Artificial Go"
+         ]
+        },
+        {
+         "name": "Synth/Egg-Punk",
+         "anchors": [
+          "Sn\u00f5\u00f5per",
+          "Lip Critic"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Pop-Punk & Emo",
+       "children": [
+        {
+         "name": "Pop-Punk",
+         "anchors": [
+          "Green Day",
+          "Blink-182",
+          "Sum 41"
+         ]
+        },
+        {
+         "name": "Emo & Mall-Emo",
+         "anchors": [
+          "Fall Out Boy",
+          "Jimmy Eat World",
+          "The Starting Line"
+         ]
+        },
+        {
+         "name": "Pop-Punk Crossover",
+         "anchors": [
+          "Good Charlotte",
+          "Hellogoodbye"
+         ]
+        },
+        {
+         "name": "DeLonge Side-Projects",
+         "anchors": [
+          "Box Car Racer",
+          "ANGELS & AIRWAVES"
+         ]
+        },
+        {
+         "name": "Modern Emo Revival",
+         "anchors": [
+          "Hot Mulligan",
+          "Joyce Manor",
+          "Static Dress",
+          "Superheaven"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Grunge",
+     "children": [
+      {
+       "name": "Seattle / Sub-Pop",
+       "anchors": [
+        "Nirvana",
+        "Soundgarden",
+        "Alice In Chains",
+        "Pearl Jam"
+       ]
+      },
+      {
+       "name": "Grunge-Adjacent",
+       "anchors": [
+        "Foo Fighters",
+        "Meat Puppets",
+        "Melvins"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Alternative",
+     "children": [
+      {
+       "name": "Noise & Rap-Rock",
+       "anchors": [
+        "Sonic Youth",
+        "Rage Against The Machine"
+       ]
+      },
+      {
+       "name": "Alt-Pop Crossover",
+       "anchors": [
+        "P!nk",
+        "Gorillaz",
+        "The Postal Service"
+       ]
+      },
+      {
+       "name": "90s Alt-Rock",
+       "children": [
+        {
+         "name": "Quirky College Alt",
+         "anchors": [
+          "Violent Femmes",
+          "Crash Test Dummies",
+          "Camper Van Beethoven"
+         ]
+        },
+        {
+         "name": "Alt Heavyweights",
+         "anchors": [
+          "Pixies",
+          "The Smashing Pumpkins",
+          "PJ Harvey",
+          "Modest Mouse"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Indie",
+     "children": [
+      {
+       "name": "Lo-Fi Indie Rock",
+       "children": [
+        {
+         "name": "GBV Universe",
+         "anchors": [
+          "Guided By Voices",
+          "Doug Gillard",
+          "Notekillers"
+         ]
+        },
+        {
+         "name": "Athens Lo-Fi",
+         "anchors": [
+          "Five Eight"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Indie-Pop & Electronic",
+       "anchors": [
+        "The Flaming Lips",
+        "MGMT",
+        "The Ting Tings"
+       ]
+      },
+      {
+       "name": "Canadian Indie",
+       "anchors": [
+        "Wolf Parade",
+        "Broken Social Scene"
+       ]
+      },
+      {
+       "name": "Modern Indie Power-Pop",
+       "anchors": [
+        "The Beths",
+        "The Happy Fits",
+        "Uni Boys"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Garage/Psych",
+     "children": [
+      {
+       "name": "Garage Rock Revival",
+       "children": [
+        {
+         "name": "NYC Garage Revival",
+         "anchors": [
+          "The Strokes",
+          "stellastarr*",
+          "The Bravery"
+         ]
+        },
+        {
+         "name": "Garage Revival Sleaze",
+         "anchors": [
+          "The White Stripes",
+          "Automatic",
+          "Broncho"
+         ]
+        },
+        {
+         "name": "Power-Pop Garage",
+         "anchors": [
+          "Steriogram",
+          "King Falcon"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Retro-Pop & Baroque Revival",
+       "anchors": [
+        "The Lemon Twigs",
+        "The Nude Party",
+        "Danny Ayala"
+       ]
+      },
+      {
+       "name": "Psychedelic Garage",
+       "children": [
+        {
+         "name": "Acid-Rock Roots",
+         "anchors": [
+          "The Doors",
+          "King Gizzard & The Lizard Wizard"
+         ]
+        },
+        {
+         "name": "Modern Garage-Psych",
+         "anchors": [
+          "The Gnomes",
+          "Love Fiend",
+          "Petey USA"
+         ]
+        },
+        {
+         "name": "International Psych",
+         "anchors": [
+          "Wax Jaw",
+          "High Fade",
+          "\u5a92\u4f53\u30d1\u30ba\u30eb",
+          "\u5a92\u4f53"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Electronic",
+   "children": [
+    {
+     "name": "House",
+     "children": [
+      {
+       "name": "Deep & Soulful House",
+       "children": [
+        {
+         "name": "Detroit / Chicago Deep House",
+         "anchors": [
+          "Mr. G",
+          "Monty Luke",
+          "Byron The Aquarius",
+          "Blaze"
+         ]
+        },
+        {
+         "name": "NYC Latin / Garage House",
+         "anchors": [
+          "Nu Yorican Soul",
+          "DJ Spen",
+          "Bini & Martini",
+          "Solomonic Sound"
+         ]
+        },
+        {
+         "name": "Soul-Sampling / Edits House",
+         "anchors": [
+          "Daphni",
+          "COEO",
+          "Qwestlife",
+          "Retromigration"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Disco & Nu-Disco House",
+       "children": [
+        {
+         "name": "Modern Disco-House Revival",
+         "anchors": [
+          "Kapote",
+          "Superlate",
+          "Main Era",
+          "Dukwa"
+         ]
+        },
+        {
+         "name": "French-Touch / Polished Nu-Disco",
+         "anchors": [
+          "Polo & Pan",
+          "Model Man",
+          "Agent Stereo",
+          "Qiri"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Tech & Minimal House",
+       "anchors": [
+        "Peggy Gou",
+        "Ninetoes",
+        "Traumer",
+        "Eric Faria & Mr Kris"
+       ]
+      },
+      {
+       "name": "Chicago Acid / Old School",
+       "anchors": [
+        "The DJ Fast Eddie",
+        "Gee Dee",
+        "Samuel Malm",
+        "Costanza"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Techno",
+     "children": [
+      {
+       "name": "Hard / EBM-Techno",
+       "anchors": [
+        "Kompromat, Vitalic, Rebeka Warrior",
+        "Vitalic",
+        "Safe Mind"
+       ]
+      },
+      {
+       "name": "Melodic / Progressive Techno",
+       "anchors": [
+        "Eric Prydz",
+        "Turbulent Space",
+        "Third System"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Trance",
+     "children": [
+      {
+       "name": "Vocal / Euro-Trance",
+       "anchors": [
+        "Alice Deejay",
+        "Edward Maya & Vika Jigulina",
+        "Ivan Gough & Feenixpawl"
+       ]
+      },
+      {
+       "name": "Progressive / Big-Room Trance",
+       "anchors": [
+        "Ti\u00ebsto",
+        "Alesso",
+        "Avicii"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Drum & Bass / Big Beat",
+     "children": [
+      {
+       "name": "Big Beat / Breaks",
+       "children": [
+        {
+         "name": "UK Big Beat Classics",
+         "anchors": [
+          "The Chemical Brothers",
+          "Fatboy Slim",
+          "Propellerheads"
+         ]
+        },
+        {
+         "name": "Rave / Hardcore Breaks",
+         "anchors": [
+          "The Prodigy",
+          "Furz",
+          "Gary's Garage"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Drum & Bass",
+       "anchors": [
+        "Underworld",
+        "Model Man",
+        "Rhytch"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Electro / Nu-Rave",
+     "children": [
+      {
+       "name": "French Electro-House",
+       "children": [
+        {
+         "name": "Banger / Distorted Electro",
+         "anchors": [
+          "Justice",
+          "Soulwax",
+          "Vitalic"
+         ]
+        },
+        {
+         "name": "Indie-Dance / Disco-Punk",
+         "anchors": [
+          "LCD Soundsystem",
+          "The Dare",
+          "Fcukers",
+          "Hot Chip"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Electroclash / Post-Punk Synth",
+       "children": [
+        {
+         "name": "Darkwave / Coldwave",
+         "anchors": [
+          "Twin Tribes",
+          "Sextile",
+          "Kompromat, Vitalic, Rebeka Warrior"
+         ]
+        },
+        {
+         "name": "Italo / Hi-NRG Revival",
+         "anchors": [
+          "NUOVO TESTAMENTO",
+          "Estratosfera",
+          "EX GENERATION"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Synth-Pop / Art-Pop Electro",
+       "anchors": [
+        "Charlotte Adig\u00e9ry & Bolis Pupul",
+        "Yaz",
+        "La Roux",
+        "Sophie Ellis-Bextor"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Bass / Club",
+     "children": [
+      {
+       "name": "EDM / Festival Bass",
+       "children": [
+        {
+         "name": "Brostep / Dubstep",
+         "anchors": [
+          "Skrillex & Diplo",
+          "Zhu",
+          "Major Lazer"
+         ]
+        },
+        {
+         "name": "Pop-Crossover EDM",
+         "anchors": [
+          "Calvin Harris",
+          "Diplo",
+          "Ellie Goulding",
+          "Icona Pop"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Global Bass / Dancehall",
+       "anchors": [
+        "M.I.A.",
+        "Teddybears",
+        "Diplo"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Ambient / Downtempo",
+     "children": [
+      {
+       "name": "Ambient House / Dub",
+       "anchors": [
+        "The Orb",
+        "Fortran 5",
+        "Spilly Cave"
+       ]
+      },
+      {
+       "name": "Chillwave / Downtempo Electronica",
+       "anchors": [
+        "Sylvan Esso",
+        "ear",
+        "ideasforconversations",
+        "Duett"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Pop-Rap / Electro-Soul",
+     "children": [
+      {
+       "name": "Pop-Rap & Hip-House",
+       "anchors": [
+        "Technotronic",
+        "Deee-Lite",
+        "Tone-L\u014dc",
+        "Digital Underground"
+       ]
+      },
+      {
+       "name": "Electro-Funk / Future-Soul",
+       "anchors": [
+        "General Elektriks",
+        "Jungle",
+        "Vulfmon",
+        "Jamiroquai"
+       ]
+      },
+      {
+       "name": "Alt-Pop / Genre-Bending Crews",
+       "anchors": [
+        "LSD, Diplo, Sia, Labrinth",
+        "TWRP",
+        "Party Pupils"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Vaporwave / Future Funk",
+     "children": [
+      {
+       "name": "Future Funk Edits",
+       "anchors": [
+        "SAINT PEPSI",
+        "Soul Mass Transit System",
+        "Mecha Maiko & dj try"
+       ]
+      },
+      {
+       "name": "Synthwave / Retro-Electronic",
+       "anchors": [
+        "RIO KOSTA",
+        "HummusVacuum",
+        "Gary's Garage",
+        "Paycheque"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Electro-Swing",
+     "anchors": [
+      "Caravan Palace",
+      "Polo & Pan",
+      "Various Artists"
+     ]
+    },
+    {
+     "name": "Indie / Post-Punk Electronic",
+     "children": [
+      {
+       "name": "Dance-Punk / Art-Rock",
+       "anchors": [
+        "Cheekface",
+        "The Bug Club",
+        "Getdown Services",
+        "N0V3L"
+       ]
+      },
+      {
+       "name": "Garage / Psych-Electronic",
+       "anchors": [
+        "Oh Sees",
+        "Yeah Yeah Yeahs",
+        "STRFKR",
+        "Djo"
+       ]
+      },
+      {
+       "name": "Industrial / Alt-Rock Crossover",
+       "anchors": [
+        "Filter",
+        "The Exies",
+        "TRUSTcompany",
+        "Chappo"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Future House / UK Garage",
+     "children": [
+      {
+       "name": "UK Garage / Future Garage",
+       "anchors": [
+        "Disclosure",
+        "Underground System",
+        "Cor.ece"
+       ]
+      },
+      {
+       "name": "Bass-House / Tech-Club",
+       "anchors": [
+        "Underkut",
+        "Ko Yang",
+        "DJ Cosworth",
+        "EazyNotey"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Pop",
+   "children": [
+    {
+     "name": "Synth-Pop / Electropop",
+     "children": [
+      {
+       "name": "Psychedelic Synth-Pop",
+       "children": [
+        {
+         "name": "Modern Psych-Pop",
+         "anchors": [
+          "Tame Impala",
+          "Magdalena Bay",
+          "Passion Pit"
+         ]
+        },
+        {
+         "name": "Hazy Lo-Fi Bedroom Synth",
+         "anchors": [
+          "TV Girl",
+          "Drugdealer",
+          "feel trip."
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Hyperpop / Maximalist Pop",
+       "anchors": [
+        "Charli XCX",
+        "PinkPantheress",
+        "Addison Rae"
+       ]
+      },
+      {
+       "name": "Art-Pop / Avant Synth",
+       "anchors": [
+        "Caroline Polachek",
+        "Purity Ring",
+        "Gotye"
+       ]
+      },
+      {
+       "name": "French Disco-Pop",
+       "anchors": [
+        "L'Imp\u00e9ratrice",
+        "Parcels",
+        "Angine de Poitrine"
+       ]
+      },
+      {
+       "name": "Glossy Dance-Pop",
+       "children": [
+        {
+         "name": "Modern Diva Pop",
+         "anchors": [
+          "Dua Lipa",
+          "Kylie Minogue",
+          "Jess Glynne"
+         ]
+        },
+        {
+         "name": "2000s Pop",
+         "anchors": [
+          "Christina Aguilera",
+          "Natasha Bedingfield",
+          "All Saints"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Indie Pop",
+     "children": [
+      {
+       "name": "Twee / Bedroom Indie",
+       "children": [
+        {
+         "name": "Lo-Fi Twee Pop",
+         "anchors": [
+          "Frankie Cosmos",
+          "Rocketship",
+          "Sombr"
+         ]
+        },
+        {
+         "name": "Dreamy Bedroom Pop",
+         "anchors": [
+          "Clairo",
+          "Hannah Jadagu",
+          "Shelly"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Jangle Pop",
+       "children": [
+        {
+         "name": "Aussie/NZ Jangle",
+         "anchors": [
+          "Rolling Blackouts Coastal Fever",
+          "Kiwi Jr.",
+          "Balu Brigada"
+         ]
+        },
+        {
+         "name": "British Jangle Pop",
+         "anchors": [
+          "The La's",
+          "Lime Garden",
+          "The Hoosiers"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Dream Pop / Hazy Indie",
+       "anchors": [
+        "WIDOWSPEAK",
+        "Men I Trust",
+        "The Mar\u00edas",
+        "Swim Mountain"
+       ]
+      },
+      {
+       "name": "Sophisti / Folk-Pop",
+       "children": [
+        {
+         "name": "Confessional Singer-Songwriter Pop",
+         "anchors": [
+          "Maggie Rogers",
+          "Julia Jacklin",
+          "Suki Waterhouse"
+         ]
+        },
+        {
+         "name": "Classic Folk-Pop",
+         "anchors": [
+          "Carly Simon",
+          "Suzanne Vega",
+          "Vanessa Carlton"
+         ]
+        },
+        {
+         "name": "Jazz-Inflected Indie Pop",
+         "anchors": [
+          "Laufey",
+          "Oracle Sisters",
+          "Miss Tess"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Pop-Rock / Power Pop",
+     "children": [
+      {
+       "name": "Pop-Punk / Emo-Pop",
+       "children": [
+        {
+         "name": "Anthemic Pop-Punk",
+         "anchors": [
+          "Paramore",
+          "Hayley Williams"
+         ]
+        },
+        {
+         "name": "Modern Confessional Pop-Rock",
+         "anchors": [
+          "Olivia Rodrigo",
+          "Gracie Abrams",
+          "Michelle Branch"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Garage / Post-Punk Indie Rock",
+       "children": [
+        {
+         "name": "UK Post-Punk Revival",
+         "anchors": [
+          "Wet Leg",
+          "Dirty Nice",
+          "World News"
+         ]
+        },
+        {
+         "name": "Aussie Garage Pop",
+         "anchors": [
+          "Girl and Girl",
+          "Baby Cool",
+          "overpass"
+         ]
+        },
+        {
+         "name": "Surf / Garage Rock",
+         "anchors": [
+          "Tijuana Panthers",
+          "The Flints",
+          "Annie Taylor"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Britpop / 90s Alt-Rock",
+       "anchors": [
+        "The Cranberries",
+        "The Cardigans",
+        "Gwen Stefani"
+       ]
+      },
+      {
+       "name": "Mainstream Pop-Rock",
+       "anchors": [
+        "Harry Styles",
+        "MIKA",
+        "Grouplove",
+        "The Temper Trap"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Soul / Funk-Pop",
+     "children": [
+      {
+       "name": "Neo-Soul / Modern Soul Revival",
+       "children": [
+        {
+         "name": "British Neo-Soul",
+         "anchors": [
+          "Olivia Dean",
+          "Mica Millar",
+          "Lola Young"
+         ]
+        },
+        {
+         "name": "Retro Funk-Soul Revival",
+         "anchors": [
+          "Say She She",
+          "Wargirl",
+          "Video Age"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Chillwave / Plunderphonic Soul",
+       "anchors": [
+        "Star Slinger",
+        "Leisure",
+        "Raf Rundell"
+       ]
+      },
+      {
+       "name": "Classic Pop Vocal",
+       "anchors": [
+        "Shirley Bassey",
+        "Adele",
+        "Paolo Nutini"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Electronic Pop / Dance",
+     "children": [
+      {
+       "name": "Future Bass / EDM-Pop",
+       "anchors": [
+        "ODESZA",
+        "Louis The Child",
+        "SNBRN"
+       ]
+      },
+      {
+       "name": "Funky House / Club",
+       "anchors": [
+        "Throttle",
+        "Cherub",
+        "Echowave"
+       ]
+      },
+      {
+       "name": "Electro-Indie",
+       "anchors": [
+        "Django Django",
+        "Animal Collective",
+        "Chateau"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Alt / Darkwave Pop",
+     "children": [
+      {
+       "name": "Cinematic Melancholy Pop",
+       "anchors": [
+        "Lana Del Rey",
+        "Lorde",
+        "Billie Eilish"
+       ]
+      },
+      {
+       "name": "Synth-Goth / Cold Pop",
+       "anchors": [
+        "Choir Boy",
+        "Vienna Vienna",
+        "Hannah Lew"
+       ]
+      },
+      {
+       "name": "Glam / Psych Pop Rock",
+       "anchors": [
+        "Silver Synthetic",
+        "Glyders",
+        "Mod Lang"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Hip-Hop/Rap",
+   "children": [
+    {
+     "name": "Old School",
+     "children": [
+      {
+       "name": "Pioneers / Electro-Funk Era",
+       "anchors": [
+        "Kurtis Blow",
+        "Grandmaster Flash & The Furious Five",
+        "Young MC",
+        "Skee-Lo"
+       ]
+      },
+      {
+       "name": "New School Crossover",
+       "anchors": [
+        "LL Cool J",
+        "Salt-N-Pepa",
+        "Naughty By Nature"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Boom Bap",
+     "children": [
+      {
+       "name": "Golden-Age Lyricism",
+       "anchors": [
+        "Eric B. & Rakim",
+        "Nas",
+        "Gang Starr"
+       ]
+      },
+      {
+       "name": "NY Hardcore / Mafioso",
+       "anchors": [
+        "The Notorious B.I.G.",
+        "Mobb Deep",
+        "JAY-Z"
+       ]
+      },
+      {
+       "name": "Latino East Coast",
+       "anchors": [
+        "Big Pun",
+        "Fat Joe"
+       ]
+      },
+      {
+       "name": "Cypress / B-Boy Rap-Rock",
+       "children": [
+        {
+         "name": "Stoner / Punk-Rooted",
+         "anchors": [
+          "Cypress Hill",
+          "Beastie Boys",
+          "House of Pain"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Conscious / Jazz-Rap",
+     "children": [
+      {
+       "name": "Native Tongues",
+       "anchors": [
+        "A Tribe Called Quest",
+        "De La Soul",
+        "Arrested Development"
+       ]
+      },
+      {
+       "name": "Bohemian / West Coast Underground",
+       "children": [
+        {
+         "name": "Cosmic / Jazz-Bop",
+         "anchors": [
+          "Digable Planets",
+          "The Pharcyde",
+          "Del The Funky Homosapien"
+         ]
+        },
+        {
+         "name": "Crate-Digger Collective",
+         "anchors": [
+          "Jurassic 5",
+          "Emanon"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Socio-Political",
+       "anchors": [
+        "Public Enemy",
+        "Common",
+        "Lupe Fiasco"
+       ]
+      },
+      {
+       "name": "Modern Studio-Rap Auteurs",
+       "anchors": [
+        "Kendrick Lamar",
+        "J. Cole",
+        "Wale"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "G-Funk / West Coast",
+     "children": [
+      {
+       "name": "Gangsta Rap Roots",
+       "anchors": [
+        "N.W.A",
+        "Ice Cube"
+       ]
+      },
+      {
+       "name": "Dr. Dre G-Funk Lineage",
+       "anchors": [
+        "Dr. Dre",
+        "Snoop Dogg",
+        "Warren G"
+       ]
+      },
+      {
+       "name": "Death Row Era 2Pac",
+       "anchors": [
+        "2Pac",
+        "2Pac & The Notorious B.I.G."
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Pop-Rap",
+     "children": [
+      {
+       "name": "Detroit Shady Camp",
+       "children": [
+        {
+         "name": "Eminem & Crew",
+         "anchors": [
+          "Eminem",
+          "D12",
+          "Eminem, Dr. Dre & 50 Cent"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "50 Cent / G-Unit Bloc",
+       "anchors": [
+        "50 Cent",
+        "G-Unit",
+        "The Game"
+       ]
+      },
+      {
+       "name": "Hit-Single Crossover",
+       "anchors": [
+        "Ja Rule",
+        "Akon",
+        "DJ Khaled",
+        "DJ Khaled featuring Sean Kingston"
+       ]
+      },
+      {
+       "name": "R&B / Genre-Blend Collabs",
+       "anchors": [
+        "Estelle",
+        "Rihanna, Kanye West, and Paul McCartney",
+        "Roy Woods",
+        "Dope Lemon"
+       ]
+      },
+      {
+       "name": "Female MCs",
+       "anchors": [
+        "Missy Elliott",
+        "Lil' Kim",
+        "EVE"
+       ]
+      },
+      {
+       "name": "Rap-Rock Fusion",
+       "anchors": [
+        "JAY-Z & Linkin Park",
+        "Fort Minor"
+       ]
+      },
+      {
+       "name": "Faith-Based Rap",
+       "anchors": [
+        "Grits",
+        "Ben Kaye & Lance Madden"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Trap / Southern",
+     "children": [
+      {
+       "name": "Dirty South Pioneers",
+       "children": [
+        {
+         "name": "ATL Funk-Rap",
+         "anchors": [
+          "Outkast",
+          "Ludacris"
+         ]
+        },
+        {
+         "name": "St. Louis / Midwest Crossover",
+         "anchors": [
+          "Nelly",
+          "Chingy",
+          "Jibbs"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Trap Kingpins",
+       "anchors": [
+        "T.I.",
+        "Pusha T",
+        "Rich Boy"
+       ]
+      },
+      {
+       "name": "Ringtone / Snap Era",
+       "anchors": [
+        "Mike Jones",
+        "Mims",
+        "Hurricane Chris",
+        "Baby Boy Da Prince"
+       ]
+      },
+      {
+       "name": "Louisiana Cash Money / Bounce",
+       "anchors": [
+        "Birdman & Lil' Wayne",
+        "Trick Daddy",
+        "Trill Family, Boosie Badazz, Webbie"
+       ]
+      },
+      {
+       "name": "Migos-Era Triplet Flow",
+       "anchors": [
+        "Migos",
+        "Lil Yachty"
+       ]
+      },
+      {
+       "name": "Psychedelic / Rage Trap",
+       "anchors": [
+        "Travis Scott",
+        "Playboi Carti",
+        "Lil Uzi Vert"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Cloud / Emo-Rap",
+     "children": [
+      {
+       "name": "Odd Future Collective",
+       "anchors": [
+        "Odd Future",
+        "Tyler, The Creator"
+       ]
+      },
+      {
+       "name": "Melodic Introspective",
+       "anchors": [
+        "Kid Cudi",
+        "Mac Miller",
+        "Post Malone"
+       ]
+      },
+      {
+       "name": "A$AP / Cohesive Aesthetic",
+       "anchors": [
+        "A$AP Rocky",
+        "Big Sean"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Soul-Sampling Auteur Rap",
+     "children": [
+      {
+       "name": "Chipmunk-Soul Maximalism",
+       "anchors": [
+        "Kanye West",
+        "Drake"
+       ]
+      },
+      {
+       "name": "Soul-Inflected Crossover",
+       "anchors": [
+        "Fugees",
+        "Gnarls Barkley"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Midwest / Regional Variants",
+     "children": [
+      {
+       "name": "Bone Thugs Harmony-Rap",
+       "anchors": [
+        "Bone Thugs-N-Harmony"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Soul",
+   "children": [
+    {
+     "name": "Classic Soul",
+     "children": [
+      {
+       "name": "Southern & Gospel-Rooted Soul",
+       "children": [
+        {
+         "name": "Deep Soul & R&B Belters",
+         "anchors": [
+          "Aretha Franklin",
+          "Syl Johnson",
+          "Jalen Ngonda"
+         ]
+        },
+        {
+         "name": "Funk-Driven Soul Revue",
+         "children": [
+          {
+           "name": "James Brown & the JB Camp",
+           "anchors": [
+            "James Brown",
+            "Lyn Collins",
+            "Melvin Bliss"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Chicago & Social-Conscious Soul",
+       "anchors": [
+        "Curtis Mayfield",
+        "Donny Hathaway",
+        "Labi Siffre"
+       ]
+      },
+      {
+       "name": "Sophisticated Vocal Soul",
+       "anchors": [
+        "Luther Vandross",
+        "Minnie Riperton",
+        "The Spinners"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Motown",
+     "children": [
+      {
+       "name": "Detroit Hitmakers",
+       "anchors": [
+        "Marvin Gaye",
+        "Stevie Wonder",
+        "Diana Ross"
+       ]
+      },
+      {
+       "name": "Crossover Pop-Soul",
+       "anchors": [
+        "Michael Jackson",
+        "Janet Jackson",
+        "Marlo Thomas & Friends"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Funk-Soul",
+     "children": [
+      {
+       "name": "Afro-Funk & Diaspora Grooves",
+       "children": [
+        {
+         "name": "British-Caribbean Jazz-Funk",
+         "anchors": [
+          "Cymande"
+         ]
+        },
+        {
+         "name": "Nigerian Electronic Funk",
+         "anchors": [
+          "William Onyeabor"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Latin & Tex-Mex Soul-Funk",
+       "anchors": [
+        "Santana",
+        "The Sir Douglas Quintet"
+       ]
+      },
+      {
+       "name": "Jazz-Funk & Spiritual Groove",
+       "children": [
+        {
+         "name": "Vibraphone & Soul-Jazz",
+         "anchors": [
+          "Roy Ayers Ubiquity",
+          "Grover Washington, Jr",
+          "Idris Muhammad"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Disco-Funk & Boogie",
+       "children": [
+        {
+         "name": "70s Crossover Disco-Soul",
+         "anchors": [
+          "A Taste Of Honey",
+          "Captain & Tennille"
+         ]
+        },
+        {
+         "name": "Modern French-Touch Boogie",
+         "anchors": [
+          "Dabeull",
+          "Saucy Lady",
+          "Joey Quinones"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Blue-Eyed & Pop-Rock Soul",
+     "children": [
+      {
+       "name": "Crooner & Standards Soul",
+       "anchors": [
+        "Frank Sinatra",
+        "Louis Armstrong",
+        "Norah Jones"
+       ]
+      },
+      {
+       "name": "70s-80s Soft Rock Soul",
+       "children": [
+        {
+         "name": "Philly-Influenced Pop-Soul Duos",
+         "anchors": [
+          "Daryl Hall & John Oates",
+          "The Doobie Brothers"
+         ]
+        },
+        {
+         "name": "AOR Soul Vocalists",
+         "anchors": [
+          "Phil Collins",
+          "Rob Thomas"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Quiet Storm",
+     "children": [
+      {
+       "name": "90s-00s Smooth R&B",
+       "anchors": [
+        "Montell Jordan",
+        "Amerie",
+        "Misha & BeMyFiasco"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Neo-Soul",
+     "children": [
+      {
+       "name": "Foundational Neo-Soul",
+       "children": [
+        {
+         "name": "Soulquarian Core",
+         "anchors": [
+          "D'Angelo",
+          "Lauryn Hill"
+         ]
+        },
+        {
+         "name": "Prince & Minneapolis Funk-Soul",
+         "anchors": [
+          "Prince",
+          "Prince & The Revolution"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Spoken-Word & Collective Soul",
+       "children": [
+        {
+         "name": "Poetic & Political Collectives",
+         "anchors": [
+          "SAULT",
+          "Ursula Rucker (featuring MAD*)"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Jazz-Fusion Neo-Soul",
+       "children": [
+        {
+         "name": "Bass-Led Cosmic Soul",
+         "anchors": [
+          "Thundercat",
+          "DOMi & JD BECK",
+          "BADBADNOTGOOD"
+         ]
+        },
+        {
+         "name": "New-Orleans Soul-Jazz",
+         "anchors": [
+          "Jon Batiste"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Contemporary Alt-R&B",
+       "children": [
+        {
+         "name": "Bedroom & Indie-Soul",
+         "anchors": [
+          "Toro y Moi",
+          "Tom Misch",
+          "PawPaw Rod"
+         ]
+        },
+        {
+         "name": "Rising Soul Vocalists",
+         "anchors": [
+          "Kareen Lomax",
+          "Olive Jones",
+          "Ki'Amora"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Modern Soul Revival",
+     "children": [
+      {
+       "name": "Retro-Soul Throwbacks",
+       "children": [
+        {
+         "name": "Vintage R&B Crooners",
+         "anchors": [
+          "Leon Bridges",
+          "Durand Jones & The Indications",
+          "Aloe Blacc"
+         ]
+        },
+        {
+         "name": "British Retro-Soul",
+         "anchors": [
+          "Amy Winehouse"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Hip-Hop Influenced Soul",
+       "children": [
+        {
+         "name": "West Coast Soul-Rap",
+         "anchors": [
+          "Anderson .Paak",
+          "Baby Bash",
+          "Uncle Louie"
+         ]
+        },
+        {
+         "name": "Trip-Hop & Downtempo Soul",
+         "anchors": [
+          "Massive Attack",
+          "James"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Global Indie Soul Scenes",
+       "children": [
+        {
+         "name": "Indonesian Soul",
+         "anchors": [
+          "Thee Marloes"
+         ]
+        },
+        {
+         "name": "Korean Soul & R&B",
+         "anchors": [
+          "Love, DEAN",
+          "Owelu Dreamhouse",
+          "Soul Wun"
+         ]
+        },
+        {
+         "name": "Independent DIY Soul Collectives",
+         "anchors": [
+          "E. Live",
+          "Caldwell Plus",
+          "Malik Hendricks"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Classic-Soul Studio Revivalists",
+       "children": [
+        {
+         "name": "Producer & Session-Driven Revival",
+         "anchors": [
+          "Peter Matson & JKriv",
+          "Oliver Dollar",
+          "Milky"
+         ]
+        },
+        {
+         "name": "Lo-Fi Garage Soul",
+         "anchors": [
+          "White Heaven",
+          "Corridor",
+          "Eve Buckley"
+         ]
+        },
+        {
+         "name": "Detroit Electronic Soul",
+         "anchors": [
+          "Octave One"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Disco",
+   "children": [
+    {
+     "name": "Classic Disco",
+     "children": [
+      {
+       "name": "Euro-Disco & Pop-Disco",
+       "anchors": [
+        "ABBA",
+        "Patrick Hernandez",
+        "Leo Sayer"
+       ]
+      },
+      {
+       "name": "American Disco & Hi-NRG",
+       "anchors": [
+        "Donna Summer",
+        "Paula Abdul"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "French Touch / Filter House",
+     "children": [
+      {
+       "name": "Pioneers & Robotic Funk",
+       "anchors": [
+        "Daft Punk",
+        "Stardust",
+        "Breakbot"
+       ]
+      },
+      {
+       "name": "Distorted / Ed Banger Electro-Disco",
+       "anchors": [
+        "SebastiAn",
+        "Krisnidanoff",
+        "Kaiser Waldon"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Nu-Disco",
+     "children": [
+      {
+       "name": "Boogie & Funk Revival",
+       "children": [
+        {
+         "name": "Modern Boogie / Synth-Funk",
+         "anchors": [
+          "Donny Ben\u00e9t",
+          "Louis XIV",
+          "Goldkimono"
+         ]
+        },
+        {
+         "name": "Re-Edit & Disco Reworks",
+         "anchors": [
+          "Tom Noble",
+          "JKriv",
+          "Hotmood",
+          "Tom of Brooklyn"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Balearic & Indie-Disco",
+       "children": [
+        {
+         "name": "Sunset / Poolside Balearic",
+         "anchors": [
+          "Poolside",
+          "Flamingo Pier",
+          "Max Essa"
+         ]
+        },
+        {
+         "name": "French House-Disco Revivalists",
+         "anchors": [
+          "Bellaire",
+          "Parallelle",
+          "Rhode & Brown"
+         ]
+        },
+        {
+         "name": "Indie Dance-Pop",
+         "anchors": [
+          "Junior Senior",
+          "Matt & Kim",
+          "Monaco"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Cosmic & Italo-Disco Revival",
+       "anchors": [
+        "Ilija Rudman",
+        "Danube Dance",
+        "Jose Ferrando",
+        "lovetempo"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Disco-House",
+     "children": [
+      {
+       "name": "Deep & Soulful Disco-House",
+       "children": [
+        {
+         "name": "Classic NY Deep House",
+         "anchors": [
+          "Dreamer G & Kerri Chandler",
+          "Terrence Parker",
+          "Ben Hixon, theMind & Phoelix"
+         ]
+        },
+        {
+         "name": "Modern Soulful Disco-House",
+         "anchors": [
+          "Chlo\u00e9 Caillet",
+          "Anish Kumar",
+          "D.M Me"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Filtered Disco-House",
+       "children": [
+        {
+         "name": "Block & Crown School",
+         "anchors": [
+          "Block & Crown, Paul Parsons",
+          "Adri Block & Paul Parsons",
+          "Block & Crown"
+         ]
+        },
+        {
+         "name": "Funky Bootleg House",
+         "anchors": [
+          "Dubdisko",
+          "Martina Budde",
+          "Martina Budde & Da Clubbmaster",
+          "Music To Dance To"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Underground Edit-House",
+       "anchors": [
+        "Balearic London",
+        "Nick The Record",
+        "Paresse & Simple Symmetry",
+        "Mr. Kris & Eric Faria"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Synthwave / Chillwave",
+     "anchors": [
+      "Hotel Pools",
+      "\u041c\u043e\u043b\u0447\u0430\u0442 \u0414\u043e\u043c\u0430",
+      "LIFE OF SURPRISES"
+     ]
+    },
+    {
+     "name": "Big Room / EDM House",
+     "children": [
+      {
+       "name": "Progressive & Electro House",
+       "children": [
+        {
+         "name": "Swedish House / Festival",
+         "anchors": [
+          "Swedish House Mafia",
+          "Avicii & Nicky Romero",
+          "Axwell"
+         ]
+        },
+        {
+         "name": "Electro-House Anthems",
+         "anchors": [
+          "David Guetta featuring Kid Cudi",
+          "David Guetta",
+          "Deadmau5"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Banging Electro / Fidget",
+       "anchors": [
+        "Benny Benassi",
+        "Martin Solveig & Dragonette",
+        "Party Pupils, Audien"
+       ]
+      },
+      {
+       "name": "Future House / Bass House",
+       "anchors": [
+        "Tchami",
+        "Dillon Francis",
+        "DJ Fresh"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Trance & Eurodance",
+     "children": [
+      {
+       "name": "Vocal & Anthem Trance",
+       "anchors": [
+        "Fragma",
+        "Darude",
+        "Blende & Gustaph"
+       ]
+      },
+      {
+       "name": "Eurodance Pop",
+       "anchors": [
+        "Eiffel 65",
+        "Captain Morgan",
+        "Choices"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Breakbeat / Big Beat",
+     "anchors": [
+      "Bassbin Twins",
+      "DJ Mike & Dr. Kif",
+      "B/B"
+     ]
+    },
+    {
+     "name": "Synth-Pop & Soundtrack Disco",
+     "anchors": [
+      "Harold Faltermeyer",
+      "Tempest Trio",
+      "Gabriel Rios",
+      "Charlotte Adig\u00e9ry"
+     ]
+    },
+    {
+     "name": "Dance-Rock / Disco-Punk",
+     "anchors": [
+      "Downstait",
+      "Dan Newman",
+      "Andre Kronert"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Synth-Pop / New Wave",
+   "children": [
+    {
+     "name": "Art Punk / New Wave Pioneers",
+     "children": [
+      {
+       "name": "CBGB Art-Punk",
+       "anchors": [
+        "Talking Heads",
+        "Blondie",
+        "The Pretenders"
+       ]
+      },
+      {
+       "name": "Mutant Disco / Quirk-Rock",
+       "anchors": [
+        "Devo",
+        "Oingo Boingo",
+        "The Cars"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Post-Punk / Goth",
+     "children": [
+      {
+       "name": "Manchester Post-Punk",
+       "anchors": [
+        "Joy Division",
+        "New Order"
+       ]
+      },
+      {
+       "name": "Goth Rock / Darkwave",
+       "anchors": [
+        "The Cure",
+        "Strangelove",
+        "Tones On Tail"
+       ]
+      },
+      {
+       "name": "Female-Fronted Post-Punk",
+       "anchors": [
+        "Romeo Void",
+        "Water From Your Eyes",
+        "Weird Nightmare"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Synth-Pop / Electronic New Wave",
+     "children": [
+      {
+       "name": "Dark Synth Pioneers",
+       "anchors": [
+        "Gary Numan",
+        "Depeche Mode"
+       ]
+      },
+      {
+       "name": "Studio Synth-Pop",
+       "anchors": [
+        "The Buggles",
+        "10cc",
+        "Talk Talk"
+       ]
+      },
+      {
+       "name": "Cinematic / Industrial Edge",
+       "anchors": [
+        "Nine Inch Nails",
+        "Mark Snow",
+        "John Barry"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "New Romantic / Sophisti-Pop",
+     "children": [
+      {
+       "name": "British New Romantics",
+       "anchors": [
+        "Duran Duran",
+        "Spandau Ballet",
+        "A Flock Of Seagulls"
+       ]
+      },
+      {
+       "name": "Anthemic Synth-Pop",
+       "anchors": [
+        "Tears For Fears",
+        "a-ha",
+        "Nik Kershaw"
+       ]
+      },
+      {
+       "name": "Funk-Pop / Jazz-Funk Crossover",
+       "anchors": [
+        "Level 42",
+        "Robert Palmer",
+        "Charlie"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Power-Pop / Mainstream New Wave",
+     "children": [
+      {
+       "name": "Rock-Radio New Wave",
+       "anchors": [
+        "Billy Idol",
+        "INXS",
+        "Huey Lewis And The News"
+       ]
+      },
+      {
+       "name": "Antipodean New Wave",
+       "anchors": [
+        "Men At Work",
+        "Men Without Hats",
+        "Barenaked Ladies"
+       ]
+      },
+      {
+       "name": "Soundtrack-Pop One-Offs",
+       "anchors": [
+        "Michael Sembello",
+        "Peter Gabriel"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Girl-Group / Dance-Pop New Wave",
+     "children": [
+      {
+       "name": "Jangle Girl-Groups",
+       "anchors": [
+        "The Bangles",
+        "Bananarama"
+       ]
+      },
+      {
+       "name": "Dance-Pop Divas",
+       "anchors": [
+        "Madonna",
+        "Ace Of Base"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "2-Tone / Ska Revival",
+     "children": [
+      {
+       "name": "British 2-Tone",
+       "anchors": [
+        "Madness",
+        "The Beat",
+        "The Bangles"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Modern Synth-Pop Revival",
+     "children": [
+      {
+       "name": "Indie Synth-Pop",
+       "children": [
+        {
+         "name": "Dream / Bedroom Synth-Pop",
+         "anchors": [
+          "MUNA",
+          "Telehealth",
+          "Waterbaby"
+         ]
+        },
+        {
+         "name": "Garage Revival New Wave",
+         "anchors": [
+          "Culture Wars",
+          "The Itch",
+          "Temper City"
+         ]
+        },
+        {
+         "name": "Lo-Fi Post-Punk Revival",
+         "anchors": [
+          "Strange Mascara",
+          "Telescreens",
+          "Senseless Optimism"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Modern Indie-Pop Crossover",
+       "anchors": [
+        "The Wombats",
+        "CMAT",
+        "KT Tunstall"
+       ]
+      },
+      {
+       "name": "Emo / Pop-Punk Adjacent",
+       "anchors": [
+        "Matchbook Romance",
+        "Seven Wiser",
+        "Gears, inc."
+       ]
+      },
+      {
+       "name": "Outsider / International One-Offs",
+       "anchors": [
+        "Hogni",
+        "OMC",
+        "Tater Andersson"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "British Alt-Rock New Wave",
+     "children": [
+      {
+       "name": "Anthemic Alt-Rock",
+       "anchors": [
+        "Manic Street Preachers",
+        "Modern English"
+       ]
+      },
+      {
+       "name": "Misfit Indie-Pop",
+       "anchors": [
+        "New York Knicks",
+        "Strangelove"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Latin / Brazilian",
+   "children": [
+    {
+     "name": "MPB / Brazilian Pop",
+     "children": [
+      {
+       "name": "Samba-Rock & Soul Fusion",
+       "children": [
+        {
+         "name": "Pioneer Samba-Soul (1970s)",
+         "anchors": [
+          "Jorge Ben",
+          "Tim Maia"
+         ]
+        },
+        {
+         "name": "Contemporary MPB Revival",
+         "anchors": [
+          "Bala Desejo",
+          "Curi\u00f3 Curi\u00f3",
+          "Nan\u00e1 Rizinni"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Tropic\u00e1lia-Adjacent Experimental",
+       "anchors": [
+        "Luzia Dvorek",
+        "St\u00e9phane San Juan"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Bossa Nova / Lounge",
+     "children": [
+      {
+       "name": "Modern Nu-Bossa & Jazz-Bossa",
+       "anchors": [
+        "Toco",
+        "Gerardo Frisina"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Latin / Brazilian Funk & Boogie",
+     "children": [
+      {
+       "name": "Cosmic Disco-Funk Revival",
+       "children": [
+        {
+         "name": "Italo-Neapolitan Tropical Boogie",
+         "anchors": [
+          "Nu Genea",
+          "BASSOLINO",
+          "Diogo Strausz"
+         ]
+        },
+        {
+         "name": "Afro-Tropical Funk Fusion",
+         "anchors": [
+          "Alex Figueira",
+          "Banana Gold Records",
+          "Lazywax"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Cumbia / Tropical",
+     "children": [
+      {
+       "name": "Modern Digital Cumbia",
+       "anchors": [
+        "Nuevos Rios",
+        "Entra\u00f1as"
+       ]
+      },
+      {
+       "name": "Neo-Tropical / Folk-Tropical",
+       "anchors": [
+        "Palmeira",
+        "Erwin",
+        "Kauan Marco"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Latin Pop / Rock en Espa\u00f1ol",
+     "children": [
+      {
+       "name": "Spanish Pop-Rock",
+       "anchors": [
+        "Loquillo",
+        "Efecto Pasillo"
+       ]
+      },
+      {
+       "name": "Indie Latin Songwriters",
+       "anchors": [
+        "Santiago Gamell",
+        "Caio Cenci",
+        "Tonica & Dominante"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Avant-Garde / Minimalist Latin",
+     "children": [
+      {
+       "name": "Mediterranean Chamber-Minimalism",
+       "anchors": [
+        "Pascal Comelade"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Country / Americana",
+   "children": [
+    {
+     "name": "Classic Country",
+     "children": [
+      {
+       "name": "Outlaw & Bakersfield",
+       "children": [
+        {
+         "name": "Man in Black Outlaw",
+         "anchors": [
+          "Johnny Cash"
+         ]
+        },
+        {
+         "name": "Modern Saddle Traditionalists",
+         "anchors": [
+          "Steel Saddle",
+          "Cowboy Hunters"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Singer-Songwriter / Folk-Country",
+     "children": [
+      {
+       "name": "1970s Soft Storyteller",
+       "anchors": [
+        "Jim Croce",
+        "Don White"
+       ]
+      },
+      {
+       "name": "Wry American Balladry",
+       "anchors": [
+        "Randy Newman",
+        "Neil Young"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Roots Rock & Heartland Americana",
+     "children": [
+      {
+       "name": "Supergroup Roots Rock",
+       "anchors": [
+        "The Traveling Wilburys",
+        "Little River Band"
+       ]
+      },
+      {
+       "name": "Garage-Country Revival",
+       "children": [
+        {
+         "name": "Nashville Gritty Garage",
+         "anchors": [
+          "Natural Child",
+          "Ryan Davis & the Roadhouse Band"
+         ]
+        },
+        {
+         "name": "Blues-Rock Roots",
+         "anchors": [
+          "Jack White",
+          "Robert Plant & Alison Krauss"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Alt-Country & Folk Revival",
+     "children": [
+      {
+       "name": "Lo-Fi Troubadour",
+       "anchors": [
+        "Shakey Graves",
+        "Josiah and the Bonnevilles",
+        "JW Francis"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Modern Country (Nashville Pop-Country)",
+     "children": [
+      {
+       "name": "Polished Mainstream",
+       "anchors": [
+        "Faith Hill",
+        "Kacey Musgraves"
+       ]
+      },
+      {
+       "name": "New Female Country Voices",
+       "children": [
+        {
+         "name": "Sassy Contemporary",
+         "anchors": [
+          "Ella Langley",
+          "STELLA LEFTY"
+         ]
+        },
+        {
+         "name": "Heartfelt Roots Belters",
+         "anchors": [
+          "Candi Jenkins",
+          "India Ramey",
+          "Meg and the Wheelers"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "R&B",
+   "children": [
+    {
+     "name": "Contemporary R&B",
+     "children": [
+      {
+       "name": "Late-90s/2000s Pop-R&B",
+       "children": [
+        {
+         "name": "Crossover Divas & Smooth Soul",
+         "anchors": [
+          "Mariah Carey",
+          "Alicia Keys",
+          "Beyonc\u00e9"
+         ]
+        },
+        {
+         "name": "Slick Pop-R&B Crooners",
+         "anchors": [
+          "Usher",
+          "Robin Thicke",
+          "Justin Timberlake"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "2000s Dance-Pop R&B",
+       "anchors": [
+        "Nelly Furtado",
+        "Rihanna",
+        "Justin Bieber"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Alternative / PBR&B",
+     "children": [
+      {
+       "name": "Dark Atmospheric R&B",
+       "anchors": [
+        "The Weeknd"
+       ]
+      },
+      {
+       "name": "Introspective Art-R&B",
+       "anchors": [
+        "Frank Ocean",
+        "SZA"
+       ]
+      },
+      {
+       "name": "Indie Singer-Songwriter Crossover",
+       "anchors": [
+        "Hozier",
+        "Pete Yorn"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Hip-Hop Soul / Auto-Tune R&B",
+     "children": [
+      {
+       "name": "Auto-Tune Club R&B",
+       "anchors": [
+        "T-Pain",
+        "Lil Wayne"
+       ]
+      },
+      {
+       "name": "Producer-Driven Beat R&B",
+       "anchors": [
+        "Timbaland"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "World",
+   "children": [
+    {
+     "name": "Afrobeat / Afro-Jazz Fusion",
+     "children": [
+      {
+       "name": "UK Afrobeat Collective",
+       "anchors": [
+        "Nubiyan Twist",
+        "IREKE"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Psychedelic Funk / Global Groove",
+     "children": [
+      {
+       "name": "Asian Psych-Funk",
+       "children": [
+        {
+         "name": "Taiwanese / Belgian Mandopop-Boogie",
+         "anchors": [
+          "Y\u012aN Y\u012aN"
+         ]
+        },
+        {
+         "name": "Anatolian Psych Revival",
+         "anchors": [
+          "Altin G\u00fcn"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Broken Beat / Soulful House Crossover",
+       "anchors": [
+        "Dan Kye",
+        "Fujiya & Miyagi"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Trip-Hop / Downtempo Beats",
+     "children": [
+      {
+       "name": "French Instrumental Hip-Hop",
+       "anchors": [
+        "DEGIHEUGI",
+        "Atabasca"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Ambient / Experimental Electronic",
+     "children": [
+      {
+       "name": "Japanese Environmental Electronics",
+       "anchors": [
+        "Sugai Ken"
+       ]
+      },
+      {
+       "name": "Nordic Synth-Pop / Art-Pop",
+       "anchors": [
+        "Szymon",
+        "Varra"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Nordic Folk",
+     "children": [
+      {
+       "name": "Finnish Runo-Song Revival",
+       "anchors": [
+        "Vilma J\u00e4\u00e4",
+        "Yunni"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Indie / Art-Rock",
+     "children": [
+      {
+       "name": "Qu\u00e9b\u00e9cois Experimental Pop-Rock",
+       "anchors": [
+        "VioleTT Pi"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Jazz / Bossa",
+   "children": [
+    {
+     "name": "Bossa Nova",
+     "children": [
+      {
+       "name": "Classic Bossa Nova",
+       "children": [
+        {
+         "name": "Composer-Led Bossa (Rio, late 1950s\u201360s)",
+         "anchors": [
+          "Antonio Carlos Jobim",
+          "Os Cariocas"
+         ]
+        },
+        {
+         "name": "Vocal Group / Crossover Bossa",
+         "anchors": [
+          "Sergio Mendes & Brasil 66"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Jazz-Funk / Fusion",
+     "children": [
+      {
+       "name": "Brazilian Jazz-Funk / Samba-Fusion",
+       "children": [
+        {
+         "name": "Electric Samba-Fusion (Rio)",
+         "anchors": [
+          "Azymuth",
+          "Family Junket"
+         ]
+        },
+        {
+         "name": "Brazilian Boogie / Studio Production Fusion",
+         "anchors": [
+          "Robson Jorge & Lincoln Olivetti"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "European Library / Lounge Jazz-Funk",
+       "anchors": [
+        "The Barigozzi Group"
+       ]
+      },
+      {
+       "name": "Big-Band / Orchestral Jazz-Funk",
+       "anchors": [
+        "Quincy Jones"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Contemporary Indie-Jazz",
+     "children": [
+      {
+       "name": "Bossa-Inflected Indie Jazz-Pop",
+       "anchors": [
+        "Mei Semones"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Funk",
+   "children": [
+    {
+     "name": "P-Funk / Funk-Rock",
+     "children": [
+      {
+       "name": "Classic P-Funk",
+       "anchors": [
+        "Parliament"
+       ]
+      },
+      {
+       "name": "Funk-Rock Fusion",
+       "children": [
+        {
+         "name": "Alt-Funk Rock",
+         "anchors": [
+          "Red Hot Chili Peppers",
+          "John Frusciante, Flea"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Funk-Soul / R&B Funk",
+     "children": [
+      {
+       "name": "Vocal Funk-Soul",
+       "anchors": [
+        "The Pointer Sisters"
+       ]
+      },
+      {
+       "name": "Breakbeat Funk-Soul",
+       "anchors": [
+        "The Honey Drippers"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Modern Funk Revival",
+     "children": [
+      {
+       "name": "Tight-Pocket Studio Funk",
+       "anchors": [
+        "Vulfpeck"
+       ]
+      },
+      {
+       "name": "Psychedelic Groove Funk",
+       "anchors": [
+        "Khruangbin"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Latin / Roots Funk",
+     "children": [
+      {
+       "name": "Native American Soul-Funk",
+       "anchors": [
+        "Redbone"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Blues",
+   "children": [
+    {
+     "name": "Electric Blues",
+     "children": [
+      {
+       "name": "Modern Blues Guitar Virtuosos",
+       "anchors": [
+        "Christone \"Kingfish\" Ingram"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Blues Rock",
+     "children": [
+      {
+       "name": "Garage Blues Revival",
+       "children": [
+        {
+         "name": "Raw Duo / Lo-Fi Blues",
+         "anchors": [
+          "The Black Keys",
+          "Jack White & Alicia Keys"
+         ]
+        },
+        {
+         "name": "Southern Soul-Blues Revival",
+         "anchors": [
+          "Alabama Shakes"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Reggae / Dub",
+   "children": [
+    {
+     "name": "Roots Reggae",
+     "children": [
+      {
+       "name": "Jamaican Roots",
+       "children": [
+        {
+         "name": "Foundation / International Roots",
+         "anchors": [
+          "Bob Marley and The Wailers"
+         ]
+        },
+        {
+         "name": "Vocal Harmony Roots",
+         "anchors": [
+          "Sam Carty & The Astronauts"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "UK Roots",
+       "children": [
+        {
+         "name": "British Roots Reggae",
+         "anchors": [
+          "Steel Pulse",
+          "Poser"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

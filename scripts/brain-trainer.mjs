@@ -100,6 +100,13 @@ function tempoEnergy(t) {
   return `tempo: ${b} BPM, ${tempo}${mood}`
 }
 
+// ⚠️ TWIN: src/main/ai/embeddings.ts subgenreText — keep in sync. Folds the AI
+// genre taxonomy's general→specific path into the embed text.
+function subgenreText(t) {
+  const p = String(t.subgenrePath || t.subgenre || '').trim()
+  return p ? `subgenre: ${p.replace(/\s*›\s*/g, ' / ')}` : ''
+}
+
 // Mirrors src/main/ai/embeddings.ts buildEmbeddingText so enriched vectors live
 // in the same space as the rest, just with the sound/mood line appended.
 function baseText(t) {
@@ -107,6 +114,7 @@ function baseText(t) {
   if (t.album) lines.push(`album: ${String(t.album).trim()}${t.year ? ` (${t.year})` : ''}`)
   else if (t.year) lines.push(`year: ${t.year}`)
   if (t.genre) lines.push(`genre: ${String(t.genre).trim()}`)
+  const sg = subgenreText(t); if (sg) lines.push(sg)
   const te = tempoEnergy(t); if (te) lines.push(te)
   const r = Number(t.rating) || 0, p = Number(t.playCount) || 0, sig = []
   if (r > 0) sig.push(`★${r}`)
@@ -188,6 +196,23 @@ async function main() {
   const desc = existsSync(DESC) ? JSON.parse(readFileSync(DESC, 'utf8')) : {}
   const done = new Set(Object.keys(desc))
   const total = tracks.filter(t => t.artist || t.title).length
+
+  // 4.5: fold the AI genre taxonomy into the embed text. Subgenres live in
+  // metadata-overrides.json (fields.subgenre / subgenrePath), not library.json,
+  // so load + merge them onto the tracks here; baseText() appends them.
+  const OV = join(STATE_DIR, 'metadata-overrides.json')
+  if (existsSync(OV)) {
+    try {
+      const ov = JSON.parse(readFileSync(OV, 'utf8'))
+      const sub = new Map()
+      for (const [id, e] of Object.entries(ov)) {
+        const f = e && e.fields
+        if (f && f.subgenre) sub.set(String(id), { subgenre: f.subgenre, subgenrePath: f.subgenrePath || f.subgenre })
+      }
+      for (const t of tracks) { const s = sub.get(String(t.id)); if (s) { t.subgenre = s.subgenre; t.subgenrePath = s.subgenrePath } }
+      log(`taxonomy: merged subgenres onto ${tracks.filter(t => t.subgenre).length} of ${tracks.length} tracks`)
+    } catch (e) { log('subgenre merge skipped:', e.message) }
+  }
 
   // On-demand status check (no enrichment): `node brain-trainer.mjs --status`
   if (process.argv.includes('--status')) {

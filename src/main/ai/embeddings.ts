@@ -167,6 +167,8 @@ export interface EmbedTrackInput {
   playCount?: number
   rating?: number
   bpm?: number
+  subgenre?: string
+  subgenrePath?: string
 }
 
 // Grounded tempo/energy/use-case from REAL bpm + genre. The literary mood
@@ -187,6 +189,13 @@ function tempoEnergyText(t: EmbedTrackInput): string {
   return `tempo: ${b} BPM, ${tempo}${mood}`
 }
 
+// ⚠️ TWIN: scripts/brain-trainer.mjs subgenreText() — keep in sync. Folds the AI
+// genre taxonomy's general→specific path into the embed text.
+function subgenreText(t: EmbedTrackInput): string {
+  const p = String(t.subgenrePath || t.subgenre || '').trim()
+  return p ? `subgenre: ${p.replace(/\s*›\s*/g, ' / ')}` : ''
+}
+
 export function buildEmbeddingText(t: EmbedTrackInput): string {
   const lines: string[] = []
   const artist = (t.artist || '').trim()
@@ -198,6 +207,7 @@ export function buildEmbeddingText(t: EmbedTrackInput): string {
   if (album) lines.push(`album: ${album}${year ? ` (${year})` : ''}`)
   if (!album && year) lines.push(`year: ${year}`)
   if (genre) lines.push(`genre: ${genre}`)
+  const sg = subgenreText(t); if (sg) lines.push(sg)
   const te = tempoEnergyText(t); if (te) lines.push(te)
   const rating = Number(t.rating) || 0
   const plays = Number(t.playCount) || 0
