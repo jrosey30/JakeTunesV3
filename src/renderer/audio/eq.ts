@@ -74,10 +74,12 @@ let filterNodes: BiquadFilterNode[] = []
 let analyserNode: AnalyserNode | null = null
 let masterTapped = false
 let currentSettings: EqSettings = { ...DEFAULT_EQ }
-// 4.2.20: tail of the EQ chain (last filter). Held so we can dynamically
-// connect a recording-tap MediaStreamDestination after the chain has
-// already been built (i.e. when the user clicks Record mid-playback).
+// 4.2.20: tail of the EQ chain (last filter, or the Enhance stage's output
+// once built below). Held so we can dynamically connect a recording-tap
+// MediaStreamDestination after the chain has already been built (i.e. when
+// the user clicks Record mid-playback).
 let chainTail: AudioNode | null = null
+let enhanceOutput: GainNode | null = null
 
 // 4.2.20: recording infrastructure. The tail of the chain is connected
 // to a MediaStreamAudioDestinationNode whose stream feeds a MediaRecorder.
@@ -124,10 +126,10 @@ function buildChain(): void {
     tail = f
     return f
   })
-  tail.connect(audioContext.destination)
-  chainTail = tail
+  tail.connect(buildEnhanceChain(audioContext))
+  chainTail = enhanceOutput
   // If recording was started before the chain existed, wire it up now.
-  if (recordStreamDest) {
+  if (recordStreamDest && chainTail) {
     chainTail.connect(recordStreamDest)
   }
 
@@ -156,6 +158,114 @@ function buildChain(): void {
   // the analyser. Without this tap the visualizer would go silent
   // after the first gapless transition.
   tapHowlerMaster()
+}
+
+/** Builds a soft-clip transfer curve for the warmth saturator: mostly
+ *  linear through the middle (quiet/normal passages pass essentially
+ *  untouched) rounding off only near the extremes. `drive` shapes how hard
+ *  the curve leans in. A pure symmetric tanh (asymmetry=0) only ever
+ *  generates ODD harmonics (3rd, 5th…) — cleaner but one-note. `asymmetry`
+ *  biases the curve slightly off-center (classic single-ended-tube trick),
+ *  which additionally generates EVEN harmonics (2nd, 4th…) — that's the
+ *  extra richness/"texture" on top of plain warmth. Each half is
+ *  normalized independently by its own endpoint so the asymmetry adds
+ *  harmonic complexity without shifting the overall output level. */
+function makeSaturationCurve(drive: number, asymmetry = 0, samples = 1024): Float32Array<ArrayBuffer> {
+  const curve = new Float32Array(samples)
+  const posEnd = Math.tanh(drive + asymmetry)
+  const negEnd = Math.tanh(-drive + asymmetry)
+  for (let i = 0; i < samples; i++) {
+    const x = (i / (samples - 1)) * 2 - 1   // -1..1
+    const y = Math.tanh(drive * x + asymmetry)
+    curve[i] = y / (y >= 0 ? posEnd : -negEnd)
+  }
+  return curve
+}
+
+/** Always-on "Enhance" mastering stage — every track passes through this,
+ *  EQ enabled or not (same reasoning as the visualizer analyser: it sits
+ *  at the end of the chain everything already flows through). Ordered
+ *  AFTER the user's EQ so it reads as a final polish on top of whatever
+ *  tone shaping they've dialed in, not something the EQ then re-colors.
+ *
+ *    warmth (low shelf + gentle saturation) → clarity (presence peak)
+ *    → crispness (air shelf) → glue compressor + makeup gain
+ *    → safety limiter (catches any inter-sample peaks the stages above
+ *      create — transparent unless something would have clipped anyway)
+ *
+ *  Returns the stage's INPUT node; the built OUTPUT node is stashed in the
+ *  module-level `enhanceOutput` (becomes the new `chainTail` — so
+ *  recording/broadcast capture the enhanced signal too, matching what's
+ *  actually heard) and is connected to ctx.destination here. */
+function buildEnhanceChain(ctx: AudioContext): AudioNode {
+  const input = ctx.createGain()
+  input.gain.value = 1.0
+
+  // Warmth: a touch of low-mid body, then a gentle soft-clip saturator for
+  // analog-style harmonic warmth. oversample='4x' keeps the harmonics it
+  // generates from aliasing into harshness — the difference between
+  // "warm" and "digitally nasty" at this drive level.
+  const warmthShelf = ctx.createBiquadFilter()
+  warmthShelf.type = 'lowshelf'
+  warmthShelf.frequency.value = 120
+  warmthShelf.gain.value = 1.8
+
+  const saturator = ctx.createWaveShaper()
+  saturator.curve = makeSaturationCurve(2.5, 0.12)
+  saturator.oversample = '4x'
+
+  // Clarity: presence lift where vocals/lead instruments cut through.
+  const presence = ctx.createBiquadFilter()
+  presence.type = 'peaking'
+  presence.frequency.value = 3200
+  presence.Q.value = 0.9
+  presence.gain.value = 2.5
+
+  // Crispness: gentle air/sparkle lift up top.
+  const airShelf = ctx.createBiquadFilter()
+  airShelf.type = 'highshelf'
+  airShelf.frequency.value = 11000
+  airShelf.gain.value = 1.6
+
+  // Punch: mild glue compression (tightens dynamics, feels more "produced")
+  // + makeup gain to restore — and slightly exceed — the pre-compression
+  // level, which reads as "louder/better" (the same reason A/B loudness
+  // tests always favor the louder track).
+  const glue = ctx.createDynamicsCompressor()
+  glue.threshold.value = -18
+  glue.knee.value = 6
+  glue.ratio.value = 2.5
+  glue.attack.value = 0.006
+  glue.release.value = 0.15
+
+  const makeup = ctx.createGain()
+  makeup.gain.value = Math.pow(10, 1.8 / 20)   // +1.8 dB
+
+  // Safety limiter: near-transparent (very high ratio, just under 0dBFS)
+  // net under the makeup gain + saturator so pushing warmth/loudness can
+  // never clip — it only ever engages on genuine peaks.
+  const limiter = ctx.createDynamicsCompressor()
+  limiter.threshold.value = -1
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.001
+  limiter.release.value = 0.05
+
+  const output = ctx.createGain()
+  output.gain.value = 1.0
+
+  input.connect(warmthShelf)
+  warmthShelf.connect(saturator)
+  saturator.connect(presence)
+  presence.connect(airShelf)
+  airShelf.connect(glue)
+  glue.connect(makeup)
+  makeup.connect(limiter)
+  limiter.connect(output)
+  output.connect(ctx.destination)
+
+  enhanceOutput = output
+  return input
 }
 
 function tapHowlerMaster(): void {
@@ -664,6 +774,7 @@ export function resetBroadcastChain(): void {
   try { broadcastFxInput?.disconnect() } catch { /* ignore */ }
   try { preampNode?.disconnect() } catch { /* ignore */ }
   try { analyserNode?.disconnect() } catch { /* ignore */ }
+  try { enhanceOutput?.disconnect() } catch { /* ignore */ }
   for (const f of filterNodes) {
     try { f.disconnect() } catch { /* ignore */ }
   }
@@ -673,6 +784,7 @@ export function resetBroadcastChain(): void {
   analyserNode = null
   broadcastFxInput = null
   broadcastFxOutput = null
+  enhanceOutput = null
   chainTail = null
   masterTapped = false
   console.log('[broadcast] chain reset — next attach will rebuild')
