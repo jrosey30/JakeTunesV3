@@ -50,8 +50,8 @@ export function playIntroStinger(): void {
     comp.release.value = 0.3
     comp.connect(ctx.destination)
     const master = ctx.createGain()
-    master.gain.setValueAtTime(0.34, t0)
-    master.gain.setValueAtTime(0.34, LAND + 2.0)
+    master.gain.setValueAtTime(0.70, t0)
+    master.gain.setValueAtTime(0.70, LAND + 2.0)
     master.gain.linearRampToValueAtTime(0.0001, LAND + 2.8)   // long, gentle fade-out
     master.connect(comp)
 
