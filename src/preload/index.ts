@@ -498,9 +498,9 @@ const electronAPI = {
     ipcRenderer.invoke('eject-cd'),
   openSoundSettings: (): Promise<void> =>
     ipcRenderer.invoke('open-sound-settings'),
-  recordPlay: (track: { title: string; artist: string; album: string; genre: string }): Promise<{ ok: boolean }> =>
+  recordPlay: (track: { title: string; artist: string; album: string; genre: string; pct?: number }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('record-play', track),
-  recordSkip: (track: { title: string; artist: string }): Promise<{ ok: boolean }> =>
+  recordSkip: (track: { title: string; artist: string; pct?: number }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('record-skip', track),
   // Brain #1 — listening memory (streaks/habits computed from the play log).
   getListeningMemory: () => ipcRenderer.invoke('get-listening-memory'),

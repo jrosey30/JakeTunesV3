@@ -1219,7 +1219,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       // 4.0 background signal: epoch ms of natural completion.
       const playedFp = `${(track.title || '').toLowerCase().trim()}|${(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
       window.electronAPI.saveMetadataOverride(track.id, 'lastPlayedAt', String(Date.now()), playedFp)
-      window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre })
+      window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre, pct: 100 })
 
       const s = stateRef.current
       // Brief 015d: prefer the queueIndex captured at the moment the
@@ -1587,8 +1587,12 @@ export function useAudio(opts?: { primary?: boolean }) {
     if (s.queue.length === 0) return
     // Record skip if current song was playing and less than 80% complete
     // (artist-aggregate stats — feeds listener-profile.json for Music Man taste).
-    if (s.nowPlaying && s.duration > 0 && (s.position / s.duration) < 0.8) {
-      window.electronAPI.recordSkip?.({ title: s.nowPlaying.title, artist: s.nowPlaying.artist })
+    // pct = exactly how far in (25%? 50%? 75%?) — richer than the binary skip flag.
+    if (s.nowPlaying && s.duration > 0) {
+      const completionFrac = s.position / s.duration
+      if (completionFrac < 0.8) {
+        window.electronAPI.recordSkip?.({ title: s.nowPlaying.title, artist: s.nowPlaying.artist, pct: Math.round(completionFrac * 100) })
+      }
     }
     // 4.0 background signal: per-track skipCount on sub-30s bail. Stronger
     // negative signal than the 80% gate; feeds recommendation filtering.

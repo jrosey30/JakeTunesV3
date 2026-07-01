@@ -6823,8 +6823,8 @@ ipcMain.handle('get-listening-memory', async () => {
 })
 
 // Called when a song finishes playing (not skipped)
-ipcMain.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string }) => {
-  void appendListeningEvent({ t: 'p', ts: new Date().toISOString(), ar: track.artist, al: track.album, g: track.genre, ti: track.title })
+ipcMain.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) => {
+  void appendListeningEvent({ t: 'p', ts: new Date().toISOString(), ar: track.artist, al: track.album, g: track.genre, ti: track.title, pct: track.pct ?? 100 })
   if (!listenerProfile.firstSeen) listenerProfile.firstSeen = new Date().toISOString().split('T')[0]
   listenerProfile.totalPlays++
   if (track.artist) listenerProfile.artistPlays[track.artist] = (listenerProfile.artistPlays[track.artist] || 0) + 1
@@ -6844,8 +6844,8 @@ ipcMain.handle('record-play', async (_event, track: { title: string; artist: str
 })
 
 // Called when a song is skipped (next button pressed before song finishes)
-ipcMain.handle('record-skip', async (_event, track: { title: string; artist: string }) => {
-  void appendListeningEvent({ t: 's', ts: new Date().toISOString(), ar: track.artist, ti: track.title })
+ipcMain.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) => {
+  void appendListeningEvent({ t: 's', ts: new Date().toISOString(), ar: track.artist, ti: track.title, pct: track.pct })
   listenerProfile.totalSkips++
   if (track.artist) listenerProfile.artistSkips[track.artist] = (listenerProfile.artistSkips[track.artist] || 0) + 1
   listenerProfile.recentSkips.unshift({ title: track.title, artist: track.artist, ts: new Date().toISOString() })

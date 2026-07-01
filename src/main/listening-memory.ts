@@ -11,6 +11,10 @@ export type PlayEvent = {
   al?: string // album
   g?: string // genre
   ti?: string // title
+  // How far into the track this happened, 0-100. 'p' (natural end) is always
+  // 100 by definition; 's' (skip) is position/duration at the moment of skip —
+  // a 50%/75%/etc. completion signal, richer than the binary play-vs-skip.
+  pct?: number
 }
 
 export interface ListeningMemoryInsights {

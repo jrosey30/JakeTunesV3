@@ -609,8 +609,8 @@ declare global {
       // into the listener profile; renderer fires-and-forgets, so the
       // bridge functions are optional from the renderer's POV (preload
       // may not have wired them in older builds — we soft-call with `?.`).
-      recordPlay?: (track: { title: string; artist: string; album: string; genre: string }) => Promise<{ ok: boolean }>
-      recordSkip?: (track: { title: string; artist: string }) => Promise<{ ok: boolean }>
+      recordPlay?: (track: { title: string; artist: string; album: string; genre: string; pct?: number }) => Promise<{ ok: boolean }>
+      recordSkip?: (track: { title: string; artist: string; pct?: number }) => Promise<{ ok: boolean }>
       recordRating?: (track: { title: string; artist: string; album: string; rating: number }) => Promise<{ ok: boolean }>
       getListeningMemory?: () => Promise<{ ok: boolean; error?: string } & Partial<ListeningMemoryData>>
       getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: RediscoveryPick[]; error?: string }>
