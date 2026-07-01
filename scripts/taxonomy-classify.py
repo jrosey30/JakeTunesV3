@@ -185,11 +185,15 @@ if app_running():
         f"(a live app clobbers external override writes). Classifications are cached; will write next eligible run.")
     sys.exit(0)
 
-# safe write: backup -> atomic replace -> verify (parse + count + size guard)
+# safe write: backup -> atomic replace -> verify (parse + count + size guard).
+# indent=2 matches the app's own on-disk format — the app pretty-prints this
+# file, so a compact json.dump() of identical data reads as an ~16% "shrink"
+# and false-trips the size guard below even though the count check already
+# proved nothing was lost. Matching format keeps the size check meaningful.
 shutil.copy(OVP, OVP + '.bak-classify')
 old_size = os.path.getsize(OVP)
 tmp = OVP + '.classify.tmp'
-json.dump(ov, open(tmp, 'w'))
+json.dump(ov, open(tmp, 'w'), indent=2)
 chk = json.load(open(tmp))                      # parses?
 assert len(chk) == len(ov), f"verify: count {len(chk)} != {len(ov)}"
 assert os.path.getsize(tmp) >= old_size * 0.95, "verify: file shrank unexpectedly"
