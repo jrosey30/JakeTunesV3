@@ -39,6 +39,11 @@
   /* Eye slightly above center so the flipped-over pages read as arcing
      up and away while the queue peeks from below. */
   perspective-origin: 50% 34%;
+  /* Anti-glitch (the "covers punch through each other" pop): TRUE 3D
+     paint ordering. With preserve-3d, depth sorting follows the cards'
+     actual translateZ continuously through transitions — no stepped
+     z-index swaps mid-flip. */
+  transform-style: preserve-3d;
 }
 
 .coverflow-card {
@@ -56,12 +61,68 @@
   transform-origin: 50% 0%;
   transition:
     transform var(--motion-carousel-snap) var(--ease-carousel),
-    opacity var(--motion-carousel-snap) ease,
-    z-index 0s;
+    opacity var(--motion-carousel-snap) ease;
   cursor: pointer;
-  /* Flipped-over pages show their reverse mid-arc; keep the artwork
-     visible from both sides rather than a blank backface. */
-  backface-visibility: visible;
+  will-change: transform;
+}
+
+/* Two-sided page. Each face hides its reverse; the back face is
+   pre-rotated 180° around X so mid-flip shows a matte sleeve back
+   instead of the mirrored artwork smear (v1's biggest "cheap" tell). */
+.coverflow-face {
+  position: absolute;
+  inset: 0;
+  display: block;
+  backface-visibility: hidden;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.coverflow-face--front {
+  background: #17110a;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  /* Weight: a soft down-cast shadow makes the cards read as objects
+     stacked in a machine, not floating paper. */
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.5);
+}
+.coverflow-face--back {
+  transform: rotateX(180deg);
+  /* Matte cardboard sleeve back — gradients only, no assets. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.25)),
+    #241a10;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.5);
+}
+/* The vinyl peeking inside the sleeve's back — a quiet brand moment. */
+.coverflow-back-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 72%;
+  height: 72%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(0, 0, 0, 0) 0 8%,
+      rgba(187, 67, 8, 0.55) 8.5% 12%,
+      rgba(0, 0, 0, 0) 12.5% 30%,
+      rgba(255, 255, 255, 0.05) 31% 32%,
+      rgba(0, 0, 0, 0) 33% 46%,
+      rgba(255, 255, 255, 0.06) 47% 48%,
+      rgba(0, 0, 0, 0) 49%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Depth as DARKNESS, not transparency: queued/flipped cards stay solid
+   objects that recede into the machine's shadow. Driven inline. */
+.coverflow-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  transition: opacity var(--motion-carousel-snap) ease;
+  pointer-events: none;
 }
 
 .coverflow-cover,
@@ -70,22 +131,25 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  background: #17110a;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  /* The mirrored floor — reflect the cover downward and fade it fast.
-     -webkit-box-reflect is fine here: Electron pins Chromium. */
-  -webkit-box-reflect: below 2px linear-gradient(transparent 62%, rgba(255, 255, 255, 0.22));
 }
 
 .coverflow-blank {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: #17110a;
 }
 
-.coverflow-card--active .coverflow-cover,
-.coverflow-card--active .coverflow-blank {
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+/* The mirrored floor belongs to the SETTLED cover only — a reflection
+   under a mid-flip tilted card smears and reads broken. The focused
+   card's cast shadow is deliberately TIGHT so it doesn't bury the
+   queued sleeve peeking right below it. */
+.coverflow-card--active .coverflow-face--front {
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.55);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.coverflow-card--active .coverflow-cover {
+  -webkit-box-reflect: below 3px linear-gradient(transparent 64%, rgba(255, 255, 255, 0.20));
 }
 
 /* Title plate — album + artist centered under the stage, iTunes style. */

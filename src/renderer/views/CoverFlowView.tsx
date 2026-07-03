@@ -103,13 +103,20 @@ export default function CoverFlowView({ tracks, emptyNoun }: CoverFlowViewProps)
   // accumulate into discrete cover steps.
   const rootRef = useRef<HTMLDivElement>(null)
   const wheelAcc = useRef(0)
+  const lastStepAt = useRef(0)
   const onWheel = useCallback((e: React.WheelEvent) => {
     // Horizontal intent wins when present (trackpads); vertical scrolls
     // over the stage also flip covers, like iTunes.
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
     wheelAcc.current += delta
-    while (wheelAcc.current >= WHEEL_STEP_PX) { wheelAcc.current -= WHEEL_STEP_PX; go(1) }
-    while (wheelAcc.current <= -WHEEL_STEP_PX) { wheelAcc.current += WHEEL_STEP_PX; go(-1) }
+    // Mechanical damping: at most one flip per 70ms — trackpad momentum
+    // reads as deliberate page-flips instead of a machine-gun blur (part
+    // of the anti-glitch pass; the old accumulator could fire 4-5 steps
+    // in a single frame and the transitions never resolved).
+    const now = performance.now()
+    if (now - lastStepAt.current < 70) return
+    if (wheelAcc.current >= WHEEL_STEP_PX) { wheelAcc.current = 0; lastStepAt.current = now; go(1) }
+    else if (wheelAcc.current <= -WHEEL_STEP_PX) { wheelAcc.current = 0; lastStepAt.current = now; go(-1) }
   }, [go])
 
   // Jukebox arc: the natural drag axis is VERTICAL (you flip pages up and
@@ -205,27 +212,34 @@ export default function CoverFlowView({ tracks, emptyNoun }: CoverFlowViewProps)
             // edge, set in coverflow.css):
             //   focused (off 0)  — face-on, pulled toward the viewer
             //   flipped (off<0)  — swung up and over the top pivot,
-            //                      hanging folded above/behind (rotateX
-            //                      past ~115°), receding with depth
+            //                      lying folded high behind, well CLEAR
+            //                      of the queue so transition paths never
+            //                      intersect a neighbor's plane
             //   queued  (off>0)  — waiting below, tilted back like title
             //                      strips, each peeking under the last
+            //
+            // Anti-glitch: NO zIndex — the fan is transform-style:
+            // preserve-3d, so paint order follows true 3D depth
+            // continuously through transitions (zIndex swapped in steps
+            // and made covers punch through each other mid-flip).
+            // Anti-cheap: depth reads as DARKENING (the dim overlay),
+            // not transparency — cards stay opaque objects; only the
+            // last visible slot fades out.
+            const dim = active ? 0 : Math.min(0.55, 0.1 + depth * 0.13)
             const style: CSSProperties = active
-              ? {
-                  transform: 'translateY(0) translateZ(110px) rotateX(0deg)',
-                  zIndex: 100,
-                  opacity: 1,
-                }
+              ? { transform: 'translateY(0) translateZ(110px) rotateX(0deg)', opacity: 1 }
               : off < 0
                 ? {
-                    transform: `translateY(${-24 - depth * 10}px) translateZ(${60 - depth * 44}px) rotateX(${115 + depth * 9}deg)`,
-                    zIndex: 96 - depth,
-                    opacity: depth > MAX_VISIBLE ? 0 : Math.max(0.15, 1 - depth * 0.28),
+                    transform: `translateY(${-48 - depth * 9}px) translateZ(${76 - depth * 30}px) rotateX(${126 + depth * 6}deg)`,
+                    opacity: depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.5 : 1,
                     pointerEvents: depth > MAX_VISIBLE ? 'none' : 'auto',
                   }
                 : {
-                    transform: `translateY(${34 + depth * 26}px) translateZ(${40 - depth * 48}px) rotateX(${-14 - depth * 5}deg)`,
-                    zIndex: 90 - depth,
-                    opacity: depth > MAX_VISIBLE ? 0 : Math.max(0.2, 1 - depth * 0.2),
+                    // Queue spread tuned so each waiting sleeve peeks a
+                    // readable band below the one in front of it — the
+                    // machine's stack should be VISIBLE at rest.
+                    transform: `translateY(${46 + depth * 30}px) translateZ(${26 - depth * 46}px) rotateX(${-16 - depth * 3}deg)`,
+                    opacity: depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.55 : 1,
                     pointerEvents: depth > MAX_VISIBLE ? 'none' : 'auto',
                   }
             return (
@@ -240,17 +254,27 @@ export default function CoverFlowView({ tracks, emptyNoun }: CoverFlowViewProps)
                 title={active ? `Play "${album.name}"` : album.name}
                 aria-label={album.name}
               >
-                {artHash ? (
-                  <AlbumArtImage hash={artHash} alt={album.name} className="coverflow-cover" priority={depth <= 2} />
-                ) : (
-                  <span className="coverflow-blank">
-                    <svg width="44" height="44" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                      <circle cx="16" cy="16" r="14" stroke="#8a8378" strokeWidth="1" />
-                      <circle cx="16" cy="16" r="5" stroke="#8a8378" strokeWidth="1" />
-                      <circle cx="16" cy="16" r="1.5" fill="#8a8378" />
-                    </svg>
-                  </span>
-                )}
+                {/* Two real faces (backface-visibility: hidden on each):
+                    mid-flip you see the sleeve's matte BACK, not a
+                    mirrored smear of the artwork — the single biggest
+                    "cheap" signal in v1. */}
+                <span className="coverflow-face coverflow-face--front">
+                  {artHash ? (
+                    <AlbumArtImage hash={artHash} alt={album.name} className="coverflow-cover" priority={depth <= 2} />
+                  ) : (
+                    <span className="coverflow-blank">
+                      <svg width="44" height="44" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                        <circle cx="16" cy="16" r="14" stroke="#8a8378" strokeWidth="1" />
+                        <circle cx="16" cy="16" r="5" stroke="#8a8378" strokeWidth="1" />
+                        <circle cx="16" cy="16" r="1.5" fill="#8a8378" />
+                      </svg>
+                    </span>
+                  )}
+                  <span className="coverflow-dim" style={{ opacity: dim }} aria-hidden="true" />
+                </span>
+                <span className="coverflow-face coverflow-face--back" aria-hidden="true">
+                  <span className="coverflow-back-ring" />
+                </span>
               </button>
             )
           })}
