@@ -252,18 +252,30 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
             const restTransform = active
               ? 'translateY(0) translateZ(110px) rotateX(0deg)'
               : off < 0
-                ? `translateY(${-48 - depth * 9}px) translateZ(${76 - depth * 30}px) rotateX(${126 + depth * 6}deg)`
+                // Flipped pages carry all the way OVER the apex (~152°)
+                // and lie back in a pile behind the pivot — stopping just
+                // past vertical (v2's 126°) froze them mid-climb, the
+                // "hard stop at the top" Jake called out. Each further
+                // flip visibly compresses the pile.
+                ? `translateY(${-52 - depth * 11}px) translateZ(${64 - depth * 30}px) rotateX(${152 + depth * 5}deg)`
                 // Queue spread tuned so each waiting sleeve peeks a
                 // readable band below the one in front of it — the
                 // machine's stack should be VISIBLE at rest.
                 : `translateY(${46 + depth * 30}px) translateZ(${26 - depth * 46}px) rotateX(${-16 - depth * 3}deg)`
             const restOpacity = active ? 1 : depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.5 : 1
+            // Role-based physics: the page going over the top gets a
+            // GRAVITY curve (accelerate into the apex, soft-land down the
+            // far side); the rising/settling cards keep the fluid
+            // carousel ease. The timing function applies at transition
+            // start, so a card's new role drives its motion.
+            const timing = off < 0 ? 'cubic-bezier(0.45, 0.02, 0.18, 1.02)' : 'var(--ease-carousel)'
             const style: CSSProperties = entered
               ? {
                   transform: restTransform,
                   opacity: restOpacity,
                   pointerEvents: !active && depth > MAX_VISIBLE ? 'none' : 'auto',
                   transitionDelay: `${ripple}, ${ripple}`,
+                  transitionTimingFunction: `${timing}, ease`,
                 }
               : {
                   // Pre-entrance: everything sits deeper in the machine,
