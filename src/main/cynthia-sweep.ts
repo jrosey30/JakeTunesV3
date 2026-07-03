@@ -23,6 +23,7 @@ import { join } from 'path'
 import { STATE_DIR } from './state-dir'
 import { JsonFileCache } from './state-cache'
 import { scanAlbum, type CynthiaScanTrack, type CynthiaFinding, type CynthiaScanFlag } from './cynthia-scan'
+import { scanLibraryConsistency } from './cynthia-library-scan'
 import { diffAgainstMusicBrainz, type MbLookupResult, type CynthiaMissingTrack } from './cynthia-mb-diff'
 import { getCachedMbRelease } from './mb-release-cache'
 
@@ -63,7 +64,14 @@ interface SweepQueueState {
   sweptAt: Record<string, number>
   initializedAt: number | null
   escalation: { day: string; used: number }
+  /** Bump SCANNER_VERSION when detection rules evolve — stale versions
+   *  force a full resweep instead of waiting out the 7-day TTL. */
+  scannerVersion?: number
 }
+
+// v2: neat-freak pass (albumArtist/genre/year sibling fills + the
+// library-wide vocabulary scan).
+const SCANNER_VERSION = 2
 
 export interface CynthiaSweepHooks {
   /** Current library grouped by album key. Called fresh each tick. */
@@ -133,23 +141,114 @@ export async function startCynthiaSweep(hooks: CynthiaSweepHooks): Promise<void>
   const state = await queueCache.get()
   const albums = hooks.getAlbums()
   const now = Date.now()
+  const rulesChanged = (state.scannerVersion ?? 1) !== SCANNER_VERSION
   const stale = [...albums.keys()].filter(k => {
+    if (rulesChanged) return true
     const at = state.sweptAt[k]
     return !at || now - at > RESWEEP_TTL_MS
   })
   const queued = new Set(state.queue)
   const additions = stale.filter(k => !queued.has(k))
-  if (additions.length > 0 || state.initializedAt === null) {
+  if (additions.length > 0 || state.initializedAt === null || rulesChanged) {
     await queueCache.update(s => ({
       ...s,
       queue: [...s.queue, ...additions],
       initializedAt: s.initializedAt ?? now,
+      scannerVersion: SCANNER_VERSION,
     }))
+    if (rulesChanged) console.log(`[cynthia-sweep] scanner rules v${SCANNER_VERSION} — full resweep queued (${additions.length} albums)`)
   }
   if (!running) {
     running = true
     stopped = false
     void workerLoop()
+  }
+  // Neat-freak pass: library-WIDE vocabulary consistency (cross-album
+  // artist/genre/feat normalization the per-album scanner can't see).
+  // Runs once per launch after a short idle delay; self-terminating —
+  // applied fixes stop matching (oldValue === newValue) and dismissed
+  // ones are filtered, so repeat launches converge to a no-op.
+  setTimeout(() => { void runLibraryConsistencyPass() }, 60_000)
+}
+
+async function runLibraryConsistencyPass(): Promise<void> {
+  const hooks = hooksRef
+  if (!hooks) return
+  try {
+    const albums = hooks.getAlbums()
+    const allTracks: CynthiaScanTrack[] = []
+    const albumKeyByTrack = new Map<number, { key: string; label: string }>()
+    for (const [key, { label, tracks }] of albums) {
+      for (const t of tracks) {
+        allTracks.push(t)
+        albumKeyByTrack.set(t.id, { key, label })
+      }
+    }
+    if (allTracks.length === 0) return
+    const dismissed = await dismissedCache.get()
+    const found = scanLibraryConsistency(allTracks).filter(f =>
+      f.oldValue !== f.newValue && !dismissed[dismissKeyOf(f)],
+    )
+    if (found.length === 0) return
+
+    const byId = new Map(allTracks.map(t => [t.id, t]))
+    const applied: Array<{ trackId: number; field: string; newValue: string }> = []
+    const ledgerAdds: CynthiaLedgerEntry[] = []
+    const pendingByAlbum = new Map<string, CynthiaFinding[]>()
+    let appliedCount = 0
+    const LIBRARY_PASS_APPLY_CAP = 100
+
+    for (const f of found) {
+      const home = albumKeyByTrack.get(f.trackId)
+      const track = byId.get(f.trackId)
+      if (!home || !track) continue
+      if (f.provable && hooks.isIdle() && appliedCount < LIBRARY_PASS_APPLY_CAP) {
+        try {
+          await hooks.applyOverride(f.trackId, f.field, f.newValue, fingerprintOf(track))
+          appliedCount++
+          applied.push({ trackId: f.trackId, field: f.field, newValue: f.newValue })
+          ledgerAdds.push({
+            id: `${Date.now().toString(36)}-lib-${f.trackId}-${f.field}`,
+            at: Date.now(),
+            albumKey: home.key,
+            albumLabel: home.label,
+            trackId: f.trackId,
+            field: f.field,
+            oldValue: f.oldValue,
+            newValue: f.newValue,
+            reason: f.reason,
+            source: f.source,
+          })
+          continue
+        } catch { /* fall through to pending */ }
+      }
+      const arr = pendingByAlbum.get(home.key)
+      if (arr) arr.push(f)
+      else pendingByAlbum.set(home.key, [f])
+    }
+
+    if (ledgerAdds.length > 0) await ledgerCache.update(l => [...l, ...ledgerAdds].slice(-2000))
+    if (pendingByAlbum.size > 0) {
+      await findingsCache.update(fc => {
+        const next = { ...fc }
+        for (const [key, adds] of pendingByAlbum) {
+          const existing = next[key]
+          const label = albumKeyByTrack.get(adds[0].trackId)?.label || key
+          const seen = new Set((existing?.findings || []).map(dismissKeyOf))
+          const merged = [...(existing?.findings || []), ...adds.filter(f => !seen.has(dismissKeyOf(f)))]
+          next[key] = existing
+            ? { ...existing, findings: merged }
+            : { albumKey: key, albumLabel: label, scannedAt: Date.now(), findings: merged, missingTracks: [], flags: [], autoAppliedCount: 0 }
+        }
+        return next
+      })
+    }
+    if (applied.length > 0) {
+      hooks.sendProgress({ swept: 0, total: 0, withFindings: 0, autoApplied: applied, currentAlbum: 'library consistency pass' })
+    }
+    console.log(`[cynthia-sweep] library consistency pass: ${found.length} findings, ${applied.length} auto-applied, ${found.length - applied.length} queued for review`)
+  } catch (err) {
+    console.warn('[cynthia-sweep] library consistency pass failed:', err instanceof Error ? err.message : err)
   }
 }
 

@@ -162,6 +162,64 @@ export function scanAlbum(tracks: CynthiaScanTrack[]): CynthiaScanResult {
     }
   }
 
+  // ── 2b. Neat-freak sibling fills (provable): blank albumArtist /
+  //        genre / year filled from UNANIMOUS album siblings. These are
+  //        the fields that make grouping identifiable — a blank
+  //        albumArtist splits an album across the grid. ──
+  const artistsInScope = new Set(tracks.map(t => cleanWhitespace(String(t.artist ?? ''))).filter(Boolean))
+  const declaredAlbumArtists = new Set(tracks.map(t => cleanWhitespace(String(t.albumArtist ?? ''))).filter(Boolean))
+  // Fill source: a declared consistent albumArtist wins; otherwise a
+  // single-artist album's artist IS its album artist.
+  const albumArtistFill = declaredAlbumArtists.size === 1
+    ? [...declaredAlbumArtists][0]
+    : declaredAlbumArtists.size === 0 && artistsInScope.size === 1
+      ? [...artistsInScope][0]
+      : null
+  if (albumArtistFill) {
+    for (const t of tracks) {
+      if (!cleanWhitespace(String(t.albumArtist ?? ''))) {
+        findings.push({
+          trackId: t.id,
+          field: 'albumArtist',
+          oldValue: String(t.albumArtist ?? ''),
+          newValue: albumArtistFill,
+          reason: declaredAlbumArtists.size === 1 ? 'siblings declare this album artist' : 'single-artist album',
+          source: 'internal-consistency',
+          confidence: 'high',
+          provable: true,
+        })
+      }
+    }
+  }
+  const declaredGenres = new Set(tracks.map(t => cleanWhitespace(String(t.genre ?? ''))).filter(Boolean))
+  if (declaredGenres.size === 1) {
+    const g = [...declaredGenres][0]
+    for (const t of tracks) {
+      if (!cleanWhitespace(String(t.genre ?? ''))) {
+        findings.push({
+          trackId: t.id, field: 'genre',
+          oldValue: String(t.genre ?? ''), newValue: g,
+          reason: 'siblings on this album agree on the genre',
+          source: 'internal-consistency', confidence: 'high', provable: true,
+        })
+      }
+    }
+  }
+  const declaredYears = new Set(tracks.map(t => num(t.year)).filter(y => y > 0))
+  if (declaredYears.size === 1) {
+    const y = [...declaredYears][0]
+    for (const t of tracks) {
+      if (num(t.year) === 0) {
+        findings.push({
+          trackId: t.id, field: 'year',
+          oldValue: String(t.year ?? ''), newValue: String(y),
+          reason: 'siblings on this album agree on the year',
+          source: 'internal-consistency', confidence: 'high', provable: true,
+        })
+      }
+    }
+  }
+
   // ── 3. Artist-spelling variance within the album (judgment) ──
   // Case/whitespace variants of the same name: majority form wins, per the
   // materiality rule (the user's own consistency, not MusicBrainz's). Never

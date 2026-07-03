@@ -162,3 +162,57 @@ test('empty scope is a no-op', () => {
   assert.equal(r.findings.length, 0)
   assert.equal(r.flags.length, 0)
 })
+
+// ── Neat-freak sibling fills (2026-07-03 pass) ──
+
+test('blank albumArtist fills from declared siblings (provable)', () => {
+  const tracks = album(5)
+  tracks[2] = mk({ ...tracks[2], albumArtist: '' })
+  const r = scanAlbum(tracks)
+  const f = r.findings.find(f => f.field === 'albumArtist')
+  assert.ok(f)
+  assert.equal(f!.newValue, 'Artist')
+  assert.equal(f!.provable, true)
+})
+
+test('blank albumArtist fills from uniform artist when none declared', () => {
+  const tracks = album(5, { albumArtist: '' as unknown as string })
+  const r = scanAlbum(tracks)
+  const fills = r.findings.filter(f => f.field === 'albumArtist')
+  assert.equal(fills.length, 5)
+  assert.ok(fills.every(f => f.newValue === 'Artist' && f.provable))
+})
+
+test('compilation (varied artists, no declared albumArtist) gets NO albumArtist fill', () => {
+  const tracks = [
+    mk({ artist: 'Nas', albumArtist: '' }),
+    mk({ artist: 'AZ', albumArtist: '' }),
+    mk({ artist: 'Cormega', albumArtist: '' }),
+  ]
+  const r = scanAlbum(tracks)
+  assert.equal(r.findings.filter(f => f.field === 'albumArtist').length, 0)
+})
+
+test('blank genre fills from unanimous siblings; conflicted siblings do not fill', () => {
+  const t1 = album(5, { genre: 'Punk' })
+  t1[3] = mk({ ...t1[3], genre: '' })
+  const r1 = scanAlbum(t1)
+  const g = r1.findings.find(f => f.field === 'genre')
+  assert.ok(g)
+  assert.equal(g!.newValue, 'Punk')
+  assert.equal(g!.provable, true)
+
+  const t2 = [mk({ genre: 'Punk' }), mk({ genre: 'Rock' }), mk({ genre: '' })]
+  const r2 = scanAlbum(t2)
+  assert.equal(r2.findings.filter(f => f.field === 'genre').length, 0)
+})
+
+test('blank year fills from unanimous siblings (provable)', () => {
+  const tracks = album(6, { year: 1994 })
+  tracks[1] = mk({ ...tracks[1], year: '' })
+  const r = scanAlbum(tracks)
+  const y = r.findings.find(f => f.field === 'year')
+  assert.ok(y)
+  assert.equal(y!.newValue, '1994')
+  assert.equal(y!.provable, true)
+})

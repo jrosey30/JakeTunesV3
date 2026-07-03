@@ -19,6 +19,7 @@ const withMb = process.argv.includes('--mb')
 
 const { scanAlbum } = await import(join(__dirname, '../src/main/cynthia-scan.ts'))
 const { diffAgainstMusicBrainz } = await import(join(__dirname, '../src/main/cynthia-mb-diff.ts'))
+const { scanLibraryConsistency } = await import(join(__dirname, '../src/main/cynthia-library-scan.ts'))
 
 const stateDir = join(homedir(), 'Library', 'Application Support', 'JakeTunes')
 const lib = JSON.parse(readFileSync(join(stateDir, 'library.json'), 'utf8'))
@@ -87,6 +88,16 @@ for (const [key, albumTracks] of byAlbum) {
   }
 }
 
+// Library-wide neat-freak pass (cross-album vocabulary).
+const libFindings = scanLibraryConsistency(tracks)
+const libStats = { provable: 0, judgment: 0, byField: new Map() }
+const libSamples = []
+for (const f of libFindings) {
+  if (f.provable) libStats.provable++; else libStats.judgment++
+  libStats.byField.set(f.field, (libStats.byField.get(f.field) || 0) + 1)
+  if (libSamples.length < 20) libSamples.push({ field: f.field, old: f.oldValue, new: f.newValue, reason: f.reason, auto: f.provable })
+}
+
 console.log(JSON.stringify({
   albums: stats.albums,
   albumsWithFindings: stats.albumsWithFindings,
@@ -95,7 +106,15 @@ console.log(JSON.stringify({
   observationFlags: stats.flags,
   mbDiffedAlbums: stats.mbDiffed,
   topReasons: [...stats.byReason.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8),
+  libraryPass: {
+    findings: libFindings.length,
+    wouldAutoApply: libStats.provable,
+    judgment: libStats.judgment,
+    byField: [...libStats.byField.entries()],
+  },
 }, null, 1))
+console.log('\nSAMPLE library-pass findings:')
+for (const s2 of libSamples) console.log(` - [${s2.auto ? 'AUTO' : 'ask '}] ${s2.field}: '${s2.old}' -> '${s2.new}'  (${s2.reason})`)
 console.log('\nSAMPLE would-auto-apply:')
 for (const s of samples.provable) console.log(` - [${s.field}] '${s.old}' -> '${s.new}'  (${s.album}) ${s.reason}`)
 console.log('\nSAMPLE judgment findings:')
