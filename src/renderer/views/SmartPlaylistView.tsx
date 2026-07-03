@@ -1074,7 +1074,7 @@ export default function SmartPlaylistView() {
         </div>
       ) : viewMode === 'coverflow' ? (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" />
+          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" stateKey={`smart:${playlistId ?? ''}`} />
         </div>
       ) : (
       <div className="songs-view" style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>

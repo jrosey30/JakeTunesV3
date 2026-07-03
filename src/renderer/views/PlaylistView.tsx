@@ -639,7 +639,7 @@ export default function PlaylistView() {
         </div>
       ) : viewMode === 'coverflow' ? (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" />
+          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" stateKey={`playlist:${playlist.id}`} />
         </div>
       ) : (
       <div className="songs-view" style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>

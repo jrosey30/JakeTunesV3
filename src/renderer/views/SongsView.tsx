@@ -1055,7 +1055,7 @@ export default function SongsView() {
     return <TrackGridView tracks={sorted} emptyNoun="tracks" />
   }
   if (viewMode === 'coverflow') {
-    return <CoverFlowView tracks={sorted} emptyNoun="tracks" />
+    return <CoverFlowView tracks={sorted} emptyNoun="tracks" stateKey="songs" />
   }
 
   return (

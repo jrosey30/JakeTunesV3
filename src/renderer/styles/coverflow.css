@@ -133,6 +133,26 @@
   object-fit: cover;
 }
 
+/* Art fades in on decode instead of popping (is-loaded added onLoad).
+   Cached images resolve before first paint, so the fade only shows for
+   genuinely-loading covers. */
+.coverflow-cover {
+  opacity: 0;
+  transition: opacity 260ms ease;
+}
+.coverflow-cover.is-loaded {
+  opacity: 1;
+}
+
+/* Tangible-to-touch: the settled cover lifts faintly under the cursor. */
+.coverflow-card--active:hover .coverflow-face--front {
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6);
+}
+.coverflow-card--active:hover {
+  transform: translateY(-2px) translateZ(116px) rotateX(0deg) !important;
+  transition-duration: 200ms;
+}
+
 .coverflow-blank {
   display: flex;
   align-items: center;

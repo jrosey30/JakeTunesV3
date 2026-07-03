@@ -51,16 +51,35 @@ function formatDuration(ms: number): string {
 interface CoverFlowViewProps {
   tracks: Track[]
   emptyNoun: string
+  /** Position-memory key (per host view) — re-entering the flow returns
+   *  to the page you left, not album #1. */
+  stateKey?: string
 }
 
-export default function CoverFlowView({ tracks, emptyNoun }: CoverFlowViewProps) {
+// Module-level position memory: mode flips unmount this component, and
+// losing your place on every list↔flow round-trip was the single most
+// jarring part of switching ("it glitches going back and forth").
+const savedFlowIdx = new Map<string, number>()
+
+export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' }: CoverFlowViewProps) {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
 
   const albums = useMemo(() => groupTracksIntoAlbums(tracks), [tracks])
-  const [idx, setIdx] = useState(0)
+  const [idx, setIdx] = useState(() => savedFlowIdx.get(stateKey) ?? 0)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; album: Album } | null>(null)
+  useEffect(() => { savedFlowIdx.set(stateKey, idx) }, [stateKey, idx])
+
+  // Entrance choreography: first paint holds every card slightly deep +
+  // dark; the next frame releases them to their real positions so the
+  // mechanism ASSEMBLES (staggered by the per-depth ripple delay below)
+  // instead of hard-cutting into existence.
+  const [entered, setEntered] = useState(false)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)))
+    return () => cancelAnimationFrame(raf)
+  }, [])
 
   // Keep the index valid when the underlying list changes (search filter,
   // library edits) — clamp rather than reset so small changes don't yank
@@ -226,22 +245,34 @@ export default function CoverFlowView({ tracks, emptyNoun }: CoverFlowViewProps)
             // not transparency — cards stay opaque objects; only the
             // last visible slot fades out.
             const dim = active ? 0 : Math.min(0.55, 0.1 + depth * 0.13)
-            const style: CSSProperties = active
-              ? { transform: 'translateY(0) translateZ(110px) rotateX(0deg)', opacity: 1 }
+            // The ripple: the focused/near cards move first, deeper pages
+            // follow a beat later — the stack reacts like a connected
+            // mechanism instead of teleporting in lockstep.
+            const ripple = `${Math.min(depth, 4) * 26}ms`
+            const restTransform = active
+              ? 'translateY(0) translateZ(110px) rotateX(0deg)'
               : off < 0
-                ? {
-                    transform: `translateY(${-48 - depth * 9}px) translateZ(${76 - depth * 30}px) rotateX(${126 + depth * 6}deg)`,
-                    opacity: depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.5 : 1,
-                    pointerEvents: depth > MAX_VISIBLE ? 'none' : 'auto',
-                  }
-                : {
-                    // Queue spread tuned so each waiting sleeve peeks a
-                    // readable band below the one in front of it — the
-                    // machine's stack should be VISIBLE at rest.
-                    transform: `translateY(${46 + depth * 30}px) translateZ(${26 - depth * 46}px) rotateX(${-16 - depth * 3}deg)`,
-                    opacity: depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.55 : 1,
-                    pointerEvents: depth > MAX_VISIBLE ? 'none' : 'auto',
-                  }
+                ? `translateY(${-48 - depth * 9}px) translateZ(${76 - depth * 30}px) rotateX(${126 + depth * 6}deg)`
+                // Queue spread tuned so each waiting sleeve peeks a
+                // readable band below the one in front of it — the
+                // machine's stack should be VISIBLE at rest.
+                : `translateY(${46 + depth * 30}px) translateZ(${26 - depth * 46}px) rotateX(${-16 - depth * 3}deg)`
+            const restOpacity = active ? 1 : depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.5 : 1
+            const style: CSSProperties = entered
+              ? {
+                  transform: restTransform,
+                  opacity: restOpacity,
+                  pointerEvents: !active && depth > MAX_VISIBLE ? 'none' : 'auto',
+                  transitionDelay: `${ripple}, ${ripple}`,
+                }
+              : {
+                  // Pre-entrance: everything sits deeper in the machine,
+                  // dark — released on the next frame.
+                  transform: `${restTransform} translateZ(-120px)`,
+                  opacity: 0,
+                  pointerEvents: 'none',
+                  transitionDelay: `${ripple}, ${ripple}`,
+                }
             return (
               <button
                 key={key}
@@ -260,7 +291,16 @@ export default function CoverFlowView({ tracks, emptyNoun }: CoverFlowViewProps)
                     "cheap" signal in v1. */}
                 <span className="coverflow-face coverflow-face--front">
                   {artHash ? (
-                    <AlbumArtImage hash={artHash} alt={album.name} className="coverflow-cover" priority={depth <= 2} />
+                    // Eager for the whole mounted window (~17 imgs): lazy
+                    // loading made covers POP IN as you flipped. Each art
+                    // fades in on decode (is-loaded) instead of snapping.
+                    <AlbumArtImage
+                      hash={artHash}
+                      alt={album.name}
+                      className="coverflow-cover"
+                      priority
+                      onLoad={(e) => e.currentTarget.classList.add('is-loaded')}
+                    />
                   ) : (
                     <span className="coverflow-blank">
                       <svg width="44" height="44" viewBox="0 0 32 32" fill="none" aria-hidden="true">
