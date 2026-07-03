@@ -88,9 +88,27 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
     setIdx(i => Math.max(0, Math.min(albums.length - 1, i)))
   }, [albums.length])
 
+  // Turbo: when flips arrive faster than the settle can finish, drop to a
+  // short transition so the covers KEEP PACE with the plate/counter —
+  // rapid input previously left the visuals smearing half a second behind
+  // the labels. The last step after input pauses settles on the long
+  // luxurious curve again.
+  const [turbo, setTurbo] = useState(false)
+  const lastGoAt = useRef(0)
+  const turboOff = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const markStep = useCallback(() => {
+    const now = performance.now()
+    if (now - lastGoAt.current < 250) setTurbo(true)
+    lastGoAt.current = now
+    if (turboOff.current) clearTimeout(turboOff.current)
+    turboOff.current = setTimeout(() => setTurbo(false), 320)
+  }, [])
+  useEffect(() => () => { if (turboOff.current) clearTimeout(turboOff.current) }, [])
+
   const go = useCallback((delta: number) => {
+    markStep()
     setIdx(i => Math.max(0, Math.min(albums.length - 1, i + delta)))
-  }, [albums.length])
+  }, [albums.length, markStep])
 
   // ── Artwork: same lookup + idle-resolution + prefetch chain as
   // AlbumsView/TrackGridView, but window-centered instead of top-N.
@@ -155,8 +173,8 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
     const delta = Math.abs(dy) >= Math.abs(dx) ? -dy : -dx
     const steps = Math.round(delta / DRAG_STEP_PX)
     const next = Math.max(0, Math.min(albums.length - 1, d.startIdx + steps))
-    setIdx(next)
-  }, [albums.length])
+    setIdx(prev => { if (prev !== next) markStep(); return next })
+  }, [albums.length, markStep])
   const onPointerUp = useCallback(() => { drag.current = null }, [])
   const dragMoved = () => drag.current?.moved ?? false
 
@@ -219,7 +237,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerUp}
       >
-        <div className="coverflow-fan">
+        <div className={`coverflow-fan${turbo ? ' coverflow-fan--turbo' : ''}`}>
           {windowed.map((album, wi) => {
             const i = from + wi
             const off = i - idx
@@ -244,11 +262,21 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
             // Anti-cheap: depth reads as DARKENING (the dim overlay),
             // not transparency — cards stay opaque objects; only the
             // last visible slot fades out.
-            const dim = active ? 0 : Math.min(0.55, 0.1 + depth * 0.13)
-            // The ripple: the focused/near cards move first, deeper pages
-            // follow a beat later — the stack reacts like a connected
-            // mechanism instead of teleporting in lockstep.
-            const ripple = `${Math.min(depth, 4) * 26}ms`
+            // SOLIDITY RULES (the anti-glitch contract, learned the hard
+            // way):
+            //   1. Card opacity is ALWAYS 1 — opacity < 1 flattens an
+            //      element out of preserve-3d depth sorting, which made
+            //      edge cards flicker through their neighbors. Depth
+            //      fade is the dim overlay going to ~black instead —
+            //      visually identical against the dark stage, and the
+            //      3D sort stays pure.
+            //   2. ONLY transform animates on the card (plus the dim
+            //      overlay's own opacity). No delays: the ripple lagged
+            //      cards behind rapid input and read as rubber-band
+            //      chaos when flipping fast.
+            //   3. No per-card reflections, no hover transforms — both
+            //      repainted/hijacked cards mid-flight.
+            const dim = active ? 0 : depth >= MAX_VISIBLE ? 0.94 : Math.min(0.6, 0.12 + depth * 0.14)
             const restTransform = active
               ? 'translateY(0) translateZ(110px) rotateX(0deg)'
               : off < 0
@@ -262,7 +290,6 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                 // readable band below the one in front of it — the
                 // machine's stack should be VISIBLE at rest.
                 : `translateY(${46 + depth * 30}px) translateZ(${26 - depth * 46}px) rotateX(${-16 - depth * 3}deg)`
-            const restOpacity = active ? 1 : depth > MAX_VISIBLE ? 0 : depth === MAX_VISIBLE ? 0.5 : 1
             // Role-based physics: the page going over the top gets a
             // GRAVITY curve (accelerate into the apex, soft-land down the
             // far side); the rising/settling cards keep the fluid
@@ -272,18 +299,15 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
             const style: CSSProperties = entered
               ? {
                   transform: restTransform,
-                  opacity: restOpacity,
                   pointerEvents: !active && depth > MAX_VISIBLE ? 'none' : 'auto',
-                  transitionDelay: `${ripple}, ${ripple}`,
-                  transitionTimingFunction: `${timing}, ease`,
+                  transitionTimingFunction: timing,
                 }
               : {
-                  // Pre-entrance: everything sits deeper in the machine,
-                  // dark — released on the next frame.
+                  // Pre-entrance: everything sits deeper in the machine —
+                  // released on the next frame (the dim overlay carries
+                  // the fade so the card itself never changes opacity).
                   transform: `${restTransform} translateZ(-120px)`,
-                  opacity: 0,
                   pointerEvents: 'none',
-                  transitionDelay: `${ripple}, ${ripple}`,
                 }
             return (
               <button

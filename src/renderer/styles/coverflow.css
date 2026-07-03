@@ -21,7 +21,10 @@
 
 .coverflow-stage {
   flex-shrink: 0;
-  height: 260px;
+  /* 320px + the card seated lower (top: 52%) = headroom for the
+     over-the-top arc — at 260px the flying page was CLIPPED by the
+     stage's top edge mid-flip (caught on screencast frames). */
+  height: 320px;
   background: linear-gradient(180deg, #241a10 0%, var(--musicman-bg) 55%, #120c06 100%);
   border-bottom: 1px solid var(--border-subtle);
   cursor: grab;
@@ -38,7 +41,7 @@
   perspective: 900px;
   /* Eye slightly above center so the flipped-over pages read as arcing
      up and away while the queue peeks from below. */
-  perspective-origin: 50% 34%;
+  perspective-origin: 50% 38%;
   /* Anti-glitch (the "covers punch through each other" pop): TRUE 3D
      paint ordering. With preserve-3d, depth sorting follows the cards'
      actual translateZ continuously through transitions — no stepped
@@ -49,7 +52,7 @@
 .coverflow-card {
   position: absolute;
   left: 50%;
-  top: 40%;
+  top: 52%;
   width: 168px;
   height: 168px;
   margin: -84px 0 0 -84px;
@@ -59,9 +62,11 @@
   transform-style: preserve-3d;
   /* The jukebox pivot: pages rotate around their TOP edge. */
   transform-origin: 50% 0%;
-  transition:
-    transform var(--motion-carousel-snap) var(--ease-carousel),
-    opacity var(--motion-carousel-snap) ease;
+  /* SOLIDITY: transform is the ONLY animated property on the card —
+     card opacity stays 1 forever (opacity < 1 flattens the element out
+     of preserve-3d depth sorting = edge-card flicker). The dim overlay
+     child carries all fading. */
+  transition: transform var(--motion-carousel-snap) var(--ease-carousel);
   cursor: pointer;
   will-change: transform;
 }
@@ -125,6 +130,14 @@
   pointer-events: none;
 }
 
+/* Turbo: rapid input drops transitions to a short catch-up so the
+   covers keep pace with the counter — the long settle returns on the
+   final step once input pauses. */
+.coverflow-fan--turbo .coverflow-card,
+.coverflow-fan--turbo .coverflow-dim {
+  transition-duration: 220ms;
+}
+
 .coverflow-cover,
 .coverflow-blank {
   display: block;
@@ -144,13 +157,12 @@
   opacity: 1;
 }
 
-/* Tangible-to-touch: the settled cover lifts faintly under the cursor. */
+/* Tangible-to-touch, SHADOW-ONLY: the settled cover's shadow deepens
+   under the cursor. The v3 hover TRANSFORM (!important) hijacked
+   whichever card became active under a parked cursor mid-flip — the
+   biggest single glitch source. Never transform on hover here. */
 .coverflow-card--active:hover .coverflow-face--front {
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6);
-}
-.coverflow-card--active:hover {
-  transform: translateY(-2px) translateZ(116px) rotateX(0deg) !important;
-  transition-duration: 200ms;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.62);
 }
 
 .coverflow-blank {
@@ -160,16 +172,27 @@
   background: #17110a;
 }
 
-/* The mirrored floor belongs to the SETTLED cover only — a reflection
-   under a mid-flip tilted card smears and reads broken. The focused
-   card's cast shadow is deliberately TIGHT so it doesn't bury the
-   queued sleeve peeking right below it. */
+/* SOLIDITY: no per-card reflection. -webkit-box-reflect toggling on the
+   landing card forced a repaint pop every flip AND flattened the card
+   out of preserve-3d sorting. The floor sheen below (a static stage
+   layer that never animates with cards) carries the reflective read. */
 .coverflow-card--active .coverflow-face--front {
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.55);
   border-color: rgba(255, 255, 255, 0.16);
 }
-.coverflow-card--active .coverflow-cover {
-  -webkit-box-reflect: below 3px linear-gradient(transparent 64%, rgba(255, 255, 255, 0.20));
+
+/* The floor: a fixed sheen under the focused position — the machine's
+   polished base. Pure stage decoration; cards never touch it. */
+.coverflow-fan::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 78%;
+  width: 320px;
+  height: 90px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02) 55%, transparent 75%);
+  pointer-events: none;
 }
 
 /* Title plate — album + artist centered under the stage, iTunes style. */
