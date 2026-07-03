@@ -10,39 +10,75 @@ import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
-import { compareNames } from '../utils/artistSort'
 import EmptyState from '../components/EmptyState'
-import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useAudio } from '../hooks/useAudio'
 import { canonicalArtist } from '../utils/artistAlias'
+// V5 facelift: Album type + grouping extracted to utils/albumGroups.ts,
+// shared with TrackGridView (Grid mode) and CoverFlowView.
+import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
+// V5 Live Concert Mode — declared-set lookups for the context menu.
+import { useSyncExternalStore } from 'react'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor } from '../liveSets'
+import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
+import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
+import { setNotice } from '../activity'
 import '../styles/albums.css'
-
-interface Album {
-  name: string
-  artist: string
-  artists: string[]   // all unique artist variants for art lookup
-  year: string | number
-  tracks: Track[]
-}
 
 export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; album: Album } | null>(null)
+  // V5 Live Concert Mode — menu entries reflect the album's declared state.
+  // Undeclare deliberately lives ONLY on the album detail page (it's a
+  // deletion; it gets the full ConfirmDialog there, not a one-click menu).
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
   const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
     const ordered = sortAlbumTracks(album.tracks)
+    const key = albumKeyFromStrings(album.artist, album.name)
+    const liveSet = album.name.endsWith(' (Live Set)') ? null : liveSetFor(key, lib.tracks)
+    const mergedTrack = liveSet ? (lib.tracks.find(t => t.id === liveSet.mergedTrackId) ?? null) : null
+    const liveEntries: MenuEntry[] = liveSet && mergedTrack
+      ? [{ label: 'Play Live Set', onClick: () => playTrack(mergedTrack, [mergedTrack], 0, undefined, true) }]
+      : album.name.endsWith(' (Live Set)')
+        ? []
+        : [{
+            label: 'Declare Live Concert Mode',
+            onClick: () => {
+              // Jake's rule: complete album only. Pre-check here so the
+              // notice explains; declareLiveSet re-verifies as the gate.
+              const completeness = verifyLiveSetCompleteness(ordered)
+              if (!completeness.complete) {
+                setNotice(`Live Mode needs the complete album — ${completeness.reason}`)
+                return
+              }
+              if (!completeness.verifiedTotal) {
+                // Unproven total needs Jake's explicit confirm — the
+                // dialog lives on the album page, so send him there.
+                setNotice('The files can\'t confirm the total — confirm on the album page')
+                libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
+                return
+              }
+              if (isDeclareInFlight()) { setNotice('A live set is already merging'); return }
+              setNotice(`Merging live set — ${album.name}…`)
+              declareLiveSet({ albumKey: key, name: album.name, artist: album.artist, genre: ordered[0]?.genre, year: album.year, tracks: ordered })
+                .then(() => setNotice(`Live set ready — ${album.name}`))
+                .catch((err) => setNotice(`Live set failed: ${err instanceof Error ? err.message : String(err)}`))
+            },
+          }]
     return [
       { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
       { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
+      ...(liveEntries.length ? [{ separator: true as const }, ...liveEntries] : []),
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
     ]
-  }, [playTrack, pbDispatch, libDispatch])
+  }, [playTrack, pbDispatch, libDispatch, lib.tracks])
 
   // When returning from AlbumDetailView (← Albums), pendingAlbumKey is still
   // set — scroll that card into view, then clear so a later sidebar visit
@@ -58,34 +94,7 @@ export default function AlbumsView() {
     }, 60)
   }, [lib.pendingAlbumKey, lib.currentView, libDispatch])
 
-  const albums = useMemo((): Album[] => {
-    const map = new Map<string, Album>()
-    for (const t of lib.tracks) {
-      const key = albumKeyOf(t)
-      if (!map.has(key)) {
-        map.set(key, {
-          name: t.album || 'Unknown Album',
-          artist: t.albumArtist || t.artist || 'Unknown Artist',
-          artists: [],
-          year: t.year || '',
-          tracks: [],
-        })
-      }
-      const album = map.get(key)!
-      album.tracks.push(t)
-      const a = (t.artist || '').trim()
-      if (a && !album.artists.includes(a)) album.artists.push(a)
-      if (t.albumArtist) {
-        const aa = t.albumArtist.trim()
-        if (aa && !album.artists.includes(aa)) album.artists.push(aa)
-      }
-      if (!album.year && t.year) album.year = t.year
-    }
-    for (const album of map.values()) {
-      album.tracks = sortAlbumTracks(album.tracks)
-    }
-    return Array.from(map.values()).sort((a, b) => compareNames(a.name, b.name))
-  }, [lib.tracks])
+  const albums = useMemo((): Album[] => groupTracksIntoAlbums(lib.tracks), [lib.tracks])
 
   const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
   const [albFilter, setAlbFilter] = useState('')

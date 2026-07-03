@@ -150,6 +150,23 @@ const electronAPI = {
   }> => ipcRenderer.invoke('cynthia-chat', input),
   cynthiaReportToMusicMan: (payload: { rationale: string; summary?: string }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('cynthia-report-to-musicman', payload),
+  // Cynthia overhaul — background-sweep surface: precomputed findings,
+  // dismissals, the auto-apply ledger (+revert), sweep status, progress.
+  cynthiaGetFindings: (albumKeys: string[]): Promise<{ ok: boolean; findings: Record<string, { albumKey: string; albumLabel: string; scannedAt: number; findings: Array<{ trackId: number; field: string; oldValue: string; newValue: string; reason: string; source: string; confidence: string; provable: boolean }>; missingTracks: Array<{ trackNumber: number; discNumber: number; title: string; duration: number | null; reason: string }>; flags: Array<{ kind: string; detail: string }>; autoAppliedCount: number }> }> =>
+    ipcRenderer.invoke('cynthia-get-findings', albumKeys),
+  cynthiaDismissFix: (fix: { trackId: number; field: string; newValue: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('cynthia-dismiss-fix', fix),
+  cynthiaGetLedger: (limit?: number): Promise<{ ok: boolean; entries: Array<{ id: string; at: number; albumKey: string; albumLabel: string; trackId: number; field: string; oldValue: string; newValue: string; reason: string; source: string; reverted?: boolean }> }> =>
+    ipcRenderer.invoke('cynthia-get-ledger', limit),
+  cynthiaRevertLedgerEntry: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('cynthia-revert-ledger-entry', id),
+  cynthiaSweepStatus: (): Promise<{ ok: boolean; swept: number; queued: number; withFindings: number; autoAppliedTotal: number; lastSweptAt: number | null }> =>
+    ipcRenderer.invoke('cynthia-sweep-status'),
+  onCynthiaSweepProgress: (callback: (progress: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => callback(progress)
+    ipcRenderer.on('cynthia-sweep:progress', handler)
+    return () => { ipcRenderer.removeListener('cynthia-sweep:progress', handler) }
+  },
   restoreXmlPickFile: (): Promise<{ ok: boolean; path?: string; canceled?: boolean }> =>
     ipcRenderer.invoke('restore-xml-pick-file'),
   restoreXmlScan: (xmlPath: string): Promise<{ ok: boolean; data?: unknown; error?: string }> =>
@@ -496,6 +513,26 @@ const electronAPI = {
   },
   ejectCd: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('eject-cd'),
+  // V5 Live Concert Mode — merge a declared live album into one gapless
+  // ALAC "live set" + per-song cue offsets; sidecar CRUD; scratch cleanup.
+  liveSetMerge: (
+    tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,
+    album: { name: string; artist: string; genre?: string; year?: string | number },
+  ): Promise<{ ok: boolean; mergedPath?: string; cues?: Array<{ trackId: number; title: string; artist: string; startMs: number; durationMs: number }>; totalDurationMs?: number; error?: string }> =>
+    ipcRenderer.invoke('live-set-merge', tracks, album),
+  onLiveSetProgress: (callback: (progress: { stage: 'decode' | 'concat' | 'encode'; current: number; total: number; label: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { stage: 'decode' | 'concat' | 'encode'; current: number; total: number; label: string }) => callback(progress)
+    ipcRenderer.on('live-set-progress', handler)
+    return () => { ipcRenderer.removeListener('live-set-progress', handler) }
+  },
+  loadLiveSets: (): Promise<{ ok: boolean; sets: Record<string, { mergedTrackId: number; cues: Array<{ trackId: number; title: string; artist: string; startMs: number; durationMs: number }>; totalDurationMs: number; createdAt: string }> }> =>
+    ipcRenderer.invoke('load-live-sets'),
+  saveLiveSet: (albumKey: string, entry: { mergedTrackId: number; cues: Array<{ trackId: number; title: string; artist: string; startMs: number; durationMs: number }>; totalDurationMs: number; createdAt: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('save-live-set', albumKey, entry),
+  removeLiveSet: (albumKey: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('remove-live-set', albumKey),
+  liveSetCleanup: (absPath: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('live-set-cleanup', absPath),
   openSoundSettings: (): Promise<void> =>
     ipcRenderer.invoke('open-sound-settings'),
   recordPlay: (track: { title: string; artist: string; album: string; genre: string; pct?: number }): Promise<{ ok: boolean }> =>

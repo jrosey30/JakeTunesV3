@@ -302,3 +302,94 @@
   min-width: 40px;
   text-align: center;
 }
+
+/* ── V5 Live Concert Mode ──
+   Declare button reads as a quiet secondary next to Play/Shuffle until
+   declared; then Play Live Set joins the primary family (brand orange,
+   like .album-page-play) and Undeclare stays quiet. Set list = a compact
+   numbered runsheet between the Music Man take and the track table,
+   active song highlighted with the selection language while the merged
+   set is playing. */
+.album-page-liveset-play {
+  background: linear-gradient(180deg, var(--brand-orange-light), var(--brand-orange-dark));
+}
+.album-page-liveset-declare:disabled {
+  opacity: 0.75;
+  cursor: default;
+  font-style: italic;
+}
+.album-page-liveset-undeclare {
+  color: #8a4030;
+}
+
+.album-page-setlist {
+  margin: 10px 24px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--white);
+}
+.album-page-setlist-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 10px;
+  background: linear-gradient(180deg, #e4e4e4, #d4d4d4);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.4);
+}
+.album-page-setlist-title {
+  font-size: var(--font-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #3a3a3a;
+}
+.album-page-setlist-sub {
+  font-size: var(--font-label);
+  color: var(--text-dim);
+}
+.album-page-setlist-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 56px;
+  align-items: center;
+  height: var(--row-height);
+  font-size: var(--font-body);
+  cursor: pointer;
+  transition: background-color 90ms ease-out;
+}
+.album-page-setlist-row:nth-child(odd) { background: var(--row-alt); }
+.album-page-setlist-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
+.album-page-setlist-row--active,
+.album-page-setlist-row--active:hover {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+  color: #fff;
+}
+.album-page-setlist-row--active .album-page-setlist-num,
+.album-page-setlist-row--active .album-page-setlist-time { color: rgba(255, 255, 255, 0.85); }
+.album-page-setlist-num {
+  text-align: right;
+  padding-right: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.album-page-setlist-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.album-page-setlist-time {
+  text-align: right;
+  padding-right: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Completeness gate — quiet explanatory line under the actions when the
+   album can't be declared (missing tracks / unverifiable count). */
+.album-page-liveset-blocked {
+  margin-top: 4px;
+  font-size: var(--font-label);
+  color: var(--text-dim);
+  font-style: italic;
+}

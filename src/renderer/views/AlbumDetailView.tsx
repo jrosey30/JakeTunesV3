@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
+import { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -20,7 +20,11 @@ import GetInfoModal from '../components/GetInfoModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
-import type { Track } from '../types'
+// V5 Live Concert Mode — declared-set store + declare orchestration.
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt } from '../liveSets'
+import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
+import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
+import type { Track, LiveSetCue } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
 
@@ -57,7 +61,7 @@ const GRID_COLS = '40px minmax(0, 1fr) 52px'
 export default function AlbumDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
-  const { playTrack } = useAudio()
+  const { playTrack, seek } = useAudio()
   const { openCynthia } = useCynthia()
 
   const albumKeyRef = useRef<string>('')
@@ -116,6 +120,73 @@ export default function AlbumDetailView() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
+
+  // ── V5 Live Concert Mode ──
+  // Declared-set state for THIS album; merge progress; undeclare confirm.
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
+  const liveSet = liveSetFor(albumKey, lib.tracks)
+  const mergedTrack = liveSet ? (lib.tracks.find(t => t.id === liveSet.mergedTrackId) ?? null) : null
+  // Don't offer declaring ON a merged set's own album page (it'd merge
+  // the merge) — UI-visibility check only, never a destructive gate.
+  const isLiveSetAlbumPage = albumName.endsWith(' (Live Set)')
+  // Jake's rule: Live Mode IF AND ONLY IF the album is complete. This
+  // pre-check drives the disabled state + reason line; declareLiveSet
+  // re-verifies as the hard gate.
+  const completeness = useMemo(() => verifyLiveSetCompleteness(tracks), [tracks])
+  const [mergeBusy, setMergeBusy] = useState(false)
+  const [mergeLabel, setMergeLabel] = useState('')
+  const [undeclareConfirm, setUndeclareConfirm] = useState(false)
+  // When the files can't prove the total (verifiedTotal=false), declaring
+  // routes through this explicit confirm — Jake is the canonical source.
+  const [completenessConfirm, setCompletenessConfirm] = useState(false)
+  useEffect(() => {
+    if (!mergeBusy) return
+    return window.electronAPI.onLiveSetProgress((p) => setMergeLabel(p.label))
+  }, [mergeBusy])
+  const runDeclare = useCallback(async (confirmedComplete: boolean) => {
+    if (mergeBusy || isDeclareInFlight()) return
+    setMergeBusy(true)
+    setMergeLabel('Preparing…')
+    try {
+      await declareLiveSet({ albumKey, name: albumName, artist: albumArtist, genre, year, tracks }, { confirmedComplete })
+      setNotice(`Live set ready — ${albumName}`)
+    } catch (err) {
+      setNotice(`Live set failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setMergeBusy(false)
+      setMergeLabel('')
+    }
+  }, [mergeBusy, albumKey, albumName, albumArtist, genre, year, tracks])
+  const handleDeclare = useCallback(() => {
+    if (!completeness.complete) return
+    if (completeness.verifiedTotal) void runDeclare(false)
+    else setCompletenessConfirm(true)
+  }, [completeness, runDeclare])
+  const playLiveSet = useCallback(() => {
+    if (mergedTrack) playTrack(mergedTrack, [mergedTrack], 0, undefined, true)
+  }, [mergedTrack, playTrack])
+  const handleUndeclare = useCallback(async () => {
+    if (!liveSet) return
+    // Identity-gated: only the exact merged track id recorded at declare
+    // time is ever deleted. save-library's existing unlink path (with its
+    // UNLINK_CAP guard) removes the audio file; originals are untouched
+    // by construction.
+    libDispatch({ type: 'DELETE_TRACKS', ids: [liveSet.mergedTrackId] })
+    await unregisterLiveSet(albumKey)
+    setUndeclareConfirm(false)
+    setNotice('Live Mode undeclared — the individual tracks are unchanged')
+  }, [liveSet, albumKey, libDispatch])
+  const setPlaying = !!(mergedTrack && pb.nowPlaying?.id === mergedTrack.id)
+  const activeCue = liveSet && setPlaying ? cueAt(liveSet, pb.position * 1000) : null
+  const seekToCue = useCallback((cue: LiveSetCue) => {
+    if (!liveSet) return
+    if (setPlaying && liveSet.totalDurationMs > 0) {
+      seek(cue.startMs / liveSet.totalDurationMs)
+    } else {
+      playLiveSet()
+    }
+  }, [liveSet, setPlaying, seek, playLiveSet])
 
   // Factual credits (MusicBrainz + iTunes) and the Music Man blurb. Both
   // fetched per-album, fail-soft (sections just stay hidden on error).
@@ -436,7 +507,35 @@ export default function AlbumDetailView() {
           <div className="album-page-actions">
             <button type="button" className="album-page-play" onClick={() => playTrack(tracks[0], tracks, 0, undefined, true)}>▶ Play</button>
             <button type="button" className="album-page-shuffle" onClick={() => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>⤮ Shuffle</button>
+            {/* V5 Live Concert Mode — declare / play-set / undeclare.
+                Declaring is allowed IF AND ONLY IF the album is complete
+                (every track present, verified against declared counts). */}
+            {!isLiveSetAlbumPage && (liveSet && mergedTrack ? (
+              <>
+                <button type="button" className="album-page-play album-page-liveset-play" onClick={playLiveSet} title="Play the whole show as one continuous set">♪ Play Live Set</button>
+                <button type="button" className="album-page-shuffle album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Delete the merged set file (individual tracks unaffected)">Undeclare Live Mode</button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="album-page-shuffle album-page-liveset-declare"
+                onClick={handleDeclare}
+                disabled={mergeBusy || !completeness.complete}
+                title={!completeness.complete
+                  ? `Live Mode needs the complete album — ${completeness.reason}`
+                  : completeness.verifiedTotal
+                    ? "Copy + merge this album's tracks into one continuous live set"
+                    : "The files can't confirm the total — you'll be asked to confirm the show is complete"}
+              >
+                {mergeBusy ? (mergeLabel || 'Merging…') : 'Declare Live Concert Mode'}
+              </button>
+            ))}
           </div>
+          {!isLiveSetAlbumPage && !liveSet && !completeness.complete && (
+            <div className="album-page-liveset-blocked">
+              Live Mode needs the complete album — {completeness.reason}
+            </div>
+          )}
           {creditLine && <div className="album-page-creditline">{creditLine}</div>}
           {infoLoading && !blurb && !creditLine && (
             <p className="album-page-loading">Loading album history…</p>
@@ -483,6 +582,34 @@ export default function AlbumDetailView() {
           </div>
         )}
       </div>
+
+      {/* V5 Live Concert Mode — the set list. Active song highlights while
+          the merged set plays; clicking jumps the playing set to that song
+          (or starts the set from the top when it isn't playing). */}
+      {liveSet && mergedTrack && (
+        <div className="album-page-setlist">
+          <div className="album-page-setlist-head">
+            <span className="album-page-setlist-title">Set List</span>
+            <span className="album-page-setlist-sub">
+              {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)} continuous
+              {setPlaying && activeCue ? ` · now: ${activeCue.index + 1}/${liveSet.cues.length}` : ''}
+            </span>
+          </div>
+          {liveSet.cues.map((cue, i) => (
+            <div
+              key={`${cue.trackId}-${i}`}
+              className={`album-page-setlist-row${activeCue && activeCue.index === i ? ' album-page-setlist-row--active' : ''}`}
+              onClick={() => seekToCue(cue)}
+              title={setPlaying ? `Jump to "${cue.title}"` : 'Play the live set'}
+              role="button"
+            >
+              <span className="album-page-setlist-num">{i + 1}</span>
+              <span className="album-page-setlist-name">{cue.title}</span>
+              <span className="album-page-setlist-time">{formatDuration(cue.durationMs)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="album-page-tracklist songs-view">
         <div className="songs-header" style={{ gridTemplateColumns: GRID_COLS }}>
@@ -551,6 +678,24 @@ export default function AlbumDetailView() {
           confirmLabel="Delete"
           onConfirm={() => { libDispatch({ type: 'DELETE_TRACKS', ids: deleteConfirm.ids }); setDeleteConfirm(null) }}
           onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+      {undeclareConfirm && liveSet && (
+        <ConfirmDialog
+          message={`Undeclare Live Mode for "${albumName}"?`}
+          detail="The merged live-set file will be deleted. The individual tracks are not affected — they stay exactly as they always were."
+          confirmLabel="Undeclare"
+          onConfirm={() => { void handleUndeclare() }}
+          onCancel={() => setUndeclareConfirm(false)}
+        />
+      )}
+      {completenessConfirm && completeness.complete && (
+        <ConfirmDialog
+          message={`Is this the complete show?`}
+          detail={`The files don't declare the album's total track count, so it can't be verified automatically. What's here checks out: ${completeness.total} tracks, numbered with no gaps or duplicates. Only declare Live Mode if this is every track of the show.`}
+          confirmLabel="It's complete — merge"
+          onConfirm={() => { setCompletenessConfirm(false); void runDeclare(true) }}
+          onCancel={() => setCompletenessConfirm(false)}
         />
       )}
     </div>

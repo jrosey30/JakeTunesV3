@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import { CynthiaScope, CynthiaFix, CynthiaMissingTrack } from '../types'
+import { CynthiaScope, CynthiaFix, CynthiaMissingTrack, CynthiaAlbumFindings, CynthiaSweepFinding, CynthiaLedgerEntry } from '../types'
+import { albumKeyOf } from '../utils/albumKey'
 import '../styles/cynthia.css'
 
 // Chat-style popover. Cynthia is two models stacked:
@@ -65,6 +66,13 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  // Cynthia overhaul — "the desk": findings + receipts the background
+  // sweep prepared for THIS scope, painted instantly on open (no model
+  // call, no spinner). Null until the (fast, local) IPC reads land.
+  const [deskFindings, setDeskFindings] = useState<CynthiaSweepFinding[] | null>(null)
+  const [deskLabelByTrack, setDeskLabelByTrack] = useState<Map<number, string>>(new Map())
+  const [deskReceipts, setDeskReceipts] = useState<CynthiaLedgerEntry[]>([])
+  const [sweepLine, setSweepLine] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const threadRef = useRef<HTMLDivElement>(null)
@@ -78,6 +86,78 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
   })
 
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Load the desk on open: precomputed findings for the scope's albums,
+  // recent auto-apply receipts for the same albums, and the sweep status
+  // line. All local sidecar reads — instant.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const keys = [...new Set(scope.tracks.map(t => albumKeyOf(t)))]
+        const [fRes, lRes, sRes] = await Promise.all([
+          window.electronAPI.cynthiaGetFindings(keys),
+          window.electronAPI.cynthiaGetLedger(200),
+          window.electronAPI.cynthiaSweepStatus(),
+        ])
+        if (cancelled) return
+        if (fRes.ok) {
+          const entries = Object.values(fRes.findings) as CynthiaAlbumFindings[]
+          const labelByTrack = new Map<number, string>()
+          const merged: CynthiaSweepFinding[] = []
+          for (const e of entries) {
+            for (const f of e.findings) {
+              merged.push(f)
+              labelByTrack.set(f.trackId, e.albumLabel)
+            }
+          }
+          setDeskFindings(merged)
+          setDeskLabelByTrack(labelByTrack)
+        }
+        if (lRes.ok) {
+          const keySet = new Set(keys)
+          setDeskReceipts(lRes.entries.filter(e => keySet.has(e.albumKey) && !e.reverted).slice(0, 8))
+        }
+        if (sRes.ok && sRes.swept > 0) {
+          const total = sRes.swept + sRes.queued
+          setSweepLine(`swept ${sRes.swept}/${total} albums · ${sRes.withFindings} with findings · ${sRes.autoAppliedTotal} auto-fixed`)
+        }
+      } catch { /* the desk is best-effort — chat works without it */ }
+    })()
+    return () => { cancelled = true }
+  }, [scope])
+
+  const trackFingerprint = useCallback((trackId: number): string => {
+    const tr = scope.tracks.find(x => x.id === trackId)
+    if (!tr) return ''
+    return `${(tr.title || '').toLowerCase().trim()}|${(tr.artist || '').toLowerCase().trim()}|${tr.duration || 0}`
+  }, [scope])
+
+  const applyDeskFinding = useCallback(async (f: CynthiaSweepFinding) => {
+    const field = normalizeField(f.field)
+    if (!field) return
+    dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: f.trackId, field, value: f.newValue }] })
+    try { await window.electronAPI.saveMetadataOverride(f.trackId, field, f.newValue, trackFingerprint(f.trackId)) }
+    catch { /* non-fatal */ }
+    // Applied = dismissed for re-suggestion purposes (the value now matches).
+    try { await window.electronAPI.cynthiaDismissFix({ trackId: f.trackId, field: f.field, newValue: f.newValue }) }
+    catch { /* non-fatal */ }
+    setDeskFindings(prev => prev ? prev.filter(x => !(x.trackId === f.trackId && x.field === f.field && x.newValue === f.newValue)) : prev)
+  }, [dispatch, trackFingerprint])
+
+  const dismissDeskFinding = useCallback(async (f: CynthiaSweepFinding) => {
+    try { await window.electronAPI.cynthiaDismissFix({ trackId: f.trackId, field: f.field, newValue: f.newValue }) }
+    catch { /* non-fatal */ }
+    setDeskFindings(prev => prev ? prev.filter(x => !(x.trackId === f.trackId && x.field === f.field && x.newValue === f.newValue)) : prev)
+  }, [])
+
+  const revertReceipt = useCallback(async (entry: CynthiaLedgerEntry) => {
+    const r = await window.electronAPI.cynthiaRevertLedgerEntry(entry.id).catch(() => ({ ok: false as const }))
+    if (r.ok) {
+      dispatch({ type: 'UPDATE_TRACKS', updates: [{ id: entry.trackId, field: entry.field, value: entry.oldValue }] })
+      setDeskReceipts(prev => prev.filter(e => e.id !== entry.id))
+    }
+  }, [dispatch])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -267,6 +347,7 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
         <div className="cynthia-header-text">
           <div className="cynthia-name">Cynthia</div>
           <div className="cynthia-role">archivist · {scopeLabel}</div>
+          {sweepLine && <div className="cynthia-sweepline">{sweepLine}</div>}
         </div>
         {!busy && (
           <button className="cynthia-close" onClick={onClose} title="Close">×</button>
@@ -274,9 +355,63 @@ export default function CynthiaPopover({ x, y, scope, onClose }: Props) {
       </div>
 
       <div className="cynthia-thread" ref={threadRef}>
+        {/* The desk — what the background sweep already prepared for this
+            scope. Instant (local sidecar reads), zero model calls. */}
+        {(deskReceipts.length > 0 || (deskFindings && deskFindings.length > 0)) && (
+          <div className="cynthia-desk">
+            {deskReceipts.length > 0 && (
+              <div className="cynthia-section">
+                <div className="cynthia-section-title">Already handled <span className="cynthia-count">{deskReceipts.length}</span></div>
+                <div className="cynthia-list">
+                  {deskReceipts.map(e => (
+                    <div key={e.id} className="cynthia-receipt-row">
+                      <span className="cynthia-fix-title">{titleForTrackId(e.trackId, scope) || e.albumLabel}</span>
+                      <span className="cynthia-fix-field">{e.field}</span>
+                      <span className="cynthia-fix-change">
+                        <span className="cynthia-fix-old">{formatVal(e.oldValue)}</span>
+                        <span className="cynthia-fix-arrow">→</span>
+                        <span className="cynthia-fix-new">{formatVal(e.newValue)}</span>
+                      </span>
+                      <button type="button" className="cynthia-select-link" onClick={() => revertReceipt(e)} title="Put it back the way it was">revert</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {deskFindings && deskFindings.length > 0 && (
+              <div className="cynthia-section">
+                <div className="cynthia-section-title">On my desk for this one <span className="cynthia-count">{deskFindings.length}</span></div>
+                <div className="cynthia-list">
+                  {deskFindings.slice(0, 12).map((f, i) => (
+                    <div key={`${f.trackId}-${f.field}-${i}`} className="cynthia-fix-row cynthia-fix-row--desk">
+                      <div className="cynthia-fix-track">
+                        <span className="cynthia-fix-title">{titleForTrackId(f.trackId, scope) || deskLabelByTrack.get(f.trackId) || `Track #${f.trackId}`}</span>
+                        <span className="cynthia-fix-field">{f.field}</span>
+                        <span className="cynthia-fix-source">{f.source}</span>
+                      </div>
+                      <div className="cynthia-fix-change">
+                        <span className="cynthia-fix-old">{formatVal(f.oldValue)}</span>
+                        <span className="cynthia-fix-arrow">→</span>
+                        <span className="cynthia-fix-new">{formatVal(f.newValue)}</span>
+                      </div>
+                      {f.reason && <div className="cynthia-fix-reason">{f.reason}</div>}
+                      <div className="cynthia-desk-actions">
+                        <button type="button" className="cynthia-btn cynthia-btn--primary cynthia-btn--mini" onClick={() => applyDeskFinding(f)}>Apply</button>
+                        <button type="button" className="cynthia-btn cynthia-btn--mini" onClick={() => dismissDeskFinding(f)} title="Never suggest this again">Dismiss</button>
+                      </div>
+                    </div>
+                  ))}
+                  {deskFindings.length > 12 && (
+                    <div className="cynthia-desk-more">…and {deskFindings.length - 12} more — ask me to run through the rest.</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {turns.length === 0 && (
           <div className="cynthia-empty-thread">
-            <div className="cynthia-empty-thread-text">Hey. What's up with this one?</div>
+            <div className="cynthia-empty-thread-text">{deskFindings && deskFindings.length > 0 ? 'Had a look at this one already — the desk above is what I found.' : "Hey. What's up with this one?"}</div>
             <div className="cynthia-empty-thread-sub">Try: <em>"check the disc count"</em>, <em>"find missing tracks"</em>, <em>"are the track numbers right?"</em></div>
           </div>
         )}

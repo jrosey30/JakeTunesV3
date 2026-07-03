@@ -27,6 +27,14 @@ import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
 import { computeArtistCandidates, parseGroupingResponse, parseRelatedArtists } from './artist-groups-core'
+// Cynthia overhaul — deterministic scanner, MB cache+diff, background sweep.
+import { scanAlbum as cynthiaScanAlbum, type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
+import { diffAgainstMusicBrainz, type MbLookupResult } from './cynthia-mb-diff'
+import { getCachedMbRelease } from './mb-release-cache'
+import {
+  startCynthiaSweep, enqueueAlbumsForSweep, getFindingsFor, dismissFinding,
+  getLedger, revertLedgerEntry, sweepStatus, albumKeyOfMain,
+} from './cynthia-sweep'
 import type { GroupingProposal, RelatedArtist } from './artist-groups-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
@@ -36,6 +44,14 @@ import {
   recoArtistMatches,
   evaluateMusicManVerification,
 } from './reco-match'
+import {
+  type RecoOutboxOp,
+  parseOutbox,
+  scrubOutboxForDelete,
+  pendingAddLocalIds,
+  pendingDeleteIds,
+  pendingDeleteIdentities,
+} from './reco-outbox'
 import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory'
 import { computeRediscovery, type RediscoveryPick, type RediscoveryTrack } from './rediscovery'
 import {
@@ -1092,8 +1108,8 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
     // handler + MM verify use, so the three surfaces agree on "same song".
     const listKeys = new Set<string>()
     try {
-      const tombstones = await readRecommendationTombstones()
-      const recos = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+      // Local rows are all live (mirror + outbox, Brief 125) — no tombstone filter.
+      const recos = await readRecommendationsFile()
       for (const r of recos) {
         const k = recoRecordIdentityKey(r)
         if (k) listKeys.add(k)
@@ -2635,6 +2651,23 @@ const playlistsCache = new JsonFileCache<unknown[]>(
   () => [],
   'playlists',
 )
+// V5 Live Concert Mode — declared live sets. Key = albumKey
+// (artist|||album, the renderer's canonical key), value = the merged
+// track's id + exact per-song cue offsets. Synced one-way to homemini
+// (see ~/bin/jaketunes-homemini-sync.sh) so mobile can grow a setlist
+// UI later; V3 is the single writer.
+// ⚠️ TWIN: src/renderer/types.ts LiveSetEntry (the renderer-side type).
+export interface LiveSetEntry {
+  mergedTrackId: number
+  cues: Array<{ trackId: number; title: string; artist: string; startMs: number; durationMs: number }>
+  totalDurationMs: number
+  createdAt: string
+}
+const liveSetsCache = new JsonFileCache<Record<string, LiveSetEntry>>(
+  () => join(STATE_DIR, 'live-sets.json'),
+  () => ({}),
+  'live-sets',
+)
 
 // 4.5.0-91 Phase 2.5 — orphaned-edit detection state. Populated by
 // detectStateConflicts() at boot when STATE_IS_NAS. UI reads it via
@@ -2651,7 +2684,10 @@ const STATE_FILE_NAMES = [
   'mobile-plays.json',
   'mobile-playlists.json',
   'playlist-additions.json',
-  'recommendations.json',
+  // recommendations.json is deliberately ABSENT (Brief 125): the mobile backend
+  // on homemini is the SINGLE writer of the shared recommendations files. V3
+  // mutates only through its HTTP API — a reconcile push of V3's local copy is
+  // exactly the whole-file clobber that resurrected phone-deleted recos.
   'play-events.jsonl',
   'embeddings.bin',
 ] as const
@@ -7526,13 +7562,19 @@ Your personality:
 - You don't pretend to know things. When sources disagree, you say so.
 
 Your toolkit:
-- musicbrainz_album_lookup: canonical track listings from MusicBrainz. This is your one and only tool. Use it for missing tracks, track-number issues, disc-count questions, "which version of this album is this?" — anything that needs the authoritative track order, durations, or disc layout for a release. You do NOT have web search. If MusicBrainz can't tell you, you say so and stop — you do not guess.
+- musicbrainz_album_lookup: canonical track listings from MusicBrainz. Use it for missing tracks, track-number issues, disc-count questions, "which version of this album is this?" — anything that needs the authoritative track order, durations, or disc layout for a release.
+- discogs_release_lookup: pressing-level facts from Discogs (year, country, label, format). Good second opinion when MusicBrainz is thin or the edition is in question.
+- wikidata_artist_lookup: structured artist facts (formed/dissolved years, members, labels, genres). Use for artist-identity questions — is this the right "Nirvana"?
+- read_file_tags: reads the EMBEDDED tags inside the user's actual audio files (title/artist/album/duration as written in the file itself). Use when you suspect the library entry and the file disagree — the file's own tags are strong evidence of what the track really is.
+You do NOT have web search. If your tools can't tell you, you say so and stop — you do not guess.
+
+PRE-GATHERED EVIDENCE: your message usually includes an EVIDENCE section — a deterministic scan of the in-scope tracks plus the cached MusicBrainz canonical diff, gathered BEFORE you were called. Read it first. If the evidence already answers the question, do NOT re-call the same tool for the same album — write your report from the evidence. Only reach for tools to answer what the evidence doesn't cover.
 
 How you work:
-1. Read what the user asked for and the in-scope tracks (ID + metadata) the user has selected.
-2. Call musicbrainz_album_lookup to ground the question. Don't guess from memory.
-3. Cross-check: if MusicBrainz returns a different artist with the same name (wrong "Nirvana", wrong "Air"), spot the mismatch and pick the right release. The release year, country, or genre tags will usually tell you.
-4. Form a concrete list of fixes — ONLY the ones you're certain about.
+1. Read what the user asked for, the in-scope tracks, and the EVIDENCE section.
+2. If the evidence is sufficient, report from it. Otherwise call the tool that fills the specific gap. Don't guess from memory.
+3. Cross-check: if MusicBrainz returns a different artist with the same name (wrong "Nirvana", wrong "Air"), spot the mismatch and pick the right release. The release year, country, or genre tags will usually tell you — wikidata_artist_lookup settles artist identity.
+4. Form a concrete list of fixes — ONLY the ones you're certain about, each citing which source proved it.
 5. Return a JSON report. The user reviews and approves before anything is written.
 
 HOW YOU TALK TO THE USER:
@@ -7580,13 +7622,15 @@ OUTPUT FORMAT — always return a single JSON object inside one fenced code bloc
 {
   "summary": "1-3 short paragraphs, conversational, talking to the user. This is the main thing they read. Tell them the situation, what you'd touch, what you'd leave alone (and why). Don't enumerate fixes line-by-line here — the fixes array does that.",
   "fixes": [
-    { "trackId": <number>, "field": "<one of the exact field names below>", "oldValue": <current value or empty string>, "newValue": <proposed value>, "reason": "<one sentence why>" }
+    { "trackId": <number>, "field": "<one of the exact field names below>", "oldValue": <current value or empty string>, "newValue": <proposed value>, "reason": "<one sentence why>", "source": "<which source proved it: musicbrainz | discogs | wikidata | file-tags | internal-consistency>", "confidence": "<high | medium>" }
   ],
   "missingTracks": [
     { "trackNumber": <n>, "discNumber": <n or 1>, "title": "<title>", "duration": <seconds or null>, "reason": "<which release this is from, e.g. 'Is There Anybody Out There? The Wall Live (1988 EMI 2CD)'>" }
   ],
   "rationale": "1-2 sentences for the Music Man brief — what was the issue, what got fixed, what's left."
 }
+
+SOURCE IS MANDATORY on every fix. 'internal-consistency' means the user's own in-scope data proves it (an outlier among their own spellings); the other four mean a tool result proved it. A fix with no source, or a source you didn't actually consult, gets DROPPED by the parser — unsourced fixes are worse than no fixes.
 
 FIELD NAMES — "field" MUST be exactly one of these strings, character-for-character. The renderer rejects anything else:
   trackNumber   (NOT track_number, track#, tracknum)
@@ -7830,6 +7874,104 @@ interface CynthiaInvestigateInput {
 //   - When the user actually wants Cynthia to *check* or *fix* something,
 //     Haiku calls deep_investigate, which spins up Sonnet 4.6 with the
 //     real toolkit and returns a structured report.
+// Cynthia overhaul — read_file_tags tool: batch-read embedded tags for
+// track ids via core/tag_reader.py (same stdin-JSON contract as the
+// sync-to-iPod verifier's batch read further up this file).
+async function readEmbeddedTagsForCynthia(trackIds: number[]): Promise<string> {
+  try {
+    if (trackIds.length === 0) return JSON.stringify({ error: 'no track ids given' })
+    const lib = await libraryCache.get()
+    const tracks = (lib.tracks as Array<{ id?: number; path?: string; title?: string }>) || []
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+    const wanted = new Map<string, number>()
+    for (const id of trackIds) {
+      const t = tracks.find(tr => tr.id === id)
+      if (t?.path) wanted.set(join(LOCAL_MOUNT, String(t.path).replace(/:/g, pathSep)), id)
+    }
+    if (wanted.size === 0) return JSON.stringify({ error: 'no file paths resolved for those ids' })
+    const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
+    const read = await new Promise<string>((resolve, reject) => {
+      const py = spawn(PYTHON_CMD ?? 'python3', [tagReaderScript])
+      let stdout = ''
+      let stderr = ''
+      py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+      py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+      py.on('error', reject)
+      py.on('close', (code: number) => {
+        if (code === 0) resolve(stdout)
+        else reject(new Error(`tag_reader exit ${code}: ${stderr}`))
+      })
+      py.stdin.on('error', reject)
+      try {
+        py.stdin.write(JSON.stringify([...wanted.keys()]))
+        py.stdin.end()
+      } catch (err) { reject(err) }
+    })
+    const arr = JSON.parse(read) as Array<{ path: string; [k: string]: unknown }>
+    return JSON.stringify(arr.map(entry => ({ trackId: wanted.get(entry.path), ...entry, path: undefined })))
+  } catch (err) {
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+  }
+}
+
+// Cynthia overhaul — pre-gather deterministic evidence for a scope so the
+// model starts INFORMED: the scanner's findings/flags plus the cached
+// MusicBrainz diff for each distinct album in scope. This is what
+// collapses the old 8×(model + 1s MB) tool loop to usually zero rounds.
+async function gatherCynthiaEvidence(scope: CynthiaInvestigateInput['scope']): Promise<string> {
+  try {
+    const byAlbum = new Map<string, CynthiaScanTrack[]>()
+    for (const t of scope.tracks) {
+      const key = albumKeyOfMain(t)
+      const arr = byAlbum.get(key)
+      if (arr) arr.push(t as CynthiaScanTrack)
+      else byAlbum.set(key, [t as CynthiaScanTrack])
+    }
+    const sections: string[] = []
+    for (const [, tracks] of byAlbum) {
+      const artist = String(tracks[0].albumArtist || tracks[0].artist || '')
+      const album = String(tracks[0].album || '')
+      const scan = cynthiaScanAlbum(tracks)
+      const lines: string[] = [`Album: ${artist} — ${album}`]
+      if (scan.findings.length > 0) {
+        lines.push(`Deterministic scan findings (already verified, cite source 'internal-consistency'):`)
+        for (const f of scan.findings.slice(0, 30)) {
+          lines.push(`  - track ${f.trackId} ${f.field}: '${f.oldValue}' -> '${f.newValue}' (${f.reason})`)
+        }
+      }
+      if (scan.flags.length > 0) {
+        lines.push(`Scan observations: ${scan.flags.map(fl => fl.detail).join('; ')}`)
+      }
+      // MB diff only when a fresh cached lookup exists or scope is album-sized;
+      // interactive calls shouldn't stall on cold MB fetches for huge scopes.
+      if (tracks.length >= 3 && byAlbum.size <= 3) {
+        try {
+          const { raw, fromCache } = await getCachedMbRelease(artist, album, musicBrainzAlbumLookup)
+          const mb = JSON.parse(raw) as MbLookupResult
+          const diff = diffAgainstMusicBrainz(tracks, mb, { artist, album })
+          if (mb.chosenRelease) {
+            lines.push(`MusicBrainz canonical (${fromCache ? 'cached' : 'fresh'}): '${mb.chosenRelease.title}' by ${mb.chosenRelease.artist}, date ${mb.chosenRelease.date || '?'} — ${mb.canonicalTrackCount || 0} tracks; exactMatch=${diff.exactMatch}, ambiguousEditions=${diff.ambiguous}`)
+          }
+          if (diff.findings.length > 0) {
+            lines.push(`Canonical diff findings (cite source 'musicbrainz'):`)
+            for (const f of diff.findings.slice(0, 30)) {
+              lines.push(`  - track ${f.trackId} ${f.field}: '${f.oldValue}' -> '${f.newValue}' (${f.reason})`)
+            }
+          }
+          if (diff.missingTracks.length > 0) {
+            lines.push(`Missing vs canonical: ${diff.missingTracks.map(m => `d${m.discNumber}t${m.trackNumber} '${m.title}'`).join(', ')}`)
+          }
+        } catch { /* evidence is best-effort */ }
+      }
+      sections.push(lines.join('\n'))
+    }
+    return sections.join('\n\n')
+  } catch {
+    return ''
+  }
+}
+
 async function runCynthiaInvestigation(
   userPrompt: string,
   scope: CynthiaInvestigateInput['scope'],
@@ -7838,19 +7980,21 @@ async function runCynthiaInvestigation(
     `${t.id}|${t.title}|${t.artist}|${t.album}|${t.albumArtist || ''}|disc ${t.discNumber || 1} track ${t.trackNumber || '?'}|${t.year || ''}|${t.genre || ''}|${Math.round((t.duration || 0) / 1000)}s`
   ).join('\n')
 
+  const evidence = await gatherCynthiaEvidence(scope)
+
   const userMessage = `The user (your boss's boss, basically) just right-clicked on ${scope.type === 'album' ? `the album "${scope.label}"` : scope.type === 'artist' ? `the artist "${scope.label}"` : scope.type === 'playlist' ? `the playlist "${scope.label}"` : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`} and said:
 
 "${userPrompt}"
 
 Tracks in scope (id|title|artist|album|albumArtist|disc/track|year|genre|duration):
 ${trackTable}
-
-Investigate. Use your tools as needed. Then return your JSON report.`
+${evidence ? `\nEVIDENCE (pre-gathered deterministically — read this before reaching for tools):\n${evidence}\n` : ''}
+Investigate. Use your tools only for what the evidence doesn't already answer. Then return your JSON report.`
 
   const tools: Anthropic.Messages.ToolUnion[] = [
     {
       name: 'musicbrainz_album_lookup',
-      description: 'Look up canonical track listings for a music release on MusicBrainz. Returns the authoritative track order, durations, and disc layout for an album. Use this FIRST for any album-related question (missing tracks, wrong track numbers, "what version is this?"). Returns a JSON object with chosenRelease, canonicalTracks, otherCandidates.',
+      description: 'Look up canonical track listings for a music release on MusicBrainz. Returns the authoritative track order, durations, and disc layout for an album. Check the EVIDENCE section first — the canonical diff may already be there. Returns a JSON object with chosenRelease, canonicalTracks, otherCandidates.',
       input_schema: {
         type: 'object' as const,
         properties: {
@@ -7858,6 +8002,40 @@ Investigate. Use your tools as needed. Then return your JSON report.`
           album:  { type: 'string', description: 'The album title (e.g. "Is There Anybody Out There? The Wall Live")' },
         },
         required: ['artist', 'album'],
+      },
+    },
+    {
+      name: 'discogs_release_lookup',
+      description: 'Pressing-level release facts from Discogs: year, country, label, format. Use as a second opinion on edition/year questions when MusicBrainz is thin or contradicted.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          artist: { type: 'string' },
+          album:  { type: 'string' },
+        },
+        required: ['artist', 'album'],
+      },
+    },
+    {
+      name: 'wikidata_artist_lookup',
+      description: 'Structured artist facts from Wikidata: formed/dissolved years, members, labels, genres, hometown. Use to settle artist-identity questions (same-name artists) and era sanity checks.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          artist: { type: 'string' },
+        },
+        required: ['artist'],
+      },
+    },
+    {
+      name: 'read_file_tags',
+      description: "Read the EMBEDDED tags inside the user's actual audio files for the in-scope track ids (title/artist/album/duration as written in the files). Strong evidence when you suspect the library entry and the file disagree.",
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          trackIds: { type: 'array', items: { type: 'number' }, description: 'Track ids from the in-scope list (max 30)' },
+        },
+        required: ['trackIds'],
       },
     },
   ]
@@ -7884,9 +8062,24 @@ Investigate. Use your tools as needed. Then return your JSON report.`
       messages.push({ role: 'assistant', content: response.content })
       const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
       for (const block of response.content) {
-        if (block.type === 'tool_use' && block.name === 'musicbrainz_album_lookup') {
+        if (block.type !== 'tool_use') continue
+        if (block.name === 'musicbrainz_album_lookup') {
           const input = block.input as { artist?: string; album?: string }
-          const result = await musicBrainzAlbumLookup(input.artist || '', input.album || '')
+          // Cynthia overhaul: route through the 7-day disk cache — repeat
+          // lookups (and anything the sweep already fetched) are instant.
+          const { raw } = await getCachedMbRelease(input.artist || '', input.album || '', musicBrainzAlbumLookup)
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: raw })
+        } else if (block.name === 'discogs_release_lookup') {
+          const input = block.input as { artist?: string; album?: string }
+          const hit = await getDiscogsReleaseInfo(input.artist || '', input.album || '').catch(() => null)
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(hit ?? { note: 'no Discogs match' }) })
+        } else if (block.name === 'wikidata_artist_lookup') {
+          const input = block.input as { artist?: string }
+          const hit = await getWikidataArtist(input.artist || '').catch(() => null)
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(hit ?? { note: 'no Wikidata match' }) })
+        } else if (block.name === 'read_file_tags') {
+          const input = block.input as { trackIds?: number[] }
+          const result = await readEmbeddedTagsForCynthia((input.trackIds || []).slice(0, 30))
           toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
         }
       }
@@ -7925,10 +8118,22 @@ Investigate. Use your tools as needed. Then return your JSON report.`
       }
     }
 
+    // Cynthia overhaul — the grounding rule is ENFORCED, not requested:
+    // a fix without a recognized source is dropped before the user sees it.
+    const VALID_SOURCES = new Set(['musicbrainz', 'discogs', 'wikidata', 'file-tags', 'internal-consistency'])
+    const rawFixes = Array.isArray(parsed.fixes) ? parsed.fixes : []
+    const sourcedFixes = rawFixes.filter((f) => {
+      const src = (f as { source?: string })?.source
+      return typeof src === 'string' && VALID_SOURCES.has(src)
+    })
+    if (rawFixes.length > sourcedFixes.length) {
+      console.warn(`[cynthia] dropped ${rawFixes.length - sourcedFixes.length} unsourced fix(es)`)
+    }
+
     return {
       ok: true,
       summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-      fixes: Array.isArray(parsed.fixes) ? parsed.fixes : [],
+      fixes: sourcedFixes,
       missingTracks: Array.isArray(parsed.missingTracks) ? parsed.missingTracks : [],
       rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
     }
@@ -8098,6 +8303,98 @@ ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale
   noteCynthiaUtterance(text)
   noteMusicManUtterance('cynthia-report', `[Cynthia, archivist] ${text}`)
   return { ok: true }
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// Cynthia overhaul — background sweep wiring + IPC family.
+// The sweep engine lives in cynthia-sweep.ts (idle-gated worker, per the
+// audio-analysis queue pattern); these are its hooks into main's plumbing
+// and the renderer's read/mutate surface.
+// ─────────────────────────────────────────────────────────────────────
+
+function cynthiaGetAlbumsSnapshot(): Map<string, { label: string; tracks: CynthiaScanTrack[] }> {
+  const out = new Map<string, { label: string; tracks: CynthiaScanTrack[] }>()
+  const lib = libraryCache.peek()
+  if (!lib) return out
+  const tracks = (lib.tracks as CynthiaScanTrack[]) || []
+  for (const t of tracks) {
+    if (!t || typeof t.id !== 'number') continue
+    const key = albumKeyOfMain(t)
+    let entry = out.get(key)
+    if (!entry) {
+      const artist = String(t.albumArtist || t.artist || 'Unknown Artist')
+      const album = String(t.album || 'Unknown')
+      entry = { label: `${artist} — ${album}`, tracks: [] }
+      out.set(key, entry)
+    }
+    entry.tracks.push(t)
+  }
+  return out
+}
+
+function buildCynthiaSweepHooks() {
+  return {
+    getAlbums: cynthiaGetAlbumsSnapshot,
+    fetchMbRelease: musicBrainzAlbumLookup,
+    applyOverride: async (trackId: number, field: string, value: string, fingerprint: string) => {
+      await applyMetadataOverrideInternal(trackId, field, value, fingerprint)
+      triggerSync('metadata-edit')
+    },
+    isIdle: () => !playbackActive,
+    sendProgress: (payload: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => {
+      mainWindow?.webContents.send('cynthia-sweep:progress', payload)
+    },
+    escalate: async (_albumKey: string, label: string, tracks: CynthiaScanTrack[], evidence: string) => {
+      const res = await runCynthiaInvestigation(
+        `Background sweep escalation — the release identity for this album is ambiguous (multiple editions with different track counts). ${evidence}. Pick the right edition and propose ONLY fixes you are sure about, each with its source.`,
+        { type: 'album', label, tracks: tracks as unknown as CynthiaTrackInScope[] },
+      )
+      if (!res.ok) return null
+      const fixes = (res.fixes as Array<Record<string, unknown>> | undefined) ?? []
+      const findings: CynthiaFinding[] = fixes
+        .filter(f => typeof f.trackId === 'number' && typeof f.field === 'string')
+        .map(f => ({
+          trackId: f.trackId as number,
+          field: f.field as CynthiaFinding['field'],
+          oldValue: String(f.oldValue ?? ''),
+          newValue: String(f.newValue ?? ''),
+          reason: String(f.reason ?? ''),
+          source: (f.source as CynthiaFinding['source']) ?? 'musicbrainz',
+          confidence: f.confidence === 'high' ? 'high' : 'medium',
+          provable: false,   // model output never auto-applies
+        }))
+      return { findings, summary: res.summary || '' }
+    },
+  }
+}
+
+ipcMain.handle('cynthia-get-findings', async (_e, albumKeys: string[]) => {
+  const findings = await getFindingsFor(Array.isArray(albumKeys) ? albumKeys : [])
+  return { ok: true, findings }
+})
+
+ipcMain.handle('cynthia-dismiss-fix', async (_e, fix: { trackId: number; field: string; newValue: string }) => {
+  if (!fix || typeof fix.trackId !== 'number' || !fix.field) return { ok: false, error: 'invalid fix key' }
+  await dismissFinding(fix)
+  return { ok: true }
+})
+
+ipcMain.handle('cynthia-get-ledger', async (_e, limit?: number) => {
+  const entries = await getLedger(typeof limit === 'number' ? limit : 200)
+  return { ok: true, entries }
+})
+
+ipcMain.handle('cynthia-revert-ledger-entry', async (_e, id: string) => {
+  const hooks = buildCynthiaSweepHooks()
+  const albums = cynthiaGetAlbumsSnapshot()
+  const byId = new Map<number, CynthiaScanTrack>()
+  for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
+  return revertLedgerEntry(String(id || ''), hooks.applyOverride, (trackId) => byId.get(trackId))
+})
+
+ipcMain.handle('cynthia-sweep-status', async () => {
+  const status = await sweepStatus()
+  return { ok: true, ...status }
 })
 
 /** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
@@ -10206,6 +10503,12 @@ function recommendationsPath(): string {
   return join(STATE_DIR, 'recommendations.json')
 }
 
+// LEGACY, READ-ONLY (Brief 125): V3 no longer writes tombstones anywhere — the
+// backend tombstones on every DELETE through its API and filters its own
+// responses. V3's old local recommendations-deleted.json is kept as read-only
+// historical knowledge so the one-time stray migration in
+// syncRecommendationsToLocal (and the NAS display fallback) can't resurrect a
+// song that was deleted before the outbox existed.
 function recommendationsDeletedPath(): string {
   return join(STATE_DIR, 'recommendations-deleted.json')
 }
@@ -10219,21 +10522,6 @@ async function readRecommendationTombstones(): Promise<Set<string>> {
   return new Set()
 }
 
-async function writeRecommendationTombstones(tombstones: Set<string>): Promise<void> {
-  const path = recommendationsDeletedPath()
-  const tmp = path + '.tmp.json'
-  await writeFile(tmp, JSON.stringify([...tombstones], null, 2))
-  const { rename: renameFS } = await import('fs/promises')
-  await renameFS(tmp, path)
-}
-
-async function addRecommendationTombstones(entries: string[]): Promise<void> {
-  if (entries.length === 0) return
-  const tombstones = await readRecommendationTombstones()
-  for (const e of entries) tombstones.add(String(e))
-  await writeRecommendationTombstones(tombstones)
-}
-
 // Identity tombstones — deleting a song tombstones the SONG (normalized
 // song|artist), not just one row id. The list once grew 14 copies of one track
 // because homemini re-minted ids for the same song and the id-only pull filter
@@ -10243,31 +10531,6 @@ const RECO_IDENTITY_TOMBSTONE_PREFIX = 'identity:'
 function isIdentityTombstoned(tombstones: Set<string>, r: RecommendationRecord): boolean {
   const k = recoRecordIdentityKey(r)
   return Boolean(k && tombstones.has(RECO_IDENTITY_TOMBSTONE_PREFIX + k))
-}
-
-// An explicit add un-deletes the song: without this, a deliberate re-add of a
-// previously deleted song would be silently dropped by the next sync.
-async function clearRecommendationIdentityTombstone(song?: string, artist?: string): Promise<void> {
-  try {
-    const k = recoIdentityKey(song, artist)
-    if (!k) return
-    const tombstones = await readRecommendationTombstones()
-    if (!tombstones.delete(RECO_IDENTITY_TOMBSTONE_PREFIX + k)) return
-    await writeRecommendationTombstones(tombstones)
-  } catch { /* best-effort */ }
-}
-
-async function mirrorRecommendationsToNas(list: RecommendationRecord[]): Promise<void> {
-  if (!isNasMounted()) return
-  try {
-    const nasPath = join(NAS_STATE_DIR_PATH, 'recommendations.json')
-    const tmp = nasPath + '.tmp.json'
-    await writeFile(tmp, JSON.stringify(sortRecommendations(list), null, 2))
-    const { rename: renameFS } = await import('fs/promises')
-    await renameFS(tmp, nasPath)
-  } catch (err) {
-    console.warn('[reco] NAS mirror failed:', err instanceof Error ? err.message : err)
-  }
 }
 
 function sortRecommendations(list: RecommendationRecord[]): RecommendationRecord[] {
@@ -10291,6 +10554,8 @@ async function readRecommendationsFile(): Promise<RecommendationRecord[]> {
   }
 }
 
+// LOCAL cache only (Brief 125): never mirrored to the NAS — the mobile backend
+// is the single writer of the shared recommendations files.
 async function writeRecommendationsFile(list: RecommendationRecord[]): Promise<void> {
   const recoPath = recommendationsPath()
   const sorted = sortRecommendations(list)
@@ -10298,7 +10563,6 @@ async function writeRecommendationsFile(list: RecommendationRecord[]): Promise<v
   await writeFile(tmp, JSON.stringify(sorted, null, 2))
   const { rename: renameFS } = await import('fs/promises')
   await renameFS(tmp, recoPath)
-  void mirrorRecommendationsToNas(sorted)
 }
 
 function mergeRecommendationsById(...sources: RecommendationRecord[][]): RecommendationRecord[] {
@@ -10509,9 +10773,8 @@ ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; t
 async function recommendationsForSuggest(): Promise<RecommendationRecord[]> {
   const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
   if (!stale && recommendationsSyncedAtMs > 0) {
-    const tombstones = await readRecommendationTombstones()
-    const local = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
-    return local
+    // Local rows are all live (mirror + outbox, Brief 125) — no tombstone filter.
+    return readRecommendationsFile()
   }
   return syncRecommendationsToLocal()
 }
@@ -10674,116 +10937,224 @@ async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | nu
   }
 }
 
-/** Merge homemini + NAS into local (additive only). Local + tombstones win. */
+// ---- Brief 125: queue-and-replay outbox --------------------------------
+// The homemini backend is the SINGLE writer of the shared recommendations
+// files. V3 mutates only via its HTTP API; when the Mini is unreachable the
+// mutation is queued here (V3-private file) and replayed on a later sync.
+function recommendationsOutboxPath(): string {
+  return join(STATE_DIR, 'recommendations-outbox.json')
+}
+
+async function readRecoOutbox(): Promise<RecoOutboxOp[]> {
+  try {
+    return parseOutbox(JSON.parse(await readFile(recommendationsOutboxPath(), 'utf-8')) as unknown)
+  } catch {
+    return []
+  }
+}
+
+async function writeRecoOutbox(ops: RecoOutboxOp[]): Promise<void> {
+  const p = recommendationsOutboxPath()
+  const tmp = p + '.tmp.json'
+  await writeFile(tmp, JSON.stringify(ops, null, 2))
+  const { rename: renameFS } = await import('fs/promises')
+  await renameFS(tmp, p)
+}
+
+// Serialize every outbox read-modify-write (adds, deletes, and replay can
+// overlap) through a promise chain so ops are never lost to a lost update.
+let recoOutboxChain: Promise<void> = Promise.resolve()
+function withRecoOutbox(fn: (ops: RecoOutboxOp[]) => Promise<RecoOutboxOp[]>): Promise<void> {
+  const run = recoOutboxChain.then(async () => {
+    const ops = await readRecoOutbox()
+    const next = await fn(ops)
+    await writeRecoOutbox(next)
+  })
+  recoOutboxChain = run.catch(() => {})
+  return run
+}
+
+function enqueueRecoOps(mutate: (ops: RecoOutboxOp[]) => RecoOutboxOp[]): Promise<void> {
+  return withRecoOutbox(async (ops) => mutate(ops))
+}
+
+/** Replay queued mutations against the backend API. Failures stay queued for
+ *  the next pass; a landed add adopts homemini's id in the local cache (the
+ *  same swap pushLocalOnlyRecommendations used to do) so the next mirror pull
+ *  can't duplicate it. */
+async function replayRecommendationsOutbox(): Promise<void> {
+  await withRecoOutbox(async (ops) => {
+    if (ops.length === 0) return ops
+    const remaining: RecoOutboxOp[] = []
+    const adoptions: Array<{ localId: string; adopted: RecommendationRecord }> = []
+    let landedAdds = 0
+    let landedDeletes = 0
+    for (const op of ops) {
+      if (op.op === 'add') {
+        try {
+          const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(op.input),
+            signal: AbortSignal.timeout(10000),
+          })
+          if (!res.ok) { remaining.push(op); continue }
+          const parsed = (await res.json().catch(() => null)) as RecommendationRecord | { item?: RecommendationRecord } | null
+          const adopted = (parsed && typeof parsed === 'object' && 'id' in parsed && (parsed as RecommendationRecord).id)
+            ? (parsed as RecommendationRecord)
+            : ((parsed as { item?: RecommendationRecord } | null)?.item ?? null)
+          if (adopted?.id && String(adopted.id) !== op.localId) {
+            adoptions.push({ localId: op.localId, adopted })
+          }
+          landedAdds++
+        } catch {
+          remaining.push(op)   // Mini unreachable — retry next sync
+        }
+      } else {
+        const stillDoomed: string[] = []
+        for (const did of op.ids) {
+          try {
+            const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
+              method: 'DELETE',
+              signal: AbortSignal.timeout(8000),
+            })
+            if (!res.ok && res.status !== 404) stillDoomed.push(did)
+          } catch {
+            stillDoomed.push(did)
+          }
+        }
+        if (stillDoomed.length > 0) remaining.push({ ...op, ids: stillDoomed })
+        else landedDeletes++
+      }
+    }
+    if (adoptions.length > 0) {
+      const local = await readRecommendationsFile()
+      const byId = new Map(local.map((r) => [String(r.id), r] as const))
+      for (const { localId, adopted } of adoptions) {
+        const mine = byId.get(localId)
+        byId.delete(localId)
+        // Adopt homemini's id; keep our enrichment where homemini's is sparse.
+        byId.set(String(adopted.id), mine ? { ...mine, ...adopted, id: adopted.id } : adopted)
+      }
+      await writeRecommendationsFile([...byId.values()])
+    }
+    if (landedAdds > 0 || landedDeletes > 0) {
+      console.log(`[reco] outbox replay: ${landedAdds} add(s), ${landedDeletes} delete(s) landed on homemini; ${remaining.length} op(s) still queued`)
+    }
+    return remaining
+  })
+}
+
+/** Brief 125 single-writer sync. Replay the outbox, then MIRROR the backend
+ *  list — it is the source of truth, so rows deleted on the phone simply
+ *  vanish here (no tombstone bookkeeping). Local enrichment overlays and
+ *  still-queued offline adds are kept. When the backend is unreachable, fall
+ *  back to a read-only additive import from the NAS copy for display — never
+ *  pushed anywhere. */
 let recommendationsSyncedAtMs = 0
 const RECOMMENDATIONS_SYNC_TTL_MS = 5 * 60 * 1000
 
 async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
-  const tombstones = await readRecommendationTombstones()
-  const rawLocal = await readRecommendationsFile()
-  const afterTombstones = rawLocal.filter((r) => !tombstones.has(String(r.id)) && !isIdentityTombstoned(tombstones, r))
-  // Heal: collapse duplicate copies of the same song that the id-only dedup
-  // let accumulate. Tombstone the collapsed ids (so the pull can't re-import
-  // them) and fire-and-forget homemini deletes so every store converges.
-  const local = dedupeRecommendationsByIdentity(afterTombstones)
-  if (local.length !== rawLocal.length) {
-    const keptIds = new Set(local.map((r) => String(r.id)))
-    const droppedDupeIds = afterTombstones.filter((r) => !keptIds.has(String(r.id))).map((r) => String(r.id))
-    if (droppedDupeIds.length > 0) {
-      await addRecommendationTombstones(droppedDupeIds)
-      for (const did of droppedDupeIds) {
-        void fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
-          method: 'DELETE', signal: AbortSignal.timeout(8000),
-        }).catch(() => { /* homemini converges on a later pass */ })
-      }
-      console.log(`[reco] healed ${droppedDupeIds.length} duplicate cop${droppedDupeIds.length === 1 ? 'y' : 'ies'} off the list`)
-    }
-    await writeRecommendationsFile(local)
-  }
-
-  const localIds = new Set(local.map((r) => String(r.id)))
-  const localIdentities = new Set(local.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
+  await replayRecommendationsOutbox().catch(() => {})
+  const local = await readRecommendationsFile()
+  const outbox = await readRecoOutbox()
+  const pendingAdds = pendingAddLocalIds(outbox)
+  const delIds = pendingDeleteIds(outbox)
+  const delIdentities = pendingDeleteIdentities(outbox)
   const backendRaw = await fetchRecommendationsFromBackend()   // null = homemini unreachable
-  const backend = backendRaw ?? []
-  const nas = (await readRecommendationsFromNas()) ?? []
 
-  // Additive pull: new phone/NAS picks only — by id AND by song identity.
-  // The id-only filter was the resurrection machine: a stale remote copy of
-  // a song under a fresh id re-imported as "new" on every restart.
-  const incoming = [...nas, ...backend].filter((r) => {
-    if (!r?.id) return false
-    const id = String(r.id)
-    if (tombstones.has(id) || localIds.has(id)) return false
-    if (isIdentityTombstoned(tombstones, r)) return false
-    const idk = recoRecordIdentityKey(r)
-    return !(idk && localIdentities.has(idk))
-  })
-
-  const merged = dedupeRecommendationsByIdentity(mergeRecommendationsById(local, incoming))
-  if (incoming.length > 0) {
+  if (backendRaw === null) {
+    // Display-freshness fallback: READ the NAS copy (backend-owned; reading is
+    // within the contract). Additive into the local cache only. The legacy
+    // tombstone file still gates this leg so a stale NAS snapshot can't
+    // resurrect a pre-outbox delete.
+    const legacy = await readRecommendationTombstones()
+    const localIds = new Set(local.map((r) => String(r.id)))
+    const localIdentities = new Set(local.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
+    const nas = (await readRecommendationsFromNas()) ?? []
+    const incoming = nas.filter((r) => {
+      if (!r?.id) return false
+      const id = String(r.id)
+      if (localIds.has(id) || delIds.has(id) || legacy.has(id)) return false
+      if (isIdentityTombstoned(legacy, r)) return false
+      const idk = recoRecordIdentityKey(r)
+      return !(idk && (localIdentities.has(idk) || delIdentities.has(idk)))
+    })
+    if (incoming.length === 0) {
+      recommendationsSyncedAtMs = Date.now()
+      return local
+    }
+    const merged = dedupeRecommendationsByIdentity(mergeRecommendationsById(local, incoming))
     await writeRecommendationsFile(merged)
-    console.log(`[reco] synced ${merged.length} recommendations to local (was ${local.length}, pulled ${incoming.length} new from remote)`)
+    console.log(`[reco] backend unreachable — pulled ${incoming.length} new from the NAS copy (read-only)`)
+    recommendationsSyncedAtMs = Date.now()
+    return merged
   }
-  recommendationsSyncedAtMs = Date.now()
-  // Reconcile UP: re-push any recommendations homemini is missing (e.g. added
-  // while it was offline, so the original POST never landed) so the mobile app
-  // sees them. No-op when homemini already has them all, or is unreachable.
-  const reconciled = await pushLocalOnlyRecommendations(merged, backendRaw, tombstones)
-  return reconciled ?? merged
-}
 
-// Re-push local recommendations that homemini lacks. Additive — never deletes
-// on homemini. Skips anything homemini already has by id OR by song+artist
-// identity (so we never double-create), and adopts homemini's returned id for
-// each pushed reco (swapping our local-only copy) so the next additive pull
-// can't re-add it as a duplicate. Capped per run; failures retry next sync.
-async function pushLocalOnlyRecommendations(
-  local: RecommendationRecord[],
-  backendRaw: RecommendationRecord[] | null,
-  tombstones: Set<string>,
-): Promise<RecommendationRecord[] | null> {
-  if (backendRaw === null) return null   // unreachable — can't distinguish local-only from "homemini has none"
+  // One-time stray migration: local rows the backend lacks with no outbox op
+  // covering them are pre-outbox offline adds (queue them up through the API)
+  // — unless the legacy tombstone file says the song was deleted, in which
+  // case they're exactly the strays that used to resurrect: drop them.
   const backendIds = new Set(backendRaw.map((r) => String(r.id)))
-  const backendIdentity = new Set(
-    backendRaw.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)),
-  )
-  const localOnly = local.filter((r) => {
-    if (tombstones.has(String(r.id)) || backendIds.has(String(r.id))) return false
-    if (isIdentityTombstoned(tombstones, r)) return false   // never re-push a deleted SONG (resurrection fix)
-    if (!(r.song || r.artist || r.album || r.note)) return false
+  const backendIdentities = new Set(backendRaw.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
+  const strays = local.filter((r) => {
+    const id = String(r.id)
+    if (backendIds.has(id) || pendingAdds.has(id) || delIds.has(id)) return false
     const idk = recoRecordIdentityKey(r)
-    return !(idk && backendIdentity.has(idk))
-  }).slice(0, 20)   // cap so a backlog doesn't hammer homemini in one pass
-  if (localOnly.length === 0) return null
-
-  const byId = new Map(local.map((r) => [String(r.id), r] as const))
-  let pushed = 0
-  for (const r of localOnly) {
-    try {
-      const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ song: r.song, artist: r.artist, album: r.album, note: r.note }),
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!res.ok) continue
-      const parsed = (await res.json().catch(() => null)) as RecommendationRecord | { item?: RecommendationRecord } | null
-      const adopted = (parsed && typeof parsed === 'object' && 'id' in parsed && (parsed as RecommendationRecord).id)
-        ? (parsed as RecommendationRecord)
-        : ((parsed as { item?: RecommendationRecord } | null)?.item ?? null)
-      if (adopted?.id && String(adopted.id) !== String(r.id)) {
-        // Adopt homemini's id; keep our enrichment where homemini's is sparse.
-        byId.delete(String(r.id))
-        byId.set(String(adopted.id), { ...r, ...adopted, id: adopted.id })
-        pushed++
-      }
-    } catch { /* homemini hiccup — leave the reco; retry next sync */ }
+    return !(idk && backendIdentities.has(idk))
+  })
+  if (strays.length > 0) {
+    const legacy = await readRecommendationTombstones()
+    const toQueue = strays
+      .filter((r) => !legacy.has(String(r.id)) && !isIdentityTombstoned(legacy, r))
+      .filter((r) => Boolean(r.song || r.artist || r.album || r.note))
+      .slice(0, 20)   // cap so a backlog doesn't hammer homemini in one pass
+    if (toQueue.length > 0) {
+      const now = new Date().toISOString()
+      await enqueueRecoOps((ops) => [
+        ...ops,
+        ...toQueue.map((r): RecoOutboxOp => ({
+          op: 'add',
+          localId: String(r.id),
+          input: { song: r.song, artist: r.artist, album: r.album, note: r.note },
+          identity: recoRecordIdentityKey(r),
+          queuedAt: now,
+        })),
+      ])
+      for (const r of toQueue) pendingAdds.add(String(r.id))
+      console.log(`[reco] queued ${toQueue.length} pre-outbox local-only recommendation(s) for homemini`)
+    }
   }
-  if (pushed === 0) return null
-  const reconciled = sortRecommendations([...byId.values()])
-  await writeRecommendationsFile(reconciled)
-  console.log(`[reco] reconciled ${pushed} local-only recommendation(s) up to homemini`)
-  return reconciled
+
+  // MIRROR: backend rows (minus pending deletes), preferring our local copy of
+  // a row when we have one (it's the backend row plus V3 enrichment), plus any
+  // offline adds still waiting in the outbox.
+  const localById = new Map(local.map((r) => [String(r.id), r] as const))
+  const fromBackend = backendRaw
+    .filter((r) => {
+      if (!r?.id || delIds.has(String(r.id))) return false
+      const idk = recoRecordIdentityKey(r)
+      return !(idk && delIdentities.has(idk))
+    })
+    .map((r) => localById.get(String(r.id)) ?? r)
+  const pendingRows = local.filter((r) => pendingAdds.has(String(r.id)))
+  const merged = dedupeRecommendationsByIdentity([...fromBackend, ...pendingRows])
+
+  // Heal server-side duplicates the dedupe collapsed: converge homemini via
+  // queued API deletes (ids only — no identity block, the song stays live).
+  const keptIds = new Set(merged.map((r) => String(r.id)))
+  const droppedDupeIds = fromBackend.filter((r) => !keptIds.has(String(r.id))).map((r) => String(r.id))
+  if (droppedDupeIds.length > 0) {
+    await enqueueRecoOps((ops) => [
+      ...ops,
+      { op: 'delete', ids: droppedDupeIds, identity: null, queuedAt: new Date().toISOString() },
+    ])
+    console.log(`[reco] healed ${droppedDupeIds.length} duplicate cop${droppedDupeIds.length === 1 ? 'y' : 'ies'} — queued homemini delete(s)`)
+  }
+
+  await writeRecommendationsFile(merged)
+  recommendationsSyncedAtMs = Date.now()
+  return merged
 }
 
 let readRecoInflight: Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> | null = null
@@ -10826,8 +11197,8 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
   // timeout, and a radar pick the user already jotted by hand. Checked BEFORE
   // the backend POST so homemini never mints a duplicate id either.
   try {
-    const tombstones = await readRecommendationTombstones()
-    const existing = (await readRecommendationsFile()).filter((r) => !tombstones.has(String(r.id)))
+    // Local rows are all live now (mirror + outbox — no tombstone filter needed).
+    const existing = await readRecommendationsFile()
     const idKey = recoIdentityKey(trimmed.song, trimmed.artist)
     const fullKey = recoMatchKey(trimmed)
     const dupe = existing.find((r) => {
@@ -10840,9 +11211,8 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
     }
   } catch { /* fall through to normal add */ }
 
-  // An explicit add un-deletes the song — clear its identity tombstone so the
-  // next sync doesn't drop the new row as a previously-deleted song.
-  await clearRecommendationIdentityTombstone(trimmed.song, trimmed.artist)
+  // Un-deleting on re-add is the backend's job (it clears the identity
+  // tombstone on a genuine re-add through POST) — V3 keeps no tombstones.
 
   const url = `${MOBILE_BACKEND_URL}/api/recommendations`
   console.log('[reco] POST →', url, JSON.stringify(trimmed))
@@ -10898,12 +11268,24 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
     return { ok: true, recommendation }
   }
 
-  // Mini unreachable or broken — save locally with iTunes enrichment.
+  // Mini unreachable or broken — save locally with iTunes enrichment and QUEUE
+  // the add for replay through the backend API (single-writer: the fallback is
+  // never a direct write to the shared NAS files).
   try {
     const local = await buildLocalRecommendation(trimmed, source)
     await appendRecommendationLocal(local)
+    await enqueueRecoOps((ops) => [
+      ...ops,
+      {
+        op: 'add',
+        localId: String(local.id),
+        input: trimmed,
+        identity: recoIdentityKey(trimmed.song, trimmed.artist),
+        queuedAt: new Date().toISOString(),
+      },
+    ])
     suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
-    console.log('[reco] saved locally (backend', backendStatus ?? 'unreachable', ') —', local.id)
+    console.log('[reco] saved locally + queued for homemini (backend', backendStatus ?? 'unreachable', ') —', local.id)
     return { ok: true, recommendation: local, savedLocally: true }
   } catch (err) {
     console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
@@ -10913,44 +11295,35 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
 
 ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
   // Identity-wide delete: removing a song removes EVERY copy of it (the list
-  // once carried 14 copies of one track under different ids) and tombstones
-  // the SONG, so no stale homemini/NAS copy can re-mint it under a fresh id.
-  // homemini DELETEs stay fire-and-forget (it 500s even on success). An
-  // explicit re-add clears the identity tombstone.
+  // once carried 14 copies of one track under different ids). The remote
+  // removal routes through the backend API via the outbox — the backend
+  // tombstones the song on DELETE (Brief 125 single-writer: V3 keeps no
+  // tombstones and never touches the shared NAS files). A queued add of the
+  // same song is cancelled instead of deleted remotely, so an offline
+  // add-then-delete can't replay the POST after the DELETE and resurrect it.
   const rid = String(id)
   let doomedIds: string[] = [rid]
-  const tombstoneEntries: string[] = [rid]
+  let identity: string | null = null
   try {
     const all = await readRecommendationsFile()
     const target = all.find((r) => String(r.id) === rid)
-    const identity = target ? recoRecordIdentityKey(target) : null
+    identity = target ? recoRecordIdentityKey(target) : null
     if (identity) {
       doomedIds = all.filter((r) => String(r.id) === rid || recoRecordIdentityKey(r) === identity).map((r) => String(r.id))
-      tombstoneEntries.length = 0
-      tombstoneEntries.push(...doomedIds, RECO_IDENTITY_TOMBSTONE_PREFIX + identity)
     }
-    await addRecommendationTombstones(tombstoneEntries)
     const next = all.filter((r) => !doomedIds.includes(String(r.id)))
     if (next.length !== all.length) await writeRecommendationsFile(next)
   } catch (err) {
     console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)
-    await addRecommendationTombstones(tombstoneEntries).catch(() => {})
   }
   suggestResultCache = null   // deleting frees the Music Man to re-suggest
-  for (const did of doomedIds) {
-    try {
-      const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
-        method: 'DELETE',
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!res.ok && res.status !== 404) {
-        console.warn('[reco] backend delete returned', res.status, 'for', did)
-      }
-    } catch (err) {
-      console.warn('[reco] backend delete unreachable:', err instanceof Error ? err.message : err)
-    }
-  }
-  // Tombstones guarantee the song stays gone even if homemini/NAS still has it.
+  await enqueueRecoOps((ops) => {
+    const { ops: scrubbed, remoteIds } = scrubOutboxForDelete(ops, doomedIds, identity)
+    if (remoteIds.length === 0) return scrubbed   // all copies were still queued adds — nothing to delete remotely
+    return [...scrubbed, { op: 'delete', ids: remoteIds, identity, queuedAt: new Date().toISOString() }]
+  })
+  // Replay now when the Mini is up; otherwise the op waits for the next sync.
+  void replayRecommendationsOutbox().catch(() => {})
   return { ok: true }
 })
 
@@ -10992,11 +11365,16 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
       const g = (t.genre || '').trim()
       if (g) playsByGenre.set(g, (playsByGenre.get(g) ?? 0) + (Number(t.playCount) || 0))
     }
-    const topArtists = Array.from(playsByArtist.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([a]) => a)
+    // Top 150 seed the model-facing no-fly list (bannedArtists) so famous owned
+    // artists are excluded at the SOURCE, not just post-filtered; the prompt's
+    // "already owns and loves" line stays a tight top-15.
+    const topOwnedArtists = Array.from(playsByArtist.entries()).sort((a, b) => b[1] - a[1]).slice(0, 150).map(([a]) => a)
+    const topArtists = topOwnedArtists.slice(0, 15)
     const topGenres = Array.from(playsByGenre.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g]) => g)
 
     let existing: string[] = []
     const listSongs = new Set<string>() // normalized artist|title already ON the list
+    const listPairs: Array<{ artist: string; title: string }> = [] // raw, for the loose-artist check
     try {
       const parsed = await recommendationsForSuggest()
       if (parsed.length > 0) {
@@ -11005,24 +11383,53 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
           .filter((s) => s.length > 2)
           .slice(0, 50)
         for (const r of parsed) {
-          const a = norm(String(r.artist || r.matchedArtist || ''))
-          const t = norm(String(r.song || r.matchedTitle || ''))
-          if (a && t) listSongs.add(`${a}|${t}`)
+          const rawA = String(r.artist || r.matchedArtist || '')
+          const rawT = String(r.song || r.matchedTitle || '')
+          const a = norm(rawA)
+          const t = norm(rawT)
+          if (a && t) {
+            listSongs.add(`${a}|${t}`)
+            listPairs.push({ artist: rawA, title: rawT })
+          }
         }
       }
     } catch { /* no list yet */ }
 
+    // Exact-match alone misses multi-credit lines MM writes for collabs/features
+    // (e.g. "Daft Punk, Pharrell Williams & Nile Rodgers" never equals the library's
+    // plain "Daft Punk"), letting already-owned artists slip past the discovery
+    // filter. recoArtistMatches (substring-aware, same helper suggest-verify uses)
+    // catches those; the Set.has fast path just avoids an O(n) scan on the common
+    // exact-match case.
+    const isOwnedArtist = (artist: string): boolean => {
+      const a = norm(artist)
+      if (ownedArtists.has(a)) return true
+      for (const owned of ownedArtists) {
+        if (recoArtistMatches(artist, owned)) return true
+      }
+      return false
+    }
+
+    // Same multi-credit seam on the on-list side: a list entry saved as
+    // "Daft Punk" must still block a suggestion credited "Daft Punk, Pharrell
+    // Williams & Nile Rodgers" for the same title.
+    const isOnList = (s: { song: string; artist: string }): boolean => {
+      if (listSongs.has(`${norm(s.artist)}|${norm(s.song)}`)) return true
+      const title = norm(s.song)
+      return listPairs.some((p) => norm(p.title) === title && recoArtistMatches(s.artist, p.artist))
+    }
+
     const passesFilter = (s: { song: string; artist: string }) => {
       const key = `${norm(s.artist)}|${norm(s.song)}`
-      return !ownedArtists.has(norm(s.artist)) && !ownedSongs.has(key) && !listSongs.has(key)
+      return !isOwnedArtist(s.artist) && !ownedSongs.has(key) && !isOnList(s)
     }
 
     const accumulated: Array<{ song: string; artist: string; note: string }> = []
     const seenKeys = new Set<string>()
-    const bannedArtists = new Set<string>(topArtists.map((a) => a.toLowerCase().trim()))
+    const bannedArtists = new Set<string>(topOwnedArtists.map((a) => a.toLowerCase().trim()))
 
     for (let attempt = 0; attempt < 4 && accumulated.length < 3; attempt++) {
-      const excludeArtists = Array.from(bannedArtists).slice(0, 80)
+      const excludeArtists = Array.from(bannedArtists).slice(0, 160)
       const excludePicked = accumulated.map((s) => s.artist)
       const user = [
         `Artists this person ALREADY OWNS and loves: ${topArtists.join(', ') || '(unknown)'}.`,
@@ -11034,6 +11441,7 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
         '',
         'This is a DISCOVERY list. Suggest 20 records they almost certainly do NOT own yet — artists NEW to this collection that sit in the lineage of, or just adjacent to, what they love (their influences, contemporaries, the bands they inspired or ripped off, the deeper scene). Do NOT suggest any artist listed above, and nothing already on the list — they HAVE those. The entire point is music they have not heard.',
         'Each: a real song + the artist + a one-sentence note in your voice on why it\'s the right next step for them.',
+        'The note must be about THAT SAME song/artist — never argue against your own pick or pitch a different record than the one named in the entry.',
         'CRITICAL: song + artist must be a real recording on Apple Music/iTunes — the primary credited artist on that track. Never attribute a famous song to the wrong artist (e.g. Daft Punk\'s "Around the World" is not by Modjo; Chromeo\'s "Bonafide Lovin\'" is not by Röyksopp).',
         'Return ONLY JSON, no prose, no code fence: an array of 20 objects [{"song":"...","artist":"...","note":"..."}, ...].',
       ].filter(Boolean).join('\n')
@@ -11359,6 +11767,38 @@ ipcMain.handle('load-metadata-overrides', async () => {
 //   { "<trackId>": { "<field>": "<value>" } }
 // Legacy entries are kept on disk but the renderer ignores them (can't
 // validate), which is what we want after the wrong-overrides incident.
+// Cynthia overhaul — the v2 fingerprint-merge write, extracted from the
+// save-metadata-override handler so the background sweep's auto-apply
+// goes through the IDENTICAL serialized pipeline (no twin logic). All
+// semantics preserved verbatim: explicit fp mismatch wipes (re-parse
+// safeguard), no-fp saves merge, fresh writes stamp the fp.
+async function applyMetadataOverrideInternal(trackId: number, field: string, value: string, fingerprint?: string): Promise<void> {
+  await writeOverridesSerialized((overrides) => {
+    const key = String(trackId)
+    const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
+    const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
+    const hasNewFp = typeof fingerprint === 'string' && fingerprint !== ''
+    const existingFp = isV2 ? (existing!.fp || '') : ''
+    if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint) {
+      // Explicit fingerprint mismatch — track at this ID has changed
+      // identity (re-parse, library shift, etc). Old overrides don't
+      // apply anymore; start fresh with just the new field.
+      overrides[key] = { fp: fingerprint, fields: { [field]: value } }
+    } else if (isV2) {
+      // Same track (matching fp, or one side has no fp). MERGE — never
+      // drop prior fields. Update fp only if a new one was passed.
+      overrides[key] = {
+        fp: hasNewFp ? fingerprint : existingFp,
+        fields: { ...(existing!.fields || {}), [field]: value },
+      }
+    } else {
+      // No prior entry — fresh write.
+      overrides[key] = { fp: fingerprint || '', fields: { [field]: value } }
+    }
+    return overrides
+  })
+}
+
 ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
   const lockReason = isSaveLocked()
   if (lockReason) {
@@ -11388,30 +11828,7 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   // existing fields and keeping the existing fp; a matching
   // fingerprint or empty-fp existing entry merges as before.
   void (async () => {
-  await writeOverridesSerialized((overrides) => {
-    const key = String(trackId)
-    const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
-    const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
-    const hasNewFp = typeof fingerprint === 'string' && fingerprint !== ''
-    const existingFp = isV2 ? (existing!.fp || '') : ''
-    if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint) {
-      // Explicit fingerprint mismatch — track at this ID has changed
-      // identity (re-parse, library shift, etc). Old overrides don't
-      // apply anymore; start fresh with just the new field.
-      overrides[key] = { fp: fingerprint, fields: { [field]: value } }
-    } else if (isV2) {
-      // Same track (matching fp, or one side has no fp). MERGE — never
-      // drop prior fields. Update fp only if a new one was passed.
-      overrides[key] = {
-        fp: hasNewFp ? fingerprint : existingFp,
-        fields: { ...(existing!.fields || {}), [field]: value },
-      }
-    } else {
-      // No prior entry — fresh write.
-      overrides[key] = { fp: fingerprint || '', fields: { [field]: value } }
-    }
-    return overrides
-  })
+  await applyMetadataOverrideInternal(trackId, field, value, fingerprint)
   // 4.4.18: metadata edits are a sync trigger — change a track's artist
   // on laptop, homemini reflects it within ~30 sec.
   triggerSync('metadata-edit')
@@ -12213,6 +12630,94 @@ ipcMain.handle('choose-artwork-file', async () => {
 ipcMain.handle('load-artwork-map', async () => {
   const index = await loadArtworkIndex()
   return { ok: true, map: index }
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// V5 Live Concert Mode — merge a declared live album into one gapless
+// ALAC "live set" + sidecar cue data. See src/main/live-set-merge.ts
+// for the engine; these handlers own IPC, path conversion, artwork
+// aliasing, and the sidecar. The renderer owns the import + library
+// steps (same division of labor as CD rip).
+// ─────────────────────────────────────────────────────────────────────
+
+function liveSetScratchDir(): string {
+  return join(STATE_DIR, 'live-set-scratch')
+}
+
+ipcMain.handle('load-live-sets', async () => {
+  const sets = await liveSetsCache.get()
+  return { ok: true, sets }
+})
+
+ipcMain.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
+  if (!albumKey || !entry || typeof entry.mergedTrackId !== 'number' || !Array.isArray(entry.cues)) {
+    return { ok: false, error: 'invalid live-set entry' }
+  }
+  await liveSetsCache.update((sets) => ({ ...sets, [albumKey]: entry }))
+  return { ok: true }
+})
+
+ipcMain.handle('remove-live-set', async (_e, albumKey: string) => {
+  await liveSetsCache.update((sets) => {
+    const next = { ...sets }
+    delete next[albumKey]
+    return next
+  })
+  return { ok: true }
+})
+
+ipcMain.handle('live-set-merge', async (
+  event,
+  tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,
+  album: { name: string; artist: string; genre?: string; year?: string | number },
+) => {
+  const { mergeLiveSet } = await import('./live-set-merge')
+  // Colon-notation library paths → absolute, same conversion the
+  // save-library unlink path uses.
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  const inputs = tracks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    artist: t.artist,
+    durationMs: t.durationMs,
+    absPath: join(LOCAL_MOUNT, String(t.path || '').replace(/:/g, pathSep)),
+  }))
+  try {
+    const result = await mergeLiveSet(inputs, album, liveSetScratchDir(), (p) => {
+      event.sender.send('live-set-progress', p)
+    })
+    // Artwork alias: the "(Live Set)" album inherits the source album's
+    // cover — same JPG on disk, second index key. Best-effort; a missing
+    // source entry just means the resolver's fallback chain runs later.
+    try {
+      const index = await loadArtworkIndex()
+      const srcKey = `${album.artist.toLowerCase().trim()}|||${album.name.toLowerCase().trim()}`
+      const liveKey = `${album.artist.toLowerCase().trim()}|||${`${album.name} (Live Set)`.toLowerCase().trim()}`
+      if (index[srcKey] && !index[liveKey]) {
+        await saveArtworkIndex({ ...index, [liveKey]: index[srcKey] })
+      }
+    } catch (err) {
+      console.warn('[live-set] artwork alias failed (non-fatal):', err instanceof Error ? err.message : err)
+    }
+    return { ok: true, ...result }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// Post-import cleanup of the merged source file. Identity-gated: only
+// paths inside OUR scratch dir are deletable — a confused caller can't
+// aim this at library audio.
+ipcMain.handle('live-set-cleanup', async (_e, absPath: string) => {
+  const scratch = liveSetScratchDir()
+  const normalized = String(absPath || '')
+  if (!normalized.startsWith(scratch + (IS_WINDOWS ? '\\' : '/'))) {
+    return { ok: false, error: 'path outside live-set scratch dir' }
+  }
+  const { rm } = await import('fs/promises')
+  await rm(normalized, { force: true }).catch(() => {})
+  return { ok: true }
 })
 
 /**
@@ -13124,6 +13629,15 @@ app.whenReady().then(async () => {
     await loadCynthiaMemory().catch(() => {})
     fetchDiscogsCollection()
   })()
+
+  // Cynthia overhaul — start the background sweep 30s after boot (out of
+  // the launch hot path), once the library cache is warm. Idle-gated on
+  // playbackActive inside the worker; queue persists across restarts.
+  setTimeout(() => {
+    void libraryCache.get()
+      .then(() => startCynthiaSweep(buildCynthiaSweepHooks()))
+      .catch((err) => console.warn('[cynthia-sweep] boot failed:', err instanceof Error ? err.message : err))
+  }, 30_000)
 
   // Cache of transcoded AAC copies of ALAC sources. Chromium can't decode
   // ALAC, so when the renderer asks for one we detect it and hand back a

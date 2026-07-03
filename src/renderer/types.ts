@@ -98,6 +98,26 @@ export interface Playlist {
 
 export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail'
 
+// V5 Live Concert Mode — a declared album's merged "live set". Key'd by
+// albumKey (artist|||album) in live-sets.json; the merged file is a REAL
+// library track (mergedTrackId) so it plays on desktop + mobile alike.
+// Cues are EXACT per-song offsets derived from PCM byte counts at merge
+// time — the pill maps playhead position → current setlist song with them.
+// ⚠️ TWIN: src/main/index.ts LiveSetEntry (the sidecar's writer-side type).
+export interface LiveSetCue {
+  trackId: number
+  title: string
+  artist: string
+  startMs: number
+  durationMs: number
+}
+export interface LiveSetEntry {
+  mergedTrackId: number
+  cues: LiveSetCue[]
+  totalDurationMs: number
+  createdAt: string
+}
+
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
 // it down" entries, owned by the mobile backend (recommendations.json on
 // the NAS, next to library.json) and mirrored to desktop. The optional
@@ -179,6 +199,46 @@ export interface CynthiaFix {
   oldValue: unknown
   newValue: unknown
   reason: string
+  // Cynthia overhaul — every fix cites the source that proved it (the
+  // parser drops unsourced fixes main-side) + a confidence grade.
+  source?: 'musicbrainz' | 'discogs' | 'wikidata' | 'file-tags' | 'internal-consistency'
+  confidence?: 'high' | 'medium'
+}
+
+// Cynthia overhaul — background-sweep surface types.
+// ⚠️ TWIN: src/main/cynthia-scan.ts CynthiaFinding / cynthia-sweep.ts
+// CynthiaAlbumFindings + CynthiaLedgerEntry (main-side originals).
+export interface CynthiaSweepFinding {
+  trackId: number
+  field: string
+  oldValue: string
+  newValue: string
+  reason: string
+  source: string
+  confidence: string
+  provable: boolean
+}
+export interface CynthiaAlbumFindings {
+  albumKey: string
+  albumLabel: string
+  scannedAt: number
+  findings: CynthiaSweepFinding[]
+  missingTracks: CynthiaMissingTrack[]
+  flags: Array<{ kind: string; detail: string }>
+  autoAppliedCount: number
+}
+export interface CynthiaLedgerEntry {
+  id: string
+  at: number
+  albumKey: string
+  albumLabel: string
+  trackId: number
+  field: string
+  oldValue: string
+  newValue: string
+  reason: string
+  source: string
+  reverted?: boolean
 }
 export interface CynthiaMissingTrack {
   trackNumber: number
@@ -438,6 +498,13 @@ declare global {
         error?: string
       }>
       cynthiaReportToMusicMan: (payload: { rationale: string; summary?: string }) => Promise<{ ok: boolean; error?: string }>
+      // Cynthia overhaul — background-sweep surface.
+      cynthiaGetFindings: (albumKeys: string[]) => Promise<{ ok: boolean; findings: Record<string, CynthiaAlbumFindings> }>
+      cynthiaDismissFix: (fix: { trackId: number; field: string; newValue: string }) => Promise<{ ok: boolean; error?: string }>
+      cynthiaGetLedger: (limit?: number) => Promise<{ ok: boolean; entries: CynthiaLedgerEntry[] }>
+      cynthiaRevertLedgerEntry: (id: string) => Promise<{ ok: boolean; error?: string }>
+      cynthiaSweepStatus: () => Promise<{ ok: boolean; swept: number; queued: number; withFindings: number; autoAppliedTotal: number; lastSweptAt: number | null }>
+      onCynthiaSweepProgress: (callback: (progress: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => void) => () => void
       restoreXmlPickFile: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
       restoreXmlScan: (xmlPath: string) => Promise<{ ok: boolean; data?: RestoreScanResult; error?: string }>
       restoreXmlApply: (xmlPath: string, approvedIds: number[]) => Promise<{ ok: boolean; data?: RestoreApplyResult; error?: string }>
@@ -604,6 +671,17 @@ declare global {
       onCdRipProgress: (callback: (progress: { current: number; total: number; trackNumber: number; trackTitle: string; track?: Track; error?: string }) => void) => () => void
       onImportProgress: (callback: (progress: { current: number; total: number; title: string; error?: string }) => void) => () => void
       ejectCd: () => Promise<{ ok: boolean; error?: string }>
+      // V5 Live Concert Mode — merge/sidecar/cleanup family (see
+      // src/main/live-set-merge.ts + the live-set-* handlers in main).
+      liveSetMerge: (
+        tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,
+        album: { name: string; artist: string; genre?: string; year?: string | number },
+      ) => Promise<{ ok: boolean; mergedPath?: string; cues?: LiveSetCue[]; totalDurationMs?: number; error?: string }>
+      onLiveSetProgress: (callback: (progress: { stage: 'decode' | 'concat' | 'encode'; current: number; total: number; label: string }) => void) => () => void
+      loadLiveSets: () => Promise<{ ok: boolean; sets: Record<string, LiveSetEntry> }>
+      saveLiveSet: (albumKey: string, entry: LiveSetEntry) => Promise<{ ok: boolean; error?: string }>
+      removeLiveSet: (albumKey: string) => Promise<{ ok: boolean }>
+      liveSetCleanup: (absPath: string) => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
       // Music Man taste-learning telemetry. The main process records these
       // into the listener profile; renderer fires-and-forgets, so the

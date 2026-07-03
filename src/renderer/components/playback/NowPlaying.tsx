@@ -3,6 +3,10 @@ import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { subscribe, getSnapshot, getRip, getSync, getImport, getNotice, getBroadcast, getRadio, getCaptionsOn, setCaptionsOn } from '../../activity'
 import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../previewPlayer'
+// V5 Live Concert Mode — approved surgical addition (Jake, 2026-07-02):
+// map the playhead to the current setlist song while a merged live set
+// plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt } from '../../liveSets'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -101,6 +105,16 @@ export default function NowPlaying() {
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const previewActive = preview.playingId != null
   const previewProgress = preview.duration > 0 ? (preview.position / preview.duration) * 100 : 0
+
+  // V5 Live Concert Mode (approved surgical addition) — when the playing
+  // track is a merged live set, derive the current setlist song from the
+  // playhead. Zero extra render cost: this component already re-renders
+  // on state.position for the scrubber. Everything below this block —
+  // including the protected scrubber drag logic — is untouched.
+  useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  const liveEntry = state.nowPlaying ? (mergedTrackIndex().get(state.nowPlaying.id) ?? null) : null
+  const liveCue = liveEntry ? cueAt(liveEntry, state.position * 1000) : null
 
   // Pause the user's music while a preview plays; resume it when the
   // preview ends/stops (the "pause music, resume after" behavior). Acts
@@ -358,13 +372,26 @@ export default function NowPlaying() {
               for a 60×8px squiggle nobody used. Component definition
               kept above in case it gets revived; just not rendered. */}
           <div className="now-playing-info now-playing-info--stacked">
+            {/* V5 Live Mode: during a merged live set, the primary line is
+                the CURRENT setlist song and the secondary carries the set
+                position — otherwise exactly the pre-V5 rendering. */}
             <div className="now-playing-line-primary">
-              <span className="now-playing-title">{track.title}</span>
+              <span className="now-playing-title">{liveCue ? liveCue.cue.title : track.title}</span>
             </div>
             <div className="now-playing-line-secondary">
-              <span className="now-playing-artist">{track.artist}</span>
-              {track.album && <span className="now-playing-sep"> — </span>}
-              {track.album && <span className="now-playing-album">{track.album}</span>}
+              {liveCue && liveEntry ? (
+                <>
+                  <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
+                  <span className="now-playing-sep"> — </span>
+                  <span className="now-playing-album">{track.album}</span>
+                </>
+              ) : (
+                <>
+                  <span className="now-playing-artist">{track.artist}</span>
+                  {track.album && <span className="now-playing-sep"> — </span>}
+                  {track.album && <span className="now-playing-album">{track.album}</span>}
+                </>
+              )}
             </div>
           </div>
           <div className="scrubber-row">

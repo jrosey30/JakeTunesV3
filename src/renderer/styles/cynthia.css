@@ -443,3 +443,48 @@
   align-items: center;
   justify-content: center;
 }
+
+/* ── Cynthia overhaul: the desk (precomputed sweep results) ── */
+.cynthia-sweepline {
+  font-size: 9px;
+  color: #a08960;
+  margin-top: 1px;
+}
+.cynthia-desk {
+  padding: 8px 10px 2px;
+  border-bottom: 1px dashed rgba(160, 120, 60, 0.25);
+  background: rgba(255, 245, 230, 0.5);
+}
+.cynthia-fix-row--desk { cursor: default; }
+.cynthia-fix-source {
+  font-size: 9px;
+  color: #a08960;
+  border: 1px solid rgba(160, 137, 96, 0.4);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+.cynthia-desk-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.cynthia-btn--mini {
+  font-size: 10px;
+  padding: 2px 8px;
+  line-height: 1.4;
+}
+.cynthia-receipt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.cynthia-desk-more {
+  font-size: 10px;
+  color: #a08960;
+  font-style: italic;
+  padding: 4px 2px;
+}

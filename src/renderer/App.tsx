@@ -3,6 +3,7 @@ import { LibraryProvider, useLibrary } from './context/LibraryContext'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
 import { NavigationProvider, useNavigation } from './context/NavigationContext'
+import { ViewModeProvider } from './context/ViewModeContext'
 import { useAudio } from './hooks/useAudio'
 import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
@@ -1495,6 +1496,20 @@ function AppInner() {
     })
   }, [dispatch])
 
+  // Cynthia overhaul — when the background sweep auto-applies a provable
+  // fix (main process, overrides file), mirror it into the in-memory
+  // library so the UI reflects it live instead of after next relaunch.
+  useEffect(() => {
+    if (!window.electronAPI.onCynthiaSweepProgress) return
+    return window.electronAPI.onCynthiaSweepProgress((p) => {
+      if (p.autoApplied.length === 0) return
+      dispatch({
+        type: 'UPDATE_TRACKS',
+        updates: p.autoApplied.map(f => ({ id: f.trackId, field: f.field, value: f.newValue })),
+      })
+    })
+  }, [dispatch])
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -1846,11 +1861,15 @@ export default function App() {
   return (
     <LibraryProvider>
       <NavigationProvider>
-        <PlaybackProvider>
-          <CynthiaProvider>
-            <AppInner />
-          </CynthiaProvider>
-        </PlaybackProvider>
+        {/* V5 facelift: view-mode (List/Grid/CoverFlow) observer — reads
+            LibraryContext only, so it sits above PlaybackProvider. */}
+        <ViewModeProvider>
+          <PlaybackProvider>
+            <CynthiaProvider>
+              <AppInner />
+            </CynthiaProvider>
+          </PlaybackProvider>
+        </ViewModeProvider>
       </NavigationProvider>
     </LibraryProvider>
   )
