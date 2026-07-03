@@ -23,9 +23,9 @@ SAFE-WRITE (metadata-overrides.json is the app's file):
 Usage: python3 taxonomy-classify.py [--dry-run]
   --dry-run classifies + stages but writes ONLY a /tmp preview, never the live file.
 """
-import json, os, struct, time, sys, subprocess, shutil
+import json, os, re, struct, time, sys, subprocess, shutil
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.request
 
@@ -85,6 +85,22 @@ paths = [p for p, _ in leaves]
 L = np.array([c for _, c in leaves], dtype='f4')
 log(f"{len(leaves)} shelf-centroids")
 
+# --- candidate-augment context (2026-07-01, the Matchbox Twenty bug) --------
+# The embedding top-6 shortlist can miss a track's obvious home shelf entirely
+# ("If You're Gone": 4 siblings in Rock › Alternative, yet no Alternative shelf
+# was ever offered — Sonnet picked the least-wrong of six wrong options). Two
+# soft hints fix the MENU without forcing the pick; Sonnet still judges:
+#   (a) tag-hint — best shelves whose path mentions the track's raw genre tag
+#   (b) artist-home — shelves where this artist's other classified tracks live
+byid = {str(t.get('id')): t for t in tracks}
+artist_home = defaultdict(Counter)   # artist(lower) -> Counter{subgenrePath}
+for _k, _v in ov.items():
+    _f = (_v or {}).get('fields') or {}
+    _p = _f.get('subgenrePath')
+    _t = byid.get(_k)
+    if _p and _t and aname(_t): artist_home[aname(_t).lower()][_p] += 1
+path_idx = {p: j for j, p in enumerate(paths)}
+
 def has_subgenre(tid):
     e = ov.get(str(tid))
     return bool(e and (e.get('fields') or {}).get('subgenre'))
@@ -107,9 +123,22 @@ def cands_for(t):
     if force:
         ci = [j for j, pp in enumerate(paths) if force in pp.lower()]
         top = sorted(ci, key=lambda j: -float(L[j] @ v))[:6] if ci else list(map(int, np.argsort(-(L @ v))[:6]))
-    else:
-        top = list(map(int, np.argsort(-(L @ v))[:6]))
-    return top, force
+        return top, force
+    top = list(map(int, np.argsort(-(L @ v))[:6]))
+    extra = []
+    if tag:   # (a) tag-hint: whole tag first, else its words (>=4 chars)
+        ti = [j for j, pp in enumerate(paths) if tag in pp.lower()]
+        if not ti:
+            words = [w for w in re.split(r'[^a-z]+', tag) if len(w) >= 4]
+            ti = [j for j, pp in enumerate(paths) if any(w in pp.lower() for w in words)]
+        extra += sorted(ti, key=lambda j: -float(L[j] @ v))[:2]
+    home = artist_home.get(aname(t).lower())   # (b) artist-home top-2 shelves
+    if home:
+        extra += [path_idx[p] for p, _ in home.most_common(2) if p in path_idx]
+    aug = list(top)
+    for j in extra:
+        if j not in aug: aug.append(j)
+    return aug[:10], force
 
 def classify_batch(batch):
     lines = []; meta = {}
@@ -157,7 +186,6 @@ if todo:
     log(f"classified -> cache now {len(cache)}")
 
 # --- stage subgenres for any cached track that still lacks a subgenre override ---
-byid = {str(t.get('id')): t for t in tracks}
 def fp_of(t):
     return f"{(t.get('title') or '').lower().strip()}|{(t.get('artist') or '').lower().strip()}|{t.get('duration') or 0}"
 staged = 0

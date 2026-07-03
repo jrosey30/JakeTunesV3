@@ -38,6 +38,8 @@ export function recoTitleMatches(want: string, got: string): boolean {
   return false
 }
 
+// ⚠️ TWIN: src/renderer/listen-to-the-list/store.ts artistLooselyMatches —
+// renderer-side copy of this rule (no cross-bundle import); keep in sync.
 export function recoArtistMatches(want: string, got: string): boolean {
   const w = recoNorm(want)
   const g = recoNorm(got)

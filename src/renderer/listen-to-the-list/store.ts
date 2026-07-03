@@ -63,19 +63,36 @@ export function suggKey(s: { song: string; artist: string }): string {
   return `${s.artist.toLowerCase().trim()}|${s.song.toLowerCase().trim()}`
 }
 
+// ⚠️ TWIN: src/main/reco-match.ts recoArtistMatches — renderer-side copy of the
+// same loose artist rule (exact normalized, else 4+-char substring either way);
+// no cross-bundle import from src/main, so keep the two in sync. Exists because
+// exact keys miss multi-credit strings: a list entry saved as "Daft Punk" must
+// still match a suggestion credited "Daft Punk, Pharrell Williams & Nile Rodgers".
+function artistLooselyMatches(want: string, got: string): boolean {
+  const clean = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const w = clean(want)
+  const g = clean(got)
+  if (!w || !g) return false
+  if (w === g) return true
+  return w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))
+}
+
 export function dedupeSuggestions(incoming: MmSuggestion[], list: Recommendation[]): MmSuggestion[] {
-  const onList = new Set(
-    list.map((r) => {
-      const a = (r.artist || r.matchedArtist || '').toLowerCase().trim()
-      const t = (r.song || r.matchedTitle || '').toLowerCase().trim()
-      return a && t ? `${a}|${t}` : ''
-    }).filter(Boolean),
-  )
+  const listPairs = list
+    .map((r) => ({
+      artist: (r.artist || r.matchedArtist || '').trim(),
+      title: (r.song || r.matchedTitle || '').toLowerCase().trim(),
+    }))
+    .filter((p) => p.artist && p.title)
+  const onList = (s: MmSuggestion): boolean => {
+    const title = s.song.toLowerCase().trim()
+    return listPairs.some((p) => p.title === title && artistLooselyMatches(s.artist, p.artist))
+  }
   const seen = new Set<string>()
   const out: MmSuggestion[] = []
   for (const s of incoming) {
     const k = suggKey(s)
-    if (!k || seen.has(k) || onList.has(k)) continue
+    if (!k || seen.has(k) || onList(s)) continue
     seen.add(k)
     out.push(s)
   }
