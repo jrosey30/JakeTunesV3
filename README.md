@@ -1,12 +1,13 @@
 # JakeTunes
 
-A pixel-perfect iTunes 8 replica for macOS, built with Electron + React + TypeScript.
+A pixel-faithful classic-iTunes desktop player for macOS, built with Electron + React + TypeScript. V5 moves the visual target from iTunes 8 to iTunes 10 — brushed-metal chrome, List/Grid/Cover Flow view modes, row checkboxes — same warm palette.
 
-**Vision:** 2008 iTunes shell, 2040 brain inside. Leopard-era unified-gray chrome, cool blue-gray sidebar, cream LCD pill, and a persistent AI DJ called The Music Man.
+**Vision:** classic iTunes shell, 2040 brain inside. Brushed warm-silver chrome, cool blue-gray sidebar, cream LCD pill, Cover Flow, and a persistent AI DJ called The Music Man.
 
 ## Features
 
 - **Full music library** — songs, artists, albums, genres, playlists, smart playlists
+- **Live Concert Mode** — declare a live album and its tracks merge into one gapless "live set" file (originals untouched); the Now Playing pill tracks the current song in the set list, and undeclaring deletes the merged file
 - **iPod Mini sync** — auto-detects a connected iPod and reads the on-device iTunesDB
 - **CD import** — detects audio CDs, looks up tracks via MusicBrainz, rips to AAC/ALAC/AIFF/WAV
 - **The Music Man** — an AI record-store savant (powered by Claude) who answers music questions, builds playlists, fixes metadata, and picks a rotating daily set
