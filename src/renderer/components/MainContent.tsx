@@ -17,7 +17,13 @@ import StoreView from '../views/BandcampStore'
 import DownloadView from '../views/DownloadStore'
 import ScotusView from '../views/ScotusView'
 import RecordStoreView from '../views/RecordStore'
+import ViewModeToggle from './ViewModeToggle'
 import '../styles/main-content.css'
+
+// V5 facelift: views that get the List / Grid / Cover Flow mode bar.
+// Only the flat-table views — Albums is already the grid metaphor;
+// Artists / Genres have their own browse structures.
+const MODE_ELIGIBLE = new Set(['songs', 'playlist', 'smart-playlist'])
 
 export default function MainContent() {
   const { state } = useLibrary()
@@ -81,7 +87,16 @@ export default function MainContent() {
     <>
       {viewElement !== null && (
         <div className="main-content-view" key={transitionKey}>
-          {viewElement}
+          {MODE_ELIGIBLE.has(state.currentView) ? (
+            // V5 facelift: thin chrome strip above the view hosting the
+            // segmented view-mode toggle, right-aligned (iTunes 10 kept
+            // this control top-right). Flex column so the view below
+            // keeps its height:100% behavior.
+            <div className="view-with-mode-bar">
+              <div className="view-mode-bar"><ViewModeToggle /></div>
+              <div className="view-mode-bar-content">{viewElement}</div>
+            </div>
+          ) : viewElement}
         </div>
       )}
       <div

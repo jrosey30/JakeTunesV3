@@ -18,9 +18,13 @@
  * lighter dividers read as iTunes 6/7-era; iTunes 8 went flatter. */
 .songs-header {
   display: grid;
-  height: 20px;
-  background: #dcdcdc;
-  border-bottom: 1px solid #888;
+  /* V5 facelift: 20px → 19px, proportional to the tighter 18px rows. */
+  height: 19px;
+  /* V5 facelift: iTunes-10 defined header — subtle sheen + inner bottom
+   * catch-light, matching the Genres browser's column headers. */
+  background: linear-gradient(180deg, #e4e4e4, #d4d4d4);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.4);
   font-size: var(--font-label);
   font-weight: 700;
   color: #3a3a3a;
@@ -74,9 +78,14 @@
   z-index: 1;
 }
 
+/* V5 facelift: holds the SortArrowIcon SVG (was a ▲/▼ font glyph —
+ * font-size no longer applies; flex centers the 7×7 triangle on the
+ * header cell's text baseline). Slightly higher opacity than the old
+ * glyph's 0.7 — SVG fill reads lighter at this size. */
 .sort-arrow {
-  font-size: 7px;
-  opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
 }
 
 .songs-body {
@@ -100,7 +109,8 @@
 
 .songs-row {
   display: grid;
-  height: 19px;
+  /* V5 facelift: shared app-wide row height token (was a 19px literal). */
+  height: var(--row-height);
   align-items: center;
   font-size: var(--font-body);
   cursor: default;
@@ -127,15 +137,18 @@
 /* 4.5: neutral pale grey alt-row. Earlier values were either too
  * warm (#f7f7f7 read Leopard-era cream) or too cool (#f0f4fa cool
  * blue that fought the warm chrome). 4.5.0-111: nudged #f3f3f1 → #eeede9
- * after --white was cooled to #f9f8f5 — the old stripe was only ~6 levels
- * off the new base and the zebra had nearly vanished; this restores a
- * readable (still subtle) stripe with the same slight warmth. */
+ * after --white was cooled to #f9f8f5. V5 facelift: that #eeede9 became
+ * the app-wide --row-alt token value — same pixels here, one zebra
+ * everywhere. */
 .songs-row--alt {
-  background: #eeede9;
+  background: var(--row-alt);
 }
 
+/* V5 facelift: hover glow references the real selection blue via
+ * --selection-top-rgb (was a drifted rgba(74,144,217) literal) and
+ * reads slightly stronger — iTunes 10's more pronounced row hover. */
 .songs-row:hover {
-  background: rgba(74, 144, 217, 0.08);
+  background: rgba(var(--selection-top-rgb), 0.11);
 }
 
 

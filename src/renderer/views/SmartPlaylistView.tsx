@@ -15,6 +15,10 @@ import { albumKeyOf } from '../utils/albumKey'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import StarRating, { ratingMenuEntries } from '../components/StarRating'
+import SortArrowIcon from '../components/SortArrowIcon'
+import TrackGridView from '../components/TrackGridView'
+import CoverFlowView from './CoverFlowView'
+import { useViewMode } from '../context/ViewModeContext'
 import { setNotice } from '../activity'
 import { songsGridTemplate } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
@@ -130,6 +134,7 @@ export default function SmartPlaylistView() {
   const { state: libState, dispatch } = useLibrary()
   const { state: pbState, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
+  const { mode: viewMode } = useViewMode()
 
   const playlistId = libState.activeSmartPlaylist
   const title = playlistId ? TITLES[playlistId] || playlistId : ''
@@ -653,7 +658,8 @@ export default function SmartPlaylistView() {
     if (idx < 0) return
     const el = songsBodyRef.current
     if (!el) return
-    const rowH = 19
+    // V5 facelift: 18px rows (matches --row-height + SongsView's ROW_HEIGHT).
+    const rowH = 18
     const rowTop = idx * rowH
     const rowBottom = rowTop + rowH
     const scrollTop = el.scrollTop
@@ -1060,6 +1066,17 @@ export default function SmartPlaylistView() {
           left header column labels desynced from row cells under
           horizontal scroll. Same { flex: 1, minHeight: 0 } sizing as
           PlaylistView's existing wrapper at line 533. */}
+      {/* V5 facelift: Grid / Cover Flow modes swap only the table below
+          the smart-playlist header. */}
+      {viewMode === 'grid' ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <TrackGridView tracks={sortedTracks} emptyNoun="tracks" />
+        </div>
+      ) : viewMode === 'coverflow' ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" />
+        </div>
+      ) : (
       <div className="songs-view" style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>
       <div
         className="songs-header"
@@ -1074,7 +1091,7 @@ export default function SmartPlaylistView() {
           >
             {col.label}
             {sortCol === col.key && (
-              <span className="sort-arrow">{sortDir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+              <span className="sort-arrow"><SortArrowIcon direction={sortDir} /></span>
             )}
             {col.resizable && (
               <div
@@ -1220,7 +1237,8 @@ export default function SmartPlaylistView() {
           )
         })}
       </div>
-      </div> {/* Brief 026: close the wrapping .songs-view div opened above the .songs-header */}
+      </div>
+      )} {/* Brief 026 + V5: close the wrapping .songs-view div + the grid-mode ternary */}
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x}

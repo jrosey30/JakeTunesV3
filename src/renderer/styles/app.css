@@ -408,7 +408,14 @@
     "imports   imports"
     "statusbar statusbar";
   height: 100vh;
-  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+  /* V5 facelift: iTunes-10 brushed metal — a fine 2px horizontal banding
+   * layer over the SAME warm-silver gradient (hexes untouched; only how
+   * they're applied changed). Band opacities are the tuning knobs. */
+  background:
+    repeating-linear-gradient(180deg,
+      rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
+      rgba(0, 0, 0, 0.035) 1px, rgba(0, 0, 0, 0.035) 2px),
+    linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
 }
 
 .imports-area {
@@ -435,10 +442,16 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  /* Continue the unified iTunes 8 chrome gradient up into the titlebar
-   * so the window reads as one piece of brushed gray rather than two
-   * stacked gradients meeting at a seam. */
-  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+  /* Continue the unified chrome gradient up into the titlebar so the
+   * window reads as one piece of brushed gray rather than two stacked
+   * gradients meeting at a seam. V5 facelift: iTunes-10 brushed metal —
+   * top catch-light sheen + fine banding over the same warm-silver base. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0) 45%),
+    repeating-linear-gradient(180deg,
+      rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
+      rgba(0, 0, 0, 0.035) 1px, rgba(0, 0, 0, 0.035) 2px),
+    linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
   text-shadow: 0 1px 0 rgba(255,255,255,0.5);
@@ -479,7 +492,13 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+  /* V5 facelift: same brushed banding as the titlebar (no catch-light —
+   * the sheen lives at the window's top edge only). */
+  background:
+    repeating-linear-gradient(180deg,
+      rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
+      rgba(0, 0, 0, 0.035) 1px, rgba(0, 0, 0, 0.035) 2px),
+    linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
   border-bottom: 1px solid var(--border-subtle);
 }
 

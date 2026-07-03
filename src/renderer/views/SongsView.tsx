@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef, useMemo, memo, useSyncExternalStore } from 'react'
+import { useCallback, useState, useEffect, useLayoutEffect, useRef, useMemo, memo, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -17,6 +17,10 @@ import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
 import ScrollTopButton from '../components/ScrollTopButton'
+import SortArrowIcon from '../components/SortArrowIcon'
+import TrackGridView from '../components/TrackGridView'
+import CoverFlowView from './CoverFlowView'
+import { useViewMode } from '../context/ViewModeContext'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { toCynthiaTrack } from '../utils/cynthia'
@@ -104,8 +108,10 @@ const ALWAYS_VISIBLE = new Set(['playing', 'title'])
 // only after this long with NO activity does the now-playing track snap
 // to the top. Deliberately long so browsing is never yanked away.
 const FOLLOW_IDLE_MS = 15000
-// Fixed row height (px) — matches the value passed to useVirtualScroll.
-const ROW_HEIGHT = 19
+// Fixed row height (px) — matches the value passed to useVirtualScroll
+// AND the CSS --row-height token in variables.css (V5 facelift: 19 → 18,
+// the tighter iTunes-10 row). All three must move together.
+const ROW_HEIGHT = 18
 
 // One row of the virtualized songs list. Memoized so that on a scroll event
 // that doesn't change THIS row's props (the common case — scrolling within a
@@ -225,6 +231,7 @@ export default function SongsView() {
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
+  const { mode: viewMode } = useViewMode()
   // Subscribe to the Bandcamp recently-added store so the row class
   // re-renders when a new import lands or its 10s TTL expires.
   useSyncExternalStore(subscribeRecentlyAdded, recentlyAddedSnapshot)
@@ -286,11 +293,26 @@ export default function SongsView() {
   // Pair with useScrollPersistence(key, containerRef) which then keeps
   // both DOM scrollTop and the cache in sync.
   const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(
-    sorted.length, 19, 10, getSavedScrollTop('songs'),
+    sorted.length, ROW_HEIGHT, 10, getSavedScrollTop('songs'),
   )
   useScrollPersistence('songs', containerRef)
   // 4.4.27: removed useElasticOverscroll — let macOS provide the
   // native bounce instead of a JS approximation.
+
+  // V5 facelift: returning to List from Grid/Cover Flow remounts the
+  // scroll container at scrollTop 0 while useVirtualScroll's INTERNAL
+  // position (do-not-touch hook — we can't reset it) still holds the
+  // pre-switch value. Rows then render thousands of px below an
+  // unscrolled viewport — the list looks EMPTY until auto-follow or a
+  // manual scroll re-syncs ("empty list, then just one album" glitch).
+  // Fix: the moment the list container exists again, seed its DOM
+  // scrollTop from the same persisted value the scroller carries, so
+  // the two agree before first paint.
+  useLayoutEffect(() => {
+    if (viewMode !== 'list') return
+    const el = containerRef.current
+    if (el) el.scrollTop = getSavedScrollTop('songs')
+  }, [viewMode, containerRef])
 
   // 4.5: column-resize sort-suppression. The resize handle lives inside
   // the header cell; user mousedown on the handle, drags, releases —
@@ -1026,6 +1048,16 @@ export default function SongsView() {
     requestAnimationFrame(() => document.body.removeChild(ghost))
   }, [])
 
+  // V5 facelift: Grid / Cover Flow modes over THIS view's sorted/filtered
+  // tracks. Placed after every hook above (project TDZ/hook-order rule);
+  // List mode falls through to the unchanged table below.
+  if (viewMode === 'grid') {
+    return <TrackGridView tracks={sorted} emptyNoun="tracks" />
+  }
+  if (viewMode === 'coverflow') {
+    return <CoverFlowView tracks={sorted} emptyNoun="tracks" />
+  }
+
   return (
     <div
       className="songs-view"
@@ -1054,7 +1086,7 @@ export default function SongsView() {
           >
             {col.label}
             {lib.sortColumn === col.key && (
-              <span className="sort-arrow">{lib.sortDirection === 'asc' ? '▲' : '▼'}</span>
+              <span className="sort-arrow"><SortArrowIcon direction={lib.sortDirection} /></span>
             )}
             {col.resizable && (
               <div

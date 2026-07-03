@@ -1,0 +1,171 @@
+/* ── V5 facelift: Cover Flow — THE JUKEBOX ARC ──
+   Covers are pages in a Seeburg-style jukebox mechanism: the focused
+   cover faces you; advancing swings it up and over a pivot at its TOP
+   EDGE while the next sleeve rises from the queue below. Stage is the
+   app's warm dark (--musicman-bg) so the floor reflection reads; below
+   it a title plate and the focused album's track list.
+
+   Transform technique still follows RecordStore's CrateBrowse (the
+   shipped precedent): perspective on the stage, per-card transforms
+   computed inline (translateY/translateZ/rotateX here — the arc), CSS
+   transition does the snap. The V5 carousel motion tokens give the flip
+   its slightly-overshooting mechanical settle. */
+
+.coverflow-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  outline: none;
+}
+
+.coverflow-stage {
+  flex-shrink: 0;
+  height: 260px;
+  background: linear-gradient(180deg, #241a10 0%, var(--musicman-bg) 55%, #120c06 100%);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  overflow: hidden;
+}
+.coverflow-stage:active { cursor: grabbing; }
+
+.coverflow-fan {
+  position: relative;
+  height: 100%;
+  perspective: 900px;
+  /* Eye slightly above center so the flipped-over pages read as arcing
+     up and away while the queue peeks from below. */
+  perspective-origin: 50% 34%;
+}
+
+.coverflow-card {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  width: 168px;
+  height: 168px;
+  margin: -84px 0 0 -84px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  transform-style: preserve-3d;
+  /* The jukebox pivot: pages rotate around their TOP edge. */
+  transform-origin: 50% 0%;
+  transition:
+    transform var(--motion-carousel-snap) var(--ease-carousel),
+    opacity var(--motion-carousel-snap) ease,
+    z-index 0s;
+  cursor: pointer;
+  /* Flipped-over pages show their reverse mid-arc; keep the artwork
+     visible from both sides rather than a blank backface. */
+  backface-visibility: visible;
+}
+
+.coverflow-cover,
+.coverflow-blank {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #17110a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* The mirrored floor — reflect the cover downward and fade it fast.
+     -webkit-box-reflect is fine here: Electron pins Chromium. */
+  -webkit-box-reflect: below 2px linear-gradient(transparent 62%, rgba(255, 255, 255, 0.22));
+}
+
+.coverflow-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.coverflow-card--active .coverflow-cover,
+.coverflow-card--active .coverflow-blank {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* Title plate — album + artist centered under the stage, iTunes style. */
+.coverflow-plate {
+  flex-shrink: 0;
+  position: relative;
+  text-align: center;
+  padding: 6px 90px 7px;
+  background: linear-gradient(180deg, #e4e4e4, #d4d4d4);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.4);
+}
+.coverflow-plate-title {
+  font-size: var(--font-title);
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coverflow-plate-artist {
+  font-size: var(--font-body);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coverflow-plate-counter {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--font-label);
+  color: var(--text-dim);
+}
+
+/* The centered album's tracks — same visual language as the app's other
+   track tables (row height token, zebra token, selection-blue hover). */
+.coverflow-tracklist {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  will-change: scroll-position;
+  overscroll-behavior: contain;
+  background: var(--white);
+}
+
+.coverflow-track-row {
+  display: grid;
+  grid-template-columns: 20px 26px minmax(120px, 2fr) minmax(80px, 1.4fr) 52px;
+  height: var(--row-height);
+  align-items: center;
+  font-size: var(--font-body);
+  cursor: default;
+  transition: background-color 90ms ease-out;
+}
+.coverflow-track-row--alt { background: var(--row-alt); }
+.coverflow-track-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
+.coverflow-track-row--playing .coverflow-track-title { font-weight: 700; }
+
+.coverflow-track-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.coverflow-track-num {
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-dim);
+}
+.coverflow-track-title,
+.coverflow-track-artist {
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.coverflow-track-artist { color: var(--text-secondary); }
+.coverflow-track-time {
+  padding-right: 12px;
+  text-align: right;
+  color: var(--text-secondary);
+}

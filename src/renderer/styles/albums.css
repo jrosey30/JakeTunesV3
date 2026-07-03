@@ -9,6 +9,15 @@
   overscroll-behavior: contain;
 }
 
+/* V5 facelift: TrackGridView's scroll root (Grid mode inside Songs /
+   Playlist / Smart Playlist) — same scroll behavior as .albums-view. */
+.track-grid-view {
+  height: 100%;
+  overflow-y: auto;
+  will-change: scroll-position;
+  overscroll-behavior: contain;
+}
+
 .albums-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

@@ -14,7 +14,9 @@
 
 /* Section */
 .sidebar-section {
-  margin-bottom: 4px;
+  /* V5 facelift: a touch more air between groups (iTunes 10 demarcated
+     sections by spacing, not divider rules — matches the reference). */
+  margin-bottom: 7px;
 }
 
 .sidebar-section-header {
@@ -23,11 +25,15 @@
   gap: 4px;
   padding: 2px 10px;
   font-size: var(--font-label);
-  font-weight: 700;
-  /* iTunes 8 section header color (LIBRARY / STORE / SHARED / etc.). */
-  color: #5a5a5a;
+  /* V5 facelift: iTunes-10 section label — slightly lighter weight, wider
+     tracking, soft white emboss beneath. Color de-hardcoded from #5a5a5a
+     onto the warm text token so it sits in the app's palette (the chevron
+     inherits via currentColor). */
+  font-weight: 600;
+  color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.7px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
   width: 100%;
   text-align: left;
 }
@@ -100,6 +106,13 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  /* V5 facelift: explicit 14×14 container per the "icon as ratio to its
+     container" project rule — the 12×12 icons render 12-in-14 (~86%),
+     and the mixed 10/12/13px intrinsics all center on one axis so every
+     label starts at the same x. */
+  width: 14px;
+  height: 14px;
+  justify-content: center;
 }
 
 .sidebar-item-label {

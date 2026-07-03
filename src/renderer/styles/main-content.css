@@ -37,3 +37,60 @@
     animation: none;
   }
 }
+
+/* ── V5 facelift: view-mode bar (List / Grid / Cover Flow) ──
+   Thin chrome strip above the flat-table views. Same surface language
+   as the existing .view-search-bar (identical gradient + border) so it
+   reads as established chrome, not a new invention. */
+.view-with-mode-bar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.view-mode-bar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  background: linear-gradient(180deg, #f7f7f7, #ededed);
+  border-bottom: 1px solid var(--border-light);
+}
+.view-mode-bar-content {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* The segmented control itself — iTunes-10 glossy joined segments.
+   24px-wide segments, 12×12 glyphs (50% of segment width), first/last
+   corners rounded, active segment pressed-in with the standard inset. */
+.view-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.view-mode-segment {
+  width: 24px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  background: linear-gradient(180deg, #fdfdfc, #e7e5e0);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.view-mode-segment:last-child { border-right: none; }
+.view-mode-segment:hover { background: linear-gradient(180deg, #ffffff, #dddbd5); }
+.view-mode-segment--active {
+  background: linear-gradient(180deg, #c9c5bd, #d8d4cc);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22);
+}

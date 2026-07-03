@@ -13,14 +13,20 @@
   /* Selection pill (iTunes 8 blue). */
   --selection-top: #5b86dc;
   --selection-bottom: #3e6ec7;
-  /* 4.5: alt-row tint — dialed BACK toward neutral cream. Prior
-     #f9f4eb leaned too warm-yellow and competed visually with the
-     pill's orange. Pulled to #f6f2e8 — still warmer than the row's
-     #fdf9f2 base but reads as a quiet stripe instead of a "second
-     orange surface". Cohesion: only the pill, brand orange, and
-     mid-tone highlights should register as orange; the cream
-     surfaces are background. */
-  --row-alt: #f6f2e8;
+  /* V5 facelift: rgba() sibling of --selection-top (same pattern as
+     --brand-orange-rgb) so hover glows reference the real selection
+     blue instead of the drifted one-off literals genres.css/songs.css
+     each carried (rgba(74,144,217,…) — close, but not the token). */
+  --selection-top-rgb: 91, 134, 220;
+  /* V5 facelift: alt-row tint consolidated to ONE app-wide zebra.
+     History: 4.5 dialed #f9f4eb back to #f6f2e8 (too warm-yellow vs the
+     pill); then 4.5.0-111 cooled --white to #f9f8f5 and songs.css was
+     re-tuned to #eeede9 — but only songs.css, so three stripes drifted
+     apart (#f6f2e8 token / #eeede9 songs / #f0f4fa genres, the last one
+     a previously-REJECTED cool blue). The token now carries the most
+     recent deliberate value, tuned against the current --white; songs,
+     genres, and musicman all reference it. */
+  --row-alt: #eeede9;
   /* 4.5: Now-playing LCD pill — another notch of orange. Iteration 3:
      prior pass (#f7e6c4 → #e1d0a5) read amber but still leaned cream;
      this nudges the hue ~5% toward the brand orange. Reads as soft
@@ -92,7 +98,10 @@
   --titlebar-height: 38px;
   --toolbar-height: 78px;
   --statusbar-height: 24px;
-  --row-height: 19px;
+  /* V5 facelift: 19px → 18px, the iTunes-10 tighter row. This token had
+     zero consumers before V5; genres.css + songs.css now reference it so
+     every track table shares ONE row height instead of per-file literals. */
+  --row-height: 18px;
   --font-family: -apple-system, "Lucida Grande", sans-serif;
   --font-body: 11px;
   --font-label: 10px;
@@ -110,4 +119,9 @@
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-lift: cubic-bezier(0.2, 0.65, 0.3, 1);
   --ease-snap: cubic-bezier(0.18, 0.9, 0.4, 1);
+  /* V5 facelift: carousel settle — longer + slight overshoot, the one
+     physically-weighted motion in the app (Cover Flow's snap). Named
+     generically; CrateBrowse could converge onto it later. */
+  --motion-carousel-snap: 420ms;
+  --ease-carousel: cubic-bezier(0.25, 1.1, 0.4, 1);
 }

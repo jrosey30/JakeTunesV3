@@ -7,7 +7,9 @@
 .genres-browser {
   display: flex;
   height: 200px;
-  border-bottom: 1px solid #c0c0c0;
+  /* V5 facelift: crisper iTunes-10 divider — soft #c0c0c0 literal moved
+     onto the firmer existing token. */
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -15,7 +17,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #c0c0c0;
+  border-right: 1px solid var(--border-subtle);
   min-width: 0;
 }
 
@@ -26,8 +28,11 @@
   font-size: var(--font-label);
   font-weight: 700;
   color: #3a3a3a;
-  background: #dcdcdc;
-  border-bottom: 1px solid #888;
+  /* V5 facelift: iTunes-10 defined header — subtle vertical sheen +
+     inner bottom catch-light instead of a flat #dcdcdc slab. */
+  background: linear-gradient(180deg, #e4e4e4, #d4d4d4);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.4);
   flex-shrink: 0;
   user-select: none;
 }
@@ -59,6 +64,11 @@
 .genres-column-item--selected {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
   color: #fff;
+  /* V5 facelift: same lifted inner highlight the sidebar's selection
+     pill already carries — one selection language across the chrome. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
 }
 
 .genres-column-item--selected:hover {
@@ -77,18 +87,24 @@
 .genres-track-row {
   display: grid;
   grid-template-columns: 20px 1fr 1fr 1fr;
-  height: 19px;
+  /* V5 facelift: shared app-wide row height token (was a 19px literal). */
+  height: var(--row-height);
   align-items: center;
   font-size: var(--font-body);
   cursor: default;
 }
 
-.genres-track-row--alt { background: #f0f4fa; }
+/* V5 facelift: alt stripe consolidated onto --row-alt. This file carried
+   its own cool-blue literal (#f0f4fa) while songs.css used #eeede9 and
+   the token said #f6f2e8 — three different zebras. One token now. */
+.genres-track-row--alt { background: var(--row-alt); }
 .genres-track-row {
   /* 4.5.0-84: same 90 ms hover ease as the main Songs view rows. */
   transition: background-color 90ms ease-out;
 }
-.genres-track-row:hover { background: rgba(74,144,217,0.08); }
+/* V5 facelift: hover glow references the real selection blue (was a
+   drifted rgba(74,144,217) literal) and reads slightly stronger. */
+.genres-track-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
 
 /* Now-playing indicator only — the SpeakerPlayingIcon already shows
  * in the left cell. No row fill (that's reserved for click-selection,
