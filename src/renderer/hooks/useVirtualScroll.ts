@@ -32,18 +32,36 @@ export function useVirtualScroll(
   const [scrollTop, setScrollTop] = useState(initialScrollTop)
   const [containerHeight, setContainerHeight] = useState(600)
 
+  // 2026-07-08 surgical fix (Jake: "half the screen is blank"). The observer
+  // used to bind to the FIRST container element forever. View-mode round
+  // trips (list→grid→list) recreate the container: the old element's final
+  // ResizeObserver tick reports height 0 as it detaches — poisoning
+  // visibleCount down to the bare buffer (20 rows, top of the screen only)
+  // — and the new element was never observed, so no later resize (window
+  // grows included) ever reached the row math again. Track the live element
+  // identity on every render and observe exactly the current one; ignore
+  // ticks from anything that is no longer the observed element.
+  const observedElRef = useRef<HTMLDivElement | null>(null)
+  const roRef = useRef<ResizeObserver | null>(null)
   useEffect(() => {
     const el = containerRef.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerHeight(entry.contentRect.height)
-      }
-    })
-    ro.observe(el)
-    setContainerHeight(el.clientHeight)
-    return () => ro.disconnect()
-  }, [])
+    if (el === observedElRef.current) return
+    if (!roRef.current) {
+      roRef.current = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.target !== observedElRef.current) continue // stale detach tick
+          setContainerHeight(entry.contentRect.height)
+        }
+      })
+    }
+    if (observedElRef.current) roRef.current.unobserve(observedElRef.current)
+    observedElRef.current = el
+    if (el) {
+      roRef.current.observe(el)
+      setContainerHeight(el.clientHeight)
+    }
+  }) // no dep array: the identity check makes re-runs free and catches ref swaps
+  useEffect(() => () => { roRef.current?.disconnect() }, [])
 
   const onScroll = useCallback(() => {
     if (containerRef.current) {
