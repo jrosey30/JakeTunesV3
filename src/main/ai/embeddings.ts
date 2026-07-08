@@ -113,7 +113,10 @@ export async function persistEmbeddingsMap(): Promise<void> {
 //   [4-byte record count (uint32 LE)]
 //   [N records: 4-byte trackId (uint32 LE) + dim*4 bytes Float32 LE]
 // At dim=1536 each record is 6,148 bytes. 6,800 tracks ≈ 42 MB.
-function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer {
+// Exported for the mood index (src/main/ai/mood-index.ts) — same binary
+// format, second file. Any format change must bump EMBED_FORMAT_VERSION
+// and applies to BOTH files.
+export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer {
   const recordSize = 4 + EMBED_DIM * 4
   const buf = Buffer.alloc(12 + map.size * recordSize)
   buf.write(EMBED_FORMAT_MAGIC, 0, 4, 'ascii')
@@ -130,7 +133,7 @@ function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer {
   }
   return buf.subarray(0, offset)
 }
-function parseEmbeddingsBlob(buf: Buffer): Map<number, Float32Array> {
+export function parseEmbeddingsBlob(buf: Buffer): Map<number, Float32Array> {
   const out = new Map<number, Float32Array>()
   if (buf.length < 12) return out
   const magic = buf.toString('ascii', 0, 4)
@@ -178,7 +181,7 @@ export interface EmbedTrackInput {
 // Only CLEAR high/low get energy/use-case — bland mid-tempo filler dilutes
 // precise genre queries without helping any mood search.
 // ⚠️ TWIN: scripts/brain-trainer.mjs tempoEnergy() — keep these in sync.
-function tempoEnergyText(t: EmbedTrackInput): string {
+export function tempoEnergyText(t: EmbedTrackInput): string {
   const b = Number(t.bpm) || 0
   if (b <= 0) return ''
   const tempo = b >= 120 ? 'fast, up-tempo, driving' : b >= 90 ? 'mid-tempo, moderate groove' : 'slow, relaxed, downtempo'

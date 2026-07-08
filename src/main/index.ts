@@ -2690,6 +2690,9 @@ const STATE_FILE_NAMES = [
   // exactly the whole-file clobber that resurrected phone-deleted recos.
   'play-events.jsonl',
   'embeddings.bin',
+  // The vibe brain rides to the NAS like embeddings.bin so the homemini
+  // backend can route mixes/DJ vibe queries against it (phase 2).
+  'mood-index.bin',
 ] as const
 interface StateConflict {
   file: string
@@ -9978,6 +9981,13 @@ import {
   pruneStaleEmbeddings as ragPruneStaleEmbeddings,
   type EmbedTrackInput,
 } from './ai/embeddings'
+import {
+  buildMoodText,
+  getMoodIndexMap,
+  setMoodVector,
+  persistMoodIndex,
+  pruneStaleMoodVectors,
+} from './ai/mood-index'
 
 async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<number> {
   const validIds = new Set(tracks.map(t => t.id))
@@ -10134,6 +10144,7 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
     const tracks = (lib.tracks || []).filter(t => typeof t?.id === 'number')
     const validIds = new Set(tracks.map(t => t.id))
     await ragPruneStaleEmbeddings(validIds).catch(() => 0)
+    await pruneStaleMoodVectors(validIds).catch(() => 0)
     const existing = await ragGetEmbeddingsMap()
     const todo = opts?.force
       ? tracks
@@ -10163,6 +10174,7 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
         console.warn('[embedding-backfill] batch failed (continuing with next):', err instanceof Error ? err.message : err)
       }
     }
+    await moodIndexCatchup(tracks)
     const total = (await ragAnalyzeEmbeddings(validIds)).indexed
     invalidateEmbeddingStatusCache()
     return { ok: true, embedded: done, total }
@@ -10177,6 +10189,30 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
 // the sound/mood enrichment on its nightly pass. Cheap when there's nothing new
 // (an in-memory membership check); bounded per pass. getEmbeddingsMap mtime-
 // reloads, so it builds on the trainer's latest file rather than reverting it.
+// Mood twin of the auto-index: give tracks missing a vibe vector one now
+// (tempo+genre-only text for brand-new tracks — the nightly trainer
+// upgrades the vector once the Gemma descriptor lands). Shared by
+// autoIndexNewTracks and the embedding-backfill IPC; failures here never
+// block the main index.
+async function moodIndexCatchup(tracks: Array<EmbedTrackInput & { id: number }>): Promise<void> {
+  try {
+    const moodMap = await getMoodIndexMap()
+    const moodTodo = tracks
+      .map((t) => ({ t, text: buildMoodText(t) }))
+      .filter(({ t, text }) => text && !moodMap.has(t.id))
+      .slice(0, 300)
+    for (let i = 0; i < moodTodo.length; i += 100) {
+      const slice = moodTodo.slice(i, i + 100)
+      const vecs = await ragEmbedTexts(slice.map((s) => s.text))
+      for (let j = 0; j < slice.length && j < vecs.length; j++) await setMoodVector(slice[j].t.id, vecs[j])
+      await persistMoodIndex()
+    }
+    if (moodTodo.length) console.log(`[mood-index] caught up ${moodTodo.length} track(s)`)
+  } catch (err) {
+    console.warn('[mood-index] catch-up failed:', err instanceof Error ? err.message : err)
+  }
+}
+
 let autoIndexBusy = false
 async function autoIndexNewTracks(): Promise<void> {
   if (!ragIsConfigured() || autoIndexBusy) return
@@ -10200,6 +10236,7 @@ async function autoIndexNewTracks(): Promise<void> {
       }
     }
     if (done) { console.log(`[rag] auto-indexed ${done} new track(s) into RAG`); invalidateEmbeddingStatusCache() }
+    await moodIndexCatchup(tracks)
   } catch (err) {
     console.warn('[rag] auto-index failed:', err instanceof Error ? err.message : err)
   } finally {
@@ -10207,17 +10244,69 @@ async function autoIndexNewTracks(): Promise<void> {
   }
 }
 
+// ── Dual-index retrieval router ──────────────────────────────────────
+// Two brains, one door: embeddings.bin knows WHO (artist/album/title/
+// year/★), mood-index.bin knows how it FEELS (descriptor/tempo/genre,
+// identity stripped). Identity collapses on the mood index BY DESIGN
+// (Sublime → 0.00 in the validation), so routing is load-bearing:
+//   • query names a library artist  → main index
+//   • query names a decade/year     → main index (mood text has no year)
+//   • anything else (vibe-shaped)   → mood index, if it's ready
+// Validated 2026-07-07 (brain-eval mood_index_proto.py): this routing
+// takes retrieval 0.825 → ~0.91 on the held-out eval set.
+const DECADE_QUERY_RE = /\b(19|20)\d{2}s?\b|(^|\D)['’]?[1-9]0s\b|\b(fifties|sixties|seventies|eighties|nineties|noughties|aughts|2000s)\b/i
+// Genre-ish words that can also be band names — an artist match on one
+// of these must not hijack a vibe query ("house and dance music" is not
+// about a band named House).
+const GENRE_WORD_ARTISTS = new Set([
+  'house', 'dance', 'funk', 'soul', 'punk', 'metal', 'grunge', 'jazz', 'blues',
+  'rock', 'pop', 'disco', 'techno', 'ambient', 'folk', 'country', 'rap',
+  'reggae', 'ska', 'indie', 'emo', 'hardcore', 'trance', 'garage', 'gospel',
+])
+let ragArtistSetCache: { at: number; set: Set<string> } | null = null
+async function ragLibraryArtistSet(): Promise<Set<string>> {
+  if (ragArtistSetCache && Date.now() - ragArtistSetCache.at < 5 * 60 * 1000) return ragArtistSetCache.set
+  const set = new Set<string>()
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string }> }
+    for (const t of lib.tracks || []) {
+      for (const a of [t.artist, t.albumArtist]) {
+        const norm = (a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+        if (norm.length >= 4 && !GENRE_WORD_ARTISTS.has(norm)) set.add(norm)
+      }
+    }
+  } catch { /* empty set = router falls back to the main index only on artist grounds */ }
+  ragArtistSetCache = { at: Date.now(), set }
+  return set
+}
+
+async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'> {
+  if (DECADE_QUERY_RE.test(query)) return 'main'
+  const qNorm = ` ${query.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `
+  const artists = await ragLibraryArtistSet()
+  for (const a of artists) {
+    if (qNorm.includes(` ${a} `)) return 'main'
+  }
+  // Vibe-shaped. Route to the mood index only once it covers most of
+  // the brain — a half-built index would silently shrink the library.
+  const [main, mood] = await Promise.all([ragGetEmbeddingsMap(), getMoodIndexMap()])
+  return mood.size >= main.size * 0.5 && mood.size > 0 ? 'mood' : 'main'
+}
+
 // Retrieve the K most-similar tracks to a free-text query. Used by
 // musicman-chat to build a focused context block in place of the
 // giant pre-computed digest. Returns track IDs + similarity scores;
-// caller resolves to full track records.
+// caller resolves to full track records. Routes between the identity
+// brain and the mood brain (see the router block above).
 async function ragRetrieveByQuery(query: string, k: number): Promise<Array<{ trackId: number; score: number }>> {
   if (!ragIsConfigured()) return []
-  const map = await ragGetEmbeddingsMap()
+  const route = await pickRetrievalIndex(query)
+  const map = route === 'mood' ? await getMoodIndexMap() : await ragGetEmbeddingsMap()
   if (map.size === 0) return []
   try {
     const [qvec] = await ragEmbedTexts([query])
     if (!qvec) return []
+    console.log(`[rag] route=${route} k=${k} "${query.slice(0, 60)}"`)
     return ragTopK(qvec, map, k)
   } catch (err) {
     console.warn('[rag] retrieve failed:', err instanceof Error ? err.message : err)

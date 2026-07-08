@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process'
 const STATE_DIR = join(homedir(), 'Library', 'Application Support', 'JakeTunes')
 const LIB = join(STATE_DIR, 'library.json')
 const EMB = join(STATE_DIR, 'embeddings.bin')
+const MOOD = join(STATE_DIR, 'mood-index.bin')
 const DESC = join(STATE_DIR, 'brain-descriptors.json')
 const ENV = join(homedir(), 'JakeTunesV3', '.env')
 const GEMMA_URL = 'http://homemini:11434/api/generate'
@@ -105,6 +106,44 @@ function tempoEnergy(t) {
 function subgenreText(t) {
   const p = String(t.subgenrePath || t.subgenre || '').trim()
   return p ? `subgenre: ${p.replace(/\s*›\s*/g, ' / ')}` : ''
+}
+
+// The mood index — the brain's second ear (vibe-only text, identity stripped).
+// ⚠️ TWIN: src/main/ai/mood-index.ts buildMoodText — keep in sync. Validated
+// on the brain-eval branch (mood_index_proto.py): vibe recall 0.756→0.900.
+function moodText(t, d) {
+  const lines = []
+  const dd = String(d || '').trim()
+  if (dd) lines.push(`sound and mood: ${dd}`)
+  const te = tempoEnergy(t); if (te) lines.push(te)
+  const g = String(t.genre || '').trim(); if (g) lines.push(`genre: ${g}`)
+  return lines.join('\n')
+}
+
+function readMood() { return existsSync(MOOD) ? readEmb(MOOD).map : new Map() }
+
+// Embed + fold mood vectors with the same backup+verify discipline as the
+// main brain. entries: [{ id, text }] (callers filter empty texts). Never
+// throws — a mood failure must not sink the nightly enrichment.
+async function updateMoodIndex(entries, label) {
+  if (!entries.length) return 0
+  try {
+    const mmap = readMood()
+    const before = mmap.size
+    const vecs = await openaiEmbed(entries.map(e => e.text))
+    if (existsSync(MOOD)) copyFileSync(MOOD, MOOD + '.bak')
+    let n = 0
+    for (let i = 0; i < entries.length; i++) { const v = vecs[i]; if (v) { mmap.set(Number(entries[i].id), v); n++ } }
+    const written = writeEmb(MOOD, mmap)
+    const check = readEmb(MOOD)
+    if (check.dim !== EMBED_DIM || check.map.size < before) throw new Error(`verify failed: dim=${check.dim} count=${check.map.size} (>=${before})`)
+    log(`mood-index ${label}: ${n} vector(s) updated (${written} total)`)
+    return n
+  } catch (e) {
+    log(`mood-index ${label} FAILED —`, e.message, existsSync(MOOD + '.bak') ? '— restoring backup' : '')
+    try { if (existsSync(MOOD + '.bak')) copyFileSync(MOOD + '.bak', MOOD) } catch { /* keep going */ }
+    return 0
+  }
 }
 
 // Mirrors src/main/ai/embeddings.ts buildEmbeddingText so enriched vectors live
@@ -247,6 +286,27 @@ async function main() {
     } catch (e) { log('VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
     writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)   // persist te (tempo-included) flags
     log(`reembed-all done: ${n}/${cands.length} re-embedded; embeddings.bin ${written} vectors. Sync will carry it to homemini.`)
+    // The vibe brain rebuilds from the same facts (descriptor + tempo + genre).
+    await updateMoodIndex(
+      cands.map(t => ({ id: t.id, text: moodText(t, desc[String(t.id)]?.d) })).filter(e => e.text),
+      'reembed-all',
+    )
+    return
+  }
+
+  // Mood-index maintenance modes:
+  //   --mood-backfill        embed vibe vectors ONLY for tracks missing one
+  //                          (post-seed gap filler; cheap, run any time)
+  //   --rebuild-mood-index   rebuild EVERY track's vibe vector (disaster recovery)
+  if (process.argv.includes('--mood-backfill') || process.argv.includes('--rebuild-mood-index')) {
+    const force = process.argv.includes('--rebuild-mood-index')
+    const mmap = readMood()
+    const entries = tracks
+      .filter(t => t.artist || t.title)
+      .map(t => ({ id: t.id, text: moodText(t, desc[String(t.id)]?.d) }))
+      .filter(e => e.text && (force || !mmap.has(Number(e.id))))
+    log(`mood ${force ? 'rebuild' : 'backfill'}: ${entries.length} track(s) to embed (index has ${mmap.size})`)
+    await updateMoodIndex(entries, force ? 'rebuild' : 'backfill')
     return
   }
 
@@ -272,6 +332,11 @@ async function main() {
     } catch (e) { log('tempo catch-up VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
     writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)
     log(`tempo catch-up: re-embedded ${cn} (now vibe-searchable). Sync carries it to homemini.`)
+    // Their tempo line changed → refresh the vibe vectors too.
+    await updateMoodIndex(
+      needTempo.map(t => ({ id: t.id, text: moodText(t, desc[String(t.id)].d) })).filter(e => e.text),
+      'tempo-catchup',
+    )
   }
 
   // Candidates: every library track not yet enriched. NEWLY-ADDED tracks jump
@@ -340,6 +405,11 @@ async function main() {
   }
 
   const dtmp = DESC + '.tmp'; writeFileSync(dtmp, JSON.stringify(desc)); renameSync(dtmp, DESC)
+  // The freshly-described tracks get their vibe vector in the same pass.
+  await updateMoodIndex(
+    pending.map(({ t, d }) => ({ id: t.id, text: moodText(t, d) })).filter(e => e.text),
+    'nightly',
+  )
   log(`done: +${enriched} enriched this run; brain now ${Object.keys(desc).length}/${total} (embeddings.bin ${written} vectors)`)
   log('the desktop→NAS sync will carry the richer brain to homemini on its next pass')
   await report(enriched, Object.keys(desc).length, total, sample)
