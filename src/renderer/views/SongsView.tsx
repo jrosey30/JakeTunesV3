@@ -311,8 +311,15 @@ export default function SongsView() {
   useLayoutEffect(() => {
     if (viewMode !== 'list') return
     const el = containerRef.current
-    if (el) el.scrollTop = getSavedScrollTop('songs')
-  }, [viewMode, containerRef])
+    if (el) {
+      el.scrollTop = getSavedScrollTop('songs')
+      // Force the virtualizer to recompute from the REAL position (see
+      // useScrollPersistence — the blank-library P0). Also re-runs when
+      // the row count lands, so a restore that clamped against a
+      // not-yet-sized body heals the moment the content exists.
+      el.dispatchEvent(new Event('scroll'))
+    }
+  }, [viewMode, containerRef, sorted.length])
 
   // 4.5: column-resize sort-suppression. The resize handle lives inside
   // the header cell; user mousedown on the handle, drags, releases —

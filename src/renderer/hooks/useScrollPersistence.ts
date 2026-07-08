@@ -82,6 +82,16 @@ export function useScrollPersistence(
     if (saved !== undefined) {
       el.scrollTop = saved.top
       el.scrollLeft = saved.left
+      // 2026-07-08 (the "blank library" P0): a programmatic scrollTop
+      // assignment doesn't reach virtualizers synchronously, and if the
+      // assignment CLAMPED (content not at full height yet on remount)
+      // the virtual window and the real scroll position disagree — the
+      // list renders rows thousands of px away from the viewport and
+      // looks EMPTY until a manual scroll. Dispatching a real scroll
+      // event forces every listener (useVirtualScroll's onScroll, the
+      // cache handler) to recompute from the ACTUAL DOM position, making
+      // the restore self-healing no matter which race happened.
+      el.dispatchEvent(new Event('scroll'))
     }
   }, [key, containerRef])
 
