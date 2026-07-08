@@ -10613,12 +10613,14 @@ function recommendationsPath(): string {
 // boot reset.)
 async function readNasRecoTombstones(): Promise<Set<string>> {
   try {
-    const { existsSync } = await import('fs')
+    // Async readFile ONLY — never existsSync/statSync here: this path is an
+    // SMB mount, and a stale mount turns any sync fs call into a
+    // seconds-long MAIN-PROCESS freeze (beachball) on every 60s sync tick
+    // that hits the fallback leg. Missing file = catch = empty set.
     const p = join(NAS_STATE_DIR_PATH, 'recommendations-deleted.json')
-    if (!existsSync(p)) return new Set()
     const parsed = JSON.parse(await readFile(p, 'utf-8')) as unknown
     if (Array.isArray(parsed)) return new Set(parsed.map((e) => String(e)))
-  } catch { /* NAS unreachable — fallback leg simply imports nothing new */ }
+  } catch { /* NAS unreachable or file missing — fallback leg imports nothing new */ }
   return new Set()
 }
 
@@ -11013,9 +11015,10 @@ async function fetchRecommendationsFromBackend(): Promise<RecommendationRecord[]
 
 async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | null> {
   try {
-    const { existsSync } = await import('fs')
+    // Async readFile ONLY — no existsSync on the SMB mount (see
+    // readNasRecoTombstones: a stale mount makes sync fs calls block the
+    // main process for seconds = the beachball).
     const nasPath = join(NAS_STATE_DIR_PATH, 'recommendations.json')
-    if (!existsSync(nasPath)) return null
     const raw = await readFile(nasPath, 'utf-8')
     return parseRecommendationsPayload(JSON.parse(raw) as unknown)
   } catch {
