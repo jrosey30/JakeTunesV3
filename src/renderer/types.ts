@@ -157,6 +157,22 @@ export interface Recommendation {
   // accepted; 'radar' = added from New for You. Legacy rows have no source →
   // shown under "Your jots". Drives the Your List sections.
   source?: 'user' | 'mm' | 'radar'
+  // Brief 126 — sync protocol v2: what the jot wants + stable external id
+  // (archive.org concert item). Fulfillment fields land via the sweep.
+  kind?: 'track' | 'album' | 'concert'
+  externalId?: string
+  owned?: boolean
+  ownedAt?: string
+  ownedVia?: string
+  ownedDesc?: string
+}
+
+// Brief 126 — sync state the UI renders instead of silent empty lists.
+export interface RecoSyncMeta {
+  source: 'backend' | 'cache' | 'nas-fallback'
+  backendReachable: boolean
+  syncedAt: number | null
+  pendingOps: number
 }
 
 // Brief 122 Phase 2 — an iTunes Search autocomplete suggestion for the
@@ -527,7 +543,8 @@ declare global {
       // Brief 122 — "Listen to the List". Read mirrors recommendations.json
       // from the NAS state dir; add/delete route through the Mini backend
       // so it stays the single writer (cache-coherent + iTunes-enriched).
-      loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[] }>
+      loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[]; meta?: RecoSyncMeta }>
+      onRecommendationsUpdated?: (callback: (info: { reason: string }) => void) => () => void
       addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; savedLocally?: boolean; deduped?: boolean }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>

@@ -4,6 +4,81 @@ export function recoNorm(s: string): string {
   return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
+// ── Recommendation identity (sync protocol v2, Brief 126) ──────────────────
+// The ONE definition of "same song" for tombstones, dedupe, and deletes.
+// ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/reco-identity.ts — byte-identical
+// logic; the parity fixture table in __tests__ is copy-shared verbatim with
+// the backend suite so drift fails both. Display-only cousins (looser, never
+// write tombstones): renderer store.ts artistLooselyMatches; iOS matchKey.
+//
+// Key kinds, strongest first (a record emits every kind that applies; ANY
+// overlap between two records = same song):
+//   ext:<norm(externalId)>                       stable catalog id (archive.org)
+//   <norm(song)>|<norm(artist)>                  raw pair
+//   <norm(matchedTitle)>|<norm(matchedArtist)>   iTunes-canonical pair
+//   solo:<norm(song)>~<norm(album)>~<norm(note)> ONLY when no artist anywhere —
+//     the artist-less-jot fix; the prefix + both-artists-empty gate guarantee
+//     a title-only jot can never collide with a real pair key.
+
+export interface RecoIdentityInput {
+  id?: string
+  song?: string
+  artist?: string
+  album?: string
+  note?: string
+  matchedTitle?: string
+  matchedArtist?: string
+  externalId?: string
+  createdAt?: string
+  resolvedAt?: string
+}
+
+export const RECO_IDENTITY_PREFIX = 'identity:'
+
+export function recoIdentityPairKey(song: string | undefined, artist: string | undefined): string | null {
+  const s = recoNorm(song || '')
+  const a = recoNorm(artist || '')
+  return s && a ? `${s}|${a}` : null
+}
+
+export function recordIdentityKeys(r: RecoIdentityInput): string[] {
+  const keys = new Set<string>()
+  const ext = recoNorm(r.externalId || '')
+  if (ext) keys.add(`ext:${ext}`)
+  const raw = recoIdentityPairKey(r.song, r.artist)
+  if (raw) keys.add(raw)
+  const matched = recoIdentityPairKey(r.matchedTitle, r.matchedArtist)
+  if (matched) keys.add(matched)
+  if (!recoNorm(r.artist || '') && !recoNorm(r.matchedArtist || '') && recoNorm(r.song || '')) {
+    keys.add(`solo:${recoNorm(r.song || '')}~${recoNorm(r.album || '')}~${recoNorm(r.note || '')}`)
+  }
+  return [...keys]
+}
+
+/** Grouping key for mirror/serve dedupe. First identity key, else a strict
+ *  full-text key, else the id (nothing-rows never merge). */
+export function recoDedupeKey(r: RecoIdentityInput): string {
+  const keys = recordIdentityKeys(r)
+  if (keys.length > 0) return keys[0]
+  const full = [r.song, r.artist, r.album, r.note].map((s) => recoNorm(s || '')).join('|')
+  return full !== '|||' ? `full:${full}` : `id:${r.id ?? ''}`
+}
+
+/** Which of two same-identity rows survives a dedupe: the resolved one, else
+ *  the newest. */
+export function pickBetterReco<T extends RecoIdentityInput>(a: T, b: T): T {
+  const aResolved = Boolean(a.resolvedAt || a.matchedTitle)
+  const bResolved = Boolean(b.resolvedAt || b.matchedTitle)
+  if (aResolved !== bResolved) return aResolved ? a : b
+  return (a.createdAt || '') >= (b.createdAt || '') ? a : b
+}
+
+/** Tombstone entries: bare ids, plus `identity:<key>` for every key kind. */
+export function isTombstonedRecord(tombs: ReadonlySet<string>, r: RecoIdentityInput): boolean {
+  if (r.id && tombs.has(String(r.id))) return true
+  return recordIdentityKeys(r).some((k) => tombs.has(RECO_IDENTITY_PREFIX + k))
+}
+
 function recoEditDistance(a: string, b: string, max = 3): number {
   if (a === b) return 0
   if (Math.abs(a.length - b.length) > max) return max + 1

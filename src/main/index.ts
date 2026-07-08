@@ -43,15 +43,19 @@ import {
   recoTitleMatches,
   recoArtistMatches,
   evaluateMusicManVerification,
+  recordIdentityKeys,
+  recoDedupeKey,
+  pickBetterReco,
+  isTombstonedRecord,
 } from './reco-match'
 import {
   type RecoOutboxOp,
   parseOutbox,
   scrubOutboxForDelete,
+  scrubOutboxAgainstBackend,
   pendingAddLocalIds,
-  pendingDeleteIds,
-  pendingDeleteIdentities,
 } from './reco-outbox'
+import { computeMirror, computeNasFallback, identitiesForDelete } from './reco-sync'
 import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory'
 import { computeRediscovery, type RediscoveryPick, type RediscoveryTrack } from './rediscovery'
 import {
@@ -10583,6 +10587,15 @@ interface RecommendationRecord {
   matchedAlbum?: string
   resolvedAt?: string
   source?: RecoSource
+  // Brief 126 — sync protocol v2: what the jot wants (track/album/full
+  // concert) + a stable external id (archive.org item — strongest identity).
+  kind?: 'track' | 'album' | 'concert'
+  externalId?: string
+  // Fulfillment (backend-synced): the jot landed in the library.
+  owned?: boolean
+  ownedAt?: string
+  ownedVia?: string
+  ownedDesc?: string
 }
 // The Mini backend owns enrichment for adds; reachable on the tailnet.
 // Override for a local dev backend via JAKETUNES_MOBILE_BACKEND.
@@ -10592,34 +10605,21 @@ function recommendationsPath(): string {
   return join(STATE_DIR, 'recommendations.json')
 }
 
-// LEGACY, READ-ONLY (Brief 125): V3 no longer writes tombstones anywhere — the
-// backend tombstones on every DELETE through its API and filters its own
-// responses. V3's old local recommendations-deleted.json is kept as read-only
-// historical knowledge so the one-time stray migration in
-// syncRecommendationsToLocal (and the NAS display fallback) can't resurrect a
-// song that was deleted before the outbox existed.
-function recommendationsDeletedPath(): string {
-  return join(STATE_DIR, 'recommendations-deleted.json')
-}
-
-async function readRecommendationTombstones(): Promise<Set<string>> {
+// Brief 126: V3 keeps ZERO tombstone state of its own. The backend's LIVE
+// tombstone file (written next to library.json on the NAS) is the only
+// delete knowledge, read here read-only to gate the NAS display fallback.
+// (The old frozen STATE_DIR/recommendations-deleted.json — whose staleness
+// powered the stray-migration resurrections — is removed by the one-time
+// boot reset.)
+async function readNasRecoTombstones(): Promise<Set<string>> {
   try {
-    const raw = await readFile(recommendationsDeletedPath(), 'utf-8')
-    const parsed = JSON.parse(raw) as unknown
-    if (Array.isArray(parsed)) return new Set(parsed.map((id) => String(id)))
-  } catch { /* no tombstones yet */ }
+    const { existsSync } = await import('fs')
+    const p = join(NAS_STATE_DIR_PATH, 'recommendations-deleted.json')
+    if (!existsSync(p)) return new Set()
+    const parsed = JSON.parse(await readFile(p, 'utf-8')) as unknown
+    if (Array.isArray(parsed)) return new Set(parsed.map((e) => String(e)))
+  } catch { /* NAS unreachable — fallback leg simply imports nothing new */ }
   return new Set()
-}
-
-// Identity tombstones — deleting a song tombstones the SONG (normalized
-// song|artist), not just one row id. The list once grew 14 copies of one track
-// because homemini re-minted ids for the same song and the id-only pull filter
-// re-imported each as "new"; id-only delete then removed one copy at a time.
-const RECO_IDENTITY_TOMBSTONE_PREFIX = 'identity:'
-
-function isIdentityTombstoned(tombstones: Set<string>, r: RecommendationRecord): boolean {
-  const k = recoRecordIdentityKey(r)
-  return Boolean(k && tombstones.has(RECO_IDENTITY_TOMBSTONE_PREFIX + k))
 }
 
 function sortRecommendations(list: RecommendationRecord[]): RecommendationRecord[] {
@@ -10670,18 +10670,15 @@ function mergeRecommendationsById(...sources: RecommendationRecord[][]): Recomme
 }
 
 // Collapse rows that are the same SONG under different ids (the duplication
-// disease). Keeps the resolved copy, else the newest. Rows without a
-// song+artist identity (note-only jots) dedupe by the stricter full key.
+// disease). Brief 126: grouping now uses the canonical protocol key
+// (recoDedupeKey — ext:/pair/solo:/full fallback chain, twin of the backend)
+// so artist-less jots dedupe correctly too.
 function dedupeRecommendationsByIdentity(list: RecommendationRecord[]): RecommendationRecord[] {
   const byIdentity = new Map<string, RecommendationRecord>()
-  const pick = (a: RecommendationRecord, b: RecommendationRecord): RecommendationRecord => {
-    if (Boolean(a.resolvedAt) !== Boolean(b.resolvedAt)) return a.resolvedAt ? a : b
-    return (a.createdAt || '').localeCompare(b.createdAt || '') >= 0 ? a : b
-  }
   for (const r of list) {
-    const k = recoRecordIdentityKey(r) ?? `full:${recoRecordKey(r)}`
+    const k = recoDedupeKey(r)
     const prev = byIdentity.get(k)
-    byIdentity.set(k, prev ? pick(r, prev) : r)
+    byIdentity.set(k, prev ? pickBetterReco(prev, r) : r)
   }
   return sortRecommendations([...byIdentity.values()])
 }
@@ -11070,7 +11067,11 @@ function enqueueRecoOps(mutate: (ops: RecoOutboxOp[]) => RecoOutboxOp[]): Promis
 /** Replay queued mutations against the backend API. Failures stay queued for
  *  the next pass; a landed add adopts homemini's id in the local cache (the
  *  same swap pushLocalOnlyRecommendations used to do) so the next mirror pull
- *  can't duplicate it. */
+ *  can't duplicate it.
+ *  Brief 126: adds declare origin 'user' (they were human actions — a
+ *  deliberate re-add may un-delete); a `suppressed` response counts as
+ *  landed. Deletes transmit the op's FULL identity-key set as query params,
+ *  so the backend tombstones the SONG even when the id no longer resolves. */
 async function replayRecommendationsOutbox(): Promise<void> {
   await withRecoOutbox(async (ops) => {
     if (ops.length === 0) return ops
@@ -11084,11 +11085,15 @@ async function replayRecommendationsOutbox(): Promise<void> {
           const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(op.input),
+            body: JSON.stringify({ ...op.input, origin: 'user', clientQueuedAt: op.queuedAt || undefined }),
             signal: AbortSignal.timeout(10000),
           })
           if (!res.ok) { remaining.push(op); continue }
-          const parsed = (await res.json().catch(() => null)) as RecommendationRecord | { item?: RecommendationRecord } | null
+          const parsed = (await res.json().catch(() => null)) as (RecommendationRecord & { suppressed?: boolean }) | { item?: RecommendationRecord } | null
+          if (parsed && typeof parsed === 'object' && (parsed as { suppressed?: boolean }).suppressed) {
+            landedAdds++   // backend said no (tombstoned system-class row) — op is settled
+            continue
+          }
           const adopted = (parsed && typeof parsed === 'object' && 'id' in parsed && (parsed as RecommendationRecord).id)
             ? (parsed as RecommendationRecord)
             : ((parsed as { item?: RecommendationRecord } | null)?.item ?? null)
@@ -11100,14 +11105,22 @@ async function replayRecommendationsOutbox(): Promise<void> {
           remaining.push(op)   // Mini unreachable — retry next sync
         }
       } else {
+        const identityParams = op.identities
+          .slice(0, 8)
+          .map((k) => `identity=${encodeURIComponent(k)}`)
+          .join('&')
         const stillDoomed: string[] = []
         for (const did of op.ids) {
           try {
-            const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}`, {
+            const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}${identityParams ? `?${identityParams}` : ''}`, {
               method: 'DELETE',
               signal: AbortSignal.timeout(8000),
             })
-            if (!res.ok && res.status !== 404) stillDoomed.push(did)
+            if (!res.ok && res.status !== 404) { stillDoomed.push(did); continue }
+            const body = (await res.json().catch(() => null)) as { existed?: boolean } | null
+            if (body && body.existed === false) {
+              console.log(`[reco] delete no-op'd on backend (id ${did} unknown) — identity keys tombstoned anyway`)
+            }
           } catch {
             stillDoomed.push(did)
           }
@@ -11134,133 +11147,158 @@ async function replayRecommendationsOutbox(): Promise<void> {
   })
 }
 
-/** Brief 125 single-writer sync. Replay the outbox, then MIRROR the backend
- *  list — it is the source of truth, so rows deleted on the phone simply
- *  vanish here (no tombstone bookkeeping). Local enrichment overlays and
- *  still-queued offline adds are kept. When the backend is unreachable, fall
- *  back to a read-only additive import from the NAS copy for display — never
- *  pushed anywhere. */
+/** Brief 126 sync protocol v2: server-authoritative mirror through the PURE
+ *  merge engine (reco-sync.ts). The backend is the only source of truth; the
+ *  local file is a cache of its list overlaid with this machine's outbox.
+ *  NOTHING IS INFERRED FROM ABSENCE — a local row that is not on the backend
+ *  and not in the outbox was deleted elsewhere and is dropped. (The old
+ *  "stray migration" that re-POSTed such rows — and thereby un-deleted every
+ *  phone delete on the next desktop sync — is gone, structurally: no such
+ *  branch exists in computeMirror.) When the backend is unreachable, a
+ *  read-only additive import from the NAS copy keeps the display fresh,
+ *  gated by the backend's LIVE NAS tombstones. */
 let recommendationsSyncedAtMs = 0
-const RECOMMENDATIONS_SYNC_TTL_MS = 5 * 60 * 1000
+const RECOMMENDATIONS_SYNC_TTL_MS = 60 * 1000
+interface RecoSyncMeta {
+  source: 'backend' | 'cache' | 'nas-fallback'
+  backendReachable: boolean
+  syncedAt: number | null
+  pendingOps: number
+}
+let lastRecoSyncMeta: RecoSyncMeta = { source: 'cache', backendReachable: false, syncedAt: null, pendingOps: 0 }
 
 async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
   await replayRecommendationsOutbox().catch(() => {})
   const local = await readRecommendationsFile()
   const outbox = await readRecoOutbox()
-  const pendingAdds = pendingAddLocalIds(outbox)
-  const delIds = pendingDeleteIds(outbox)
-  const delIdentities = pendingDeleteIdentities(outbox)
   const backendRaw = await fetchRecommendationsFromBackend()   // null = homemini unreachable
 
   if (backendRaw === null) {
-    // Display-freshness fallback: READ the NAS copy (backend-owned; reading is
-    // within the contract). Additive into the local cache only. The legacy
-    // tombstone file still gates this leg so a stale NAS snapshot can't
-    // resurrect a pre-outbox delete.
-    const legacy = await readRecommendationTombstones()
-    const localIds = new Set(local.map((r) => String(r.id)))
-    const localIdentities = new Set(local.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
     const nas = (await readRecommendationsFromNas()) ?? []
-    const incoming = nas.filter((r) => {
-      if (!r?.id) return false
-      const id = String(r.id)
-      if (localIds.has(id) || delIds.has(id) || legacy.has(id)) return false
-      if (isIdentityTombstoned(legacy, r)) return false
-      const idk = recoRecordIdentityKey(r)
-      return !(idk && (localIdentities.has(idk) || delIdentities.has(idk)))
-    })
-    if (incoming.length === 0) {
-      recommendationsSyncedAtMs = Date.now()
-      return local
-    }
+    const nasTombstones = await readNasRecoTombstones()
+    const incoming = computeNasFallback({ local, nas, nasTombstones, ops: outbox })
+    lastRecoSyncMeta = { source: 'nas-fallback', backendReachable: false, syncedAt: recommendationsSyncedAtMs || null, pendingOps: outbox.length }
+    if (incoming.length === 0) return local
     const merged = dedupeRecommendationsByIdentity(mergeRecommendationsById(local, incoming))
     await writeRecommendationsFile(merged)
     console.log(`[reco] backend unreachable — pulled ${incoming.length} new from the NAS copy (read-only)`)
-    recommendationsSyncedAtMs = Date.now()
     return merged
   }
 
-  // One-time stray migration: local rows the backend lacks with no outbox op
-  // covering them are pre-outbox offline adds (queue them up through the API)
-  // — unless the legacy tombstone file says the song was deleted, in which
-  // case they're exactly the strays that used to resurrect: drop them.
-  const backendIds = new Set(backendRaw.map((r) => String(r.id)))
-  const backendIdentities = new Set(backendRaw.map((r) => recoRecordIdentityKey(r)).filter((k): k is string => Boolean(k)))
-  const strays = local.filter((r) => {
-    const id = String(r.id)
-    if (backendIds.has(id) || pendingAdds.has(id) || delIds.has(id)) return false
-    const idk = recoRecordIdentityKey(r)
-    return !(idk && backendIdentities.has(idk))
-  })
-  if (strays.length > 0) {
-    const legacy = await readRecommendationTombstones()
-    const toQueue = strays
-      .filter((r) => !legacy.has(String(r.id)) && !isIdentityTombstoned(legacy, r))
-      .filter((r) => Boolean(r.song || r.artist || r.album || r.note))
-      .slice(0, 20)   // cap so a backlog doesn't hammer homemini in one pass
-    if (toQueue.length > 0) {
-      const now = new Date().toISOString()
-      await enqueueRecoOps((ops) => [
-        ...ops,
-        ...toQueue.map((r): RecoOutboxOp => ({
-          op: 'add',
-          localId: String(r.id),
-          input: { song: r.song, artist: r.artist, album: r.album, note: r.note },
-          identity: recoRecordIdentityKey(r),
-          queuedAt: now,
-        })),
-      ])
-      for (const r of toQueue) pendingAdds.add(String(r.id))
-      console.log(`[reco] queued ${toQueue.length} pre-outbox local-only recommendation(s) for homemini`)
-    }
-  }
-
-  // MIRROR: backend rows (minus pending deletes), preferring our local copy of
-  // a row when we have one (it's the backend row plus V3 enrichment), plus any
-  // offline adds still waiting in the outbox.
-  const localById = new Map(local.map((r) => [String(r.id), r] as const))
-  const fromBackend = backendRaw
-    .filter((r) => {
-      if (!r?.id || delIds.has(String(r.id))) return false
-      const idk = recoRecordIdentityKey(r)
-      return !(idk && delIdentities.has(idk))
-    })
-    .map((r) => localById.get(String(r.id)) ?? r)
-  const pendingRows = local.filter((r) => pendingAdds.has(String(r.id)))
-  const merged = dedupeRecommendationsByIdentity([...fromBackend, ...pendingRows])
+  const { merged: mirrorRows, dupeDeleteIds } = computeMirror({ backend: backendRaw, local, ops: outbox })
+  const merged = sortRecommendations(mirrorRows)
 
   // Heal server-side duplicates the dedupe collapsed: converge homemini via
-  // queued API deletes (ids only — no identity block, the song stays live).
-  const keptIds = new Set(merged.map((r) => String(r.id)))
-  const droppedDupeIds = fromBackend.filter((r) => !keptIds.has(String(r.id))).map((r) => String(r.id))
-  if (droppedDupeIds.length > 0) {
+  // queued API deletes (ids only — NO identity keys, the song stays live).
+  if (dupeDeleteIds.length > 0) {
     await enqueueRecoOps((ops) => [
       ...ops,
-      { op: 'delete', ids: droppedDupeIds, identity: null, queuedAt: new Date().toISOString() },
+      { op: 'delete', ids: dupeDeleteIds, identities: [], queuedAt: new Date().toISOString() },
     ])
-    console.log(`[reco] healed ${droppedDupeIds.length} duplicate cop${droppedDupeIds.length === 1 ? 'y' : 'ies'} — queued homemini delete(s)`)
+    console.log(`[reco] healed ${dupeDeleteIds.length} duplicate cop${dupeDeleteIds.length === 1 ? 'y' : 'ies'} — queued homemini delete(s)`)
   }
 
   await writeRecommendationsFile(merged)
   recommendationsSyncedAtMs = Date.now()
+  lastRecoSyncMeta = { source: 'backend', backendReachable: true, syncedAt: recommendationsSyncedAtMs, pendingOps: outbox.length }
   return merged
 }
 
-let readRecoInflight: Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> | null = null
+// ── Brief 126: freshness + push. A 60s main-process timer keeps the mirror
+// current (a phone delete disappears from an open desktop view within ≤60s);
+// any sync that changed the list pushes `recommendations-updated` so the
+// renderer never polls. Mutations schedule a converge-sync ~2s out. ──
+let recoLastPushedJson = ''
+async function runRecoSyncAndNotify(reason: string): Promise<void> {
+  try {
+    const list = await syncRecommendationsToLocal()
+    const json = JSON.stringify(list.map((r) => r.id + (r.owned ? '!' : '')))
+    if (json !== recoLastPushedJson) {
+      recoLastPushedJson = json
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send('recommendations-updated', { reason })
+      }
+    }
+  } catch (err) {
+    console.warn('[reco] scheduled sync failed:', err instanceof Error ? err.message : err)
+  }
+}
+let recoSyncTimerStarted = false
+function startRecoSyncTimer(): void {
+  if (recoSyncTimerStarted) return
+  recoSyncTimerStarted = true
+  setInterval(() => { void runRecoSyncAndNotify('timer') }, 60 * 1000)
+}
+let recoConvergeTimer: NodeJS.Timeout | null = null
+function scheduleRecoConvergeSync(): void {
+  if (recoConvergeTimer) clearTimeout(recoConvergeTimer)
+  recoConvergeTimer = setTimeout(() => {
+    recoConvergeTimer = null
+    void runRecoSyncAndNotify('mutation')
+  }, 2000)
+}
 
-ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }): Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> => {
+// ── Brief 126: one-time boot reset. Scrubs the outbox of stray-migration
+// residue (queued adds whose identity is live or tombstoned on the backend),
+// deletes the frozen legacy tombstone file, and forces a full mirror.
+// Safety-gated: aborts (and retries next boot) when the backend is
+// unreachable — the reset never runs blind. ──
+async function runRecoResetV2IfNeeded(): Promise<void> {
+  const marker = join(STATE_DIR, 'reco-reset-v2.done')
+  const { existsSync } = await import('fs')
+  if (existsSync(marker)) return
+  try {
+    const backend = await fetchRecommendationsFromBackend()
+    if (backend === null) { console.log('[reco] reset-v2 deferred — backend unreachable'); return }
+    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/deleted`, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) { console.log('[reco] reset-v2 deferred — /deleted', res.status); return }
+    const deleted = (await res.json()) as { keys?: string[] }
+    const tombstoneEntries = new Set((deleted.keys || []).map(String))
+    const backendKeys = new Set(backend.flatMap((r) => recordIdentityKeys(r)))
+    await withRecoOutbox(async (ops) => {
+      const { ops: kept, dropped } = scrubOutboxAgainstBackend(ops, backendKeys, tombstoneEntries)
+      for (const d of dropped) {
+        if (d.op === 'add') console.log(`[reco] reset-v2 dropped stray queued add: "${d.input.song ?? ''}" — ${d.input.artist ?? ''}`)
+      }
+      return kept
+    })
+    try { await unlink(join(STATE_DIR, 'recommendations-deleted.json')) } catch { /* already gone */ }
+    await syncRecommendationsToLocal()
+    await writeFile(marker, new Date().toISOString())
+    console.log('[reco] reset-v2 complete — legacy tombstones removed, outbox scrubbed, mirror forced')
+  } catch (err) {
+    console.warn('[reco] reset-v2 failed (will retry next boot):', err instanceof Error ? err.message : err)
+  }
+}
+
+type ReadRecosResult = { ok: boolean; recommendations: RecommendationRecord[]; meta: RecoSyncMeta }
+let readRecoInflight: Promise<ReadRecosResult> | null = null
+
+ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }): Promise<ReadRecosResult> => {
   if (!opts?.forceSync && readRecoInflight) return readRecoInflight
-  readRecoInflight = (async (): Promise<{ ok: boolean; recommendations: RecommendationRecord[] }> => {
+  readRecoInflight = (async (): Promise<ReadRecosResult> => {
     try {
       const forceSync = opts?.forceSync === true
       const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
       const recommendations = (forceSync || stale || recommendationsSyncedAtMs === 0)
         ? await syncRecommendationsToLocal()
         : await readRecommendationsFile()
-      return { ok: true, recommendations }
+      if (!stale && !forceSync && lastRecoSyncMeta.source === 'backend') {
+        lastRecoSyncMeta = { ...lastRecoSyncMeta, source: 'cache' }
+      }
+      return { ok: true, recommendations, meta: lastRecoSyncMeta }
     } catch (err) {
+      // Brief 126: an error NEVER masquerades as an empty list. Serve the
+      // cached file with backendReachable:false — the UI shows a banner,
+      // not an innocent EmptyState.
       console.warn('[reco] read/sync failed:', err instanceof Error ? err.message : err)
-      return { ok: true, recommendations: [] }
+      const cached = await readRecommendationsFile().catch(() => [] as RecommendationRecord[])
+      const outbox = await readRecoOutbox().catch(() => [] as RecoOutboxOp[])
+      return {
+        ok: cached.length > 0,
+        recommendations: cached,
+        meta: { source: 'cache', backendReachable: false, syncedAt: recommendationsSyncedAtMs || null, pendingOps: outbox.length },
+      }
     } finally {
       readRecoInflight = null
     }
@@ -11312,7 +11350,8 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(trimmed),
+      // origin:'user' — a deliberate human add; may un-delete (Brief 126).
+      body: JSON.stringify({ ...trimmed, origin: 'user' }),
       signal: AbortSignal.timeout(10000),
     })
     backendStatus = res.status
@@ -11354,6 +11393,7 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
     } catch (err) {
       console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
     }
+    scheduleRecoConvergeSync()
     return { ok: true, recommendation }
   }
 
@@ -11369,7 +11409,7 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
         op: 'add',
         localId: String(local.id),
         input: trimmed,
-        identity: recoIdentityKey(trimmed.song, trimmed.artist),
+        identities: recordIdentityKeys(local),
         queuedAt: new Date().toISOString(),
       },
     ])
@@ -11386,19 +11426,21 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
   // Identity-wide delete: removing a song removes EVERY copy of it (the list
   // once carried 14 copies of one track under different ids). The remote
   // removal routes through the backend API via the outbox — the backend
-  // tombstones the song on DELETE (Brief 125 single-writer: V3 keeps no
-  // tombstones and never touches the shared NAS files). A queued add of the
-  // same song is cancelled instead of deleted remotely, so an offline
-  // add-then-delete can't replay the POST after the DELETE and resurrect it.
+  // tombstones the id + every transmitted identity key (Brief 126: the keys
+  // ride the DELETE as query params, so the song dies even if the backend
+  // re-minted its id). A queued add of the same song is cancelled instead of
+  // deleted remotely, so an offline add-then-delete can't replay the POST
+  // after the DELETE and resurrect it.
   const rid = String(id)
   let doomedIds: string[] = [rid]
-  let identity: string | null = null
+  let identities: string[] = []
   try {
     const all = await readRecommendationsFile()
     const target = all.find((r) => String(r.id) === rid)
-    identity = target ? recoRecordIdentityKey(target) : null
-    if (identity) {
-      doomedIds = all.filter((r) => String(r.id) === rid || recoRecordIdentityKey(r) === identity).map((r) => String(r.id))
+    if (target) {
+      const plan = identitiesForDelete(target, all)
+      doomedIds = plan.doomedIds
+      identities = plan.identities
     }
     const next = all.filter((r) => !doomedIds.includes(String(r.id)))
     if (next.length !== all.length) await writeRecommendationsFile(next)
@@ -11407,12 +11449,16 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
   }
   suggestResultCache = null   // deleting frees the Music Man to re-suggest
   await enqueueRecoOps((ops) => {
-    const { ops: scrubbed, remoteIds } = scrubOutboxForDelete(ops, doomedIds, identity)
-    if (remoteIds.length === 0) return scrubbed   // all copies were still queued adds — nothing to delete remotely
-    return [...scrubbed, { op: 'delete', ids: remoteIds, identity, queuedAt: new Date().toISOString() }]
+    const { ops: scrubbed, remoteIds } = scrubOutboxForDelete(ops, doomedIds, identities)
+    // Even when every local copy was a still-queued add, the identity keys
+    // must land on the backend — the song may exist there under an id this
+    // machine never saw.
+    if (remoteIds.length === 0 && identities.length === 0) return scrubbed
+    return [...scrubbed, { op: 'delete', ids: remoteIds.length > 0 ? remoteIds : [rid], identities, queuedAt: new Date().toISOString() }]
   })
   // Replay now when the Mini is up; otherwise the op waits for the next sync.
   void replayRecommendationsOutbox().catch(() => {})
+  scheduleRecoConvergeSync()
   return { ok: true }
 })
 
@@ -13542,9 +13588,16 @@ app.whenReady().then(async () => {
   setInterval(() => { void autoIndexNewTracks() }, 30_000)
   // Brief 122 — warm recommendations.json from homemini/NAS so "Listen to
   // the List" isn't empty when the phone wrote picks the laptop never pulled.
-  void syncRecommendationsToLocal().catch((err) => {
-    console.warn('[reco] boot sync failed (non-fatal):', err instanceof Error ? err.message : err)
-  })
+  // Brief 126 — the one-time reset runs FIRST (scrub stray-migration residue
+  // from the outbox, drop the frozen legacy tombstone file, force a clean
+  // mirror), then the 60s freshness timer keeps every device converged.
+  void (async () => {
+    await runRecoResetV2IfNeeded()
+    await syncRecommendationsToLocal().catch((err) => {
+      console.warn('[reco] boot sync failed (non-fatal):', err instanceof Error ? err.message : err)
+    })
+    startRecoSyncTimer()
+  })()
 
   // 4.4.85: seed the codec-hint map BEFORE the ipod-audio:// protocol
   // handler registers so the very first play in this session can use it.

@@ -202,6 +202,13 @@ const electronAPI = {
   addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) =>
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
+  // Brief 126 — main pushes when the mirror changed (60s timer / mutations);
+  // the renderer refetches instead of polling.
+  onRecommendationsUpdated: (callback: (info: { reason: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { reason: string }) => callback(info)
+    ipcRenderer.on('recommendations-updated', handler)
+    return () => { ipcRenderer.removeListener('recommendations-updated', handler) }
+  },
   // Brief 122 — Music Man suggests 3 things to add to the list.
   suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.

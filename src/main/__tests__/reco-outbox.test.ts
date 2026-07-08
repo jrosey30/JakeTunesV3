@@ -9,18 +9,20 @@ import {
   pendingDeleteIdentities,
 } from '../reco-outbox.ts'
 
-const addOp = (localId: string, identity: string | null = null): RecoOutboxOp => ({
+// Brief 126: ops carry identities: string[] (v2). parseOutbox still accepts
+// the legacy single-`identity` field — covered in reco-sync.test.ts.
+const addOp = (localId: string, identities: string[] = []): RecoOutboxOp => ({
   op: 'add',
   localId,
   input: { song: 'S', artist: 'A' },
-  identity,
+  identities,
   queuedAt: '2026-07-02T00:00:00.000Z',
 })
 
-const deleteOp = (ids: string[], identity: string | null = null): RecoOutboxOp => ({
+const deleteOp = (ids: string[], identities: string[] = []): RecoOutboxOp => ({
   op: 'delete',
   ids,
-  identity,
+  identities,
   queuedAt: '2026-07-02T00:00:00.000Z',
 })
 
@@ -48,50 +50,59 @@ describe('parseOutbox', () => {
 
 describe('scrubOutboxForDelete', () => {
   it('cancels a queued add by localId and excludes it from remote deletes', () => {
-    const { ops, remoteIds } = scrubOutboxForDelete([addOp('L1')], ['L1', 'B2'], null)
+    const { ops, remoteIds } = scrubOutboxForDelete([addOp('L1')], ['L1', 'B2'], [])
     assert.deepEqual(ops, [])
     assert.deepEqual(remoteIds, ['B2'])   // L1 never reached the backend
   })
 
   it('cancels a queued add by identity even under a different id', () => {
     const { ops, remoteIds } = scrubOutboxForDelete(
-      [addOp('L1', 'song|artist')],
+      [addOp('L1', ['song|artist'])],
       ['B9'],
-      'song|artist',
+      ['song|artist'],
     )
     assert.deepEqual(ops, [])
     assert.deepEqual(remoteIds, ['B9'])
   })
 
   it('keeps unrelated ops untouched', () => {
-    const unrelated = [addOp('L2', 'other|song'), deleteOp(['Z1'])]
-    const { ops, remoteIds } = scrubOutboxForDelete(unrelated, ['B1'], 'song|artist')
+    const unrelated = [addOp('L2', ['other|song']), deleteOp(['Z1'])]
+    const { ops, remoteIds } = scrubOutboxForDelete(unrelated, ['B1'], ['song|artist'])
     assert.deepEqual(ops, unrelated)
     assert.deepEqual(remoteIds, ['B1'])
   })
 
-  it('null identity cancels only by localId', () => {
-    const { ops } = scrubOutboxForDelete([addOp('L1', null)], ['B1'], null)
+  it('empty identities cancels only by localId', () => {
+    const { ops } = scrubOutboxForDelete([addOp('L1', [])], ['B1'], [])
     assert.equal(ops.length, 1)   // no id overlap, no identity — add survives
   })
 
   it('offline add-then-delete of the same song leaves nothing to replay', () => {
     // The resurrection scenario: POST must not fire after the DELETE.
     const { ops, remoteIds } = scrubOutboxForDelete(
-      [addOp('L1', 'song|artist')],
+      [addOp('L1', ['song|artist'])],
       ['L1'],
-      'song|artist',
+      ['song|artist'],
     )
     assert.deepEqual(ops, [])
     assert.deepEqual(remoteIds, [])
+  })
+
+  it('any overlapping key cancels — multi-key ops (solo/ext) included', () => {
+    const { ops } = scrubOutboxForDelete(
+      [addOp('L1', ['s|b', 'solo:s~~'])],
+      ['B1'],
+      ['solo:s~~'],
+    )
+    assert.deepEqual(ops, [])
   })
 })
 
 describe('pending sets', () => {
   it('collects ids and identities by op type', () => {
-    const ops = [addOp('L1'), deleteOp(['B1', 'B2'], 'k1'), deleteOp(['B3'], null)]
+    const ops = [addOp('L1'), deleteOp(['B1', 'B2'], ['k1', 'k2']), deleteOp(['B3'], [])]
     assert.deepEqual([...pendingAddLocalIds(ops)], ['L1'])
     assert.deepEqual([...pendingDeleteIds(ops)].sort(), ['B1', 'B2', 'B3'])
-    assert.deepEqual([...pendingDeleteIdentities(ops)], ['k1'])
+    assert.deepEqual([...pendingDeleteIdentities(ops)].sort(), ['k1', 'k2'])
   })
 })
