@@ -8,7 +8,7 @@ const queue: string[] = []
 
 function drainPrefetchQueue(): void {
   while (inFlight < MAX_IN_FLIGHT && queue.length > 0) {
-    const hash = queue.shift()!
+    const url = queue.shift()!
     inFlight++
     const img = new Image()
     img.decoding = 'async'
@@ -18,19 +18,23 @@ function drainPrefetchQueue(): void {
     }
     img.onload = done
     img.onerror = done
-    img.src = `album-art://${hash}.jpg`
+    img.src = url
   }
 }
 
 /**
  * Warm the Chromium + main-process artwork caches for a batch of hashes.
  * Fire-and-forget — rate-limited so grid mounts don't stampede main.
+ * Pass `size` matching what the consuming view renders (grids use the
+ * thumbnail tier) so the warmed bytes are the ones actually displayed.
  */
-export function prefetchAlbumArtHashes(hashes: Iterable<string | undefined | null>): void {
+export function prefetchAlbumArtHashes(hashes: Iterable<string | undefined | null>, size?: number): void {
   for (const hash of hashes) {
-    if (!hash || prefetched.has(hash)) continue
-    prefetched.add(hash)
-    queue.push(hash)
+    if (!hash) continue
+    const key = size ? `${hash}@${size}` : hash
+    if (prefetched.has(key)) continue
+    prefetched.add(key)
+    queue.push(`album-art://${hash}.jpg${size ? `?s=${size}` : ''}`)
   }
   drainPrefetchQueue()
 }

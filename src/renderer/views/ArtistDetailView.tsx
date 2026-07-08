@@ -391,7 +391,7 @@ export default function ArtistDetailView() {
         else if (missing.length < 24) missing.push({ artist: p.name, album: a.name })
       }
     }
-    prefetchAlbumArtHashes(hashes.slice(0, 32))
+    prefetchAlbumArtHashes(hashes.slice(0, 32), 320)
     if (missing.length > 0) queueArtworkResolutions(missing, dispatch)
   }, [personas, lib.artworkMap, normalizedArtIndex, findArtHash, dispatch])
 

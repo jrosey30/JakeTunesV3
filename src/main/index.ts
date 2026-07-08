@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -65,7 +65,7 @@ import {
 } from '../common/albumReleaseDate'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
-import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile } from 'fs/promises'
+import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
@@ -5528,7 +5528,23 @@ function bareArtHash(hash: string): string {
 }
 
 function invalidateArtBytes(hash: string): void {
-  ART_BYTES_CACHE.delete(bareArtHash(hash))
+  const bare = bareArtHash(hash)
+  ART_BYTES_CACHE.delete(bare)
+  // Thumbnail tier: sweep every size variant from memory AND disk, or a
+  // replaced cover would keep serving its old thumb forever (the URL
+  // cache-bust only reaches the browser cache, not our stores).
+  for (const key of [...ART_BYTES_CACHE.keys()]) {
+    if (key.startsWith(`${bare}@`)) ART_BYTES_CACHE.delete(key)
+  }
+  void (async () => {
+    try {
+      const thumbDir = join(getArtworkDir(), 'thumbs')
+      const entries = await readdir(thumbDir).catch(() => [] as string[])
+      await Promise.all(entries
+        .filter((f) => f.startsWith(`${bare}_`))
+        .map((f) => unlink(join(thumbDir, f)).catch(() => {})))
+    } catch { /* best-effort */ }
+  })()
 }
 
 function getCachedArtBytes(hash: string): ArrayBuffer | undefined {
@@ -13691,35 +13707,62 @@ app.whenReady().then(async () => {
   // renderer's first paint can resolve album-art:// URLs.
   protocol.handle('album-art', async (request) => {
     const url = request.url.replace('album-art://', '')
-    const rawHash = decodeURIComponent(url.split('?')[0].replace('.jpg', ''))
+    const [pathPart, queryPart] = url.split('?')
+    const rawHash = decodeURIComponent(pathPart.replace('.jpg', ''))
     // Strip cache-bust suffix (e.g. "abc123_1713100000000" → "abc123")
     const hash = rawHash.replace(/_\d+$/, '')
-    const cached = getCachedArtBytes(hash)
-    if (cached) {
-      return new Response(cached, {
-        headers: {
-          'Content-Type': 'image/jpeg',
-          // Versioned hash in the URL busts browser cache on art change;
-          // long max-age makes scroll-back instant within a session.
-          'Cache-Control': 'public, max-age=31536000, immutable',
-        },
-      })
+    // Thumbnail tier (2026-07-08, "art loads sporadically"): grid cells
+    // were decoding the FULL cover (median ~400KB, some multi-MB) into
+    // 150px tiles, dozens at a time — the pop-in. `?s=NNN` serves a
+    // ~15KB thumb, generated once via nativeImage and cached on disk in
+    // artwork/thumbs. Full-size stays for heroes / Get Info / export.
+    const sMatch = /(?:^|&)s=(\d+)/.exec(queryPart || '')
+    const size = sMatch ? Math.min(1024, Math.max(64, parseInt(sMatch[1], 10))) : 0
+    const cacheKey = size ? `${hash}@${size}` : hash
+    const artHeaders = {
+      'Content-Type': 'image/jpeg',
+      // Versioned hash in the URL busts browser cache on art change;
+      // long max-age makes scroll-back instant within a session.
+      'Cache-Control': 'public, max-age=31536000, immutable',
     }
-    const filePath = join(getArtworkDir(), `${hash}.jpg`)
+    const cached = getCachedArtBytes(cacheKey)
+    if (cached) return new Response(cached, { headers: artHeaders })
+    const fullPath = join(getArtworkDir(), `${hash}.jpg`)
     try {
-      const data = await readFile(filePath)
+      let data: Buffer
+      if (size) {
+        const thumbDir = join(getArtworkDir(), 'thumbs')
+        const thumbPath = join(thumbDir, `${hash}_${size}.jpg`)
+        try {
+          data = await readFile(thumbPath)
+        } catch {
+          // Generate once: decode full art, downscale, persist. Some
+          // covers defeat nativeImage (mislabeled PNGs, exotic JPEGs —
+          // e.g. a 7.7MB not-actually-a-jpg found in the wild): fall back
+          // to serving the ORIGINAL bytes, which Chromium decodes fine —
+          // a thumb miss must never 404 art that used to display.
+          const full = await readFile(fullPath)
+          try {
+            const img = nativeImage.createFromBuffer(full)
+            if (img.isEmpty()) throw new Error('undecodable art')
+            const thumb = img.resize({ width: size, quality: 'good' }).toJPEG(82)
+            data = thumb
+            await mkdir(thumbDir, { recursive: true }).catch(() => {})
+            void writeFile(thumbPath, thumb).catch(() => {})
+          } catch {
+            data = full
+          }
+        }
+      } else {
+        data = await readFile(fullPath)
+      }
       // Buffer<ArrayBufferLike> doesn't satisfy BodyInit's stricter
       // ArrayBuffer constraint under the latest @types/node — slice into
       // a fresh ArrayBuffer so the body is unambiguously sized memory
       // backed by a real ArrayBuffer.
       const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
-      putArtBytes(hash, body)
-      return new Response(body, {
-        headers: {
-          'Content-Type': 'image/jpeg',
-          'Cache-Control': 'public, max-age=31536000, immutable',
-        },
-      })
+      putArtBytes(cacheKey, body)
+      return new Response(body, { headers: artHeaders })
     } catch {
       return new Response('Not found', {
         status: 404,
@@ -13753,6 +13796,43 @@ app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
+
+  // Thumbnail pregeneration (2026-07-08): build the 320px tier for every
+  // cover once, in the background, so grids never pay a first-scroll
+  // generation cost. ~2.4k covers × ~15ms nativeImage decode+resize,
+  // spaced 40ms apart ≈ a few gentle minutes, one time; subsequent boots
+  // skip existing thumbs in one readdir. Runs well after boot so it never
+  // competes with startup.
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const artDir = getArtworkDir()
+        const thumbDir = join(artDir, 'thumbs')
+        await mkdir(thumbDir, { recursive: true })
+        const [arts, thumbs] = await Promise.all([readdir(artDir), readdir(thumbDir)])
+        const have = new Set(thumbs)
+        const todo = arts.filter((f) => /^[^.].*\.jpg$/.test(f) && !have.has(f.replace(/\.jpg$/, '_320.jpg')))
+        if (todo.length === 0) return
+        console.log(`[art-thumbs] pregenerating ${todo.length} thumbnail(s) in background`)
+        let made = 0
+        for (const f of todo) {
+          try {
+            const full = await readFile(join(artDir, f))
+            const img = nativeImage.createFromBuffer(full)
+            if (!img.isEmpty()) {
+              const thumb = img.resize({ width: 320, quality: 'good' }).toJPEG(82)
+              await writeFile(join(thumbDir, f.replace(/\.jpg$/, '_320.jpg')), thumb)
+              made++
+            }
+          } catch { /* skip corrupt art */ }
+          await new Promise((r) => setTimeout(r, 40))
+        }
+        console.log(`[art-thumbs] pregeneration done: ${made}/${todo.length}`)
+      } catch (err) {
+        console.warn('[art-thumbs] pregeneration failed:', err instanceof Error ? err.message : err)
+      }
+    })()
+  }, 25_000)
 
   // Show the window before heavy startup IO (artwork self-heal, memory
   // loads, ipod-audio handler registration). Splash + library load give

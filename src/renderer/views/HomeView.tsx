@@ -508,7 +508,7 @@ export default function HomeView() {
       featuredAlbum?.key && artHashForKey(featuredAlbum.key),
       ...recentAlbums.map(c => artHashForKey(c.key)),
     ]
-    prefetchAlbumArtHashes(hashes)
+    prefetchAlbumArtHashes(hashes, 320)
   }, [lib.currentView, featuredAlbum?.key, recentAlbums, lib.artworkMap, normalizedArtIndex])
 
   const playAlbum = (card: AlbumCard) => {
@@ -544,7 +544,8 @@ export default function HomeView() {
         <section className="home-featured">
           {artHashForKey(featuredAlbum.key) && (
             <div className="home-featured-bleed" aria-hidden="true">
-              <AlbumArtImage hash={artHashForKey(featuredAlbum.key)!} alt="" />
+              {/* Blurred backdrop — a 320px thumb blurs identically to the full art. */}
+              <AlbumArtImage hash={artHashForKey(featuredAlbum.key)!} alt="" size={320} />
             </div>
           )}
           <div
@@ -719,7 +720,7 @@ export default function HomeView() {
                 >
                   <div className="home-rediscover-art" onClick={() => playRediscovery(pick)} title="Play">
                     {hash ? (
-                      <AlbumArtImage hash={hash} alt={pick.artist} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} />
+                      <AlbumArtImage hash={hash} alt={pick.artist} size={320} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} />
                     ) : (
                       <div className="home-album-art-placeholder home-rediscover-art-ph">{pick.artist.split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('')}</div>
                     )}

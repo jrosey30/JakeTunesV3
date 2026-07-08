@@ -57,7 +57,7 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
   }, [albums, findArtHash, libDispatch])
 
   useEffect(() => {
-    prefetchAlbumArtHashes(albums.slice(0, 48).map(a => findArtHash(a)))
+    prefetchAlbumArtHashes(albums.slice(0, 48).map(a => findArtHash(a)), 320)
   }, [albums, findArtHash, lib.artworkMap])
 
   const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
@@ -98,7 +98,7 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
             >
               <div className="album-card-art">
                 {artHash ? (
-                  <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" />
+                  <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" size={320} />
                 ) : (
                   <svg width="32" height="32" viewBox="0 0 32 32" fill="#bbb">
                     <circle cx="16" cy="16" r="14" fill="none" stroke="#bbb" strokeWidth="1" />

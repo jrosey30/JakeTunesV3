@@ -631,9 +631,11 @@ export default function ArtistsView() {
                     <div className="artist-album-art">
                       {artworkLookup ? (
                         <img
-                          src={`album-art://${artworkLookup}.jpg`}
+                          src={`album-art://${artworkLookup}.jpg?s=320`}
                           alt={album.name}
                           className="artist-album-art-img"
+                          loading="lazy"
+                          decoding="async"
                           draggable={false}
                         />
                       ) : (

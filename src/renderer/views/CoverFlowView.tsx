@@ -132,7 +132,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
         libDispatch,
       )
     }
-    prefetchAlbumArtHashes(around.map(a => findArtHash(a)))
+    prefetchAlbumArtHashes(around.map(a => findArtHash(a)), 420)
   }, [idx, albums, findArtHash, libDispatch, lib.artworkMap])
 
   // ── Input: keyboard (scoped to the view root, not window — other views
@@ -335,6 +335,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
                       alt={album.name}
                       className="coverflow-cover"
                       priority
+                      size={420}
                       onLoad={(e) => e.currentTarget.classList.add('is-loaded')}
                     />
                   ) : (
