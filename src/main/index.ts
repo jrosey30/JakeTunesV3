@@ -18,7 +18,7 @@ import {
 import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
-import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
@@ -2807,8 +2807,8 @@ ipcMain.handle('get-state-conflicts', (): {
   }
 })
 ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
-  if (!isNasMounted()) {
-    return { ok: false, pushed: 0, backups: [], error: 'Synology not mounted — connect /Volumes/JakeShared and retry.' }
+  if (!(await nasAvailable())) {
+    return { ok: false, pushed: 0, backups: [], error: 'Synology not mounted or not responding — connect /Volumes/JakeShared and retry.' }
   }
   if (stateConflicts.length === 0) {
     return { ok: true, pushed: 0, backups: [] }
@@ -2866,7 +2866,8 @@ ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean
 // files are left untouched + logged, never silently destroyed.
 let autoBackupBusy = false
 async function autoBackupStateToNas(): Promise<void> {
-  if (!isNasMounted() || autoBackupBusy) return
+  if (autoBackupBusy) return
+  if (!(await nasAvailable())) return   // breaker open: skip ALL NAS IO
   autoBackupBusy = true
   try {
     await detectStateConflicts()
@@ -3215,7 +3216,7 @@ function scheduleDbRebuild(deletedPaths: string[]) {
 // missing mirror can't cause empty-display or loss. tmp+rename for atomicity
 // when it does land.
 async function mirrorLibraryToNas(library: unknown): Promise<void> {
-  if (!isNasMounted()) return
+  if (!(await nasAvailable())) return   // breaker open: skip ALL NAS IO
   const nasPath = join(NAS_STATE_DIR_PATH, 'library.json')
   const json = JSON.stringify(library, null, 2)
   // Two attempts: SMB rename intermittently fails "Resource busy"; a quick
@@ -10628,6 +10629,7 @@ function recommendationsPath(): string {
 // powered the stray-migration resurrections — is removed by the one-time
 // boot reset.)
 async function readNasRecoTombstones(): Promise<Set<string>> {
+  if (!(await nasAvailable())) return new Set()   // breaker open: no NAS IO
   try {
     // Async readFile ONLY — never existsSync/statSync here: this path is an
     // SMB mount, and a stale mount turns any sync fs call into a
@@ -11030,6 +11032,7 @@ async function fetchRecommendationsFromBackend(): Promise<RecommendationRecord[]
 }
 
 async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | null> {
+  if (!(await nasAvailable())) return null   // breaker open: no NAS IO
   try {
     // Async readFile ONLY — no existsSync on the SMB mount (see
     // readNasRecoTombstones: a stale mount makes sync fs calls block the
@@ -13567,7 +13570,7 @@ app.whenReady().then(async () => {
   MUSIC_DIR = await resolveMusicDir()
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
   // 4.5.0-114 — local SSD is canonical; NAS is async backup mirror only.
-  const nasUp = isNasMounted()
+  const nasUp = await nasAvailable()
   console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-primary'} — dir=${STATE_DIR}${nasUp ? ` (NAS backup mirror at ${NAS_STATE_DIR_PATH})` : ` (NAS backup unavailable — ${NAS_STATE_DIR_PATH} not mounted)`}`)
   // Bug #1 fix — NAS-reconnect watcher. Only arms when we booted into
   // local-fallback. If NAS later becomes reachable, saves get locked
@@ -13591,7 +13594,7 @@ app.whenReady().then(async () => {
   // Compare local canonical state against the NAS backup mirror when
   // Synology is reachable — surfaces divergence even in local-primary mode.
   // Non-blocking: SMB stat storm before first paint caused launch beach balls.
-  if (isNasMounted()) {
+  if (nasUp) {
     void autoBackupStateToNas().catch((err) => {
       console.warn('[state] boot auto-backup failed (non-fatal):', err instanceof Error ? err.message : err)
     })

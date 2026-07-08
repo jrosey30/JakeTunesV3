@@ -25,7 +25,7 @@
  */
 
 import { app } from 'electron'
-import { existsSync } from 'fs'
+import { stat } from 'fs/promises'
 
 const NAS_STATE_DIR = '/Volumes/JakeShared/JakeTunesState'
 
@@ -40,9 +40,49 @@ export const STATE_IS_NAS = false
 /** The NAS path — used ONLY as the async backup-mirror target, never read. */
 export const NAS_STATE_DIR_PATH = NAS_STATE_DIR
 
-/** True when the Synology share is mounted at boot or check time. */
+// ── NAS circuit breaker (2026-07-08, "figure it the fuck out") ────────────
+// The old isNasMounted() was a SYNCHRONOUS existsSync on the SMB mount — a
+// stale Synology share turns any sync fs call into a seconds-long
+// MAIN-PROCESS block, and even async SMB calls park libuv threadpool
+// threads until the SMB timeout, starving every other fs op in the app.
+// Jake's old laptop ran a LOCAL-ONLY library and "rarely froze"; this
+// machine's NAS-touching timers are the difference. The breaker makes the
+// app immune to a flaky share: one 2s-timeout probe decides, a slow/absent
+// NAS opens the breaker and ALL NAS IO is skipped for 5 minutes.
+let nasBreakerUntil = 0
+let lastVerdict = false
+let lastProbeAt = 0
+let probeInflight: Promise<boolean> | null = null
+
+export async function nasAvailable(): Promise<boolean> {
+  const now = Date.now()
+  if (now < nasBreakerUntil) return false
+  if (now - lastProbeAt < 30_000) return lastVerdict   // verdict cache
+  if (probeInflight) return probeInflight
+  probeInflight = (async () => {
+    try {
+      const ok = await Promise.race([
+        stat(NAS_STATE_DIR_PATH).then(() => true, () => false),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 2000)),
+      ])
+      lastVerdict = ok
+      lastProbeAt = Date.now()
+      if (!ok) {
+        nasBreakerUntil = Date.now() + 5 * 60_000
+        console.warn('[nas-breaker] NAS slow or absent — skipping ALL NAS IO for 5 min')
+      }
+      return ok
+    } finally {
+      probeInflight = null
+    }
+  })()
+  return probeInflight
+}
+
+/** Last KNOWN verdict — never touches the filesystem. Kept for sync
+ *  contexts (UI badges); authoritative checks use nasAvailable(). */
 export function isNasMounted(): boolean {
-  return existsSync(NAS_STATE_DIR_PATH)
+  return Date.now() < nasBreakerUntil ? false : lastVerdict
 }
 
 /**
