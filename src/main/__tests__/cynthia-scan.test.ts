@@ -216,3 +216,35 @@ test('blank year fills from unanimous siblings (provable)', () => {
   assert.equal(y!.newValue, '1994')
   assert.equal(y!.provable, true)
 })
+
+test('implausible future year flags — even on a single-track album', () => {
+  // Regression: "GIVE UP YOUR LOVE TO ME - Single" shipped tagged 2031
+  // and scanned clean — one track, so no variance class could see it.
+  const r = scanAlbum([mk({ title: 'GIVE UP YOUR LOVE TO ME', year: 2031 })], 2026)
+  const f = r.flags.filter(f => f.kind === 'year-implausible')
+  assert.equal(f.length, 1)
+  assert.match(f[0].detail, /2031/)
+  assert.equal(r.findings.length, 0) // flag only — never a fix
+})
+
+test('year bounds: 1899 and nowYear+2 flag; 1900 and nowYear+1 (preorder) do not', () => {
+  const implausible = (year: number) =>
+    scanAlbum([mk({ year })], 2026).flags.filter(f => f.kind === 'year-implausible').length
+  assert.equal(implausible(1899), 1)
+  assert.equal(implausible(1900), 0)
+  assert.equal(implausible(2027), 0)
+  assert.equal(implausible(2028), 1)
+})
+
+test('blank year is not implausible', () => {
+  const r = scanAlbum([mk({ year: '' })], 2026)
+  assert.equal(r.flags.filter(f => f.kind === 'year-implausible').length, 0)
+})
+
+test('implausible year never seeds the sibling year fill', () => {
+  const tracks = album(3, { year: 2031 })
+  tracks[2] = mk({ ...tracks[2], year: '' })
+  const r = scanAlbum(tracks, 2026)
+  assert.equal(r.findings.filter(f => f.field === 'year').length, 0)
+  assert.equal(r.flags.filter(f => f.kind === 'year-implausible').length, 2)
+})

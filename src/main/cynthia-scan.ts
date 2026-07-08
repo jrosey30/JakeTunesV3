@@ -52,7 +52,7 @@ export interface CynthiaFinding {
 }
 
 export interface CynthiaScanFlag {
-  kind: 'duplicate-track-number' | 'missing-track-number' | 'year-variance' | 'genre-variance' | 'artist-variance' | 'feat-variance'
+  kind: 'duplicate-track-number' | 'missing-track-number' | 'year-variance' | 'year-implausible' | 'genre-variance' | 'artist-variance' | 'feat-variance'
   detail: string
 }
 
@@ -79,9 +79,18 @@ function cleanWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
 }
 
+/** Sanity bounds for a declared release year: nothing in this library
+ * predates 1900, and nowYear+1 allows preorders. Impossible years DO
+ * arrive from real sources — a Bandcamp artist can deliberately declare
+ * a future release date (seen live: an edit single tagged 2031) — so a
+ * breach flags for judgment; it never auto-fixes and never seeds fills. */
+function plausibleYear(y: number, nowYear: number): boolean {
+  return y >= 1900 && y <= nowYear + 1
+}
+
 const FEAT_RE = /\b(feat\.|feat\b|featuring|ft\.)\s/i
 
-export function scanAlbum(tracks: CynthiaScanTrack[]): CynthiaScanResult {
+export function scanAlbum(tracks: CynthiaScanTrack[], nowYear: number = new Date().getFullYear()): CynthiaScanResult {
   const findings: CynthiaFinding[] = []
   const flags: CynthiaScanFlag[] = []
   if (tracks.length === 0) return { findings, flags }
@@ -104,6 +113,20 @@ export function scanAlbum(tracks: CynthiaScanTrack[]): CynthiaScanResult {
           provable: true,
         })
       }
+    }
+  }
+
+  // ── 1b. Implausible year (flag only — the canonical year is MB's /
+  //        a judgment call). Runs before the sibling gate below so
+  //        single-track albums are covered: the 2031 single that
+  //        motivated this check had no siblings to raise a variance. ──
+  for (const t of tracks) {
+    const y = num(t.year)
+    if (y > 0 && !plausibleYear(y, nowYear)) {
+      flags.push({
+        kind: 'year-implausible',
+        detail: `"${t.title}" declares year ${y} — outside plausible range 1900–${nowYear + 1}`,
+      })
     }
   }
 
@@ -205,7 +228,7 @@ export function scanAlbum(tracks: CynthiaScanTrack[]): CynthiaScanResult {
       }
     }
   }
-  const declaredYears = new Set(tracks.map(t => num(t.year)).filter(y => y > 0))
+  const declaredYears = new Set(tracks.map(t => num(t.year)).filter(y => y > 0 && plausibleYear(y, nowYear)))
   if (declaredYears.size === 1) {
     const y = [...declaredYears][0]
     for (const t of tracks) {

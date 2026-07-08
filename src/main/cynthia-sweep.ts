@@ -71,7 +71,9 @@ interface SweepQueueState {
 
 // v2: neat-freak pass (albumArtist/genre/year sibling fills + the
 // library-wide vocabulary scan).
-const SCANNER_VERSION = 2
+// v3: year-implausible flag (<1900 or >now+1, single-track albums
+// included) + implausible years no longer seed sibling year fills.
+const SCANNER_VERSION = 3
 
 export interface CynthiaSweepHooks {
   /** Current library grouped by album key. Called fresh each tick. */
