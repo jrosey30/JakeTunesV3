@@ -107,12 +107,41 @@ export const PYTHON_INSTALL_HINT = IS_WINDOWS
  * Enumerate every plausible mount point on this platform.
  *   macOS:  ["/Volumes/JACOBROSENB", "/Volumes/Highway To Hell", ...]
  *   Windows: ["D:\\", "E:\\", "F:\\", ...]
+ *
+ * NETWORK MOUNTS ARE EXCLUDED on macOS (the 2026-07-08 beachball fix).
+ * An iPod is never an smbfs/afpfs/nfs share — but the device poll runs
+ * findIpodMount every ~2.5s, and stat()ing iPod_Control on the NAS
+ * shares put continuous SMB round-trips on Node's 4-thread fs pool.
+ * The moment the NAS was slow, hung stats saturated the pool and EVERY
+ * fs op in the app queued behind them — so view switches (which load
+ * data through main-process fs IPC) beachballed. The `mount` table is
+ * parsed per pass (one cheap child process, no fs threadpool) and any
+ * network filesystem is dropped before a single stat happens.
  */
+const NETWORK_FS_RE = /\b(smbfs|afpfs|nfs|webdav|autofs|ftp)\b/i
+
+async function macNetworkMountSet(): Promise<Set<string>> {
+  try {
+    const { stdout } = await execP('mount', [])
+    const netMounts = new Set<string>()
+    for (const line of stdout.split('\n')) {
+      // "//jake@ds225/JakeShared on /Volumes/JakeShared (smbfs, nodev, ...)"
+      const m = line.match(/ on (\/Volumes\/[^(]+?) \(([^)]+)\)/)
+      if (m && NETWORK_FS_RE.test(m[2])) netMounts.add(m[1].trim())
+    }
+    return netMounts
+  } catch {
+    return new Set()   // can't read the table — scan everything, as before
+  }
+}
+
 export async function listMountPoints(): Promise<string[]> {
   if (IS_MAC) {
     try {
-      const entries = await readdir('/Volumes')
-      return entries.map(v => `/Volumes/${v}`)
+      const [entries, netMounts] = await Promise.all([readdir('/Volumes'), macNetworkMountSet()])
+      return entries
+        .map(v => `/Volumes/${v}`)
+        .filter(p => !netMounts.has(p))
     } catch {
       return []
     }
@@ -174,14 +203,27 @@ export async function isIpodMount(mountPoint: string): Promise<boolean> {
  * is debuggable from a single dev-console open instead of needing
  * fresh instrumentation each time.
  */
+// The renderer's hotplug poll calls this every ~2.5s. A short negative
+// cache keeps the steady state (no iPod, none appearing) at zero fs work
+// most ticks, and the result log fires on STATE CHANGES only — 104
+// identical "NO iPod found" lines in 4 minutes buried every real signal
+// in the console (observed 2026-07-08 while hunting the beachball).
+let ipodNegativeCacheUntil = 0
+let lastIpodLogState: string | null = null
+
 export async function findIpodMount(): Promise<string | null> {
+  if (Date.now() < ipodNegativeCacheUntil) return null
   const mounts = await listMountPoints()
   const checks: { mount: string; isIpod: boolean }[] = []
   for (const m of mounts) {
     const hit = await isIpodMount(m)
     checks.push({ mount: m, isIpod: hit })
     if (hit) {
-      console.log('[ipod-detect] FOUND iPod at', m, '— mounts scanned:', mounts.length)
+      ipodNegativeCacheUntil = 0
+      if (lastIpodLogState !== `found:${m}`) {
+        lastIpodLogState = `found:${m}`
+        console.log('[ipod-detect] FOUND iPod at', m, '— mounts scanned:', mounts.length)
+      }
       return m
     }
   }
@@ -189,7 +231,12 @@ export async function findIpodMount(): Promise<string | null> {
   // is either (a) mount missing entirely from /Volumes (macOS didn't
   // mount it), or (b) mount present but no iPod_Control/iTunes/iTunesDB
   // (uninitialized iPod, or wrong device).
-  console.log('[ipod-detect] NO iPod found. Checked:', JSON.stringify(checks))
+  ipodNegativeCacheUntil = Date.now() + 10_000
+  const state = `none:${checks.map((c) => c.mount).join(',')}`
+  if (lastIpodLogState !== state) {
+    lastIpodLogState = state
+    console.log('[ipod-detect] NO iPod found. Checked:', JSON.stringify(checks))
+  }
 
   // macOS-only fallback: the iPod might be physically connected but
   // unmounted (e.g. previous sync triggered a safety-eject, or the
@@ -212,6 +259,11 @@ export async function findIpodMount(): Promise<string | null> {
           const mm = mountOut.match(/on (\/Volumes\/[^\s]+)/)
           const mountedAt = mm ? mm[1] : null
           if (mountedAt && await isIpodMount(mountedAt)) {
+            // Success on the remount path must clear the negative cache
+            // set above, or the next poll would report null for 10s
+            // while the iPod is sitting there mounted.
+            ipodNegativeCacheUntil = 0
+            lastIpodLogState = `found:${mountedAt}`
             return mountedAt
           }
         } catch {
