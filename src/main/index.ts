@@ -13834,6 +13834,22 @@ app.whenReady().then(async () => {
     })()
   }, 25_000)
 
+  // 2026-07-08 — the "it is still spinning" capture: the freeze trap
+  // recorded the RENDERER suspended for 114 seconds (heartbeat staircase
+  // draining at 02:38:43) while main idled in its event loop. Under
+  // memory pressure macOS doesn't just throttle an occluded app (what
+  // the 4.2.13 playback-scoped blocker guards during audio) — it
+  // SUSPENDS its processes wholesale, and returning to the app reads as
+  // a long beachball. A music library app lives half its life covered
+  // by other windows: hold an app-LIFETIME suspension blocker. Display
+  // sleep is unaffected; this only opts out of App Nap / app suspension.
+  try {
+    const id = powerSaveBlocker.start('prevent-app-suspension')
+    console.log('[powerSave] app-lifetime suspension blocker id=', id)
+  } catch (err) {
+    console.warn('[powerSave] app-lifetime blocker failed:', err)
+  }
+
   // Show the window before heavy startup IO (artwork self-heal, memory
   // loads, ipod-audio handler registration). Splash + library load give
   // us ~3s before playback needs ipod-audio://.
