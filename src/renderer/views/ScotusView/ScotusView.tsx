@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import type { ScotusArchiveData, ScotusSegment } from '../../types'
+import type { ScotusArchiveData, ScotusOpinionDoc, ScotusSegment } from '../../types'
 import './scotus.css'
 
 // The Beck v. Prupis exhibit — Michael Rosenbaum's ("Poppy's") 1999 Supreme
@@ -15,6 +15,18 @@ function fmt(s: number): string {
 }
 function lastName(name: string): string {
   return name.split(' ').pop() || name
+}
+/**
+ * Apostrophe-proof name equality. The roster writes "Sandra Day O’Connor"
+ * with a typographic apostrophe; the transcript's speaker field uses an
+ * ASCII one — `===` silently failed ONLY for her, so her tile never lit
+ * while she spoke.
+ * ⚠️ TWIN: src/main/scotus-archive/index.ts sameName() — same rule feeds
+ * portraitSlug() on the main side. Keep in sync.
+ */
+function sameName(a: string, b: string): boolean {
+  const norm = (s: string) => s.replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase()
+  return norm(a) === norm(b)
 }
 function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('')
@@ -43,11 +55,15 @@ export default function ScotusView() {
   const [duration, setDuration] = useState(0)
   // Amicus chat thread — the back-and-forth is visible, and the history rides
   // along on each call so follow-ups ("what does that mean?") resolve.
-  const [chat, setChat] = useState<Array<{ role: 'user' | 'amicus'; text: string }>>([])
+  // Amicus replies may carry cues: moments on the tape he cited, rendered as
+  // jump chips under the bubble.
+  const [chat, setChat] = useState<Array<{ role: 'user' | 'amicus'; text: string; cues?: Array<{ time: number; label: string }> }>>([])
   const [thinking, setThinking] = useState(false)
   const [question, setQuestion] = useState('')
   const [speakingIdx, setSpeakingIdx] = useState(-1)
   const [speakNote, setSpeakNote] = useState('')
+  // The Decision section — which opinion documents are unfolded.
+  const [openOps, setOpenOps] = useState<{ majority: boolean; dissent: boolean }>({ majority: false, dissent: false })
   const amicusAudioRef = useRef<HTMLAudioElement | null>(null)
   const chatBoxRef = useRef<HTMLDivElement | null>(null)
   const chatRef = useRef<typeof chat>([])
@@ -229,7 +245,11 @@ export default function ScotusView() {
     setThinking(true)
     const r = await window.electronAPI.scotusAmicus?.({ mode, time, question: q, history }).catch(() => null)
     setThinking(false)
-    setChat((c) => [...c, { role: 'amicus', text: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.') }])
+    setChat((c) => [...c, {
+      role: 'amicus',
+      text: r?.ok ? (r.answer || '') : (r?.error || 'Amicus is unavailable right now.'),
+      cues: r?.ok && Array.isArray(r.cues) ? r.cues : undefined,
+    }])
   }, [time, stopSpeak])
   const explain = useCallback(() => sendToAmicus('explain', `Explain this moment — ${fmt(time)}`), [sendToAmicus, time])
   const ask = useCallback(() => {
@@ -264,6 +284,52 @@ export default function ScotusView() {
     )
   }
   const c = data.case
+
+  // One opinion document — collapsed to its nameplate; unfolds to the full
+  // verbatim slip-opinion text (blocks + footnotes from vault opinion.json).
+  const renderOpinion = (doc: ScotusOpinionDoc, side: 'majority' | 'dissent') => {
+    const open = openOps[side]
+    const j = (data.justices || []).find((x) => x.slug === doc.slug)
+    return (
+      <article className={`scotus-op scotus-op--${side}`}>
+        <button
+          className="scotus-op-head"
+          onClick={() => setOpenOps((o) => ({ ...o, [side]: !o[side] }))}
+          aria-expanded={open}
+        >
+          {j?.portrait
+            ? <img className="scotus-op-face" src={j.portrait} alt={doc.author} draggable={false} />
+            : <span className="scotus-op-face scotus-op-face--ph">{initials(doc.author)}</span>}
+          <span className="scotus-op-id">
+            <span className="scotus-op-label">{doc.label}</span>
+            <span className="scotus-op-author">Justice {doc.author}</span>
+            <span className="scotus-op-joined">{doc.joined}</span>
+          </span>
+          <span className="scotus-op-toggle">{open ? 'Close ▴' : 'Read the full text ▾'}</span>
+        </button>
+        {open && (
+          <div className="scotus-op-doc">
+            {doc.blocks.map((b, i) =>
+              b.kind === 'head'
+                ? <div key={i} className="scotus-op-sec">{b.text}</div>
+                : (
+                  <p key={i} className={`scotus-op-p${b.kind === 'opener' ? ' scotus-op-p--opener' : ''}${b.kind === 'end' ? ' scotus-op-p--end' : ''}`}>
+                    {b.text}
+                  </p>
+                ))}
+            {doc.notes.length > 0 && (
+              <div className="scotus-op-notes">
+                <div className="scotus-op-notes-h">Notes</div>
+                {doc.notes.map((n) => (
+                  <p key={n.n} className="scotus-op-note"><span className="scotus-op-note-n">{n.n}.</span> {n.text}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </article>
+    )
+  }
 
   return (
     <div className="scotus-view">
@@ -314,7 +380,7 @@ export default function ScotusView() {
           {(data.justices || []).map((j) => (
             <div
               key={j.slug}
-              className={`scotus-justice ${currentSpeaker === j.name ? 'scotus-justice--speaking' : ''}`}
+              className={`scotus-justice ${sameName(currentSpeaker, j.name) ? 'scotus-justice--speaking' : ''}`}
               title={`${j.name}\n${j.title}${j.note ? '\n' + j.note : ''}`}
             >
               {j.portrait
@@ -329,7 +395,7 @@ export default function ScotusView() {
           {(data.advocates || []).map((a) => (
             <div
               key={a.name}
-              className={`scotus-justice scotus-justice--adv ${currentSpeaker === a.name ? 'scotus-justice--speaking' : ''}`}
+              className={`scotus-justice scotus-justice--adv ${sameName(currentSpeaker, a.name) ? 'scotus-justice--speaking' : ''}`}
               title={`${a.name}\n${a.role}`}
             >
               {a.photo
@@ -363,6 +429,20 @@ export default function ScotusView() {
               : (
                 <div key={i} className="scotus-msg scotus-msg--amicus">
                   <p>{m.text}</p>
+                  {(m.cues?.length ?? 0) > 0 && (
+                    <div className="scotus-msg-cues">
+                      {m.cues!.map((cue) => (
+                        <button
+                          key={`${cue.time}-${cue.label}`}
+                          className="scotus-msg-cue"
+                          onClick={() => seekTo(cue.time)}
+                          title={`Play from ${fmt(cue.time)}`}
+                        >
+                          <span className="scotus-msg-cue-time">▶ {fmt(cue.time)}</span> {cue.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <button
                     className={`scotus-amicus-speak scotus-amicus-speak--sm ${speakingIdx === i ? 'is-speaking' : ''}`}
                     onClick={() => void speakBubble(i, m.text)}
@@ -477,6 +557,19 @@ export default function ScotusView() {
           ))}
         </div>
       </section>
+
+      {/* The Decision — how it ended: the opinion that won it, and the dissent */}
+      {data.opinion && (
+        <section className="scotus-decision">
+          <h2 className="scotus-h2">The Decision</h2>
+          <p className="scotus-decision-lineup">{data.opinion.lineup}</p>
+          {renderOpinion(data.opinion.majority, 'majority')}
+          {renderOpinion(data.opinion.dissent, 'dissent')}
+          <p className="scotus-decision-src">
+            Verbatim slip-opinion text, {data.opinion.decided} — via Cornell Law School’s Legal Information Institute.
+          </p>
+        </section>
+      )}
 
       <footer className="scotus-footer">
         Recording &amp; transcript: official U.S. Supreme Court audio via Oyez. Facts verified against Oyez,

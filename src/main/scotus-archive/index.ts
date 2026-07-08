@@ -200,9 +200,74 @@ async function loadSegments(): Promise<Segment[]> {
   return cachedSegments
 }
 
+// ── The decision itself — vault opinion.json (verbatim slip-opinion text,
+// extracted from Cornell LII; see the file's `source` field). Optional: an
+// archive without it simply doesn't render the section. ──
+interface OpinionDoc {
+  label: string; author: string; slug: string; joined: string
+  blocks: Array<{ kind: 'opener' | 'head' | 'p' | 'end'; text: string }>
+  notes: Array<{ n: number; text: string }>
+}
+interface OpinionData { source: string; decided: string; lineup: string; majority: OpinionDoc; dissent: OpinionDoc }
+
+async function loadOpinion(): Promise<OpinionData | null> {
+  try {
+    const raw = await readFile(join(vaultDir(), 'opinion.json'), 'utf-8')
+    const parsed = JSON.parse(raw) as OpinionData
+    return parsed?.majority?.blocks?.length ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+// ── Amicus's whole-argument knowledge (built once, cached) ──
+// Pre-upgrade, Amicus saw only the 8 segments before the cursor — he
+// couldn't answer "did Scalia give him a hard time overall?" or point
+// you anywhere. This index gives him the ENTIRE hour in compressed form:
+// every segment's time + speaker + opening words, plus the argument's
+// shape (who spoke when, who asked how many questions).
+let cachedArgumentIndex: string | null = null
+
+async function argumentIndex(): Promise<string> {
+  if (cachedArgumentIndex) return cachedArgumentIndex
+  const segments = await loadSegments()
+  if (segments.length === 0) return ''
+
+  const counts = new Map<string, number>()
+  for (const s of segments) counts.set(s.speaker, (counts.get(s.speaker) || 0) + 1)
+  const shape = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([who, n]) => `${who}: ${n} turns`)
+    .join(' · ')
+
+  const lines = segments.map((s) =>
+    `${fmtTime(s.start)} ${s.speaker.split(' ').pop()}: ${s.text.replace(/\s+/g, ' ').slice(0, 72)}`
+  )
+  cachedArgumentIndex = [
+    `ARGUMENT MAP — every turn of the hour (time, speaker's last name, opening words). Use it to answer whole-argument questions and to cite exact moments:`,
+    `Speaking turns — ${shape}`,
+    ...lines,
+  ].join('\n')
+  return cachedArgumentIndex
+}
+
+/**
+ * Apostrophe-proof name equality. The roster (this file) writes
+ * "Sandra Day O’Connor" with a typographic apostrophe; the Oyez
+ * transcript writes "Sandra Day O'Connor" with an ASCII one — exact
+ * equality silently failed ONLY for her (the one name with an
+ * apostrophe), so her portrait never lit while she spoke.
+ * ⚠️ TWIN: src/renderer/views/ScotusView/ScotusView.tsx sameName() —
+ * same rule on the renderer side (colonnade highlight). Keep in sync.
+ */
+function sameName(a: string, b: string): boolean {
+  const norm = (s: string) => s.replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase()
+  return norm(a) === norm(b)
+}
+
 /** Map speaker → vault portrait slug (Justices only; advocates use initials). */
 function portraitSlug(speaker: string): string | null {
-  const j = JUSTICES.find((x) => x.name === speaker)
+  const j = JUSTICES.find((x) => sameName(x.name, speaker))
   return j ? j.slug : null
 }
 
@@ -244,6 +309,12 @@ HOW YOU EXPLAIN:
 - Be vivid and charismatic. Set the scene, name the move a Justice is making ("Justice Scalia just set a trap…"), and build a little suspense about where it's heading.
 - Anchor it in the human stakes — a man was fired; can he even get into federal court? — then land the point with clarity and a little flourish.
 
+YOUR REACH: you receive an ARGUMENT MAP of the entire hour (every turn: time, speaker, opening words) plus the exchange around the listener's cursor. So you can answer questions about the WHOLE argument — how a Justice treated each side overall, where a thread started, what's still coming — not just the current moment. Ground every claim in the map or the excerpt; if neither supports an answer, say you'd rather not guess.
+
+POINTING TO MOMENTS (critical): when your answer references one or two specific moments on the tape, add cue lines at the VERY END of your reply, each on its own line, in EXACTLY this form:
+CUE 43:01 Scalia's Halberstam callback
+Rules: at most 2 cues; the time must be copied from the ARGUMENT MAP (never invented); the label is 3–6 words. Cue lines are stripped before your prose is read aloud — they become "jump to this moment" buttons for the listener. Never mention the cues in your prose ("see the cue below" is forbidden); the prose must stand alone.
+
 LENGTH: a tight 3–4 sentences. Every sentence earns its place — charismatic, never bloated, no preamble, no "essentially." Only go longer if the listener explicitly asks.
 
 FORMAT (critical): your words are READ ALOUD by a text-to-speech voice. Write plain spoken prose ONLY. Never use asterisks, markdown, bullet points, headings, or any emphasis symbols — they get vocalized as garbled noise. Convey emphasis through word choice and rhythm, not punctuation.`
@@ -253,8 +324,8 @@ export function registerScotusArchive(deps: ScotusDeps): void {
     try {
       // Audio presence is the gate — without the recording there's no exhibit.
       await readFile(join(vaultDir(), 'argument.mp3')).then(() => {}, () => { throw new Error('no audio') }).catch(() => { throw new Error('no audio') })
-      const [segments, justices, advocates] = await Promise.all([loadSegments(), justicesWithPortraits(), advocatesWithPhotos()])
-      return { ok: true, exists: true, case: CASE_META, advocates, justices, segments, quotes: QUOTES }
+      const [segments, justices, advocates, opinion] = await Promise.all([loadSegments(), justicesWithPortraits(), advocatesWithPhotos(), loadOpinion()])
+      return { ok: true, exists: true, case: CASE_META, advocates, justices, segments, quotes: QUOTES, opinion }
     } catch {
       return { ok: true, exists: false }
     }
@@ -284,6 +355,7 @@ export function registerScotusArchive(deps: ScotusDeps): void {
       const histBlock = hist.length
         ? ['Your conversation with the listener so far:', ...hist.map((h) => `${h.role === 'user' ? 'Listener' : 'Amicus'}: ${h.text}`), ''].join('\n')
         : ''
+      const argMap = await argumentIndex()
       const user = input.mode === 'ask'
         ? [
             histBlock,
@@ -297,12 +369,27 @@ export function registerScotusArchive(deps: ScotusDeps): void {
             `Explain, in plain English, what's happening in this exchange at ${fmtTime(t)} — what's being argued and what the Justice is really getting at:`,
             ctx || '(the very start of the argument)',
           ].filter(Boolean).join('\n')
-      const text = await deps.askClaude('scotus-amicus', AMICUS_SYSTEM, user, 400)
+      // The argument map rides in the system prompt so Amicus knows the
+      // whole hour, not just the cursor window.
+      const system = argMap ? `${AMICUS_SYSTEM}\n\n${argMap}` : AMICUS_SYSTEM
+      const text = await deps.askClaude('scotus-amicus', system, user, input.mode === 'ask' ? 550 : 400)
+      // Parse + strip trailing CUE lines (they become jump buttons; the
+      // prose is what gets displayed AND read aloud).
+      const cues: Array<{ time: number; label: string }> = []
+      const lines = text.split('\n')
+      while (lines.length > 0) {
+        const last = lines[lines.length - 1].trim()
+        const m = last.match(/^CUE\s+(\d{1,2}):(\d{2})\s+(.{2,60})$/)
+        if (!m) break
+        lines.pop()
+        const secs = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+        if (secs >= 0 && secs < 4000 && cues.length < 2) cues.unshift({ time: secs, label: m[3].trim() })
+      }
       // The answer is both displayed AND read aloud by TTS. Strip markdown /
       // emphasis symbols — the voice garbles asterisks & backticks into the
       // "gibberish/stroke" artifact. (Belt-and-suspenders with the prompt.)
-      const answer = text.replace(/[*`#_]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
-      return { ok: true, answer, speaker: window.length ? window[window.length - 1].speaker : '' }
+      const answer = lines.join('\n').replace(/[*`#_]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+      return { ok: true, answer, cues, speaker: window.length ? window[window.length - 1].speaker : '' }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

@@ -69,7 +69,9 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #b8924a;
-  margin: 16px 0 6px;
+  /* 6px bottom read as cramped — the advocate photos nearly touched the
+     label (Jake, 2026-07-03). 13px gives the podium row its own air. */
+  margin: 16px 0 13px;
 }
 .scotus-justice--adv img { object-position: center 18%; }
 
@@ -273,6 +275,25 @@
   border-bottom-left-radius: 3px;
 }
 .scotus-msg--thinking { background: transparent; color: #c9a961; font-style: italic; padding-left: 2px; }
+/* Cue chips — moments Amicus cited; click jumps the argument there. Same
+   gold-on-navy language as the hall-of-fame play badges. */
+.scotus-msg-cues { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.scotus-msg-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(231, 200, 115, 0.45);
+  border-radius: 6px;
+  background: rgba(231, 200, 115, 0.08);
+  color: #e7c873;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.scotus-msg-cue:hover { background: #b8924a; border-color: #b8924a; color: #1a2744; }
+.scotus-msg-cue-time { font-weight: 600; white-space: nowrap; }
 .scotus-chat-clear {
   margin-left: auto;
   border: none;
@@ -572,3 +593,103 @@
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .scotus-rate:hover { background: rgba(184, 146, 74, 0.12); border-color: #b8924a; }
+
+/* ── The Decision — the opinions themselves, unfolded as documents ── */
+.scotus-decision { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+/* The syllabus lineup line — who joined whom, verbatim. */
+.scotus-decision-lineup {
+  max-width: 640px;
+  margin: -6px auto 22px;
+  text-align: center;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #5a6172;
+}
+.scotus-op {
+  background: #fffefb;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-left: 3px solid #b8924a;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+/* The dissent recedes to slate — the majority keeps the gold. */
+.scotus-op--dissent { border-left-color: #6b7691; }
+.scotus-op-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.scotus-op-head:hover { background: rgba(184, 146, 74, 0.06); }
+.scotus-op-face {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center 22%;
+  flex-shrink: 0;
+  border: 2px solid rgba(26, 39, 68, 0.15);
+}
+.scotus-op-face--ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a2744;
+  color: #e7c873;
+  font-weight: 700;
+}
+.scotus-op-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.scotus-op-label { font-family: Georgia, serif; font-weight: 700; font-size: 15.5px; color: #1a2744; }
+.scotus-op-author { font-size: 12.5px; color: #5a5a5a; }
+.scotus-op-joined { font-size: 11.5px; color: #8a8a8a; }
+.scotus-op-toggle { flex-shrink: 0; font-size: 12px; font-weight: 600; color: #b8924a; white-space: nowrap; }
+.scotus-op-head:hover .scotus-op-toggle { text-decoration: underline; }
+/* The document body — slip-opinion typography: serif, first-line indents,
+   centered section numerals, centered italic disposition line. */
+.scotus-op-doc {
+  padding: 10px 34px 26px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: #26303f;
+}
+.scotus-op-p { margin: 0 0 2px; text-indent: 1.6em; }
+.scotus-op-p--opener { font-style: italic; margin-top: 14px; }
+.scotus-op-p--end { text-align: center; text-indent: 0; font-style: italic; margin-top: 18px; }
+.scotus-op-sec {
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 20px 0 10px;
+  color: #1a2744;
+}
+.scotus-op-notes {
+  margin-top: 26px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #4a5261;
+}
+.scotus-op-notes-h {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #b8924a;
+  margin-bottom: 8px;
+}
+.scotus-op-note { margin: 0 0 8px; }
+.scotus-op-note-n { font-weight: 700; color: #1a2744; }
+.scotus-decision-src { text-align: center; font-size: 11.5px; color: #8a8a8a; margin: 4px 0 0; }

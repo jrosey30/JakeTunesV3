@@ -415,6 +415,14 @@ export interface ScotusCase {
   question: string; background: string; holding: string; significance: string
 }
 export interface ScotusQuote { title: string; time: number; note?: string; lines: Array<{ speaker: string; text: string }> }
+// The decision — verbatim slip-opinion text (mirrors OpinionData in
+// src/main/scotus-archive/index.ts; sourced from vault opinion.json).
+export interface ScotusOpinionDoc {
+  label: string; author: string; slug: string; joined: string
+  blocks: Array<{ kind: 'opener' | 'head' | 'p' | 'end'; text: string }>
+  notes: Array<{ n: number; text: string }>
+}
+export interface ScotusOpinion { source: string; decided: string; lineup: string; majority: ScotusOpinionDoc; dissent: ScotusOpinionDoc }
 export interface ScotusArchiveData {
   exists: boolean
   case?: ScotusCase
@@ -422,6 +430,7 @@ export interface ScotusArchiveData {
   justices?: ScotusJustice[]
   segments?: ScotusSegment[]
   quotes?: ScotusQuote[]
+  opinion?: ScotusOpinion | null
 }
 
 // Brain — Rediscover pick (mirrors RediscoveryPick in src/main/rediscovery.ts).
@@ -694,7 +703,7 @@ declare global {
       getRediscovery?: (force?: boolean) => Promise<{ ok: boolean; picks?: RediscoveryPick[]; error?: string }>
       scotusGetArchive?: () => Promise<{ ok: boolean } & ScotusArchiveData>
       scotusGetAudio?: () => Promise<{ ok: boolean; bytes?: Uint8Array; error?: string }>
-      scotusAmicus?: (input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) => Promise<{ ok: boolean; answer?: string; speaker?: string; error?: string }>
+      scotusAmicus?: (input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) => Promise<{ ok: boolean; answer?: string; cues?: Array<{ time: number; label: string }>; speaker?: string; error?: string }>
       listAudioDevices: () => Promise<{ ok: boolean; devices: { id: number; name: string; transport: string; isDefault: boolean }[] }>
       setAudioDevice: (deviceId: number) => Promise<{ ok: boolean; error?: string }>
       setCallWatch: (armed: boolean) => Promise<{ ok: boolean }>
