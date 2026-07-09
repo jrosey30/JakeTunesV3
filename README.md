@@ -87,6 +87,26 @@ core/
 - **Virtual scroll:** Custom `useVirtualScroll` hook to keep 3,000+ track lists smooth.
 - **AI:** All Claude and ElevenLabs calls happen in the main process — the renderer talks to them via IPC.
 
+## homemini & multi-device sync
+
+JakeTunes is not MacBook-only. A Mac Mini at home (**homemini**, Tailscale hostname `homemini`) runs the mobile streaming backend and stays in sync with this desktop app.
+
+| This machine (MacBook) | homemini |
+|------------------------|----------|
+| Canonical **editor** — imports, metadata, playlists, AI | Canonical **streamer** for [JakeTunes Mobile](https://github.com/jrosey30/JakeTunesMobile) at `http://homemini:3000` |
+| Triggers `~/bin/jaketunes-homemini-sync.sh` after library changes | Pulls new music from NAS every 60s (`mini-nas-pull`) for resilient playback |
+| Music in `~/Music2/JakeTunesLibrary/` | Local copy in `~/Music/JakeTunesLibrary/` |
+
+**Setup:** install `Dr. Claude/scripts/jaketunes-homemini-sync.sh` to `~/bin/`, ensure Tailscale + Synology `JakeShared` mount work, then deploy the mobile backend from [JakeTunesMobile](https://github.com/jrosey30/JakeTunesMobile):
+
+```bash
+ssh jakerosenbaumnas@homemini 'cd ~/JakeTunesMobile && git pull && ./deploy/install-on-mini.sh'
+```
+
+The sync orchestrator (`src/main/sync-orchestrator.ts`) only runs the homemini sync script when it exists on disk — homemini, workmini, and fresh installs stay quiet.
+
+Full ecosystem diagram, ports, and NAS pipeline: **[docs/homemini.md](docs/homemini.md)**.
+
 ## Known limitations
 
 - AirPlay device discovery is manual (no Bonjour/mDNS auto-detect yet)
