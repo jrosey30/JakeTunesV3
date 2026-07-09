@@ -2941,6 +2941,226 @@ async function writePins(pinned: string[]): Promise<void> {
   await rename(tmp, p)
 }
 
+// ── Streaming migration helpers (hoisted to module scope 2026-07-09) ────────
+// homemini serves audio by library id; these map a track ↔ id and pull bytes
+// over HTTP. Shared by the ipod-audio:// protocol handler (playback), the
+// download/pin IPC, and the ingestion redirect. See project_jaketunes_streaming.
+const HOMEMINI_AUDIO_BASE = process.env.JAKETUNES_MOBILE_BACKEND
+  ? `${process.env.JAKETUNES_MOBILE_BACKEND}/audio`
+  : 'http://homemini:3000/audio'
+let streamTrackIdByColonPath: Map<string, string | number> | null = null
+let streamTrackIdMapMtime = -1
+async function trackIdForAbsPath(absPath: string): Promise<string | number | null> {
+  const i = absPath.indexOf('iPod_Control')
+  if (i < 0) return null
+  const colon = ':' + absPath.slice(i).replace(/\//g, ':')
+  try {
+    const st = await stat(LIBRARY_PATH)
+    if (!streamTrackIdByColonPath || st.mtimeMs !== streamTrackIdMapMtime) {
+      const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ id: string | number; path?: string }> }
+      const m = new Map<string, string | number>()
+      for (const t of lib.tracks || []) if (t.path) m.set(t.path, t.id)
+      streamTrackIdByColonPath = m
+      streamTrackIdMapMtime = st.mtimeMs
+    }
+  } catch { return null }
+  return streamTrackIdByColonPath.get(colon) ?? null
+}
+async function fetchAudioFromHomemini(id: string | number, rangeHeader: string | null): Promise<Response | null> {
+  try {
+    const reqHeaders: Record<string, string> = {}
+    if (rangeHeader) reqHeaders['Range'] = rangeHeader
+    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, {
+      headers: reqHeaders,
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok && res.status !== 206) return null
+    if (!res.body) return null
+    const out: Record<string, string> = { 'Accept-Ranges': 'bytes', 'X-JT-Audio-Source': 'homemini' }
+    const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
+    const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
+    const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
+    return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
+  } catch {
+    return null
+  }
+}
+
+// ── Streaming ingestion engine (Stage 3, dormant until streamSource is set) ──
+// "Streaming mode" for THIS machine, from app settings library.streamSource:
+//   'homemini'   → new imports are pushed to homemini and kept locally only as
+//                  a symlink (streamed).
+//   absent/null  → fully local (default; behavior unchanged).
+async function readStreamSource(): Promise<'homemini' | null> {
+  try {
+    const s = JSON.parse(await readFile(appSettingsPath(), 'utf-8'))
+    return s?.library?.streamSource === 'homemini' ? 'homemini' : null
+  } catch { return null }
+}
+// The local symlink target for streamed tracks: a single always-present 0-byte
+// sentinel under the library root. Playback keys off isSymbolicLink() (→ homemini);
+// a non-dangling target just means any un-guarded stat()-follower sees a present
+// (empty) file instead of an ENOENT throw. Created lazily.
+function streamedSentinelPath(): string {
+  const root = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  return join(root, '.jt-streamed')
+}
+async function ensureStreamedSentinel(): Promise<string> {
+  const p = streamedSentinelPath()
+  try { await stat(p) } catch { try { await writeFile(p, '') } catch { /* best effort */ } }
+  return p
+}
+// Identity gate for a destructive convert-to-streamed: homemini must serve the
+// EXACT bytes we're about to drop locally. Fetch the first 256KB from homemini
+// and require sha1(bytes) to match the stored audioFingerprint hash (the same
+// window computeAudioFingerprint uses). Refuse on any mismatch, missing
+// fingerprint, or unreachable homemini — never evict blind (CLAUDE.md
+// destructive-ops rule: gate on identity/binary fingerprint, not text).
+async function homeminiServesMatchingBytes(id: string | number, storedFingerprint: string | undefined): Promise<boolean> {
+  if (!storedFingerprint || !storedFingerprint.startsWith('sha1:')) return false
+  const wantHash = storedFingerprint.split('|')[0].slice('sha1:'.length)
+  try {
+    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, {
+      headers: { Range: 'bytes=0-262143' },   // first 256KB — matches the fingerprint window
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok && res.status !== 206) return false
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length <= 0) return false
+    const got = createHash('sha1').update(buf).digest('hex').slice(0, 16)
+    return got === wantHash
+  } catch { return false }
+}
+// Look up a track's stored audioFingerprint by its colon path (for the
+// convert-to-streamed identity gate when the caller doesn't already have it).
+async function fingerprintForIpodPath(ipodPath: string): Promise<string | undefined> {
+  try {
+    const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ path?: string; audioFingerprint?: string }> }
+    for (const t of lib.tracks || []) {
+      if (t.path === ipodPath) return typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined
+    }
+  } catch { /* ignore */ }
+  return undefined
+}
+// Convert a local track file into a streamed symlink — DESTRUCTIVE (drops the
+// local bytes). Gated on homeminiServesMatchingBytes: the identity check that
+// keeps this from ever orphaning a track. Atomic (symlink tmp → rename). No-op
+// if already a symlink.
+async function convertTrackToStreamed(ipodPath: string, storedFingerprint: string | undefined): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const fp = trackFarmPath(ipodPath)
+    let st
+    try { st = await lstat(fp) } catch { return { ok: false, error: 'local file not found' } }
+    if (st.isSymbolicLink()) return { ok: true }         // already streamed
+    const id = await trackIdForAbsPath(fp)
+    if (id == null) return { ok: false, error: 'track id not found in library' }
+    if (!(await homeminiServesMatchingBytes(id, storedFingerprint))) {
+      return { ok: false, error: 'homemini does not yet serve matching bytes — kept local' }
+    }
+    const sentinel = await ensureStreamedSentinel()
+    const tmp = fp + '.stream.tmp'
+    await unlink(tmp).catch(() => {})
+    await symlink(sentinel, tmp)
+    await rename(tmp, fp)                                  // atomic: real file → symlink
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+// Pull a streamed track's real bytes down from homemini into a local file (the
+// "Download"/pin action). Additive — never destructive. Atomic.
+async function pinStreamedTrackFromHomemini(ipodPath: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const fp = trackFarmPath(ipodPath)
+    let st
+    try { st = await lstat(fp) } catch { return { ok: false, error: 'track file not found' } }
+    if (!st.isSymbolicLink()) return { ok: true }         // already a real local file
+    const id = await trackIdForAbsPath(fp)
+    if (id == null) return { ok: false, error: 'track id not found in library' }
+    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, { signal: AbortSignal.timeout(30000) })
+    if (!res.ok && res.status !== 206 && res.status !== 200) return { ok: false, error: `homemini ${res.status}` }
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length <= 0) return { ok: false, error: 'homemini returned no bytes' }
+    const tmp = fp + '.dl.tmp'
+    await unlink(tmp).catch(() => {})
+    await writeFile(tmp, buf)
+    await rename(tmp, fp)                                  // atomic: symlink → real file
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+// ── Stream-convert queue (Stage 3 ingestion redirect) ───────────────────────
+// A newly-imported track is written locally as a real file (so fingerprint /
+// analysis run on real bytes), then enqueued here. A background pass keeps the
+// track LOCAL and PLAYABLE until homemini is confirmed to serve byte-identical
+// bytes (macbook→NAS→homemini propagation, typically ≤60-120s), then converts
+// it to a streamed symlink. If homemini never serves a match within
+// STREAM_CONVERT_MAX_AGE_MS, the track just stays local (safe). Crash-safe:
+// persisted in userData. Poll interval is > 30s to dodge homemini's miss-cache.
+interface StreamConvertItem { ipodPath: string; fingerprint?: string; enqueuedAt: number }
+const STREAM_CONVERT_MAX_AGE_MS = 30 * 60 * 1000   // give up after 30 min → stays local
+let streamConvertTimer: ReturnType<typeof setInterval> | null = null
+function streamConvertQueuePath(): string {
+  return join(app.getPath('userData'), 'stream-convert-queue.json')
+}
+async function readStreamConvertQueue(): Promise<StreamConvertItem[]> {
+  try {
+    const s = JSON.parse(await readFile(streamConvertQueuePath(), 'utf-8'))
+    return Array.isArray(s?.items) ? (s.items as StreamConvertItem[]) : []
+  } catch { return [] }
+}
+async function writeStreamConvertQueue(items: StreamConvertItem[]): Promise<void> {
+  const p = streamConvertQueuePath()
+  const tmp = p + '.tmp'
+  await writeFile(tmp, JSON.stringify({ items, updatedAt: new Date().toISOString() }, null, 2), 'utf-8')
+  await rename(tmp, p)
+}
+async function enqueueStreamConvert(ipodPath: string, fingerprint: string | undefined, enqueuedAt: number): Promise<void> {
+  try {
+    const items = await readStreamConvertQueue()
+    if (items.some((it) => it.ipodPath === ipodPath)) return
+    items.push({ ipodPath, fingerprint, enqueuedAt })
+    await writeStreamConvertQueue(items)
+    ensureStreamConvertWorker()
+  } catch { /* non-fatal: track just stays local */ }
+}
+let streamConvertPassRunning = false
+async function runStreamConvertPass(now: number): Promise<void> {
+  if (streamConvertPassRunning) return
+  streamConvertPassRunning = true
+  try {
+    if ((await readStreamSource()) !== 'homemini') return   // mode off → do nothing
+    let items = await readStreamConvertQueue()
+    if (!items.length) return
+    const keep: StreamConvertItem[] = []
+    for (const it of items) {
+      if (now - it.enqueuedAt > STREAM_CONVERT_MAX_AGE_MS) {
+        console.log(`[stream-convert] gave up (homemini never served a match in time), staying local: ${it.ipodPath}`)
+        continue                                            // drop → stays local
+      }
+      const fpr = it.fingerprint ?? await fingerprintForIpodPath(it.ipodPath)
+      const r = await convertTrackToStreamed(it.ipodPath, fpr)
+      if (r.ok) {
+        console.log(`[stream-convert] converted to streamed: ${it.ipodPath}`)
+      } else {
+        keep.push(it)                                       // not ready yet → retry next pass
+      }
+    }
+    if (keep.length !== items.length) await writeStreamConvertQueue(keep)
+    if (!keep.length && streamConvertTimer) { clearInterval(streamConvertTimer); streamConvertTimer = null }
+  } catch { /* non-fatal */ } finally {
+    streamConvertPassRunning = false
+  }
+}
+function ensureStreamConvertWorker(): void {
+  if (streamConvertTimer) return
+  // 90s interval: > homemini's 30s miss-cache window, ~aligned to the 60s NAS
+  // sync legs. Pass reads the queue itself, so a stale closure is impossible.
+  streamConvertTimer = setInterval(() => { void runStreamConvertPass(Date.now()) }, 90 * 1000)
+}
+
 ipcMain.handle('track-local-state', async (_e, ipodPath: string): Promise<'local' | 'streamed' | 'unknown'> => {
   try {
     const st = await lstat(trackFarmPath(ipodPath))
@@ -2949,20 +3169,28 @@ ipcMain.handle('track-local-state', async (_e, ipodPath: string): Promise<'local
 })
 
 ipcMain.handle('load-downloads-state', async (): Promise<{ pinned: string[]; streaming: boolean }> => {
-  return { pinned: await readPins(), streaming: (await readStreamRoot()) !== null }
+  const streaming = (await readStreamRoot()) !== null || (await readStreamSource()) === 'homemini'
+  return { pinned: await readPins(), streaming }
 })
 
 ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
-    const fp = trackFarmPath(ipodPath)
-    const st = await lstat(fp)
-    if (st.isSymbolicLink()) {
-      const target = await readlink(fp)
-      await stat(target)                       // NAS source must be reachable
-      const tmp = fp + '.dl.tmp'
-      await unlink(tmp).catch(() => {})
-      await copyFile(target, tmp)              // pull the real bytes local
-      await rename(tmp, fp)                    // atomic: symlink → real file
+    if ((await readStreamSource()) === 'homemini') {
+      // Laptop homemini mode: pull the real bytes over HTTP from homemini.
+      const r = await pinStreamedTrackFromHomemini(ipodPath)
+      if (!r.ok) return r
+    } else {
+      // Workmini NAS cache-farm mode: copy from the symlink's NAS target.
+      const fp = trackFarmPath(ipodPath)
+      const st = await lstat(fp)
+      if (st.isSymbolicLink()) {
+        const target = await readlink(fp)
+        await stat(target)                       // NAS source must be reachable
+        const tmp = fp + '.dl.tmp'
+        await unlink(tmp).catch(() => {})
+        await copyFile(target, tmp)              // pull the real bytes local
+        await rename(tmp, fp)                    // atomic: symlink → real file
+      }
     }
     const pins = await readPins()
     if (!pins.includes(ipodPath)) { pins.push(ipodPath); await writePins(pins) }
@@ -2974,17 +3202,26 @@ ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boo
 
 ipcMain.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
-    const root = await readStreamRoot()
-    if (!root) return { ok: false, error: 'This library is fully local — nothing to un-download.' }
-    const fp = trackFarmPath(ipodPath)
-    const target = join(root, ipodPath.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
-    await stat(target)                         // never orphan: NAS must have it first
-    const st = await lstat(fp)
-    if (!st.isSymbolicLink()) {
-      const tmp = fp + '.rm.tmp'
-      await unlink(tmp).catch(() => {})
-      await symlink(target, tmp)
-      await rename(tmp, fp)                     // atomic: real file → symlink
+    if ((await readStreamSource()) === 'homemini') {
+      // Laptop homemini mode: re-stream. convertTrackToStreamed hash-verifies
+      // homemini serves the exact bytes before dropping the local file, so this
+      // can never orphan a track.
+      const r = await convertTrackToStreamed(ipodPath, await fingerprintForIpodPath(ipodPath))
+      if (!r.ok) return r
+    } else {
+      // Workmini NAS cache-farm mode: symlink back to the NAS master.
+      const root = await readStreamRoot()
+      if (!root) return { ok: false, error: 'This library is fully local — nothing to un-download.' }
+      const fp = trackFarmPath(ipodPath)
+      const target = join(root, ipodPath.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+      await stat(target)                         // never orphan: NAS must have it first
+      const st = await lstat(fp)
+      if (!st.isSymbolicLink()) {
+        const tmp = fp + '.rm.tmp'
+        await unlink(tmp).catch(() => {})
+        await symlink(target, tmp)
+        await rename(tmp, fp)                     // atomic: real file → symlink
+      }
     }
     await writePins((await readPins()).filter((p) => p !== ipodPath))
     return { ok: true }
@@ -5043,6 +5280,14 @@ async function importOneFile(
       )
     } catch (err) {
       console.warn(`[import] embedded-art extraction skipped for ${srcPath}:`, err instanceof Error ? err.message : err)
+    }
+
+    // Stage 3 ingestion redirect: in homemini streaming mode, keep this import
+    // LOCAL + PLAYABLE now, then let the background pass convert it to a streamed
+    // symlink once homemini serves byte-identical bytes. ALAC never streams
+    // (Chromium can't decode raw ALAC, homemini doesn't transcode) — stays local.
+    if (chosenFmt !== 'alac' && audioFingerprint && (await readStreamSource()) === 'homemini') {
+      void enqueueStreamConvert(String(track.path), audioFingerprint, Date.now())
     }
 
     return { ok: true, track, ...(artwork ? { artwork } : {}) }
@@ -13295,6 +13540,16 @@ ipcMain.handle('rip-cd-tracks', async (_e,
       const fileStats = await stat(destPath)
       const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
 
+      // Stage 3 ingestion redirect (twin of the importOneFile hook): in
+      // homemini streaming mode, enqueue this non-ALAC rip for background
+      // conversion to a streamed symlink once homemini serves matching bytes.
+      // Fingerprint is computed just for the identity gate; the track's stored
+      // fingerprint is still backfilled later by verifyAndHealTracks as before.
+      if (fmt !== 'alac' && (await readStreamSource()) === 'homemini') {
+        const cdFp = await computeAudioFingerprint(destPath, (cdTrack.duration || 0) * 1000)
+        if (cdFp) void enqueueStreamConvert(`:iPod_Control:Music:${subDir}:${fileName}`, cdFp, Date.now())
+      }
+
       imported.push({
         id,
         title: cdTrack.title,
@@ -13665,6 +13920,14 @@ app.whenReady().then(async () => {
   // Depends on MUSIC_DIR (resolved just above) for the colon-path -> abs
   // conversion.
   await loadCodecMapFromLibrary()
+
+  // Stage 3: resume any pending stream-conversions from a prior session (a
+  // track imported just before quit whose homemini propagation hadn't landed
+  // yet). No-op unless streamSource is 'homemini' and the queue is non-empty.
+  if ((await readStreamSource()) === 'homemini' && (await readStreamConvertQueue()).length) {
+    ensureStreamConvertWorker()
+    void runStreamConvertPass(Date.now())
+  }
 
   // 4.5.0-117: one library snapshot per launch (Phase 0 backup/restore).
   // Fire-and-forget; skips an empty library.
@@ -14304,53 +14567,9 @@ app.whenReady().then(async () => {
     return { ok: true, pruned, bytesFreed }
   })
 
-  // ── Streaming migration helpers (Stage 1, 2026-07-09) ──────────────────
-  // Reverse-map an on-disk audio path to its library track id (homemini serves
-  // audio by library id). Cached; refreshed on library.json mtime.
-  let streamTrackIdByColonPath: Map<string, string | number> | null = null
-  let streamTrackIdMapMtime = -1
-  const trackIdForAbsPath = async (absPath: string): Promise<string | number | null> => {
-    const i = absPath.indexOf('iPod_Control')
-    if (i < 0) return null
-    const colon = ':' + absPath.slice(i).replace(/\//g, ':')
-    try {
-      const st = await stat(LIBRARY_PATH)
-      if (!streamTrackIdByColonPath || st.mtimeMs !== streamTrackIdMapMtime) {
-        const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ id: string | number; path?: string }> }
-        const m = new Map<string, string | number>()
-        for (const t of lib.tracks || []) if (t.path) m.set(t.path, t.id)
-        streamTrackIdByColonPath = m
-        streamTrackIdMapMtime = st.mtimeMs
-      }
-    } catch { return null }
-    return streamTrackIdByColonPath.get(colon) ?? null
-  }
-  // Fetch audio bytes from homemini's HTTP server, forwarding the Range header
-  // and piping its 206/200 body back. Bounded timeout; returns null on any
-  // failure so the caller falls back to the local read (breaker-safe — a slow
-  // homemini can't hang the player).
-  const HOMEMINI_AUDIO_BASE = process.env.JAKETUNES_MOBILE_BACKEND
-    ? `${process.env.JAKETUNES_MOBILE_BACKEND}/audio`
-    : 'http://homemini:3000/audio'
-  const fetchAudioFromHomemini = async (id: string | number, rangeHeader: string | null): Promise<Response | null> => {
-    try {
-      const reqHeaders: Record<string, string> = {}
-      if (rangeHeader) reqHeaders['Range'] = rangeHeader
-      const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, {
-        headers: reqHeaders,
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!res.ok && res.status !== 206) return null
-      if (!res.body) return null
-      const out: Record<string, string> = { 'Accept-Ranges': 'bytes', 'X-JT-Audio-Source': 'homemini' }
-      const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
-      const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
-      const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
-      return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
-    } catch {
-      return null
-    }
-  }
+  // Streaming migration helpers (trackIdForAbsPath / fetchAudioFromHomemini /
+  // HOMEMINI_AUDIO_BASE) were hoisted to module scope (near trackFarmPath) so
+  // the ingestion-redirect and download/pin paths can share them. See there.
 
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
