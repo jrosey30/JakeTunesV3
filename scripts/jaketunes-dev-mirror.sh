@@ -32,6 +32,22 @@ for r in "${REPOS[@]}"; do
   br=$(git branch --show-current 2>/dev/null) || continue
   [ -n "$br" ] || continue                      # detached HEAD — skip
   name=$(basename "$r")
+  # PULL FIRST — land any commits made on homemini (source of truth) onto the
+  # laptop, so the two windows stay in lockstep. ONLY when the working tree is
+  # clean (never disturb active laptop edits) and only a fast-forward (a real
+  # divergence logs + waits for a human — never auto-merge). git fetches quietly
+  # then ff-merges; nothing destructive.
+  if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+    git fetch -q origin "$br" 2>>"$LOG" || true
+    behind=$(git rev-list --count "HEAD..@{upstream}" 2>/dev/null || echo 0)
+    if [ "$behind" -gt 0 ] 2>/dev/null; then
+      if git merge -q --ff-only "@{upstream}" 2>>"$LOG"; then
+        log "$name [$br]: pulled $behind commit(s) from homemini"
+      else
+        log "$name [$br]: $behind incoming but not a fast-forward (diverged) — resolve manually"
+      fi
+    fi
+  fi
   if ! up=$(git rev-list --count "@{upstream}..HEAD" 2>/dev/null); then
     # no upstream configured for this branch — establish it + push
     if git push -u origin "$br" >/dev/null 2>>"$LOG"; then log "$name [$br]: pushed + set upstream"; fi
