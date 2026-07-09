@@ -16,7 +16,7 @@
 // signal is untrustworthy (no/empty/incomplete music root, or a flood of
 // dead tracks), which is what silently dropped 265 tracks on workmini.
 
-import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, copyFileSync, existsSync, lstatSync } from 'fs'
 import { join, basename } from 'path'
 import {
   LIBRARY_PATH,
@@ -81,7 +81,14 @@ function existsUnderAnyMount(colonPath) {
   if (!colonPath) return false
   const rel = colonPath.replace(/:/g, '/')
   for (const m of mounts) {
-    if (existsSync(join(m, rel))) return true
+    const abs = join(m, rel)
+    if (existsSync(abs)) return true
+    // Streaming: a streamed track's local file is a symlink (real bytes on
+    // homemini). existsSync FOLLOWS the link, so a dangling streamed symlink
+    // reads as absent → "dead" → deleted on --commit. lstatSync does not
+    // follow: a symlink here means "present, streamed" and is NEVER dead.
+    // ⚠️ TWIN: isStreamedTrackFile + verifyAndHealTracks skip in src/main/index.ts
+    try { if (lstatSync(abs).isSymbolicLink()) return true } catch { /* not on this mount */ }
   }
   return false
 }

@@ -3911,6 +3911,21 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     }
     let srcToCopy = local
     let dstToCopy = ipod
+    // ── Streaming: skip streamed tracks ───────────────────────────
+    // A streamed track's local file is a symlink (real bytes on homemini).
+    // Copying it to the iPod would push a dangling/0-byte file and could
+    // overwrite a good existing device copy. Skip it — to sync a streamed
+    // track to the iPod, download (pin) it locally first. Non-destructive:
+    // any existing iPod copy is left untouched. Count it as processed so the
+    // progress bar still completes (matches the byte-identical skip below).
+    if (await isStreamedTrackFile(local)) {
+      console.log(`sync-to-ipod: skipping streamed track (not downloaded locally): ${title}`)
+      copied++
+      mainWindow?.webContents.send('sync-progress', {
+        phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+      })
+      continue
+    }
     // ── Bitrate conversion ────────────────────────────────────────
     // When enabled, try to build an AAC mirror of the source. Returns
     // null for non-lossless inputs, in which case we just copy the
@@ -4487,6 +4502,19 @@ async function computeAudioFingerprint(absPath: string, durationMs: number): Pro
   }
 }
 
+// ── Streaming: streamed-track detection (Stage 2/3 data-loss safety) ──────
+// A "streamed" track's on-disk file is a SYMLINK — its real bytes live on
+// homemini and are fetched over HTTP at playback time (see the ipod-audio://
+// handler). Such a track is PRESENT-by-definition, even when the symlink
+// target is unreachable (homemini offline, no NAS mount). Every destructive
+// or verify path that stat()-FOLLOWS a track path must treat a symlink as
+// present-and-streamed — otherwise the dead-track deletion chain reads it as
+// audioMissing and silently deletes it (the library-data-loss class). lstat()
+// does not follow the link, so it sees the symlink itself regardless of target.
+async function isStreamedTrackFile(absPath: string): Promise<boolean> {
+  try { return (await lstat(absPath)).isSymbolicLink() } catch { return false }
+}
+
 // Best-effort: turn a track's colon-style library path into an absolute
 // path under either the local mount or the iPod mount. Returns the
 // first one that exists, or null. Sync flows use this when we don't
@@ -4501,7 +4529,12 @@ async function resolveTrackAbsPath(colonPath: string, mounts: string[]): Promise
     try {
       const s = await stat(abs)
       if (s.isFile()) return abs
-    } catch { /* try next mount */ }
+    } catch {
+      // stat() failed — but a STREAMED track is a symlink whose homemini
+      // target isn't on this disk. lstat (no-follow) still sees the link;
+      // treat it as present so the dead-track chain never deletes it.
+      try { if ((await lstat(abs)).isSymbolicLink()) return abs } catch { /* not on this mount */ }
+    }
   }
   return null
 }
@@ -4602,6 +4635,12 @@ async function verifyAndHealTracks(
 
   for (const tr of inputs) {
     const absNow = await resolveTrackAbsPath(tr.path, mounts)
+    // Streamed tracks (symlink → homemini) are present-by-definition: their
+    // bytes aren't local, so there's nothing to fingerprint or heal, and they
+    // must NEVER be flagged audioMissing. Skipping here is the single chokepoint
+    // that keeps the dead-track deletion chain (scan/remove-dead-tracks + the
+    // post-sync verifier) and the expensive F-dir fingerprint index off them.
+    if (absNow && await isStreamedTrackFile(absNow)) continue
     if (absNow) {
       // File exists at expected path. Backfill fingerprint if missing.
       // (One-time per track; after that the field is permanent and only
