@@ -14265,10 +14265,83 @@ app.whenReady().then(async () => {
     return { ok: true, pruned, bytesFreed }
   })
 
+  // ── Streaming migration helpers (Stage 1, 2026-07-09) ──────────────────
+  // Reverse-map an on-disk audio path to its library track id (homemini serves
+  // audio by library id). Cached; refreshed on library.json mtime.
+  let streamTrackIdByColonPath: Map<string, string | number> | null = null
+  let streamTrackIdMapMtime = -1
+  const trackIdForAbsPath = async (absPath: string): Promise<string | number | null> => {
+    const i = absPath.indexOf('iPod_Control')
+    if (i < 0) return null
+    const colon = ':' + absPath.slice(i).replace(/\//g, ':')
+    try {
+      const st = await stat(LIBRARY_PATH)
+      if (!streamTrackIdByColonPath || st.mtimeMs !== streamTrackIdMapMtime) {
+        const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ id: string | number; path?: string }> }
+        const m = new Map<string, string | number>()
+        for (const t of lib.tracks || []) if (t.path) m.set(t.path, t.id)
+        streamTrackIdByColonPath = m
+        streamTrackIdMapMtime = st.mtimeMs
+      }
+    } catch { return null }
+    return streamTrackIdByColonPath.get(colon) ?? null
+  }
+  // Fetch audio bytes from homemini's HTTP server, forwarding the Range header
+  // and piping its 206/200 body back. Bounded timeout; returns null on any
+  // failure so the caller falls back to the local read (breaker-safe — a slow
+  // homemini can't hang the player).
+  const HOMEMINI_AUDIO_BASE = process.env.JAKETUNES_MOBILE_BACKEND
+    ? `${process.env.JAKETUNES_MOBILE_BACKEND}/audio`
+    : 'http://homemini:3000/audio'
+  const fetchAudioFromHomemini = async (id: string | number, rangeHeader: string | null): Promise<Response | null> => {
+    try {
+      const reqHeaders: Record<string, string> = {}
+      if (rangeHeader) reqHeaders['Range'] = rangeHeader
+      const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, {
+        headers: reqHeaders,
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok && res.status !== 206) return null
+      if (!res.body) return null
+      const out: Record<string, string> = { 'Accept-Ranges': 'bytes', 'X-JT-Audio-Source': 'homemini' }
+      const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
+      const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
+      const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
+      return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
+    } catch {
+      return null
+    }
+  }
+
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
     let filePath = rawPath
     let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+
+    // ── Streaming migration Stage 1 (2026-07-09): stream a NON-LOCAL track
+    // from homemini's HTTP audio server instead of reading it off disk. Fires
+    // when the on-disk file is a SYMLINK (a "streamed" track — the Stage 2+
+    // trigger) OR the JT_STREAM_TEST flag is set (the Stage-1 proof, no files
+    // touched). Pulls from homemini (the phone-proven path, served from its own
+    // local disk) so flaky SMB never sits on the playback hot path — the exact
+    // 2026-07-08 freeze cause. ALAC is excluded: Chromium can't decode raw
+    // ALAC and homemini doesn't transcode, so ALAC stays local/pinned. Any
+    // homemini failure (timeout/unreachable/miss) falls THROUGH to the local
+    // read below — a streamed track with no local bytes then 404s cleanly
+    // (surfaced as unavailable) rather than hanging the player.
+    const isAlac = codecByAbsPath.get(rawPath) === 'alac' || ext === '.alac'
+    if (!isAlac) {
+      let streamed = process.env.JT_STREAM_TEST === '1'
+      if (!streamed) { try { streamed = (await lstat(rawPath)).isSymbolicLink() } catch { /* real local file */ } }
+      if (streamed) {
+        const id = await trackIdForAbsPath(rawPath)
+        if (id != null) {
+          const remote = await fetchAudioFromHomemini(id, request.headers.get('range'))
+          if (remote) return remote
+        }
+      }
+    }
+
     try {
       // If the source is ALAC, swap in a cached AAC transcode. Silent
       // fallthrough to the raw file if ffmpeg fails — playback may still
@@ -14337,6 +14410,7 @@ app.whenReady().then(async () => {
             'Content-Range': `bytes ${start}-${end}/${total}`,
             'Content-Length': String(chunkSize),
             'Accept-Ranges': 'bytes',
+            'X-JT-Audio-Source': 'local',
           },
         })
       }
@@ -14348,6 +14422,7 @@ app.whenReady().then(async () => {
           'Content-Type': mimeType,
           'Content-Length': String(total),
           'Accept-Ranges': 'bytes',
+          'X-JT-Audio-Source': 'local',
         },
       })
     } catch {
