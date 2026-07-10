@@ -540,6 +540,10 @@ const electronAPI = {
     ipcRenderer.invoke('remove-live-set', albumKey),
   getConcertCrowd: (mergedTrackId: number): Promise<string | null> =>
     ipcRenderer.invoke('get-concert-crowd', mergedTrackId),
+  saveCrowdTuning: (t: Record<string, number>): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('save-crowd-tuning', t),
+  loadCrowdTuning: (): Promise<Record<string, number> | null> =>
+    ipcRenderer.invoke('load-crowd-tuning'),
   liveSetCleanup: (absPath: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('live-set-cleanup', absPath),
   openSoundSettings: (): Promise<void> =>

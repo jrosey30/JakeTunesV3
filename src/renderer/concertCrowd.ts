@@ -20,16 +20,40 @@ let totalSec = 0
 let attachedId: number | null = null
 const listeners = new Set<() => void>()
 
-// Envelope (all seconds) — tunable by ear. The crowd rises over LEAD_IN before a
-// song boundary, holds briefly, then fades fast so the next song's downbeat is
-// clean. PEAK is the swell ceiling (the clip is already loudnorm'd quiet).
-const LEAD_IN = 3.5
-const FADE_OUT = 1.4
-const PEAK = 0.7
+// Envelope (all seconds / 0-1) — TUNABLE BY EAR (the concert view's crowd panel).
+// The crowd rises over `rise` before a song boundary, then fades over `tail` so
+// the next downbeat is clean. `level` is the swell ceiling (the clip is already
+// loudnorm'd quiet). Persisted so a dial-in sticks.
+let leadIn = 3.5   // rise
+let fadeOut = 1.4  // tail
+let peak = 0.7     // level
 
 function emit(): void { for (const l of listeners) l() }
 export function subscribeConcertCrowd(cb: () => void): () => void { listeners.add(cb); return () => { listeners.delete(cb) } }
 export function isConcertCrowdEnabled(): boolean { return enabled }
+
+export function getCrowdParams(): { level: number; rise: number; tail: number } {
+  return { level: peak, rise: leadIn, tail: fadeOut }
+}
+export async function setCrowdParams(partial: { level?: number; rise?: number; tail?: number }): Promise<void> {
+  if (partial.level != null) peak = Math.max(0, Math.min(1, partial.level))
+  if (partial.rise != null) leadIn = Math.max(0.5, Math.min(8, partial.rise))
+  if (partial.tail != null) fadeOut = Math.max(0.3, Math.min(5, partial.tail))
+  emit()
+  try { await window.electronAPI.saveCrowdTuning({ level: peak, rise: leadIn, tail: fadeOut }) } catch { /* best effort */ }
+}
+// Load the persisted dial-in once at startup.
+void (async () => {
+  try {
+    const t = await window.electronAPI.loadCrowdTuning?.()
+    if (t) {
+      if (typeof t.level === 'number') peak = t.level
+      if (typeof t.rise === 'number') leadIn = t.rise
+      if (typeof t.tail === 'number') fadeOut = t.tail
+      emit()
+    }
+  } catch { /* defaults are fine */ }
+})()
 
 export function setConcertCrowdEnabled(on: boolean): void {
   enabled = on
@@ -86,13 +110,13 @@ function gainAt(posSec: number): number {
   for (const b of boundariesSec) {
     const d = posSec - b
     let v = 0
-    if (d <= 0 && d > -LEAD_IN) v = 1 - (-d / LEAD_IN)          // rising into the boundary
-    else if (d > 0 && d < FADE_OUT) v = 1 - (d / FADE_OUT)      // falling out of it
+    if (d <= 0 && d > -leadIn) v = 1 - (-d / leadIn)          // rising into the boundary
+    else if (d > 0 && d < fadeOut) v = 1 - (d / fadeOut)      // falling out of it
     if (v > g) g = v
   }
   // ease the linear ramp into a soft cosine bell
   const bell = 0.5 * (1 - Math.cos(Math.PI * g))
-  return PEAK * bell
+  return peak * bell
 }
 
 function tick(): void {

@@ -13141,6 +13141,15 @@ ipcMain.handle('get-concert-crowd', async (_e, mergedTrackId: number): Promise<s
     return buf.toString('base64')
   } catch { return null }
 })
+// Crowd tuning knobs (level / rise / tail) — persisted so the user's by-ear dial-in sticks.
+function crowdTuningPath(): string { return join(app.getPath('userData'), 'concert-crowd-tuning.json') }
+ipcMain.handle('save-crowd-tuning', async (_e, t: Record<string, number>): Promise<{ ok: boolean }> => {
+  try { await writeFile(crowdTuningPath(), JSON.stringify(t, null, 2), 'utf-8') } catch { /* best effort */ }
+  return { ok: true }
+})
+ipcMain.handle('load-crowd-tuning', async (): Promise<Record<string, number> | null> => {
+  try { return JSON.parse(await readFile(crowdTuningPath(), 'utf-8')) } catch { return null }
+})
 
 ipcMain.handle('live-set-merge', async (
   event,

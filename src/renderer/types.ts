@@ -722,6 +722,8 @@ declare global {
       saveLiveSet: (albumKey: string, entry: LiveSetEntry) => Promise<{ ok: boolean; error?: string }>
       removeLiveSet: (albumKey: string) => Promise<{ ok: boolean }>
       getConcertCrowd: (mergedTrackId: number) => Promise<string | null>
+      saveCrowdTuning: (t: Record<string, number>) => Promise<{ ok: boolean }>
+      loadCrowdTuning: () => Promise<Record<string, number> | null>
       liveSetCleanup: (absPath: string) => Promise<{ ok: boolean; error?: string }>
       openSoundSettings: () => Promise<void>
       // Music Man taste-learning telemetry. The main process records these

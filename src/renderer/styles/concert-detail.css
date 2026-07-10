@@ -106,6 +106,21 @@
 .concert-btn--remove { color: #8a5a52; border-color: transparent; background: transparent; }
 .concert-btn--remove:hover { color: #a5342a; background: rgba(165, 52, 42, 0.07); }
 
+/* Crowd tuning panel — appears when Crowd is on; adjusts the live engine. */
+.concert-crowd-panel {
+  margin-top: 14px;
+  max-width: 380px;
+  padding: 11px 14px;
+  background: rgba(224, 129, 46, 0.07);
+  border: 1px solid rgba(187, 67, 8, 0.2);
+  border-radius: 8px;
+}
+.ccp-title { font-size: 11px; color: #8a5a1a; font-weight: 600; margin-bottom: 8px; }
+.ccp-row { display: grid; grid-template-columns: 42px 1fr 74px; align-items: center; gap: 10px; margin: 6px 0; }
+.ccp-row > span { font-size: 12px; color: #4a4842; }
+.ccp-row > em { font-size: 11px; color: #8a6a2a; text-align: right; font-style: normal; font-variant-numeric: tabular-nums; }
+.ccp-row input[type="range"] { width: 100%; accent-color: var(--brand-orange, #bb4308); height: 4px; }
+
 /* The journey */
 .concert-journey { max-width: 640px; }
 .cj-row {
