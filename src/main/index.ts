@@ -5896,6 +5896,38 @@ async function loadArtworkIndex(): Promise<Record<string, string>> {
   }
 }
 
+// Self-heal the artwork index from the .meta.json sidecars. Custom art (e.g. a
+// concert poster) reaches other machines as <hash>.jpg + <hash>.meta.json — the
+// deploy + syncs ship those, but NOT index.json — while the renderer's
+// artworkMap is built from index.json. Without this, a synced poster's file is
+// present but unmapped, so it never renders. Merge any sidecar whose key isn't
+// in the index (bare hash → resolves via bareArtHash). Gated on the artwork
+// dir being newer than the index so it only walks meta.json when new art
+// actually arrived (not on every boot once merged). Returns whether it changed.
+async function mergeArtworkSidecarsIntoIndex(index: Record<string, string>): Promise<boolean> {
+  try {
+    const dirStat = await stat(getArtworkDir())
+    const idxStat = await stat(getArtworkIndexPath()).catch(() => null)
+    if (idxStat && dirStat.mtimeMs <= idxStat.mtimeMs + 1000) return false // nothing new since last merge
+  } catch { /* fall through and scan */ }
+  let changed = false
+  try {
+    const { readdir } = await import('fs/promises')
+    const dir = getArtworkDir()
+    for (const name of await readdir(dir)) {
+      if (!name.endsWith('.meta.json')) continue
+      try {
+        const meta = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { key?: string; artist?: string; album?: string }
+        const key = (meta.key || (meta.artist && meta.album ? `${meta.artist.toLowerCase().trim()}|||${meta.album.toLowerCase().trim()}` : '')).trim()
+        if (!key || index[key]) continue
+        index[key] = name.replace(/\.meta\.json$/, '')
+        changed = true
+      } catch { /* malformed sidecar */ }
+    }
+  } catch { /* readdir failed */ }
+  return changed
+}
+
 // 4.4.12: single-flight + atomic write for the artwork index.
 //
 // Same class of bug 4.1.1 fixed for metadata-overrides (see
@@ -13098,6 +13130,14 @@ ipcMain.handle('choose-artwork-file', async () => {
 
 ipcMain.handle('load-artwork-map', async () => {
   const index = await loadArtworkIndex()
+  // Self-heal from synced .meta.json sidecars so custom art (concert posters,
+  // user covers) that arrived via a deploy/sync resolves even though index.json
+  // didn't travel. Persist + refresh so it's durable and the next boot is fast.
+  if (await mergeArtworkSidecarsIntoIndex(index)) {
+    artworkIndexMem = index
+    void saveArtworkIndex(index)
+    scheduleArtworkLookupRebuild(index)
+  }
   return { ok: true, map: index }
 })
 
