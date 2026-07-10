@@ -369,13 +369,21 @@
 }
 .album-page-setlist-row:nth-child(odd) { background: var(--row-alt); }
 .album-page-setlist-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
+/* NOW PLAYING — the current song must POP, not fade. Orange left-bar +
+ * warm tint + bold, so at a glance you see exactly where you are in the show. */
 .album-page-setlist-row--active,
-.album-page-setlist-row--active:hover {
-  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
-  color: #fff;
+.album-page-setlist-row--active:hover,
+.album-page-setlist-row--active:nth-child(odd) {
+  background: rgba(224, 129, 46, 0.15);
+  box-shadow: inset 3px 0 0 var(--brand-orange, #bb4308);
 }
-.album-page-setlist-row--active .album-page-setlist-num,
-.album-page-setlist-row--active .album-page-setlist-time { color: rgba(255, 255, 255, 0.85); }
+.album-page-setlist-row--active .album-page-setlist-name { color: #7a3608; font-weight: 700; }
+.album-page-setlist-row--active .album-page-setlist-num { color: var(--brand-orange, #bb4308); font-weight: 700; }
+.album-page-setlist-row--active .album-page-setlist-time { color: #a0561a; font-weight: 600; }
+/* PLAYED — songs already gone by read dimmer, so the setlist shows progress. */
+.album-page-setlist-row--played .album-page-setlist-name,
+.album-page-setlist-row--played .album-page-setlist-num,
+.album-page-setlist-row--played .album-page-setlist-time { color: #b4b0a7; }
 .album-page-setlist-num {
   text-align: right;
   padding-right: 10px;

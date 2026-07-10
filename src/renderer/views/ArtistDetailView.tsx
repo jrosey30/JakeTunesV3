@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
@@ -123,6 +124,9 @@ function relationLabel(rel: string): string {
 
 export default function ArtistDetailView() {
   const { state: lib, dispatch } = useLibrary()
+  // A full live concert is its OWN thing, not an album of the artist — exclude
+  // its tracks from this artist's album grouping (they live in Live Concerts).
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
   const { dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const [albumCtx, setAlbumCtx] = useState<{ x: number; y: number; name: string; tracks: Track[] } | null>(null)
@@ -169,7 +173,7 @@ export default function ArtistDetailView() {
     const canonicalActive = canonicalArtist(artist)
     // personaName → albumName → AlbumGroup
     const byPersona = new Map<string, Map<string, AlbumGroup>>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       const directMatch = isSameArtist(t.artist || '', canonicalActive)
       const collabMatch = (t.contributingArtists || []).find(x => isSameArtist(x || '', canonicalActive))
       if (!directMatch && !collabMatch) continue
@@ -224,7 +228,7 @@ export default function ArtistDetailView() {
       return aMin - bMin
     })
     return out
-  }, [lib.tracks, artist, aliasVersion])
+  }, [regularTracks, artist, aliasVersion])
 
   // Flattened album list — kept for hero stats + genre chips.
   const albums = useMemo<AlbumGroup[]>(

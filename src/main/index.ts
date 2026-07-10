@@ -3850,6 +3850,25 @@ interface SyncConvertOptions {
 }
 
 ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
+  // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
+  // for full concerts). Drop the merged concert track AND any of its constituent
+  // songs not individually reimported (promoted). A promoted song is a normal
+  // library track again and syncs as usual. Enforced main-side so the rule can't
+  // be bypassed. ⚠️ mirrors libraryHiddenTrackIds in src/renderer/liveSets.ts.
+  try {
+    const sets = await liveSetsCache.get()
+    const concertOwned = new Set<number>()
+    for (const e of Object.values(sets)) {
+      concertOwned.add(e.mergedTrackId)
+      const promoted = new Set(e.promotedTrackIds || [])
+      for (const c of e.cues) if (!promoted.has(c.trackId)) concertOwned.add(c.trackId)
+    }
+    if (concertOwned.size) {
+      const before = tracks.length
+      tracks = tracks.filter((t) => !concertOwned.has(Number(t.id)))
+      if (tracks.length !== before) console.log(`sync-to-ipod: kept ${before - tracks.length} full-concert track(s) OFF the iPod`)
+    }
+  } catch { /* no live sets → nothing to exclude */ }
   if (syncInFlight) {
     const ageMs = Date.now() - syncStartedAt
     if (ageMs > SYNC_HANG_TIMEOUT_MS) {

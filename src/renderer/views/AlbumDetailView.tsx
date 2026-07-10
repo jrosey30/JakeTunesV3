@@ -624,7 +624,7 @@ export default function AlbumDetailView() {
             return (
             <div
               key={`${cue.trackId}-${i}`}
-              className={`album-page-setlist-row${activeCue && activeCue.index === i ? ' album-page-setlist-row--active' : ''}${inLibrary ? ' album-page-setlist-row--in-library' : ''}`}
+              className={`album-page-setlist-row${activeCue && activeCue.index === i ? ' album-page-setlist-row--active' : ''}${activeCue && i < activeCue.index ? ' album-page-setlist-row--played' : ''}${inLibrary ? ' album-page-setlist-row--in-library' : ''}`}
               onClick={() => seekToCue(cue)}
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
               title={setPlaying ? `Jump to "${cue.title}"` : 'Play the live set — right-click a song to add it to your library'}
