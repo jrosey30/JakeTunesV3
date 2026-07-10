@@ -384,6 +384,15 @@
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
+/* A setlist song the user reimported into the regular library. */
+.album-page-setlist-inlib {
+  color: var(--brand-orange, #bb4308);
+  font-size: 11px;
+  margin: 0 6px 0 2px;
+  flex-shrink: 0;
+}
+.album-page-setlist-row--in-library .album-page-setlist-name { color: var(--brand-orange, #bb4308); }
+.album-page-setlist-row--active .album-page-setlist-inlib { color: #fff; }
 
 /* Completeness gate — quiet explanatory line under the actions when the
    album can't be declared (missing tracks / unverifiable count). */

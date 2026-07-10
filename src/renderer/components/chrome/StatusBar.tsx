@@ -1,14 +1,17 @@
 import { useMemo } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
+import { useRegularLibraryTracks } from '../../hooks/useRegularLibraryTracks'
 
 export default function StatusBar() {
   const { state } = useLibrary()
+  // Declared full concerts don't count as songs — footer reflects the regular library.
+  const tracks = useRegularLibraryTracks(state.tracks)
 
   const summary = useMemo(() => {
-    const count = state.tracks.length
+    const count = tracks.length
     if (count === 0) return 'No songs'
 
-    const totalMs = state.tracks.reduce((sum, t) => sum + (t.duration || 0), 0)
+    const totalMs = tracks.reduce((sum, t) => sum + (t.duration || 0), 0)
     const totalSecs = Math.floor(totalMs / 1000)
     const totalMins = Math.floor(totalSecs / 60)
     const hours = Math.floor(totalMins / 60)
@@ -25,14 +28,14 @@ export default function StatusBar() {
       timeStr = `${mins} minute${mins !== 1 ? 's' : ''}`
     }
 
-    const totalBytes = state.tracks.reduce((sum, t) => sum + (t.fileSize || 0), 0)
+    const totalBytes = tracks.reduce((sum, t) => sum + (t.fileSize || 0), 0)
     const gb = totalBytes / (1024 * 1024 * 1024)
     const sizeStr = gb >= 1 ? `${gb.toFixed(1)} GB` : `${(totalBytes / (1024 * 1024)).toFixed(0)} MB`
 
     // Thousands separator so the footer speaks the same number language as the
     // rest of the app (Home, the iPod modal, etc. all use toLocaleString()).
     return `${count.toLocaleString()} song${count !== 1 ? 's' : ''}, ${timeStr}, ${sizeStr}`
-  }, [state.tracks])
+  }, [tracks])
 
   return (
     <div className="statusbar">

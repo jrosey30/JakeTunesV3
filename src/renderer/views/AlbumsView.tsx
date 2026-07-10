@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { usePlayback } from '../context/PlaybackContext'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
@@ -94,7 +95,11 @@ export default function AlbumsView() {
     }, 60)
   }, [lib.pendingAlbumKey, lib.currentView, libDispatch])
 
-  const albums = useMemo((): Album[] => groupTracksIntoAlbums(lib.tracks), [lib.tracks])
+  // Declared full concerts (both the "(Live Set)" merged album tile AND the raw
+  // constituent album) drop out of the Albums grid — they live in the Full Live
+  // Concerts section. Constituents re-appear here once individually reimported.
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
+  const albums = useMemo((): Album[] => groupTracksIntoAlbums(regularTracks), [regularTracks])
 
   const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
   const [albFilter, setAlbFilter] = useState('')

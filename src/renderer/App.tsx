@@ -43,6 +43,7 @@ import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/e
 import { setStereoWidth } from './audio/audioEnhance'
 import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
+import { ensureLiveSetsLoaded } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
 import { setNotice } from './activity'
@@ -151,6 +152,11 @@ function AppInner() {
   // in any song-list view (not just Songs), even if a playlist is the first view
   // opened after launch. Idempotent (guarded inside initDownloads).
   useEffect(() => { void initDownloads() }, [])
+
+  // Load declared live concerts at boot so the regular-library projection
+  // (Songs/Albums/Artists/count) excludes concert tracks on first paint,
+  // not after a flash. Idempotent (first caller wins inside the store).
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
 
   // Subscribe the renderer-side recently-added store to the main-process
   // Bandcamp download-router events. Idempotent.

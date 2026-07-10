@@ -2666,6 +2666,10 @@ export interface LiveSetEntry {
   cues: Array<{ trackId: number; title: string; artist: string; startMs: number; durationMs: number }>
   totalDurationMs: number
   createdAt: string
+  // Constituents reimported to the regular library (right-click → Add to
+  // Library). Exempted from the concert's library-hide. See src/renderer/types.ts.
+  promotedTrackIds?: number[]
+  concert?: { venue?: string; city?: string; date?: string; poster?: string }
 }
 const liveSetsCache = new JsonFileCache<Record<string, LiveSetEntry>>(
   () => join(STATE_DIR, 'live-sets.json'),

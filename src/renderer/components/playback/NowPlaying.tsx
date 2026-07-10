@@ -89,9 +89,16 @@ type PillMode = 'playing' | 'rip' | 'sync' | 'import' | 'notice' | 'broadcast'
 
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
-  const mins = Math.floor(s / 60)
-  const secs = Math.floor(s % 60)
-  return `${mins}:${secs.toString().padStart(2, '0')}`
+  const total = Math.floor(s)
+  const secs = total % 60
+  const mins = Math.floor(total / 60) % 60
+  const hours = Math.floor(total / 3600)
+  // Roll over to H:MM:SS for hour-long tracks (full live concerts) so a
+  // 2½-hour show reads 1:30:00 / -1:30:00, not 155:59. Sub-hour tracks
+  // stay M:SS exactly as before — display only, no scrubber-math change.
+  return hours > 0
+    ? `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    : `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 export default function NowPlaying() {

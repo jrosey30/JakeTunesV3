@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { compareNames, artistSectionLetter } from '../utils/artistSort'
 import ScrollTopButton from '../components/ScrollTopButton'
@@ -74,10 +75,13 @@ export default function ArtistsView() {
   const [groupingOpen, setGroupingOpen] = useState(false)
   // Regroup when the user/AI alias map changes (boot load or an approve/edit).
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
+  // Concert-owned tracks don't appear under Artists (the concert lives in the
+  // Full Live Concerts section); a reimported song brings its artist back.
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
   const artists = useMemo((): ArtistGroup[] => {
     const map = new Map<string, Track[]>()
     const displayNames = new Map<string, string>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       // Brief 031 Phase 4c: fan out each track across every artist
       // listed in contributingArtists, not just t.artist. For sole-
       // artist tracks, contributingArtists is [artist] so behavior is
@@ -124,7 +128,7 @@ export default function ArtistsView() {
           albums: Array.from(albumMap.entries()).map(([n, t]) => ({ name: n, tracks: t }))
         }
       })
-  }, [lib.tracks, aliasVersion])
+  }, [regularTracks, aliasVersion])
 
   // Filter against the global toolbar Search Pill. Matches artist
   // name, album name, or track title.

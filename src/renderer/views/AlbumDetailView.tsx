@@ -21,7 +21,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 // V5 Live Concert Mode — declared-set store + declare orchestration.
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt } from '../liveSets'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt, promoteTrackToLibrary } from '../liveSets'
 import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import type { Track, LiveSetCue } from '../types'
@@ -118,6 +118,9 @@ export default function AlbumDetailView() {
 
   const [blurbExpanded, setBlurbExpanded] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
+  // Right-click a setlist song → reimport that one track into the regular
+  // library (promote). The concert stays intact; only that song re-appears.
+  const [cueCtx, setCueCtx] = useState<{ x: number; y: number; cue: LiveSetCue } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
 
@@ -595,19 +598,24 @@ export default function AlbumDetailView() {
               {setPlaying && activeCue ? ` · now: ${activeCue.index + 1}/${liveSet.cues.length}` : ''}
             </span>
           </div>
-          {liveSet.cues.map((cue, i) => (
+          {liveSet.cues.map((cue, i) => {
+            const inLibrary = (liveSet.promotedTrackIds || []).includes(cue.trackId)
+            return (
             <div
               key={`${cue.trackId}-${i}`}
-              className={`album-page-setlist-row${activeCue && activeCue.index === i ? ' album-page-setlist-row--active' : ''}`}
+              className={`album-page-setlist-row${activeCue && activeCue.index === i ? ' album-page-setlist-row--active' : ''}${inLibrary ? ' album-page-setlist-row--in-library' : ''}`}
               onClick={() => seekToCue(cue)}
-              title={setPlaying ? `Jump to "${cue.title}"` : 'Play the live set'}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
+              title={setPlaying ? `Jump to "${cue.title}"` : 'Play the live set — right-click a song to add it to your library'}
               role="button"
             >
               <span className="album-page-setlist-num">{i + 1}</span>
               <span className="album-page-setlist-name">{cue.title}</span>
+              {inLibrary && <span className="album-page-setlist-inlib" title="In your library">✓</span>}
               <span className="album-page-setlist-time">{formatDuration(cue.durationMs)}</span>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -659,6 +667,21 @@ export default function AlbumDetailView() {
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={getContextMenuItems()} onClose={() => setCtxMenu(null)} />}
+      {cueCtx && (
+        <ContextMenu
+          x={cueCtx.x}
+          y={cueCtx.y}
+          items={
+            (liveSet?.promotedTrackIds || []).includes(cueCtx.cue.trackId)
+              ? [{ label: 'Already in your library', onClick: () => {}, disabled: true }]
+              : [{
+                  label: `Add "${cueCtx.cue.title}" to My Library`,
+                  onClick: () => { void promoteTrackToLibrary(albumKey, cueCtx.cue.trackId) },
+                }]
+          }
+          onClose={() => setCueCtx(null)}
+        />
+      )}
       {getInfoState && (
         <GetInfoModal
           tracks={getInfoState.tracks}

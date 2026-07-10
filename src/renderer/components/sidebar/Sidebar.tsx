@@ -14,6 +14,12 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
   songs: <SongsIcon />,
   artists: <ArtistsIcon />,
   albums: <AlbumsIcon />,
+  concerts: (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="2" width="10" height="12" rx="1" />
+      <path d="M8 4.4l0.85 1.75 1.95 0.28-1.4 1.37 0.33 1.93L8 8.79l-1.73 0.91 0.33-1.93-1.4-1.37 1.95-0.28z" />
+    </svg>
+  ),
   genres: <GenresIcon />,
   discovery: <DiscoveryIcon />,
 }
@@ -25,6 +31,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Songs', view: 'songs' },
   { label: 'Artists', view: 'artists' },
   { label: 'Albums', view: 'albums' },
+  { label: 'Live Concerts', view: 'concerts' },
   { label: 'Genres', view: 'genres' },
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
   // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the

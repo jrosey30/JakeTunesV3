@@ -96,7 +96,7 @@ export interface Playlist {
   source?: 'mobile'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -116,6 +116,20 @@ export interface LiveSetEntry {
   cues: LiveSetCue[]
   totalDurationMs: number
   createdAt: string
+  // Constituent track ids the user has "reimported" back into the regular
+  // library (right-click a setlist song → Add to Library). A declared concert
+  // hides its merged track + all constituents from the regular library; a
+  // promoted id is exempted so that one song shows as a normal track again.
+  promotedTrackIds?: number[]
+  // Concert-native metadata (the "poster universe"). Grounded from tags/user,
+  // never fabricated. Optional + back-compat: older sidecar rows omit it.
+  concert?: ConcertMeta
+}
+export interface ConcertMeta {
+  venue?: string
+  city?: string
+  date?: string        // display string, e.g. "May 15–16, 1980"
+  poster?: string      // artwork key/hash for the concert poster (portrait)
 }
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot

@@ -5,6 +5,7 @@ import ArtistsView from '../views/ArtistsView'
 import ArtistDetailView from '../views/ArtistDetailView'
 import AlbumsView from '../views/AlbumsView'
 import AlbumDetailView from '../views/AlbumDetailView'
+import ConcertsView from '../views/ConcertsView'
 import MixDetailView from '../views/MixDetailView'
 import GenresView from '../views/GenresView'
 import DiscoveryView from '../views/DiscoveryView'
@@ -57,6 +58,7 @@ export default function MainContent() {
     case 'artist-detail': viewElement = <ArtistDetailView />; break
     case 'albums': viewElement = <AlbumsView />; break
     case 'album-detail': viewElement = <AlbumDetailView />; break
+    case 'concerts': viewElement = <ConcertsView />; break
     case 'mix-detail': viewElement = <MixDetailView />; break
     case 'genres': viewElement = <GenresView />; break
     case 'discovery': viewElement = <DiscoveryView />; break

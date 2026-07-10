@@ -1,0 +1,42 @@
+/* Full Live Concerts — reuses the albums grid/card classes, with a concert
+ * "poster" character on top (LC-6 will push the poster to a portrait crop). */
+
+.concerts-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 16px 6px;
+}
+.concerts-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary, #1c1c1c);
+}
+.concerts-count {
+  font-size: 12px;
+  color: var(--text-secondary, #6a6a68);
+}
+
+.concerts-empty {
+  padding: 28px 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary, #6a6a68);
+  max-width: 520px;
+}
+.concerts-empty-em {
+  color: var(--brand-orange, #bb4308);
+  font-weight: 500;
+}
+
+/* Concert poster tile: slightly warmer frame than an album cover so a show
+ * reads as its own object. Portrait crop + real gig-poster art land in LC-6. */
+.concert-card-poster {
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  background: #f2f0ea;
+}
+.concert-card-meta {
+  color: var(--text-secondary, #8a8a88);
+}

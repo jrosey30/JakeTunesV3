@@ -93,6 +93,46 @@ export function mergedTrackIndex(): Map<number, LiveSetEntry> {
 }
 
 /**
+ * The set of track ids that a declared concert HIDES from the regular library
+ * (count / Songs / Albums / Artists) — the merged "Full Set" track PLUS every
+ * constituent that hasn't been reimported (promoted). A concert doesn't count
+ * as songs in the library; only individually-promoted songs re-appear.
+ *
+ * `liveTrackIds` is the id set of the current library.tracks — a set whose
+ * merged track is no longer present is treated as not-declared (parity with
+ * liveSetFor's self-heal), so a hand-deleted merged file re-reveals its
+ * constituents instead of hiding phantom rows. Pure: no IPC/side effects, safe
+ * to call every render.
+ */
+export function libraryHiddenTrackIds(liveTrackIds: Set<number>): Set<number> {
+  const hidden = new Set<number>()
+  for (const entry of Object.values(state.sets)) {
+    if (!liveTrackIds.has(entry.mergedTrackId)) continue      // stale set — don't hide
+    hidden.add(entry.mergedTrackId)                            // the merged concert track
+    const promoted = new Set(entry.promotedTrackIds || [])
+    for (const c of entry.cues) if (!promoted.has(c.trackId)) hidden.add(c.trackId)
+  }
+  return hidden
+}
+
+/**
+ * Reimport ONE setlist song into the regular library: mark its constituent
+ * track id "promoted" on the concert's sidecar entry so the (untouched)
+ * original track re-appears as a normal song. Additive + idempotent — never
+ * deletes or re-encodes; the audio was never removed.
+ */
+export async function promoteTrackToLibrary(albumKey: string, trackId: number): Promise<void> {
+  const entry = state.sets[albumKey]
+  if (!entry) return
+  const promoted = new Set(entry.promotedTrackIds || [])
+  if (promoted.has(trackId)) return
+  promoted.add(trackId)
+  const next: LiveSetEntry = { ...entry, promotedTrackIds: [...promoted] }
+  await window.electronAPI.saveLiveSet(albumKey, next)
+  setState({ ...state, sets: { ...state.sets, [albumKey]: next } })
+}
+
+/**
  * Map a playhead position within a merged set to its current cue.
  * Cues are sorted by startMs at merge time; linear scan is fine at
  * setlist sizes (10-40 songs), binary search would be overkill.

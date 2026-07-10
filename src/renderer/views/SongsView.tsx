@@ -5,6 +5,7 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
 import { useSortedTracks } from '../hooks/useSortedTracks'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -287,7 +288,10 @@ export default function SongsView() {
     return { visibleCols, colWidths }
   }, [columnOrder, hiddenCols, colWidthMap])
 
-  const sorted = useSortedTracks(lib.tracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
+  // Declared full concerts (merged track + un-promoted constituents) don't
+  // appear in the Songs list — they live in the Full Live Concerts section.
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
+  const sorted = useSortedTracks(regularTracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
   // 4.4.22: seed useVirtualScroll's internal scrollTop from the persisted
   // value so the FIRST render computes startIndex/endIndex correctly.
   // Pair with useScrollPersistence(key, containerRef) which then keeps
