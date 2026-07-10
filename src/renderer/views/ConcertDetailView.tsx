@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, useSyncExternalStore, useCallback } from 'react'
+import { useMemo, useEffect, useState, useRef, useSyncExternalStore, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -8,7 +8,7 @@ import { getConcertKey, subscribeConcertKey } from '../concertNav'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import AlbumArtImage from '../components/AlbumArtImage'
 import ContextMenu from '../components/ContextMenu'
-import type { LiveSetCue } from '../types'
+import type { LiveSetCue, Track } from '../types'
 import '../styles/concerts.css'
 import '../styles/concert-detail.css'
 
@@ -57,11 +57,35 @@ export default function ConcertDetailView() {
   const setPlaying = !!(mergedTrack && pb.nowPlaying?.id === mergedTrack.id)
   const activeCue = liveSet && setPlaying ? cueAt(liveSet, pb.position * 1000) : null
 
-  const playLiveSet = useCallback(() => { if (mergedTrack) playTrack(mergedTrack, [mergedTrack], 0, undefined, true) }, [mergedTrack, playTrack])
+  // A concert plays inside a queue of ALL concerts (each = its one merged
+  // track), so the transport next/prev buttons move between CONCERTS and can
+  // NEVER skip songs within a show — the show is one continuous piece. Picking
+  // a song just seeks within the current track.
+  const pendingSeekRef = useRef<number | null>(null)
+  const playLiveSet = useCallback((startFrac?: number) => {
+    if (!mergedTrack) return
+    const sets = Object.values(getLiveSetsSnapshot().sets)
+      .filter((e) => lib.tracks.some((t) => t.id === e.mergedTrackId))
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    const queue = sets.map((e) => lib.tracks.find((t) => t.id === e.mergedTrackId)).filter(Boolean) as Track[]
+    const idx = Math.max(0, queue.findIndex((t) => t.id === mergedTrack.id))
+    pendingSeekRef.current = startFrac ?? null
+    playTrack(mergedTrack, queue.length ? queue : [mergedTrack], idx, undefined, true)
+  }, [mergedTrack, lib.tracks, playTrack])
+  // Start-at-a-picked-song when the show isn't already playing: seek once it's up.
+  useEffect(() => {
+    if (setPlaying && pendingSeekRef.current != null) {
+      const f = pendingSeekRef.current
+      pendingSeekRef.current = null
+      const t = setTimeout(() => seek(f), 400)
+      return () => clearTimeout(t)
+    }
+  }, [setPlaying, seek])
   const jumpTo = useCallback((cue: LiveSetCue) => {
     if (!liveSet) return
-    if (setPlaying && liveSet.totalDurationMs > 0) seek(cue.startMs / liveSet.totalDurationMs)
-    else playLiveSet()
+    const frac = liveSet.totalDurationMs > 0 ? cue.startMs / liveSet.totalDurationMs : 0
+    if (setPlaying) seek(frac)
+    else playLiveSet(frac)   // start the show AT the song you picked
   }, [liveSet, setPlaying, seek, playLiveSet])
 
   // Crowd toggle + engine attach (same as the concert plays here now).
@@ -195,7 +219,7 @@ export default function ConcertDetailView() {
                 <div className="cj-song">
                   <span className="cj-num">{i + 1}</span>
                   <span className="cj-name">{cue.title.replace(/\s*\(Live.*/, '')}{inLib && <span className="cj-inlib" title="In your library">✓</span>}</span>
-                  <span className="cj-dur">{mmss(cue.durationMs)}</span>
+                  <span className="cj-dur" title="Starts at this point in the show">{hms(cue.startMs)}</span>
                 </div>
               )}
             </div>

@@ -28,9 +28,9 @@
 }
 .concert-hero-poster {
   position: relative;
-  flex: 0 0 168px;
-  width: 168px;
-  aspect-ratio: 1 / 1;
+  flex: 0 0 176px;
+  width: 176px;
+  aspect-ratio: 3 / 4;
   border-radius: 3px;
   overflow: hidden;
   background: #3a2c1c;

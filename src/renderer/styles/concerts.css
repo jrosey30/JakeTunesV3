@@ -63,7 +63,7 @@
 .concert-poster-art {
   position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 3 / 4;
   background: #3a2c1c;
   overflow: hidden;
 }
