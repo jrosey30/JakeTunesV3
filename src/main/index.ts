@@ -3006,6 +3006,17 @@ async function readStreamSource(): Promise<'homemini' | null> {
     return s?.library?.streamSource === 'homemini' ? 'homemini' : null
   } catch { return null }
 }
+// Cached for the playback hot path (the ipod-audio handler checks it per play to
+// decide whether a symlinked track streams from homemini). 5s TTL so a settings
+// change is picked up quickly without a file read on every request.
+let _streamSourceCache: { v: 'homemini' | null; t: number } | null = null
+async function readStreamSourceCached(): Promise<'homemini' | null> {
+  const now = Date.now()
+  if (_streamSourceCache && now - _streamSourceCache.t < 5000) return _streamSourceCache.v
+  const v = await readStreamSource()
+  _streamSourceCache = { v, t: now }
+  return v
+}
 // The local symlink target for streamed tracks: a single always-present 0-byte
 // sentinel under the library root. Playback keys off isSymbolicLink() (→ homemini);
 // a non-dangling target just means any un-guarded stat()-follower sees a present
@@ -14679,7 +14690,15 @@ app.whenReady().then(async () => {
     const isAlac = codecByAbsPath.get(rawPath) === 'alac' || ext === '.alac'
     if (!isAlac) {
       let streamed = process.env.JT_STREAM_TEST === '1'
-      if (!streamed) { try { streamed = (await lstat(rawPath)).isSymbolicLink() } catch { /* real local file */ } }
+      // Route a SYMLINKED track to homemini ONLY when THIS machine is a homemini
+      // streaming client (app-settings library.streamSource === 'homemini').
+      // Critical: on a NAS cache-farm machine (workmini has streamRoot set, where
+      // a symlink means "cached from the NAS", NOT homemini) this must stay OFF —
+      // otherwise every symlinked track is hijacked to homemini and normal NAS
+      // playback breaks. This gate is the fix for the 2026-07-10 workmini regression.
+      if (!streamed && (await readStreamSourceCached()) === 'homemini') {
+        try { streamed = (await lstat(rawPath)).isSymbolicLink() } catch { /* real local file */ }
+      }
       if (streamed) {
         const id = await trackIdForAbsPath(rawPath)
         if (id != null) {
