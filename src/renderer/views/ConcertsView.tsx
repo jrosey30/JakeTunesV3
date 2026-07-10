@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { subscribeLiveSets, getLiveSetsSnapshot } from '../liveSets'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import AlbumArtImage from '../components/AlbumArtImage'
+import { setConcertKey } from '../concertNav'
 import type { LiveSetEntry } from '../types'
 import '../styles/albums.css'
 import '../styles/concerts.css'
@@ -80,7 +81,8 @@ export default function ConcertsView() {
   }, [snap, lib.tracks, lib.artworkMap, normalizedArtIndex])
 
   const openConcert = useCallback((albumKey: string) => {
-    libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey })
+    setConcertKey(albumKey)
+    libDispatch({ type: 'SET_VIEW', view: 'concert-detail' })
   }, [libDispatch])
 
   return (

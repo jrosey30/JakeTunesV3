@@ -1,0 +1,162 @@
+/* Concert detail — "the setlist journey" (Concept B). A show is its own thing:
+ * a poster hero + a vertical run you travel down, played songs receding, the
+ * current song bloomed into a card, what's next waiting below. */
+
+.concert-detail {
+  padding: 12px 22px 40px;
+  overflow-y: auto;
+  height: 100%;
+}
+.concert-back {
+  border: 1px solid var(--border-light, #cfcabf);
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #5a5852;
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+.concert-back:hover { background: #fff; }
+
+/* Hero */
+.concert-hero {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+.concert-hero-poster {
+  flex: 0 0 168px;
+  width: 168px;
+  aspect-ratio: 1 / 1;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #3a2c1c;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.28);
+}
+.concert-hero-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.concert-hero-noart { width: 100%; height: 100%; background: #3a2c1c; }
+.concert-hero-meta { flex: 1; min-width: 0; padding-top: 4px; }
+.concert-hero-band {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #a05a1a;
+}
+.concert-hero-show {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.05;
+  margin: 3px 0 6px;
+  color: #1c1c1c;
+}
+.concert-hero-where { font-size: 14px; color: #4a4842; }
+.concert-hero-stat { font-size: 12px; color: #8a8880; margin-top: 2px; }
+.concert-hero-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.concert-btn {
+  border: 1px solid var(--border-light, #cfcabf);
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: #3a3a38;
+  transition: box-shadow 120ms ease-out, background 120ms ease-out;
+}
+.concert-btn--play {
+  background: linear-gradient(180deg, #e89a4a, #bb4308);
+  border-color: #a03c08;
+  color: #fff;
+}
+.concert-btn--play:hover { filter: brightness(1.05); }
+.concert-btn--crowd.is-on {
+  color: var(--brand-orange, #bb4308);
+  box-shadow: inset 0 0 0 1px var(--brand-orange, #bb4308);
+}
+.concert-btn--remove { color: #8a5a52; border-color: transparent; background: transparent; }
+.concert-btn--remove:hover { color: #a5342a; background: rgba(165, 52, 42, 0.07); }
+
+/* The journey */
+.concert-journey { max-width: 640px; }
+.cj-row {
+  display: flex;
+  gap: 12px;
+  cursor: pointer;
+  align-items: stretch;
+}
+.cj-rail {
+  flex: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+.cj-line { width: 3px; background: #e3ded2; flex: 1; }
+.cj-line--top { min-height: 10px; }
+.cj-line--bot { min-height: 10px; }
+.cj-row:first-child .cj-line--top { background: transparent; }
+.cj-row:last-child .cj-line--bot { background: transparent; }
+.cj-node {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #cfc9bb;
+  background: #f6f4ee;
+  flex: 0 0 auto;
+  margin: 2px 0;
+  z-index: 1;
+}
+
+/* played — spine filled, text receded */
+.cj-row--played .cj-line { background: #e0a86a; }
+.cj-row--played .cj-node { background: #cf8a3a; border-color: #cf8a3a; }
+.cj-row--played .cj-song { color: #b4b0a7; }
+.cj-row--played .cj-num, .cj-row--played .cj-name, .cj-row--played .cj-dur { color: #b8b3a8; }
+
+/* current — the bloom */
+.cj-row--current .cj-line--top { background: #e0812e; }
+.cj-row--current .cj-node {
+  width: 16px; height: 16px;
+  background: #bb4308; border-color: #bb4308;
+  box-shadow: 0 0 0 5px rgba(224, 129, 46, 0.20);
+  margin-top: 12px;
+}
+
+/* compact song rows */
+.cj-song {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 52px;
+  align-items: center;
+  height: 32px;
+  font-size: 13.5px;
+  color: #2a2a28;
+  border-radius: 5px;
+  padding: 0 4px;
+}
+.cj-row:hover .cj-song { background: rgba(224, 129, 46, 0.07); }
+.cj-num { color: #a8a49a; font-variant-numeric: tabular-nums; }
+.cj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cj-dur { text-align: right; color: #a8a49a; font-variant-numeric: tabular-nums; }
+.cj-inlib { color: var(--brand-orange, #bb4308); font-size: 11px; margin-left: 6px; }
+
+/* the now-playing card */
+.cj-card {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #e6c9a8;
+  border-left: 4px solid #bb4308;
+  border-radius: 7px;
+  padding: 11px 15px;
+  margin: 4px 0 10px;
+  box-shadow: 0 2px 10px rgba(187, 67, 8, 0.13);
+}
+.cj-card-tag { font-size: 10px; letter-spacing: 0.15em; color: #a05a1a; font-weight: 600; }
+.cj-card-title { font-size: 20px; font-weight: 700; line-height: 1.15; margin: 1px 0 6px; color: #1c1c1c; }
+.cj-card-prog { display: flex; align-items: center; gap: 11px; }
+.cj-card-bar { flex: 1; height: 5px; background: #efe6d6; border-radius: 3px; overflow: hidden; }
+.cj-card-fill { height: 100%; background: #e0812e; border-radius: 3px; transition: width 240ms linear; }
+.cj-card-time { font-size: 12px; color: #8a6a2a; font-variant-numeric: tabular-nums; }
