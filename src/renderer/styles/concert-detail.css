@@ -27,6 +27,7 @@
   margin-bottom: 22px;
 }
 .concert-hero-poster {
+  position: relative;
   flex: 0 0 168px;
   width: 168px;
   aspect-ratio: 1 / 1;
@@ -34,6 +35,32 @@
   overflow: hidden;
   background: #3a2c1c;
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  transition: box-shadow 120ms ease-out;
+}
+.concert-hero-poster.is-drag {
+  box-shadow: 0 0 0 3px var(--brand-orange, #bb4308), 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.concert-hero-poster-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0) 46%);
+  pointer-events: none;
+}
+.concert-hero-poster:hover .concert-hero-poster-hint,
+.concert-hero-poster.is-drag .concert-hero-poster-hint { opacity: 1; }
+.concert-hero-poster-hint span {
+  color: #fff;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding-bottom: 11px;
 }
 .concert-hero-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .concert-hero-noart { width: 100%; height: 100%; background: #3a2c1c; }

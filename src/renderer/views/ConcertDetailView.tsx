@@ -77,6 +77,24 @@ export default function ConcertDetailView() {
 
   const [cueCtx, setCueCtx] = useState<{ x: number; y: number; cue: LiveSetCue } | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  // The concert poster IS the artwork — make it dead-easy to set the real one:
+  // drop an image on it, or click to choose. Grounded (your image), never
+  // fabricated. Reuses the app's custom-artwork pipeline keyed by band+show.
+  const [posterDrag, setPosterDrag] = useState(false)
+  const applyPoster = useCallback(async (path: string) => {
+    if (!path || !meta.band || !meta.show) return
+    const r = await window.electronAPI.setCustomArtwork(meta.band, meta.show, path)
+    if (r.ok && r.key && r.hash) libDispatch({ type: 'ADD_ARTWORK', key: r.key, hash: r.hash })
+  }, [meta.band, meta.show, libDispatch])
+  const onPosterDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); setPosterDrag(false)
+    const f = e.dataTransfer.files?.[0] as (File & { path?: string }) | undefined
+    if (f && f.type.startsWith('image/') && f.path) void applyPoster(f.path)
+  }, [applyPoster])
+  const choosePoster = useCallback(async () => {
+    const file = await window.electronAPI.chooseArtworkFile()
+    if (file.ok && file.path) void applyPoster(file.path)
+  }, [applyPoster])
   const handleUndeclare = useCallback(async () => {
     if (!liveSet) return
     // Identity-gated: only the merged track id is deleted; the individual songs
@@ -103,10 +121,19 @@ export default function ConcertDetailView() {
       <button className="concert-back" onClick={() => libDispatch({ type: 'SET_VIEW', view: 'concerts' })}>← Live Concerts</button>
 
       <div className="concert-hero">
-        <div className="concert-hero-poster">
+        <div
+          className={`concert-hero-poster${posterDrag ? ' is-drag' : ''}`}
+          onClick={choosePoster}
+          onDrop={onPosterDrop}
+          onDragOver={(e) => { e.preventDefault(); if (!posterDrag) setPosterDrag(true) }}
+          onDragLeave={() => setPosterDrag(false)}
+          role="button"
+          title="Drop a concert poster here, or click to choose one"
+        >
           {meta.artHash
             ? <AlbumArtImage hash={meta.artHash} alt={meta.show} className="concert-hero-img" size={320} />
             : <div className="concert-hero-noart" aria-hidden="true" />}
+          <div className="concert-hero-poster-hint"><span>{posterDrag ? 'Drop poster' : 'Set poster'}</span></div>
         </div>
         <div className="concert-hero-meta">
           <div className="concert-hero-band">{meta.band}</div>
