@@ -2,7 +2,7 @@ import { useMemo, useEffect, useState, useRef, useSyncExternalStore, useCallback
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet } from '../liveSets'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled, getCrowdParams, setCrowdParams } from '../concertCrowd'
 import { getConcertKey, subscribeConcertKey } from '../concertNav'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
@@ -102,6 +102,13 @@ export default function ConcertDetailView() {
   }, [crowdMergedId, crowdCues, crowdTotalMs])
 
   const [cueCtx, setCueCtx] = useState<{ x: number; y: number; cue: LiveSetCue } | null>(null)
+  // Companion "Your notes" — editable, persisted to the concert entry on blur.
+  const savedNotes = liveSet?.concert?.notes ?? ''
+  const [notesDraft, setNotesDraft] = useState('')
+  useEffect(() => { setNotesDraft(savedNotes) }, [savedNotes])
+  const saveNotes = useCallback(() => {
+    if (notesDraft !== savedNotes) void updateConcertMeta(albumKey, { notes: notesDraft })
+  }, [notesDraft, savedNotes, albumKey])
   const [confirmRemove, setConfirmRemove] = useState(false)
   // The concert poster IS the artwork — make it dead-easy to set the real one:
   // drop an image on it, or click to choose. Grounded (your image), never
@@ -251,6 +258,54 @@ export default function ConcertDetailView() {
           )
         })}
       </div>
+
+      {/* Companion — the tour-book layer: grounded facts, the details, your notes. */}
+      {(() => {
+        const c = liveSet.concert || {}
+        const facts = c.facts || []
+        const details: Array<[string, string | undefined]> = [
+          ['Venue', meta.venue ? `${meta.venue}${c.city ? `, ${c.city}` : ''}` : undefined],
+          ['Date', meta.date],
+          ['Source', c.source],
+          ['Release', c.label],
+        ]
+        const hasDetails = details.some((d) => d[1])
+        return (
+          <div className="concert-companion">
+            {facts.length > 0 && (
+              <section className="cc-sec">
+                <div className="cc-h">The Night</div>
+                <div className="cc-facts">
+                  {facts.map((f, i) => <div className="cc-fact" key={i}>{f}</div>)}
+                </div>
+              </section>
+            )}
+            <div className="cc-grid">
+              {hasDetails && (
+                <section className="cc-sec">
+                  <div className="cc-h">The tape &amp; the room</div>
+                  <table className="cc-details"><tbody>
+                    {details.filter((d) => d[1]).map(([k, v]) => (
+                      <tr key={k}><td>{k}</td><td>{v}</td></tr>
+                    ))}
+                  </tbody></table>
+                  <a className="cc-merch" href={c.merchUrl || 'https://store.dead.net/'} title="Find merch for this show">Merch table ↗</a>
+                </section>
+              )}
+              <section className="cc-sec cc-sec--notes">
+                <div className="cc-h">Your notes</div>
+                <textarea
+                  className="cc-notes"
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  onBlur={saveNotes}
+                  placeholder="Were you there? What do you remember about this night…"
+                />
+              </section>
+            </div>
+          </div>
+        )
+      })()}
 
       {cueCtx && (
         <ContextMenu

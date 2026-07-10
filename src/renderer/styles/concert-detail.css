@@ -202,3 +202,32 @@
 .cj-card-bar { flex: 1; height: 5px; background: #efe6d6; border-radius: 3px; overflow: hidden; }
 .cj-card-fill { height: 100%; background: #e0812e; border-radius: 3px; transition: width 240ms linear; }
 .cj-card-time { font-size: 12px; color: #8a6a2a; font-variant-numeric: tabular-nums; }
+
+/* Companion — the tour-book layer below the journey */
+.concert-companion { max-width: 640px; margin: 26px 0 8px; display: flex; flex-direction: column; gap: 18px; }
+.cc-sec { }
+.cc-h {
+  font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: #a05a1a; font-weight: 600; margin-bottom: 9px;
+}
+.cc-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cc-fact {
+  background: #fff; border: 1px solid #e6e1d6; border-radius: 8px;
+  padding: 9px 12px; font-size: 12.5px; color: #3a3a38; line-height: 1.4;
+}
+.cc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.cc-details { width: 100%; font-size: 12.5px; }
+.cc-details td { padding: 3px 0; }
+.cc-details td:first-child { color: #8a857c; white-space: nowrap; }
+.cc-details td:last-child { text-align: right; color: #3a3a38; padding-left: 12px; }
+.cc-merch { display: inline-block; margin-top: 10px; font-size: 12.5px; color: var(--brand-orange, #bb4308); text-decoration: none; }
+.cc-merch:hover { text-decoration: underline; }
+.cc-sec--notes { display: flex; flex-direction: column; }
+.cc-notes {
+  width: 100%; min-height: 84px; resize: vertical;
+  border: 1px dashed #cfc9bb; border-radius: 8px; background: #fff;
+  padding: 10px 12px; font-size: 12.5px; color: #2a2a28; font-family: inherit;
+  line-height: 1.5; box-sizing: border-box;
+}
+.cc-notes:focus { outline: none; border-color: var(--brand-orange, #bb4308); border-style: solid; }
+.cc-notes::placeholder { color: #b0aca2; }

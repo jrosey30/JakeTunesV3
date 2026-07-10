@@ -130,6 +130,14 @@ export interface ConcertMeta {
   city?: string
   date?: string        // display string, e.g. "May 15–16, 1980"
   poster?: string      // artwork key/hash for the concert poster (portrait)
+  // Companion panel (tour-book layer). All grounded or user-authored, never
+  // fabricated. facts = short grounded blurbs; notes = the user's own memories;
+  // source/label = recording lineage; merchUrl = a real store link.
+  facts?: string[]
+  notes?: string
+  source?: string
+  label?: string
+  merchUrl?: string
 }
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot

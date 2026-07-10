@@ -69,6 +69,15 @@ export function liveSetFor(albumKey: string, tracks: Track[]): LiveSetEntry | nu
   return entry
 }
 
+/** Merge companion metadata (facts/notes/details/poster) onto a concert entry. */
+export async function updateConcertMeta(albumKey: string, partial: NonNullable<LiveSetEntry['concert']>): Promise<void> {
+  const entry = state.sets[albumKey]
+  if (!entry) return
+  const next: LiveSetEntry = { ...entry, concert: { ...entry.concert, ...partial } }
+  await window.electronAPI.saveLiveSet(albumKey, next)
+  setState({ ...state, sets: { ...state.sets, [albumKey]: next } })
+}
+
 /** Record a newly-merged set (called after the import queue lands the track). */
 export async function registerLiveSet(albumKey: string, entry: LiveSetEntry): Promise<void> {
   await window.electronAPI.saveLiveSet(albumKey, entry)
