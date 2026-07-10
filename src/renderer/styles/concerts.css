@@ -1,11 +1,12 @@
-/* Full Live Concerts — reuses the albums grid/card classes, with a concert
- * "poster" character on top (LC-6 will push the poster to a portrait crop). */
+/* Full Live Concerts — Option A: a wall of portrait gig posters. Each concert
+ * wears the show's cover art up top and a letterpress band/venue/date band
+ * below, so the section reads like posters pinned to a wall. */
 
 .concerts-header {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 14px 16px 6px;
+  padding: 14px 18px 6px;
 }
 .concerts-title {
   font-size: 15px;
@@ -30,13 +31,93 @@
   font-weight: 500;
 }
 
-/* Concert poster tile: slightly warmer frame than an album cover so a show
- * reads as its own object. Portrait crop + real gig-poster art land in LC-6. */
-.concert-card-poster {
-  border: 1px solid rgba(0, 0, 0, 0.10);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-  background: #f2f0ea;
+/* The poster wall */
+.concerts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 22px 18px;
+  padding: 14px 18px 28px;
+  align-items: start;
 }
-.concert-card-meta {
-  color: var(--text-secondary, #8a8a88);
+
+.concert-poster {
+  display: flex;
+  flex-direction: column;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #241c14;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.26);
+  cursor: pointer;
+  outline: none;
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+.concert-poster:hover,
+.concert-poster:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 9px 22px rgba(0, 0, 0, 0.34);
+}
+
+/* Cover art, shown square at the top — the band below makes the tile portrait.
+ * (Square keeps the imported cover uncropped; a real portrait gig poster, when
+ * dropped in later, fills the same slot.) */
+.concert-poster-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #3a2c1c;
+  overflow: hidden;
+}
+.concert-poster-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.concert-poster-noart {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #3a2c1c;
+}
+
+/* Letterpress caption band */
+.concert-poster-band {
+  padding: 10px 11px 13px;
+  text-align: center;
+  background: #241c14;
+  color: #f0e2c4;
+}
+.concert-poster-artist {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.12;
+  color: #f2e6c9;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.concert-poster-rule {
+  height: 1px;
+  background: #a8712a;
+  margin: 7px 16px;
+}
+.concert-poster-venue {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e0b060;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.concert-poster-date {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: #cbb488;
+  margin-top: 2px;
 }
