@@ -13111,6 +13111,18 @@ ipcMain.handle('remove-live-set', async (_e, albumKey: string) => {
   return { ok: true }
 })
 
+// Concert crowd ambience (LC-7): serve the short "that night's crowd" clip
+// extracted from the show's own between-song gap. Stored per merged-track-id in
+// userData/concert-crowd/<id>.m4a. Returns base64 (renderer makes a Blob URL) or
+// null when a show has no clip — the crowd layer then simply does nothing.
+ipcMain.handle('get-concert-crowd', async (_e, mergedTrackId: number): Promise<string | null> => {
+  try {
+    const p = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
+    const buf = await readFile(p)
+    return buf.toString('base64')
+  } catch { return null }
+})
+
 ipcMain.handle('live-set-merge', async (
   event,
   tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,

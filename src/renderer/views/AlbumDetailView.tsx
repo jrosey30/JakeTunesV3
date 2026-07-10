@@ -22,6 +22,7 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 // V5 Live Concert Mode — declared-set store + declare orchestration.
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt, promoteTrackToLibrary } from '../liveSets'
+import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
 import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import type { Track, LiveSetCue } from '../types'
@@ -182,6 +183,18 @@ export default function AlbumDetailView() {
   }, [liveSet, albumKey, libDispatch])
   const setPlaying = !!(mergedTrack && pb.nowPlaying?.id === mergedTrack.id)
   const activeCue = liveSet && setPlaying ? cueAt(liveSet, pb.position * 1000) : null
+
+  // LC-7 crowd ambience: load "that night's crowd" for this concert while the
+  // page is open; the engine only swells it when the set is playing + toggled on.
+  const crowdOn = useSyncExternalStore(subscribeConcertCrowd, isConcertCrowdEnabled)
+  const crowdMergedId = mergedTrack?.id
+  const crowdCues = liveSet?.cues
+  const crowdTotalMs = liveSet?.totalDurationMs
+  useEffect(() => {
+    if (crowdMergedId == null || !crowdCues || !crowdTotalMs) return
+    void attachConcert(crowdMergedId, crowdCues.map((c) => c.startMs / 1000), crowdTotalMs / 1000)
+    return () => { detachConcert() }
+  }, [crowdMergedId, crowdCues, crowdTotalMs])
   const seekToCue = useCallback((cue: LiveSetCue) => {
     if (!liveSet) return
     if (setPlaying && liveSet.totalDurationMs > 0) {
@@ -516,6 +529,14 @@ export default function AlbumDetailView() {
             {!isLiveSetAlbumPage && (liveSet && mergedTrack ? (
               <>
                 <button type="button" className="album-page-play album-page-liveset-play" onClick={playLiveSet} title="Play the whole show as one continuous set">♪ Play Live Set</button>
+                <button
+                  type="button"
+                  className={`album-page-shuffle album-page-liveset-crowd${crowdOn ? ' album-page-liveset-crowd--on' : ''}`}
+                  onClick={() => setConcertCrowdEnabled(!crowdOn)}
+                  title="Swell that night's crowd in the gaps between songs — off by default"
+                >
+                  {crowdOn ? '◉ Crowd on' : '◎ Crowd'}
+                </button>
                 <button type="button" className="album-page-shuffle album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Delete the merged set file (individual tracks unaffected)">Undeclare Live Mode</button>
               </>
             ) : (

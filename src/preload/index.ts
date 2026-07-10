@@ -538,6 +538,8 @@ const electronAPI = {
     ipcRenderer.invoke('save-live-set', albumKey, entry),
   removeLiveSet: (albumKey: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('remove-live-set', albumKey),
+  getConcertCrowd: (mergedTrackId: number): Promise<string | null> =>
+    ipcRenderer.invoke('get-concert-crowd', mergedTrackId),
   liveSetCleanup: (absPath: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('live-set-cleanup', absPath),
   openSoundSettings: (): Promise<void> =>
