@@ -2701,6 +2701,11 @@ const STATE_FILE_NAMES = [
   // The vibe brain rides to the NAS like embeddings.bin so the homemini
   // backend can route mixes/DJ vibe queries against it (phase 2).
   'mood-index.bin',
+  // Live Concert Mode declarations — the ONLY file that records "these tracks
+  // form a declared concert" (mergedTrackId + cues + facts). Without it a
+  // concert declared on one machine lands as an orphan track on the others.
+  // Single-writer (the desktop app), so no clobber risk like recommendations.json.
+  'live-sets.json',
 ] as const
 interface StateConflict {
   file: string

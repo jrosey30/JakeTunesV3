@@ -220,7 +220,7 @@ fi
 # (different Macs have different feature subsets enabled).
 say "[4/5] Bootstrapping library.json + sidecars"
 ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
-SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json)
+SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json live-sets.json)
 for f in "${SIDECARS[@]}"; do
   # Sidecars prefer NAS state copy when present (same logic as library.json)
   src=""
