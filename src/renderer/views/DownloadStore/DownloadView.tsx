@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useReducer, type CSSProperties } from 'react'
+import { useEffect, useState, useMemo, useReducer, useRef, type CSSProperties } from 'react'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, queueSummary, clearFinished, type QItem } from './downloadQueue'
@@ -7,6 +7,31 @@ import { enqueue, itemFor, subscribeQueue, getQueue, retry, queueSummary, clearF
 // import the main-process reco-match).
 const norm = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+
+// Relevance scorer — a TWIN of the universal-search ranker in
+// utils/searchIndex.ts (exact > prefix > token-start > substring > all-tokens),
+// so Download organizes results by "likeliest you mean" exactly like the
+// app's main search, and re-ranks live as you type more characters.
+const normQ = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+function scoreField(field: string, query: string, qTokens: string[]): number {
+  if (!field || !query) return 0
+  if (field === query) return 100 + Math.min(20, query.length)
+  if (field.startsWith(query)) return 70 + Math.min(20, query.length)
+  if ((' ' + field).includes(' ' + query)) return 50
+  if (field.includes(query)) return 30
+  if (qTokens.length > 1 && qTokens.every((qt) => field.includes(qt))) return 20
+  return 0
+}
+const stripThe = (s: string): string => s.replace(/^the /, '')
+function scoreResult(q: string, qTokens: string[], title: string, artist: string): number {
+  // Artist weighed a touch higher than title (and "the " stripped) so searching
+  // an ARTIST ("postal service") surfaces that artist's catalog above junk
+  // tracks merely TITLED like the artist ("Postal Service" by some cover farm).
+  const t = scoreField(normQ(title), q, qTokens)
+  const aRaw = normQ(artist)
+  const a = Math.max(scoreField(aRaw, q, qTokens), scoreField(stripThe(aRaw), q, qTokens))
+  return t * 1.0 + a * 1.15
+}
 
 // streamrip "Download" view — replaces the embedded web-store browser views
 // (squid/lucida/dab, all dead/walled/ad-trapped). Browse by searching a
@@ -24,13 +49,6 @@ const SOURCES = [
   { id: 'deezer', label: 'Deezer' },
   { id: 'youtube', label: 'YouTube' },
 ]
-const TYPES = [
-  { id: 'all', label: 'Everything' },
-  { id: 'album', label: 'Albums' },
-  { id: 'track', label: 'Tracks' },
-  { id: 'artist', label: 'Artists' },
-]
-
 // 4.5: page memory — this view unmounts on navigate-away. A module-level cache
 // (same pattern as MadeForYou's sessionMixes) restores the working state — your
 // search, source, results, and pasted link — when you leave and come back.
@@ -55,7 +73,7 @@ export default function DownloadView() {
   const [status, setStatus] = useState<RipStatus | null>(null)
   const [query, setQuery] = useState(pageCache.query)
   const [source, setSource] = useState(pageCache.source)
-  const [mediaType, setMediaType] = useState(pageCache.mediaType)
+  const [mediaType] = useState(pageCache.mediaType) // persisted for page memory; search is always album+track now
   const [searching, setSearching] = useState(false)
   const [results, setResults] = useState<SearchResult[]>(pageCache.results)
   const [art, setArt] = useState<Record<string, string>>(pageCache.art)
@@ -99,6 +117,32 @@ export default function DownloadView() {
     return { tracks, albums }
   }, [lib.tracks])
   const summary = queueSummary()
+
+  // Rank + group by relevance to the current query — recomputed every keystroke
+  // so the likeliest match rises AS you type, before the next fetch even returns.
+  const ranked = useMemo(() => {
+    const q = normQ(query)
+    const qTokens = q ? q.split(' ') : []
+    const scored = results.map((res) => {
+      const { title, artist } = parseDesc(res.desc)
+      const owned = res.mediaType === 'album'
+        ? libIndex.albums.has(norm(title) + '|' + norm(artist))
+        : res.mediaType === 'track' && libIndex.tracks.has(norm(title) + '|' + norm(artist))
+      return { res, title, artist, owned, score: q ? scoreResult(q, qTokens, title, artist) : 0 }
+    })
+    scored.sort((a, b) => b.score - a.score)
+    // Only show results that actually match the current query — so stale results
+    // from the previous keystroke drop the instant they no longer fit.
+    const relevant = q ? scored.filter((s) => s.score > 0) : scored
+    const topHit = relevant.length > 0 ? relevant[0] : null
+    const rest = topHit ? relevant.filter((s) => s.res.id !== topHit.res.id) : relevant
+    return {
+      topHit,
+      albums: rest.filter((s) => s.res.mediaType === 'album'),
+      tracks: rest.filter((s) => s.res.mediaType === 'track'),
+      artists: rest.filter((s) => s.res.mediaType === 'artist'),
+    }
+  }, [results, query, libIndex])
 
   useEffect(() => {
     let cancelled = false
@@ -156,23 +200,23 @@ export default function DownloadView() {
     return () => { cancelled = true }
   }, [results])
 
-  const runSearch = async () => {
-    const q = query.trim()
-    if (!q || searching) return
+  // Live, universal-search-style: albums + tracks in one shot (you never need to
+  // know the album), newest query wins (stale results dropped).
+  const searchTokenRef = useRef(0)
+  const runSearch = async (raw: string) => {
+    const q = raw.trim()
+    const token = ++searchTokenRef.current
+    if (!q) { setResults([]); setSearchErr(null); setSearching(false); return }
     setSearching(true)
     setSearchErr(null)
-    setResults([])
-    setArt({})
     setNotice(null)
     try {
-      // "Everything" = albums AND tracks in one shot, so you never have to know
-      // the album to find a track. A specific type searches just that.
-      const types = mediaType === 'all' ? ['album', 'track'] : [mediaType]
       const settled = await Promise.all(
-        types.map((mt) =>
+        ['album', 'track'].map((mt) =>
           window.electronAPI.streamripSearch?.({ query: q, source, mediaType: mt, numResults: 25 }).catch(() => null),
         ),
       )
+      if (token !== searchTokenRef.current) return // a newer keystroke superseded this
       const merged: SearchResult[] = []
       const seen = new Set<string>()
       let anyErr: string | null = null
@@ -186,14 +230,23 @@ export default function DownloadView() {
           merged.push(res)
         }
       }
-      if (merged.length === 0) setSearchErr(anyErr || 'No results — try a different source or spelling.')
       setResults(merged)
+      setSearchErr(merged.length === 0 ? (anyErr || `No matches for “${q}”.`) : null)
     } catch (e) {
-      setSearchErr(e instanceof Error ? e.message : 'Search failed.')
+      if (token === searchTokenRef.current) setSearchErr(e instanceof Error ? e.message : 'Search failed.')
     } finally {
-      setSearching(false)
+      if (token === searchTokenRef.current) setSearching(false)
     }
   }
+
+  // Type and it finds — 2+ chars, 400ms after you pause; re-fires on source change.
+  useEffect(() => {
+    const q = query.trim()
+    if (q.length < 2) { setResults([]); setSearchErr(null); setSearching(false); return }
+    const h = window.setTimeout(() => { void runSearch(q) }, 400)
+    return () => window.clearTimeout(h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, source])
 
   const downloadPaste = async () => {
     const link = pasteUrl.trim()
@@ -313,21 +366,19 @@ export default function DownloadView() {
           ))}
         </div>
         <div className="download-search">
-          <select className="download-select" value={mediaType} onChange={(e) => setMediaType(e.target.value)} disabled={searching}>
-            {TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-          </select>
-          <input
-            className="download-input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void runSearch() }}
-            placeholder="Search artists, songs, albums…"
-            disabled={searching}
-            spellCheck={false}
-          />
-          <button className="download-btn" onClick={() => void runSearch()} disabled={searching || !query.trim()}>
-            {searching ? 'Searching…' : 'Search'}
-          </button>
+          <div className="download-search-field">
+            <svg className="download-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+            <input
+              className="download-input download-input--search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(query) }}
+              placeholder="Search a song, album, or artist…"
+              spellCheck={false}
+              autoFocus
+            />
+            {searching && <span className="dl-spinner download-search-spinner" aria-hidden="true" />}
+          </div>
         </div>
 
         {searchErr && <div className="download-result download-result--err">{searchErr}</div>}
@@ -346,47 +397,50 @@ export default function DownloadView() {
           </div>
         )}
 
-        {results.length > 0 && (() => {
-          const order = [{ key: 'album', label: 'Albums' }, { key: 'track', label: 'Tracks' }, { key: 'artist', label: 'Artists' }]
-          const groups = order
-            .map((g) => ({ ...g, items: results.filter((r) => r.mediaType === g.key) }))
-            .filter((g) => g.items.length > 0)
+        {(ranked.topHit || ranked.albums.length > 0 || ranked.tracks.length > 0 || ranked.artists.length > 0) && (() => {
           let idx = 0
+          const renderRow = (s: { res: SearchResult; title: string; artist: string; owned: boolean }, hero = false) => {
+            const { res, title, artist, owned } = s
+            const item = itemFor(res)
+            const i = idx++
+            return (
+              <li key={res.id} className={`download-result-row${hero ? ' download-result-row--hero' : ''}${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
+                {art[res.id]
+                  ? <img className="download-result-art" src={art[res.id]} alt="" loading="lazy" />
+                  : <span className="download-result-art download-result-art--ph" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+                    </span>}
+                <div className="download-result-body">
+                  <span className="download-result-title" title={res.desc}>{title || res.desc}</span>
+                  <span className="download-result-meta">
+                    {artist && <span className="download-result-artist">{artist}</span>}
+                    {owned && <span className="download-owned">In your library</span>}
+                  </span>
+                </div>
+                {renderAction(res, item)}
+              </li>
+            )
+          }
+          const groups = [
+            { key: 'album', label: 'Albums', items: ranked.albums },
+            { key: 'track', label: 'Tracks', items: ranked.tracks },
+            { key: 'artist', label: 'Artists', items: ranked.artists },
+          ].filter((g) => g.items.length > 0)
           return (
             <div className="download-results">
+              {ranked.topHit && (
+                <section className="download-group download-group--top">
+                  <div className="download-group-head"><span className="download-group-label download-group-label--top">Top match</span></div>
+                  <ul className="download-group-list" role="list">{renderRow(ranked.topHit, true)}</ul>
+                </section>
+              )}
               {groups.map((g) => (
                 <section key={g.key} className="download-group">
                   <div className="download-group-head">
                     <span className="download-group-label">{g.label}</span>
                     <span className="download-group-count">{g.items.length}</span>
                   </div>
-                  <ul className="download-group-list" role="list">
-                    {g.items.map((res) => {
-                      const { title, artist } = parseDesc(res.desc)
-                      const item = itemFor(res)
-                      const owned = res.mediaType === 'album'
-                        ? libIndex.albums.has(norm(title) + '|' + norm(artist))
-                        : res.mediaType === 'track' && libIndex.tracks.has(norm(title) + '|' + norm(artist))
-                      const i = idx++
-                      return (
-                        <li key={res.id} className={`download-result-row${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
-                          {art[res.id]
-                            ? <img className="download-result-art" src={art[res.id]} alt="" loading="lazy" />
-                            : <span className="download-result-art download-result-art--ph" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-                              </span>}
-                          <div className="download-result-body">
-                            <span className="download-result-title" title={res.desc}>{title || res.desc}</span>
-                            <span className="download-result-meta">
-                              {artist && <span className="download-result-artist">{artist}</span>}
-                              {owned && <span className="download-owned">In your library</span>}
-                            </span>
-                          </div>
-                          {renderAction(res, item)}
-                        </li>
-                      )
-                    })}
-                  </ul>
+                  <ul className="download-group-list" role="list">{g.items.map((s) => renderRow(s))}</ul>
                 </section>
               ))}
             </div>
