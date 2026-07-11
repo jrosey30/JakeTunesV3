@@ -1,0 +1,1 @@
+{"at": 1783753656903, "iso": "2026-07-11T03:07:36", "model": "claude-haiku-4-5", "judged": false, "no_llm": false, "limit": 0, "label": "current", "brain_id": "a6744e9ffa8f", "vectors": 8495, "retrieval": 0.7896, "grounding": 1.0, "persona": null, "overall": 0.8948, "n": {"retrieval": 15, "grounding": 10, "persona": 0}}
