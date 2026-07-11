@@ -126,4 +126,118 @@
      Named generically; CrateBrowse could converge onto it later. */
   --motion-carousel-snap: 560ms;
   --ease-carousel: cubic-bezier(0.3, 1.04, 0.22, 1);
+
+  /* ══════════════════════════════════════════════════════════════════
+     V6 "Facelift+" — the structural scales the app was missing. Color +
+     motion were already systematized; type / space / depth / radius were
+     eyeballed per-component (~14 radii, ~60 one-off shadows, 4 ad-hoc
+     type sizes). These complete the system so every measurement is
+     DECIDED, not guessed. Additive only — no existing token changes.
+     Ethos: iTunes-8 warmth, ONE light source, orange the only accent.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* — Type: a real scale (root 16px). Body/table core stays the iTunes
+       9–12px; the 13–46px steps replace values that "appeared from
+       nowhere". Display face folds in the orphan splash stack. */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+  /* PX, not rem — the app's <html> root is 11px, so rem-based sizes render at
+     ~69% of intent (the V6 "why did the font shrink" bug). Px matches the
+     app's own convention (--font-body:11px etc.) and is what everything else
+     here uses. */
+  --font-9: 9px;    /* timestamps */
+  --font-10: 10px;  /* eyebrow labels */
+  --font-11: 11px;  /* body / table (iTunes core) */
+  --font-12: 12px;  /* secondary / meta */
+  --font-13: 13px;  /* controls / captions */
+  --font-14: 14px;  /* inputs / result artist */
+  --font-15: 15px;  /* list card / result titles */
+  --font-16: 16px;  /* card titles */
+  --font-18: 18px;  /* section titles */
+  --font-20: 20px;  /* now-playing / dialog titles */
+  --font-24: 24px;  /* sub-hero */
+  --font-26: 26px;  /* page titles */
+  --font-30: 30px;  /* concert show title */
+  --font-40: 40px;  /* stat values */
+  --font-46: 46px;  /* splash display */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-heavy: 800;
+  --lh-tight: 1.05;      /* display / hero */
+  --lh-snug: 1.2;        /* titles */
+  --lh-normal: 1.45;     /* body */
+  --lh-relaxed: 1.6;     /* help text */
+  --track-display: -0.02em;
+  --track-tight: -0.01em;
+  --track-normal: 0;
+  --track-caps: 0.08em;
+  --track-eyebrow: 0.12em;   /* ONE canonical eyebrow: 10px / heavy / uppercase / --text-dim */
+  --num-tabular: tabular-nums;
+
+  /* — Space: 2/4px iTunes-tight rhythm. Chosen so refactors shift nothing
+       where current spacing is already good. */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+  --space-9: 32px;
+  --space-10: 40px;
+  --space-11: 48px;
+  --space-12: 64px;
+  --gutter-view: var(--space-8);   /* the 24–28px view gutter */
+  --control-h-sm: 28px;
+  --control-h-md: 34px;
+  --control-h-lg: 40px;
+
+  /* — Radius ladder (mapped from the 14 existing literals). */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 14px;
+  --radius-pill: 999px;
+  --radius-splash: 26px;
+  --radius-round: 50%;
+
+  /* — Elevation: ONE light source, warm-neutral shadow (the brown
+       rgba(70,55,40) iTunes-heritage signature). Neutral-black is
+       RESERVED for photographic art so covers read as glass over paper.
+       Hover promotes exactly one step — never a bespoke shadow. */
+  --shadow-1: 0 1px 2px rgba(70, 55, 40, 0.06);
+  --shadow-2: 0 1px 2px rgba(70, 55, 40, 0.05), 0 4px 12px rgba(70, 55, 40, 0.08);
+  --shadow-3: 0 2px 4px rgba(70, 55, 40, 0.06), 0 8px 24px rgba(70, 55, 40, 0.10);
+  --shadow-4: 0 4px 12px rgba(70, 55, 40, 0.10), 0 20px 48px rgba(70, 55, 40, 0.16);
+  --shadow-art: 0 6px 18px rgba(0, 0, 0, 0.20), 0 0 0 0.5px rgba(0, 0, 0, 0.10);
+  /* Material accents — the iTunes-8/Aqua read without heavy skeuomorphism. */
+  --gloss-top: inset 0 1px 0 rgba(255, 255, 255, 0.28);   /* top highlight on glossy buttons/pills */
+  --ring-inset: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);    /* hairline frame on art tiles */
+  --shadow-press: inset 0 1px 2px rgba(70, 55, 40, 0.20); /* :active */
+
+  /* — z-index ladder (replaces magic 10/40/80/500/9999). */
+  --z-base: 1;
+  --z-sticky: 10;
+  --z-scroll-top: 40;
+  --z-find: 80;
+  --z-overlay: 500;
+  --z-toast: 9999;
+
+  /* — Semantic surface + intent layer (thin names over the physical
+       hexes; no source hex changes). */
+  --surface-content: var(--white);        /* #f9f8f5 — the content sheet */
+  --surface-raised: #fcfbf8;              /* cards / tiles that sit above the sheet */
+  --surface-canvas: #f0ebe1;              /* the warm page canvas behind cards */
+  --border-warm: rgba(120, 90, 50, 0.14); /* hairline on cream surfaces */
+  --border-hairline: rgba(70, 55, 40, 0.10);
+  --color-danger: #c0392b;
+  --color-success: #2c6b4f;
+  --accent: var(--brand-orange);          /* fixes the accidental blue See-All */
+  --brand-orange-glow: #e0812e;           /* the brighter LCD/progress/now-playing warm orange */
+  --ring-focus: 0 0 0 2px rgba(var(--selection-top-rgb), 0.55);
 }
