@@ -29,7 +29,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-const STATE_DIR = join(homedir(), 'Library', 'Application Support', 'JakeTunes')
+// STATE_DIR defaults to the desktop app's local dir, but JT_STATE_DIR lets the
+// homemini nightly job point it at the NAS canonical (/Volumes/JakeShared/
+// JakeTunesState) so the mini owns + writes the shared brain. See
+// project_brain_homemini_migration.
+const STATE_DIR = process.env.JT_STATE_DIR || join(homedir(), 'Library', 'Application Support', 'JakeTunes')
 const LIB = join(STATE_DIR, 'library.json')
 const EMB = join(STATE_DIR, 'embeddings.bin')
 const MOOD = join(STATE_DIR, 'mood-index.bin')
