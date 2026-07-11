@@ -128,7 +128,13 @@ export default function DownloadView() {
       const owned = res.mediaType === 'album'
         ? libIndex.albums.has(norm(title) + '|' + norm(artist))
         : res.mediaType === 'track' && libIndex.tracks.has(norm(title) + '|' + norm(artist))
-      return { res, title, artist, owned, score: q ? scoreResult(q, qTokens, title, artist) : 0 }
+      const base = q ? scoreResult(q, qTokens, title, artist) : 0
+      // Tie toward the SONG — but ONLY when the query matched the track's TITLE
+      // (real song intent). A track that only matched via its ARTIST (an artist
+      // search) gets no nudge, so albums still lead the discography.
+      const titleHit = q ? scoreField(normQ(title), q, qTokens) > 0 : false
+      const score = base > 0 && res.mediaType === 'track' && titleHit ? base + 0.5 : base
+      return { res, title, artist, owned, score }
     })
     scored.sort((a, b) => b.score - a.score)
     // Only show results that actually match the current query — so stale results
@@ -426,6 +432,9 @@ export default function DownloadView() {
             { key: 'track', label: 'Tracks', items: ranked.tracks },
             { key: 'artist', label: 'Artists', items: ranked.artists },
           ].filter((g) => g.items.length > 0)
+            // Strongest-matching type leads — search a song and Tracks come
+            // first; search an artist/album and Albums lead.
+            .sort((a, b) => (b.items[0]?.score ?? 0) - (a.items[0]?.score ?? 0))
           return (
             <div className="download-results">
               {ranked.topHit && (
