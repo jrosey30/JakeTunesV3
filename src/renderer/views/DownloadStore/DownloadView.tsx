@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useReducer, type CSSProperties } from 'react'
 import './download-store.css'
+import { useLibrary } from '../../context/LibraryContext'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, queueSummary, clearFinished, type QItem } from './downloadQueue'
+
+// normalize for the "already in your library" match (local; renderer can't
+// import the main-process reco-match).
+const norm = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
 
 // streamrip "Download" view — replaces the embedded web-store browser views
 // (squid/lucida/dab, all dead/walled/ad-trapped). Browse by searching a
@@ -18,8 +25,9 @@ const SOURCES = [
   { id: 'youtube', label: 'YouTube' },
 ]
 const TYPES = [
-  { id: 'track', label: 'Tracks' },
+  { id: 'all', label: 'Everything' },
   { id: 'album', label: 'Albums' },
+  { id: 'track', label: 'Tracks' },
   { id: 'artist', label: 'Artists' },
 ]
 
@@ -31,7 +39,7 @@ interface DownloadCache {
   results: SearchResult[]; art: Record<string, string>; pasteUrl: string
 }
 let pageCache: DownloadCache = {
-  query: '', source: 'qobuz', mediaType: 'track', results: [], art: {}, pasteUrl: '',
+  query: '', source: 'qobuz', mediaType: 'all', results: [], art: {}, pasteUrl: '',
 }
 
 // streamrip result descs end with " by <artist>" ("Creep by Radiohead",
@@ -52,7 +60,6 @@ export default function DownloadView() {
   const [results, setResults] = useState<SearchResult[]>(pageCache.results)
   const [art, setArt] = useState<Record<string, string>>(pageCache.art)
   const [searchErr, setSearchErr] = useState<string | null>(null)
-  const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
   // 4.5: per-file import failures, kept on screen (not just the ~9s top-strip flash)
   const [failures, setFailures] = useState<Array<{ filename: string; error: string }>>([])
@@ -67,6 +74,31 @@ export default function DownloadView() {
   const [qMode, setQMode] = useState<'password' | 'token'>('password')
   const [qUserId, setQUserId] = useState('')
   const [qToken, setQToken] = useState('')
+
+  // Queue: subscribe for re-render on any status change, + a 1s tick so the
+  // "downloading" elapsed clock stays live. State lives in downloadQueue (module
+  // level) so it survives navigating away and back.
+  const { state: lib } = useLibrary()
+  const [, forceRender] = useReducer((x: number) => x + 1, 0)
+  useEffect(() => subscribeQueue(forceRender), [])
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (getQueue().some((q) => q.status === 'downloading')) forceRender()
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  // "Already in your library" index — track (title|artist) + album (album|artist).
+  const libIndex = useMemo(() => {
+    const tracks = new Set<string>()
+    const albums = new Set<string>()
+    for (const t of lib.tracks) {
+      const a = norm(t.artist)
+      if (t.title) tracks.add(norm(t.title) + '|' + a)
+      if (t.album) albums.add(norm(t.album) + '|' + a)
+    }
+    return { tracks, albums }
+  }, [lib.tracks])
+  const summary = queueSummary()
 
   useEffect(() => {
     let cancelled = false
@@ -133,37 +165,33 @@ export default function DownloadView() {
     setArt({})
     setNotice(null)
     try {
-      const r = await window.electronAPI.streamripSearch?.({ query: q, source, mediaType, numResults: 25 })
-      if (r?.ok) setResults(r.results || [])
-      else setSearchErr(r?.error || 'Search failed.')
+      // "Everything" = albums AND tracks in one shot, so you never have to know
+      // the album to find a track. A specific type searches just that.
+      const types = mediaType === 'all' ? ['album', 'track'] : [mediaType]
+      const settled = await Promise.all(
+        types.map((mt) =>
+          window.electronAPI.streamripSearch?.({ query: q, source, mediaType: mt, numResults: 25 }).catch(() => null),
+        ),
+      )
+      const merged: SearchResult[] = []
+      const seen = new Set<string>()
+      let anyErr: string | null = null
+      for (const r of settled) {
+        if (!r) continue
+        if (!r.ok) { anyErr = r.error || anyErr; continue }
+        for (const res of r.results || []) {
+          const k = `${res.source}|${res.mediaType}|${res.desc.toLowerCase()}` // collapse exact dupes
+          if (seen.has(k)) continue
+          seen.add(k)
+          merged.push(res)
+        }
+      }
+      if (merged.length === 0) setSearchErr(anyErr || 'No results — try a different source or spelling.')
+      setResults(merged)
     } catch (e) {
       setSearchErr(e instanceof Error ? e.message : 'Search failed.')
     } finally {
       setSearching(false)
-    }
-  }
-
-  const downloadResult = async (res: SearchResult) => {
-    if (downloadingId) return
-    setDownloadingId(res.id)
-    setNotice(null)
-    setFailures([])
-    try {
-      const r = await window.electronAPI.streamripDownloadId?.(res.source, res.mediaType, res.id)
-      if (r?.ok && (r.imported ?? 0) > 0) {
-        const dup = r.dupes ? `, ${r.dupes} already in library` : ''
-        setNotice({ ok: true, msg: `Imported ${r.imported} track${r.imported === 1 ? '' : 's'}${dup} — ${res.desc}` })
-      } else if (r?.ok && r.dupes) {
-        setNotice({ ok: true, msg: `Already in your library — all ${r.dupes} track${r.dupes === 1 ? '' : 's'} skipped.` })
-      } else if (r?.ok) {
-        setNotice({ ok: false, msg: 'Downloaded, but no tracks made it into your library — see below.' })
-      } else {
-        setNotice({ ok: false, msg: r?.error || 'Download failed.' })
-      }
-    } catch (e) {
-      setNotice({ ok: false, msg: e instanceof Error ? e.message : 'Download failed.' })
-    } finally {
-      setDownloadingId(null)
     }
   }
 
@@ -238,13 +266,39 @@ export default function DownloadView() {
     }
   }
 
+  // Each result's right-side action reflects its OWN queue lifecycle so the
+  // download → into-library journey is never a black box.
+  const renderAction = (res: SearchResult, item: QItem | undefined) => {
+    const st = item?.status
+    if (st === 'downloading') {
+      const secs = item?.startedAt ? Math.floor((Date.now() - item.startedAt) / 1000) : 0
+      return <span className="dl-state dl-state--busy"><span className="dl-spinner" aria-hidden="true" />Downloading {mmss(secs)}</span>
+    }
+    if (st === 'queued') return <span className="dl-state dl-state--queued">Queued</span>
+    if (st === 'done') {
+      return (
+        <span className="dl-state dl-state--done">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5" /></svg>
+          In your library{item?.imported ? ` · ${item.imported}` : ''}
+        </span>
+      )
+    }
+    if (st === 'failed') {
+      return <button className="download-retry" onClick={() => item && retry(item.key)} title={item?.error || 'Retry'}>Retry</button>
+    }
+    return <button className="download-result-btn" onClick={() => enqueue(res)}>{res.mediaType === 'artist' ? 'Get all' : 'Download'}</button>
+  }
+
   return (
     <div className="download-view">
       <div className="download-card">
-        <h1 className="download-title">Download</h1>
-        <p className="download-sub">
-          Search a source and click to grab it — or paste a link. It imports straight into your library.
-        </p>
+        <div className="download-head">
+          <span className="download-eyebrow">Get music</span>
+          <h1 className="download-title">Download</h1>
+          <p className="download-sub">
+            Search a source and click to grab it — or paste a link. It imports straight into your library.
+          </p>
+        </div>
 
         {/* ── Browse: source pills → search → results → click ── */}
         <div className="download-sources" role="tablist" aria-label="Download source">
@@ -278,28 +332,66 @@ export default function DownloadView() {
 
         {searchErr && <div className="download-result download-result--err">{searchErr}</div>}
 
-        {results.length > 0 && (
-          <ul className="download-results" role="list">
-            {results.map((res) => {
-              const busy = downloadingId === res.id
-              return (
-                <li key={res.id} className="download-result-row">
-                  {art[res.id]
-                    ? <img className="download-result-art" src={art[res.id]} alt="" loading="lazy" />
-                    : <span className="download-result-art download-result-art--ph" aria-hidden="true">♪</span>}
-                  <span className="download-result-desc" title={res.desc}>{res.desc}</span>
-                  <button
-                    className="download-result-btn"
-                    onClick={() => void downloadResult(res)}
-                    disabled={!!downloadingId}
-                  >
-                    {busy ? 'Downloading…' : res.mediaType === 'artist' ? 'Download all' : 'Download'}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+        {(summary.active + summary.queued + summary.done + summary.failed) > 0 && (
+          <div className="download-queue-strip">
+            <span className="download-queue-summary">
+              {summary.active > 0 && <span className="dq-part dq-active"><span className="dl-spinner" aria-hidden="true" />{summary.active} downloading</span>}
+              {summary.queued > 0 && <span className="dq-part">{summary.queued} queued</span>}
+              {summary.done > 0 && <span className="dq-part dq-done">{summary.done} in your library</span>}
+              {summary.failed > 0 && <span className="dq-part dq-failed">{summary.failed} failed</span>}
+            </span>
+            {summary.active === 0 && summary.queued === 0 && (summary.done + summary.failed) > 0 && (
+              <button className="download-link-btn" onClick={() => clearFinished()}>Clear finished</button>
+            )}
+          </div>
         )}
+
+        {results.length > 0 && (() => {
+          const order = [{ key: 'album', label: 'Albums' }, { key: 'track', label: 'Tracks' }, { key: 'artist', label: 'Artists' }]
+          const groups = order
+            .map((g) => ({ ...g, items: results.filter((r) => r.mediaType === g.key) }))
+            .filter((g) => g.items.length > 0)
+          let idx = 0
+          return (
+            <div className="download-results">
+              {groups.map((g) => (
+                <section key={g.key} className="download-group">
+                  <div className="download-group-head">
+                    <span className="download-group-label">{g.label}</span>
+                    <span className="download-group-count">{g.items.length}</span>
+                  </div>
+                  <ul className="download-group-list" role="list">
+                    {g.items.map((res) => {
+                      const { title, artist } = parseDesc(res.desc)
+                      const item = itemFor(res)
+                      const owned = res.mediaType === 'album'
+                        ? libIndex.albums.has(norm(title) + '|' + norm(artist))
+                        : res.mediaType === 'track' && libIndex.tracks.has(norm(title) + '|' + norm(artist))
+                      const i = idx++
+                      return (
+                        <li key={res.id} className={`download-result-row${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
+                          {art[res.id]
+                            ? <img className="download-result-art" src={art[res.id]} alt="" loading="lazy" />
+                            : <span className="download-result-art download-result-art--ph" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+                              </span>}
+                          <div className="download-result-body">
+                            <span className="download-result-title" title={res.desc}>{title || res.desc}</span>
+                            <span className="download-result-meta">
+                              {artist && <span className="download-result-artist">{artist}</span>}
+                              {owned && <span className="download-owned">In your library</span>}
+                            </span>
+                          </div>
+                          {renderAction(res, item)}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )
+        })()}
 
         {notice && (
           <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>
