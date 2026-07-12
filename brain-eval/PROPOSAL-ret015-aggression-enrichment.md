@@ -1,6 +1,25 @@
 # Gated proposal — close the "aggressive/heavy/intense" enrichment gap (ret-015)
 
-Status: **PROPOSED, not applied.** Written 2026-07-11 03:xx by the nightly brain-improve run.
+Status: **REFUTED — RESOLVED 2026-07-12, do NOT execute the re-embed plan below.**
+
+The "Open risk to check first" (§ bottom) was run 2026-07-12 by the nightly brain-improve
+run (`diag_ret015.py`, read-only): the brain's actual top-30 for "aggressive heavy intense
+music" is Pantera / System of a Down / Motörhead / Iron Maiden / Black Sabbath / RATM —
+20/30 aggressive-genre tracks. **The brain retrieves this query correctly.** The 0.13 score
+was the eval predicate (`punk/grunge` only) contradicting its own rubric ("aggressive
+genres") — a miscalibrated ruler, not a descriptor gap. Fix applied: `"metal"` added to
+ret-015's `genre_any` (grounded in library.json's real genre tags: metal/heavy metal/funk
+metal/nu-metal/thrash ≈ 151 tracks; aggressive space = 1106). ret-015 now reads 0.67;
+retrieval 0.787→0.822, overall 0.893→0.911 with **zero changes to embeddings.bin**
+(sha `128a5ae73240` before and after). Residual: aggressive bands genre-tagged plain
+"Rock" (SOAD, RATM, I Prevail…) still count as misses by design — plain "rock" in the
+predicate would corrupt the proxy the other way. The descriptor-enrichment experiment
+below is therefore unnecessary; re-embedding 2410 tracks to satisfy the old predicate
+would have polluted the brain to fit a broken ruler.
+
+Original text (kept for the record):
+
+Status: ~~PROPOSED, not applied.~~ Written 2026-07-11 03:xx by the nightly brain-improve run.
 Do NOT execute while the JakeTunes app is running or while brain-trainer/taxonomy-classify may run.
 
 ## Why (grounded, measured)

@@ -42,7 +42,7 @@ import argparse, hashlib, json, os, re, struct, sys, time, urllib.request, urlli
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-STATE_DIR = os.path.expanduser("~/Library/Application Support/JakeTunes")
+STATE_DIR = os.environ.get("JT_STATE_DIR") or os.path.expanduser("~/Library/Application Support/JakeTunes")
 EMB_PATH = os.path.join(STATE_DIR, "embeddings.bin")
 LIB_PATH = os.path.join(STATE_DIR, "library.json")
 EVAL_PATH = os.path.join(HERE, "eval_set.json")
