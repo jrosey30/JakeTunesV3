@@ -2364,6 +2364,28 @@ const SYNC_CONVERT_CACHE_SUBDIR = 'sync-convert-cache'
 const LOSSLESS_EXTS = new Set(['.alac', '.flac', '.wav', '.wave', '.aiff', '.aif'])
 const LOSSLESS_CODECS = new Set(['alac', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_s16be', 'pcm_s24be'])
 
+// Is Apple's afconvert (the CoreAudio AAC encoder that iTunes itself used)
+// available? Memoized. We prefer it over ffmpeg's native `aac` encoder for
+// iPod sync mirrors: the device's ~20-year-old hardware AAC decoder is the
+// same lineage as afconvert's output, whereas ffmpeg's native-AAC bitstream
+// — though spec-clean and decode-perfect in software — is the one variable
+// that changed the sync Jake reported as "a lot of squeaks" (2026-07-11).
+// macOS-only; every other platform falls back to (capped) ffmpeg.
+let _afconvertOk: Promise<boolean> | null = null
+async function afconvertAvailable(): Promise<boolean> {
+  if (process.platform !== 'darwin') return false
+  if (_afconvertOk) return _afconvertOk
+  _afconvertOk = (async () => {
+    try {
+      const { execFile } = await import('child_process')
+      const { promisify } = await import('util')
+      await promisify(execFile)('afconvert', ['--help'], { timeout: 4000 })
+      return true
+    } catch { return false }
+  })()
+  return _afconvertOk
+}
+
 async function buildAacMirror(srcPath: string, targetKbps: number): Promise<string | null> {
   const { execFile } = await import('child_process')
   const { promisify } = await import('util')
@@ -2404,7 +2426,11 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
   // produce different mirror files.
   const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
   await mkdir(cacheDir, { recursive: true }).catch(() => {})
-  const hash = createHash('sha1').update(`${srcPath}|${targetKbps}`).digest('hex').slice(0, 16)
+  // Cache key carries an encoder-format version token. `afenc-44100-2-v2`
+  // invalidates every mirror produced by the old ffmpeg-native path so the
+  // next sync re-encodes them with afconvert + the iPod-safe 44.1k/stereo
+  // cap. Bump this token whenever the encode recipe changes.
+  const hash = createHash('sha1').update(`${srcPath}|${targetKbps}|afenc-44100-2-v2`).digest('hex').slice(0, 16)
   const cached = join(cacheDir, `${hash}.m4a`)
   try {
     const cStat = await stat(cached)
@@ -2413,19 +2439,51 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
 
   // Transcode. ~5-30s per track depending on length + CPU.
   const tmp = cached + '.partial.m4a'
+  const { rename: renameFS } = await import('fs/promises')
   try {
+    if (await afconvertAvailable()) {
+      // Two-stage, iPod-native path: ffmpeg decodes ANY source (FLAC/ALAC/
+      // WAV/AIFF, incl. hi-res) down to clean 44.1kHz/16-bit stereo LPCM;
+      // Apple's afconvert then encodes AAC-LC that the iPod hardware decoder
+      // is guaranteed to handle. The -ar/-ac cap also fixes any >48kHz
+      // source that the old ffmpeg-only path passed through untouched.
+      const pcm = cached + '.partial.wav'
+      try {
+        await execP('ffmpeg', [
+          '-nostdin', '-y', '-i', srcPath, '-vn',
+          '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le',
+          '-f', 'wav', pcm,
+        ], { timeout: 600000 })
+        await execP('afconvert', [
+          pcm, '-o', tmp,
+          '-d', 'aac',                    // AAC-LC (not aach/HE — iPod-safe)
+          '-f', 'm4af',                   // MPEG-4 Audio container (.m4a)
+          '-b', String(targetKbps * 1000),
+          '-q', '127',                    // max encoder quality
+          '-s', '1',                      // ABR — steadiest for old decoders
+        ], { timeout: 600000 })
+        await renameFS(tmp, cached)
+        return cached
+      } finally {
+        try { await unlink(pcm) } catch { /* already gone */ }
+      }
+    }
+
+    // Fallback (non-macOS / afconvert missing): ffmpeg native AAC, but now
+    // hard-capped to iPod-safe 44.1kHz/stereo so a hi-res source can never
+    // pass through at a rate the device can't clock.
     await execP('ffmpeg', [
-      '-y', '-i', srcPath, '-vn',
+      '-nostdin', '-y', '-i', srcPath, '-vn',
       '-c:a', 'aac', '-b:a', `${targetKbps}k`,
+      '-ar', '44100', '-ac', '2',
       '-map_metadata', '0',
       tmp,
     ], { timeout: 600000 })
-    const { rename: renameFS } = await import('fs/promises')
     await renameFS(tmp, cached)
     return cached
   } catch (err) {
     try { await unlink(tmp) } catch { /* already gone */ }
-    console.warn(`[sync-convert] ffmpeg failed for ${srcPath}:`, err)
+    console.warn(`[sync-convert] transcode failed for ${srcPath}:`, err)
     return null
   }
 }
