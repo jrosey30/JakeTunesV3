@@ -38,8 +38,9 @@ const LIB = join(STATE_DIR, 'library.json')
 const EMB = join(STATE_DIR, 'embeddings.bin')
 const MOOD = join(STATE_DIR, 'mood-index.bin')
 const DESC = join(STATE_DIR, 'brain-descriptors.json')
+const LYRICS = join(STATE_DIR, 'lyrics.json')   // grounded LRCLIB lyrics (scripts/lyrics-fetch.mjs)
 const ENV = join(homedir(), 'JakeTunesV3', '.env')
-const GEMMA_URL = 'http://homemini:11434/api/generate'
+const GEMMA_URL = process.env.GEMMA_URL || 'http://homemini:11434/api/generate'
 const GEMMA_MODEL = 'gemma3:4b'
 const EMBED_URL = 'https://api.openai.com/v1/embeddings'
 const EMBED_MODEL = 'text-embedding-3-small'
@@ -178,6 +179,36 @@ async function gemmaDescribe(t) {
   return (d.length >= 8 && d.length <= 400) ? d : null
 }
 
+// The enrichment layer: base library facts + Gemma's sound/mood descriptor (d)
+// + a lyrics-derived MEANING line (m). Kept OUT of baseText()/buildEmbeddingText
+// (the base twin the desktop shares) on purpose — the desktop has no lyrics, so
+// meaning lives here at the trainer's append layer, exactly like sound/mood.
+// Each line is gated on a truthy value so a missing signal adds NOTHING (never
+// fabricate). This is the ONLY place the enriched embed text is assembled.
+function enrichedText(t, d, m) {
+  let s = baseText(t)
+  if (d) s += `\nsound and mood: ${d}`
+  if (m) s += `\nmeaning: ${m}`
+  return s
+}
+
+// Sibling of gemmaDescribe: read a track's real lyrics and write ONE compact
+// line about what the SONG IS ABOUT (themes/subject/arc) — an interpretation,
+// NOT the words. The prompt forbids quoting so we store meaning, not lyrics
+// (copyright + it's what the brain needs). Same 8..400 gate + null-on-failure
+// as gemmaDescribe, so a lyric-less / failed track adds no meaning line.
+async function gemmaMeaning(t, lyricText) {
+  const prompt = `You are a music analyst. Read the lyrics below and describe in ONE line (max 24 words) what the SONG IS ABOUT: its central theme(s), subject, emotional arc, and the narrator's stance. Describe the MEANING abstractly — do NOT quote or paraphrase specific lyric lines. Output ONLY the description, no preamble.\n\nTrack: ${t.artist || '?'} — ${t.title || '?'}\nLyrics:\n${String(lyricText).slice(0, 3000)}`
+  const r = await fetch(GEMMA_URL, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: GEMMA_MODEL, prompt, stream: false, options: { temperature: 0.4, num_predict: 90 } }),
+    signal: AbortSignal.timeout(30000),
+  })
+  if (!r.ok) throw new Error(`gemma-meaning ${r.status}`)
+  let m = String((await r.json()).response || '').trim().replace(/\s+/g, ' ').replace(/^["']|["']$/g, '')
+  return (m.length >= 8 && m.length <= 400) ? m : null
+}
+
 async function openaiEmbed(texts) {
   const out = []
   for (let i = 0; i < texts.length; i += 100) {
@@ -240,6 +271,19 @@ async function main() {
   const done = new Set(Object.keys(desc))
   const total = tracks.filter(t => t.artist || t.title).length
 
+  // Grounded lyrics sidecar (written by scripts/lyrics-fetch.mjs, mirrored from
+  // the laptop). lyricTextFor returns the plain lyric text (synced cues stripped)
+  // for a track, or null when there are no lyrics / it's an instrumental / a miss
+  // — so meaning is only ever derived from real words, never fabricated.
+  const lyrics = existsSync(LYRICS) ? JSON.parse(readFileSync(LYRICS, 'utf8')) : {}
+  const lyricTextFor = (id) => {
+    const rec = lyrics[String(id)]
+    if (!rec || rec.miss || rec.instrumental) return null
+    let txt = rec.plain || (rec.synced ? rec.synced.replace(/^\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s?/gm, '') : '')
+    txt = String(txt || '').trim()
+    return txt.length >= 20 ? txt : null
+  }
+
   // 4.5: fold the AI genre taxonomy into the embed text. Subgenres live in
   // metadata-overrides.json (fields.subgenre / subgenrePath), not library.json,
   // so load + merge them onto the tracks here; baseText() appends them.
@@ -276,8 +320,8 @@ async function main() {
     const cands = tracks.filter(t => (t.artist || t.title))
     log(`reembed-all: re-embedding ${cands.length} tracks with grounded tempo/energy facts (no Gemma)…`)
     const texts = cands.map(t => {
-      const d = desc[String(t.id)]?.d
-      return d ? `${baseText(t)}\nsound and mood: ${d}` : baseText(t)
+      const e = desc[String(t.id)]
+      return enrichedText(t, e?.d, e?.m)   // base + sound/mood + lyrics-meaning (each gated)
     })
     const vecs = await openaiEmbed(texts)
     copyFileSync(EMB, EMB + '.bak')
@@ -323,9 +367,9 @@ async function main() {
   // vibe-searchable once it's been heard. `te` = tempo facts are in the vector.
   const CATCHUP_CAP = 500
   const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && desc[String(t.id)].te !== true).slice(0, CATCHUP_CAP)
-  if (needTempo.length) {
+  if (needTempo.length && !process.argv.includes('--meaning-catchup')) {   // --meaning-catchup isolates meaning: no tempo re-embeds to confound a before/after eval
     log(`tempo catch-up: ${needTempo.length} enriched track(s) gained bpm since enrichment — re-embedding with tempo (no Gemma)`)
-    const cvecs = await openaiEmbed(needTempo.map(t => `${baseText(t)}\nsound and mood: ${desc[String(t.id)].d}`))
+    const cvecs = await openaiEmbed(needTempo.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
     copyFileSync(EMB, EMB + '.bak')
     let cn = 0
     for (let i = 0; i < needTempo.length; i++) { const v = cvecs[i]; if (v) { map.set(Number(needTempo[i].id), v); desc[String(needTempo[i].id)].te = true; cn++ } }
@@ -342,6 +386,46 @@ async function main() {
       'tempo-catchup',
     )
   }
+
+  // Meaning catch-up: backfill the lyrics-derived MEANING line onto tracks that
+  // are ALREADY enriched (have a descriptor) and now have grounded lyrics but no
+  // meaning yet — the counterpart of tempo catch-up for the lyrics brain. Gemma
+  // reads the lyrics, we re-embed with meaning folded in. Most-played first, so
+  // the songs Jake loves understand their words first; bounded per run
+  // (BRAIN_MEANING_CAP, default 150) so the nightly stays invisible. Over time
+  // the whole library gains "aboutness". Reuses each track's existing descriptor
+  // (no new gemmaDescribe). `node brain-trainer.mjs --meaning-catchup` runs ONLY
+  // this (with a high BRAIN_MEANING_CAP for the initial bulk backfill).
+  const MEANING_CAP = Number(process.env.BRAIN_MEANING_CAP || 150)
+  const needMeaning = tracks
+    .filter(t => desc[String(t.id)] && !desc[String(t.id)].m && lyricTextFor(t.id))
+    .sort((a, b) => (b.playCount ?? 0) - (a.playCount ?? 0))
+    .slice(0, MEANING_CAP)
+  if (needMeaning.length) {
+    log(`meaning catch-up: ${needMeaning.length} enriched track(s) have lyrics but no meaning — deriving + re-embedding`)
+    const mpending = []
+    for (const t of needMeaning) {
+      try { const m = await gemmaMeaning(t, lyricTextFor(t.id)); if (m) mpending.push({ t, m }) }
+      catch (e) { log('  meaning skip', `${t.artist} — ${t.title}`, '·', e.message) }
+    }
+    if (mpending.length) {
+      const mvecs = await openaiEmbed(mpending.map(({ t, m }) => enrichedText(t, desc[String(t.id)].d, m)))
+      copyFileSync(EMB, EMB + '.bak')
+      let mn = 0
+      for (let i = 0; i < mpending.length; i++) {
+        const v = mvecs[i]; if (!v) continue
+        const { t, m } = mpending[i]; map.set(Number(t.id), v); desc[String(t.id)].m = m; mn++
+      }
+      writeEmb(EMB, map)
+      try {
+        const check = readEmb(EMB)
+        if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: count=${check.map.size}`)
+      } catch (e) { log('meaning catch-up VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+      writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)
+      log(`meaning catch-up: ${mn} track(s) now understand their lyrics. Sync carries it to homemini.`)
+    }
+  }
+  if (process.argv.includes('--meaning-catchup')) return   // explicit bulk-meaning run stops here
 
   // Candidates: every library track not yet enriched. NEWLY-ADDED tracks jump
   // the queue (Jake adds music almost daily and wants the brain to know it
@@ -371,7 +455,13 @@ async function main() {
   for (const t of batch) {
     try {
       const d = await gemmaDescribe(t)
-      if (d) pending.push({ t, d })
+      if (!d) continue
+      // If this track already has grounded lyrics, derive its meaning in the
+      // same pass so a new song lands in the brain understanding what it's about.
+      const lt = lyricTextFor(t.id)
+      let m = null
+      if (lt) { try { m = await gemmaMeaning(t, lt) } catch (e) { log('  meaning skip', `${t.artist} — ${t.title}`, '·', e.message) } }
+      pending.push({ t, d, m })
     } catch (e) { log('  gemma skip', `${t.artist} — ${t.title}`, '·', e.message) }
   }
   if (pending.length === 0) {
@@ -381,16 +471,16 @@ async function main() {
   }
 
   // 2) Re-embed enriched text (batched).
-  const vecs = await openaiEmbed(pending.map(({ t, d }) => `${baseText(t)}\nsound and mood: ${d}`))
+  const vecs = await openaiEmbed(pending.map(({ t, d, m }) => enrichedText(t, d, m)))
 
   // 3) Back up the live brain, then fold the new vectors in.
   copyFileSync(EMB, EMB + '.bak')
   let enriched = 0, sample = null
   for (let i = 0; i < pending.length; i++) {
     const v = vecs[i]; if (!v) continue
-    const { t, d } = pending[i]
+    const { t, d, m } = pending[i]
     map.set(Number(t.id), v)
-    desc[String(t.id)] = { d, at: new Date().toISOString(), artist: t.artist, title: t.title, te: (Number(t.bpm) || 0) > 0 }
+    desc[String(t.id)] = { d, m: m || undefined, at: new Date().toISOString(), artist: t.artist, title: t.title, te: (Number(t.bpm) || 0) > 0 }
     if (!sample) sample = { artist: t.artist, title: t.title, d }
     enriched++
   }
