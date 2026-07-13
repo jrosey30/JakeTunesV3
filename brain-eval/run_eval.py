@@ -153,6 +153,16 @@ def expected_ids(pred, tracks):
         if "bpm_max" in pred:
             b = t.get("bpm") or 0
             ok = ok and b and b <= pred["bpm_max"]
+        if "songs" in pred:
+            # Explicit expected-song list (for THEME prompts — there is no
+            # library field for "aboutness", so the ruler names the songs).
+            # Match normalized title equality + artist substring.
+            def _n(x): return "".join(c for c in (x or "").lower() if c.isalnum())
+            tt, ta = _n(t.get("title")), _n(t.get("artist"))
+            hit = any(_n(w.get("t")) and tt == _n(w.get("t")) and
+                      (not w.get("a") or _n(w["a"]) in ta or ta in _n(w["a"]))
+                      for w in pred["songs"])
+            ok = ok and hit
         if ok:
             out.add(tid)
     return out
