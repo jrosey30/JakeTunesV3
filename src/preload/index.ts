@@ -366,6 +366,8 @@ const electronAPI = {
     ipcRenderer.invoke('remove-artwork', artist, album, force),
   chooseArtworkFile: (): Promise<{ ok: boolean; path?: string }> =>
     ipcRenderer.invoke('choose-artwork-file'),
+  getTrackLyrics: (trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> =>
+    ipcRenderer.invoke('get-track-lyrics', trackId),
   loadArtworkMap: (): Promise<{ ok: boolean; map: Record<string, string> }> =>
     ipcRenderer.invoke('load-artwork-map'),
   // 4.5.0-51: server-authoritative artwork resolver — used when the

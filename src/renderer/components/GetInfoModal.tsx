@@ -59,6 +59,7 @@ export default function GetInfoModal({
   const [fetchingArt, setFetchingArt] = useState(false)
   const [localArtHash, setLocalArtHash] = useState<string | null>(null)
   const [artCacheBust, setArtCacheBust] = useState('')
+  const [lyrics, setLyrics] = useState<{ plain?: string; synced?: string; instrumental?: boolean } | null>(null)
   const firstInputRef = useRef<HTMLInputElement>(null)
   const isInitialMount = useRef(true)
   const userInteractedRef = useRef(false)
@@ -68,12 +69,32 @@ export default function GetInfoModal({
   const currentIdx = currentId != null ? allTracks.findIndex((t) => t.id === currentId) : -1
   const currentTrack = isMulti ? null : (currentIdx >= 0 ? allTracks[currentIdx] : null)
 
+  // Read-only lyrics display text: prefer plain; else strip [mm:ss.xx] cues off
+  // the synced version so the section reads as a clean lyric sheet, not an LRC.
+  const lyricsDisplay = lyrics
+    ? (lyrics.plain?.trim() || (lyrics.synced ? lyrics.synced.replace(/^\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s?/gm, '').trim() : ''))
+    : ''
+
   // Reset local art override when navigating to a different track —
   // otherwise the previous track's hash can bleed into the new cover.
   useEffect(() => {
     setLocalArtHash(null)
     setArtCacheBust('')
   }, [currentId])
+
+  // Load the track's grounded lyrics for the read-only Lyrics section. Keyed on
+  // currentId so it refetches on prev/next nav. Self-fetched via IPC because the
+  // modal's props interface must stay untouched (GenresView, a call site, is
+  // do-not-touch). null while loading / on a miss → the UI shows "No lyrics".
+  useEffect(() => {
+    setLyrics(null)
+    if (isMulti || currentId == null) return
+    let cancelled = false
+    window.electronAPI.getTrackLyrics(currentId)
+      .then((r) => { if (!cancelled) setLyrics(r?.ok ? { plain: r.plain, synced: r.synced, instrumental: r.instrumental } : null) })
+      .catch(() => { /* leave null → "No lyrics" */ })
+    return () => { cancelled = true }
+  }, [currentId, isMulti])
 
   // Focus first input on mount and after navigation. Auto-select-all only
   // on initial open (iTunes convention — type to overwrite title); on
@@ -435,6 +456,14 @@ export default function GetInfoModal({
               <div className="getinfo-field-row getinfo-field-row--readonly">
                 <label className="getinfo-label">File</label>
                 <span className="getinfo-path">{currentTrack.path}</span>
+              </div>
+            )}
+            {!isMulti && currentTrack && (
+              <div className="getinfo-field-row getinfo-field-row--readonly getinfo-lyrics-row">
+                <label className="getinfo-label">Lyrics</label>
+                {lyricsDisplay
+                  ? <div className="getinfo-lyrics">{lyricsDisplay}</div>
+                  : <span className="getinfo-lyrics-empty">{lyrics?.instrumental ? 'Instrumental' : 'No lyrics'}</span>}
               </div>
             )}
           </div>

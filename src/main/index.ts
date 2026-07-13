@@ -2677,6 +2677,27 @@ const overridesCache = new JsonFileCache<Record<string, unknown>>(
   () => ({}),
   'overrides',
 )
+// Lyrics sidecar (lyrics.json) — grounded lyrics from LRCLIB, written by
+// scripts/lyrics-fetch.mjs and keyed by String(track.id). The desktop reads it
+// LOCALLY for the Get Info Lyrics section; the LOCAL→NAS mirror (STATE_FILE_NAMES
+// below) carries it to homemini so the nightly brain-trainer's "meaning" pass can
+// read it. The laptop fetcher is the SINGLE writer. NEVER fabricated: a genuine
+// not-found is { miss:true }, an instrumental { instrumental:true }.
+// ⚠️ Schema mirror: scripts/lyrics-fetch.mjs recordFrom() writes this exact shape.
+export interface LyricsRecord {
+  plain?: string
+  synced?: string
+  instrumental?: boolean
+  miss?: boolean
+  source?: string
+  lrclibId?: number
+  fetchedAt?: number
+}
+const lyricsCache = new JsonFileCache<Record<string, LyricsRecord>>(
+  () => join(STATE_DIR, 'lyrics.json'),
+  () => ({}),
+  'lyrics',
+)
 const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
   () => join(STATE_DIR, 'mobile-stars.json'),
   () => ({ trackIds: [] }),
@@ -2745,6 +2766,10 @@ const liveSetsCache = new JsonFileCache<Record<string, LiveSetEntry>>(
 const STATE_FILE_NAMES = [
   'library.json',
   'metadata-overrides.json',
+  // Grounded LRCLIB lyrics sidecar. The laptop is the single writer; mirroring
+  // it LOCAL→NAS is what lets homemini's nightly brain-trainer read lyrics for
+  // its "meaning" enrichment pass. Same desktop-authored contract as overrides.
+  'lyrics.json',
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',
@@ -13195,6 +13220,22 @@ ipcMain.handle('choose-artwork-file', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return { ok: false }
   return { ok: true, path: result.filePaths[0] }
+})
+
+// Read-only: return the grounded lyrics for a track from the lyrics.json
+// sidecar (fetched by scripts/lyrics-fetch.mjs). Get Info's Lyrics section
+// self-fetches through this so the modal's props interface stays untouched
+// (one of its 7 call sites is the do-not-touch GenresView). A genuine miss /
+// instrumental / not-yet-fetched all return no text — the UI shows "No lyrics".
+ipcMain.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> => {
+  try {
+    const store = await lyricsCache.get()
+    const rec = store[String(trackId)]
+    if (!rec || rec.miss) return { ok: true }
+    return { ok: true, plain: rec.plain, synced: rec.synced, instrumental: rec.instrumental }
+  } catch {
+    return { ok: true }
+  }
 })
 
 ipcMain.handle('load-artwork-map', async () => {
