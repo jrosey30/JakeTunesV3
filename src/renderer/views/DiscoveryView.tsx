@@ -31,7 +31,7 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
           aria-selected={tab === 'new-for-you'}
           className={`discovery-tab ${tab === 'new-for-you' ? 'discovery-tab--on' : ''}`}
           onClick={() => select('new-for-you')}
-        >New for You</button>
+        >Discover</button>
         <button
           role="tab"
           aria-selected={tab === 'your-list'}

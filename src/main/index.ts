@@ -1180,6 +1180,155 @@ ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
   return { ok: true }
 })
 
+// ── Discover feed v2 — typed, multi-lane (song/album/artist × new/old). ──
+// See src/main/discover-feed.ts for the grounding rules. Replaces the
+// single-lane "new releases only" radar as Discovery's engine (the radar
+// handler stays for back-compat until mobile migrates).
+let discoverFeedMem: { at: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> } | null = null
+const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
+
+ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
+  if (!force && discoverFeedMem && Date.now() - discoverFeedMem.at < DISCOVER_TTL_MS) {
+    return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true }
+  }
+  try {
+    const df = await import('./discover-feed.ts')
+    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
+    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
+    const fp = computeTasteFingerprint(tracks)
+    if (fp.totalTracks === 0) return { ok: false, error: 'Library is empty — nothing to base discovery on yet.' }
+    const anchors = getTasteAnchors(tracks, 8)
+    const anchorNames = anchors.map((a) => a.artist).join(', ')
+    const nk = (x: string) => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+    const ownedArtists = new Set(tracks.map((t) => nk(String((t as { artist?: string }).artist || ''))).filter(Boolean))
+    const ownedAlbumKeys = new Set(tracks.map((t) => {
+      const tr = t as { artist?: string; album?: string; title?: string }
+      return [`${nk(String(tr.artist || ''))}|${nk(String(tr.album || ''))}`, `${nk(String(tr.artist || ''))}|${nk(String(tr.title || ''))}`]
+    }).flat())
+
+    const tasteLine = `Taste: ${fp.summary} Top genres: ${fp.topGenres.slice(0, 6).map((g) => g.genre).join(', ')}. Plays most: ${anchorNames}.`
+    const cards: import('./discover-feed.ts').FeedCard[] = []
+
+    // L1 · Brand new — the proven radar pipeline (journalism-grounded).
+    const radarPromise = (async () => {
+      try {
+        const year = String(new Date().getFullYear())
+        const scenes = fp.spines.slice(0, 3).map((sp) => RADAR_SCENES[sp.name] || sp.name.toLowerCase())
+        const { exaNewMusic } = await import('./exa')
+        const blocks = await Promise.all(scenes.map((sc) => exaNewMusic(sc, year)))
+        const journalism = blocks.filter(Boolean).join('\n\n')
+        if (!journalism) return
+        const reply = await claudeCall('discover-brand-new', {
+          model: 'claude-sonnet-4-6', max_tokens: 1200, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 10 this listener would love. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
+        })
+        const block = reply.content[0]
+        const text = block && block.type === 'text' ? block.text : ''
+        for (const r of df.parseFeedJson<{ artist?: string; title?: string; year?: string; why?: string }>(text)) {
+          if (r.artist && r.title) cards.push({ lane: 'brand-new', type: 'album', artist: String(r.artist), title: String(r.title), year: String(r.year || new Date().getFullYear()), why: df.clipWhy(String(r.why || '')) })
+        }
+      } catch (err) { console.warn('[discover] brand-new lane failed:', err) }
+    })()
+
+    // L2 · You're missing — MusicBrainz discography minus owned (pure grounding).
+    const missingPromise = (async () => {
+      try {
+        const tops = anchors.slice(0, 4)
+        for (const a of tops) {
+          const disco = await fetchArtistDiscography(a.artist).catch(() => null)
+          if (!disco) continue
+          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 2)
+          for (const al of missing) {
+            cards.push({ lane: 'missing', type: 'album', artist: a.artist, title: al.title, year: String(al.year || ''), why: `You own ${a.tracks} ${a.artist} tracks — not this` })
+          }
+        }
+      } catch (err) { console.warn('[discover] missing lane failed:', err) }
+    })()
+
+    // L3 · Time machine — any-era albums/artists, iTunes-verified before display.
+    // L4 · Songs to try — individual tracks, iTunes-verified (gives previews).
+    const llmLanes = (async () => {
+      try {
+        const reply = await claudeCall('discover-time-machine', {
+          model: 'claude-sonnet-4-6', max_tokens: 1400, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nRecommend music from ANY era (1960s to last year — deliberately NOT this year's releases) adjacent to this taste that the listener plausibly does NOT own. Mix eras. Return ONLY JSON with two arrays:\n{"classics":[{"type":"album"|"artist","artist","title","year","why"}] (8 items), "songs":[{"artist","title","year","why"}] (8 items)}\nEvery "why" MUST be 8 words or fewer. No prose, no code fence.` }],
+        })
+        const block = reply.content[0]
+        const text = block && block.type === 'text' ? block.text : ''
+        const m = text.match(/\{[\s\S]*\}/)
+        const parsed = m ? JSON.parse(m[0]) as { classics?: Array<{ type?: string; artist?: string; title?: string; year?: string; why?: string }>; songs?: Array<{ artist?: string; title?: string; year?: string; why?: string }> } : {}
+        // Verify each against iTunes — canonical name/art/year or it doesn't exist.
+        for (const c of (parsed.classics || []).slice(0, 8)) {
+          if (!c.artist) continue
+          const entity = c.type === 'artist' ? 'musicArtist' : 'album'
+          const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist')
+          if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl })
+          await new Promise((r) => setTimeout(r, 250))   // stay polite with Apple
+        }
+        for (const sng of (parsed.songs || []).slice(0, 8)) {
+          if (!sng.artist || !sng.title) continue
+          const v = await df.itunesVerify(`${sng.artist} ${sng.title}`, 'song')
+          if (v) cards.push({ lane: 'songs', type: 'song', artist: v.artist, title: v.title, year: v.year || String(sng.year || ''), why: df.clipWhy(String(sng.why || '')), artUrl: v.artUrl, previewUrl: v.previewUrl })
+          await new Promise((r) => setTimeout(r, 250))
+        }
+      } catch (err) { console.warn('[discover] llm lanes failed:', err) }
+    })()
+
+    await Promise.all([radarPromise, missingPromise, llmLanes])
+
+    // Artwork pass: brand-new (journalism) and missing (MusicBrainz) cards
+    // arrive without art — dress them from iTunes. Existence is already
+    // grounded by their sources, so a missing iTunes hit keeps the card,
+    // just with the placeholder.
+    for (const c of cards) {
+      if (c.artUrl) continue
+      const v = await df.itunesVerify(`${c.artist} ${c.title}`, 'album').catch(() => null)
+      if (v?.artUrl) { c.artUrl = v.artUrl; if (!c.year && v.year) c.year = v.year }
+      await new Promise((r) => setTimeout(r, 200))
+    }
+
+    // Jake's verdicts + rotation + ownership + cross-lane dedupe.
+    const fb = await discoveryFeedbackCache.get()
+    const nowMs = Date.now()
+    const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs })
+
+    // The brain scores EVERYTHING in the feed — one embed batch.
+    const { brainMatchCandidates } = await import('./discovery-brain.ts')
+    const pcts = await brainMatchCandidates(
+      visible.map((c) => ({ artist: c.artist, title: c.title, genre: '', year: c.year })),
+      tracks as Array<{ id?: number; rating?: number; playCount?: number }>,
+    )
+    if (pcts) visible.forEach((c, i) => { c.brainPct = pcts[i] })
+
+    const laneDefs = [
+      { id: 'brand-new', title: 'Brand New' },
+      { id: 'missing', title: "You're Missing" },
+      { id: 'time-machine', title: 'Time Machine' },
+      { id: 'songs', title: 'Songs to Try' },
+    ]
+    const lanes = laneDefs
+      .map((l) => ({ ...l, cards: visible.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 10) }))
+      .filter((l) => l.cards.length > 0)
+
+    // Serve-count for rotation.
+    await discoveryFeedbackCache.update((cur) => {
+      for (const l of lanes) for (const c of l.cards as import('./discover-feed.ts').FeedCard[]) {
+        const k = df.cardKey(c)
+        const sv = cur.served[k]
+        if (sv) { sv.views += 1; sv.last = nowMs } else cur.served[k] = { first: nowMs, last: nowMs, views: 1 }
+      }
+      return cur
+    })
+
+    // Never cache an empty feed — a transient failure (Apple 403, Exa down)
+    // must not stick for 3 hours; the next open retries.
+    if (lanes.length > 0) discoverFeedMem = { at: nowMs, lanes }
+    return { ok: true, lanes, generatedAt: nowMs }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'discover failed' }
+  }
+})
+
 ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
   if (!force && radarCache && Date.now() - radarCache.generatedAt < RADAR_TTL_MS) {
     return { ok: true, candidates: radarCache.candidates, generatedAt: radarCache.generatedAt, cached: true, fingerprintSummary: radarCache.fingerprintSummary, anchors: radarCache.anchors }

@@ -597,6 +597,7 @@ declare global {
       friendEvent: (name: string, ev: 'add' | 'got' | 'tossed') => Promise<{ ok: boolean }>
       captureResolveLink: (url: string) => Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }>
       getContacts: () => Promise<{ ok: boolean; names: string[] }>
+      getDiscoverFeed: (force?: boolean) => Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

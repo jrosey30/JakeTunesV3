@@ -236,6 +236,7 @@ const electronAPI = {
   friendEvent: (name: string, ev: 'add' | 'got' | 'tossed'): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-event', name, ev),
   captureResolveLink: (url: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => ipcRenderer.invoke('capture-resolve-link', url),
   getContacts: (): Promise<{ ok: boolean; names: string[] }> => ipcRenderer.invoke('get-contacts'),
+  getDiscoverFeed: (force?: boolean): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }> => ipcRenderer.invoke('get-discover-feed', force),
   // 4.5.0-82 — windowed play counts derived from the per-play event
   // log. Returns { trackIdString: count } for plays in the last
   // `windowMs` ms. Used by Top 25's Last Week / Last Month views to
