@@ -84,3 +84,12 @@
 }
 .df-add:hover:not(:disabled) { background: rgba(var(--brand-orange-rgb), 0.10); color: rgb(var(--brand-orange-rgb)); }
 .df-add--done { color: rgb(var(--brand-orange-rgb)); border-color: rgba(var(--brand-orange-rgb), 0.3); cursor: default; }
+
+/* The view IS the scroller (Jake: "i cant scroll on the new discovery page") */
+.df-view { height: 100%; overflow-y: auto; }
+
+/* Owned lane: the whole cover is a play button */
+.df-art--btn { border: none; padding: 0; cursor: pointer; display: block; }
+.df-type--owned { color: rgb(var(--brand-orange-rgb)); background: rgba(var(--brand-orange-rgb), 0.14); }
+.df-play--owned { pointer-events: none; }
+.df-art--btn:hover .df-play--owned { opacity: 1; }

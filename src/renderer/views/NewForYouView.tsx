@@ -17,6 +17,10 @@
  */
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
+import { useLibrary } from '../context/LibraryContext'
+import { useAudio } from '../hooks/useAudio'
+import AlbumArtImage from '../components/AlbumArtImage'
+import type { RediscoveryPick } from '../types'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -34,6 +38,7 @@ interface Lane { id: string; title: string; cards: FeedCard[] }
 
 let feedCache: Lane[] | null = null
 let feedAtCache: number | null = null
+let rediscCache: RediscoveryPick[] | null = null
 
 const cardId = (c: FeedCard) => `disc|${c.artist}|${c.title}`.toLowerCase()
 
@@ -43,7 +48,26 @@ export default function NewForYouView() {
   const [error, setError] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<number | null>(feedAtCache)
   const [added, setAdded] = useState<Set<string>>(new Set())
+  const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
+  const { state: lib } = useLibrary()
+  const { playTrack } = useAudio()
+
+  // "In Your Library" — music Jake OWNS but overlooks (the rediscovery
+  // engine). One click PLAYS it: no list, no download — it's sitting
+  // right there.
+  useEffect(() => {
+    if (rediscCache !== null) return
+    void window.electronAPI.getRediscovery?.().then((r) => {
+      if (r?.ok && r.picks) { rediscCache = r.picks; setOwned(r.picks) }
+    })
+  }, [])
+
+  const playOwned = (pick: RediscoveryPick) => {
+    const nrm = (x: string) => (x || '').trim().toLowerCase()
+    const tracks = lib.tracks.filter((t) => nrm(t.albumArtist || t.artist) === nrm(pick.artist))
+    if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true)
+  }
 
   const load = async (force = false) => {
     setLoading(true); setError(null)
@@ -94,6 +118,34 @@ export default function NewForYouView() {
         <div className="df-loading">Reading your taste…</div>
       )}
       {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
+
+      {owned.length > 0 && (
+        <section className="df-lane">
+          <div className="df-lane-head">In Your Library — Overlooked</div>
+          <div className="df-row">
+            {owned.map((pk) => {
+              const hash = lib.artworkMap[`${pk.artist}|||${pk.album}`]
+              return (
+                <div key={`${pk.artist}|${pk.album}`} className="df-card">
+                  <button type="button" className="df-art df-art--btn" title={`Play ${pk.artist}`} onClick={() => playOwned(pk)}>
+                    {hash
+                      ? <AlbumArtImage hash={hash} alt={pk.album} size={320} />
+                      : <div className="df-art-ph" aria-hidden="true">♪</div>}
+                    <span className="df-play df-play--owned" aria-hidden="true">▶</span>
+                  </button>
+                  <div className="df-badge-row">
+                    <span className="df-type df-type--owned">Owned</span>
+                    <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="df-name" title={pk.artist}>{pk.artist}</div>
+                  {pk.album && <div className="df-artist" title={pk.album}>{pk.album}</div>}
+                  {pk.reason && <div className="df-why">{pk.reason.split(/\s+/).slice(0, 10).join(' ')}</div>}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {lanes.map((lane) => (
         <section key={lane.id} className="df-lane">
