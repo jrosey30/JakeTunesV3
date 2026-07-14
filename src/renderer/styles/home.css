@@ -107,9 +107,23 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(38px) saturate(1.25);
+  filter: blur(38px) saturate(1.4);
   transform: scale(1.3);   /* hide the blurred edges */
-  opacity: 0.5;
+  opacity: 0.38;
+}
+/* V6: warm veil ABOVE the bleed. Monochrome covers (Marshall Mathers LP…)
+   were graying the whole panel into an unfinished-looking slab — the wash
+   must always stay in the app's warm register no matter the art. Painted
+   after .home-featured-bleed (an ::after at the same level), under art+text. */
+.home-featured::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Strongest at the right edge (where the bleed is unmasked) so even a
+     monochrome cover lands as warm smoke, never a dead gray slab. */
+  background: linear-gradient(90deg, rgba(var(--brand-orange-rgb), 0.08) 0%, rgba(var(--brand-cream-rgb), 0.35) 55%, rgba(var(--brand-cream-rgb), 0.68) 100%);
 }
 /* Art + text ride above the bleed. */
 .home-featured-art { z-index: 1; }
@@ -244,28 +258,28 @@
   filter: brightness(1.12);
 }
 
-/* ── 4.4.33: Quick Stats strip ───────────────────────────────────────── */
+/* ── V6: Quick Stats — ONE recessed instrument strip, not four floating
+   SaaS tiles. A quiet inset well (like iTunes' status bar) with hairline
+   dividers between figures: the numbers are read, not clicked, so they
+   shouldn't compete with the hero and mixes for card-ness. ── */
 .home-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+  gap: 0;
   margin: 0 28px 32px 28px;
+  background: rgba(120, 90, 50, 0.045);
+  border: 1px solid rgba(120, 90, 50, 0.10);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 3px rgba(70, 55, 40, 0.06), 0 1px 0 rgba(255, 255, 255, 0.55);
+  overflow: hidden;
   animation: home-card-in 360ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
 }
 .home-stat {
-  /* 4.5 polish: lifted warm panel. Was --white on a --white page (a hairline
-     only) — now a lighter-than-canvas surface + soft drop shadow so each tile
-     reads as a real card resting on the page. */
-  background: #fcfbf8;
-  border: 1px solid rgba(120, 90, 50, 0.10);
-  border-radius: 9px;
-  padding: 15px 17px;
-  box-shadow: 0 1px 2px rgba(70, 55, 40, 0.04), 0 5px 14px rgba(70, 55, 40, 0.05);
-  transition: box-shadow 180ms ease, transform 180ms ease;
+  padding: 14px 18px;
+  border-left: 1px solid rgba(120, 90, 50, 0.09);
 }
-.home-stat:hover {
-  box-shadow: 0 2px 6px rgba(70, 55, 40, 0.07), 0 10px 22px rgba(70, 55, 40, 0.08);
-  transform: translateY(-1px);
+.home-stat:first-child {
+  border-left: none;
 }
 .home-stat-value {
   font-size: 22px;
@@ -311,38 +325,47 @@
      "23 plays") that always fit. */
 }
 
+/* V6: ONE section voice for the whole dashboard — the quiet small-caps
+   eyebrow the mixes section already speaks (its craft was the page's best).
+   The greeting stays the only large type; sections become calm chapters
+   separated by a hairline + consistent rhythm. Kill the second, bold-title
+   voice that made the page read as two different apps. */
 .home-section {
-  margin-bottom: 40px;
+  margin-bottom: 44px;
 }
 
 .home-section-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 0 28px 14px 28px;
+  gap: 12px;
+  margin: 0 28px;
+  padding: 18px 0 12px 0;
+  border-top: 1px solid rgba(120, 90, 50, 0.09);
 }
 
 .home-section-title {
-  /* 4.5 polish: firmer "chapter" headers (was 16px) so the 12 stacked sections
-     read as distinct units instead of running together. */
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 800;
   margin: 0;
-  color: var(--text-primary, #1a1a1a);
-  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--text-secondary, #8a8275);
 }
 
 .home-section-more {
   background: none;
   border: 0;
   font-size: 12px;
-  color: var(--accent, #3a72c4);
+  font-weight: 600;
+  color: rgb(var(--brand-orange-rgb));
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 3px;
+  transition: opacity 140ms ease;
 }
 .home-section-more:hover {
-  background: rgba(58, 114, 196, 0.08);
+  opacity: 0.75;
 }
 
 .home-empty {
@@ -581,9 +604,9 @@
 }
 
 .home-section-source {
-  font-size: 11px;
-  color: var(--text-secondary, #888);
-  font-style: italic;
+  font-size: 10.5px;
+  color: rgba(120, 100, 75, 0.62);
+  letter-spacing: 0.02em;
 }
 
 /* ── 4.4.32: Tour Date card (Bandsintown, library-personalized) ──────── */
@@ -610,7 +633,7 @@
   animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
 }
 .home-tour-card:hover {
-  background: #fafbff;
+  background: #fdfaf4;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.10);
   transform: translateY(-1px);
 }

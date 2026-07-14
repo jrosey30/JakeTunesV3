@@ -694,7 +694,9 @@ export default function HomeView() {
           </div>
           {memory.observations[0] && (
             <blockquote className="home-memory-obs">
-              “{memory.observations[0]}”
+              {/* Notebook is LLM prose — strip markdown emphasis markers (** / __)
+                  so literal asterisks never reach the page (spotted live 2026-07-14). */}
+              “{memory.observations[0].replace(/\*\*|__/g, '')}”
               <cite> — Music Man’s notebook</cite>
             </blockquote>
           )}

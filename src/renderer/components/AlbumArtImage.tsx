@@ -71,7 +71,10 @@ export default function AlbumArtImage({
       fetchPriority={priority ? 'high' : 'auto'}
       draggable={false}
       onLoad={handleLoad}
-      onError={onError}
+      // A missing/corrupt artwork file must degrade to the parent's clean
+      // placeholder background — never the browser's broken-image glyph
+      // (spotted live on the Home "Recently Added" row, 2026-07-14).
+      onError={(e) => { e.currentTarget.style.visibility = 'hidden'; onError?.(e) }}
     />
   )
 }
