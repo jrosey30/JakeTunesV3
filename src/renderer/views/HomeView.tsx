@@ -685,14 +685,10 @@ export default function HomeView() {
               </div>
             )}
           </div>
-          {memory.observations[0] && (
-            <blockquote className="home-memory-obs">
-              {/* Notebook is LLM prose — strip markdown emphasis markers (** / __)
-                  so literal asterisks never reach the page (spotted live 2026-07-14). */}
-              “{memory.observations[0].replace(/\*\*|__/g, '')}”
-              <cite> — Music Man’s notebook</cite>
-            </blockquote>
-          )}
+          {/* Music Man's notebook was here — removed 2026-07-14. LLM prose
+              can't be safely clipped (a "sentence" boundary landed inside a
+              quoted song title). The full notebook lives in Music Man's view;
+              the dashboard shows numbers, not essays. */}
         </section>
       )}
 
