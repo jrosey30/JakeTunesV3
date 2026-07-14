@@ -591,7 +591,8 @@ declare global {
       getRelatedArtists: (artist: string) => Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }>
       // 4.5.0-118 — Discovery Brain Phase 2: new-music radar. anchor/anchors/
       // fingerprintSummary feed the "Seeded from" chips + "because you play X" reasoning.
-      getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
+      getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; brainPct?: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
+      discoveryNotForMe: (artist: string) => Promise<{ ok: boolean }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>

@@ -21,6 +21,7 @@ interface RadarCandidate {
   why: string
   anchor?: string
   score: number
+  brainPct?: number
   reasons: string[]
 }
 
@@ -273,7 +274,9 @@ export default function NewForYouView() {
         <div className="nfy-grid">
           {candidates.map((c) => {
             const key = radarKey(c)
-            const pct = Math.round(c.score * 100)
+            // Brain match when available (embedded vs Jake's starred/heavy-
+            // rotation exemplars); genre heuristic only as fallback.
+            const pct = c.brainPct ?? Math.round(c.score * 100)
             const isAdded = added.has(key)
             const art = enriched[key]?.art
             const previewUrl = enriched[key]?.preview
@@ -288,7 +291,18 @@ export default function NewForYouView() {
                   {art
                     ? <img src={art} alt={c.title} loading="lazy" />
                     : <div className="nfy-cover-ph">♫</div>}
-                  <div className="nfy-match" title={`${pct}% taste match`}>{pct}%</div>
+                  <div className="nfy-match" title={c.brainPct != null ? `${pct}% brain match` : `${pct}% taste match`}>{pct}%</div>
+                  <button
+                    type="button"
+                    className="nfy-nope"
+                    title={`Not for me — never show ${c.artist} again`}
+                    aria-label="Not for me"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void window.electronAPI.discoveryNotForMe?.(c.artist)
+                      setCandidates((cur) => { const next = cur.filter((x) => x.artist !== c.artist); radarCache = next; return next })
+                    }}
+                  >✕</button>
                   {previewUrl && (
                     <button
                       type="button"

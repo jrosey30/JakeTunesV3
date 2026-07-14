@@ -1070,6 +1070,24 @@ const RADAR_SCENES: Record<string, string> = {
   'Pop': 'pop',
   'Jazz, Blues & Classical': 'jazz and experimental',
 }
+// Normalized key for discovery feedback (artist- and title-level).
+function normArtistKey(sname: string): string {
+  return String(sname || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+// Jake's thumbs-down: suppress this artist from Discovery permanently and
+// drop them from the current cache so the card vanishes on next read.
+ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
+  const key = normArtistKey(artist)
+  if (!key) return { ok: false }
+  await discoveryFeedbackCache.update((cur) => {
+    cur.notForMe[key] = { artist: String(artist), at: Date.now() }
+    return cur
+  })
+  if (radarCache) radarCache.candidates = radarCache.candidates.filter((c: { artist: string }) => normArtistKey(c.artist) !== key)
+  return { ok: true }
+})
+
 ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
   if (!force && radarCache && Date.now() - radarCache.generatedAt < RADAR_TTL_MS) {
     return { ok: true, candidates: radarCache.candidates, generatedAt: radarCache.generatedAt, cached: true, fingerprintSummary: radarCache.fingerprintSummary, anchors: radarCache.anchors }
@@ -1123,7 +1141,42 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
       const k = recoIdentityKey(a, t)
       return k != null && listKeys.has(k)
     }
-    const candidates = rankCandidates(fp, parseCandidates(text), 12, isOnList, anchors)
+    // Rank generously (24), then let the BRAIN and Jake's verdicts cut it down.
+    const ranked = rankCandidates(fp, parseCandidates(text), 24, isOnList, anchors)
+
+    // Jake's verdicts: "not for me" artists never come back; cards served 4+
+    // times without a bite rotate out for two weeks (no more month-long squatters).
+    const fb = await discoveryFeedbackCache.get()
+    const nowMs = Date.now()
+    const ROTATE_VIEWS = 4, ROTATE_REST_MS = 14 * 24 * 3600 * 1000
+    const visible = ranked.filter((c) => {
+      if (fb.notForMe[normArtistKey(c.artist)]) return false
+      const sv = fb.served[`${normArtistKey(c.artist)}|${normArtistKey(c.title)}`]
+      if (sv && sv.views >= ROTATE_VIEWS && nowMs - sv.last < ROTATE_REST_MS) return false
+      return true
+    })
+
+    // The real match %: candidates embedded into the library's own vector
+    // space, scored against Jake's starred/heavy-rotation exemplars. Falls
+    // back to the genre heuristic only if the brain is unavailable.
+    const { brainMatchCandidates } = await import('./discovery-brain.ts')
+    const brainPcts = await brainMatchCandidates(
+      visible.map((c) => ({ artist: c.artist, title: c.title, genre: c.genre, year: c.year })),
+      Array.isArray(lib.tracks) ? (lib.tracks as Array<{ id?: number; rating?: number; playCount?: number }>) : [],
+    )
+    const withBrain = visible.map((c, i) => ({ ...c, brainPct: brainPcts ? brainPcts[i] : undefined }))
+    if (brainPcts) withBrain.sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0))
+    const candidates = withBrain.slice(0, 12)
+
+    // Count this serving toward rotation.
+    await discoveryFeedbackCache.update((cur) => {
+      for (const c of candidates) {
+        const k = `${normArtistKey(c.artist)}|${normArtistKey(c.title)}`
+        const sv = cur.served[k]
+        if (sv) { sv.views += 1; sv.last = nowMs } else cur.served[k] = { first: nowMs, last: nowMs, views: 1 }
+      }
+      return cur
+    })
     radarCache = { candidates, generatedAt: Date.now(), fingerprintSummary: fp.summary, anchors }
     return { ok: true, candidates, generatedAt: radarCache.generatedAt, fingerprintSummary: fp.summary, anchors }
   } catch (err) {
@@ -2698,6 +2751,19 @@ const lyricsCache = new JsonFileCache<Record<string, LyricsRecord>>(
   () => ({}),
   'lyrics',
 )
+// Discovery feedback — the radar's memory of Jake's verdicts. notForMe keys
+// are normalized artist names ("not for me" = that artist never surfaces in
+// Discovery again); served tracks per-candidate view counts so stale cards
+// rotate out instead of squatting for weeks (the Vince Staples bug).
+interface DiscoveryFeedback {
+  notForMe: Record<string, { artist: string; at: number }>
+  served: Record<string, { first: number; last: number; views: number }>
+}
+const discoveryFeedbackCache = new JsonFileCache<DiscoveryFeedback>(
+  () => join(STATE_DIR, 'discovery-feedback.json'),
+  () => ({ notForMe: {}, served: {} }),
+  'discovery-feedback',
+)
 const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
   () => join(STATE_DIR, 'mobile-stars.json'),
   () => ({ trackIds: [] }),
@@ -2770,6 +2836,7 @@ const STATE_FILE_NAMES = [
   // it LOCAL→NAS is what lets homemini's nightly brain-trainer read lyrics for
   // its "meaning" enrichment pass. Same desktop-authored contract as overrides.
   'lyrics.json',
+  'discovery-feedback.json',
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',

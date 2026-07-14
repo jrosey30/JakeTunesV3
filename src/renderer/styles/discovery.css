@@ -34,3 +34,25 @@
 
 /* Hosts whichever leaf view is active; each is height:100% + own scroll. */
 .discovery-body { flex: 1; min-height: 0; }
+
+/* Not-for-me — Jake's thumbs-down. Quiet until hover; one click and the
+   artist never surfaces in Discovery again (identity-tombstoned in
+   discovery-feedback.json). */
+.nfy-nope {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: rgba(20, 16, 12, 0.55);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 140ms ease, background 140ms ease;
+}
+.nfy-card:hover .nfy-nope { opacity: 1; }
+.nfy-nope:hover { background: rgba(160, 40, 30, 0.9); }
