@@ -1186,11 +1186,20 @@ ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
 // handler stays for back-compat until mobile migrates).
 let discoverFeedMem: { at: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> } | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
+// Jake (2026-07-14): "can it not look like this every time the app opens. it
+// should be there already... if it needs to update it will update." The feed
+// persists to disk and serves INSTANTLY on open; a stale feed refreshes in
+// the background and pushes the update to the renderer when ready.
+const discoverFeedDisk = new JsonFileCache<{ at: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }>(
+  () => join(STATE_DIR, 'discover-feed.json'),
+  () => ({ at: 0, lanes: [] }),
+  'discover-feed',
+)
+let discoverGenInFlight = false
 
-ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
-  if (!force && discoverFeedMem && Date.now() - discoverFeedMem.at < DISCOVER_TTL_MS) {
-    return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true }
-  }
+async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: unknown[] }>; generatedAt?: number; error?: string }> {
+  if (discoverGenInFlight) return { ok: false, error: 'already generating' }
+  discoverGenInFlight = true
   try {
     const df = await import('./discover-feed.ts')
     const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
@@ -1321,12 +1330,43 @@ ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
     })
 
     // Never cache an empty feed — a transient failure (Apple 403, Exa down)
-    // must not stick for 3 hours; the next open retries.
-    if (lanes.length > 0) discoverFeedMem = { at: nowMs, lanes }
+    // must not stick; the next open retries.
+    if (lanes.length > 0) {
+      discoverFeedMem = { at: nowMs, lanes }
+      await discoverFeedDisk.update(() => ({ at: nowMs, lanes }))
+      mainWindow?.webContents.send('discover-feed-updated', { lanes, generatedAt: nowMs })
+    }
     return { ok: true, lanes, generatedAt: nowMs }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'discover failed' }
+  } finally {
+    discoverGenInFlight = false
   }
+}
+
+ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
+  const isFresh = (at: number) => Date.now() - at < DISCOVER_TTL_MS
+  if (!discoverFeedMem) {
+    const disk = await discoverFeedDisk.get()
+    if (disk.lanes.length) discoverFeedMem = disk
+  }
+  if (!force && discoverFeedMem?.lanes.length) {
+    // Serve what we have INSTANTLY; refresh behind the scenes if stale.
+    if (!isFresh(discoverFeedMem.at)) void generateDiscoverFeed()
+    return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true, stale: !isFresh(discoverFeedMem.at) }
+  }
+  return generateDiscoverFeed()
+})
+
+// Boot warmer: if the persisted feed is stale/empty, regenerate quietly ~25s
+// after launch so the tab is ready before Jake ever opens it.
+app.whenReady().then(() => {
+  setTimeout(() => {
+    void (async () => {
+      const disk = await discoverFeedDisk.get()
+      if (!disk.lanes.length || Date.now() - disk.at >= DISCOVER_TTL_MS) void generateDiscoverFeed()
+    })()
+  }, 25000)
 })
 
 ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {

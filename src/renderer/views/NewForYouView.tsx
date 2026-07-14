@@ -86,6 +86,16 @@ export default function NewForYouView() {
 
   useEffect(() => { if (feedCache === null) void load() }, [])
 
+  // A stale feed serves instantly; when the background refresh lands, main
+  // pushes the fresh lanes here — the page quietly updates in place.
+  useEffect(() => {
+    const off = window.electronAPI.onDiscoverFeedUpdated?.((p) => {
+      feedCache = p.lanes; feedAtCache = p.generatedAt
+      setLanes(p.lanes); setGeneratedAt(p.generatedAt)
+    })
+    return () => { off?.() }
+  }, [])
+
   const notForMe = (c: FeedCard) => {
     void window.electronAPI.discoveryNotForMe?.(c.artist)
     const next = lanes.map((l) => ({ ...l, cards: l.cards.filter((x) => x.artist !== c.artist) })).filter((l) => l.cards.length > 0)
