@@ -531,12 +531,6 @@ export default function HomeView() {
             </span>
           )}
         </div>
-        <p className="home-subtitle">
-          {lib.tracks.length.toLocaleString()} songs in your library
-          {recentAlbums.length > 0 && (
-            <> · last import {new Date(recentAlbums[0].newestAdded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</>
-          )}
-        </p>
       </div>
 
       {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
@@ -578,7 +572,7 @@ export default function HomeView() {
             </div>
           </div>
           <div className="home-featured-info">
-            <div className="home-featured-label">Today's pick from your library</div>
+            <div className="home-featured-label">Today's pick</div>
             <h2 className="home-featured-title">{featuredAlbum.album}</h2>
             <div className="home-featured-artist">{featuredAlbum.artist}</div>
             <div className="home-featured-meta">
@@ -643,7 +637,6 @@ export default function HomeView() {
             <h2 className="home-section-title">Listening Memory</h2>
             <span className="home-memory-since">
               {memory.insights.totals.daysActive} active day{memory.insights.totals.daysActive === 1 ? '' : 's'}
-              {memory.lifetime.firstSeen ? ` · since ${formatAppDate(memory.lifetime.firstSeen)}` : ''}
             </span>
           </div>
           <div className="home-stats home-stats--memory">
@@ -708,7 +701,7 @@ export default function HomeView() {
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Rediscover</h2>
-            <span className="home-section-source">overlooked in your own library · Music Man</span>
+            <span className="home-section-source">Music Man</span>
           </div>
           <div className="home-card-row" role="list" ref={rediscoverRowRef}>
             {rediscovery.map((pick) => {
@@ -857,8 +850,8 @@ export default function HomeView() {
       {tourDates !== null && tourDates.length > 0 && (
         <section className="home-section">
           <div className="home-section-header">
-            <h2 className="home-section-title">Coming to a Stage Near You</h2>
-            <span className="home-section-source">via Bandsintown · your artists · NYC metro (≈1hr), the city first</span>
+            <h2 className="home-section-title">Live Near You</h2>
+            <span className="home-section-source">via Bandsintown</span>
           </div>
           <div className="home-card-row" role="list" ref={tourDatesRowRef}>
             {tourDates.slice(0, 20).map((ev, i) => {
@@ -894,7 +887,7 @@ export default function HomeView() {
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">On the Horizon</h2>
-            <span className="home-section-source">via MusicBrainz · upcoming albums from your artists</span>
+            <span className="home-section-source">via MusicBrainz</span>
           </div>
           <div className="home-card-row" role="list" ref={upcomingRowRef}>
             {upcoming.map((item, i) => (

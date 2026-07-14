@@ -9,7 +9,7 @@
   /* 4.5 polish: warm cream canvas so the card panels (hero, stat tiles, memory)
      lift off it. Pre-fix the page was --white and the panels were ALSO --white,
      separated only by a 6% hairline — so nothing read as a card. */
-  background: var(--home-canvas, #f0ebe1);
+  background: var(--home-canvas, #f2f0eb);
   /* 4.4.35 smoother scroll: hint the compositor that this element
      is scrolled often, so it gets its own GPU layer and each scroll
      frame doesn't repaint the page-level background or trigger
@@ -22,11 +22,11 @@
    N tracks" line that felt like a debug printout. */
 .home-header {
   padding: 36px 28px 26px 28px;
-  border-bottom: 1px solid rgba(120, 90, 50, 0.10);
+  border-bottom: 1px solid rgba(85, 78, 64, 0.10);
   margin-bottom: 28px;
   /* 4.5 polish: warmer welcome band — a soft cream wash (was a barely-there 18%)
      that fades down into the canvas, so the greeting feels like a header, not a line. */
-  background: linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.6) 0%, rgba(var(--brand-cream-rgb), 0) 100%);
+  background: linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.32) 0%, rgba(var(--brand-cream-rgb), 0) 100%);
 }
 
 .home-title {
@@ -81,8 +81,8 @@
   /* 4.5 polish: a real warm "featured" wash — a brand-orange hint melting into
      cream — on a lifted panel, so Today's Pick reads as the centerpiece (was a
      7% orange→blue tint that was effectively invisible). */
-  background: linear-gradient(135deg, rgba(var(--brand-orange-rgb), 0.12) 0%, rgba(var(--brand-cream-rgb), 0.65) 55%, rgba(var(--brand-cream-rgb), 0.42) 100%);
-  border: 1px solid rgba(120, 90, 50, 0.12);
+  background: linear-gradient(135deg, rgba(var(--brand-orange-rgb), 0.06) 0%, rgba(var(--brand-cream-rgb), 0.5) 55%, rgba(var(--brand-cream-rgb), 0.35) 100%);
+  border: 1px solid rgba(85, 78, 64, 0.12);
   border-radius: 12px;
   box-shadow: 0 1px 2px rgba(70, 55, 40, 0.05), 0 10px 30px rgba(70, 55, 40, 0.08);
   animation: home-card-in 320ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
@@ -123,7 +123,7 @@
   pointer-events: none;
   /* Strongest at the right edge (where the bleed is unmasked) so even a
      monochrome cover lands as warm smoke, never a dead gray slab. */
-  background: linear-gradient(90deg, rgba(var(--brand-orange-rgb), 0.08) 0%, rgba(var(--brand-cream-rgb), 0.35) 55%, rgba(var(--brand-cream-rgb), 0.68) 100%);
+  background: linear-gradient(90deg, rgba(var(--brand-orange-rgb), 0.04) 0%, rgba(var(--brand-cream-rgb), 0.4) 55%, rgba(var(--brand-cream-rgb), 0.7) 100%);
 }
 /* Art + text ride above the bleed. */
 .home-featured-art { z-index: 1; }
@@ -267,8 +267,8 @@
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 0;
   margin: 0 28px 32px 28px;
-  background: rgba(120, 90, 50, 0.045);
-  border: 1px solid rgba(120, 90, 50, 0.10);
+  background: rgba(85, 78, 64, 0.045);
+  border: 1px solid rgba(85, 78, 64, 0.10);
   border-radius: 10px;
   box-shadow: inset 0 1px 3px rgba(70, 55, 40, 0.06), 0 1px 0 rgba(255, 255, 255, 0.55);
   overflow: hidden;
@@ -276,7 +276,7 @@
 }
 .home-stat {
   padding: 14px 18px;
-  border-left: 1px solid rgba(120, 90, 50, 0.09);
+  border-left: 1px solid rgba(85, 78, 64, 0.09);
 }
 .home-stat:first-child {
   border-left: none;
@@ -341,7 +341,7 @@
   gap: 12px;
   margin: 0 28px;
   padding: 18px 0 12px 0;
-  border-top: 1px solid rgba(120, 90, 50, 0.09);
+  border-top: 1px solid rgba(85, 78, 64, 0.09);
 }
 
 .home-section-title {
@@ -888,7 +888,7 @@
    in place in <340ms, fast enough to feel snappy, slow enough to be
    perceived as deliberate motion rather than a hard cut. */
 @keyframes home-card-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(14px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .home-card-row > *:nth-child(1)  { animation-delay:   0ms; }
@@ -944,13 +944,13 @@
    faint warm wash, no elevation, slightly smaller — so Listening Memory reads as
    its own softer "memory" strip beneath the primary, elevated stat cards. */
 .home-stats--memory .home-stat {
-  background: rgba(120, 90, 50, 0.045);
-  border-color: rgba(120, 90, 50, 0.09);
+  background: rgba(85, 78, 64, 0.045);
+  border-color: rgba(85, 78, 64, 0.09);
   box-shadow: none;
   padding: 12px 15px;
 }
 .home-stats--memory .home-stat:hover {
-  background: rgba(120, 90, 50, 0.08);
+  background: rgba(85, 78, 64, 0.08);
   box-shadow: none;
   transform: none;
 }
@@ -1031,4 +1031,30 @@
 .home-tour-miles {
   opacity: 0.85;
   font-weight: 600;
+}
+
+/* ── V6 motion: the page ARRIVES. Every section rises in sequence (16px
+   fade-up, ~55ms stagger) so landing on Home feels like the app setting
+   the table, not a static document. Uses the existing home-card-in
+   keyframes; sections after the 8th share the last delay. ── */
+.home-section {
+  animation: home-card-in 420ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.home-section:nth-of-type(1) { animation-delay: 60ms; }
+.home-section:nth-of-type(2) { animation-delay: 115ms; }
+.home-section:nth-of-type(3) { animation-delay: 170ms; }
+.home-section:nth-of-type(4) { animation-delay: 225ms; }
+.home-section:nth-of-type(5) { animation-delay: 280ms; }
+.home-section:nth-of-type(6) { animation-delay: 335ms; }
+.home-section:nth-of-type(n+7) { animation-delay: 390ms; }
+.home-stats { animation-delay: 40ms; }
+.home-mixes { animation-delay: 25ms; }
+
+/* Notebook quote: three lines, not an essay — the full thought lives in
+   Music Man's own view. Clamp keeps the dashboard scannable. */
+.home-memory-obs {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
