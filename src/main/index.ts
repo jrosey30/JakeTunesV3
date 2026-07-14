@@ -1075,6 +1075,79 @@ function normArtistKey(sname: string): string {
   return String(sname || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
+// ── Listen to the List v2: friends ledger + capture-anything resolver ──
+ipcMain.handle('get-friends', async () => {
+  const f = await friendsCache.get()
+  return { ok: true, friends: Object.values(f).sort((a, b) => b.adds - a.adds) }
+})
+ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
+  const key = String(name || '').trim().toLowerCase()
+  if (!key) return { ok: false }
+  await friendsCache.update((cur) => {
+    const f = cur[key] || { name: String(name).trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
+    if (ev === 'add') f.adds += 1
+    if (ev === 'got') f.got += 1
+    if (ev === 'tossed') f.tossed += 1
+    f.lastAt = Date.now()
+    cur[key] = f
+    return cur
+  })
+  return { ok: true }
+})
+
+// Resolve a pasted link (Spotify / YouTube / TikTok / anything with OG tags)
+// into a best-guess song + artist. GROUNDED: this only extracts what the
+// page itself says — the renderer always verifies against iTunes Search and
+// the USER picks the candidate; nothing is auto-added from a guess.
+ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => {
+  const u = String(rawUrl || '').trim()
+  if (!/^https?:\/\//i.test(u)) return { ok: false }
+  const get = async (url: string): Promise<string | null> => {
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh) JakeTunes/1.0' }, signal: AbortSignal.timeout(8000) })
+      return r.ok ? await r.text() : null
+    } catch { return null }
+  }
+  try {
+    if (/open\.spotify\.com\/(track|album)\//i.test(u)) {
+      // Spotify page <title>: "Song - song and lyrics by Artist | Spotify"
+      const html = await get(u)
+      const t = html?.match(/<title>([^<]+)<\/title>/i)?.[1] || ''
+      const m = t.match(/^(.*?)\s*[-–]\s*(?:song(?: and lyrics)? by\s*)?(.*?)\s*\|\s*Spotify/i)
+      if (m) return { ok: true, kind: 'spotify', title: m[1].trim(), artist: m[2].trim() }
+      const oe = await get(`https://open.spotify.com/oembed?url=${encodeURIComponent(u)}`)
+      const title = oe ? (JSON.parse(oe).title as string) : ''
+      return { ok: true, kind: 'spotify', title: title || undefined, raw: t || undefined }
+    }
+    if (/youtube\.com|youtu\.be/i.test(u)) {
+      const oe = await get(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(u)}`)
+      if (oe) {
+        const j = JSON.parse(oe) as { title?: string; author_name?: string }
+        const t = String(j.title || '')
+        const m = t.match(/^(.*?)\s*[-–]\s*(.*)$/)
+        const artist = (j.author_name || '').replace(/\s*-\s*Topic$/i, '')
+        if (m) return { ok: true, kind: 'youtube', title: m[2].trim(), artist: m[1].trim(), raw: t }
+        return { ok: true, kind: 'youtube', title: t || undefined, artist: artist || undefined }
+      }
+      return { ok: false }
+    }
+    if (/tiktok\.com/i.test(u)) {
+      const oe = await get(`https://www.tiktok.com/oembed?url=${encodeURIComponent(u)}`)
+      const j = oe ? JSON.parse(oe) as { title?: string } : {}
+      // TikTok captions rarely name the song cleanly — hand the caption back
+      // as raw context; the user types/edits what they hear.
+      return { ok: true, kind: 'tiktok', raw: j.title || undefined }
+    }
+    // Generic: og:title
+    const html = await get(u)
+    const og = html?.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]
+      || html?.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
+    return { ok: true, kind: 'link', raw: og || undefined }
+  } catch {
+    return { ok: false }
+  }
+})
+
 // Jake's thumbs-down: suppress this artist from Discovery permanently and
 // drop them from the current cache so the card vanishes on next read.
 ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
@@ -2764,6 +2837,15 @@ const discoveryFeedbackCache = new JsonFileCache<DiscoveryFeedback>(
   () => ({ notForMe: {}, served: {} }),
   'discovery-feedback',
 )
+// Friends ledger — who sends Jake music and how reliable they are. Updated on
+// list adds ('add'), downloads that land ('got'), and tosses ('tossed');
+// the Scouts strip in Listen to the List ranks by hit rate.
+interface FriendEntry { name: string; adds: number; got: number; tossed: number; lastAt: number }
+const friendsCache = new JsonFileCache<Record<string, FriendEntry>>(
+  () => join(STATE_DIR, 'friends.json'),
+  () => ({}),
+  'friends',
+)
 const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
   () => join(STATE_DIR, 'mobile-stars.json'),
   () => ({ trackIds: [] }),
@@ -2837,6 +2919,7 @@ const STATE_FILE_NAMES = [
   // its "meaning" enrichment pass. Same desktop-authored contract as overrides.
   'lyrics.json',
   'discovery-feedback.json',
+  'friends.json',
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',
@@ -11833,12 +11916,24 @@ ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boole
   return readRecoInflight
 })
 
-ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> => {
+ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> => {
+  // v2 capture: friend attribution + source link ride the synced `note`
+  // field (backend passes note through verbatim), and the friend gets an
+  // 'add' tick in the local ledger for the Scouts ranking.
+  const noteBits = [input.note?.trim(), input.from?.trim() ? `from ${input.from.trim()}` : '', input.link?.trim() || ''].filter(Boolean)
   const trimmed = {
     song: input.song?.trim() || undefined,
     artist: input.artist?.trim() || undefined,
     album: input.album?.trim() || undefined,
-    note: input.note?.trim() || undefined,
+    note: noteBits.length ? noteBits.join(' · ') : undefined,
+  }
+  if (input.from?.trim()) {
+    void friendsCache.update((cur) => {
+      const key = input.from!.trim().toLowerCase()
+      const f = cur[key] || { name: input.from!.trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
+      f.adds += 1; f.lastAt = Date.now(); cur[key] = f
+      return cur
+    })
   }
   if (!trimmed.song && !trimmed.artist && !trimmed.album && !trimmed.note) {
     return { ok: false, error: 'nothing to add' }

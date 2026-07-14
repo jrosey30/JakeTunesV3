@@ -23,9 +23,12 @@ export interface AddFormState {
   artist: string
   album: string
   note: string
+  // v2 capture: who sent it + the link it came from (both optional).
+  from: string
+  link: string
 }
 
-const EMPTY_FORM: AddFormState = { song: '', artist: '', album: '', note: '' }
+const EMPTY_FORM: AddFormState = { song: '', artist: '', album: '', note: '', from: '', link: '' }
 
 export function useListenToTheList() {
   const cachedRecs = getRecsCache()
@@ -218,6 +221,8 @@ export function useListenToTheList() {
       artist: form.artist.trim() || undefined,
       album: form.album.trim() || undefined,
       note: form.note.trim() || undefined,
+      from: form.from.trim() || undefined,
+      link: form.link.trim() || undefined,
     }
     const canAdd = trimmed.song || trimmed.artist || trimmed.album || trimmed.note
     if (!canAdd || adding) return { ok: false as const }

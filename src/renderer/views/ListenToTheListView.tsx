@@ -1,10 +1,27 @@
-import { useState, useRef, useSyncExternalStore } from 'react'
+/**
+ * Listen to the List v2 — the capture-anything inbox (2026-07-14 rebuild).
+ *
+ * Ground-up rethink on the PROVEN sync layer (Briefs 126/127 identity
+ * deletes stay). What changed is the experience:
+ *
+ *  - ONE omnibox. Type a sloppy guess OR paste a link (Spotify / YouTube /
+ *    TikTok / anything) — links resolve to a song guess via main's
+ *    capture-resolve-link, then iTunes Search verifies. No more spelling
+ *    anxiety: you SEE the real song with artwork and click it. One click
+ *    on a candidate ADDS it (no fill-then-submit two-step).
+ *  - Friend attribution: tag who sent it ("From"), building a local
+ *    Scouts ledger — adds / gots / tosses per friend — so the strip up
+ *    top shows who actually has the ear.
+ *  - Raw jots still save un-resolved on Enter (grounded: never force a
+ *    match), exactly like the old flow.
+ */
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, stopPreview } from '../previewPlayer'
-import type { Recommendation } from '../types'
+import type { Recommendation, ItunesSuggestion } from '../types'
 import { MmSuggestions, RecoRow } from '../listen-to-the-list/components'
 import { useItunesAutocomplete } from '../listen-to-the-list/useItunesAutocomplete'
 import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
@@ -18,43 +35,99 @@ import {
 } from '../listen-to-the-list/ltlDownload'
 import '../styles/listen-to-the-list.css'
 
+interface Friend { name: string; adds: number; got: number; tossed: number; lastAt: number }
+
+/** Who sent this rec, parsed back out of the synced note ("… · from Ben · …"). */
+function friendOf(rec: Recommendation): string | null {
+  const m = String(rec.note || '').match(/(?:^|· )from ([^·]+?)(?: ·|$)/)
+  return m ? m[1].trim() : null
+}
+
+const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s.trim())
+
 export default function ListenToTheListView() {
   const { dispatch } = useLibrary()
   const {
-    recs,
-    loading,
-    adding,
-    visibleMm,
-    suggLoading,
-    refreshSuggestions,
-    addFromForm,
-    addSuggestion,
-    deleteRecommendation,
-    EMPTY_FORM,
+    recs, loading, adding, visibleMm, suggLoading,
+    refreshSuggestions, addFromForm, addSuggestion, deleteRecommendation, EMPTY_FORM,
   } = useListenToTheList()
 
   const [form, setForm] = useState<AddFormState>(EMPTY_FORM)
+  const [omni, setOmni] = useState('')
+  const [from, setFrom] = useState('')
+  const [linkInfo, setLinkInfo] = useState<{ kind: string; link: string } | null>(null)
+  const [resolving, setResolving] = useState(false)
+  const [friends, setFriends] = useState<Friend[]>([])
   const [deleteTarget, setDeleteTarget] = useState<Recommendation | null>(null)
+  const omniRef = useRef<HTMLInputElement>(null)
+
+  // The omnibox drives the iTunes verifier directly (song = raw text).
   const { suggestions, searching, pick, clearSuggestions } = useItunesAutocomplete(form.song, form.artist)
 
   const viewRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('listen-to-the-list', viewRef)
 
-  const canAdd = Boolean(form.song.trim() || form.artist.trim() || form.album.trim() || form.note.trim())
+  useEffect(() => {
+    void window.electronAPI.getFriends?.().then((r) => { if (r?.ok) setFriends(r.friends) })
+  }, [recs.length])
 
+  // Omnibox → form. A pasted URL resolves through main (oEmbed/OG) into a
+  // song/artist guess; plain text just becomes the search seed.
+  const handleOmni = async (raw: string) => {
+    setOmni(raw)
+    if (isUrl(raw)) {
+      setResolving(true)
+      try {
+        const r = await window.electronAPI.captureResolveLink?.(raw.trim())
+        if (r?.ok) {
+          setLinkInfo({ kind: r.kind || 'link', link: raw.trim() })
+          const seed = r.title || r.raw || ''
+          setForm((f) => ({ ...f, song: seed, artist: r.artist || '', link: raw.trim() }))
+          setOmni(seed ? `${seed}${r.artist ? ` — ${r.artist}` : ''}` : raw)
+        }
+      } finally { setResolving(false) }
+    } else {
+      setForm((f) => ({ ...f, song: raw, artist: '', link: linkInfo?.link || '' }))
+    }
+  }
+
+  const resetCapture = () => {
+    setOmni(''); setForm(EMPTY_FORM); setLinkInfo(null); clearSuggestions()
+    omniRef.current?.focus()
+  }
+
+  // One click on a verified candidate = ON THE LIST. The no-typing promise.
+  const quickAdd = async (s: ItunesSuggestion) => {
+    if (adding) return
+    const picked = pick(s)
+    const draft: AddFormState = { ...form, ...picked, from: from.trim(), link: linkInfo?.link || form.link }
+    resetCapture()
+    const res = await addFromForm(draft)
+    if (!res.ok) { setForm(draft); setOmni(draft.song) }
+  }
+
+  // Enter with no candidate picked = raw jot, saved as typed (never forced).
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!canAdd || adding) return
-    const draft = { ...form }
-    setForm(EMPTY_FORM)
-    clearSuggestions()
-    const result = await addFromForm(draft)
-    if (!result.ok) setForm(draft)
+    if (!omni.trim() || adding) return
+    const draft: AddFormState = { ...form, song: form.song || omni.trim(), from: from.trim(), link: linkInfo?.link || '' }
+    resetCapture()
+    const res = await addFromForm(draft)
+    if (!res.ok) { setForm(draft); setOmni(draft.song) }
   }
 
   const handleDelete = (rec: Recommendation) => {
     if (getPreviewSnapshot().playingId === rec.id) stopPreview()
+    const f = friendOf(rec)
+    if (f) void window.electronAPI.friendEvent?.(f, 'tossed')
     void deleteRecommendation(rec)
+  }
+
+  const openDownloadForReco = (rec: Recommendation) => {
+    const f = friendOf(rec)
+    if (f) void window.electronAPI.friendEvent?.(f, 'got')
+    prefillDownloadView(rec)
+    dispatch({ type: 'SET_VIEW', view: 'download' })
   }
 
   const jots = recs.filter((r) => (r.source ?? 'user') === 'user')
@@ -63,10 +136,7 @@ export default function ListenToTheListView() {
   const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
   const dlActive = [...dlMap.values()].some((s) => s.state === 'queued' || s.state === 'downloading')
 
-  const openDownloadForReco = (rec: Recommendation) => {
-    prefillDownloadView(rec)
-    dispatch({ type: 'SET_VIEW', view: 'download' })
-  }
+  const scouts = friends.filter((f) => f.adds > 0).slice(0, 8)
 
   return (
     <div className="ltl-view" ref={viewRef}>
@@ -86,50 +156,51 @@ export default function ListenToTheListView() {
         )}
       </div>
 
+      {/* ── Capture: one box for everything ── */}
       <div className="ltl-add-wrap">
-        <form className="ltl-add" onSubmit={handleSubmit}>
+        <form className="ltl-capture" onSubmit={handleSubmit}>
           <input
-            className="ltl-add-input"
-            placeholder="Song"
-            value={form.song}
-            onChange={(e) => setForm((f) => ({ ...f, song: e.target.value }))}
+            ref={omniRef}
+            className="ltl-omni"
+            placeholder="Drop a song, a Spotify/YouTube/TikTok link, or a hunch…"
+            value={omni}
+            onChange={(e) => void handleOmni(e.target.value)}
+            spellCheck={false}
           />
           <input
-            className="ltl-add-input"
-            placeholder="Artist"
-            value={form.artist}
-            onChange={(e) => setForm((f) => ({ ...f, artist: e.target.value }))}
+            className="ltl-from"
+            placeholder="From…"
+            title="Who sent you this? Builds your Scouts ranking."
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            list="ltl-friends-list"
+            spellCheck={false}
           />
-          <input
-            className="ltl-add-input"
-            placeholder="Album"
-            value={form.album}
-            onChange={(e) => setForm((f) => ({ ...f, album: e.target.value }))}
-          />
-          <input
-            className="ltl-add-input ltl-add-note"
-            placeholder="Note (optional)"
-            value={form.note}
-            onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
-          />
-          <button className="ltl-add-btn" type="submit" disabled={!canAdd || adding}>
-            {adding ? 'Adding…' : 'Add'}
+          <datalist id="ltl-friends-list">
+            {friends.map((f) => <option key={f.name} value={f.name} />)}
+          </datalist>
+          <button className="ltl-add-btn" type="submit" disabled={!omni.trim() || adding}>
+            {adding ? 'Adding…' : 'Jot it'}
           </button>
         </form>
-        {(suggestions.length > 0 || searching) && (
+        {linkInfo && (
+          <div className="ltl-linkinfo">
+            via {linkInfo.kind}{resolving ? ' — reading…' : ' — pick the match below (or edit the text)'}
+            <button type="button" className="ltl-linkinfo-x" onClick={resetCapture} aria-label="Clear">✕</button>
+          </div>
+        )}
+        {(suggestions.length > 0 || searching) && omni.trim() && (
           <div className="ltl-suggestions">
             {searching && suggestions.length === 0 && (
-              <div className="ltl-suggest-empty">Searching…</div>
+              <div className="ltl-suggest-empty">Checking…</div>
             )}
             {suggestions.map((s, i) => (
               <button
                 type="button"
                 key={`${s.song}-${s.artist}-${i}`}
                 className="ltl-suggest-row"
-                onClick={() => {
-                  const picked = pick(s)
-                  setForm((f) => ({ ...f, ...picked }))
-                }}
+                title="Click to add to your list"
+                onClick={() => void quickAdd(s)}
               >
                 {s.artworkUrl
                   ? <img className="ltl-suggest-art" src={s.artworkUrl} alt="" loading="lazy" />
@@ -139,11 +210,35 @@ export default function ListenToTheListView() {
                   <span className="ltl-suggest-artist">{s.artist}</span>
                   {s.album && <span className="ltl-suggest-album">{s.album}</span>}
                 </span>
+                <span className="ltl-suggest-add" aria-hidden="true">+ Add</span>
               </button>
             ))}
           </div>
         )}
       </div>
+
+      {/* ── Scouts: who actually has the ear ── */}
+      {scouts.length > 0 && (
+        <div className="ltl-scouts">
+          <span className="ltl-scouts-label">Scouts</span>
+          {scouts.map((f) => {
+            const verdicts = f.got + f.tossed
+            const rate = verdicts > 0 ? Math.round((f.got / verdicts) * 100) : null
+            return (
+              <button
+                type="button"
+                key={f.name}
+                className="ltl-scout"
+                title={`${f.adds} sent · ${f.got} got · ${f.tossed} tossed`}
+                onClick={() => setFrom(f.name)}
+              >
+                {f.name}
+                <span className="ltl-scout-stat">{rate != null ? `${rate}%` : `${f.adds}`}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <MmSuggestions
         visible={visibleMm}
@@ -155,7 +250,7 @@ export default function ListenToTheListView() {
       {loading ? (
         <div className="ltl-loading">Loading…</div>
       ) : recs.length === 0 ? (
-        <EmptyState noun="recommendations" subMessage="Jot down a song to start your list." />
+        <EmptyState noun="recommendations" subMessage="Drop a song, a link, or a hunch above — friends' picks get tracked too." />
       ) : (
         <div className="ltl-list">
           {jots.length > 0 && (
@@ -164,7 +259,10 @@ export default function ListenToTheListView() {
                 Your jots<span className="ltl-section-count">{jots.length}</span>
               </div>
               {jots.map((rec) => (
-                <RecoRow key={rec.id} rec={rec} onDelete={() => setDeleteTarget(rec)} onOpenDownload={openDownloadForReco} />
+                <div key={rec.id} className="ltl-row-wrap">
+                  <RecoRow rec={rec} onDelete={() => setDeleteTarget(rec)} onOpenDownload={openDownloadForReco} />
+                  {friendOf(rec) && <span className="ltl-row-from">from {friendOf(rec)}</span>}
+                </div>
               ))}
             </div>
           )}

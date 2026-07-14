@@ -474,3 +474,103 @@
 .empty-state-title { font-size: 14px; font-weight: 600; color: #3a3a3a; }
 .empty-state-title strong { font-weight: 700; color: #2a2a2a; }
 .empty-state-sub { font-size: 12px; max-width: 280px; line-height: 1.4; }
+
+/* ── v2 capture: the omnibox era ─────────────────────────────────────── */
+.ltl-capture {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ltl-omni {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  padding: 11px 14px;
+  border: 1px solid rgba(85, 78, 64, 0.22);
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+  outline: none;
+  color: #222;
+}
+.ltl-omni:focus { border-color: rgba(var(--brand-orange-rgb), 0.55); }
+.ltl-from {
+  flex: 0 0 130px;
+  font-size: 12.5px;
+  padding: 11px 12px;
+  border: 1px solid rgba(85, 78, 64, 0.18);
+  border-radius: 9px;
+  background: #fdfcf9;
+  outline: none;
+  color: #333;
+}
+.ltl-from:focus { border-color: rgba(var(--brand-orange-rgb), 0.45); }
+.ltl-linkinfo {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: rgba(120, 100, 75, 0.85);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ltl-linkinfo-x {
+  border: none; background: none; cursor: pointer;
+  color: rgba(120, 100, 75, 0.7); font-size: 11px; padding: 2px 4px;
+}
+.ltl-suggest-add {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgb(var(--brand-orange-rgb));
+  opacity: 0;
+  transition: opacity 120ms ease;
+  white-space: nowrap;
+  padding-left: 10px;
+}
+.ltl-suggest-row:hover .ltl-suggest-add { opacity: 1; }
+
+/* ── Scouts strip: friends ranked by ear ── */
+.ltl-scouts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 28px 14px;
+}
+.ltl-scouts-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #8a8275);
+  margin-right: 2px;
+}
+.ltl-scout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3a3428;
+  background: rgba(85, 78, 64, 0.06);
+  border: 1px solid rgba(85, 78, 64, 0.14);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 130ms ease;
+}
+.ltl-scout:hover { background: rgba(var(--brand-orange-rgb), 0.10); }
+.ltl-scout-stat {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: rgb(var(--brand-orange-rgb));
+}
+
+/* Friend byline under a jotted row */
+.ltl-row-wrap { position: relative; }
+.ltl-row-from {
+  display: block;
+  margin: -4px 0 6px 66px;
+  font-size: 10.5px;
+  color: rgba(120, 100, 75, 0.75);
+}

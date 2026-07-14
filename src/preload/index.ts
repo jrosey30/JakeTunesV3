@@ -199,7 +199,7 @@ const electronAPI = {
   // (next to library.json on the NAS); add/delete route through the Mini
   // backend so it stays the single writer.
   loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
-  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar' }) =>
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string }) =>
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   // Brief 126 — main pushes when the mirror changed (60s timer / mutations);
@@ -232,6 +232,9 @@ const electronAPI = {
   // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
   getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
   discoveryNotForMe: (artist: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('discovery-not-for-me', artist),
+  getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number }> }> => ipcRenderer.invoke('get-friends'),
+  friendEvent: (name: string, ev: 'add' | 'got' | 'tossed'): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-event', name, ev),
+  captureResolveLink: (url: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => ipcRenderer.invoke('capture-resolve-link', url),
   // 4.5.0-82 — windowed play counts derived from the per-play event
   // log. Returns { trackIdString: count } for plays in the last
   // `windowMs` ms. Used by Top 25's Last Week / Last Month views to
