@@ -1095,6 +1095,25 @@ ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tos
   return { ok: true }
 })
 
+// macOS Contacts names for the "From" typeahead. One osascript JXA call
+// (triggers the system's one-time Automation permission prompt for Contacts);
+// cached for the session. Denied/unavailable -> ok:false, the field still
+// accepts free-typed names. Names only — no numbers/emails ever leave Contacts.
+let contactsCache: { at: number; names: string[] } | null = null
+ipcMain.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] }> => {
+  if (contactsCache && Date.now() - contactsCache.at < 3600_000) return { ok: true, names: contactsCache.names }
+  try {
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const { stdout } = await promisify(execFile)('osascript', ['-l', 'JavaScript', '-e', 'JSON.stringify(Application("Contacts").people.name())'], { timeout: 30000 })
+    const names = (JSON.parse(stdout.trim()) as string[]).filter((n) => typeof n === 'string' && n.trim()).sort()
+    contactsCache = { at: Date.now(), names }
+    return { ok: true, names }
+  } catch {
+    return { ok: false, names: [] }
+  }
+})
+
 // Resolve a pasted link (Spotify / YouTube / TikTok / anything with OG tags)
 // into a best-guess song + artist. GROUNDED: this only extracts what the
 // page itself says — the renderer always verifies against iTunes Search and

@@ -67,10 +67,26 @@ export function RecoRow({ rec, onDelete, onOpenDownload }: RecoRowProps) {
         {(rec.matchedAlbum || rec.album) && (
           <div className="ltl-album">{rec.matchedAlbum || rec.album}</div>
         )}
-        {rec.note && <div className="ltl-note">{rec.note}</div>}
-        <div className="ltl-sub">
-          <span className="ltl-date">{formatAppDate(rec.createdAt)}</span>
-        </div>
+        {/* v2: the synced note carries machine bits ("from Ben", the source
+            URL). Display the HUMAN part only; the friend becomes ONE clean
+            chip on the date line (it was rendering twice — Jake caught it). */}
+        {(() => {
+          const rawNote = String(rec.note || '')
+          const friend = (rawNote.match(/(?:^|· )from ([^·]+?)(?: ·|$)/) || [])[1]?.trim()
+          const humanNote = rawNote
+            .replace(/(?:^|· )from [^·]+?(?= ·|$)/, '')
+            .replace(/https?:\/\/\S+/g, '')
+            .replace(/(?:\s*·\s*)+/g, ' · ').replace(/^\s*·\s*|\s*·\s*$/g, '').trim()
+          return (
+            <>
+              {humanNote && <div className="ltl-note">{humanNote}</div>}
+              <div className="ltl-sub">
+                <span className="ltl-date">{formatAppDate(rec.createdAt)}</span>
+                {friend && <span className="ltl-friend-chip">from {friend}</span>}
+              </div>
+            </>
+          )
+        })()}
       </div>
       {canDl && (
         <button

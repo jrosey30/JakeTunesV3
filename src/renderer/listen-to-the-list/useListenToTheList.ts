@@ -111,6 +111,10 @@ export function useListenToTheList() {
   useEffect(() => {
     if (loading) return
     if (mmPool.length >= MM_VISIBLE) return
+    // 2026-07-14: MM suggestions removed from the list view (Jake: 'he should
+    // just focus on New for You') — never auto-fetch here.
+    return
+    // eslint-disable-next-line no-unreachable
     if (wasAutoSuggestAttempted()) return
     if (isSuggestionsCacheFresh() && (getSuggestionsCache()?.length ?? 0) > 0) return
 

@@ -22,7 +22,7 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, stopPreview } from '../previewPlayer'
 import type { Recommendation, ItunesSuggestion } from '../types'
-import { MmSuggestions, RecoRow } from '../listen-to-the-list/components'
+import { RecoRow } from '../listen-to-the-list/components'
 import { useItunesAutocomplete } from '../listen-to-the-list/useItunesAutocomplete'
 import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
 import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
@@ -48,8 +48,8 @@ const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s.trim())
 export default function ListenToTheListView() {
   const { dispatch } = useLibrary()
   const {
-    recs, loading, adding, visibleMm, suggLoading,
-    refreshSuggestions, addFromForm, addSuggestion, deleteRecommendation, EMPTY_FORM,
+    recs, loading, adding,
+    addFromForm, deleteRecommendation, EMPTY_FORM,
   } = useListenToTheList()
 
   const [form, setForm] = useState<AddFormState>(EMPTY_FORM)
@@ -58,6 +58,7 @@ export default function ListenToTheListView() {
   const [linkInfo, setLinkInfo] = useState<{ kind: string; link: string } | null>(null)
   const [resolving, setResolving] = useState(false)
   const [friends, setFriends] = useState<Friend[]>([])
+  const [contacts, setContacts] = useState<string[]>([])
   const [deleteTarget, setDeleteTarget] = useState<Recommendation | null>(null)
   const omniRef = useRef<HTMLInputElement>(null)
 
@@ -70,6 +71,12 @@ export default function ListenToTheListView() {
   useEffect(() => {
     void window.electronAPI.getFriends?.().then((r) => { if (r?.ok) setFriends(r.friends) })
   }, [recs.length])
+
+  // macOS Contacts names feed the From typeahead (one TCC prompt, then cached
+  // in main). Free-typing still works — contacts are suggestions, not a gate.
+  useEffect(() => {
+    void window.electronAPI.getContacts?.().then((r) => { if (r?.ok) setContacts(r.names) })
+  }, [])
 
   // Omnibox → form. A pasted URL resolves through main (oEmbed/OG) into a
   // song/artist guess; plain text just becomes the search seed.
@@ -170,14 +177,14 @@ export default function ListenToTheListView() {
           <input
             className="ltl-from"
             placeholder="From…"
-            title="Who sent you this? Builds your Scouts ranking."
+            title="Who sent you this? Builds your Friends ranking."
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             list="ltl-friends-list"
             spellCheck={false}
           />
           <datalist id="ltl-friends-list">
-            {friends.map((f) => <option key={f.name} value={f.name} />)}
+            {[...new Set([...friends.map((f) => f.name), ...contacts])].map((n) => <option key={n} value={n} />)}
           </datalist>
           <button className="ltl-add-btn" type="submit" disabled={!omni.trim() || adding}>
             {adding ? 'Adding…' : 'Jot it'}
@@ -220,7 +227,7 @@ export default function ListenToTheListView() {
       {/* ── Scouts: who actually has the ear ── */}
       {scouts.length > 0 && (
         <div className="ltl-scouts">
-          <span className="ltl-scouts-label">Scouts</span>
+          <span className="ltl-scouts-label">Friends</span>
           {scouts.map((f) => {
             const verdicts = f.got + f.tossed
             const rate = verdicts > 0 ? Math.round((f.got / verdicts) * 100) : null
@@ -240,13 +247,6 @@ export default function ListenToTheListView() {
         </div>
       )}
 
-      <MmSuggestions
-        visible={visibleMm}
-        loading={suggLoading}
-        onRefresh={() => void refreshSuggestions()}
-        onAdd={(s) => void addSuggestion(s)}
-      />
-
       {loading ? (
         <div className="ltl-loading">Loading…</div>
       ) : recs.length === 0 ? (
@@ -259,10 +259,7 @@ export default function ListenToTheListView() {
                 Your jots<span className="ltl-section-count">{jots.length}</span>
               </div>
               {jots.map((rec) => (
-                <div key={rec.id} className="ltl-row-wrap">
-                  <RecoRow rec={rec} onDelete={() => setDeleteTarget(rec)} onOpenDownload={openDownloadForReco} />
-                  {friendOf(rec) && <span className="ltl-row-from">from {friendOf(rec)}</span>}
-                </div>
+                <RecoRow key={rec.id} rec={rec} onDelete={() => setDeleteTarget(rec)} onOpenDownload={openDownloadForReco} />
               ))}
             </div>
           )}

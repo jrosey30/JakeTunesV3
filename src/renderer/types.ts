@@ -596,6 +596,7 @@ declare global {
       getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number }> }>
       friendEvent: (name: string, ev: 'add' | 'got' | 'tossed') => Promise<{ ok: boolean }>
       captureResolveLink: (url: string) => Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }>
+      getContacts: () => Promise<{ ok: boolean; names: string[] }>
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
