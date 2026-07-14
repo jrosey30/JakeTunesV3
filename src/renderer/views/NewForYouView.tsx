@@ -15,11 +15,12 @@
  * they got here; "You're Missing" comes straight from MusicBrainz
  * discographies minus what the library owns.
  */
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
+import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import type { RediscoveryPick } from '../types'
 import '../styles/discover-feed.css'
 
@@ -52,6 +53,10 @@ export default function NewForYouView() {
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const { state: lib } = useLibrary()
   const { playTrack } = useAudio()
+  // Same normalized artwork lookup Home uses — a raw \`artist|||album\` key
+  // misses the map's normalization and rendered Jake's OWN albums as gray
+  // placeholders (his screenshot, 2026-07-14).
+  const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
   // "In Your Library" — music Jake OWNS but overlooks (the rediscovery
   // engine). One click PLAYS it: no list, no download — it's sitting
@@ -135,21 +140,23 @@ export default function NewForYouView() {
           <div className="df-row">
             {owned.map((pk) => {
               const hash = lib.artworkMap[`${pk.artist}|||${pk.album}`]
+                || lookupArtwork(lib.artworkMap, normalizedArtIndex, pk.artist, pk.album)
               return (
-                <div key={`${pk.artist}|${pk.album}`} className="df-card">
-                  <button type="button" className="df-art df-art--btn" title={`Play ${pk.artist}`} onClick={() => playOwned(pk)}>
+                // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
+                // circles, artist name front and centered, album demoted to
+                // the tooltip alongside Music Man's pitch.
+                <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
+                  <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
                     {hash
-                      ? <AlbumArtImage hash={hash} alt={pk.album} size={320} />
+                      ? <AlbumArtImage hash={hash} alt={pk.artist} size={320} />
                       : <div className="df-art-ph" aria-hidden="true">♪</div>}
                     <span className="df-play df-play--owned" aria-hidden="true">▶</span>
                   </button>
-                  <div className="df-badge-row">
-                    <span className="df-type df-type--owned">Owned</span>
+                  <div className="df-badge-row df-badge-row--center">
+                    <span className="df-type df-type--owned">Artist</span>
                     <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
                   </div>
-                  <div className="df-name" title={pk.artist}>{pk.artist}</div>
-                  {pk.album && <div className="df-artist" title={pk.album}>{pk.album}</div>}
-                  {pk.reason && <div className="df-why">{pk.reason.split(/\s+/).slice(0, 10).join(' ')}</div>}
+                  <div className="df-name df-name--center" title={`${pk.artist}${pk.album ? ` — ${pk.album}` : ''}`}>{pk.artist}</div>
                 </div>
               )
             })}
