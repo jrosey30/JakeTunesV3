@@ -58,14 +58,20 @@ async function collectAudio(dir: string): Promise<string[]> {
 }
 
 interface RunResult { code: number; stdout: string; stderr: string; enoent: boolean }
+// Live children — so a mis-click can be CANCELED (Jake, 2026-07-16). Killing
+// the rip process aborts the transfer; the staging temp dir is wiped by the
+// caller's finally, so a canceled download leaves nothing behind.
+const activeProcs = new Set<ReturnType<typeof execFile>>()
 function run(bin: string, args: string[], timeoutMs: number): Promise<RunResult> {
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
-      const e = err as (Error & { code?: number | string }) | null
+    const child = execFile(bin, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+      activeProcs.delete(child)
+      const e = err as (Error & { code?: number | string; killed?: boolean }) | null
       const enoent = e?.code === 'ENOENT'
       const code = typeof e?.code === 'number' ? e.code : (e ? 1 : 0)
       resolve({ code, stdout: stdout || '', stderr: stderr || '', enoent })
     })
+    activeProcs.add(child)
   })
 }
 
@@ -170,6 +176,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     }
   }
 
+  // Abort every in-flight rip process (download or search). The queue marks
+  // the item canceled; the killed process's staging dir is cleaned as usual.
+  ipcMain.handle('streamrip:cancel-active', async () => {
+    let killed = 0
+    for (const c of activeProcs) { try { c.kill('SIGKILL'); killed++ } catch { /* already gone */ } }
+    return { ok: true, killed }
+  })
+
   ipcMain.handle('streamrip:status', async () => {
     const rip = await resolveRip()
     return rip ? { ok: true, installed: true, version: rip.version } : { ok: true, installed: false }
@@ -222,12 +236,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   // One-shot: search Qobuz for artist+title, pick the best match, download + import.
   // Used by Listen to the List so the renderer doesn't round-trip search → pick → download.
-  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
     const artist = (opts?.artist || '').trim()
-    const title = (opts?.title || opts?.song || '').trim()
+    // album set -> resolve a whole ALBUM on Qobuz; else a single track.
+    const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
+    const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
     const query = [artist, title].filter(Boolean).join(' ')
-    const search = await searchCatalog({ query, source: 'qobuz', mediaType: 'track', numResults: 25 })
+    const search = await searchCatalog({ query, source: 'qobuz', mediaType: wantAlbum ? 'album' : 'track', numResults: 25 })
     if (!search.ok || !search.results?.length) {
       return { ok: false, error: search.error || `No Qobuz match for “${query}”.` }
     }

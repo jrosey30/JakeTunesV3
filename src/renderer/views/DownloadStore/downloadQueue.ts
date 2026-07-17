@@ -7,8 +7,21 @@
 // Module-level + pub/sub so the state survives navigating away and back (same
 // pattern as the view's pageCache) and any mounted view re-renders on change.
 
-export interface QResult { source: string; mediaType: string; id: string; desc: string }
-export type QStatus = 'queued' | 'downloading' | 'done' | 'failed'
+// Two kinds of queue entries:
+//  - id: a raw streamrip catalog id (legacy path, still used by pasted links)
+//  - query: an iTunes-picked song/album resolved on Qobuz at download time
+//    (artist+title or artist+album) — the v2 search flow.
+export interface QResult {
+  source: string
+  mediaType: string
+  id: string
+  desc: string
+  kind?: 'id' | 'query'
+  artist?: string
+  title?: string
+  album?: string
+}
+export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
   key: string
   result: QResult
@@ -53,12 +66,30 @@ export function enqueue(r: QResult): void {
   const key = queueKey(r)
   const existing = queue.find((q) => q.key === key)
   if (existing) {
-    if (existing.status === 'failed') { existing.status = 'queued'; existing.error = undefined; emit(); void pump() }
+    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; emit(); void pump() }
     return
   }
   queue = [...queue, { key, result: r, status: 'queued' }]
   emit()
   void pump()
+}
+
+/** Cancel a queued item (drop it) or an in-flight one (kill the rip
+ *  process; main's staging cleanup handles the partial files). */
+export async function cancel(key: string): Promise<void> {
+  const it = queue.find((q) => q.key === key)
+  if (!it) return
+  if (it.status === 'queued') {
+    queue = queue.filter((q) => q.key !== key)
+    emit()
+    return
+  }
+  if (it.status === 'downloading') {
+    it.status = 'canceled'
+    it.endedAt = Date.now()
+    emit()
+    await window.electronAPI.streamripCancelActive?.().catch(() => {})
+  }
 }
 
 export function retry(key: string): void {
@@ -92,8 +123,11 @@ async function pump(): Promise<void> {
       it.error = undefined
       emit()
       try {
-        const r = await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
-        if (r?.ok) {
+        const r = it.result.kind === 'query'
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album })
+          : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
+        if (it.status === 'canceled') { /* user killed it mid-flight — keep that verdict */ }
+        else if (r?.ok) {
           it.status = 'done'
           it.imported = r.imported ?? 0
           it.dupes = r.dupes ?? 0
@@ -102,8 +136,10 @@ async function pump(): Promise<void> {
           it.error = r?.error || 'Download failed.'
         }
       } catch (e) {
-        it.status = 'failed'
-        it.error = e instanceof Error ? e.message : 'Download failed.'
+        if (it.status !== 'canceled') {
+          it.status = 'failed'
+          it.error = e instanceof Error ? e.message : 'Download failed.'
+        }
       }
       it.endedAt = Date.now()
       emit()

@@ -1,17 +1,32 @@
-import { useEffect, useState, useMemo, useReducer, useRef, type CSSProperties } from 'react'
+import { useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, queueSummary, clearFinished, type QItem } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
+import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
+import type { ItunesSuggestion } from '../../types'
 
-// normalize for the "already in your library" match (local; renderer can't
-// import the main-process reco-match).
+/**
+ * Download v3 (2026-07-16) — "browse fast, resolve slow".
+ *
+ * Jake's verdict on v2: "the search is flat out a 0/100… it doesn't work,
+ * i can't find any songs, i can't cancel downloads." Root cause: live search
+ * was wired to the streamrip CLI — 5-15 SECONDS per call, two calls per
+ * keystroke pause. The engine worked; the experience was dead on arrival.
+ *
+ * v3 splits the two jobs:
+ *   SEARCH  = iTunes Search (instant, artwork, 30s previews) — find the right
+ *             thing in milliseconds, hear it before you commit.
+ *   RESOLVE = Qobuz via streamrip, only when you click Get — by artist+title
+ *             (or artist+album), server-side best-match (pickBestStreamripMatch).
+ *   CANCEL  = every queued item can be removed; an in-flight download kills
+ *             the rip process (streamrip:cancel-active).
+ */
+
 const norm = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
 
 // Relevance scorer — a TWIN of the universal-search ranker in
-// utils/searchIndex.ts (exact > prefix > token-start > substring > all-tokens),
-// so Download organizes results by "likeliest you mean" exactly like the
-// app's main search, and re-ranks live as you type more characters.
+// utils/searchIndex.ts (exact > prefix > token-start > substring > all-tokens).
 const normQ = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 function scoreField(field: string, query: string, qTokens: string[]): number {
   if (!field || !query) return 0
@@ -24,62 +39,59 @@ function scoreField(field: string, query: string, qTokens: string[]): number {
 }
 const stripThe = (s: string): string => s.replace(/^the /, '')
 function scoreResult(q: string, qTokens: string[], title: string, artist: string): number {
-  // Artist weighed a touch higher than title (and "the " stripped) so searching
-  // an ARTIST ("postal service") surfaces that artist's catalog above junk
-  // tracks merely TITLED like the artist ("Postal Service" by some cover farm).
   const t = scoreField(normQ(title), q, qTokens)
   const aRaw = normQ(artist)
   const a = Math.max(scoreField(aRaw, q, qTokens), scoreField(stripThe(aRaw), q, qTokens))
   return t * 1.0 + a * 1.15
 }
 
-// streamrip "Download" view — replaces the embedded web-store browser views
-// (squid/lucida/dab, all dead/walled/ad-trapped). Browse by searching a
-// source's catalog and clicking a result, or paste a direct link. Either way
-// the audio imports into the library through the same pipeline every other
-// import uses. No embedded browser, no Cloudflare.
-
 interface RipStatus { installed: boolean; version?: string }
-interface SearchResult { source: string; mediaType: string; id: string; desc: string }
 
-// 4.5: SoundCloud removed at Jake's request.
-const SOURCES = [
-  { id: 'qobuz', label: 'Qobuz' },
-  { id: 'tidal', label: 'Tidal' },
-  { id: 'deezer', label: 'Deezer' },
-  { id: 'youtube', label: 'YouTube' },
-]
-// 4.5: page memory — this view unmounts on navigate-away. A module-level cache
-// (same pattern as MadeForYou's sessionMixes) restores the working state — your
-// search, source, results, and pasted link — when you leave and come back.
-interface DownloadCache {
-  query: string; source: string; mediaType: string
-  results: SearchResult[]; art: Record<string, string>; pasteUrl: string
+interface SongRow {
+  kind: 'song'
+  artist: string
+  title: string
+  album?: string
+  artworkUrl?: string
+  previewUrl?: string
+  owned: boolean
+  score: number
 }
-let pageCache: DownloadCache = {
-  query: '', source: 'qobuz', mediaType: 'all', results: [], art: {}, pasteUrl: '',
+interface AlbumRow {
+  kind: 'album'
+  artist: string
+  album: string
+  artworkUrl?: string
+  owned: boolean
+  score: number
+  songs: number
 }
 
-// streamrip result descs end with " by <artist>" ("Creep by Radiohead",
-// "Sub Urban - Cradles [NCS Release] by Sub Urban"). Split on the LAST " by "
-// to feed the app's artist-verified iTunes art lookup.
-function parseDesc(desc: string): { artist: string; title: string } {
-  const i = desc.lastIndexOf(' by ')
-  if (i > 0) return { title: desc.slice(0, i).trim(), artist: desc.slice(i + 4).trim() }
-  return { title: desc.trim(), artist: '' }
-}
+// Page memory — the view unmounts on navigate-away; restore search state on return.
+interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
+let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
+
+// Queue entries resolve on Qobuz AT DOWNLOAD TIME by artist+title/album.
+const songQ = (r: SongRow): QResult => ({
+  kind: 'query', source: 'qobuz', mediaType: 'track',
+  id: `q|track|${norm(r.artist)}|${norm(r.title)}`,
+  desc: `${r.title} — ${r.artist}`,
+  artist: r.artist, title: r.title,
+})
+const albumQ = (r: AlbumRow): QResult => ({
+  kind: 'query', source: 'qobuz', mediaType: 'album',
+  id: `q|album|${norm(r.artist)}|${norm(r.album)}`,
+  desc: `${r.album} — ${r.artist} (album)`,
+  artist: r.artist, album: r.album,
+})
 
 export default function DownloadView() {
   const [status, setStatus] = useState<RipStatus | null>(null)
   const [query, setQuery] = useState(pageCache.query)
-  const [source, setSource] = useState(pageCache.source)
-  const [mediaType] = useState(pageCache.mediaType) // persisted for page memory; search is always album+track now
   const [searching, setSearching] = useState(false)
-  const [results, setResults] = useState<SearchResult[]>(pageCache.results)
-  const [art, setArt] = useState<Record<string, string>>(pageCache.art)
+  const [results, setResults] = useState<ItunesSuggestion[]>(pageCache.results)
   const [searchErr, setSearchErr] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
-  // 4.5: per-file import failures, kept on screen (not just the ~9s top-strip flash)
   const [failures, setFailures] = useState<Array<{ filename: string; error: string }>>([])
   const [pasteUrl, setPasteUrl] = useState(pageCache.pasteUrl)
   const [pasteBusy, setPasteBusy] = useState(false)
@@ -93,10 +105,8 @@ export default function DownloadView() {
   const [qUserId, setQUserId] = useState('')
   const [qToken, setQToken] = useState('')
 
-  // Queue: subscribe for re-render on any status change, + a 1s tick so the
-  // "downloading" elapsed clock stays live. State lives in downloadQueue (module
-  // level) so it survives navigating away and back.
   const { state: lib } = useLibrary()
+  const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const [, forceRender] = useReducer((x: number) => x + 1, 0)
   useEffect(() => subscribeQueue(forceRender), [])
   useEffect(() => {
@@ -105,7 +115,8 @@ export default function DownloadView() {
     }, 1000)
     return () => window.clearInterval(id)
   }, [])
-  // "Already in your library" index — track (title|artist) + album (album|artist).
+
+  // "Already in your library" index.
   const libIndex = useMemo(() => {
     const tracks = new Set<string>()
     const albums = new Set<string>()
@@ -118,35 +129,50 @@ export default function DownloadView() {
   }, [lib.tracks])
   const summary = queueSummary()
 
-  // Rank + group by relevance to the current query — recomputed every keystroke
-  // so the likeliest match rises AS you type, before the next fetch even returns.
+  // Rank songs + derive albums from the SAME instant result set.
   const ranked = useMemo(() => {
     const q = normQ(query)
     const qTokens = q ? q.split(' ') : []
-    const scored = results.map((res) => {
-      const { title, artist } = parseDesc(res.desc)
-      const owned = res.mediaType === 'album'
-        ? libIndex.albums.has(norm(title) + '|' + norm(artist))
-        : res.mediaType === 'track' && libIndex.tracks.has(norm(title) + '|' + norm(artist))
-      const base = q ? scoreResult(q, qTokens, title, artist) : 0
-      // Tie toward the SONG — but ONLY when the query matched the track's TITLE
-      // (real song intent). A track that only matched via its ARTIST (an artist
-      // search) gets no nudge, so albums still lead the discography.
-      const titleHit = q ? scoreField(normQ(title), q, qTokens) > 0 : false
-      const score = base > 0 && res.mediaType === 'track' && titleHit ? base + 0.5 : base
-      return { res, title, artist, owned, score }
-    })
-    scored.sort((a, b) => b.score - a.score)
-    // Only show results that actually match the current query — so stale results
-    // from the previous keystroke drop the instant they no longer fit.
-    const relevant = q ? scored.filter((s) => s.score > 0) : scored
-    const topHit = relevant.length > 0 ? relevant[0] : null
-    const rest = topHit ? relevant.filter((s) => s.res.id !== topHit.res.id) : relevant
+    const songs: SongRow[] = results.map((s) => {
+      const owned = libIndex.tracks.has(norm(s.song) + '|' + norm(s.artist))
+      const base = q ? scoreResult(q, qTokens, s.song, s.artist) : 0
+      const titleHit = q ? scoreField(normQ(s.song), q, qTokens) > 0 : false
+      return {
+        kind: 'song' as const,
+        artist: s.artist, title: s.song, album: s.album,
+        artworkUrl: s.artworkUrl, previewUrl: s.previewUrl,
+        owned, score: base > 0 && titleHit ? base + 0.5 : base,
+      }
+    }).filter((s) => !q || s.score > 0)
+    songs.sort((a, b) => b.score - a.score)
+
+    const albumMap = new Map<string, AlbumRow>()
+    for (const s of results) {
+      if (!s.album) continue
+      const key = `${norm(s.artist)}|${norm(s.album)}`
+      const albScore = q ? Math.max(
+        scoreResult(q, qTokens, s.album, s.artist),
+        scoreResult(q, qTokens, s.song, s.artist) * 0.85,
+      ) : 0
+      const cur = albumMap.get(key)
+      if (cur) { cur.songs += 1; cur.score = Math.max(cur.score, albScore); if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl }
+      else albumMap.set(key, {
+        kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
+        owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
+        score: albScore, songs: 1,
+      })
+    }
+    const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, 8)
+
+    const topSong = songs[0] ?? null
+    const topAlbum = albums[0] ?? null
+    // The hero is whichever type matched harder.
+    const hero: SongRow | AlbumRow | null =
+      topSong && topAlbum ? (topAlbum.score > topSong.score ? topAlbum : topSong) : (topSong || topAlbum)
     return {
-      topHit,
-      albums: rest.filter((s) => s.res.mediaType === 'album'),
-      tracks: rest.filter((s) => s.res.mediaType === 'track'),
-      artists: rest.filter((s) => s.res.mediaType === 'artist'),
+      hero,
+      songs: songs.filter((s) => s !== hero).slice(0, 12),
+      albums: albums.filter((a) => a !== hero),
     }
   }, [results, query, libIndex])
 
@@ -161,24 +187,19 @@ export default function DownloadView() {
     return () => { cancelled = true }
   }, [])
 
-  // 4.5: keep per-file import failures visible on the Download screen. App.tsx
-  // also flashes each one in the top strip for ~9s, but on a multi-track album
-  // they blink past and you'd only catch the last — so accumulate the full list
-  // here until the next download starts.
   useEffect(() => {
     return window.electronAPI.onBandcampPerFileFailed((r) => {
       setFailures((prev) => [...prev, r])
     })
   }, [])
 
-  // Prefill search when opened from Listen to the List (failed match fallback).
+  // Prefill search when opened from Listen to the List.
   useEffect(() => {
     const onPrefill = (e: Event) => {
       const q = (e as CustomEvent<{ query?: string }>).detail?.query?.trim()
       if (!q) return
       setQuery(q)
       setResults([])
-      setArt({})
       setSearchErr(null)
       setNotice(null)
     }
@@ -186,28 +207,12 @@ export default function DownloadView() {
     return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)
   }, [])
 
-  // 4.5: page memory — persist the working state so leaving and returning restores it.
   useEffect(() => {
-    pageCache = { query, source, mediaType, results, art, pasteUrl }
-  }, [query, source, mediaType, results, art, pasteUrl])
+    pageCache = { query, results, pasteUrl }
+  }, [query, results, pasteUrl])
 
-  // Lazily fetch cover art for each result (streamrip search returns none;
-  // reuse the app's artist-verified iTunes art lookup). Misses show the ♪.
-  useEffect(() => {
-    if (results.length === 0) return
-    let cancelled = false
-    for (const res of results) {
-      const { artist, title } = parseDesc(res.desc)
-      if (!artist || !title) continue
-      window.electronAPI.lookupRecoArtwork?.({ artist, title }).then((r) => {
-        if (!cancelled && r?.artworkUrl) setArt((prev) => (prev[res.id] ? prev : { ...prev, [res.id]: r.artworkUrl as string }))
-      }).catch(() => { /* leave placeholder */ })
-    }
-    return () => { cancelled = true }
-  }, [results])
-
-  // Live, universal-search-style: albums + tracks in one shot (you never need to
-  // know the album), newest query wins (stale results dropped).
+  // INSTANT search: iTunes answers in ~200ms with art + previews. Newest
+  // keystroke wins; Qobuz is only touched when a Get button is clicked.
   const searchTokenRef = useRef(0)
   const runSearch = async (raw: string) => {
     const q = raw.trim()
@@ -215,29 +220,28 @@ export default function DownloadView() {
     if (!q) { setResults([]); setSearchErr(null); setSearching(false); return }
     setSearching(true)
     setSearchErr(null)
-    setNotice(null)
     try {
-      const settled = await Promise.all(
-        ['album', 'track'].map((mt) =>
-          window.electronAPI.streamripSearch?.({ query: q, source, mediaType: mt, numResults: 25 }).catch(() => null),
-        ),
-      )
-      if (token !== searchTokenRef.current) return // a newer keystroke superseded this
-      const merged: SearchResult[] = []
-      const seen = new Set<string>()
-      let anyErr: string | null = null
-      for (const r of settled) {
-        if (!r) continue
-        if (!r.ok) { anyErr = r.error || anyErr; continue }
-        for (const res of r.results || []) {
-          const k = `${res.source}|${res.mediaType}|${res.desc.toLowerCase()}` // collapse exact dupes
-          if (seen.has(k)) continue
-          seen.add(k)
-          merged.push(res)
+      const r = await window.electronAPI.searchItunes?.(q)
+      if (token !== searchTokenRef.current) return
+      let list = r?.ok ? r.results : []
+      if (!r?.ok) {
+        // iTunes can rate-limit (403). Fall back to the slower Qobuz catalog
+        // search so Jake is never staring at nothing — results just lack
+        // artwork/previews until Apple lets us back in.
+        const fb = await window.electronAPI.streamripSearch?.({ query: q, source: 'qobuz', mediaType: 'track', numResults: 20 }).catch(() => null)
+        if (token !== searchTokenRef.current) return
+        if (fb?.ok && fb.results) {
+          list = fb.results.map((res) => {
+            const i = res.desc.lastIndexOf(' by ')
+            return {
+              song: i > 0 ? res.desc.slice(0, i).trim() : res.desc,
+              artist: i > 0 ? res.desc.slice(i + 4).trim() : '',
+            } as ItunesSuggestion
+          })
         }
       }
-      setResults(merged)
-      setSearchErr(merged.length === 0 ? (anyErr || `No matches for “${q}”.`) : null)
+      setResults(list)
+      setSearchErr(list.length === 0 ? `No matches for “${q}”.` : null)
     } catch (e) {
       if (token === searchTokenRef.current) setSearchErr(e instanceof Error ? e.message : 'Search failed.')
     } finally {
@@ -245,14 +249,13 @@ export default function DownloadView() {
     }
   }
 
-  // Type and it finds — 2+ chars, 400ms after you pause; re-fires on source change.
   useEffect(() => {
     const q = query.trim()
     if (q.length < 2) { setResults([]); setSearchErr(null); setSearching(false); return }
-    const h = window.setTimeout(() => { void runSearch(q) }, 400)
+    const h = window.setTimeout(() => { void runSearch(q) }, 300)
     return () => window.clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, source])
+  }, [query])
 
   const downloadPaste = async () => {
     const link = pasteUrl.trim()
@@ -291,7 +294,7 @@ export default function DownloadView() {
         setQobuz({ configured: true, email: e })
         setQPass('')
         setQEditing(false)
-        setQMsg({ ok: true, msg: 'Qobuz connected — pick Qobuz in the source dropdown to search it in hi-fi.' })
+        setQMsg({ ok: true, msg: 'Qobuz connected — downloads now resolve there in hi-fi.' })
       } else {
         setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz login.' })
       }
@@ -314,7 +317,7 @@ export default function DownloadView() {
         setQobuz({ configured: true, email: `user ${u}` })
         setQToken('')
         setQEditing(false)
-        setQMsg({ ok: true, msg: 'Qobuz connected via token — pick Qobuz in the source dropdown to search it in hi-fi.' })
+        setQMsg({ ok: true, msg: 'Qobuz connected via token — downloads now resolve there in hi-fi.' })
       } else {
         setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz token.' })
       }
@@ -325,15 +328,27 @@ export default function DownloadView() {
     }
   }
 
-  // Each result's right-side action reflects its OWN queue lifecycle so the
-  // download → into-library journey is never a black box.
-  const renderAction = (res: SearchResult, item: QItem | undefined) => {
+  // Right-side action = the item's OWN lifecycle, with CANCEL at every stage
+  // before "done" (a mis-click is never a commitment).
+  const renderAction = (qres: QResult, item: QItem | undefined) => {
     const st = item?.status
     if (st === 'downloading') {
       const secs = item?.startedAt ? Math.floor((Date.now() - item.startedAt) / 1000) : 0
-      return <span className="dl-state dl-state--busy"><span className="dl-spinner" aria-hidden="true" />Downloading {mmss(secs)}</span>
+      return (
+        <span className="dl-actions">
+          <span className="dl-state dl-state--busy"><span className="dl-spinner" aria-hidden="true" />{mmss(secs)}</span>
+          <button className="download-cancel" onClick={() => item && void cancel(item.key)} title="Cancel this download">Cancel</button>
+        </span>
+      )
     }
-    if (st === 'queued') return <span className="dl-state dl-state--queued">Queued</span>
+    if (st === 'queued') {
+      return (
+        <span className="dl-actions">
+          <span className="dl-state dl-state--queued">Queued</span>
+          <button className="download-cancel" onClick={() => item && void cancel(item.key)} title="Remove from queue">✕</button>
+        </span>
+      )
+    }
     if (st === 'done') {
       return (
         <span className="dl-state dl-state--done">
@@ -342,10 +357,73 @@ export default function DownloadView() {
         </span>
       )
     }
+    if (st === 'canceled') {
+      return <button className="download-retry" onClick={() => item && retry(item.key)} title="Download after all">Canceled — redo</button>
+    }
     if (st === 'failed') {
       return <button className="download-retry" onClick={() => item && retry(item.key)} title={item?.error || 'Retry'}>Retry</button>
     }
-    return <button className="download-result-btn" onClick={() => enqueue(res)}>{res.mediaType === 'artist' ? 'Get all' : 'Download'}</button>
+    return <button className="download-result-btn" onClick={() => enqueue(qres)}>Get</button>
+  }
+
+  const renderSong = (s: SongRow, hero = false, i = 0) => {
+    const qres = songQ(s)
+    const item = itemFor(qres)
+    const pid = `dl|${qres.id}`
+    const isPlaying = preview.playingId === pid
+    return (
+      <li key={qres.id} className={`download-result-row${hero ? ' download-result-row--hero' : ''}${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
+        <span className="download-result-artwrap">
+          {s.artworkUrl
+            ? <img className="download-result-art" src={s.artworkUrl} alt="" loading="lazy" />
+            : <span className="download-result-art download-result-art--ph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+              </span>}
+          {s.previewUrl && (
+            <button
+              type="button"
+              className={`download-preview${isPlaying ? ' download-preview--on' : ''}`}
+              onClick={() => togglePreview(pid, s.previewUrl!, s.title, s.artist)}
+              title={isPlaying ? 'Stop preview' : '30s preview'}
+            >{isPlaying ? '❚❚' : '▶'}</button>
+          )}
+        </span>
+        <div className="download-result-body">
+          <span className="download-result-title" title={s.title}>{s.title}</span>
+          <span className="download-result-meta">
+            <span className="download-result-artist">{s.artist}</span>
+            {s.album && <span className="download-result-album">{s.album}</span>}
+            {s.owned && <span className="download-owned">In your library</span>}
+          </span>
+        </div>
+        {renderAction(qres, item)}
+      </li>
+    )
+  }
+
+  const renderAlbum = (a: AlbumRow, hero = false, i = 0) => {
+    const qres = albumQ(a)
+    const item = itemFor(qres)
+    return (
+      <li key={qres.id} className={`download-result-row${hero ? ' download-result-row--hero' : ''}${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
+        <span className="download-result-artwrap">
+          {a.artworkUrl
+            ? <img className="download-result-art" src={a.artworkUrl} alt="" loading="lazy" />
+            : <span className="download-result-art download-result-art--ph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+              </span>}
+        </span>
+        <div className="download-result-body">
+          <span className="download-result-title" title={a.album}>{a.album}</span>
+          <span className="download-result-meta">
+            <span className="download-result-badge">ALBUM</span>
+            <span className="download-result-artist">{a.artist}</span>
+            {a.owned && <span className="download-owned">In your library</span>}
+          </span>
+        </div>
+        {renderAction(qres, item)}
+      </li>
+    )
   }
 
   return (
@@ -355,22 +433,10 @@ export default function DownloadView() {
           <span className="download-eyebrow">Get music</span>
           <h1 className="download-title">Download</h1>
           <p className="download-sub">
-            Search a source and click to grab it — or paste a link. It imports straight into your library.
+            Type anything — results are instant, with previews. Get resolves it on Qobuz in hi-fi.
           </p>
         </div>
 
-        {/* ── Browse: source pills → search → results → click ── */}
-        <div className="download-sources" role="tablist" aria-label="Download source">
-          {SOURCES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={`download-source-pill${source === s.id ? ' is-active' : ''}`}
-              onClick={() => setSource(s.id)}
-              disabled={searching}
-            >{s.label}</button>
-          ))}
-        </div>
         <div className="download-search">
           <div className="download-search-field">
             <svg className="download-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
@@ -378,7 +444,6 @@ export default function DownloadView() {
               className="download-input download-input--search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(query) }}
               placeholder="Search a song, album, or artist…"
               spellCheck={false}
               autoFocus
@@ -387,7 +452,7 @@ export default function DownloadView() {
           </div>
         </div>
 
-        {searchErr && <div className="download-result download-result--err">{searchErr}</div>}
+        {searchErr && !searching && <div className="download-result download-result--err">{searchErr}</div>}
 
         {(summary.active + summary.queued + summary.done + summary.failed) > 0 && (
           <div className="download-queue-strip">
@@ -403,58 +468,36 @@ export default function DownloadView() {
           </div>
         )}
 
-        {(ranked.topHit || ranked.albums.length > 0 || ranked.tracks.length > 0 || ranked.artists.length > 0) && (() => {
-          let idx = 0
-          const renderRow = (s: { res: SearchResult; title: string; artist: string; owned: boolean }, hero = false) => {
-            const { res, title, artist, owned } = s
-            const item = itemFor(res)
-            const i = idx++
-            return (
-              <li key={res.id} className={`download-result-row${hero ? ' download-result-row--hero' : ''}${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
-                {art[res.id]
-                  ? <img className="download-result-art" src={art[res.id]} alt="" loading="lazy" />
-                  : <span className="download-result-art download-result-art--ph" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-                    </span>}
-                <div className="download-result-body">
-                  <span className="download-result-title" title={res.desc}>{title || res.desc}</span>
-                  <span className="download-result-meta">
-                    {artist && <span className="download-result-artist">{artist}</span>}
-                    {owned && <span className="download-owned">In your library</span>}
-                  </span>
+        {(ranked.hero || ranked.songs.length > 0 || ranked.albums.length > 0) && (
+          <div className="download-results">
+            {ranked.hero && (
+              <section className="download-group download-group--top">
+                <div className="download-group-head"><span className="download-group-label download-group-label--top">Top match</span></div>
+                <ul className="download-group-list" role="list">
+                  {ranked.hero.kind === 'song' ? renderSong(ranked.hero, true, 0) : renderAlbum(ranked.hero, true, 0)}
+                </ul>
+              </section>
+            )}
+            {ranked.songs.length > 0 && (
+              <section className="download-group">
+                <div className="download-group-head">
+                  <span className="download-group-label">Songs</span>
+                  <span className="download-group-count">{ranked.songs.length}</span>
                 </div>
-                {renderAction(res, item)}
-              </li>
-            )
-          }
-          const groups = [
-            { key: 'album', label: 'Albums', items: ranked.albums },
-            { key: 'track', label: 'Tracks', items: ranked.tracks },
-            { key: 'artist', label: 'Artists', items: ranked.artists },
-          ].filter((g) => g.items.length > 0)
-            // Strongest-matching type leads — search a song and Tracks come
-            // first; search an artist/album and Albums lead.
-            .sort((a, b) => (b.items[0]?.score ?? 0) - (a.items[0]?.score ?? 0))
-          return (
-            <div className="download-results">
-              {ranked.topHit && (
-                <section className="download-group download-group--top">
-                  <div className="download-group-head"><span className="download-group-label download-group-label--top">Top match</span></div>
-                  <ul className="download-group-list" role="list">{renderRow(ranked.topHit, true)}</ul>
-                </section>
-              )}
-              {groups.map((g) => (
-                <section key={g.key} className="download-group">
-                  <div className="download-group-head">
-                    <span className="download-group-label">{g.label}</span>
-                    <span className="download-group-count">{g.items.length}</span>
-                  </div>
-                  <ul className="download-group-list" role="list">{g.items.map((s) => renderRow(s))}</ul>
-                </section>
-              ))}
-            </div>
-          )
-        })()}
+                <ul className="download-group-list" role="list">{ranked.songs.map((s, i) => renderSong(s, false, i + 1))}</ul>
+              </section>
+            )}
+            {ranked.albums.length > 0 && (
+              <section className="download-group">
+                <div className="download-group-head">
+                  <span className="download-group-label">Albums</span>
+                  <span className="download-group-count">{ranked.albums.length}</span>
+                </div>
+                <ul className="download-group-list" role="list">{ranked.albums.map((a, i) => renderAlbum(a, false, i + 1))}</ul>
+              </section>
+            )}
+          </div>
+        )}
 
         {notice && (
           <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>

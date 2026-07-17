@@ -666,8 +666,10 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
-  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
+  streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
+    ipcRenderer.invoke('streamrip:cancel-active'),
   streamripGetQobuz: (): Promise<{ ok: boolean; configured: boolean; email?: string }> =>
     ipcRenderer.invoke('streamrip:get-qobuz'),
   streamripSetQobuz: (email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
