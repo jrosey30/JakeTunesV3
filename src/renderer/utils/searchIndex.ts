@@ -221,7 +221,15 @@ export function search(idx: SearchIndex, rawQuery: string, opts?: { perSectionCa
     const sTitle  = scoreField(t.nTitle,  q, qTokens) * W_TITLE
     const sArtist = scoreField(t.nArtist, q, qTokens) * W_ARTIST
     const sAlbum  = scoreField(t.nAlbum,  q, qTokens) * W_ALBUM
-    const score = sTitle + sArtist + sAlbum
+    // COMBINED field — "song artist" queries ("when you die mgmt") are
+    // contained by NO single field, so per-field scoring returned 0 and the
+    // most natural search shape found nothing (Jake, 2026-07-16).
+    // ⚠️ TWIN: views/DownloadStore/DownloadView.tsx scoreResult — same fix.
+    const sCombo = Math.max(
+      scoreField(`${t.nTitle} ${t.nArtist}`, q, qTokens),
+      scoreField(`${t.nArtist} ${t.nTitle}`, q, qTokens),
+    ) * W_TITLE
+    const score = Math.max(sTitle + sArtist + sAlbum, sCombo)
     if (score > 0) trackHits.push({ row: t, score })
   }
   trackHits.sort((a, b) => b.score - a.score)
@@ -230,7 +238,11 @@ export function search(idx: SearchIndex, rawQuery: string, opts?: { perSectionCa
   for (const a of idx.albums) {
     const sAlbum  = scoreField(a.nAlbum,  q, qTokens) * W_ALBUM
     const sArtist = scoreField(a.nArtist, q, qTokens) * W_ARTIST * 0.5
-    const score = sAlbum + sArtist
+    const sCombo = Math.max(
+      scoreField(`${a.nAlbum} ${a.nArtist}`, q, qTokens),
+      scoreField(`${a.nArtist} ${a.nAlbum}`, q, qTokens),
+    ) * W_ALBUM
+    const score = Math.max(sAlbum + sArtist, sCombo)
     if (score > 0) albumHits.push({ row: a, score })
   }
   albumHits.sort((a, b) => b.score - a.score)
