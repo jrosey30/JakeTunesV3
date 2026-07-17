@@ -12656,27 +12656,54 @@ interface ItunesSuggestion {
 // renditions, kids covers. iTunes Search has NO popularity score, so it
 // dumps these in with the real thing. Filter them out entirely.
 const ITUNES_JUNK_ARTIST = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
+// Deezer public search — the INSTANT fallback when Apple rate-limits
+// (403s under heavy use; Jake typed "when you die MGMT" into a silent
+// blank, 2026-07-16). Keyless, ~200ms, artwork + 30s previews, and it
+// maps 1:1 onto the ItunesSuggestion shape so every consumer (Download
+// search, List omnibox) inherits the failover for free.
+async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestion[] | null> {
+  try {
+    const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25`, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) return null
+    const data = await res.json() as { data?: Array<{ title?: string; preview?: string; artist?: { name?: string }; album?: { title?: string; cover_medium?: string } }> }
+    const out: ItunesSuggestion[] = (data.data || []).map((r) => ({
+      song: String(r.title ?? ''),
+      artist: String(r.artist?.name ?? ''),
+      album: r.album?.title ? String(r.album.title) : undefined,
+      artworkUrl: r.album?.cover_medium || undefined,
+      previewUrl: r.preview || undefined,
+    })).filter((s) => s.song && s.artist)
+    return out.length ? out : null
+  } catch { return null }
+}
+
 ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
   try {
     // Pull a WIDER pool (25) than we show, so the re-rank below has enough
     // signal to float the recognizable artist up and bury one-off covers.
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=25`
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
-    if (!res.ok) return { ok: false, results: [] }
-    const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
-    const raw: ItunesSuggestion[] = (data.results || [])
-      .map((r) => ({
-        song: String(r.trackName ?? ''),
-        artist: String(r.artistName ?? ''),
-        album: r.collectionName ? String(r.collectionName) : undefined,
-        // Bump the 100px thumb to 200px for a crisper suggestion row.
-        artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
-        previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
-        appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
-      }))
-      .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
+    let raw: ItunesSuggestion[] | null = null
+    try {
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=25`
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      if (res.ok) {
+        const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+        raw = (data.results || [])
+          .map((r) => ({
+            song: String(r.trackName ?? ''),
+            artist: String(r.artistName ?? ''),
+            album: r.collectionName ? String(r.collectionName) : undefined,
+            // Bump the 100px thumb to 200px for a crisper suggestion row.
+            artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+            previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+            appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+          }))
+          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
+      }
+    } catch { raw = null }
+    if (raw === null) raw = await fetchDeezerSuggestions(q)
+    if (raw === null) return { ok: false, results: [] }
 
     // Re-rank toward the recognizable version. iTunes gives no popularity
     // score, so use a free proxy: a famous artist shows up MULTIPLE times
@@ -12688,13 +12715,21 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
       const k = s.artist.toLowerCase()
       artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
     }
+    const qNorm = q.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
     const scoreOf = (s: ItunesSuggestion): number => {
       let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 10
       const album = (s.album || '').toLowerCase()
       const song = s.song.toLowerCase()
+      // The song the user actually TYPED wins: if the track title appears
+      // verbatim inside the query, nothing popularity-ranked beats it
+      // ("when you die mgmt" must put When You Die above Little Dark Age).
+      const songNorm = song.replace(/[^a-z0-9]+/g, ' ').trim()
+      if (songNorm.length > 3 && qNorm.includes(songNorm)) score += 25
       const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
-      if (!isLive && !/ - single$/.test(album)) score += 4          // prefer a real studio album cut
+      const isRemix = /remix|rework|edit\)/.test(song) || /remix/.test(album)
+      if (!isLive && !isRemix && !/ - single$/.test(album)) score += 4   // prefer the studio cut
       if (isLive) score -= 3                                          // demote live versions a touch
+      if (isRemix) score -= 3                                         // and remixes — the original leads
       if (/ - single$/.test(album) && album.startsWith(song)) score -= 6 // one-off cover single
       return score
     }
