@@ -42,7 +42,15 @@ function scoreResult(q: string, qTokens: string[], title: string, artist: string
   const t = scoreField(normQ(title), q, qTokens)
   const aRaw = normQ(artist)
   const a = Math.max(scoreField(aRaw, q, qTokens), scoreField(stripThe(aRaw), q, qTokens))
-  return t * 1.0 + a * 1.15
+  // COMBINED match — the most natural query is "song artist" ("when you die
+  // mgmt"), which no SINGLE field contains, so per-field scoring returned 0
+  // and the view filtered every correct result to a blank page (Jake,
+  // 2026-07-16). Score the joined field both ways too.
+  const combo = Math.max(
+    scoreField(`${normQ(title)} ${aRaw}`, q, qTokens),
+    scoreField(`${aRaw} ${normQ(title)}`, q, qTokens),
+  )
+  return Math.max(t * 1.0 + a * 1.15, combo * 1.2)
 }
 
 interface RipStatus { installed: boolean; version?: string }
