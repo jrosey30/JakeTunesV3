@@ -2764,7 +2764,7 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
   // invalidates every mirror produced by the old ffmpeg-native path so the
   // next sync re-encodes them with afconvert + the iPod-safe 44.1k/stereo
   // cap. Bump this token whenever the encode recipe changes.
-  const hash = createHash('sha1').update(`${srcPath}|${targetKbps}|afenc-44100-2-v2`).digest('hex').slice(0, 16)
+  const hash = createHash('sha1').update(`${srcPath}|${targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
   const cached = join(cacheDir, `${hash}.m4a`)
   try {
     const cStat = await stat(cached)
@@ -2794,7 +2794,7 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
           '-f', 'm4af',                   // MPEG-4 Audio container (.m4a)
           '-b', String(targetKbps * 1000),
           '-q', '127',                    // max encoder quality
-          '-s', '1',                      // ABR — steadiest for old decoders
+          '-s', '0',                      // TRUE CBR — the iTunes-era-native mode every Mini shipped against
         ], { timeout: 600000 })
         await renameFS(tmp, cached)
         return cached
