@@ -3,7 +3,7 @@
  * Persistence lives in activity-context.ts.
  */
 
-export type ActivityKind = 'run' | 'ski' | 'lift' | 'bike' | 'walk' | 'hike' | 'other'
+export type ActivityKind = 'bop' | 'run' | 'ski' | 'lift' | 'bike' | 'walk' | 'hike' | 'other'
 export type Intensity = 'easy' | 'medium' | 'hard'
 export type SettingKind = 'city' | 'trail' | 'gym' | 'mountain' | 'indoors' | 'water'
 export type SocialKind = 'solo' | 'friends'
@@ -42,6 +42,7 @@ export interface SavedActivityProfile extends ActivityBrief {
 
 export function labelActivity(a: ActivityKind): string {
   const map: Record<ActivityKind, string> = {
+    bop: 'Bopping Around',
     run: 'Run', ski: 'Ski', lift: 'Lift', bike: 'Bike', walk: 'Walk', hike: 'Hike', other: 'Activity',
   }
   return map[a] || 'Activity'
@@ -61,10 +62,15 @@ export function formatActivityContextForPrompt(ctx: ActivityBrainContext | null)
       + (ctx.weather.placeLabel ? ` (${ctx.weather.placeLabel})` : ''),
     )
   }
+  if (b.activity === 'bop') {
+    lines.push(
+      `• Mode: everyday listening — hanging around, commuting, errands, killing time. Not a workout. Favor variety and vibe over pure BPM grind.`,
+    )
+  }
   if (b.note?.trim()) lines.push(`• Listener note: ${b.note.trim()}`)
   if (ctx.setName) lines.push(`• Latest iPod set: “${ctx.setName}”${ctx.setCommentary ? ` — ${ctx.setCommentary}` : ''}`)
   lines.push(
-    `Use this as live situational context. A hard ski day in the cold is not a casual park jog. Match energy, density, and social vibe — do not ignore the weather or place.`,
+    `Use this as live situational context. A hard ski day in the cold is not “Bopping Around” on the train. Match energy, density, and social vibe — do not ignore the weather or place.`,
   )
   return lines.join('\n')
 }
@@ -84,6 +90,12 @@ export function activityScoreHints(brief: ActivityBrief, weather: ActivityWeathe
   else if (brief.intensity === 'easy') bpmBias = 'mid'
   else bpmBias = 'mixed'
 
+  // Everyday listening — hanging around, commuting, errands. Not a workout set.
+  if (brief.activity === 'bop') {
+    genreBoosts.push('hip-hop', 'indie', 'soul', 'funk', 'electronic', 'rap', 'disco', 'r&b')
+    genrePenalties.push('hardcore', 'doom', 'sludge')
+    bpmBias = brief.intensity === 'hard' ? 'mixed' : 'mid'
+  }
   if (brief.activity === 'run' || brief.activity === 'bike') {
     genreBoosts.push('electronic', 'hip-hop', 'house', 'techno', 'rap')
     bpmBias = brief.intensity === 'easy' ? 'mid' : 'high'

@@ -33,6 +33,29 @@ describe('activityScoreHints', () => {
     assert.ok(cold.genreBoosts.some((g) => /techno|hip-hop|metal|industrial/i.test(g)))
     assert.match(cold.weatherNote, /cold|harsh/i)
   })
+
+  it('bopping around stays mid/mixed — everyday hang / commute energy', () => {
+    const bop: ActivityBrief = {
+      activity: 'bop', intensity: 'medium', setting: 'city', place: 'Brooklyn', social: 'solo',
+    }
+    const hints = activityScoreHints(bop, null)
+    assert.equal(hints.bpmBias, 'mid')
+    assert.ok(hints.genreBoosts.some((g) => /hip-hop|indie|soul|funk/i.test(g)))
+  })
+})
+
+describe('formatActivityContextForPrompt — bop', () => {
+  it('labels Bopping Around for the AI brain', () => {
+    const block = formatActivityContextForPrompt({
+      brief: {
+        activity: 'bop', intensity: 'easy', setting: 'city', place: 'Brooklyn', social: 'solo',
+      },
+      weather: null,
+      updatedAt: new Date().toISOString(),
+    })
+    assert.match(block, /Bopping Around/)
+    assert.match(block, /everyday listening|commuting|hanging/i)
+  })
 })
 
 describe('formatActivityContextForPrompt', () => {

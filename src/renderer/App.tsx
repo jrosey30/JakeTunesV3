@@ -393,12 +393,12 @@ function AppInner() {
       const lib = libStateRef.current
       if (lib.tracks.length === 0) return
       // Auto-sync: reuse last activity brief from the AI brain context
-      // (can't show the sheet on plug-in). Falls back to a default run brief.
+      // (can't show the sheet on plug-in). Falls back to Bopping Around.
       void (async () => {
         try {
           const ctx = await window.electronAPI.getActivityBrainContext?.()
           const brief = (ctx?.context as { brief?: import('./components/ActivitySheet').ActivityBrief } | undefined)?.brief
-            || { activity: 'run' as const, intensity: 'medium' as const, setting: 'city' as const, place: 'Brooklyn', social: 'solo' as const }
+            || { activity: 'bop' as const, intensity: 'medium' as const, setting: 'city' as const, place: 'Brooklyn', social: 'solo' as const }
           const built = await buildWorkoutIpodSyncPayload(lib.tracks, lib.playlists || [], brief)
           if (!built.ok) {
             console.warn('[auto-sync] activity set failed:', built.error)

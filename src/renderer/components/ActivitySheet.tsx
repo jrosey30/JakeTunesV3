@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import '../styles/activity-sheet.css'
 
-export type ActivityKind = 'run' | 'ski' | 'lift' | 'bike' | 'walk' | 'hike' | 'other'
+export type ActivityKind = 'bop' | 'run' | 'ski' | 'lift' | 'bike' | 'walk' | 'hike' | 'other'
 export type Intensity = 'easy' | 'medium' | 'hard'
 export type SettingKind = 'city' | 'trail' | 'gym' | 'mountain' | 'indoors' | 'water'
 export type SocialKind = 'solo' | 'friends'
@@ -29,6 +29,7 @@ interface Props {
 }
 
 const ACTIVITIES: { id: ActivityKind; label: string }[] = [
+  { id: 'bop', label: 'Bopping Around' },
   { id: 'run', label: 'Run' },
   { id: 'ski', label: 'Ski' },
   { id: 'lift', label: 'Lift' },
@@ -52,7 +53,7 @@ const SETTINGS: { id: SettingKind; label: string }[] = [
 ]
 
 const DEFAULT: ActivityBrief = {
-  activity: 'run',
+  activity: 'bop',
   intensity: 'medium',
   setting: 'city',
   place: 'Brooklyn',
@@ -103,6 +104,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           <h2 className="activity-sheet-title">What are you doing?</h2>
           <p className="activity-sheet-sub">
             Music Man builds ~1,000 tracks for this — weather and place included. ALAC stays ALAC.
+            “Bopping Around” is everyday listening: hanging out, commuting, errands.
           </p>
         </div>
 

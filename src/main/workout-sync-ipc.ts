@@ -168,7 +168,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         return { ok: false, error: 'Library is empty — nothing to sync.' }
       }
       const brief: ActivityBrief = opts?.brief || {
-        activity: 'run',
+        activity: 'bop',
         intensity: 'medium',
         setting: 'city',
         place: 'Brooklyn',
