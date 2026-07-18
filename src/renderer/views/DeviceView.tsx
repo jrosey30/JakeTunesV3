@@ -1,7 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import { buildWorkoutIpodSyncPayload } from '../utils/workoutIpodSync'
+import { buildWorkoutIpodSyncPayload, assembleSyncPlaylists, type WorkoutSyncPayload } from '../utils/workoutIpodSync'
 import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
+import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import '../styles/device.css'
@@ -73,6 +74,14 @@ export default function DeviceView() {
   const [showActivitySheet, setShowActivitySheet] = useState(false)
   const [showFullSyncConfirm, setShowFullSyncConfirm] = useState(false)
   const [lastBrief, setLastBrief] = useState<ActivityBrief | null>(null)
+  // REVIEW GATE: set after Music Man builds a proposal; nothing syncs or
+  // persists until the user confirms the (possibly edited) list.
+  const [reviewData, setReviewData] = useState<{
+    payload: WorkoutSyncPayload
+    brief: ActivityBrief
+    keepIds: Set<number>
+    leaving: Array<{ path: string; title: string; artist: string }>
+  } | null>(null)
 
   // Pull the version from main once on mount. Sourced from package.json
   // via app.getVersion() so it auto-tracks the actual installed build.
@@ -321,24 +330,67 @@ export default function DeviceView() {
         setSyncing(false)
         return
       }
-      const { payload } = built
-      const wx = payload.weatherLine ? ` · ${payload.weatherLine}` : ''
-      setSyncStatus({
-        state: 'syncing',
-        step: `Syncing “${payload.name}” — ${payload.total} tracks (${payload.alacCount} ALAC)${wx}…`,
+      // REVIEW GATE (Jake 2026-07-18): stop here and show the proposed
+      // set. previewIpodSync runs the ENGINE'S OWN planning criteria
+      // (real files on the device + size matches vs source/cached
+      // mirror) — never the iTunesDB, which is a stale template after a
+      // gut. Nothing has synced or persisted — the build handler no
+      // longer saves state, so Cancel = no trace.
+      const targetKbpsPrev: 128 | 192 | 256 =
+        appliedSettings.optConvertBitrateTarget === '256' ? 256
+        : appliedSettings.optConvertBitrateTarget === '192' ? 192
+        : 128
+      const preview = await window.electronAPI.previewIpodSync?.(built.payload.tracks, {
+        enabled: appliedSettings.optConvertBitrate,
+        targetKbps: targetKbpsPrev,
       })
-      activity.setSync({
-        active: true,
-        step: `Syncing “${payload.name}” — ${payload.total} tracks…`,
+      const keepIds = new Set<number>(
+        (preview?.ok ? preview.plan : []).filter((r) => r.action === 'keep').map((r) => r.id),
+      )
+      setReviewData({
+        payload: built.payload,
+        brief,
+        keepIds,
+        leaving: preview?.ok ? preview.leaving : [],
       })
-      // MERGE 2026-07-18: activity sets ride the user's APPLIED convert
-      // setting — toggle ON = 128k CBR mirrors (the chirp cure), toggle
-      // OFF = ALAC preserved (Cursor's workout-quality intent).
+      setSyncing(false)
+      setSyncStatus({ state: 'idle' })
+      activity.setSync(null)
+    } catch (err) {
+      console.error('Activity set build failed:', err)
+      const msg = String(err)
+      setSyncStatus({ state: 'error', message: msg })
+      activity.setSync({ active: true, step: `Build failed — ${msg}` })
+      setTimeout(() => activity.setSync(null), 4000)
+      setSyncing(false)
+    }
+  }
+
+  // The sync half — runs only after the user confirms the (possibly
+  // edited) list in the review sheet. Commits the set as ground truth
+  // ONLY after the device sync succeeds.
+  const runConfirmedActivitySync = async (finalTracks: typeof state.tracks) => {
+    const review = reviewData
+    setReviewData(null)
+    if (!review || finalTracks.length === 0) return
+    const activity = await import('../activity')
+    setSyncing(true)
+    const name = review.payload.name
+    const playlists = assembleSyncPlaylists(finalTracks, state.playlists, name)
+    const wx = review.payload.weatherLine ? ` · ${review.payload.weatherLine}` : ''
+    setSyncStatus({
+      state: 'syncing',
+      step: `Syncing “${name}” — ${finalTracks.length} tracks${wx}…`,
+    })
+    activity.setSync({ active: true, step: `Syncing “${name}” — ${finalTracks.length} tracks…` })
+    try {
+      // Activity sets ride the user's APPLIED convert setting — toggle
+      // ON = 128k CBR mirrors (the chirp cure), OFF = ALAC preserved.
       const targetKbpsNum: 128 | 192 | 256 =
         appliedSettings.optConvertBitrateTarget === '256' ? 256
         : appliedSettings.optConvertBitrateTarget === '192' ? 192
         : 128
-      const result = await window.electronAPI.syncToIpod(payload.tracks, payload.playlists, {
+      const result = await window.electronAPI.syncToIpod(finalTracks, playlists, {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
       })
@@ -392,17 +444,27 @@ export default function DeviceView() {
         }
         if (updates.length > 0) dispatch({ type: 'UPDATE_TRACKS', updates })
       }
+      // Sync landed — NOW commit the set as "what's on the iPod". This
+      // is what plug-in auto-sync repairs and the next build rotates
+      // away from. Also feeds Music Man's activity brain context.
+      await window.electronAPI.commitWorkoutSyncSet?.({
+        trackIds: finalTracks.map((t) => t.id),
+        name,
+        commentary: review.payload.commentary,
+        alacCount: review.payload.alacCount,
+        brief: review.brief as unknown as Record<string, unknown>,
+      })
       const now = new Date()
       const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       setSyncStatus({
         state: 'done',
         copied: result.copied || 0,
-        total: result.totalTracks || payload.total,
+        total: result.totalTracks || finalTracks.length,
         time: timeStr,
       })
       activity.setSync({
         active: true,
-        step: `Synced “${payload.name}” — ${result.copied || 0} new · ${payload.total} on device`,
+        step: `Synced “${name}” — ${result.copied || 0} new · ${finalTracks.length} on device`,
       })
       setTimeout(() => activity.setSync(null), 4000)
     } catch (err) {
@@ -641,6 +703,19 @@ export default function DeviceView() {
           destructive={false}
           onConfirm={() => { void runFullLibrarySync() }}
           onCancel={() => setShowFullSyncConfirm(false)}
+        />
+      )}
+      {reviewData && (
+        <SyncReviewSheet
+          setName={reviewData.payload.name}
+          commentary={reviewData.payload.commentary}
+          weatherLine={reviewData.payload.weatherLine}
+          initialTracks={reviewData.payload.tracks}
+          keepIds={reviewData.keepIds}
+          leaving={reviewData.leaving}
+          allTracks={state.tracks}
+          onCancel={() => setReviewData(null)}
+          onConfirm={(tracks) => { void runConfirmedActivitySync(tracks) }}
         />
       )}
     </div>

@@ -37,7 +37,7 @@ import {
 } from './importQueue'
 import { setImport } from './activity'
 import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
-import { buildWorkoutIpodSyncPayload } from './utils/workoutIpodSync'
+import { assembleSyncPlaylists } from './utils/workoutIpodSync'
 import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
 import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
@@ -661,27 +661,29 @@ function AppInner() {
         console.warn(`[auto-sync] ABORTED — convert preference unreadable: ${abortReason}. Open Device view and click Apply to commit a known-good convert state.`)
         return
       }
-      // 2026-07-18: the iPod is Jake's ACTIVITY device now — plug-in refresh
-      // rebuilds the LAST activity set (never a silent full-library dump;
-      // "Whole library instead" on the Device sheet is the explicit path).
-      // No prior activity state -> do nothing and wait for a manual sync.
+      // 2026-07-18 REVIEW GATE: plug-in auto-sync REPAIRS the last
+      // CONFIRMED set only — the exact trackIds committed after the last
+      // successful review-confirmed sync. It never rebuilds/rotates (that
+      // would bypass the review sheet) and never burns a Music Man call.
+      // Crossover is free: the sync engine skips byte-identical files, so
+      // a repair pass with nothing missing copies zero bytes. No prior
+      // confirmed set -> do nothing and wait for a manual Activity Sync.
       void (async () => {
         try {
           const prev = await window.electronAPI.getWorkoutSyncState?.()
-          if (!prev?.ok || !prev.state) {
-            console.log('[auto-sync] no prior activity set — waiting for a manual Device sync')
+          if (!prev?.ok || !prev.state?.trackIds?.length) {
+            console.log('[auto-sync] no confirmed activity set — waiting for a manual Activity Sync')
             return
           }
-          const ctx = await window.electronAPI.getActivityBrainContext?.()
-          const brief = (ctx?.context as { brief?: import('./components/ActivitySheet').ActivityBrief } | undefined)?.brief
-          if (!brief) {
-            console.log('[auto-sync] no stored activity brief — waiting for a manual Device sync')
+          const idSet = new Set(prev.state.trackIds)
+          const setTracks = lib.tracks.filter((t) => idSet.has(t.id))
+          if (setTracks.length === 0) {
+            console.log('[auto-sync] confirmed set has no matching library tracks — waiting for a manual Activity Sync')
             return
           }
-          const built = await buildWorkoutIpodSyncPayload(lib.tracks, lib.playlists || [], brief)
-          if (!built.ok) { console.warn('[auto-sync] activity refresh failed:', built.error); return }
-          console.log(`[auto-sync] refreshing activity set "${built.payload.name}" (${built.payload.total} tracks), convertOptions=`, convertOptions)
-          await window.electronAPI.syncToIpod(built.payload.tracks, built.payload.playlists, convertOptions)
+          const playlists = assembleSyncPlaylists(setTracks, lib.playlists || [], prev.state.name)
+          console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertOptions)
+          await window.electronAPI.syncToIpod(setTracks, playlists, convertOptions)
         } catch (err) {
           console.warn('[auto-sync] failed:', err)
         }

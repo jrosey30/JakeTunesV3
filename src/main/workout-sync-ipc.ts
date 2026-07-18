@@ -204,38 +204,58 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         return { ok: false, error: 'Could not build an activity set from this library.' }
       }
 
-      const state: WorkoutSyncState = {
+      // REVIEW GATE (2026-07-18): building is now a PROPOSAL — nothing
+      // persists here. The renderer shows the set for review (edits,
+      // substitutions) and calls commit-workout-sync-set only after the
+      // device sync actually succeeds. Cancelling the review leaves no
+      // trace, so plug-in auto-sync can never chase a phantom set.
+      return {
+        ok: true,
         trackIds: selected.trackIds,
         name: selected.name,
         commentary: selected.commentary,
-        syncedAt: new Date().toISOString(),
         alacCount: selected.alacCount,
-        brief,
-      }
-      await saveState(state)
-
-      // Feed the AI brain — Music Man chat/DJ/radio will see this context.
-      await saveActivityBrainContext({
-        brief,
-        weather,
-        setName: selected.name,
-        setCommentary: selected.commentary,
-        updatedAt: state.syncedAt,
-      })
-
-      return {
-        ok: true,
-        trackIds: state.trackIds,
-        name: state.name,
-        commentary: state.commentary,
-        alacCount: state.alacCount,
-        total: state.trackIds.length,
+        total: selected.trackIds.length,
         rotatedFrom: prev?.trackIds?.length ?? 0,
         weather,
         brief,
       }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'workout sync failed' }
+    }
+  })
+
+  // REVIEW GATE: called by the renderer AFTER a confirmed sync lands.
+  // State written here is the ground truth "last set on the iPod" that
+  // plug-in auto-sync repairs and the next build rotates away from.
+  ipcMain.handle('commit-workout-sync-set', async (
+    _e,
+    payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: ActivityBrief; weather?: ActivityWeather | null },
+  ) => {
+    try {
+      if (!Array.isArray(payload?.trackIds) || payload.trackIds.length === 0) {
+        return { ok: false, error: 'Nothing to commit — empty track list.' }
+      }
+      const state: WorkoutSyncState = {
+        trackIds: payload.trackIds.map(Number),
+        name: String(payload.name || 'Activity Sync'),
+        commentary: String(payload.commentary || ''),
+        syncedAt: new Date().toISOString(),
+        alacCount: Number(payload.alacCount) || 0,
+        brief: payload.brief,
+      }
+      await saveState(state)
+      // Feed the AI brain — Music Man chat/DJ/radio will see this context.
+      await saveActivityBrainContext({
+        brief: payload.brief,
+        weather: payload.weather ?? null,
+        setName: state.name,
+        setCommentary: state.commentary,
+        updatedAt: state.syncedAt,
+      })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'commit failed' }
     }
   })
 

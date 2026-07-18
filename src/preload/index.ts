@@ -515,6 +515,10 @@ const electronAPI = {
     brief?: Record<string, unknown>
     error?: string
   }> => ipcRenderer.invoke('build-workout-sync-set', tracks, opts),
+  previewIpodSync: (tracks: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }> =>
+    ipcRenderer.invoke('preview-ipod-sync', tracks, convertOptions),
+  commitWorkoutSyncSet: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('commit-workout-sync-set', payload),
   getWorkoutSyncState: (): Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }> =>
     ipcRenderer.invoke('get-workout-sync-state'),
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>

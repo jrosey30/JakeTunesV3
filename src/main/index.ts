@@ -4264,6 +4264,93 @@ ipcMain.handle('get-ipod-db-tracks', async () => {
   }
 })
 
+// ── Preview an iPod sync (REVIEW GATE, 2026-07-18) ──
+// Answers "what would this sync actually DO" using the SAME criteria the
+// copy planner uses: files that exist on the device (F00-F49 walk = ground
+// truth; the iTunesDB is a stale template after a gut and must NOT be
+// trusted for existence) and byte-size matches against the local source or
+// the cached AAC mirror. Read-only — never copies, never writes.
+ipcMain.handle('preview-ipod-sync', async (_e, tracks: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
+  try {
+    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', plan: [], leaving: [] }
+    const IPOD_MOUNT = detectedIpodMount
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const pathSep = IS_WINDOWS ? '\\' : '/'
+    const { readdir: rd } = await import('fs/promises')
+    const { createHash } = await import('crypto')
+
+    // Ground truth: every real audio file on the device, by basename.
+    const filesByBasename = new Map<string, { path: string; size: number }>()
+    for (let i = 0; i < 50; i++) {
+      const sub = join(IPOD_MOUNT, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
+      const entries = await rd(sub).catch(() => [] as string[])
+      for (const fn of entries) {
+        if (fn.startsWith('._') || filesByBasename.has(fn)) continue
+        const full = join(sub, fn)
+        const st = await stat(full).catch(() => null)
+        if (st && st.isFile()) filesByBasename.set(fn, { path: full, size: st.size })
+      }
+    }
+
+    const claimed = new Set<string>()
+    const plan: Array<{ id: number; action: 'keep' | 'copy' }> = []
+    for (const t of tracks) {
+      const id = Number(t.id)
+      const colonPath = String(t.path || '')
+      if (!colonPath) { plan.push({ id, action: 'copy' }); continue }
+      const baseName = colonPath.split(':').pop() || ''
+      const dot = baseName.lastIndexOf('.')
+      const m4aName = dot > 0 ? baseName.slice(0, dot) + '.m4a' : baseName
+      const localFile = join(LOCAL_MOUNT, colonPath.replace(/:/g, pathSep))
+      const candNames = baseName === m4aName ? [baseName] : [baseName, m4aName]
+      let action: 'keep' | 'copy' = 'copy'
+      for (const nm of candNames) {
+        const dev = filesByBasename.get(nm)
+        if (!dev) continue
+        claimed.add(nm) // this device slot belongs to the set either way
+        // Mirrors the planner: byte-identical original = keep, unless a
+        // convert pass wants to shrink a (known-)lossless source.
+        const ls = await stat(localFile).catch(() => null)
+        if (ls && dev.size === ls.size) {
+          const ext2 = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
+          const hint = (codecByAbsPath.get(localFile) || '').toLowerCase()
+          const lossless = LOSSLESS_EXTS.has(ext2) || hint === 'alac' || LOSSLESS_CODECS.has(hint)
+          if (!(convertOptions?.enabled && lossless)) { action = 'keep'; break }
+        }
+        // Mirrors the copy loop's last-mile skip: a cached AAC mirror
+        // whose size matches the device file means zero bytes move.
+        if (convertOptions?.enabled) {
+          const hash = createHash('sha1').update(`${localFile}|${convertOptions.targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
+          const cs = await stat(join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR, `${hash}.m4a`)).catch(() => null)
+          if (cs && dev.size === cs.size) { action = 'keep'; break }
+        }
+      }
+      plan.push({ id, action })
+    }
+
+    // Leaving = real device files no track in the set claims. The post-sync
+    // orphan cleanup deletes exactly these. Titles best-effort from the DB.
+    const titleByColon = new Map<string, { title: string; artist: string }>()
+    try {
+      const db = await readIpodDatabase()
+      for (const dt of db.tracks as Array<Record<string, unknown>>) {
+        titleByColon.set(String(dt.path || ''), { title: String(dt.title || ''), artist: String(dt.artist || '') })
+      }
+    } catch { /* DB unreadable → basenames only */ }
+    const leaving: Array<{ path: string; title: string; artist: string }> = []
+    for (const [nm, f] of filesByBasename) {
+      if (claimed.has(nm)) continue
+      const rel = f.path.slice(IPOD_MOUNT.length + 1)
+      const colon = ':' + rel.split(pathSep).join(':')
+      const meta = titleByColon.get(colon)
+      leaving.push({ path: colon, title: meta?.title || nm, artist: meta?.artist || '' })
+    }
+    return { ok: true, plan, leaving, deviceFileCount: filesByBasename.size }
+  } catch (err) {
+    return { ok: false, error: String(err), plan: [], leaving: [] }
+  }
+})
+
 // ── Sync library TO iPod ──
 //
 // Content-safety invariant: this handler will REFUSE to commit the

@@ -125,3 +125,109 @@
 }
 
 .activity-btn--go:hover { background: #186475; }
+
+/* ── Sync review sheet (2026-07-18) — the confirm gate before any bytes
+   move to the iPod. Reuses the activity sheet shell; adds the badged
+   track list, leaving-list, and substitution search. ── */
+.sync-review-sheet {
+  width: 560px;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+.sync-review-counts {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #444;
+}
+.sync-review-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  vertical-align: 1px;
+}
+.sync-review-badge--new { background: #1d7a8c; color: #fff; }
+.sync-review-badge--kept { background: #d8d8d8; color: #444; }
+.sync-review-badge--dupe { background: #b5541c; color: #fff; font-weight: 600; }
+.sync-review-leaving-toggle {
+  border: none;
+  background: none;
+  color: #8c4a1d;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.sync-review-leaving {
+  max-height: 120px;
+  overflow-y: auto;
+  border: 1px solid #e0d8c8;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  background: #faf6ee;
+}
+.sync-review-add { position: relative; margin-bottom: 10px; }
+.sync-review-add .activity-place { width: 100%; }
+.sync-review-results {
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  z-index: 5;
+  background: #fff;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.sync-review-list {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+.sync-review-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.sync-review-row:last-child { border-bottom: none; }
+.sync-review-row--leaving { color: #7a5a3a; }
+/* Truncation policy: names NEVER clip or ellipsize — long titles wrap. */
+.sync-review-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sync-review-row-artist {
+  color: #777;
+  max-width: 40%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.sync-review-row-btn {
+  border: 1px solid #1d7a8c;
+  background: #fff;
+  color: #1d7a8c;
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.sync-review-row-btn:hover { background: #eef6f7; }
+.sync-review-row-btn--remove {
+  border-color: #bbb;
+  color: #888;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 6px;
+}
+.sync-review-row-btn--remove:hover { border-color: #b5541c; color: #b5541c; background: #fdf3ec; }
+.activity-btn--go:disabled { opacity: 0.5; cursor: default; }

@@ -36,6 +36,33 @@ function toWorkoutTrack(t: Track) {
   }
 }
 
+/**
+ * Assemble the playlist list for an activity-set sync: the set itself as
+ * a named playlist, plus the user's regular playlists filtered down to
+ * members of the set. Exported so the review sheet can re-assemble after
+ * the user edits (removes/substitutes) tracks — playlists must always be
+ * rebuilt from the FINAL track list or the iPod DB would reference songs
+ * that never landed.
+ */
+export function assembleSyncPlaylists(
+  tracks: Track[],
+  regularPlaylists: Playlist[],
+  setName: string,
+): Playlist[] {
+  const idSet = new Set(tracks.map((t) => t.id))
+  const basePlaylists = buildSmartPlaylistsForSync(tracks, regularPlaylists)
+  const filteredRegular = basePlaylists.map((p) => ({
+    ...p,
+    trackIds: (p.trackIds || []).filter((id) => idSet.has(id)),
+  })).filter((p) => (p.trackIds?.length || 0) > 0)
+  const setPlaylist: Playlist = {
+    id: 'workout-sync',
+    name: setName || 'Activity Sync',
+    trackIds: tracks.map((t) => t.id),
+  }
+  return [setPlaylist, ...filteredRegular]
+}
+
 export async function buildWorkoutIpodSyncPayload(
   allTracks: Track[],
   regularPlaylists: Playlist[],
@@ -49,23 +76,10 @@ export async function buildWorkoutIpodSyncPayload(
     return { ok: false, error: res?.error || 'Could not build activity sync set.' }
   }
 
-  const idSet = new Set(res.trackIds)
   const byId = new Map(allTracks.map((t) => [t.id, t]))
   const tracks = res.trackIds.map((id) => byId.get(id)).filter((t): t is Track => !!t)
   if (tracks.length === 0) {
     return { ok: false, error: 'Activity set produced no matching library tracks.' }
-  }
-
-  const basePlaylists = buildSmartPlaylistsForSync(tracks, regularPlaylists)
-  const filteredRegular = basePlaylists.map((p) => ({
-    ...p,
-    trackIds: (p.trackIds || []).filter((id) => idSet.has(id)),
-  })).filter((p) => (p.trackIds?.length || 0) > 0)
-
-  const workoutPlaylist: Playlist = {
-    id: 'workout-sync',
-    name: res.name || 'Activity Sync',
-    trackIds: tracks.map((t) => t.id),
   }
 
   const w = res.weather
@@ -77,7 +91,7 @@ export async function buildWorkoutIpodSyncPayload(
     ok: true,
     payload: {
       tracks,
-      playlists: [workoutPlaylist, ...filteredRegular],
+      playlists: assembleSyncPlaylists(tracks, regularPlaylists, res.name || 'Activity Sync'),
       name: res.name || 'Activity Sync',
       commentary: res.commentary || '',
       alacCount: res.alacCount ?? 0,
