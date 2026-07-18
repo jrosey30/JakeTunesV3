@@ -459,17 +459,22 @@ export default function DeviceView() {
           <label className="device-itunes-option device-itunes-option--note">
             <span>
             Sync mode: answer a few questions → Music Man builds ~1,000 tracks for that
-            activity/place/weather. Rotates every sync. ALAC stays ALAC.
+            activity/place/weather. Rotates every sync. Songs land at the convert
+            setting below.
             </span>
           </label>
           <label className="device-itunes-option">
             <input
               type="checkbox"
-              checked={false}
-              disabled
-              onChange={() => {}}
+              checked={optConvertBitrate}
+              onChange={e => setOptConvertBitrate(e.target.checked)}
             />
-            <span>Convert higher bit rate songs to AAC — off (workout sync keeps lossless)</span>
+            <span>Convert higher bit rate songs to <select
+              className="device-itunes-select"
+              value={optConvertBitrateTarget}
+              disabled={!optConvertBitrate}
+              onChange={e => setOptConvertBitrateTarget(e.target.value as '128' | '192' | '256')}
+            ><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option></select> AAC</span>
           </label>
           <label className="device-itunes-option">
             <input

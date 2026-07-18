@@ -104,7 +104,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel, onFullLibr
         <div className="activity-sheet-head">
           <h2 className="activity-sheet-title">What are you doing?</h2>
           <p className="activity-sheet-sub">
-            Music Man builds ~1,000 tracks for this — weather and place included. ALAC stays ALAC.
+            Music Man builds ~1,000 tracks for this — weather and place included. Songs land at your convert setting.
             “Bopping Around” is everyday listening: hanging out, commuting, errands.
           </p>
         </div>
