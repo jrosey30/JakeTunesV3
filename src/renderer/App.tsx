@@ -37,6 +37,7 @@ import {
 } from './importQueue'
 import { setImport } from './activity'
 import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
+import { buildWorkoutIpodSyncPayload } from './utils/workoutIpodSync'
 import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
 import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
@@ -624,7 +625,6 @@ function AppInner() {
       // auto-sync silently re-copied lossless originals over previously-
       // converted AAC files on the iPod. That's how Jake's 2,917 cached
       // AAC mirrors never made it to the device.
-      const playlists = buildSmartPlaylistsForSync(lib.tracks, lib.playlists || [])
       // Bug #4: previous logic defaulted `enabled=false` on any ambiguity
       // (load failure, missing field, exception). That's the *destructive*
       // default — convert-off means full ALAC copies to the iPod, which is
@@ -661,10 +661,31 @@ function AppInner() {
         console.warn(`[auto-sync] ABORTED — convert preference unreadable: ${abortReason}. Open Device view and click Apply to commit a known-good convert state.`)
         return
       }
-      console.log(`[auto-sync] firing with convertOptions=`, convertOptions)
-      window.electronAPI.syncToIpod(lib.tracks, playlists, convertOptions).catch((err) => {
-        console.warn('[auto-sync] failed:', err)
-      })
+      // 2026-07-18: the iPod is Jake's ACTIVITY device now — plug-in refresh
+      // rebuilds the LAST activity set (never a silent full-library dump;
+      // "Whole library instead" on the Device sheet is the explicit path).
+      // No prior activity state -> do nothing and wait for a manual sync.
+      void (async () => {
+        try {
+          const prev = await window.electronAPI.getWorkoutSyncState?.()
+          if (!prev?.ok || !prev.state) {
+            console.log('[auto-sync] no prior activity set — waiting for a manual Device sync')
+            return
+          }
+          const ctx = await window.electronAPI.getActivityBrainContext?.()
+          const brief = (ctx?.context as { brief?: import('./components/ActivitySheet').ActivityBrief } | undefined)?.brief
+          if (!brief) {
+            console.log('[auto-sync] no stored activity brief — waiting for a manual Device sync')
+            return
+          }
+          const built = await buildWorkoutIpodSyncPayload(lib.tracks, lib.playlists || [], brief)
+          if (!built.ok) { console.warn('[auto-sync] activity refresh failed:', built.error); return }
+          console.log(`[auto-sync] refreshing activity set "${built.payload.name}" (${built.payload.total} tracks), convertOptions=`, convertOptions)
+          await window.electronAPI.syncToIpod(built.payload.tracks, built.payload.playlists, convertOptions)
+        } catch (err) {
+          console.warn('[auto-sync] failed:', err)
+        }
+      })()
     }
     window.addEventListener('jaketunes-ipod-mounted', onIpodMounted)
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)
