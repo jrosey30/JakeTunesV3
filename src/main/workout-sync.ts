@@ -24,6 +24,8 @@ export interface WorkoutTrack {
   bpm?: number | null
   codec?: string
   fileSize?: number
+  /** ms — needed by the skit/intro gate. Absent = gate passes it. */
+  duration?: number
 }
 
 export interface WorkoutVibe {
@@ -41,6 +43,11 @@ export interface WorkoutSelectOpts {
   brief?: ActivityBrief
   weather?: ActivityWeather | null
   seed?: number
+  /** Learned from sync history: tracks Jake REMOVED in review for this
+   *  activity — heavily demoted so they stop coming back. */
+  demoteIds?: number[]
+  /** Tracks Jake ADDED in review for this activity — boosted. */
+  boostIds?: number[]
 }
 
 export interface WorkoutSelectResult {
@@ -54,6 +61,29 @@ export interface WorkoutSelectResult {
 const WORKOUT_GENRE = /hip.?hop|rap|electronic|house|techno|dance|disco|funk|soul|r&b|rnb|edm|drum.?and.?bass|\bdnb\b|jungle|breakbeat|garage|boogie|trap|drill|club|electro|ambient.?techno|footwork|idm|big.?beat|nu.?disco|synth|industrial|metal|punk|hardcore|running|workout|fitness|cardio/i
 const SLOW_GENRE = /folk|singer.?songwriter|acoustic|ballad|classical|ambient(?!.?techno)|lullaby|sleep|meditation|new.?age|chill.?out|downtempo|sad|country|jazz(?!.?funk)/i
 const SKIP_ARTISTS = new Set(['various artists', 'various', 'va', 'unknown artist', 'soundtrack', 'compilation', ''])
+
+// ── Skit / intro gate (Jake 2026-07-18: "absolutely at all times avoid
+// skits, intro songs that are really really short — but differentiate
+// short PUNK songs from skits") ──────────────────────────────────────
+// Title patterns are out at ANY length. Short tracks are out UNLESS the
+// genre is punk-family (where sub-minute songs are real songs) or Jake
+// has demonstrated he plays/loves the track.
+const SKIT_TITLE = /\b(skit|interlude|intro|outro|prelude|segue|snippet|spoken word|a\s?cappella)\b/i
+const SHORT_OK_GENRE = /punk|hardcore|grind|powerviolence|thrash|crust|ska|garage|surf|noise/i
+const SHORT_MS = 75_000   // under this, a non-punk track needs evidence
+const MICRO_MS = 35_000   // under this, only punk-family survives
+
+export function isSkitOrIntro(t: WorkoutTrack): boolean {
+  if (SKIT_TITLE.test(t.title || '')) return true
+  const dur = Number(t.duration) || 0
+  if (dur <= 0 || dur >= SHORT_MS) return false
+  const punkFamily = SHORT_OK_GENRE.test(t.genre || '')
+  if (dur < MICRO_MS) return !punkFamily
+  // 35-75s: punk-family passes; otherwise the listener must have shown
+  // real intent (plays or a high rating) for it to count as a song.
+  if (punkFamily) return false
+  return !((Number(t.playCount) || 0) >= 5 || (Number(t.rating) || 0) >= 4)
+}
 
 function mulberry32(a: number): () => number {
   return () => {
@@ -156,18 +186,26 @@ export function selectWorkoutSyncSet(
   const weather = opts.weather
   const rand = mulberry32(opts.seed ?? 1)
 
+  const demote = new Set(opts.demoteIds || [])
+  const boost = new Set(opts.boostIds || [])
   const scored = tracks
+    .filter((t) => !isSkitOrIntro(t))
     .map((t) => {
       let s = scoreWorkoutTrack(t, vibe, brief, weather)
       if (previous.has(t.id)) s -= 35
+      if (demote.has(t.id)) s -= 60   // Jake pulled this in review — learn it
+      if (boost.has(t.id)) s += 20    // Jake added this in review — learn it
       s += (rand() - 0.5) * 2
       return { t, s }
     })
     .filter((x) => x.s > -20)
     .sort((a, b) => b.s - a.s || a.t.id - b.t.id)
 
-  const CAP = 4
+  // Diversity: at most 3 per artist AND 3 per album in the capped pass
+  // (was 4 per artist, no album cap — Jake: "diversify a little more").
+  const CAP = 3
   const perArtist = new Map<string, number>()
+  const perAlbum = new Map<string, number>()
   const out: number[] = []
   const scoreMap = new Map<number, number>()
 
@@ -176,11 +214,14 @@ export function selectWorkoutSyncSet(
       if (out.length >= target) break
       if (scoreMap.has(t.id)) continue
       const key = (t.artist || 'Unknown').toLowerCase().trim()
+      const albumKey = `${key}|||${(t.album || '').toLowerCase().trim()}`
       const n = perArtist.get(key) || 0
-      if (!relaxCap && n >= CAP) continue
+      const an = perAlbum.get(albumKey) || 0
+      if (!relaxCap && (n >= CAP || (t.album && an >= CAP))) continue
       out.push(t.id)
       scoreMap.set(t.id, s)
       perArtist.set(key, n + 1)
+      perAlbum.set(albumKey, an + 1)
     }
   }
 

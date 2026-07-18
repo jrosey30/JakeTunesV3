@@ -33,6 +33,7 @@ function toWorkoutTrack(t: Track) {
     bpm: t.bpm,
     codec: t.codec,
     fileSize: t.fileSize,
+    duration: t.duration,
   }
 }
 

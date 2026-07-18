@@ -36,6 +36,47 @@ export interface WorkoutSyncHost {
 
 const WORKOUT_TARGET = 1000
 const STATE_FILE = () => join(app.getPath('userData'), 'workout-sync-state.json')
+const HISTORY_FILE = () => join(app.getPath('userData'), 'workout-sync-history.json')
+// Best-effort NAS mirror so the nightly brain jobs on homemini
+// (JT_STATE_DIR = /Volumes/JakeShared/JakeTunesState) can ingest the
+// sync history — this is how activity syncs feed the brain over time.
+const HISTORY_NAS_MIRROR = '/Volumes/JakeShared/JakeTunesState/workout-sync-history.json'
+const HISTORY_CAP = 200
+
+interface SyncHistoryEdit { id: number; title: string; artist: string }
+export interface SyncHistoryEntry {
+  syncedAt: string
+  name: string
+  brief: ActivityBrief
+  trackCount: number
+  alacCount: number
+  /** Jake's review-sheet edits — the strongest taste signal we have. */
+  added: SyncHistoryEdit[]
+  removed: SyncHistoryEdit[]
+}
+
+async function loadSyncHistory(): Promise<SyncHistoryEntry[]> {
+  try {
+    const raw = await readFile(HISTORY_FILE(), 'utf-8')
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
+}
+
+async function appendSyncHistory(entry: SyncHistoryEntry): Promise<void> {
+  const cur = await loadSyncHistory()
+  const next = [entry, ...cur].slice(0, HISTORY_CAP)
+  const json = JSON.stringify(next, null, 2)
+  await writeFile(HISTORY_FILE(), json)
+  try {
+    const { existsSync } = await import('fs')
+    if (existsSync('/Volumes/JakeShared/JakeTunesState')) {
+      await writeFile(HISTORY_NAS_MIRROR, json)
+    }
+  } catch { /* NAS asleep — local copy is the source of truth */ }
+}
 
 interface WorkoutSyncState {
   trackIds: number[]
@@ -98,6 +139,7 @@ async function askActivityVibe(
   brief: ActivityBrief,
   weather: ActivityWeather | null,
   previousName?: string,
+  historyLines?: string,
 ): Promise<WorkoutVibe> {
   const genreCounts = new Map<string, number>()
   const artistPlays = new Map<string, number>()
@@ -122,6 +164,7 @@ async function askActivityVibe(
       : 'Weather: unknown — lean on activity + setting.',
     hints.weatherNote ? `Weather read: ${hints.weatherNote}` : '',
     brief.note ? `Listener note: ${brief.note}` : '',
+    historyLines ? `\nWhat past syncs taught us (review edits are the listener's OWN corrections — respect them):\n${historyLines}` : '',
     '',
     `Suggested genre lean (from heuristics): ${hints.genreBoosts.join(', ') || 'none'}`,
     `BPM bias: ${hints.bpmBias}`,
@@ -190,7 +233,20 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       }
 
       const prev = await loadState()
-      const vibe = await askActivityVibe(host, tracks, brief, weather, prev?.name)
+      // Learn from history: edits Jake made in review for THIS activity.
+      // Removed tracks get demoted hard; added tracks get boosted. The
+      // vibe prompt also sees a compact digest so Music Man's framing
+      // improves sync over sync.
+      const history = await loadSyncHistory()
+      const sameActivity = history.filter((h) => h?.brief?.activity === brief.activity).slice(0, 20)
+      const demoteIds = [...new Set(sameActivity.flatMap((h) => (h.removed || []).map((e) => e.id)))]
+      const boostIds = [...new Set(sameActivity.flatMap((h) => (h.added || []).map((e) => e.id)))]
+      const historyLines = sameActivity.slice(0, 8).map((h) => {
+        const rm = (h.removed || []).slice(0, 5).map((e) => `${e.title} — ${e.artist}`).join('; ')
+        const ad = (h.added || []).slice(0, 5).map((e) => `${e.title} — ${e.artist}`).join('; ')
+        return `• ${h.syncedAt.slice(0, 10)} "${h.name}" (${h.trackCount} tracks)${rm ? ` | removed: ${rm}` : ''}${ad ? ` | added: ${ad}` : ''}`
+      }).join('\n')
+      const vibe = await askActivityVibe(host, tracks, brief, weather, prev?.name, historyLines || undefined)
       const target = Math.min(opts?.target ?? WORKOUT_TARGET, tracks.length)
       const selected = selectWorkoutSyncSet(tracks, {
         target,
@@ -199,6 +255,8 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         brief,
         weather,
         seed: Date.now(),
+        demoteIds,
+        boostIds,
       })
       if (selected.trackIds.length === 0) {
         return { ok: false, error: 'Could not build an activity set from this library.' }
@@ -230,7 +288,12 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
   // plug-in auto-sync repairs and the next build rotates away from.
   ipcMain.handle('commit-workout-sync-set', async (
     _e,
-    payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: ActivityBrief; weather?: ActivityWeather | null },
+    payload: {
+      trackIds: number[]; name: string; commentary: string; alacCount: number
+      brief: ActivityBrief; weather?: ActivityWeather | null
+      added?: Array<{ id: number; title: string; artist: string }>
+      removed?: Array<{ id: number; title: string; artist: string }>
+    },
   ) => {
     try {
       if (!Array.isArray(payload?.trackIds) || payload.trackIds.length === 0) {
@@ -245,6 +308,18 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         brief: payload.brief,
       }
       await saveState(state)
+      // Ledger every confirmed sync (with Jake's review edits) — feeds
+      // the next build's demote/boost lists, the vibe prompt digest, and
+      // (via the NAS mirror) the nightly brain jobs on homemini.
+      await appendSyncHistory({
+        syncedAt: state.syncedAt,
+        name: state.name,
+        brief: payload.brief,
+        trackCount: state.trackIds.length,
+        alacCount: state.alacCount,
+        added: Array.isArray(payload.added) ? payload.added : [],
+        removed: Array.isArray(payload.removed) ? payload.removed : [],
+      }).catch(() => {})
       // Feed the AI brain — Music Man chat/DJ/radio will see this context.
       await saveActivityBrainContext({
         brief: payload.brief,

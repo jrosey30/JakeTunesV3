@@ -82,6 +82,37 @@ export default function DeviceView() {
     keepIds: Set<number>
     leaving: Array<{ path: string; title: string; artist: string }>
   } | null>(null)
+  // Last CONFIRMED activity set — offered as "Save as playlist" (its own
+  // SYNCED SETS sidebar category) when Jake really likes a sync.
+  const [lastCommitted, setLastCommitted] = useState<{ name: string; trackIds: number[] } | null>(null)
+  const [savedSetNotice, setSavedSetNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    window.electronAPI.getWorkoutSyncState?.().then((r) => {
+      if (r?.ok && r.state?.trackIds?.length) {
+        setLastCommitted({ name: r.state.name, trackIds: r.state.trackIds })
+      }
+    }).catch(() => {})
+  }, [])
+
+  const saveLastSetAsPlaylist = () => {
+    if (!lastCommitted) return
+    const exists = state.playlists.some((p) => p.category === 'synced-set' && p.name === lastCommitted.name)
+    const name = exists
+      ? `${lastCommitted.name} (${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })})`
+      : lastCommitted.name
+    dispatch({
+      type: 'ADD_PLAYLIST',
+      playlist: {
+        id: `synced-set-${Date.now()}`,
+        name,
+        trackIds: lastCommitted.trackIds,
+        category: 'synced-set' as const,
+      },
+    })
+    setSavedSetNotice(`Saved “${name}” to Synced Sets`)
+    setTimeout(() => setSavedSetNotice(null), 4000)
+  }
 
   // Pull the version from main once on mount. Sourced from package.json
   // via app.getVersion() so it auto-tracks the actual installed build.
@@ -447,13 +478,22 @@ export default function DeviceView() {
       // Sync landed — NOW commit the set as "what's on the iPod". This
       // is what plug-in auto-sync repairs and the next build rotates
       // away from. Also feeds Music Man's activity brain context.
+      const proposedIds = new Set(review.payload.tracks.map((t) => t.id))
+      const finalIds = new Set(finalTracks.map((t) => t.id))
       await window.electronAPI.commitWorkoutSyncSet?.({
         trackIds: finalTracks.map((t) => t.id),
         name,
         commentary: review.payload.commentary,
         alacCount: review.payload.alacCount,
         brief: review.brief as unknown as Record<string, unknown>,
+        // Jake's review edits — the strongest taste signal the brain
+        // gets: removed = demote next time, added = boost.
+        added: finalTracks.filter((t) => !proposedIds.has(t.id))
+          .map((t) => ({ id: t.id, title: String(t.title || ''), artist: String(t.artist || '') })),
+        removed: review.payload.tracks.filter((t) => !finalIds.has(t.id))
+          .map((t) => ({ id: t.id, title: String(t.title || ''), artist: String(t.artist || '') })),
       })
+      setLastCommitted({ name, trackIds: finalTracks.map((t) => t.id) })
       const now = new Date()
       const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       setSyncStatus({
@@ -591,6 +631,20 @@ export default function DeviceView() {
           )}
           {syncStatus.state === 'error' && (
             <span className="device-sync-message">✗ Sync failed — {syncStatus.message}</span>
+          )}
+        </div>
+      )}
+
+      {(lastCommitted || savedSetNotice) && (
+        <div className="device-sync-status device-sync-status--saveset">
+          {savedSetNotice ? (
+            <span className="device-sync-message">✓ {savedSetNotice}</span>
+          ) : (
+            <button
+              className="device-itunes-btn device-itunes-btn--saveset"
+              onClick={saveLastSetAsPlaylist}
+              title="Keep this sync's track list as a playlist in the SYNCED SETS sidebar section"
+            >Save “{lastCommitted!.name}” as playlist</button>
           )}
         </div>
       )}

@@ -518,6 +518,24 @@ export default function Sidebar() {
           </div>
         </SidebarSection>
 
+        {/* 2026-07-18 — saved activity syncs get their own category so a
+            kept sync reads as a different kind of thing than a hand-made
+            playlist. Section renders only when at least one exists. */}
+        {state.playlists.some(pl => pl.category === 'synced-set') && (
+          <SidebarSection title="SYNCED SETS">
+            {state.playlists.filter(pl => pl.category === 'synced-set').map((pl) => (
+              <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+                <SidebarItem
+                  label={pl.name}
+                  icon={<SmartPlaylistIcon />}
+                  selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+                  onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                />
+              </div>
+            ))}
+          </SidebarSection>
+        )}
+
         <SidebarSection title="PLAYLISTS">
           {smartPlaylists.map((sp) => (
             <SidebarItem
@@ -528,7 +546,7 @@ export default function Sidebar() {
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
             />
           ))}
-          {state.playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name)).map((pl) => (
+          {state.playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set').map((pl) => (
             editingPlaylistId === pl.id ? (
               <div key={pl.id} className="sidebar-item" style={{ paddingLeft: 22 }}>
                 <span className="sidebar-item-icon"><PlaylistIcon /></span>
