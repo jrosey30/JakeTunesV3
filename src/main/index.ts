@@ -89,21 +89,16 @@ import {
 } from './platform'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
-<<<<<<< HEAD
 import { registerScotusArchive } from './scotus-archive'
 import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
-=======
-import { registerRecommendationsIpc, warmRecommendationsSync, getActiveRecommendationIdentityKeys } from './recommendations'
-import { registerDiscoveryBrainIpc } from './discovery-brain'
 import { registerWorkoutSyncIpc } from './workout-sync-ipc'
 import {
   getActivityPromptBlockSync,
   getActivityBrainContextSync,
   loadActivityBrainContext,
 } from './activity-context'
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -7014,15 +7009,11 @@ Be unpredictable — sometimes a verified fun fact, sometimes an arrogant opinio
 If background info from MusicBrainz or Wikipedia is provided below, USE IT for any facts. If no background info and you're not confident, go with a take on the sound/genre rather than making up a story.`
 
   const djPrompt = isStephen
-<<<<<<< HEAD
-    ? withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djInstructions
-=======
     ? (() => {
         const act = getActivityPromptBlockSync()
-        return DJ_HANDS_CORE + '\n\n' + djInstructions
+        return withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djInstructions
           + (act ? `\n\n${act}\nMatch energy and density to this activity when you talk — a hard ski set is not a casual stroll.` : '')
       })()
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
     : buildMusicManPrompt(djInstructions)
 
   // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
@@ -7350,18 +7341,10 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   // External-API enrichment — append only what came back. The prompt's
   // KILL VANILLA / HUMAN MOVES rules tell Claude to use these as
   // *texture and reaction hooks*, not facts to recite.
-<<<<<<< HEAD
-  // 4.5 radioV2: the encyclopedic context — Wikidata bios, Discogs pressing
-  // detail, Last.fm "similar to" — was REMOVED from the radio prompt. Handing
-  // the model an encyclopedia entry made the hosts recite it (the "Wikipedia
-  // page" feel) no matter how hard KILL EXPOSITION pushed back. They now get
-  // ONLY reaction-bait — weather, the charts, press headlines — so they have to
-  // talk from opinion + chemistry. (wdCurrent/discogsCurrent/similarCurrent are
-  // still fetched above; a follow-up can stub those fetches for latency.)
-  const weatherLine = formatWeatherForPrompt(weather)
-=======
-  // Prefer the listener's activity place weather (from last iPod sync brief)
-  // when present — Aspen ski day should not sound like Brooklyn radio filler.
+  // 4.5 radioV2: reaction-bait only (no encyclopedia) — see prior comment
+  // history. MERGE 2026-07-18: the listener's ACTIVITY place weather (from the
+  // last iPod sync brief) outranks Brooklyn — an Aspen ski day should not
+  // sound like Brooklyn radio filler.
   const activityCtx = getActivityBrainContextSync()
   const activityWx = activityCtx?.weather
   const weatherLine = activityWx
@@ -7369,7 +7352,6 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     : formatWeatherForPrompt(weather)
   const activityPrompt = getActivityPromptBlockSync()
   if (activityPrompt) userMessage += `\n\n${activityPrompt}`
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
   const chartLine = formatLastFmChartForPrompt(chart)
   const reviewsBlock = formatReviewsForPrompt(reviews)
   if (weatherLine) userMessage += `\n\n${weatherLine}`
@@ -7511,13 +7493,9 @@ Rules:
 - Order matters — build a journey, but a DANCE FLOOR journey, not a Music Man lecture journey
 - Keep the intro SHORT — Stephen is NOT a man of many words${recentStr}`
 
-<<<<<<< HEAD
-  const systemPrompt = withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djSetInstructions
-=======
   const act = getActivityPromptBlockSync()
-  const systemPrompt = DJ_HANDS_CORE + '\n\n' + djSetInstructions
+  const systemPrompt = withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djSetInstructions
     + (act ? `\n\n${act}\nBias the set toward this activity's energy when it fits the dancefloor.` : '')
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
 
   try {
     const response = await claudeCall('musicman-dj-set', {
@@ -10396,13 +10374,9 @@ Rules:
 - ★ ARTIST VARIETY (see the box above) — aim for 25 distinct artists, max TWO per artist, NEVER three
 - Commentary: 1-2 sentences. STOP.`
 
-<<<<<<< HEAD
+  const act2 = getActivityPromptBlockSync()
   const systemPrompt = withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + picksInstructions
-=======
-  const act = getActivityPromptBlockSync()
-  const systemPrompt = DJ_HANDS_CORE + '\n\n' + picksInstructions
-    + (act ? `\n\n${act}\nLean the weekly rotation toward this activity when the library allows.` : '')
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
+    + (act2 ? `\n\n${act2}\nLean the weekly rotation toward this activity when the library allows.` : '')
   const chart = await getLastFmNyChart()
   const chartLine = formatLastFmChartForPrompt(chart)
   const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine} (Pick from MY library only — this is just party-pulse context.)` : ''}`
@@ -10594,32 +10568,12 @@ Their top genres: ${topGenres}`
   }
 })
 
-<<<<<<< HEAD
-=======
-// Brief 122 — Listen to the List (recommendations.json + homemini sync)
-registerRecommendationsIpc({
-  stateDir: app.getPath('userData'),
-  nasStateDir: '/Volumes/JakeShared/JakeTunesState',
-  isNasMounted: () => existsSync('/Volumes/JakeShared/JakeTunesState'),
-  libraryPath: LIBRARY_PATH,
-  claudeCall,
-  musicManCore: MUSIC_MAN_CORE,
-})
-
-registerDiscoveryBrainIpc({
-  libraryPath: LIBRARY_PATH,
-  claudeCall,
-  musicManCore: MUSIC_MAN_CORE,
-  getListIdentityKeys: getActiveRecommendationIdentityKeys,
-  getListenerTasteContext: async () => buildTasteProfile(),
-})
-
+// Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
 })
 
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
 // Music Man metadata scanner
 ipcMain.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
@@ -14693,18 +14647,8 @@ app.whenReady().then(async () => {
 
   // Load listener profile for Music Man (sync, tiny file)
   loadListenerProfile()
-<<<<<<< HEAD
-=======
-  // Brief 122 — warm recommendations from homemini/NAS in background
-  void warmRecommendationsSync()
+  // Warm the activity brain context (last iPod sync brief + place weather)
   void loadActivityBrainContext()
-  // Load Music Man's cross-mode memory (things he's said recently)
-  await loadMusicManMemory()
-  // Load Cynthia's archivist memory (recent jobs she's finished)
-  await loadCynthiaMemory()
-  // Fetch Discogs collection for Music Man taste context
-  fetchDiscogsCollection()
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
 
   // Serve album artwork images — register before createWindow so the
   // renderer's first paint can resolve album-art:// URLs.

@@ -489,7 +489,6 @@ const electronAPI = {
     ipcRenderer.invoke('save-library', tracks, playlists),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>
     ipcRenderer.invoke('sync-ipod', existingIds),
-<<<<<<< HEAD
   // 4.5: third arg `convertOptions` enables iTunes-style "Convert
   // higher bit rate songs to N kbps AAC" at sync time. Lossless
   // sources are transcoded + cached; their iPod destination filename
@@ -501,11 +500,6 @@ const electronAPI = {
   // loop checks it between files and bails with cancelled:true.
   cancelSync: (): Promise<{ ok: boolean; wasRunning: boolean }> =>
     ipcRenderer.invoke('cancel-sync'),
-  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => callback(progress)
-=======
-  syncToIpod: (tracks: unknown[], playlists: unknown[]): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
-    ipcRenderer.invoke('sync-to-ipod', tracks, playlists),
   buildWorkoutSyncSet: (tracks: Array<{
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
@@ -529,9 +523,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-activity-brain-context'),
   previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>
     ipcRenderer.invoke('preview-place-weather', place),
-  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => callback(progress)
->>>>>>> origin/cursor/ipod-workout-alac-sync-0d17
+  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)
     return () => { ipcRenderer.removeListener('sync-progress', handler) }
   },
