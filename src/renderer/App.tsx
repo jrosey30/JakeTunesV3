@@ -31,7 +31,7 @@ import {
   getDupeCount,
 } from './importQueue'
 import { setImport } from './activity'
-import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
+import { buildWorkoutIpodSyncPayload } from './utils/workoutIpodSync'
 import { setCrossfadeSettings } from './hooks/useAudio'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
 import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
@@ -392,20 +392,23 @@ function AppInner() {
       if (!settings.sync.autoSyncOnConnect) return
       const lib = libStateRef.current
       if (lib.tracks.length === 0) return
-      // 4.4.46: auto-sync now ships the SAME playlist set the manual
-      // Device-view "Sync" button does — the user's regular playlists
-      // PLUS the four built-in smart playlists (Recently Added,
-      // Recently Played, Top 25, My Top Rated), freshly evaluated.
-      // Before this, auto-sync passed only `lib.playlists` filtered to
-      // non-iPod entries — so plugging the iPod in and letting it
-      // auto-sync silently dropped every built-in smart playlist. The
-      // iTunesDB writer takes whatever it's handed as THE complete
-      // playlist set, so `buildSmartPlaylistsForSync` returns regular
-      // playlists too (kept as-is) — they are NOT dropped.
-      const playlists = buildSmartPlaylistsForSync(lib.tracks, lib.playlists || [])
-      window.electronAPI.syncToIpod(lib.tracks, playlists).catch((err) => {
-        console.warn('[auto-sync] failed:', err)
-      })
+      // Auto-sync: reuse last activity brief from the AI brain context
+      // (can't show the sheet on plug-in). Falls back to a default run brief.
+      void (async () => {
+        try {
+          const ctx = await window.electronAPI.getActivityBrainContext?.()
+          const brief = (ctx?.context as { brief?: import('./components/ActivitySheet').ActivityBrief } | undefined)?.brief
+            || { activity: 'run' as const, intensity: 'medium' as const, setting: 'city' as const, place: 'Brooklyn', social: 'solo' as const }
+          const built = await buildWorkoutIpodSyncPayload(lib.tracks, lib.playlists || [], brief)
+          if (!built.ok) {
+            console.warn('[auto-sync] activity set failed:', built.error)
+            return
+          }
+          await window.electronAPI.syncToIpod(built.payload.tracks, built.payload.playlists)
+        } catch (err) {
+          console.warn('[auto-sync] failed:', err)
+        }
+      })()
     }
     window.addEventListener('jaketunes-ipod-mounted', onIpodMounted)
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)

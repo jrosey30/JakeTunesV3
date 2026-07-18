@@ -45,6 +45,12 @@ import { registerSquidStore } from './squid-store'
 import { registerStreamripStore } from './streamrip-store'
 import { registerRecommendationsIpc, warmRecommendationsSync, getActiveRecommendationIdentityKeys } from './recommendations'
 import { registerDiscoveryBrainIpc } from './discovery-brain'
+import { registerWorkoutSyncIpc } from './workout-sync-ipc'
+import {
+  getActivityPromptBlockSync,
+  getActivityBrainContextSync,
+  loadActivityBrainContext,
+} from './activity-context'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -3603,7 +3609,11 @@ Be unpredictable — sometimes drop a verified fun fact, sometimes your arrogant
 If background info from MusicBrainz or Wikipedia is provided below, USE IT for any facts. If no background info and you're not confident, go with a take on the sound/genre rather than making up a story.`
 
   const djPrompt = isStephen
-    ? DJ_HANDS_CORE + '\n\n' + djInstructions
+    ? (() => {
+        const act = getActivityPromptBlockSync()
+        return DJ_HANDS_CORE + '\n\n' + djInstructions
+          + (act ? `\n\n${act}\nMatch energy and density to this activity when you talk — a hard ski set is not a casual stroll.` : '')
+      })()
     : buildMusicManPrompt(djInstructions)
 
   // Look up artist facts for accuracy (Wikipedia + MusicBrainz + Bandcamp)
@@ -3906,7 +3916,15 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   // External-API enrichment — append only what came back. The prompt's
   // KILL VANILLA / HUMAN MOVES rules tell Claude to use these as
   // *texture and reaction hooks*, not facts to recite.
-  const weatherLine = formatWeatherForPrompt(weather)
+  // Prefer the listener's activity place weather (from last iPod sync brief)
+  // when present — Aspen ski day should not sound like Brooklyn radio filler.
+  const activityCtx = getActivityBrainContextSync()
+  const activityWx = activityCtx?.weather
+  const weatherLine = activityWx
+    ? `${activityWx.placeLabel || activityCtx?.brief?.place || 'There'}: ${activityWx.tempF}°F, ${(activityWx.description || activityWx.condition || '').toLowerCase()}.`
+    : formatWeatherForPrompt(weather)
+  const activityPrompt = getActivityPromptBlockSync()
+  if (activityPrompt) userMessage += `\n\n${activityPrompt}`
   const chartLine = formatLastFmChartForPrompt(chart)
   const reviewsBlock = formatReviewsForPrompt(reviews)
   const wdCurLine = formatWikidataForPrompt(wdCurrent)
@@ -4022,7 +4040,9 @@ Rules:
 - Order matters — build a journey, but a DANCE FLOOR journey, not a Music Man lecture journey
 - Keep the intro SHORT — Stephen is NOT a man of many words${recentStr}`
 
+  const act = getActivityPromptBlockSync()
   const systemPrompt = DJ_HANDS_CORE + '\n\n' + djSetInstructions
+    + (act ? `\n\n${act}\nBias the set toward this activity's energy when it fits the dancefloor.` : '')
 
   try {
     const response = await claudeCall('musicman-dj-set', {
@@ -4206,7 +4226,10 @@ ipcMain.handle('record-rating', async (_event, track: { title: string; artist: s
 // Build a rich taste summary for Music Man prompts
 function buildTasteProfile(): string {
   const p = listenerProfile
-  if (p.totalPlays === 0 && !discogsCollection) return ''
+  // Activity context must still reach the AI brain even when play history
+  // / Discogs are empty — it is live situational state from iPod sync.
+  const activityBlockEarly = getActivityPromptBlockSync()
+  if (p.totalPlays === 0 && !discogsCollection && !activityBlockEarly) return ''
 
   const lines: string[] = []
   if (p.totalPlays > 0) {
@@ -4311,6 +4334,12 @@ function buildTasteProfile(): string {
     lines.push(`\nPhysical record collection (Discogs): ${discogsCollection}`)
     lines.push(`This tells you what they care about enough to own on vinyl/CD. Use this for deeper recommendations and conversation.`)
   }
+
+  // Activity / iPod sync context — what they're doing, where, weather there.
+  // Populated when they run an activity sync; Music Man / Megan / radio should
+  // treat it as live (chat, DJ, playlists, picks, discovery all see this).
+  const activityBlock = activityBlockEarly || getActivityPromptBlockSync()
+  if (activityBlock) lines.push(`\n${activityBlock}`)
 
   // 4.4.41 — explicit reasoning rule. Without this, Picks and observations
   // would treat playCount == 0 as "unfamiliar" and surface tracks the user
@@ -5549,7 +5578,9 @@ ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: bo
     const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'mm' })
     // Force MM persona regardless of the user's default-host preference —
     // the user explicitly asked for Music Man's list under his name.
+    const taste = buildTasteProfile()
     const systemPrompt = MUSIC_MAN_CORE + '\n\n' + picksInstructions
+      + (taste ? `\n\nWhat you know about this listener:\n${taste}` : '')
     const chart = await getLastFmNyChart()
     const chartLine = formatLastFmChartForPrompt(chart)
     const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\nWeek context — ${chartLine} (Use this only as a 'what's the cultural moment' anchor — DO NOT pick from this list unless it's already in my library.)` : ''}`
@@ -5585,7 +5616,9 @@ ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boole
   return getOrGeneratePicks('megan', tracks, !!force, async () => {
     const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
     const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
+    const taste = buildTasteProfile()
     const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
+      + (taste ? `\n\nWhat you know about this listener:\n${taste}` : '')
     const [chart, reviews] = await Promise.all([getLastFmNyChart(), getRecentReviews()])
     const chartLine = formatLastFmChartForPrompt(chart)
     const reviewsBlock = formatReviewsForPrompt(reviews)
@@ -5675,7 +5708,9 @@ Rules:
 - ★ ARTIST VARIETY (see the box above) — aim for 25 distinct artists, max TWO per artist, NEVER three
 - Commentary: 1-2 sentences. STOP.`
 
+  const act = getActivityPromptBlockSync()
   const systemPrompt = DJ_HANDS_CORE + '\n\n' + picksInstructions
+    + (act ? `\n\n${act}\nLean the weekly rotation toward this activity when the library allows.` : '')
   const chart = await getLastFmNyChart()
   const chartLine = formatLastFmChartForPrompt(chart)
   const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine} (Pick from MY library only — this is just party-pulse context.)` : ''}`
@@ -5850,6 +5885,11 @@ registerDiscoveryBrainIpc({
   musicManCore: MUSIC_MAN_CORE,
   getListIdentityKeys: getActiveRecommendationIdentityKeys,
   getListenerTasteContext: async () => buildTasteProfile(),
+})
+
+registerWorkoutSyncIpc({
+  claudeCall,
+  musicManCore: MUSIC_MAN_CORE,
 })
 
 // Music Man metadata scanner
@@ -7327,6 +7367,7 @@ app.whenReady().then(async () => {
   loadListenerProfile()
   // Brief 122 — warm recommendations from homemini/NAS in background
   void warmRecommendationsSync()
+  void loadActivityBrainContext()
   // Load Music Man's cross-mode memory (things he's said recently)
   await loadMusicManMemory()
   // Load Cynthia's archivist memory (recent jobs she's finished)

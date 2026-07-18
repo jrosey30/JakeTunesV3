@@ -410,6 +410,27 @@ declare global {
         // verified state and the UI can show audioMissing flags.
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
+      buildWorkoutSyncSet?: (tracks: Array<{
+        id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
+        playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
+      }>, opts?: { target?: number; brief?: {
+        id?: string; profileName?: string; activity: string; intensity: string; setting: string
+        place: string; social: string; note?: string
+      }; saveProfile?: boolean }) => Promise<{
+        ok: boolean
+        trackIds?: number[]
+        name?: string
+        commentary?: string
+        alacCount?: number
+        total?: number
+        rotatedFrom?: number
+        weather?: { tempF: number; condition: string; description: string; placeLabel: string } | null
+        error?: string
+      }>
+      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }>
+      getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
+      getActivityBrainContext?: () => Promise<{ ok: boolean; context?: unknown; promptBlock?: string }>
+      previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => void) => () => void
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>

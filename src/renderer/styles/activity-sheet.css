@@ -1,0 +1,127 @@
+.activity-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(20, 18, 14, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.activity-sheet {
+  width: min(520px, 100%);
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
+  background: #f9f8f5;
+  border: 1px solid #c8c4bb;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  padding: 20px 22px 18px;
+}
+
+.activity-sheet-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #2a2a2a;
+}
+
+.activity-sheet-sub {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  color: #8a8780;
+  line-height: 1.4;
+}
+
+.activity-q, .activity-profiles { margin-bottom: 14px; }
+
+.activity-q-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #186475;
+  margin-bottom: 6px;
+}
+
+.activity-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.activity-chip {
+  appearance: none;
+  border: 1px solid #c5dde2;
+  background: #fff;
+  color: #3a4a4e;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.activity-chip:hover { background: #eef6f7; }
+.activity-chip.is-on {
+  background: #1f7a8c;
+  border-color: #186475;
+  color: #fff;
+}
+
+.activity-place {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid #c0bbb0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.activity-place:focus {
+  outline: none;
+  border-color: #1f7a8c;
+  box-shadow: 0 0 0 2px rgba(31, 122, 140, 0.18);
+}
+
+.activity-weather {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: #6a6560;
+  font-style: italic;
+}
+
+.activity-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e0ddd6;
+}
+
+.activity-btn {
+  appearance: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.activity-btn--ghost {
+  border: 1px solid #c0bbb0;
+  background: #fff;
+  color: #555;
+}
+
+.activity-btn--go {
+  border: 1px solid #186475;
+  background: #1f7a8c;
+  color: #fff;
+}
+
+.activity-btn--go:hover { background: #186475; }

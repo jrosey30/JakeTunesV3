@@ -30,32 +30,61 @@ function makeCache<T>(ttlMs: number) {
 }
 
 // ───────────────────────────── OpenWeatherMap ─────────────────────────────
-// Brooklyn, NY weather. Used to inject "live from a 36° drizzle" /
-// "82 and gross" context into the radio prompt. 10-min cache because
-// weather doesn't change second-to-second and we don't want to fire
-// per-transition.
-type WeatherSnapshot = { tempF: number; condition: string; description: string } | null
+// Weather by place (or Brooklyn default). Used for Home greeting, radio
+// texture, and activity-aware iPod sync. 10-min cache.
+export type WeatherSnapshot = { tempF: number; condition: string; description: string; placeLabel?: string } | null
 const weatherCache = makeCache<WeatherSnapshot>(10 * 60 * 1000)
-export async function getBrooklynWeather(): Promise<WeatherSnapshot> {
-  const cached = weatherCache.get('brooklyn')
+
+async function fetchWeatherAt(lat: number, lon: number, placeLabel: string, cacheKey: string): Promise<WeatherSnapshot> {
+  const cached = weatherCache.get(cacheKey)
   if (cached) return cached
   const key = process.env.OPENWEATHER_API_KEY
   if (!key) return null
   try {
-    // Brooklyn lat/lon (Williamsburg-ish — close enough for "Brooklyn weather")
-    const url = `https://api.openweathermap.org/data/2.5/weather?lat=40.6782&lon=-73.9442&appid=${key}&units=imperial`
+    const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${key}&units=imperial`
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
-    if (!res.ok) { weatherCache.set('brooklyn', null); return null }
+    if (!res.ok) { weatherCache.set(cacheKey, null); return null }
     const data = await res.json() as {
       main?: { temp?: number },
       weather?: { main?: string; description?: string }[],
+      name?: string,
     }
     const tempF = Math.round(data.main?.temp ?? 0)
     const condition = data.weather?.[0]?.main || ''
     const description = data.weather?.[0]?.description || ''
-    const snap = { tempF, condition, description }
-    weatherCache.set('brooklyn', snap)
+    const snap = { tempF, condition, description, placeLabel: placeLabel || data.name || cacheKey }
+    weatherCache.set(cacheKey, snap)
     return snap
+  } catch {
+    return null
+  }
+}
+
+export async function getBrooklynWeather(): Promise<WeatherSnapshot> {
+  return fetchWeatherAt(40.6782, -73.9442, 'Brooklyn', 'brooklyn')
+}
+
+/** Resolve a free-text place ("Aspen, CO") via OpenWeather geocoding, then weather. */
+export async function getWeatherForPlace(place: string): Promise<WeatherSnapshot> {
+  const q = (place || '').trim()
+  if (!q) return getBrooklynWeather()
+  const cacheKey = `place:${q.toLowerCase()}`
+  const cached = weatherCache.get(cacheKey)
+  if (cached) return cached
+  const key = process.env.OPENWEATHER_API_KEY
+  if (!key) return null
+  try {
+    const geoUrl = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(q)}&limit=1&appid=${key}`
+    const geoRes = await fetch(geoUrl, { signal: AbortSignal.timeout(5000) })
+    if (!geoRes.ok) { weatherCache.set(cacheKey, null); return null }
+    const geo = await geoRes.json() as Array<{ lat?: number; lon?: number; name?: string; state?: string; country?: string }>
+    const hit = geo?.[0]
+    if (!hit || hit.lat == null || hit.lon == null) {
+      weatherCache.set(cacheKey, null)
+      return null
+    }
+    const label = [hit.name, hit.state, hit.country].filter(Boolean).join(', ')
+    return fetchWeatherAt(hit.lat, hit.lon, label || q, cacheKey)
   } catch {
     return null
   }
@@ -65,7 +94,8 @@ export async function getBrooklynWeather(): Promise<WeatherSnapshot> {
 export function formatWeatherForPrompt(w: WeatherSnapshot): string {
   if (!w) return ''
   const desc = w.description ? w.description.replace(/\b\w/g, c => c.toUpperCase()) : w.condition
-  return `Brooklyn weather right now: ${w.tempF}°F, ${desc.toLowerCase()}.`
+  const where = w.placeLabel || 'Brooklyn'
+  return `${where} weather right now: ${w.tempF}°F, ${desc.toLowerCase()}.`
 }
 
 // ────────────────────────────── Last.fm ──────────────────────────────

@@ -280,6 +280,29 @@ const electronAPI = {
     ipcRenderer.invoke('sync-ipod', existingIds),
   syncToIpod: (tracks: unknown[], playlists: unknown[]): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
     ipcRenderer.invoke('sync-to-ipod', tracks, playlists),
+  buildWorkoutSyncSet: (tracks: Array<{
+    id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
+    playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
+  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean }): Promise<{
+    ok: boolean
+    trackIds?: number[]
+    name?: string
+    commentary?: string
+    alacCount?: number
+    total?: number
+    rotatedFrom?: number
+    weather?: { tempF: number; condition: string; description: string; placeLabel: string } | null
+    brief?: Record<string, unknown>
+    error?: string
+  }> => ipcRenderer.invoke('build-workout-sync-set', tracks, opts),
+  getWorkoutSyncState: (): Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }> =>
+    ipcRenderer.invoke('get-workout-sync-state'),
+  getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
+    ipcRenderer.invoke('get-activity-profiles'),
+  getActivityBrainContext: (): Promise<{ ok: boolean; context?: unknown; promptBlock?: string }> =>
+    ipcRenderer.invoke('get-activity-brain-context'),
+  previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>
+    ipcRenderer.invoke('preview-place-weather', place),
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db'; current: number; total: number; title: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)
