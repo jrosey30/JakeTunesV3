@@ -1154,7 +1154,7 @@ function AppInner() {
     return cleanup
   }, [])
 
-  // Global sync-progress listener. DeviceView's handleSync seeds an
+  // Global sync-progress listener. DeviceView's sync handlers seed an
   // initial "Preparing..." state into the activity store, but the
   // per-file + db-write progress during an active sync comes from the
   // main process as 'sync-progress' events. Refine the store's `step`

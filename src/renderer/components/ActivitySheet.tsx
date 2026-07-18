@@ -26,7 +26,6 @@ interface Props {
   initial?: ActivityBrief | null
   onConfirm: (brief: ActivityBrief) => void
   onCancel: () => void
-  onFullLibrary?: () => void
 }
 
 const ACTIVITIES: { id: ActivityKind; label: string }[] = [
@@ -62,7 +61,7 @@ const DEFAULT: ActivityBrief = {
   note: '',
 }
 
-export default function ActivitySheet({ initial, onConfirm, onCancel, onFullLibrary }: Props) {
+export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
   const [brief, setBrief] = useState<ActivityBrief>(initial || DEFAULT)
   const [profiles, setProfiles] = useState<SavedProfile[]>([])
   const [weatherLine, setWeatherLine] = useState<string | null>(null)
@@ -209,11 +208,6 @@ export default function ActivitySheet({ initial, onConfirm, onCancel, onFullLibr
 
         <div className="activity-sheet-actions">
           <button type="button" className="activity-btn activity-btn--ghost" onClick={onCancel}>Cancel</button>
-          {onFullLibrary && (
-            <button type="button" className="activity-btn activity-btn--ghost" onClick={onFullLibrary} title="Skip the activity set — mirror the ENTIRE library to the iPod at your convert setting">
-              Whole library instead
-            </button>
-          )}
           <button
             type="button"
             className="activity-btn activity-btn--go"

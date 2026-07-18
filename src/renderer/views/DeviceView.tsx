@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { buildWorkoutIpodSyncPayload } from '../utils/workoutIpodSync'
 import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
+import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import '../styles/device.css'
 
@@ -70,6 +71,7 @@ export default function DeviceView() {
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
   const [showActivitySheet, setShowActivitySheet] = useState(false)
+  const [showFullSyncConfirm, setShowFullSyncConfirm] = useState(false)
   const [lastBrief, setLastBrief] = useState<ActivityBrief | null>(null)
 
   // Pull the version from main once on mount. Sourced from package.json
@@ -239,25 +241,35 @@ export default function DeviceView() {
     }
   }, [state.tracks, ipodCapacityBytes, ipodFreeBytes])
 
-  const handleSync = async () => {
+  const ensureIpodMounted = async (): Promise<boolean> => {
     const mount = await window.electronAPI.checkIpodMounted()
-    if (!mount?.mounted) {
-      const activity = await import('../activity')
-      setSyncStatus({ state: 'error', message: 'No iPod detected — plug it in and try again.' })
-      activity.setSync({ active: true, step: 'No iPod detected' })
-      setTimeout(() => activity.setSync(null), 4000)
-      return
-    }
-    // Ask activity questions first — place/weather feed the AI brain.
-    setShowActivitySheet(true)
+    if (mount?.mounted) return true
+    const activity = await import('../activity')
+    setSyncStatus({ state: 'error', message: 'No iPod detected — plug it in and try again.' })
+    activity.setSync({ active: true, step: 'No iPod detected' })
+    setTimeout(() => activity.setSync(null), 4000)
+    return false
   }
 
-  // MERGE 2026-07-18: the FULL-LIBRARY mirror sync (pre-activity behavior),
-  // reachable from the sheet's "whole library" escape — used for clean-slate
+  // Two explicit sync entry points (Jake, 2026-07-18: "separate activity
+  // sync or supersync button… everything needs to work as planned. no
+  // exceptions"). Each button does exactly ONE thing:
+  //   Activity Sync → sheet → ~1,000-track set. Can never full-mirror.
+  //   Full Sync → confirm dialog → whole-library mirror. The ONLY path
+  //   to a full mirror; the sheet's "whole library" escape was removed.
+  const handleActivitySync = async () => {
+    if (await ensureIpodMounted()) setShowActivitySheet(true)
+  }
+
+  const handleFullSync = async () => {
+    if (await ensureIpodMounted()) setShowFullSyncConfirm(true)
+  }
+
+  // The FULL-LIBRARY mirror (pre-activity behavior) — used for clean-slate
   // rebuilds (like the fragmentation cure) where the device must carry
   // everything, at the applied convert setting.
   const runFullLibrarySync = async () => {
-    setShowActivitySheet(false)
+    setShowFullSyncConfirm(false)
     const activity = await import('../activity')
     setSyncing(true)
     setSyncStatus({ state: 'syncing', step: 'Copying your whole library to iPod…' })
@@ -583,11 +595,17 @@ export default function DeviceView() {
             >Apply</button>
           )}
           <button
+            className="device-itunes-btn"
+            disabled={syncing || isDirty}
+            onClick={handleFullSync}
+            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Mirror the ENTIRE library to the iPod at your convert setting')}
+          >Full Sync</button>
+          <button
             className="device-itunes-btn device-itunes-btn--sync"
             disabled={syncing || isDirty}
-            onClick={handleSync}
-            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Sync to iPod')}
-          >{syncing ? 'Syncing…' : 'Sync'}</button>
+            onClick={handleActivitySync}
+            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Answer a few questions — Music Man builds a ~1,000-track set for the activity')}
+          >{syncing ? 'Syncing…' : 'Activity Sync'}</button>
           {/* 4.5.0-109: Cancel button — only rendered while a sync is in
               flight. Hits cancel-sync IPC which flips a flag main checks
               between each file copy. Pre-fix, force-quitting the app was
@@ -613,7 +631,16 @@ export default function DeviceView() {
           initial={lastBrief}
           onCancel={() => setShowActivitySheet(false)}
           onConfirm={(brief) => { void runSyncWithBrief(brief) }}
-          onFullLibrary={() => { void runFullLibrarySync() }}
+        />
+      )}
+      {showFullSyncConfirm && (
+        <ConfirmDialog
+          message="Mirror the ENTIRE library to the iPod?"
+          detail={`All ${state.tracks.length.toLocaleString()} songs copy at ${appliedSettings.optConvertBitrate ? `${appliedSettings.optConvertBitrateTarget} kbps AAC` : 'original quality'}. Anything on the iPod that isn't in the library — including the current activity set — is replaced. On the Mini this takes hours; keep it plugged in.`}
+          confirmLabel="Full Sync"
+          destructive={false}
+          onConfirm={() => { void runFullLibrarySync() }}
+          onCancel={() => setShowFullSyncConfirm(false)}
         />
       )}
     </div>
