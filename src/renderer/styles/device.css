@@ -379,6 +379,20 @@
 }
 .device-itunes-option input[type="checkbox"]:disabled + span,
 .device-itunes-option input[type="checkbox"]:disabled ~ span {
+  opacity: 0.55;
+}
+
+.device-itunes-option--note {
+  display: block;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #f0f7f8;
+  border: 1px solid #c5dde2;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #3a4a4e;
+}
   color: #888;
 }
 .device-itunes-select {

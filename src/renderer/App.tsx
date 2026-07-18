@@ -603,6 +603,10 @@ function AppInner() {
       if (!settings.sync.autoSyncOnConnect) return
       const lib = libStateRef.current
       if (lib.tracks.length === 0) return
+      // MERGE 2026-07-18: plug-in AUTO-sync stays the FULL-LIBRARY mirror with
+      // the convert-gate (Cursor's activity flow would sync a ~1000-track
+      // subset on every plug-in and orphan-clean the rest off the device).
+      // Activity sets are a deliberate act — the Device view's Sync sheet.
       // 4.4.46: auto-sync now ships the SAME playlist set the manual
       // Device-view "Sync" button does — the user's regular playlists
       // PLUS the four built-in smart playlists (Recently Added,

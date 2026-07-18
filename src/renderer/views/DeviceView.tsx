@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import { buildSmartPlaylistsForSync } from '../utils/smartPlaylists'
+import { buildWorkoutIpodSyncPayload } from '../utils/workoutIpodSync'
+import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import '../styles/device.css'
 
@@ -68,6 +69,8 @@ export default function DeviceView() {
   const [ipodFreeBytes, setIpodFreeBytes] = useState<number | null>(null)
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
+  const [showActivitySheet, setShowActivitySheet] = useState(false)
+  const [lastBrief, setLastBrief] = useState<ActivityBrief | null>(null)
 
   // Pull the version from main once on mount. Sourced from package.json
   // via app.getVersion() so it auto-tracks the actual installed build.
@@ -172,7 +175,14 @@ export default function DeviceView() {
   }
 
   const stats = useMemo(() => {
-    const tracks = state.tracks
+    // Capacity bar estimates the NEXT workout sync (~1000 tracks), not the
+    // full library — that's what actually lands on the iPod now.
+    const WORKOUT_ESTIMATE = 1000
+    const sortedBySize = [...state.tracks]
+      .filter((t) => (t.fileSize || 0) > 0)
+      .sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0))
+    const estimateTracks = sortedBySize.slice(0, Math.min(WORKOUT_ESTIMATE, sortedBySize.length))
+    const tracks = estimateTracks.length > 0 ? estimateTracks : state.tracks.slice(0, WORKOUT_ESTIMATE)
     const totalBytes = tracks.reduce((sum, t) => sum + (t.fileSize || 0), 0)
     const totalMs = tracks.reduce((sum, t) => sum + (t.duration || 0), 0)
     const artists = new Set(tracks.map(t => t.artist).filter(Boolean))
@@ -212,7 +222,7 @@ export default function DeviceView() {
       : null
 
     return {
-      trackCount: tracks.length,
+      trackCount: Math.min(WORKOUT_ESTIMATE, state.tracks.length),
       artistCount: artists.size,
       albumCount: albums.size,
       genreCount: genres.size,
@@ -225,35 +235,35 @@ export default function DeviceView() {
       otherPercent,
       freePercent,
       roomForSongs,
+      libraryTotal: state.tracks.length,
     }
   }, [state.tracks, ipodCapacityBytes, ipodFreeBytes])
 
   const handleSync = async () => {
-    const activity = await import('../activity')
-
-    // Guardrail: sync with no iPod mounted used to silently return an
-    // error and leave the user wondering if anything happened at all.
-    // Check up front and surface a clear error (and keep it in the
-    // pill for a few seconds) instead of silently bailing.
     const mount = await window.electronAPI.checkIpodMounted()
     if (!mount?.mounted) {
+      const activity = await import('../activity')
       setSyncStatus({ state: 'error', message: 'No iPod detected — plug it in and try again.' })
       activity.setSync({ active: true, step: 'No iPod detected' })
       setTimeout(() => activity.setSync(null), 4000)
       return
     }
+    // Ask activity questions first — place/weather feed the AI brain.
+    setShowActivitySheet(true)
+  }
 
+  // MERGE 2026-07-18: the FULL-LIBRARY mirror sync (pre-activity behavior),
+  // reachable from the sheet's "whole library" escape — used for clean-slate
+  // rebuilds (like the fragmentation cure) where the device must carry
+  // everything, at the applied convert setting.
+  const runFullLibrarySync = async () => {
+    setShowActivitySheet(false)
+    const activity = await import('../activity')
     setSyncing(true)
-    setSyncStatus({ state: 'syncing', step: 'Preparing playlists...' })
-    activity.setSync({ active: true, step: 'Preparing playlists...' })
+    setSyncStatus({ state: 'syncing', step: 'Copying your whole library to iPod…' })
+    activity.setSync({ active: true, step: 'Copying your whole library to iPod…' })
     try {
       const syncPlaylists = buildSmartPlaylistsForSync(state.tracks, state.playlists)
-      setSyncStatus({ state: 'syncing', step: 'Copying new tracks to iPod...' })
-      activity.setSync({ active: true, step: 'Copying new tracks to iPod...' })
-      // 4.5: pass the APPLIED convert settings (not the working draft).
-      // Sync button is gated to applied state via isDirty so this is
-      // always the user's committed choice. targetKbps coerced from
-      // the persisted string to the numeric enum the IPC expects.
       const targetKbpsNum: 128 | 192 | 256 =
         appliedSettings.optConvertBitrateTarget === '256' ? 256
         : appliedSettings.optConvertBitrateTarget === '192' ? 192
@@ -262,11 +272,64 @@ export default function DeviceView() {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
       })
-      // 4.5.0-109: silent no-op when another sync was already in flight.
-      // We just leave the existing sync to finish — DON'T flip syncing
-      // back off, DON'T show a "done" toast (the real sync hasn't done
-      // anything yet from THIS click's perspective). The global
-      // sync-progress listener will paint the in-flight one's status.
+      if (result.alreadyRunning) return
+      if (!result.ok) {
+        const msg = result.error || 'Sync failed'
+        setSyncStatus({ state: 'error', message: msg })
+        activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+        setTimeout(() => activity.setSync(null), 4000)
+        return
+      }
+      setSyncStatus({ state: 'done', message: `Synced ${result.totalTracks ?? state.tracks.length} tracks.` })
+      activity.setSync({ active: true, step: 'Sync complete' })
+      setTimeout(() => activity.setSync(null), 4000)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sync failed'
+      setSyncStatus({ state: 'error', message: msg })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const runSyncWithBrief = async (brief: ActivityBrief) => {
+    setShowActivitySheet(false)
+    setLastBrief(brief)
+    const activity = await import('../activity')
+
+    setSyncing(true)
+    setSyncStatus({ state: 'syncing', step: 'Music Man building your activity set…' })
+    activity.setSync({ active: true, step: 'Music Man building your activity set…' })
+    try {
+      const built = await buildWorkoutIpodSyncPayload(state.tracks, state.playlists, brief)
+      if (!built.ok) {
+        const msg = built.error || 'Could not build activity set'
+        setSyncStatus({ state: 'error', message: msg })
+        activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+        setTimeout(() => activity.setSync(null), 4000)
+        setSyncing(false)
+        return
+      }
+      const { payload } = built
+      const wx = payload.weatherLine ? ` · ${payload.weatherLine}` : ''
+      setSyncStatus({
+        state: 'syncing',
+        step: `Syncing “${payload.name}” — ${payload.total} tracks (${payload.alacCount} ALAC)${wx}…`,
+      })
+      activity.setSync({
+        active: true,
+        step: `Syncing “${payload.name}” — ${payload.total} tracks…`,
+      })
+      // MERGE 2026-07-18: activity sets ride the user's APPLIED convert
+      // setting — toggle ON = 128k CBR mirrors (the chirp cure), toggle
+      // OFF = ALAC preserved (Cursor's workout-quality intent).
+      const targetKbpsNum: 128 | 192 | 256 =
+        appliedSettings.optConvertBitrateTarget === '256' ? 256
+        : appliedSettings.optConvertBitrateTarget === '192' ? 192
+        : 128
+      const result = await window.electronAPI.syncToIpod(payload.tracks, payload.playlists, {
+        enabled: appliedSettings.optConvertBitrate,
+        targetKbps: targetKbpsNum,
+      })
       if (result.alreadyRunning) {
         return
       }
@@ -322,10 +385,13 @@ export default function DeviceView() {
       setSyncStatus({
         state: 'done',
         copied: result.copied || 0,
-        total: result.totalTracks || state.tracks.length,
+        total: result.totalTracks || payload.total,
         time: timeStr,
       })
-      activity.setSync({ active: true, step: `Sync complete — ${result.copied || 0} new tracks` })
+      activity.setSync({
+        active: true,
+        step: `Synced “${payload.name}” — ${result.copied || 0} new · ${payload.total} on device`,
+      })
       setTimeout(() => activity.setSync(null), 4000)
     } catch (err) {
       console.error('Sync failed:', err)
@@ -350,7 +416,12 @@ export default function DeviceView() {
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Songs:</span>
-            <span className="device-itunes-value">{stats.trackCount.toLocaleString()}</span>
+            <span className="device-itunes-value">
+              ~{stats.trackCount.toLocaleString()} workout
+              {stats.libraryTotal > stats.trackCount
+                ? ` (of ${stats.libraryTotal.toLocaleString()} in library)`
+                : ''}
+            </span>
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Software Version:</span>
@@ -385,18 +456,20 @@ export default function DeviceView() {
             />
             <span>Sync only checked songs</span>
           </label>
+          <label className="device-itunes-option device-itunes-option--note">
+            <span>
+            Sync mode: answer a few questions → Music Man builds ~1,000 tracks for that
+            activity/place/weather. Rotates every sync. ALAC stays ALAC.
+            </span>
+          </label>
           <label className="device-itunes-option">
             <input
               type="checkbox"
-              checked={optConvertBitrate}
-              onChange={e => setOptConvertBitrate(e.target.checked)}
+              checked={false}
+              disabled
+              onChange={() => {}}
             />
-            <span>Convert higher bit rate songs to <select
-              className="device-itunes-select"
-              value={optConvertBitrateTarget}
-              disabled={!optConvertBitrate}
-              onChange={e => setOptConvertBitrateTarget(e.target.value as '128' | '192' | '256')}
-            ><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option></select> AAC</span>
+            <span>Convert higher bit rate songs to AAC — off (workout sync keeps lossless)</span>
           </label>
           <label className="device-itunes-option">
             <input
@@ -530,6 +603,14 @@ export default function DeviceView() {
         </div>
       </div>
       {showIpodLibrary && <IpodLibraryModal onClose={() => setShowIpodLibrary(false)} />}
+      {showActivitySheet && (
+        <ActivitySheet
+          initial={lastBrief}
+          onCancel={() => setShowActivitySheet(false)}
+          onConfirm={(brief) => { void runSyncWithBrief(brief) }}
+          onFullLibrary={() => { void runFullLibrarySync() }}
+        />
+      )}
     </div>
   )
 }
