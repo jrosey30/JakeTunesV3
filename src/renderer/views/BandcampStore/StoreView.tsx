@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState , useSyncExternalStore } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { setNotice } from '../../activity'
 import './store-header.css'
@@ -38,6 +38,9 @@ export default function StoreView() {
   const ref = useRef<HTMLDivElement>(null)
   const { state: lib, dispatch } = useLibrary()
   const [ctx, setCtx] = useState<StoreContext | null>(null)
+  // A tape in the deck floats the DeckBar over the content area — carve
+  // out its strip so the native store view never covers it.
+  const deckLoaded = useSyncExternalStore(subscribeMixtapes, getDeckState) != null
 
   useEffect(() => {
     const el = ref.current
@@ -65,7 +68,27 @@ export default function StoreView() {
     }
     window.addEventListener('resize', onWindowResize)
 
+    // ── Overlay guard: a native WebContentsView composites ABOVE every
+    // piece of renderer DOM — context menus, sheets, dialogs all appear
+    // BEHIND the store (Jake: "options for everything appear behind
+    // bandcamp always"). Watch the document for any known overlay and
+    // hide the native view while one is up.
+    const OVERLAYS = '.context-menu, .confirm-overlay, .activity-sheet-overlay, [class*="-overlay"], [class*="modal"]'
+    let hidden = false
+    const checkOverlays = () => {
+      const anyOpen = !!document.querySelector(OVERLAYS)
+      if (anyOpen !== hidden) {
+        hidden = anyOpen
+        void window.electronAPI.bandcampSetVisible?.(!anyOpen)
+      }
+    }
+    const mo = new MutationObserver(checkOverlays)
+    mo.observe(document.body, { childList: true, subtree: true })
+    checkOverlays()
+
     return () => {
+      mo.disconnect()
+      void window.electronAPI.bandcampSetVisible?.(true)
       ro.disconnect()
       window.removeEventListener('resize', onWindowResize)
       void window.electronAPI.bandcampUnmount()
@@ -159,7 +182,7 @@ export default function StoreView() {
   }
 
   return (
-    <div className="store-view-root">
+    <div className="store-view-root" style={{ paddingBottom: deckLoaded ? 78 : 0 }}>
       <div className="store-library-header">
         {/* 4.5.0-47: back arrow is ALWAYS rendered. Walks the embedded
             Bandcamp WebContentsView's history (browser-style). Dimmed

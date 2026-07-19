@@ -525,3 +525,7 @@
   padding: 2px 6px;
   max-width: 180px;
 }
+
+/* Spool wind — held FF/REW: the reels blur, REW runs them backwards. */
+.spool--fast { animation-duration: 0.18s; }
+.spool--rev { animation-direction: reverse; }

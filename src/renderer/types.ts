@@ -850,6 +850,7 @@ declare global {
       bandcampMount: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampResize: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: true }>
       bandcampUnmount: () => Promise<{ ok: true }>
+      bandcampSetVisible?: (visible: boolean) => Promise<{ ok: true }>
       bandcampNavState: () => Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }>
       bandcampGoBack: () => Promise<{ ok: boolean }>
       bandcampGoForward: () => Promise<{ ok: boolean }>

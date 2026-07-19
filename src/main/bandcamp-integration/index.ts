@@ -188,6 +188,13 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
     return { ok: true as const }
   })
 
+  // Overlays (menus, sheets, dialogs) can NEVER draw over a native
+  // WebContentsView — the renderer hides the store while one is open.
+  ipcMain.handle('bandcamp:set-visible', (_e, visible: boolean) => {
+    try { view?.setVisible(!!visible) } catch { /* view gone */ }
+    return { ok: true as const }
+  })
+
   ipcMain.handle('bandcamp:unmount', () => {
     detachView(deps)
     return { ok: true as const }

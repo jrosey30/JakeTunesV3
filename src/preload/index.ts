@@ -691,6 +691,8 @@ const electronAPI = {
     ipcRenderer.invoke('bandcamp:mount', bounds),
   bandcampResize: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }> =>
     ipcRenderer.invoke('bandcamp:resize', bounds),
+  bandcampSetVisible: (visible: boolean): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('bandcamp:set-visible', visible),
   bandcampUnmount: (): Promise<{ ok: true }> => ipcRenderer.invoke('bandcamp:unmount'),
   // 4.5.0-47: Bandcamp in-browser nav controls so the renderer can paint
   // a real back arrow above the embedded WebContentsView.

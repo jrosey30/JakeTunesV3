@@ -24,13 +24,18 @@ function fmt(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export function CassetteSvg({ title, ink, lengthLabel, spinning, side }: {
+export function CassetteSvg({ title, ink, lengthLabel, spinning, side, wind }: {
   title: string
   ink: string
   lengthLabel: string
   spinning: boolean
   side: 'A' | 'B' | null
+  /** Winding: 1 = FF (fast), -1 = REW (fast, reversed), undefined = normal. */
+  wind?: 1 | -1
 }) {
+  const spoolCls = spinning || wind
+    ? `spool spool--spin${wind ? ' spool--fast' : ''}${wind === -1 ? ' spool--rev' : ''}`
+    : 'spool'
   return (
     <svg className="cassette" viewBox="0 0 320 200" width="320" height="200">
       {/* shell */}
@@ -49,13 +54,13 @@ export function CassetteSvg({ title, ink, lengthLabel, spinning, side }: {
       <text x="282" y="103" textAnchor="end" className="cassette-len" fill="#6b6045">{lengthLabel}</text>
       {/* window + spools */}
       <rect x="70" y="112" width="180" height="52" rx="26" fill="#181818" stroke="#0c0c0c" />
-      <g className={spinning ? 'spool spool--spin' : 'spool'} style={{ transformOrigin: '110px 138px' }}>
+      <g className={spoolCls} style={{ transformOrigin: '110px 138px' }}>
         <circle cx="110" cy="138" r="20" fill="#0e0e0e" stroke="#4a4a4a" strokeWidth="2" />
         {[0, 60, 120, 180, 240, 300].map((a) => (
           <rect key={a} x="108.5" y="122" width="3" height="8" fill="#8a8a8a" transform={`rotate(${a} 110 138)`} />
         ))}
       </g>
-      <g className={spinning ? 'spool spool--spin' : 'spool'} style={{ transformOrigin: '210px 138px' }}>
+      <g className={spoolCls} style={{ transformOrigin: '210px 138px' }}>
         <circle cx="210" cy="138" r="20" fill="#0e0e0e" stroke="#4a4a4a" strokeWidth="2" />
         {[0, 60, 120, 180, 240, 300].map((a) => (
           <rect key={a} x="208.5" y="122" width="3" height="8" fill="#8a8a8a" transform={`rotate(${a} 210 138)`} />
@@ -240,7 +245,7 @@ export default function MixtapeView() {
   return (
     <div className="mixtape-view">
       <div className="mixtape-hero">
-        <CassetteSvg title={tape.title} ink={ink} lengthLabel={`C${tape.tapeLength}`} spinning={tapeActive} side={side} />
+        <CassetteSvg title={tape.title} ink={ink} lengthLabel={`C${tape.tapeLength}`} spinning={tapeActive} side={side} wind={winding?.dir} />
         <div className="mixtape-hero-info">
           <h1 className="mixtape-title">{tape.title}</h1>
           {tape.dedication && <div className="mixtape-dedication" style={{ color: ink }}>for: {tape.dedication}</div>}
@@ -261,21 +266,48 @@ export default function MixtapeView() {
               if (currentOnTape) { if (!pb.isPlaying) togglePlayPause(); return }
               playTape()
             }
-            // SPOOL — FF/REW move the TAPE (Jake: "THE FAST FORWARD,
-            // REWIND IS LIKE SKIPPING TRACKS"). ±15 tape-seconds per
-            // press, straight through the middle of songs. Locked while
-            // REC is latched, like a real deck.
-            const spool = (deltaMs: number) => {
-              if (armed) return
+            // SPOOL WIND — hold FF/REW and the tape WINDS (Jake: "like an
+            // actual tape... thats how old mixtapes merge with each other").
+            // The head lifts, the spools accelerate, the deck squeals;
+            // release and you land wherever the ribbon stopped — straight
+            // through the middle of songs. Locked while REC is latched.
+            const WIND_TICK = 90
+            const startWind = (dir: 1 | -1) => {
+              if (armed || winding) return
+              const side = counter.side
+              const ids = side === 'A' ? tape.sideA : tape.sideB
+              const sideTotal = ids.reduce((s, id) => s + effDur(id), 0)
+              if (sideTotal <= 0) return
+              windMeta.current = { wasPlaying: pb.isPlaying, startedAt: Date.now() }
+              if (pb.isPlaying) togglePlayPause()
+              startWindSound()
+              setWinding({ dir, side, usedMs: counter.usedMs })
+              windTimer.current = window.setInterval(() => {
+                setWinding((w) => {
+                  if (!w) return w
+                  const held = (Date.now() - windMeta.current.startedAt) / 1000
+                  const speed = Math.min(32, 8 * Math.pow(2, held))
+                  const next = w.usedMs + w.dir * speed * WIND_TICK
+                  return { ...w, usedMs: Math.max(0, Math.min(sideTotal - 1500, next)) }
+                })
+              }, WIND_TICK)
+            }
+            const finishWind = () => {
+              if (!winding) return
+              if (windTimer.current != null) { clearInterval(windTimer.current); windTimer.current = null }
+              stopWindSound()
+              const { side, usedMs } = winding
+              setWinding(null)
               const durOfId = (id: number) => byId.get(id)?.duration || undefined
-              const tgt = spoolTarget(tape, counter.side, counter.usedMs, deltaMs, durOfId)
+              const tgt = spoolTarget(tape, side, usedMs, 0, durOfId)
               if (!tgt) return
               if (currentId === tgt.trackId) {
                 const durMs = byId.get(tgt.trackId)?.duration || 0
                 if (durMs > 0) seek(Math.min(0.99, tgt.fileSeekMs / durMs))
+                if (windMeta.current.wasPlaying && !pb.isPlaying) togglePlayPause()
                 return
               }
-              // crossing a splice: start that slot, land mid-song
+              // landed past a splice: drop in mid-song on that slot
               const all = [...sideATracks, ...sideBTracks]
               const idx = all.findIndex((t) => t.id === tgt.trackId)
               if (idx < 0) return
@@ -294,26 +326,34 @@ export default function MixtapeView() {
             return (
               <>
                 <div className="faceplate">
-                  <div className={`fp-counter${rolling ? ' fp-counter--rolling' : ''}`}
+                  <div className={`fp-counter${rolling || winding ? ' fp-counter--rolling' : ''}`}
                     title="Tape left on this side — rolls while you record">
-                    <span className="fp-counter-side">SIDE {counter.side}</span>
-                    <span className="fp-counter-digits">{counter.leftMs <= 0 ? 'FULL' : fmt(counter.leftMs)}</span>
-                    <span className="fp-counter-sub">{counter.leftMs <= 0 ? 'tape over it' : 'left'}</span>
+                    <span className="fp-counter-side">SIDE {winding ? winding.side : counter.side}</span>
+                    <span className="fp-counter-digits">
+                      {winding
+                        ? fmt(Math.max(0, sideBudget - winding.usedMs))
+                        : counter.leftMs <= 0 ? 'FULL' : fmt(counter.leftMs)}
+                    </span>
+                    <span className="fp-counter-sub">
+                      {winding ? (winding.dir > 0 ? '›› winding' : '‹‹ winding') : counter.leftMs <= 0 ? 'tape over it' : 'left'}
+                    </span>
                   </div>
                   <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => load({ recArmed: !armed })}
                     title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
                   </button>
-                  <button className="fp-key" onClick={() => spool(-15_000)} disabled={armed}
-                    title="REWIND — spool the tape back 15 seconds, mid-song and all. Locked while REC is down.">
+                  <button className={`fp-key${winding?.dir === -1 ? ' is-down' : ''}`} disabled={armed}
+                    onMouseDown={() => startWind(-1)} onMouseUp={finishWind} onMouseLeave={finishWind}
+                    title="REWIND — hold it down and the tape winds back, screaming past the song joins. Let go to drop back in. Locked while REC is down.">
                     <span className="fp-shape fp-shape--rew" /><span className="fp-label">REW</span>
                   </button>
                   <button className="fp-key fp-key--play" onClick={pressPlay}
                     title={armed ? 'PLAY — roll the music you are recording' : 'PLAY — play this tape'}>
                     <span className="fp-shape fp-shape--tri" /><span className="fp-label">PLAY</span>
                   </button>
-                  <button className="fp-key" onClick={() => spool(15_000)} disabled={armed}
-                    title="FAST-FORWARD — spool the tape ahead 15 seconds, straight through the middle of songs. Locked while REC is down.">
+                  <button className={`fp-key${winding?.dir === 1 ? ' is-down' : ''}`} disabled={armed}
+                    onMouseDown={() => startWind(1)} onMouseUp={finishWind} onMouseLeave={finishWind}
+                    title="FAST-FORWARD — hold it down and the tape winds ahead, straight through the middle of songs. Let go to drop back in. Locked while REC is down.">
                     <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
                   </button>
                   <button className="fp-key" onClick={() => { stopPlayback(); if (loaded) load({ recArmed: false, micOn: false }) }}
