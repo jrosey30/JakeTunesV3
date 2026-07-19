@@ -172,13 +172,20 @@ export function liveTapeCounter(
       { side: 'B' as const, ids: tape.sideB, cut: tape.sideBCutMs },
     ]) {
       const idx = cfg.ids.indexOf(nowId)
-      if (idx < 0 || idx !== cfg.ids.length - 1) continue
+      // ANY slot on a side rolls the reels — playback mid-tape counts
+      // down through the recorded region exactly like the real counter
+      // (Jake: "THAT CLOCK NEEDS TO COUNTDOWN!!!"). Recording is just
+      // the special case where the playing slot is the tail.
+      if (idx < 0) continue
       let before = 0
       for (let i = 0; i < idx; i++) before += effDur(cfg.ids[i])
       const off = tape.startOffsets?.[String(nowId)] || 0
       const live = before + Math.max(0, positionSec * 1000 - off)
       if (live < budgetMs) {
-        return { side: cfg.side, leftMs: budgetMs - live, usedMs: live, budgetMs, cutCountdown: cfg.cut !== undefined }
+        return {
+          side: cfg.side, leftMs: budgetMs - live, usedMs: live, budgetMs,
+          cutCountdown: cfg.cut !== undefined && idx === cfg.ids.length - 1,
+        }
       }
     }
   }
