@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { libraryHiddenTrackIds } from '../liveSets'
 import { useLibrary } from '../context/LibraryContext'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { setNotice } from '../activity'
@@ -325,10 +326,17 @@ export default function MusicManView() {
   // (a librosa failure leaves the timestamp but no bpm, so it stays "remaining"
   // and can be retried). Recomputes live as progress dispatches land.
   const audioAnalysisCounts = useMemo(() => {
+    // Count the SAME songs the rest of the app counts: full-live-concert
+    // territory (merged show + constituent tracks) is hidden from Songs
+    // (LC-5), so the banner excludes it too — 8,551 vs 8,496 confusion
+    // (Jake, 2026-07-19) came from this denominator mismatch. The
+    // analyzer itself still walks everything; only the arithmetic shown
+    // matches the visible library.
+    const hidden = libraryHiddenTrackIds(new Set(libState.tracks.map((t) => t.id)))
     let analyzed = 0
     let total = 0
     for (const t of libState.tracks) {
-      if (!t.path) continue
+      if (!t.path || hidden.has(t.id)) continue
       total++
       if (t.audioAnalysisAt && t.bpm) analyzed++
     }
