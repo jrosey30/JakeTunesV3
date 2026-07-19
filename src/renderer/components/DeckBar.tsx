@@ -66,9 +66,24 @@ export default function DeckBar() {
   // 0) and "REC pressed mid-song" (offset = playhead). ──
   const landTrack = useCallback((id: number, startMs: number) => {
     const d = getDeckState()
-    const t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
+    let t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
     if (!d || !t) return
-    if (t.sideA.includes(id) || t.sideB.includes(id)) return // one slot per song per tape
+    // THE TAPE IS LINEAR (Jake: "preestablishing songs on side A and B is
+    // dumb... side A of the tape is still recording!!"). A song already
+    // on the recorded portion (the active side, or anything once we're on
+    // B) is physically on tape — skip. But a song only PLANNED for later
+    // (sitting in Side B's plan while A is still rolling) yields to
+    // reality: pull it out of the plan and record it right here.
+    if (d.side === 'A') {
+      if (t.sideA.includes(id)) return // already recorded on A
+      if (t.sideB.includes(id)) {
+        const remaining = t.sideB.filter((x) => x !== id)
+        const refit = fitSide(remaining, effectiveDurationFn(durOf, t.startOffsets), (t.tapeLength / 2) * 60_000)
+        t = { ...t, sideB: refit.ids, sideBCutMs: refit.cutMs }
+      }
+    } else {
+      if (t.sideA.includes(id) || t.sideB.includes(id)) return // all recorded territory on side B
+    }
     const budget = (t.tapeLength / 2) * 60_000
     const offsets = { ...(t.startOffsets || {}) }
     if (startMs > 1500) offsets[String(id)] = Math.round(startMs)

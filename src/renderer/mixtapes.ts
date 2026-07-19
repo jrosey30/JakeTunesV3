@@ -107,7 +107,16 @@ export async function layOnDeck(
   let side: 'A' | 'B' = deck.side
   let laid = 0
   for (const id of trackIds) {
-    if (sideA.includes(id) || sideB.includes(id)) continue // already on the tape
+    // Linear tape: recorded territory skips; a song merely PLANNED for
+    // side B while A is still rolling gets pulled forward to the head.
+    if (side === 'A') {
+      if (sideA.includes(id)) continue
+      if (sideB.includes(id)) {
+        sideB = sideB.filter((x) => x !== id)
+        const refitB = fitSide(sideB, effDur, budget)
+        sideB = refitB.ids; cutB = refitB.cutMs
+      }
+    } else if (sideA.includes(id) || sideB.includes(id)) continue
     const tryside = (which: 'A' | 'B'): boolean => {
       const cur = which === 'A' ? sideA : sideB
       const cut = which === 'A' ? cutA : cutB
