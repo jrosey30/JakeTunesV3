@@ -78,6 +78,56 @@ export function getDeckState(): DeckState | null {
   return deckState
 }
 
+/**
+ * Lay songs straight onto the tape in the deck — the right-click path
+ * ("adding songs by search is bogus" — Jake). Same physics as the
+ * recorder: fills the active side in order, boundary song gets cut,
+ * flips A→B, stops when the tape is full. Persists once. Returns a
+ * human sentence for the notice.
+ */
+import { fitSide } from '../common/tape-physics'
+
+export async function layOnDeck(
+  trackIds: number[],
+  durOf: (id: number) => number | undefined,
+): Promise<string> {
+  const deck = deckState
+  if (!deck) return 'No tape in the deck.'
+  const tape = cache.find((m) => m.id === deck.mixtapeId)
+  if (!tape) return 'No tape in the deck.'
+  const budget = (tape.tapeLength / 2) * 60_000
+  let sideA = [...tape.sideA]
+  let sideB = [...tape.sideB]
+  let cutA = tape.sideACutMs
+  let cutB = tape.sideBCutMs
+  let side: 'A' | 'B' = deck.side
+  let laid = 0
+  for (const id of trackIds) {
+    if (sideA.includes(id) || sideB.includes(id)) continue // already on the tape
+    const tryside = (which: 'A' | 'B'): boolean => {
+      const cur = which === 'A' ? sideA : sideB
+      const cut = which === 'A' ? cutA : cutB
+      if (cut !== undefined) return false
+      const fit = fitSide([...cur, id], durOf, budget)
+      if (!fit.ids.includes(id)) return false
+      if (which === 'A') { sideA = fit.ids; cutA = fit.cutMs } else { sideB = fit.ids; cutB = fit.cutMs }
+      return true
+    }
+    let ok = tryside(side)
+    if (!ok && side === 'A') { ok = tryside('B'); if (ok) side = 'B' }
+    if (!ok) break
+    laid++
+    if ((side === 'A' ? cutA : cutB) !== undefined && side === 'A') side = 'B'
+  }
+  if (laid === 0) return 'Tape full — nothing landed.'
+  const next = { ...tape, sideA, sideB, sideACutMs: cutA, sideBCutMs: cutB }
+  await window.electronAPI.saveMixtape?.(next)
+  await refreshMixtapes()
+  setDeckState({ ...deck, side })
+  const skipped = trackIds.length - laid
+  return `${laid} song${laid === 1 ? '' : 's'} laid on the tape${skipped > 0 ? ` — tape ran out, ${skipped} didn't fit` : ''}.`
+}
+
 /** Stable per-tape ink color for the handwritten label. */
 const INKS = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 export function pickInk(seed: string): string {

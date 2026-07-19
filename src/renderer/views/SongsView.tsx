@@ -10,6 +10,7 @@ import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as sub
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import MixtapeSheet from '../components/MixtapeSheet'
+import { getDeckState, layOnDeck } from '../mixtapes'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
@@ -489,6 +490,15 @@ export default function SongsView() {
       ...(count >= 2 ? [
         { separator: true as const },
         { label: `Make a Mixtape from ${count} songs…`, onClick: () => setMixtapeTracks(selectedTracks) },
+      ] : []),
+      ...(getDeckState() ? [
+        {
+          label: `Lay on the tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
+          onClick: () => {
+            void layOnDeck(selectedTracks.map(t => t.id), (id) => selectedTracks.find(t => t.id === id)?.duration || undefined)
+              .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
+          },
+        },
       ] : []),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },

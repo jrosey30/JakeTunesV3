@@ -6,9 +6,9 @@
  * tape — then you land on THE DECK and mix it like it's 1985:
  *   ↑ ↓  nudge a song up/down the side
  *   ⇄    bump it to the other side
- *   ×    off the tape (back on the floor)
- *   floor + shelf: put any song back on, or pull anything from the
- *   whole library, straight onto a side
+ *   ×    off the tape
+ * Adding songs happens at the RECORDER (play with REC down) or by
+ * right-clicking songs → "Lay on the tape" — not here.
  * The tape counter is live and TRUE (src/common/tape-physics.ts — the
  * exact function the saved tape obeys): each side shows time used, time
  * left, where the boundary song gets cut, and songs stacked past the end
@@ -60,7 +60,6 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
   // tape; physics decides what actually records.
   const [deckA, setDeckA] = useState<number[]>(existing?.sideA ?? [])
   const [deckB, setDeckB] = useState<number[]>(existing?.sideB ?? [])
-  const [shelfQuery, setShelfQuery] = useState('')
 
   const libById = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
   const dur = (id: number) => libById.get(id)?.duration || undefined
@@ -72,20 +71,6 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
   const placed = useMemo(() => new Set([...deckA, ...deckB]), [deckA, deckB])
   // The floor: songs brought to the session but not on either side.
   const floor = useMemo(() => tracks.filter((t) => !placed.has(t.id)), [tracks, placed])
-
-  const shelfResults = useMemo(() => {
-    const q = shelfQuery.trim().toLowerCase()
-    if (q.length < 2) return []
-    const out: Track[] = []
-    for (const t of lib.tracks) {
-      if (placed.has(t.id)) continue
-      if (`${t.title || ''} ${t.artist || ''}`.toLowerCase().includes(q)) {
-        out.push(t)
-        if (out.length >= 6) break
-      }
-    }
-    return out
-  }, [shelfQuery, lib.tracks, placed])
 
   const totalMs = useMemo(() => tracks.reduce((s, t) => s + (t.duration || 0), 0), [tracks])
 
@@ -177,13 +162,6 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
     const set = side === 'A' ? setDeckA : setDeckB
     set((cur) => cur.filter((_, i) => i !== idx))
   }
-  const place = (id: number, side: 'A' | 'B') => {
-    if (placed.has(id)) return
-    if (side === 'A') setDeckA((cur) => [...cur, id])
-    else setDeckB((cur) => [...cur, id])
-    setShelfQuery('')
-  }
-
   const renderDeckSide = (label: 'A' | 'B', ids: number[], fit: ReturnType<typeof fitSide>) => {
     const leftMs = sideBudgetMs - fit.usedMs
     const cutId = fit.cutMs !== undefined ? fit.ids[fit.ids.length - 1] : null
@@ -306,36 +284,10 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
 
             {floor.length > 0 && (
               <div className="mixsheet-floor">
-                <span className="mixsheet-floor-label">On the floor:</span>
-                {floor.map((t) => (
-                  <span key={t.id} className="mixsheet-floor-chip">
-                    {t.title}
-                    <button type="button" title="Onto Side A" onClick={() => place(t.id, 'A')}>+A</button>
-                    <button type="button" title="Onto Side B" onClick={() => place(t.id, 'B')}>+B</button>
-                  </span>
-                ))}
+                <span className="mixsheet-floor-label">Didn't make the tape:</span>{' '}
+                {floor.map((t) => t.title).join(' · ')}
               </div>
             )}
-
-            <div className="mixsheet-shelf">
-              <input className="activity-place" type="text" value={shelfQuery}
-                onChange={(e) => setShelfQuery(e.target.value)}
-                placeholder="Pull anything from the shelf — search your whole library…" />
-              {shelfResults.length > 0 && (
-                <div className="mixsheet-shelf-results">
-                  {shelfResults.map((t) => (
-                    <div key={t.id} className="mixsheet-row">
-                      <span className="mixsheet-row-title">{t.title}</span>
-                      <span className="mixsheet-row-artist">{t.artist}</span>
-                      <span className="mixsheet-row-tools">
-                        <button type="button" onClick={() => place(t.id, 'A')}>+A</button>
-                        <button type="button" onClick={() => place(t.id, 'B')}>+B</button>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {existing && (
               <div className="mixsheet-tapeover-warning">

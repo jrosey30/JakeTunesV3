@@ -6,6 +6,7 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import MixtapeSheet from '../components/MixtapeSheet'
+import { getDeckState, layOnDeck } from '../mixtapes'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
@@ -508,6 +509,15 @@ export default function PlaylistView() {
       ...(selected.length >= 2 ? [
         { separator: true as const },
         { label: `Make a Mixtape from ${selected.length} songs…`, onClick: () => setMixtapeTracks(selected) },
+      ] : []),
+      ...(getDeckState() ? [
+        {
+          label: `Lay on the tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,
+          onClick: () => {
+            void layOnDeck(selected.map(t => t.id), (id) => selected.find(t => t.id === id)?.duration || undefined)
+              .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
+          },
+        },
       ] : []),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },

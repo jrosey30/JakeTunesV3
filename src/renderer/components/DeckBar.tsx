@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
+import { useAudio } from '../hooks/useAudio'
 import {
   getDeckState, setDeckState, getMixtapes, getTapeSession,
   subscribeMixtapes, refreshMixtapes,
@@ -34,7 +35,11 @@ function fmt(ms: number): string {
 
 export default function DeckBar() {
   const { state: lib } = useLibrary()
-  const { state: pb, dispatch: pbDispatch } = usePlayback()
+  const { state: pb } = usePlayback()
+  // THE transport — same function the toolbar uses, so play/pause stays
+  // loyal to the actual audio engine (a raw dispatch only flips the
+  // label while the music keeps going — the original sin here).
+  const { togglePlayPause } = useAudio()
   const deck = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const [notice, setNotice] = useState('')
@@ -175,7 +180,7 @@ export default function DeckBar() {
   }
 
   return (
-    <div className="deckbar">
+    <div className={`deckbar${rolling ? ' deckbar--recording' : deck.recArmed ? ' deckbar--armed' : ''}`}>
       <svg className={`deckbar-cassette${rolling ? ' deckbar-cassette--rolling' : ''}`} viewBox="0 0 84 52" width="84" height="52">
       <rect x="1" y="1" width="82" height="50" rx="6" fill="#3a3a3a" stroke="#111" />
         <rect x="7" y="5" width="70" height="16" rx="2" fill="#f4eeda" />
@@ -191,31 +196,38 @@ export default function DeckBar() {
       </svg>
 
       <div className="deckbar-counter">
-        <span className="deckbar-side">SIDE {deck.side}</span>
-        <span className="deckbar-left">{sideCut !== undefined || leftMs <= MIN_CUT_MS ? 'side full' : `${fmt(leftMs)} left`}</span>
+        <span className="deckbar-status">
+          {rolling ? '● RECORDING' : deck.recArmed ? 'REC DOWN — press play' : 'not recording'}
+        </span>
+        <span className="deckbar-side">SIDE {deck.side} · {sideCut !== undefined || leftMs <= MIN_CUT_MS ? 'full' : `${fmt(leftMs)} left`}</span>
+        {rolling && pb.nowPlaying && (
+          <span className="deckbar-nowrec">{String(pb.nowPlaying.title || '').slice(0, 34)} → tape</span>
+        )}
         {notice && <span className="deckbar-notice">{notice}</span>}
       </div>
 
       <div className="deckbar-transport">
         <button
           className="deckbar-btn deckbar-btn--play"
-          onClick={() => pbDispatch({ type: pb.isPlaying ? 'PAUSE' : 'RESUME' })}
+          onClick={togglePlayPause}
           title={pb.isPlaying ? 'Pause the music' : 'Play the music'}
         >{pb.isPlaying ? <PauseIcon /> : <PlayIcon />}</button>
         <button
           className={`deckbar-btn deckbar-btn--rec${deck.recArmed ? ' is-armed' : ''}`}
           onClick={() => { lastLandedRef.current = deck.recArmed ? lastLandedRef.current : nowId ?? null; setDeckState({ ...deck, recArmed: !deck.recArmed }) }}
-          title={deck.recArmed ? "REC is down — everything you play lands on the tape. Click to pop it out." : 'Press REC — whatever plays gets recorded onto the tape'}
+          title={deck.recArmed ? 'Pop REC out — stop recording' : 'Press REC — whatever plays goes on the tape'}
         ><RecIcon /> REC</button>
-        <button
-          className={`deckbar-btn deckbar-btn--talk${talking ? ' is-talking' : ''}`}
-          onClick={() => { void startTalk() }}
-          disabled={talkBusy}
-          title="Talk onto the tape — your voice records WITH the music, right at this spot. Click again to stop."
-        ><MicSmallIcon /> {talkBusy ? 'dubbing…' : talking ? 'TALKING' : 'TALK'}</button>
       </div>
 
-      <button className="deckbar-eject" onClick={() => { stopTalk(); setDeckState(null) }} title="Eject the tape">EJECT</button>
+      <div className="deckbar-minor">
+        <button
+          className={`deckbar-mini${talking ? ' is-talking' : ''}`}
+          onClick={() => { void startTalk() }}
+          disabled={talkBusy}
+          title="Talk onto the tape — your voice goes down with the music. Click again to stop."
+        ><MicSmallIcon /></button>
+        <button className="deckbar-mini deckbar-mini--eject" onClick={() => { stopTalk(); setDeckState(null) }} title="Eject the tape">⏏</button>
+      </div>
     </div>
   )
 }
