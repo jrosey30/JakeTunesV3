@@ -12,12 +12,19 @@
  * any other song and you've ejected the cassette.
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { getTapeSession, setTapeSession, subscribeMixtapes } from '../mixtapes'
+import { getTapeSession, setTapeSession, getMixtapes, subscribeMixtapes } from '../mixtapes'
 
 export default function TapeMonitor() {
+  const { state: lib } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const session = useSyncExternalStore(subscribeMixtapes, getTapeSession)
+  const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
+  // Talkovers already played this session (one shot each per playthrough)
+  // + live overlay audio elements for cleanup.
+  const playedTalkRef = useRef<Set<string>>(new Set())
+  const overlayRef = useRef<HTMLAudioElement[]>([])
   // A cut fires once per landing on the boundary song. Re-arm when the
   // playing track changes (rewinding the tape lets it cut again — physics).
   const firedForRef = useRef<number | null>(null)
@@ -30,12 +37,48 @@ export default function TapeMonitor() {
     }
   }, [nowId])
 
+  // Session changed → fresh playthrough: reset one-shots, kill overlays.
+  useEffect(() => {
+    playedTalkRef.current = new Set()
+    for (const a of overlayRef.current) a.pause()
+    overlayRef.current = []
+  }, [session])
+  useEffect(() => () => { for (const a of overlayRef.current) a.pause() }, [])
+
   useEffect(() => {
     if (!session || nowId == null) return
     // Ejected: playback left the tape entirely.
     if (!session.tapeTrackIds.includes(nowId)) {
       setTapeSession(null)
+      for (const a of overlayRef.current) a.pause()
+      overlayRef.current = []
       return
+    }
+    // ── Talkovers: Jake's voice, laid down WITH the music, plays over
+    // the song at its pinned spot on the side. Fire when the tape's
+    // side-elapsed crosses atMs (position ticks ~1s — tape-accurate).
+    const tape = mixtapes.find((m) => m.id === session.mixtapeId)
+    if (tape?.talkovers?.length) {
+      const side: 'A' | 'B' | null = tape.sideA.includes(nowId) ? 'A' : tape.sideB.includes(nowId) ? 'B' : null
+      if (side) {
+        const ids = side === 'A' ? tape.sideA : tape.sideB
+        const idx = ids.indexOf(nowId)
+        let before = 0
+        for (let i = 0; i < idx; i++) before += lib.tracks.find((t) => t.id === ids[i])?.duration || 210_000
+        const elapsed = before + pb.position * 1000
+        for (const tk of tape.talkovers) {
+          if (tk.side !== side) continue
+          const key = `${tk.side}|${tk.atMs}|${tk.path}`
+          if (playedTalkRef.current.has(key)) continue
+          if (elapsed >= tk.atMs && elapsed - tk.atMs < 4000) {
+            playedTalkRef.current.add(key)
+            const a = new Audio('ipod-audio://' + encodeURIComponent(tk.path))
+            overlayRef.current.push(a)
+            a.onended = () => { overlayRef.current = overlayRef.current.filter((x) => x !== a) }
+            void a.play().catch(() => {})
+          }
+        }
+      }
     }
     const cut = session.cuts.find((c) => c.trackId === nowId)
     if (!cut || firedForRef.current === nowId) return
@@ -48,7 +91,7 @@ export default function TapeMonitor() {
         pbDispatch({ type: 'NEXT_TRACK' })
       }
     }
-  }, [session, nowId, pb.position, pbDispatch])
+  }, [session, nowId, pb.position, pbDispatch, mixtapes, lib.tracks])
 
   return null
 }

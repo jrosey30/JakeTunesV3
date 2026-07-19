@@ -9,6 +9,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
+import BlankTapeSheet from '../BlankTapeSheet'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
   home: <HomeIcon />,
@@ -255,6 +256,7 @@ export default function Sidebar() {
   const renameRef = useRef<HTMLInputElement>(null)
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const activeMixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
+  const [showBlankTape, setShowBlankTape] = useState(false)
 
   useEffect(() => { void refreshMixtapes() }, [])
 
@@ -537,19 +539,23 @@ export default function Sidebar() {
         {/* 2026-07-18 — mixtapes: real cassettes made from a song
             selection. Module store (mixtapes.ts) mirrors concertNav;
             detail view routes via generic SET_VIEW. */}
-        {mixtapes.length > 0 && (
-          <SidebarSection title="MIXTAPES">
-            {mixtapes.map((m) => (
-              <SidebarItem
-                key={m.id}
-                label={m.title}
-                icon={<CassetteIcon />}
-                selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
-                onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
-              />
-            ))}
-          </SidebarSection>
-        )}
+        <SidebarSection title="MIXTAPES">
+          <SidebarItem
+            label="Blank Tape…"
+            icon={<CassetteIcon />}
+            selected={false}
+            onClick={() => setShowBlankTape(true)}
+          />
+          {mixtapes.map((m) => (
+            <SidebarItem
+              key={m.id}
+              label={m.title}
+              icon={<CassetteIcon />}
+              selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
+              onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
+            />
+          ))}
+        </SidebarSection>
 
         {/* 2026-07-18 — saved activity syncs get their own category so a
             kept sync reads as a different kind of thing than a hand-made
@@ -641,6 +647,7 @@ export default function Sidebar() {
           onClose={() => setPlCtxMenu(null)}
         />
       )}
+      {showBlankTape && <BlankTapeSheet onClose={() => setShowBlankTape(false)} />}
       {deleteConfirm && (
         <ConfirmDialog
           message={`Delete the playlist "${deleteConfirm.name}"?`}

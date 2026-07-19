@@ -117,6 +117,9 @@ export interface Mixtape {
   sideBCutMs?: number
   linerNotes: Array<{ id: number; note: string }>
   introPath?: string
+  // Voice recorded WITH the music (TALK button while REC armed) — plays
+  // over the song at atMs into that side during tape playback.
+  talkovers?: Array<{ side: 'A' | 'B'; atMs: number; path: string }>
   createdAt: string
   inkColor?: string
 }

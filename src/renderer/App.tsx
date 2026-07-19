@@ -9,6 +9,7 @@ import Toolbar from './components/playback/Toolbar'
 import Sidebar from './components/sidebar/Sidebar'
 import MainContent from './components/MainContent'
 import TapeMonitor from './components/TapeMonitor'
+import DeckBar from './components/DeckBar'
 import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
@@ -1649,6 +1650,7 @@ function AppInner() {
       <div className="content-area" style={{ position: 'relative' }}>
         <MainContent />
         <TapeMonitor />
+        <DeckBar />
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}

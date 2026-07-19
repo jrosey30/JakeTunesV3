@@ -58,6 +58,26 @@ export function getTapeSession(): TapeSession | null {
   return tapeSession
 }
 
+// ── The deck — record-on-play state ─────────────────────────────────
+// A tape "in the deck" + REC armed means: every song that PLAYS gets
+// laid onto the active side, in the order it played, true physics.
+// That's how mixtapes are made.
+export interface DeckState {
+  mixtapeId: string
+  side: 'A' | 'B'
+  recArmed: boolean
+}
+
+let deckState: DeckState | null = null
+
+export function setDeckState(d: DeckState | null): void {
+  deckState = d
+  notify()
+}
+export function getDeckState(): DeckState | null {
+  return deckState
+}
+
 /** Stable per-tape ink color for the handwritten label. */
 const INKS = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 export function pickInk(seed: string): string {

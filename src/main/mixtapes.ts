@@ -49,6 +49,9 @@ export interface Mixtape {
   sideBCutMs?: number
   linerNotes: MixtapeLinerNote[]
   introPath?: string
+  /** Voice laid down WITH the music while recording — plays over the
+   *  song at atMs into that side during tape playback. */
+  talkovers?: Array<{ side: 'A' | 'B'; atMs: number; path: string }>
   createdAt: string
   /** J-card ink color the renderer drew the label with (stable per tape). */
   inkColor?: string

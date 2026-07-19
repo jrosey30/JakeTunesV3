@@ -14,7 +14,7 @@ import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeMic from '../components/MixtapeMic'
 import MixtapeSheet from '../components/MixtapeSheet'
-import { getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession } from '../mixtapes'
+import { getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState } from '../mixtapes'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -184,6 +184,8 @@ export default function MixtapeView() {
             {introPlaying && (
               <button className="mixtape-btn" onClick={() => { stopIntro(); startQueueAt(0) }}>Skip intro</button>
             )}
+            <button className="mixtape-btn" onClick={() => setDeckState({ mixtapeId: tape.id, side: tape.sideACutMs !== undefined ? 'B' : 'A', recArmed: false })}
+              title="Load this tape into the recorder — press REC and whatever you play lands on it">Put in the deck</button>
             <button className="mixtape-btn" onClick={() => setRemixing(true)}
               title="Back on the deck — rearrange, swap songs, change tape length. Saving tapes over this one.">Open on the deck</button>
             <button className="mixtape-btn" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
