@@ -13,7 +13,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
-import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState } from '../mixtapes'
+import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter } from '../mixtapes'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -246,9 +246,23 @@ export default function MixtapeView() {
               playTape()
             }
             const rolling = armed && pb.isPlaying
+            // The counter window — how much tape is left on this side,
+            // rolling live while the tail song records or plays.
+            const counter = liveTapeCounter(
+              tape,
+              loaded ? deckState!.side : resumeSide,
+              currentId, pb.position, pb.isPlaying,
+              (id) => byId.get(id)?.duration || undefined,
+            )
             return (
               <>
                 <div className="faceplate">
+                  <div className={`fp-counter${rolling ? ' fp-counter--rolling' : ''}`}
+                    title="Tape left on this side — rolls while you record">
+                    <span className="fp-counter-side">SIDE {counter.side}</span>
+                    <span className="fp-counter-digits">{counter.leftMs <= 0 ? 'FULL' : fmt(counter.leftMs)}</span>
+                    <span className="fp-counter-sub">{counter.leftMs <= 0 ? 'tape over it' : 'left'}</span>
+                  </div>
                   <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => load({ recArmed: !armed })}
                     title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>

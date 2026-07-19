@@ -132,6 +132,47 @@ export async function layOnDeck(
   return `${laid} song${laid === 1 ? '' : 's'} laid on the tape${skipped > 0 ? ` — tape ran out, ${skipped} didn't fit` : ''}.`
 }
 
+/**
+ * The tape counter — ONE calculation for every display (faceplate window,
+ * deck strip). Committed songs count whole (effective, offset-aware); the
+ * side's TAIL song rolls live with the playhead, so time-left ticks down
+ * second by second while recording (or while playing the tape's tail).
+ */
+export function liveTapeCounter(
+  tape: Mixtape,
+  activeSide: 'A' | 'B',
+  nowId: number | null | undefined,
+  positionSec: number,
+  isPlaying: boolean,
+  durOf: (id: number) => number | undefined,
+): { side: 'A' | 'B'; leftMs: number; usedMs: number; budgetMs: number; cutCountdown: boolean } {
+  const budgetMs = (tape.tapeLength / 2) * 60_000
+  const effDur = effectiveDurationFn(durOf, tape.startOffsets)
+  const staticFor = (side: 'A' | 'B') => {
+    const ids = side === 'A' ? tape.sideA : tape.sideB
+    const cut = side === 'A' ? tape.sideACutMs : tape.sideBCutMs
+    const used = cut !== undefined ? budgetMs : fitSide(ids, effDur, budgetMs).usedMs
+    return { side, leftMs: Math.max(0, budgetMs - used), usedMs: used, budgetMs, cutCountdown: false }
+  }
+  if (isPlaying && nowId != null) {
+    for (const cfg of [
+      { side: 'A' as const, ids: tape.sideA, cut: tape.sideACutMs },
+      { side: 'B' as const, ids: tape.sideB, cut: tape.sideBCutMs },
+    ]) {
+      const idx = cfg.ids.indexOf(nowId)
+      if (idx < 0 || idx !== cfg.ids.length - 1) continue
+      let before = 0
+      for (let i = 0; i < idx; i++) before += effDur(cfg.ids[i])
+      const off = tape.startOffsets?.[String(nowId)] || 0
+      const live = before + Math.max(0, positionSec * 1000 - off)
+      if (live < budgetMs) {
+        return { side: cfg.side, leftMs: budgetMs - live, usedMs: live, budgetMs, cutCountdown: cfg.cut !== undefined }
+      }
+    }
+  }
+  return staticFor(activeSide)
+}
+
 /** Stable per-tape ink color for the handwritten label. */
 const INKS = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 export function pickInk(seed: string): string {

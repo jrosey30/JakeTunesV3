@@ -21,7 +21,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import {
   getDeckState, setDeckState, getMixtapes, getTapeSession, getMixtapeId,
-  subscribeMixtapes, refreshMixtapes,
+  subscribeMixtapes, refreshMixtapes, liveTapeCounter,
 } from '../mixtapes'
 import { fitSide, effectiveDurationFn } from '../../common/tape-physics'
 import type { Mixtape } from '../types'
@@ -211,35 +211,11 @@ export default function DeckBar() {
   // The faceplate on the tape's own page drives the deck — hide the strip there.
   if (lib.currentView === 'mixtape-detail' && activeMixtapeId === deck.mixtapeId) return null
 
-  const budget = (tape.tapeLength / 2) * 60_000
-  const effDur = effectiveDurationFn(durOf, tape.startOffsets)
-  const sideIds = deck.side === 'A' ? tape.sideA : tape.sideB
-  const sideCut = deck.side === 'A' ? tape.sideACutMs : tape.sideBCutMs
-  const fit = fitSide(sideIds, effDur, budget)
   const rolling = deck.recArmed && pb.isPlaying
-
-  let dispSide: 'A' | 'B' = deck.side
-  let dispLeft = sideCut !== undefined ? 0 : budget - fit.usedMs
-  let cutCountdown = false
-  if (pb.isPlaying && nowId != null) {
-    for (const cfg of [
-      { label: 'A' as const, ids: tape.sideA, cut: tape.sideACutMs },
-      { label: 'B' as const, ids: tape.sideB, cut: tape.sideBCutMs },
-    ]) {
-      const idx = cfg.ids.indexOf(nowId)
-      if (idx < 0 || idx !== cfg.ids.length - 1) continue
-      let before = 0
-      for (let i = 0; i < idx; i++) before += effDur(cfg.ids[i])
-      const off = tape.startOffsets?.[String(nowId)] || 0
-      const live = before + Math.max(0, pb.position * 1000 - off)
-      if (live < budget) {
-        dispSide = cfg.label
-        dispLeft = budget - live
-        cutCountdown = cfg.cut !== undefined
-      }
-      break
-    }
-  }
+  const counter = liveTapeCounter(tape, deck.side, nowId, pb.position, pb.isPlaying, durOf)
+  const dispSide = counter.side
+  const dispLeft = counter.leftMs
+  const cutCountdown = counter.cutCountdown
 
   const pressRec = () => {
     setDeckState({ ...deck, recArmed: !deck.recArmed })
