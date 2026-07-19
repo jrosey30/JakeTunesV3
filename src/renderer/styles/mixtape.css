@@ -465,3 +465,16 @@
 }
 .mixtape-link:hover { color: #333; }
 .mixtape-link:disabled { opacity: 0.5; cursor: default; }
+/* REW / FF / STOP shapes */
+.fp-shape--rew, .fp-shape--ff { display: flex; gap: 1px; }
+.fp-shape--rew::before, .fp-shape--rew::after {
+  content: ''; width: 0; height: 0;
+  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
+  border-right: 10px solid #ddd;
+}
+.fp-shape--ff::before, .fp-shape--ff::after {
+  content: ''; width: 0; height: 0;
+  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
+  border-left: 10px solid #ddd;
+}
+.fp-shape--stop { width: 13px; height: 13px; background: #ddd; }

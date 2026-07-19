@@ -73,7 +73,7 @@ export function CassetteSvg({ title, ink, lengthLabel, spinning, side }: {
 export default function MixtapeView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb } = usePlayback()
-  const { playTrack, togglePlayPause } = useAudio()
+  const { playTrack, togglePlayPause, nextTrack, prevTrack, stopPlayback } = useAudio()
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
@@ -253,9 +253,21 @@ export default function MixtapeView() {
                     title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
                   </button>
+                  <button className="fp-key" onClick={prevTrack}
+                    title="REWIND — back to the start of the song; press again for the one before">
+                    <span className="fp-shape fp-shape--rew" /><span className="fp-label">REW</span>
+                  </button>
                   <button className="fp-key fp-key--play" onClick={pressPlay}
                     title={armed ? 'PLAY — roll the music you are recording' : 'PLAY — play this tape'}>
                     <span className="fp-shape fp-shape--tri" /><span className="fp-label">PLAY</span>
+                  </button>
+                  <button className="fp-key" onClick={nextTrack}
+                    title="FAST-FORWARD — next song">
+                    <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
+                  </button>
+                  <button className="fp-key" onClick={() => { stopPlayback(); if (loaded) load({ recArmed: false, micOn: false }) }}
+                    title="STOP — everything stops and the REC latch pops out, like a real deck">
+                    <span className="fp-shape fp-shape--stop" /><span className="fp-label">STOP</span>
                   </button>
                   <button className="fp-key fp-key--pause" onClick={() => { if (pb.isPlaying) togglePlayPause() }}
                     title="PAUSE — the music stops where it is. Recording waits.">
@@ -282,7 +294,7 @@ export default function MixtapeView() {
           <div className="mixtape-smallrow">
             <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
             <span>·</span>
-            <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Dubbing…' : 'Dub to cassette'}</button>
+            <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Making the files…' : 'Make Side A + B files for a REAL cassette deck'}</button>
             <span>·</span>
             <button className="mixtape-link" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
