@@ -184,7 +184,9 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
         const existing = new Set(p.trackIds)
         const newIds = action.trackIds.filter(id => !existing.has(id))
         if (newIds.length === 0) return p
-        return { ...p, trackIds: [...newIds, ...p.trackIds] }
+        // Jake 2026-07-19: new songs ALWAYS land at the BOTTOM of a
+        // playlist (and mixtape sides append too) — never on top.
+        return { ...p, trackIds: [...p.trackIds, ...newIds] }
       })
       return { ...state, playlists }
     }
