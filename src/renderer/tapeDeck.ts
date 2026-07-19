@@ -93,12 +93,12 @@ function engage(): void {
     const wow = ctx.createOscillator()
     wow.frequency.value = 0.5
     const wowDepth = ctx.createGain()
-    wowDepth.gain.value = 0.0012
+    wowDepth.gain.value = 0.0005
     wow.connect(wowDepth).connect(delay.delayTime)
     const flutter = ctx.createOscillator()
     flutter.frequency.value = 6.1
     const flutterDepth = ctx.createGain()
-    flutterDepth.gain.value = 0.0002
+    flutterDepth.gain.value = 0.0001
     flutter.connect(flutterDepth).connect(delay.delayTime)
     wow.start()
     flutter.start()
@@ -112,7 +112,7 @@ function engage(): void {
       const curve = new Float32Array(n)
       for (let i = 0; i < n; i++) {
         const x = (i / (n - 1)) * 2 - 1
-        curve[i] = Math.tanh(2.2 * x) / Math.tanh(2.2)
+        curve[i] = Math.tanh(1.3 * x) / Math.tanh(1.3)
       }
       sat.curve = curve
       sat.oversample = '2x'
@@ -120,24 +120,25 @@ function engage(): void {
 
     const shelfHi = ctx.createBiquadFilter()
     shelfHi.type = 'highshelf'
-    shelfHi.frequency.value = 7200
-    shelfHi.gain.value = -7
+    shelfHi.frequency.value = 9500
+    shelfHi.gain.value = -3
     const lp = ctx.createBiquadFilter()
     lp.type = 'lowpass'
-    lp.frequency.value = 13000
+    lp.frequency.value = 15000
     lp.Q.value = 0.7
     const shelfLo = ctx.createBiquadFilter()
-    shelfLo.type = 'lowshelf'
-    shelfLo.frequency.value = 70
-    shelfLo.gain.value = -2
+    shelfLo.type = 'peaking'
+    shelfLo.frequency.value = 85
+    shelfLo.Q.value = 0.8
+    shelfLo.gain.value = 2.5
 
     // Tape glue — barely-there compression.
     const comp = ctx.createDynamicsCompressor()
-    comp.threshold.value = -22
-    comp.ratio.value = 2.4
-    comp.knee.value = 24
-    comp.attack.value = 0.01
-    comp.release.value = 0.25
+    comp.threshold.value = -18
+    comp.ratio.value = 1.7
+    comp.knee.value = 30
+    comp.attack.value = 0.012
+    comp.release.value = 0.2
 
     master.disconnect()
     master.connect(input)
@@ -163,7 +164,7 @@ function engage(): void {
     // (pause = motor stopped = silence, like a real deck).
     hissWatch = window.setInterval(() => {
       const rolling = !!howler()?._howls?.some((h) => h.playing())
-      hissGain?.gain.setTargetAtTime(rolling ? 0.0055 : 0, ctx.currentTime, 0.08)
+      hissGain?.gain.setTargetAtTime(rolling ? 0.0028 : 0, ctx.currentTime, 0.08)
     }, 400)
 
     engaged = true
