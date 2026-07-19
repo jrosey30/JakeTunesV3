@@ -4258,6 +4258,44 @@ ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
 // device itself reports as present, independent of the app's local
 // library.json. Handy for reconciling "library says X / iPod says Y"
 // discrepancies.
+// ── The Music Man's wall: what the brain actually knows (Jake asked
+// "how is progress?" — this makes the answer a glance, not an audit).
+// Pure reads; every number is a real file, every stamp a real mtime.
+ipcMain.handle('brain-status', async () => {
+  const ud = app.getPath('userData')
+  const out: Record<string, unknown> = {}
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }
+    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
+    out.tracks = tracks.length
+    out.subgenred = tracks.filter((t) => t.subgenre).length
+    out.starred = tracks.filter((t) => t.rating === 5).length
+  } catch { /* library unreadable — tiles show gaps honestly */ }
+  try {
+    const raw = await readFile(join(ud, 'brain-descriptors.json'), 'utf-8')
+    const d = JSON.parse(raw) as Record<string, { te?: unknown }>
+    out.descriptors = Object.keys(d).length
+    out.themed = Object.values(d).filter((v) => v && (v as { te?: unknown }).te).length
+    out.descriptorsMtime = (await stat(join(ud, 'brain-descriptors.json'))).mtimeMs
+  } catch { /* no descriptors yet */ }
+  try {
+    const ly = JSON.parse(await readFile(join(ud, 'lyrics.json'), 'utf-8')) as Record<string, unknown>
+    out.lyrics = Object.keys(ly).length
+  } catch { /* none */ }
+  try {
+    const st = await stat(join(ud, 'embeddings.bin'))
+    out.embeddingsMtime = st.mtimeMs
+    out.embeddingsBytes = st.size
+  } catch { /* none */ }
+  try {
+    const hist = JSON.parse(await readFile(join(ud, 'workout-sync-history.json'), 'utf-8')) as Array<{ syncedAt?: string; added?: unknown[]; removed?: unknown[] }>
+    out.syncs = hist.length
+    out.syncEdits = hist.reduce((n, h) => n + (h.added?.length || 0) + (h.removed?.length || 0), 0)
+    out.lastSync = hist[0]?.syncedAt || null
+  } catch { /* none yet */ }
+  return { ok: true, ...out }
+})
+
 ipcMain.handle('get-ipod-db-tracks', async () => {
   try {
     const ipodData = await readIpodDatabase()

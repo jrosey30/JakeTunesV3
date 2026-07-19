@@ -846,6 +846,7 @@ declare global {
         error?: string
       }>
       removeDeadTracks: () => Promise<{ ok: boolean; removed?: number; error?: string }>
+      brainStatus?: () => Promise<{ ok: boolean; tracks?: number; subgenred?: number; starred?: number; descriptors?: number; themed?: number; descriptorsMtime?: number; lyrics?: number; embeddingsMtime?: number; embeddingsBytes?: number; syncs?: number; syncEdits?: number; lastSync?: string | null }>
       getIpodDbTracks: () => Promise<{ ok: boolean; tracks: Track[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }>
       onLibraryExternalChange: (callback: () => void) => () => void
       // ── Bandcamp Store v4 (embedded WebContentsView lifecycle) ──

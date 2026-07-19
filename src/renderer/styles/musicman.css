@@ -2001,3 +2001,30 @@
   justify-content: center;
 }
 .pl-suggest-add:hover { background: var(--brand-orange, #bb4308); color: #fff; }
+
+/* ── THE BRAIN — the Music Man's back wall (what he's actually learned) ── */
+.mm-wall {
+  margin: 0 24px 14px;
+  border: 1px solid #d8cfae;
+  background: #faf6ea;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.mm-wall-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.mm-wall-title { font-size: 11px; font-weight: 800; letter-spacing: 1.6px; color: #8a7f5e; }
+.mm-wall-health { font-size: 11px; }
+.mm-wall-health--green { color: #1d6f3f; }
+.mm-wall-health--amber { color: #b07818; }
+.mm-wall-health--red { color: #b5341c; font-weight: 700; }
+.mm-wall-tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.mm-wall-tile {
+  display: flex; flex-direction: column; gap: 2px;
+  background: #fffdf4;
+  border: 1px solid #e6ddc2;
+  border-radius: 5px;
+  padding: 7px 9px;
+}
+.mm-wall-num { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: #33301f; }
+.mm-wall-num small { font-size: 11px; font-weight: 500; color: #8a7f5e; }
+.mm-wall-label { font-size: 10px; color: #8a7f5e; letter-spacing: 0.3px; }
+@media (max-width: 1100px) { .mm-wall-tiles { grid-template-columns: repeat(3, 1fr); } }

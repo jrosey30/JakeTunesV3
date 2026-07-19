@@ -674,6 +674,8 @@ const electronAPI = {
     ipcRenderer.invoke('remove-dead-tracks'),
   // Read the iPod's actual iTunesDB so the UI can show the real
   // device state (the "On This iPod" view from classic iTunes).
+  brainStatus: (): Promise<Record<string, unknown> & { ok: boolean }> =>
+    ipcRenderer.invoke('brain-status'),
   getIpodDbTracks: (): Promise<{ ok: boolean; tracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; total: number; error?: string }> =>
     ipcRenderer.invoke('get-ipod-db-tracks'),
   // Fires when library.json is modified on disk by something other than

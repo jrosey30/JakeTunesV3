@@ -75,6 +75,11 @@ interface ChatMessage {
 }
 
 export default function MusicManView() {
+  // The wall — what the brain actually knows (brain-status IPC).
+  const [brain, setBrain] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => {
+    window.electronAPI.brainStatus?.().then((r) => { if (r?.ok) setBrain(r) }).catch(() => {})
+  }, [])
   const { state: libState, dispatch } = useLibrary()
   const [chatInput, setChatInput] = useState('')
   const [conversations, setConversations] = useState<ChatConversation[]>([])
@@ -344,6 +349,51 @@ export default function MusicManView() {
           <div className="musicman-tagline">"{TAGLINES[Math.floor(new Date().getDate() + new Date().getMonth() * 31) % TAGLINES.length]}"</div>
         </div>
       </div>
+
+      {brain && (() => {
+        const n = (k: string) => Number(brain[k] || 0)
+        const pct = (k: string) => n('tracks') > 0 ? Math.round((n(k) / n('tracks')) * 100) : 0
+        const ageDays = brain.descriptorsMtime ? (Date.now() - Number(brain.descriptorsMtime)) / 86_400_000 : null
+        const health: 'green' | 'amber' | 'red' = ageDays == null ? 'red' : ageDays < 1.5 ? 'green' : ageDays < 3.5 ? 'amber' : 'red'
+        const stamp = brain.descriptorsMtime ? new Date(Number(brain.descriptorsMtime)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never'
+        return (
+          <div className="mm-wall">
+            <div className="mm-wall-head">
+              <span className="mm-wall-title">THE BRAIN</span>
+              <span className={`mm-wall-health mm-wall-health--${health}`}
+                title="How fresh the nightly training is — red would have caught the week the trainer was silently down">
+                ● last learned {stamp}
+              </span>
+            </div>
+            <div className="mm-wall-tiles">
+              <div className="mm-wall-tile" title="Songs where the brain has written a prose descriptor of how the track FEELS">
+                <span className="mm-wall-num">{n('descriptors').toLocaleString()}</span>
+                <span className="mm-wall-label">songs described · {pct('descriptors')}%</span>
+              </div>
+              <div className="mm-wall-tile" title="Descriptors enriched with lyric THEMES (the meaning pass)">
+                <span className="mm-wall-num">{n('themed').toLocaleString()}</span>
+                <span className="mm-wall-label">with themes</span>
+              </div>
+              <div className="mm-wall-tile" title="Songs with fetched lyrics">
+                <span className="mm-wall-num">{n('lyrics').toLocaleString()}</span>
+                <span className="mm-wall-label">lyrics on file</span>
+              </div>
+              <div className="mm-wall-tile" title="Genre taxonomy coverage">
+                <span className="mm-wall-num">{pct('subgenred')}%</span>
+                <span className="mm-wall-label">subgenred</span>
+              </div>
+              <div className="mm-wall-tile" title="Your 5-star exemplars — the taste anchors">
+                <span className="mm-wall-num">{n('starred').toLocaleString()}</span>
+                <span className="mm-wall-label">taste anchors</span>
+              </div>
+              <div className="mm-wall-tile" title="iPod activity syncs absorbed — including every song you personally added or pulled in review">
+                <span className="mm-wall-num">{n('syncs')}<small> / {n('syncEdits')} edits</small></span>
+                <span className="mm-wall-label">syncs learned</span>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       <div className="musicman-content musicman-content--chat">
         <div className="musicman-chat-layout">
