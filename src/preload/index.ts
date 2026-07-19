@@ -523,6 +523,8 @@ const electronAPI = {
     ipcRenderer.invoke('mixtape-save', tape),
   deleteMixtape: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('mixtape-delete', id),
+  dubMixtape: (payload: unknown): Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }> =>
+    ipcRenderer.invoke('dub-mixtape', payload),
   saveMixtapeIntro: (data: ArrayBuffer): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('save-mixtape-intro', data),
   previewIpodSync: (tracks: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }> =>

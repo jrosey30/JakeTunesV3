@@ -346,3 +346,4 @@
 }
 .deckbar-eject:hover { color: #ddd; border-color: #666; }
 .mixsheet--blank { width: 460px; }
+.mixtape-dub-notice { font-size: 11.5px; color: #6b6045; font-style: italic; margin-bottom: 8px; max-width: 480px; }

@@ -78,6 +78,12 @@ export default function MixtapeView() {
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [remixing, setRemixing] = useState(false)
+  const [dubbing, setDubbing] = useState(false)
+  const [dubNotice, setDubNotice] = useState('')
+  const mountRef = useRef<string>('')
+  useEffect(() => {
+    window.electronAPI?.getMusicLibraryPath?.().then((p: string) => { mountRef.current = p }).catch(() => {})
+  }, [])
   const [introPlaying, setIntroPlaying] = useState(false)
   const introRef = useRef<HTMLAudioElement | null>(null)
 
@@ -116,6 +122,41 @@ export default function MixtapeView() {
     setTapeSession({ mixtapeId: tape.id, tapeTrackIds: allTracks.map((x) => x.id), cuts })
     playTrack(t, allTracks, idx, undefined, true)
   }, [allTracks, playTrack, stopIntro, tape])
+
+  // Dub to a REAL cassette: render each side as one continuous file
+  // (cuts honored, intro at the head of A, talkovers mixed at their
+  // pins) → ~/Desktop/JakeTunes Dubs/<title>/ → play it into the deck.
+  const dubToCassette = async () => {
+    if (!tape || dubbing) return
+    setDubbing(true)
+    setDubNotice('Dubbing… rendering both sides.')
+    try {
+      const abs = (t: Track) => mountRef.current + String(t.path || '').replace(/:/g, '/')
+      const mkSide = (label: 'A' | 'B', tracksOnSide: Track[], cutMs?: number) => ({
+        label,
+        songs: tracksOnSide.map((t, i) => ({
+          absPath: abs(t),
+          cutMs: cutMs !== undefined && i === tracksOnSide.length - 1 ? cutMs : undefined,
+        })),
+        talkovers: (tape.talkovers || []).filter((tv) => tv.side === label).map((tv) => ({ atMs: tv.atMs, path: tv.path })),
+        introPath: label === 'A' ? tape.introPath : undefined,
+      })
+      const r = await window.electronAPI.dubMixtape?.({
+        title: tape.title,
+        sides: [
+          mkSide('A', sideATracks, tape.sideACutMs),
+          mkSide('B', sideBTracks, tape.sideBCutMs),
+        ],
+      })
+      setDubNotice(r?.ok
+        ? `Dubbed to Desktop → JakeTunes Dubs → ${tape.title}. Play a side out the headphone jack, hold REC on the real deck.`
+        : (r?.error || 'Dub failed.'))
+    } catch (err) {
+      setDubNotice(String(err))
+    }
+    setDubbing(false)
+    setTimeout(() => setDubNotice(''), 12_000)
+  }
 
   const playTape = useCallback(() => {
     if (allTracks.length === 0) return
@@ -188,8 +229,11 @@ export default function MixtapeView() {
               title="Load this tape into the recorder — press REC and whatever you play lands on it">Put in the deck</button>
             <button className="mixtape-btn" onClick={() => setRemixing(true)}
               title="Back on the deck — rearrange, swap songs, change tape length. Saving tapes over this one.">Open on the deck</button>
+            <button className="mixtape-btn" disabled={dubbing} onClick={() => { void dubToCassette() }}
+              title="Render each side as one continuous audio file — cuts, intro, and talkovers baked in — to dub onto a real cassette">{dubbing ? 'Dubbing…' : 'Dub to cassette…'}</button>
             <button className="mixtape-btn" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
+          {dubNotice && <div className="mixtape-dub-notice">{dubNotice}</div>}
           <MixtapeMic
             existingPath={tape.introPath}
             onProcessed={(path) => {

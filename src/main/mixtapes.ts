@@ -15,8 +15,9 @@
  * same ipod-audio:// protocol the library uses.
  */
 
-import { ipcMain, app } from 'electron'
-import { readFile, writeFile, mkdir, unlink } from 'fs/promises'
+import { ipcMain, app, shell } from 'electron'
+import { readFile, writeFile, mkdir, unlink, stat } from 'fs/promises'
+import { homedir } from 'os'
 import { join } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -326,6 +327,98 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'delete failed' }
+    }
+  })
+
+  // ── Dub to cassette (Jake: "that tape is recorded onto an actual
+  // cassette tape") — render each side as ONE continuous audio file:
+  // songs in order at full quality, the boundary song truncated at the
+  // tape cut, Jake's intro at the head of Side A, talkovers mixed OVER
+  // the music at their pinned spots. Play the file out the headphone
+  // jack into a real deck; the cassette adds its own character.
+  ipcMain.handle('dub-mixtape', async (
+    _e,
+    payload: {
+      title: string
+      sides: Array<{
+        label: 'A' | 'B'
+        songs: Array<{ absPath: string; cutMs?: number }>
+        talkovers: Array<{ atMs: number; path: string }>
+        introPath?: string
+      }>
+    },
+  ) => {
+    try {
+      const safe = (payload.title || 'Mixtape').replace(/[\/:*?"<>|]/g, '_').slice(0, 60)
+      const outDir = join(homedir(), 'Desktop', 'JakeTunes Dubs', safe)
+      await mkdir(outDir, { recursive: true })
+      const outputs: string[] = []
+      for (const side of payload.sides) {
+        if (side.songs.length === 0) continue
+        // Pre-flight: every source must exist (streamed/missing files fail loud).
+        for (const sng of side.songs) {
+          const st = await stat(sng.absPath).catch(() => null)
+          if (!st) return { ok: false, error: `Missing audio file for Side ${side.label}: ${sng.absPath}` }
+        }
+        const inputs: string[] = []
+        const chains: string[] = []
+        let idx = 0
+        const bedRefs: string[] = []
+        // Talkover pins are music-relative; an intro at the head of the
+        // side shifts everything after it by its own length.
+        let introMs = 0
+        if (side.introPath) {
+          try {
+            const { stdout } = await execP('ffprobe', [
+              '-v', 'error', '-show_entries', 'format=duration',
+              '-of', 'default=nw=1:nk=1', side.introPath,
+            ], { timeout: 10_000 })
+            introMs = Math.round(parseFloat((stdout || '0').trim()) * 1000) || 0
+          } catch { /* unknown intro length — pins stay music-relative */ }
+        }
+        if (side.introPath) {
+          inputs.push('-i', side.introPath)
+          chains.push(`[${idx}:a]aresample=44100,aformat=channel_layouts=stereo[s${idx}]`)
+          bedRefs.push(`[s${idx}]`)
+          idx++
+        }
+        for (const sng of side.songs) {
+          inputs.push('-i', sng.absPath)
+          const trim = sng.cutMs ? `atrim=0:${(sng.cutMs / 1000).toFixed(3)},` : ''
+          chains.push(`[${idx}:a]${trim}aresample=44100,aformat=channel_layouts=stereo[s${idx}]`)
+          bedRefs.push(`[s${idx}]`)
+          idx++
+        }
+        chains.push(`${bedRefs.join('')}concat=n=${bedRefs.length}:v=0:a=1[bed]`)
+        let mixRef = '[bed]'
+        if (side.talkovers.length > 0) {
+          const tvRefs: string[] = []
+          for (const tv of side.talkovers) {
+            inputs.push('-i', tv.path)
+            const delay = Math.max(0, Math.round(tv.atMs + introMs))
+            chains.push(`[${idx}:a]aresample=44100,aformat=channel_layouts=stereo,adelay=${delay}|${delay}[tv${idx}]`)
+            tvRefs.push(`[tv${idx}]`)
+            idx++
+          }
+          chains.push(`[bed]${tvRefs.join('')}amix=inputs=${tvRefs.length + 1}:duration=first:normalize=0[mix]`)
+          mixRef = '[mix]'
+        }
+        const outPath = join(outDir, `Side ${side.label}.m4a`)
+        await execP('ffmpeg', [
+          '-y', ...inputs,
+          '-filter_complex', chains.join(';'),
+          '-map', mixRef,
+          '-c:a', 'aac', '-b:a', '256k',
+          outPath,
+        ], { timeout: 600_000, maxBuffer: 1024 * 1024 * 32 })
+        outputs.push(outPath)
+      }
+      if (outputs.length === 0) return { ok: false, error: 'Nothing on the tape to dub.' }
+      shell.showItemInFolder(outputs[0])
+      return { ok: true, outputs, dir: outDir }
+    } catch (err) {
+      console.warn('[mixtapes] dub failed:', err)
+      return { ok: false, error: err instanceof Error ? err.message : 'dub failed' }
     }
   })
 

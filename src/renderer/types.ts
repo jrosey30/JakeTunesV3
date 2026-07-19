@@ -767,6 +767,7 @@ declare global {
       buildMixtape?: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; sideACutMs?: number; sideBCutMs?: number; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }>
       saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
       deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
+      dubMixtape?: (payload: { title: string; sides: Array<{ label: 'A' | 'B'; songs: Array<{ absPath: string; cutMs?: number }>; talkovers: Array<{ atMs: number; path: string }>; introPath?: string }> }) => Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }>
       saveMixtapeIntro?: (data: ArrayBuffer) => Promise<{ ok: boolean; path?: string; error?: string }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
       commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
