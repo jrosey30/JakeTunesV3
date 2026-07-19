@@ -66,6 +66,9 @@ export interface DeckState {
   mixtapeId: string
   side: 'A' | 'B'
   recArmed: boolean
+  /** MIC switch: on = mic is live/ready; it only records onto the tape
+   *  while REC is also down (Jake's rule). */
+  micOn?: boolean
 }
 
 let deckState: DeckState | null = null
@@ -85,7 +88,7 @@ export function getDeckState(): DeckState | null {
  * flips A→B, stops when the tape is full. Persists once. Returns a
  * human sentence for the notice.
  */
-import { fitSide } from '../common/tape-physics'
+import { fitSide, effectiveDurationFn } from '../common/tape-physics'
 
 export async function layOnDeck(
   trackIds: number[],
@@ -96,6 +99,7 @@ export async function layOnDeck(
   const tape = cache.find((m) => m.id === deck.mixtapeId)
   if (!tape) return 'No tape in the deck.'
   const budget = (tape.tapeLength / 2) * 60_000
+  const effDur = effectiveDurationFn(durOf, tape.startOffsets)
   let sideA = [...tape.sideA]
   let sideB = [...tape.sideB]
   let cutA = tape.sideACutMs
@@ -108,7 +112,7 @@ export async function layOnDeck(
       const cur = which === 'A' ? sideA : sideB
       const cut = which === 'A' ? cutA : cutB
       if (cut !== undefined) return false
-      const fit = fitSide([...cur, id], durOf, budget)
+      const fit = fitSide([...cur, id], effDur, budget)
       if (!fit.ids.includes(id)) return false
       if (which === 'A') { sideA = fit.ids; cutA = fit.cutMs } else { sideB = fit.ids; cutB = fit.cutMs }
       return true

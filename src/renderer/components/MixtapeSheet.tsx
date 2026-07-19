@@ -20,7 +20,7 @@ import { useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import MixtapeMic from './MixtapeMic'
 import { refreshMixtapes, setMixtapeId, pickInk } from '../mixtapes'
-import { fitSide } from '../../common/tape-physics'
+import { fitSide, effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/activity-sheet.css'
 import '../styles/mixtape.css'
@@ -62,7 +62,7 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
   const [deckB, setDeckB] = useState<number[]>(existing?.sideB ?? [])
 
   const libById = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
-  const dur = (id: number) => libById.get(id)?.duration || undefined
+  const dur = effectiveDurationFn((id: number) => libById.get(id)?.duration || undefined, existing?.startOffsets)
   const sideBudgetMs = (tapeLength / 2) * 60_000
 
   const fitA = useMemo(() => fitSide(deckA, dur, sideBudgetMs), [deckA, sideBudgetMs, libById])
@@ -120,6 +120,8 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
       sideBCutMs: fitB.cutMs,
       linerNotes: linerNotes.filter((n) => onTape.has(n.id)),
       introPath: introPath || undefined,
+      startOffsets: existing?.startOffsets,
+      talkovers: existing?.talkovers,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       inkColor: existing?.inkColor ?? pickInk(id),
     }

@@ -1,30 +1,29 @@
 /**
- * DeckBar — the tape recorder (Jake: "play means play, record means tape
- * means record tape... the play/pause and record/dont record buttons are
- * the two most important ones here....thats how mixtapes are made!!").
+ * DeckBar — the tape recorder engine + the traveling strip.
  *
- * A tape sits in the deck. Two big buttons run the show:
- *   ⏯  PLAY/PAUSE — the music, the normal transport
- *   ⏺  REC — armed (red) = every song that PLAYS is laid onto the
- *      active side, in the order you play it, TRUE physics: the side
- *      fills, the boundary song gets cut, the deck auto-flips to Side B,
- *      and when the whole tape is full REC pops out. Not armed = play
- *      all you want, nothing lands.
- *   TALK — hold a thought? press it while recording and your voice goes
- *      down WITH the music (1979 chain), pinned right at this spot on
- *      the tape. Press again to stop.
- * EJECT takes the tape out. Every landing persists immediately — there
- * is no undo, only taping over.
+ * Jake's rules, verbatim where possible:
+ * - "play means play" — PLAY/PAUSE is the toolbar's own togglePlayPause.
+ * - REC down = whatever plays lands on the tape. Popping REC out does
+ *   NOT stop the music. Pressing REC back down mid-song records the
+ *   song FROM RIGHT THERE (startOffsets — the tape only has its tail).
+ * - MIC is a switch: on = mic ready. It only records onto the tape
+ *   while REC is ALSO down — mic + record is when your voice goes on.
+ * - True physics always: sides fill, boundary songs cut, auto-flip
+ *   A→B, tape full pops REC out. Every landing persists. No undo.
+ *
+ * The engine (landing + mic capture) lives HERE and always runs while a
+ * tape is in the deck. The visual strip hides on that tape's own page —
+ * the faceplate there drives the same deck state.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import {
-  getDeckState, setDeckState, getMixtapes, getTapeSession,
+  getDeckState, setDeckState, getMixtapes, getTapeSession, getMixtapeId,
   subscribeMixtapes, refreshMixtapes,
 } from '../mixtapes'
-import { fitSide, MIN_CUT_MS } from '../../common/tape-physics'
+import { fitSide, effectiveDurationFn } from '../../common/tape-physics'
 import type { Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -36,20 +35,17 @@ function fmt(ms: number): string {
 export default function DeckBar() {
   const { state: lib } = useLibrary()
   const { state: pb } = usePlayback()
-  // THE transport — same function the toolbar uses, so play/pause stays
-  // loyal to the actual audio engine (a raw dispatch only flips the
-  // label while the music keeps going — the original sin here).
   const { togglePlayPause } = useAudio()
   const deck = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
+  const activeMixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const [notice, setNotice] = useState('')
-  const [talking, setTalking] = useState(false)
-  const [talkBusy, setTalkBusy] = useState(false)
+  const [micCapturing, setMicCapturing] = useState(false)
   const lastLandedRef = useRef<number | null>(null)
-  const talkRecRef = useRef<MediaRecorder | null>(null)
-  const talkStreamRef = useRef<MediaStream | null>(null)
-  const talkChunksRef = useRef<Blob[]>([])
-  const talkAtRef = useRef<{ side: 'A' | 'B'; atMs: number } | null>(null)
+  const micRecRef = useRef<MediaRecorder | null>(null)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micChunksRef = useRef<Blob[]>([])
+  const micPinRef = useRef<{ side: 'A' | 'B'; atMs: number } | null>(null)
 
   const tape: Mixtape | undefined = deck ? mixtapes.find((m) => m.id === deck.mixtapeId) : undefined
   const durOf = useCallback((id: number) => lib.tracks.find((t) => t.id === id)?.duration || undefined, [lib.tracks])
@@ -64,74 +60,164 @@ export default function DeckBar() {
     await refreshMixtapes()
   }, [])
 
-  // ── record-on-play: the heart of the deck ─────────────────────────
   const nowId = pb.nowPlaying?.id
-  useEffect(() => {
-    if (!deck?.recArmed || !tape || nowId == null || !pb.isPlaying) return
-    if (getTapeSession()) return            // playing the tape itself — a deck can't dub itself
-    if (lastLandedRef.current === nowId) return
-    const budget = (tape.tapeLength / 2) * 60_000
 
-    const tryLand = (side: 'A' | 'B'): { tape: Mixtape; flipped: boolean } | 'full' => {
-      const ids = side === 'A' ? tape.sideA : tape.sideB
-      const cut = side === 'A' ? tape.sideACutMs : tape.sideBCutMs
-      if (cut !== undefined) return 'full'  // side already ends mid-song
-      const fit = fitSide([...ids, nowId], durOf, budget)
-      if (!fit.ids.includes(nowId)) return 'full' // < MIN_CUT_MS left — song never starts
-      const next: Mixtape = { ...tape }
+  // ── landing: one path for both "song started while REC down" (offset
+  // 0) and "REC pressed mid-song" (offset = playhead). ──
+  const landTrack = useCallback((id: number, startMs: number) => {
+    const d = getDeckState()
+    const t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
+    if (!d || !t) return
+    if (t.sideA.includes(id) || t.sideB.includes(id)) return // one slot per song per tape
+    const budget = (t.tapeLength / 2) * 60_000
+    const offsets = { ...(t.startOffsets || {}) }
+    if (startMs > 1500) offsets[String(id)] = Math.round(startMs)
+    const effDur = effectiveDurationFn(durOf, offsets)
+
+    const tryLand = (side: 'A' | 'B'): Mixtape | null => {
+      const ids = side === 'A' ? t.sideA : t.sideB
+      const cut = side === 'A' ? t.sideACutMs : t.sideBCutMs
+      if (cut !== undefined) return null
+      const fit = fitSide([...ids, id], effDur, budget)
+      if (!fit.ids.includes(id)) return null
+      const next: Mixtape = { ...t, startOffsets: offsets }
       if (side === 'A') { next.sideA = fit.ids; next.sideACutMs = fit.cutMs }
       else { next.sideB = fit.ids; next.sideBCutMs = fit.cutMs }
-      return { tape: next, flipped: fit.cutMs !== undefined }
+      return next
     }
 
-    let landed = tryLand(deck.side)
-    let sideUsed: 'A' | 'B' = deck.side
-    if (landed === 'full' && deck.side === 'A') {
-      landed = tryLand('B')
-      sideUsed = 'B'
-      if (landed !== 'full') setDeckState({ ...deck, side: 'B' })
-    }
-    if (landed === 'full') {
-      setDeckState({ ...deck, recArmed: false })
+    let sideUsed: 'A' | 'B' = d.side
+    let landed = tryLand(d.side)
+    if (!landed && d.side === 'A') { landed = tryLand('B'); sideUsed = 'B' }
+    if (!landed) {
+      setDeckState({ ...d, recArmed: false })
       flash('Tape full — REC popped out.')
       return
     }
-    lastLandedRef.current = nowId
-    const cutHere = sideUsed === 'A' ? landed.tape.sideACutMs : landed.tape.sideBCutMs
+    lastLandedRef.current = id
+    const cutHere = sideUsed === 'A' ? landed.sideACutMs : landed.sideBCutMs
+    const title = lib.tracks.find((x) => x.id === id)?.title || 'song'
     if (cutHere !== undefined) {
-      // This song is the boundary — it records until the tape runs out.
       if (sideUsed === 'A') {
-        setDeckState({ mixtapeId: deck.mixtapeId, side: 'B', recArmed: true })
-        flash(`Side A ran out ${fmt(cutHere)} into “${pb.nowPlaying?.title}” — flipped to B.`)
+        setDeckState({ ...d, side: 'B', recArmed: true })
+        flash(`Side A runs out ${fmt(cutHere)} into “${title}” — flipping to B.`)
       } else {
-        flash(`Side B ran out ${fmt(cutHere)} into “${pb.nowPlaying?.title}” — that's the tape.`)
+        setDeckState({ ...d, side: 'B' })
+        flash(`Side B runs out ${fmt(cutHere)} into “${title}” — that's the tape.`)
       }
+    } else if (sideUsed !== d.side) {
+      setDeckState({ ...d, side: sideUsed })
     }
-    void persist(landed.tape)
-  }, [deck, tape, nowId, pb.isPlaying, durOf, persist, pb.nowPlaying?.title])
+    void persist(landed)
+  }, [durOf, lib.tracks, persist])
 
-  const stopTalk = useCallback(() => {
-    if (talkRecRef.current && talkRecRef.current.state === 'recording') talkRecRef.current.stop()
-  }, [])
+  // song starts while REC is down → lands whole (offset 0)
+  useEffect(() => {
+    if (!deck?.recArmed || !tape || nowId == null || !pb.isPlaying) return
+    if (getTapeSession()) return // playing the tape itself — can't dub itself
+    if (lastLandedRef.current === nowId) return
+    landTrack(nowId, 0)
+  }, [deck, tape, nowId, pb.isPlaying, landTrack])
 
-  useEffect(() => () => { // unmount safety: kill mic + stream
-    talkStreamRef.current?.getTracks().forEach((t) => t.stop())
-    if (talkRecRef.current && talkRecRef.current.state === 'recording') talkRecRef.current.stop()
+  // REC pressed DOWN (from anywhere — strip or faceplate) while a song
+  // is mid-flight → "it records wherever in that song it is": the song
+  // lands from the playhead, tail-only (startOffsets).
+  const prevArmedRef = useRef(false)
+  useEffect(() => {
+    const armed = !!deck?.recArmed
+    const wasArmed = prevArmedRef.current
+    prevArmedRef.current = armed
+    if (!armed || wasArmed) return
+    if (nowId == null || !pb.isPlaying || getTapeSession()) return
+    landTrack(nowId, pb.position * 1000)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deck?.recArmed])
+
+  // Where the pen is on the active side right now (effective-time).
+  const penMs = useCallback((): number => {
+    const d = getDeckState()
+    const t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
+    if (!d || !t) return 0
+    const effDur = effectiveDurationFn(durOf, t.startOffsets)
+    const ids = d.side === 'A' ? t.sideA : t.sideB
+    const idx = nowId != null ? ids.indexOf(nowId) : -1
+    if (idx < 0) return fitSide(ids, effDur, (t.tapeLength / 2) * 60_000).usedMs
+    let before = 0
+    for (let i = 0; i < idx; i++) before += effDur(ids[i])
+    const off = t.startOffsets?.[String(nowId)] || 0
+    return before + Math.max(0, pb.position * 1000 - off)
+  }, [durOf, nowId, pb.position])
+
+  // ── MIC engine: capture runs while mic is ON *and* REC is down *and*
+  // music plays. Dropping any of the three stops + dubs the talkover. ──
+  const micShouldRun = !!deck?.micOn && !!deck?.recArmed && pb.isPlaying
+  useEffect(() => {
+    let cancelled = false
+    if (micShouldRun && !micRecRef.current) {
+      void (async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          })
+          if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return }
+          micStreamRef.current = stream
+          micChunksRef.current = []
+          const d = getDeckState()
+          micPinRef.current = { side: d?.side || 'A', atMs: penMs() }
+          const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+          micRecRef.current = rec
+          rec.ondataavailable = (e) => { if (e.data.size > 0) micChunksRef.current.push(e.data) }
+          rec.onstop = async () => {
+            micStreamRef.current?.getTracks().forEach((t) => t.stop())
+            micStreamRef.current = null
+            micRecRef.current = null
+            setMicCapturing(false)
+            try {
+              const blob = new Blob(micChunksRef.current, { type: 'audio/webm' })
+              if (blob.size < 2000) return // a blip, not a take
+              const buf = await blob.arrayBuffer()
+              const r = await window.electronAPI.saveMixtapeIntro?.(buf)
+              const pin = micPinRef.current
+              const d2 = getDeckState()
+              if (r?.ok && r.path && pin && d2) {
+                const fresh = getMixtapes().find((m) => m.id === d2.mixtapeId)
+                if (fresh) {
+                  await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: pin.side, atMs: pin.atMs, path: r.path }] })
+                  flash(`Voice on tape at ${fmt(pin.atMs)}, Side ${pin.side}.`)
+                }
+              }
+            } catch (err) { console.warn('[deck-mic] talkover save failed:', err) }
+          }
+          rec.start()
+          setMicCapturing(true)
+        } catch {
+          flash('Microphone unavailable — check System Settings → Privacy → Microphone.')
+          const d = getDeckState()
+          if (d) setDeckState({ ...d, micOn: false })
+        }
+      })()
+    } else if (!micShouldRun && micRecRef.current) {
+      if (micRecRef.current.state === 'recording') micRecRef.current.stop()
+    }
+    return () => { cancelled = true }
+  }, [micShouldRun, penMs, persist])
+
+  useEffect(() => () => { // unmount safety
+    micStreamRef.current?.getTracks().forEach((t) => t.stop())
+    if (micRecRef.current && micRecRef.current.state === 'recording') micRecRef.current.stop()
   }, [])
 
   if (!deck || !tape) return null
+  // The faceplate on the tape's own page drives the deck — hide the strip there.
+  if (lib.currentView === 'mixtape-detail' && activeMixtapeId === deck.mixtapeId) return null
 
   const budget = (tape.tapeLength / 2) * 60_000
+  const effDur = effectiveDurationFn(durOf, tape.startOffsets)
   const sideIds = deck.side === 'A' ? tape.sideA : tape.sideB
   const sideCut = deck.side === 'A' ? tape.sideACutMs : tape.sideBCutMs
-  const fit = fitSide(sideIds, durOf, budget)
+  const fit = fitSide(sideIds, effDur, budget)
   const rolling = deck.recArmed && pb.isPlaying
 
-  // The counter ROLLS (Jake: "why is it not counting down as soon as it
-  // starts recording"). While the tail song of a side is playing, tape
-  // remaining ticks down with the live playhead — landed math stays
-  // whole-song (that's the tape's truth), the display moves like the
-  // reel. Falls back to the static count between songs.
   let dispSide: 'A' | 'B' = deck.side
   let dispLeft = sideCut !== undefined ? 0 : budget - fit.usedMs
   let cutCountdown = false
@@ -143,8 +229,9 @@ export default function DeckBar() {
       const idx = cfg.ids.indexOf(nowId)
       if (idx < 0 || idx !== cfg.ids.length - 1) continue
       let before = 0
-      for (let i = 0; i < idx; i++) before += durOf(cfg.ids[i]) || 210_000
-      const live = before + pb.position * 1000
+      for (let i = 0; i < idx; i++) before += effDur(cfg.ids[i])
+      const off = tape.startOffsets?.[String(nowId)] || 0
+      const live = before + Math.max(0, pb.position * 1000 - off)
       if (live < budget) {
         dispSide = cfg.label
         dispLeft = budget - live
@@ -154,55 +241,8 @@ export default function DeckBar() {
     }
   }
 
-  // Where the pen is on the tape right now: everything landed on this
-  // side before the current song, plus how far the current song is in.
-  const penMs = (): number => {
-    const idx = nowId != null ? sideIds.indexOf(nowId) : -1
-    if (idx < 0) return fit.usedMs
-    let before = 0
-    for (let i = 0; i < idx; i++) before += durOf(sideIds[i]) || 210_000
-    return before + pb.position * 1000
-  }
-
-  const startTalk = async () => {
-    if (talking || talkBusy) { stopTalk(); return }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
-      talkStreamRef.current = stream
-      talkChunksRef.current = []
-      talkAtRef.current = { side: deck.side, atMs: penMs() }
-      const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-      talkRecRef.current = rec
-      rec.ondataavailable = (e) => { if (e.data.size > 0) talkChunksRef.current.push(e.data) }
-      rec.onstop = async () => {
-        talkStreamRef.current?.getTracks().forEach((t) => t.stop())
-        talkStreamRef.current = null
-        setTalking(false)
-        setTalkBusy(true)
-        try {
-          const blob = new Blob(talkChunksRef.current, { type: 'audio/webm' })
-          const buf = await blob.arrayBuffer()
-          const r = await window.electronAPI.saveMixtapeIntro?.(buf)
-          const at = talkAtRef.current
-          if (r?.ok && r.path && at) {
-            const fresh = getMixtapes().find((m) => m.id === deck.mixtapeId)
-            if (fresh) {
-              await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: at.side, atMs: at.atMs, path: r.path }] })
-              flash(`Your voice is on the tape at ${fmt(at.atMs)} (Side ${at.side}).`)
-            }
-          } else if (r?.error) flash(r.error)
-        } catch (err) {
-          flash(String(err))
-        }
-        setTalkBusy(false)
-      }
-      rec.start()
-      setTalking(true)
-    } catch {
-      flash('Microphone unavailable — check System Settings → Privacy → Microphone.')
-    }
+  const pressRec = () => {
+    setDeckState({ ...deck, recArmed: !deck.recArmed })
   }
 
   return (
@@ -230,6 +270,7 @@ export default function DeckBar() {
           <span className="deckbar-nowrec">
             {String(pb.nowPlaying.title || '').slice(0, 34)} → tape
             {cutCountdown ? ` — ends when the tape does (${fmt(dispLeft)})` : ''}
+            {micCapturing ? ' · MIC LIVE' : ''}
           </span>
         )}
         {notice && <span className="deckbar-notice">{notice}</span>}
@@ -243,19 +284,18 @@ export default function DeckBar() {
         >{pb.isPlaying ? <PauseIcon /> : <PlayIcon />}</button>
         <button
           className={`deckbar-btn deckbar-btn--rec${deck.recArmed ? ' is-armed' : ''}`}
-          onClick={() => { lastLandedRef.current = deck.recArmed ? lastLandedRef.current : nowId ?? null; setDeckState({ ...deck, recArmed: !deck.recArmed }) }}
-          title={deck.recArmed ? 'Pop REC out — stop recording' : 'Press REC — whatever plays goes on the tape'}
+          onClick={pressRec}
+          title={deck.recArmed ? 'Pop REC out — stop recording (music keeps playing)' : 'Press REC — records from right here'}
         ><RecIcon /> REC</button>
       </div>
 
       <div className="deckbar-minor">
         <button
-          className={`deckbar-mini${talking ? ' is-talking' : ''}`}
-          onClick={() => { void startTalk() }}
-          disabled={talkBusy}
-          title="Talk onto the tape — your voice goes down with the music. Click again to stop."
+          className={`deckbar-mini${deck.micOn ? ' is-talking' : ''}`}
+          onClick={() => setDeckState({ ...deck, micOn: !deck.micOn })}
+          title={deck.micOn ? 'Mic is ON — it records onto the tape while REC is down' : 'Mic on (records only while REC is down)'}
         ><MicSmallIcon /></button>
-        <button className="deckbar-mini deckbar-mini--eject" onClick={() => { stopTalk(); setDeckState(null) }} title="Eject the tape">⏏</button>
+        <button className="deckbar-mini deckbar-mini--eject" onClick={() => setDeckState(null)} title="Eject the tape">⏏</button>
       </div>
     </div>
   )

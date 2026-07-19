@@ -14,11 +14,15 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
+import { useAudio } from '../hooks/useAudio'
+import { effectiveDurationFn } from '../../common/tape-physics'
 import { getTapeSession, setTapeSession, getMixtapes, subscribeMixtapes } from '../mixtapes'
 
 export default function TapeMonitor() {
   const { state: lib } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
+  const { seek } = useAudio()
+  const seekedForRef = useRef<number | null>(null)
   const session = useSyncExternalStore(subscribeMixtapes, getTapeSession)
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   // Talkovers already played this session (one shot each per playthrough)
@@ -34,6 +38,9 @@ export default function TapeMonitor() {
   useEffect(() => {
     if (firedForRef.current !== null && firedForRef.current !== nowId) {
       firedForRef.current = null
+    }
+    if (seekedForRef.current !== null && seekedForRef.current !== nowId) {
+      seekedForRef.current = null
     }
   }, [nowId])
 
@@ -58,14 +65,31 @@ export default function TapeMonitor() {
     // the song at its pinned spot on the side. Fire when the tape's
     // side-elapsed crosses atMs (position ticks ~1s — tape-accurate).
     const tape = mixtapes.find((m) => m.id === session.mixtapeId)
+    // A slot recorded mid-song plays from its offset — seek there once
+    // when the track starts (the tape only has the tail).
+    if (tape) {
+      const off = tape.startOffsets?.[String(nowId)] || 0
+      if (off > 0 && seekedForRef.current !== nowId && pb.position * 1000 < off - 1500) {
+        const durMs = lib.tracks.find((t) => t.id === nowId)?.duration || 0
+        if (durMs > 0) {
+          seekedForRef.current = nowId
+          seek(Math.min(0.99, off / durMs))
+        }
+      }
+      if (seekedForRef.current !== null && seekedForRef.current !== nowId && (tape.startOffsets?.[String(seekedForRef.current)] || 0) > 0) {
+        // moved on — allow a future replay of that slot to seek again
+      }
+    }
     if (tape?.talkovers?.length) {
       const side: 'A' | 'B' | null = tape.sideA.includes(nowId) ? 'A' : tape.sideB.includes(nowId) ? 'B' : null
       if (side) {
+        const effDur = effectiveDurationFn((id) => lib.tracks.find((t) => t.id === id)?.duration || undefined, tape.startOffsets)
         const ids = side === 'A' ? tape.sideA : tape.sideB
         const idx = ids.indexOf(nowId)
         let before = 0
-        for (let i = 0; i < idx; i++) before += lib.tracks.find((t) => t.id === ids[i])?.duration || 210_000
-        const elapsed = before + pb.position * 1000
+        for (let i = 0; i < idx; i++) before += effDur(ids[i])
+        const off = tape.startOffsets?.[String(nowId)] || 0
+        const elapsed = before + Math.max(0, pb.position * 1000 - off)
         for (const tk of tape.talkovers) {
           if (tk.side !== side) continue
           const key = `${tk.side}|${tk.atMs}|${tk.path}`
@@ -91,7 +115,7 @@ export default function TapeMonitor() {
         pbDispatch({ type: 'NEXT_TRACK' })
       }
     }
-  }, [session, nowId, pb.position, pbDispatch, mixtapes, lib.tracks])
+  }, [session, nowId, pb.position, pbDispatch, mixtapes, lib.tracks, seek])
 
   return null
 }

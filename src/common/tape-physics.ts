@@ -60,3 +60,19 @@ export function fitSide(
     overflowIds: overflow,
   }
 }
+
+/**
+ * Wrap a raw duration lookup with per-track start offsets (REC pressed
+ * mid-song → only the tail is on tape). Every fitSide call site that
+ * handles a tape with startOffsets must use this — one adapter, no forks.
+ */
+export function effectiveDurationFn(
+  durOf: (id: number) => number | undefined,
+  startOffsets?: Record<string, number>,
+): (id: number) => number {
+  return (id: number) => {
+    const full = durOf(id) || UNKNOWN_DURATION_MS
+    const off = startOffsets?.[String(id)] || 0
+    return Math.max(1000, full - off)
+  }
+}

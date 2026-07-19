@@ -120,6 +120,9 @@ export interface Mixtape {
   // Voice recorded WITH the music (TALK button while REC armed) — plays
   // over the song at atMs into that side during tape playback.
   talkovers?: Array<{ side: 'A' | 'B'; atMs: number; path: string }>
+  // REC pressed mid-song: that song recorded FROM this ms (sparse map,
+  // keyed by track id as string). Playback seeks there; dub trims there.
+  startOffsets?: Record<string, number>
   createdAt: string
   inkColor?: string
 }

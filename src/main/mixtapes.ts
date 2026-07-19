@@ -53,6 +53,9 @@ export interface Mixtape {
   /** Voice laid down WITH the music while recording — plays over the
    *  song at atMs into that side during tape playback. */
   talkovers?: Array<{ side: 'A' | 'B'; atMs: number; path: string }>
+  /** REC pressed mid-song: that song recorded FROM this ms — the tape
+   *  only has its tail. Sparse, keyed by track id. */
+  startOffsets?: Record<string, number>
   createdAt: string
   /** J-card ink color the renderer drew the label with (stable per tape). */
   inkColor?: string
@@ -342,7 +345,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       title: string
       sides: Array<{
         label: 'A' | 'B'
-        songs: Array<{ absPath: string; cutMs?: number }>
+        songs: Array<{ absPath: string; cutMs?: number; startMs?: number }>
         talkovers: Array<{ atMs: number; path: string }>
         introPath?: string
       }>
@@ -384,7 +387,12 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
         }
         for (const sng of side.songs) {
           inputs.push('-i', sng.absPath)
-          const trim = sng.cutMs ? `atrim=0:${(sng.cutMs / 1000).toFixed(3)},` : ''
+          // A mid-song landing plays from startMs; a boundary song ends
+          // cutMs of TAPE time after it starts — i.e. start + cut.
+          const st = (sng.startMs || 0) / 1000
+          let trim = ''
+          if (sng.cutMs) trim = `atrim=${st.toFixed(3)}:${(st + sng.cutMs / 1000).toFixed(3)},`
+          else if (st > 0) trim = `atrim=start=${st.toFixed(3)},`
           chains.push(`[${idx}:a]${trim}aresample=44100,aformat=channel_layouts=stereo[s${idx}]`)
           bedRefs.push(`[s${idx}]`)
           idx++

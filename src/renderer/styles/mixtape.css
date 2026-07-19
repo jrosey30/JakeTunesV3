@@ -374,3 +374,94 @@
   color: #fff;
   animation: mic-blink 1s steps(2, start) infinite;
 }
+
+/* ── the faceplate: traditional as hell ── */
+.faceplate {
+  display: flex;
+  gap: 4px;
+  background: linear-gradient(#4c4c4c, #2c2c2c);
+  border: 1px solid #171717;
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: fit-content;
+  box-shadow: inset 0 1px 0 #5e5e5e, 0 3px 8px rgba(0,0,0,0.35);
+  margin-bottom: 6px;
+}
+.fp-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 66px;
+  height: 54px;
+  border: 1px solid #141414;
+  border-radius: 5px;
+  background: linear-gradient(#5e5e5e, #3a3a3a);
+  color: #ddd;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 #757575, 0 3px 4px rgba(0,0,0,0.45);
+}
+.fp-key:active { transform: translateY(2px); box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
+.fp-key:disabled { opacity: 0.45; cursor: default; }
+.fp-label { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; }
+.fp-shape { display: flex; align-items: center; justify-content: center; height: 16px; }
+/* shapes, color coordinated */
+.fp-shape--circle { width: 14px; height: 14px; border-radius: 50%; background: #d0321e; }
+.fp-shape--tri {
+  width: 0; height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 13px solid #3fae5a;
+}
+.fp-shape--bars { width: 12px; height: 14px; border-left: 4px solid #e8b23a; border-right: 4px solid #e8b23a; }
+.fp-shape--eject {
+  width: 0; height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 9px solid #bbb;
+  position: relative;
+}
+.fp-shape--mic { color: #ddd; }
+/* pressed-in states */
+.fp-key--rec.is-down {
+  background: linear-gradient(#c23a24, #8f1d10);
+  color: #fff;
+  transform: translateY(2px);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,0.55), 0 0 12px rgba(220,60,40,0.6);
+}
+.fp-key--rec.is-down .fp-shape--circle { background: #fff; }
+.fp-key--mic.is-down {
+  background: linear-gradient(#b3542a, #8a3a18);
+  color: #fff;
+  transform: translateY(2px);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,0.55);
+}
+.fp-status {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #777;
+  margin: 2px 0 8px;
+}
+.fp-status--armed { color: #b07818; }
+.fp-status--recording { color: #c23a24; animation: mic-blink 1.2s steps(2, start) infinite; }
+.mixtape-smallrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11.5px;
+  color: #999;
+  margin-bottom: 8px;
+}
+.mixtape-link {
+  border: none;
+  background: none;
+  color: #777;
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+.mixtape-link:hover { color: #333; }
+.mixtape-link:disabled { opacity: 0.5; cursor: default; }

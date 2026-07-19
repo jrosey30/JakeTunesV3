@@ -12,9 +12,9 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
-import MixtapeMic from '../components/MixtapeMic'
 import MixtapeSheet from '../components/MixtapeSheet'
-import { getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState } from '../mixtapes'
+import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState } from '../mixtapes'
+import { effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -73,9 +73,10 @@ export function CassetteSvg({ title, ink, lengthLabel, spinning, side }: {
 export default function MixtapeView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb } = usePlayback()
-  const { playTrack } = useAudio()
+  const { playTrack, togglePlayPause } = useAudio()
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
+  const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [remixing, setRemixing] = useState(false)
   const [dubbing, setDubbing] = useState(false)
@@ -112,12 +113,17 @@ export default function MixtapeView() {
     if (!t || !tape) return
     // TRUE tape physics: arm the cut points before the reels move. The
     // Side A cut is the flip; the Side B cut is the end of the tape.
+    // A boundary song with a start offset plays from the offset — its
+    // cut lands at offset + tape-remaining in SONG time.
+    const cutPos = (id: number, cutMs: number) => ((tape.startOffsets?.[String(id)] || 0) + cutMs) / 1000
     const cuts: Array<{ trackId: number; cutSec: number; thenStop: boolean }> = []
     if (tape.sideACutMs && tape.sideA.length > 0) {
-      cuts.push({ trackId: tape.sideA[tape.sideA.length - 1], cutSec: tape.sideACutMs / 1000, thenStop: false })
+      const id = tape.sideA[tape.sideA.length - 1]
+      cuts.push({ trackId: id, cutSec: cutPos(id, tape.sideACutMs), thenStop: false })
     }
     if (tape.sideBCutMs && tape.sideB.length > 0) {
-      cuts.push({ trackId: tape.sideB[tape.sideB.length - 1], cutSec: tape.sideBCutMs / 1000, thenStop: true })
+      const id = tape.sideB[tape.sideB.length - 1]
+      cuts.push({ trackId: id, cutSec: cutPos(id, tape.sideBCutMs), thenStop: true })
     }
     setTapeSession({ mixtapeId: tape.id, tapeTrackIds: allTracks.map((x) => x.id), cuts })
     playTrack(t, allTracks, idx, undefined, true)
@@ -137,6 +143,7 @@ export default function MixtapeView() {
         songs: tracksOnSide.map((t, i) => ({
           absPath: abs(t),
           cutMs: cutMs !== undefined && i === tracksOnSide.length - 1 ? cutMs : undefined,
+          startMs: tape.startOffsets?.[String(t.id)] || undefined,
         })),
         talkovers: (tape.talkovers || []).filter((tv) => tv.side === label).map((tv) => ({ atMs: tv.atMs, path: tv.path })),
         introPath: label === 'A' ? tape.introPath : undefined,
@@ -182,8 +189,9 @@ export default function MixtapeView() {
   const onSideB = currentId != null && tape.sideB.includes(currentId)
   const tapeActive = introPlaying || ((onSideA || onSideB) && pb.isPlaying)
   const side: 'A' | 'B' | null = introPlaying ? 'A' : onSideA ? 'A' : onSideB ? 'B' : null
-  const durA = sideATracks.reduce((s, t) => s + (t.duration || 0), 0)
-  const durB = sideBTracks.reduce((s, t) => s + (t.duration || 0), 0)
+  const effDur = effectiveDurationFn((id) => byId.get(id)?.duration || undefined, tape.startOffsets)
+  const durA = sideATracks.reduce((s, t) => s + effDur(t.id), 0)
+  const durB = sideBTracks.reduce((s, t) => s + effDur(t.id), 0)
   const sideBudget = (tape.tapeLength / 2) * 60_000
 
   const renderSide = (label: 'A' | 'B', tracks: Track[], startIdx: number, dur: number, cutMs?: number) => (
@@ -201,7 +209,10 @@ export default function MixtapeView() {
             <span className="jcard-row-num">{i + 1}.</span>
             <span className="jcard-row-title">{t.title}</span>
             <span className="jcard-row-artist">{t.artist}</span>
-            <span className="jcard-row-time">{isCut ? fmt(cutMs!) : fmt(t.duration || 0)}</span>
+            <span className="jcard-row-time">{isCut ? fmt(cutMs!) : fmt(effDur(t.id))}</span>
+            {(tape.startOffsets?.[String(t.id)] || 0) > 0 && (
+              <span className="jcard-row-note" style={{ color: ink }}>picked up mid-song — from {fmt(tape.startOffsets![String(t.id)])}</span>
+            )}
             {notes.has(t.id) && <span className="jcard-row-note" style={{ color: ink }}>{notes.get(t.id)}</span>}
             {isCut && <span className="jcard-row-note jcard-row-cut" style={{ color: ink }}>— tape runs out at {fmt(cutMs!)}. too bad.</span>}
           </div>
@@ -218,29 +229,64 @@ export default function MixtapeView() {
           <h1 className="mixtape-title">{tape.title}</h1>
           {tape.dedication && <div className="mixtape-dedication" style={{ color: ink }}>for: {tape.dedication}</div>}
           <p className="mixtape-commentary">{tape.commentary}</p>
-          <div className="mixtape-actions">
-            <button className="mixtape-btn mixtape-btn--play" onClick={playTape} disabled={allTracks.length === 0}>
-              {introPlaying ? '⏸ voice on tape…' : '▶ Play Tape'}
-            </button>
-            {introPlaying && (
-              <button className="mixtape-btn" onClick={() => { stopIntro(); startQueueAt(0) }}>Skip intro</button>
-            )}
-            <button className="mixtape-btn" onClick={() => setDeckState({ mixtapeId: tape.id, side: tape.sideACutMs !== undefined ? 'B' : 'A', recArmed: false })}
-              title="Load this tape into the recorder — press REC and whatever you play lands on it">Put in the deck</button>
-            <button className="mixtape-btn" onClick={() => setRemixing(true)}
-              title="Back on the deck — rearrange, swap songs, change tape length. Saving tapes over this one.">Open on the deck</button>
-            <button className="mixtape-btn" disabled={dubbing} onClick={() => { void dubToCassette() }}
-              title="Render each side as one continuous audio file — cuts, intro, and talkovers baked in — to dub onto a real cassette">{dubbing ? 'Dubbing…' : 'Dub to cassette…'}</button>
-            <button className="mixtape-btn" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
+          {(() => {
+            const loaded = deckState?.mixtapeId === tape.id
+            const armed = loaded && !!deckState?.recArmed
+            const micOn = loaded && !!deckState?.micOn
+            const resumeSide: 'A' | 'B' = tape.sideACutMs !== undefined ? 'B' : 'A'
+            const load = (over: { recArmed?: boolean; micOn?: boolean }) => {
+              const cur = getDeckState()
+              if (cur?.mixtapeId === tape.id) setDeckState({ ...cur, ...over })
+              else setDeckState({ mixtapeId: tape.id, side: resumeSide, recArmed: false, micOn: false, ...over })
+            }
+            const currentOnTape = currentId != null && (tape.sideA.includes(currentId) || tape.sideB.includes(currentId))
+            const pressPlay = () => {
+              if (armed) { if (!pb.isPlaying && pb.nowPlaying) togglePlayPause(); return }
+              if (currentOnTape) { if (!pb.isPlaying) togglePlayPause(); return }
+              playTape()
+            }
+            const rolling = armed && pb.isPlaying
+            return (
+              <>
+                <div className="faceplate">
+                  <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => load({ recArmed: !armed })}
+                    title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
+                    <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
+                  </button>
+                  <button className="fp-key fp-key--play" onClick={pressPlay}
+                    title={armed ? 'PLAY — roll the music you are recording' : 'PLAY — play this tape'}>
+                    <span className="fp-shape fp-shape--tri" /><span className="fp-label">PLAY</span>
+                  </button>
+                  <button className="fp-key fp-key--pause" onClick={() => { if (pb.isPlaying) togglePlayPause() }}
+                    title="PAUSE — the music stops where it is. Recording waits.">
+                    <span className="fp-shape fp-shape--bars" /><span className="fp-label">PAUSE</span>
+                  </button>
+                  <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => load({ micOn: !micOn })}
+                    title="MIC — mic on means mic ready. Your voice records onto the tape only while REC is down.">
+                    <span className="fp-shape fp-shape--mic"><MicShape /></span><span className="fp-label">MIC</span>
+                  </button>
+                  <button className="fp-key fp-key--eject" onClick={() => { if (loaded) setDeckState(null) }} disabled={!loaded}
+                    title="EJECT — take the tape out of the deck">
+                    <span className="fp-shape fp-shape--eject" /><span className="fp-label">EJECT</span>
+                  </button>
+                </div>
+                <div className={`fp-status${rolling ? ' fp-status--recording' : armed ? ' fp-status--armed' : ''}`}>
+                  {rolling ? `● RECORDING — ${String(pb.nowPlaying?.title || '').slice(0, 30)} → tape${micOn ? ' · MIC LIVE' : ''}`
+                    : armed ? 'REC DOWN — press PLAY'
+                    : loaded ? 'in the deck — not recording'
+                    : 'on the shelf — press REC to record onto it'}
+                </div>
+              </>
+            )
+          })()}
+          <div className="mixtape-smallrow">
+            <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
+            <span>·</span>
+            <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Dubbing…' : 'Dub to cassette'}</button>
+            <span>·</span>
+            <button className="mixtape-link" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
           {dubNotice && <div className="mixtape-dub-notice">{dubNotice}</div>}
-          <MixtapeMic
-            existingPath={tape.introPath}
-            onProcessed={(path) => {
-              void window.electronAPI.saveMixtape?.({ ...tape, introPath: path || undefined })
-                .then(() => refreshMixtapes())
-            }}
-          />
         </div>
       </div>
 
@@ -267,5 +313,15 @@ export default function MixtapeView() {
         />
       )}
     </div>
+  )
+}
+
+
+function MicShape() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4" />
+    </svg>
   )
 }
