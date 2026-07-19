@@ -515,6 +515,16 @@ const electronAPI = {
     brief?: Record<string, unknown>
     error?: string
   }> => ipcRenderer.invoke('build-workout-sync-set', tracks, opts),
+  listMixtapes: (): Promise<{ ok: boolean; mixtapes: unknown[] }> =>
+    ipcRenderer.invoke('mixtapes-list'),
+  buildMixtape: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string): Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }> =>
+    ipcRenderer.invoke('build-mixtape', tracks, tapeLength, dedication, note),
+  saveMixtape: (tape: unknown): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('mixtape-save', tape),
+  deleteMixtape: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('mixtape-delete', id),
+  saveMixtapeIntro: (data: ArrayBuffer): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('save-mixtape-intro', data),
   previewIpodSync: (tracks: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }> =>
     ipcRenderer.invoke('preview-ipod-sync', tracks, convertOptions),
   commitWorkoutSyncSet: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }): Promise<{ ok: boolean; error?: string }> =>

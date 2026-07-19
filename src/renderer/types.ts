@@ -99,7 +99,25 @@ export interface Playlist {
   category?: 'synced-set'
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail'
+// Mixtapes (2026-07-18) — a group of songs turned into a REAL cassette:
+// C60/C90/C120, Music Man-sequenced Side A/B that fit the tape, J-card
+// liner notes, and optionally Jake's own voice intro processed to sound
+// like 1979. Stored main-side in mixtapes.json (not library.json).
+export interface Mixtape {
+  id: string
+  title: string
+  commentary: string
+  dedication?: string
+  tapeLength: 60 | 90 | 120
+  sideA: number[]
+  sideB: number[]
+  linerNotes: Array<{ id: number; note: string }>
+  introPath?: string
+  createdAt: string
+  inkColor?: string
+}
+
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -738,6 +756,11 @@ declare global {
         weather?: { tempF: number; condition: string; description: string; placeLabel: string } | null
         error?: string
       }>
+      listMixtapes?: () => Promise<{ ok: boolean; mixtapes: Mixtape[] }>
+      buildMixtape?: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }>
+      saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
+      deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
+      saveMixtapeIntro?: (data: ArrayBuffer) => Promise<{ ok: boolean; path?: string; error?: string }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
       commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
       getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }>

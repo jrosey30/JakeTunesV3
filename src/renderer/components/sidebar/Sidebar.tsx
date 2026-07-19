@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
@@ -8,6 +8,7 @@ import ContextMenu from '../ContextMenu'
 import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId } from '../../types'
 import { setNotice } from '../../activity'
+import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
   home: <HomeIcon />,
@@ -146,6 +147,17 @@ function PlaylistIcon() {
   )
 }
 
+function CassetteIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <circle cx="8" cy="12" r="2.2" />
+      <circle cx="16" cy="12" r="2.2" />
+      <path d="M10.2 12h3.6" />
+    </svg>
+  )
+}
+
 function SmartPlaylistIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -241,6 +253,10 @@ export default function Sidebar() {
   const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null)
   const newPlaylistRef = useRef<HTMLInputElement>(null)
   const renameRef = useRef<HTMLInputElement>(null)
+  const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
+  const activeMixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
+
+  useEffect(() => { void refreshMixtapes() }, [])
 
   useEffect(() => {
     if (creatingPlaylist) {
@@ -517,6 +533,23 @@ export default function Sidebar() {
             ))}
           </div>
         </SidebarSection>
+
+        {/* 2026-07-18 — mixtapes: real cassettes made from a song
+            selection. Module store (mixtapes.ts) mirrors concertNav;
+            detail view routes via generic SET_VIEW. */}
+        {mixtapes.length > 0 && (
+          <SidebarSection title="MIXTAPES">
+            {mixtapes.map((m) => (
+              <SidebarItem
+                key={m.id}
+                label={m.title}
+                icon={<CassetteIcon />}
+                selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
+                onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
+              />
+            ))}
+          </SidebarSection>
+        )}
 
         {/* 2026-07-18 — saved activity syncs get their own category so a
             kept sync reads as a different kind of thing than a hand-made

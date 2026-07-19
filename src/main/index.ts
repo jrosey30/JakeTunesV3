@@ -94,6 +94,7 @@ import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
 import { registerWorkoutSyncIpc } from './workout-sync-ipc'
+import { registerMixtapesIpc } from './mixtapes'
 import {
   getActivityPromptBlockSync,
   getActivityBrainContextSync,
@@ -10657,6 +10658,12 @@ Their top genres: ${topGenres}`
 
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
+  claudeCall,
+  musicManCore: MUSIC_MAN_CORE,
+})
+
+// Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
+registerMixtapesIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
 })

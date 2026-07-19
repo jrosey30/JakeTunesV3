@@ -9,6 +9,7 @@ import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
+import MixtapeSheet from '../components/MixtapeSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { ratingMenuEntries } from '../components/StarRating'
@@ -261,6 +262,7 @@ export default function SongsView() {
   const [columnOrder, setColumnOrder] = useState<string[]>(() => ALL_COLUMN_DEFS.map(c => c.key))
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
+  const [mixtapeTracks, setMixtapeTracks] = useState<Track[] | null>(null)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
@@ -484,6 +486,10 @@ export default function SongsView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      ...(count >= 2 ? [
+        { separator: true as const },
+        { label: `Make a Mixtape from ${count} songs…`, onClick: () => setMixtapeTracks(selectedTracks) },
+      ] : []),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
       { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
@@ -1164,6 +1170,9 @@ export default function SongsView() {
           onClose={find.close}
           placeholder="Find song, artist, album…"
         />
+      )}
+      {mixtapeTracks && (
+        <MixtapeSheet tracks={mixtapeTracks} onClose={() => setMixtapeTracks(null)} />
       )}
       {ctxMenu && (
         <ContextMenu
