@@ -202,6 +202,18 @@ export function liveTapeCounter(
 // ── Spooling: FF/REW move the TAPE, not track boundaries. A spool that
 // crosses into another slot sets a pending seek; TapeMonitor fires it
 // the moment that track starts, landing mid-song like a real deck.
+// Live wind position (FF/REW held) — mirrored here so EVERY display
+// (faceplate counter, pill scrubber) follows the reels together.
+export interface WindDisplay { side: 'A' | 'B'; posMs: number }
+let windDisplay: WindDisplay | null = null
+export function setWindDisplay(w: WindDisplay | null): void {
+  windDisplay = w
+  notify()
+}
+export function getWindDisplay(): WindDisplay | null {
+  return windDisplay
+}
+
 export interface PendingTapeSeek { trackId: number; seekMs: number }
 let pendingSeek: PendingTapeSeek | null = null
 export function setPendingTapeSeek(psk: PendingTapeSeek | null): void {

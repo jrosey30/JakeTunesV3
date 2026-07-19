@@ -7,7 +7,7 @@ import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../preview
 // map the playhead to the current setlist song while a merged live set
 // plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt } from '../../liveSets'
-import { subscribeMixtapes, getTapeSession, getDeckState, getMixtapes, liveTapeCounter, spoolTarget, setPendingTapeSeek } from '../../mixtapes'
+import { subscribeMixtapes, getTapeSession, getDeckState, getMixtapes, liveTapeCounter, spoolTarget, setPendingTapeSeek, getWindDisplay } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
 
@@ -466,14 +466,15 @@ export default function NowPlaying() {
                 {/* Side-wide tape scrubber — the needle sweeps SIDE {A|B},
                     not the song. Click = spool there (locked during REC). */}
                 {/* Playback runs against the MUSIC on the side; recording
-                    against the physical tape (blank included). */}
-                <span className="scrubber-time">{formatTime(Math.floor(tapeCounter.usedMs / 1000))}</span>
+                    against the physical tape (blank included). While the
+                    reels WIND, the needle follows the wind position. */}
+                <span className="scrubber-time">{formatTime(Math.floor((getWindDisplay()?.posMs ?? tapeCounter.usedMs) / 1000))}</span>
                 <div className={`scrubber-track scrubber-track--tape${tapeArmed ? ' scrubber-track--locked' : ''}`} onMouseDown={handleTapeScrub}
                   title={tapeArmed ? `Recording Side ${tapeCounter.side} — the tape doesn't scrub while REC is down` : `Side ${tapeCounter.side} of the tape — click to spool`}>
-                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, (tapeCounter.usedMs / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
-                  <div className="scrubber-knob" style={{ left: `${Math.min(100, (tapeCounter.usedMs / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
+                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, ((getWindDisplay()?.posMs ?? tapeCounter.usedMs) / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
+                  <div className="scrubber-knob" style={{ left: `${Math.min(100, ((getWindDisplay()?.posMs ?? tapeCounter.usedMs) / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
                 </div>
-                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(((tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs) - tapeCounter.usedMs) / 1000)))}</span>
+                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(((tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs) - (getWindDisplay()?.posMs ?? tapeCounter.usedMs)) / 1000)))}</span>
               </>
             ) : (
               <>

@@ -13,7 +13,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
-import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek } from '../mixtapes'
+import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
 import { startWindSound, stopWindSound } from '../tapeDeck'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
@@ -290,13 +290,16 @@ export default function MixtapeView() {
               if (pb.isPlaying) togglePlayPause()
               startWindSound()
               setWinding({ dir, side, usedMs: counter.usedMs })
+              setWindDisplay({ side, posMs: counter.usedMs })
               windTimer.current = window.setInterval(() => {
                 setWinding((w) => {
                   if (!w) return w
                   const held = (Date.now() - windMeta.current.startedAt) / 1000
                   const speed = Math.min(32, 8 * Math.pow(2, held))
                   const next = w.usedMs + w.dir * speed * WIND_TICK
-                  return { ...w, usedMs: Math.max(0, Math.min(sideTotal - 1500, next)) }
+                  const clamped = Math.max(0, Math.min(sideTotal - 1500, next))
+                  setWindDisplay({ side: w.side, posMs: clamped })
+                  return { ...w, usedMs: clamped }
                 })
               }, WIND_TICK)
             }
@@ -304,6 +307,7 @@ export default function MixtapeView() {
               if (!winding) return
               if (windTimer.current != null) { clearInterval(windTimer.current); windTimer.current = null }
               stopWindSound()
+              setWindDisplay(null)
               const { side, usedMs } = winding
               setWinding(null)
               const durOfId = (id: number) => byId.get(id)?.duration || undefined
