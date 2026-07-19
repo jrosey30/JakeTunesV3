@@ -163,9 +163,13 @@ export default function DeckBar() {
     return before + Math.max(0, pb.position * 1000 - off)
   }, [durOf, nowId, pb.position])
 
-  // ── MIC engine: capture runs while mic is ON *and* REC is down *and*
-  // music plays. Dropping any of the three stops + dubs the talkover. ──
-  const micShouldRun = !!deck?.micOn && !!deck?.recArmed && pb.isPlaying
+  // ── MIC engine: REC down + MIC on = the mic is HOT — even in silence
+  // (Jake: "if i record before the tape it needs to be a part of the
+  // tape"). A take with music under it lands as a talkover at its pin;
+  // a take spoken onto the head of a blank Side A becomes the tape's
+  // OPENING (the voice before track 1 — leader tape, part of the tape
+  // on playback and on every dub). ──
+  const micShouldRun = !!deck?.micOn && !!deck?.recArmed
   useEffect(() => {
     let cancelled = false
     if (micShouldRun && !micRecRef.current) {
@@ -197,8 +201,15 @@ export default function DeckBar() {
               if (r?.ok && r.path && pin && d2) {
                 const fresh = getMixtapes().find((m) => m.id === d2.mixtapeId)
                 if (fresh) {
-                  await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: pin.side, atMs: pin.atMs, path: r.path }] })
-                  flash(`Voice on tape at ${fmt(pin.atMs)}, Side ${pin.side}.`)
+                  // Spoken onto the head of a blank Side A → the tape's
+                  // opening, not an overlay. Anything else → talkover.
+                  if (pin.side === 'A' && fresh.sideA.length === 0 && pin.atMs <= 500) {
+                    await persist({ ...fresh, introPath: r.path })
+                    flash('Your voice opens the tape — it plays before track 1, always.')
+                  } else {
+                    await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: pin.side, atMs: pin.atMs, path: r.path }] })
+                    flash(`Voice on tape at ${fmt(pin.atMs)}, Side ${pin.side}.`)
+                  }
                 }
               }
             } catch (err) { console.warn('[deck-mic] talkover save failed:', err) }
