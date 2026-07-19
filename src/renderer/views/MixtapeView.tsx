@@ -13,7 +13,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
-import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter } from '../mixtapes'
+import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek } from '../mixtapes'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -73,7 +73,7 @@ export function CassetteSvg({ title, ink, lengthLabel, spinning, side }: {
 export default function MixtapeView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb } = usePlayback()
-  const { playTrack, togglePlayPause, nextTrack, prevTrack, stopPlayback } = useAudio()
+  const { playTrack, togglePlayPause, stopPlayback, seek } = useAudio()
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
@@ -249,6 +249,27 @@ export default function MixtapeView() {
               if (currentOnTape) { if (!pb.isPlaying) togglePlayPause(); return }
               playTape()
             }
+            // SPOOL — FF/REW move the TAPE (Jake: "THE FAST FORWARD,
+            // REWIND IS LIKE SKIPPING TRACKS"). ±15 tape-seconds per
+            // press, straight through the middle of songs. Locked while
+            // REC is latched, like a real deck.
+            const spool = (deltaMs: number) => {
+              if (armed) return
+              const durOfId = (id: number) => byId.get(id)?.duration || undefined
+              const tgt = spoolTarget(tape, counter.side, counter.usedMs, deltaMs, durOfId)
+              if (!tgt) return
+              if (currentId === tgt.trackId) {
+                const durMs = byId.get(tgt.trackId)?.duration || 0
+                if (durMs > 0) seek(Math.min(0.99, tgt.fileSeekMs / durMs))
+                return
+              }
+              // crossing a splice: start that slot, land mid-song
+              const all = [...sideATracks, ...sideBTracks]
+              const idx = all.findIndex((t) => t.id === tgt.trackId)
+              if (idx < 0) return
+              setPendingTapeSeek({ trackId: tgt.trackId, seekMs: tgt.fileSeekMs })
+              startQueueAt(idx)
+            }
             const rolling = armed && pb.isPlaying
             // The counter window — how much tape is left on this side,
             // rolling live while the tail song records or plays.
@@ -271,16 +292,16 @@ export default function MixtapeView() {
                     title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
                   </button>
-                  <button className="fp-key" onClick={prevTrack}
-                    title="REWIND — back to the start of the song; press again for the one before">
+                  <button className="fp-key" onClick={() => spool(-15_000)} disabled={armed}
+                    title="REWIND — spool the tape back 15 seconds, mid-song and all. Locked while REC is down.">
                     <span className="fp-shape fp-shape--rew" /><span className="fp-label">REW</span>
                   </button>
                   <button className="fp-key fp-key--play" onClick={pressPlay}
                     title={armed ? 'PLAY — roll the music you are recording' : 'PLAY — play this tape'}>
                     <span className="fp-shape fp-shape--tri" /><span className="fp-label">PLAY</span>
                   </button>
-                  <button className="fp-key" onClick={nextTrack}
-                    title="FAST-FORWARD — next song">
+                  <button className="fp-key" onClick={() => spool(15_000)} disabled={armed}
+                    title="FAST-FORWARD — spool the tape ahead 15 seconds, straight through the middle of songs. Locked while REC is down.">
                     <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
                   </button>
                   <button className="fp-key" onClick={() => { stopPlayback(); if (loaded) load({ recArmed: false, micOn: false }) }}

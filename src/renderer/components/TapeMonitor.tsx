@@ -16,7 +16,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { effectiveDurationFn } from '../../common/tape-physics'
-import { getTapeSession, setTapeSession, getMixtapes, subscribeMixtapes } from '../mixtapes'
+import { getTapeSession, setTapeSession, getMixtapes, getPendingTapeSeek, setPendingTapeSeek, subscribeMixtapes } from '../mixtapes'
 
 export default function TapeMonitor() {
   const { state: lib } = useLibrary()
@@ -65,6 +65,17 @@ export default function TapeMonitor() {
     // the song at its pinned spot on the side. Fire when the tape's
     // side-elapsed crosses atMs (position ticks ~1s — tape-accurate).
     const tape = mixtapes.find((m) => m.id === session.mixtapeId)
+    // Spooling: a FF/REW that crossed into this slot seeks mid-song the
+    // moment it starts — the tape lands wherever the reels stopped.
+    const psk = getPendingTapeSeek()
+    if (psk && psk.trackId === nowId) {
+      const durMs = lib.tracks.find((t) => t.id === nowId)?.duration || 0
+      if (durMs > 0 && pb.position * 1000 < psk.seekMs - 500) {
+        seek(Math.min(0.99, psk.seekMs / durMs))
+      }
+      setPendingTapeSeek(null)
+      seekedForRef.current = nowId // suppress the offset auto-seek for this landing
+    }
     // A slot recorded mid-song plays from its offset — seek there once
     // when the track starts (the tape only has the tail).
     if (tape) {

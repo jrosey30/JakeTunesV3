@@ -192,6 +192,48 @@ export function liveTapeCounter(
   return staticFor(activeSide)
 }
 
+// ── Spooling: FF/REW move the TAPE, not track boundaries. A spool that
+// crosses into another slot sets a pending seek; TapeMonitor fires it
+// the moment that track starts, landing mid-song like a real deck.
+export interface PendingTapeSeek { trackId: number; seekMs: number }
+let pendingSeek: PendingTapeSeek | null = null
+export function setPendingTapeSeek(psk: PendingTapeSeek | null): void {
+  pendingSeek = psk
+}
+export function getPendingTapeSeek(): PendingTapeSeek | null {
+  return pendingSeek
+}
+
+/**
+ * Where does the tape land if we spool deltaMs from the current spot?
+ * Walks the side's slots in effective time; clamps to [0, side end].
+ * Returns the slot to play and how far INTO THE FILE to seek (offset-aware).
+ */
+export function spoolTarget(
+  tape: Mixtape,
+  side: 'A' | 'B',
+  currentElapsedMs: number,
+  deltaMs: number,
+  durOf: (id: number) => number | undefined,
+): { trackId: number; fileSeekMs: number } | null {
+  const effDur = effectiveDurationFn(durOf, tape.startOffsets)
+  const ids = side === 'A' ? tape.sideA : tape.sideB
+  if (ids.length === 0) return null
+  const total = ids.reduce((sum, id) => sum + effDur(id), 0)
+  const target = Math.max(0, Math.min(total - 1500, currentElapsedMs + deltaMs))
+  let acc = 0
+  for (const id of ids) {
+    const d = effDur(id)
+    if (target < acc + d) {
+      const off = tape.startOffsets?.[String(id)] || 0
+      return { trackId: id, fileSeekMs: off + (target - acc) }
+    }
+    acc += d
+  }
+  const last = ids[ids.length - 1]
+  return { trackId: last, fileSeekMs: (tape.startOffsets?.[String(last)] || 0) + effDur(last) - 1500 }
+}
+
 /** Stable per-tape ink color for the handwritten label. */
 const INKS = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 export function pickInk(seed: string): string {
