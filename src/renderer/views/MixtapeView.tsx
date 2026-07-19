@@ -13,6 +13,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeMic from '../components/MixtapeMic'
+import MixtapeSheet from '../components/MixtapeSheet'
 import { getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession } from '../mixtapes'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -76,6 +77,7 @@ export default function MixtapeView() {
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [remixing, setRemixing] = useState(false)
   const [introPlaying, setIntroPlaying] = useState(false)
   const introRef = useRef<HTMLAudioElement | null>(null)
 
@@ -182,6 +184,8 @@ export default function MixtapeView() {
             {introPlaying && (
               <button className="mixtape-btn" onClick={() => { stopIntro(); startQueueAt(0) }}>Skip intro</button>
             )}
+            <button className="mixtape-btn" onClick={() => setRemixing(true)}
+              title="Back on the deck — rearrange, swap songs, change tape length. Saving tapes over this one.">Open on the deck</button>
             <button className="mixtape-btn" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
           <MixtapeMic
@@ -199,6 +203,9 @@ export default function MixtapeView() {
         {renderSide('B', sideBTracks, sideATracks.length, durB, tape.sideBCutMs)}
       </div>
 
+      {remixing && (
+        <MixtapeSheet tracks={allTracks} existing={tape} onClose={() => { setRemixing(false); void refreshMixtapes() }} />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           message={`Throw out “${tape.title}”?`}

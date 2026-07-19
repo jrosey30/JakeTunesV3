@@ -22,6 +22,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
+import { fitSide } from '../common/tape-physics'
 
 const execP = promisify(execFile)
 
@@ -69,10 +70,8 @@ const MIXTAPES_FILE = () => join(app.getPath('userData'), 'mixtapes.json')
 const INTROS_DIR = () => join(app.getPath('userData'), 'mixtape-intros')
 const MAX_INPUT_SONGS = 150
 // TRUE tape limits (Jake: "absolutely true time limits... if i run out of
-// space, too bad"). No slack. A side that runs out mid-song CUTS the song
-// off right there — playback enforces the cut, the J-card marks it.
-// Under this remaining-tape floor we don't bother starting another song.
-const MIN_CUT_MS = 20_000
+// space, too bad"). The physics live in src/common/tape-physics.ts — the
+// SAME function the renderer's mixing deck uses for its live counter.
 
 async function loadMixtapes(): Promise<Mixtape[]> {
   try {
@@ -138,28 +137,9 @@ function enforceTape(
     }
     return out
   }
-  const fit = (ids: number[]): { ids: number[]; cutMs?: number } => {
-    let total = 0
-    const out: number[] = []
-    for (const id of ids) {
-      const dur = Number(byId.get(id)?.duration) || 210_000 // unknown ≈ 3:30
-      if (total + dur <= sideBudgetMs) {
-        total += dur
-        out.push(id)
-        continue
-      }
-      // This song crosses the end of the tape.
-      const remaining = sideBudgetMs - total
-      if (remaining >= MIN_CUT_MS) {
-        out.push(id)
-        return { ids: out, cutMs: remaining }
-      }
-      return { ids: out }
-    }
-    return { ids: out }
-  }
-  const a = fit(clean(rawA))
-  const b = fit(clean(rawB))
+  const dur = (id: number) => Number(byId.get(id)?.duration) || undefined
+  const a = fitSide(clean(rawA), dur, sideBudgetMs)
+  const b = fitSide(clean(rawB), dur, sideBudgetMs)
   return { sideA: a.ids, sideB: b.ids, sideACutMs: a.cutMs, sideBCutMs: b.cutMs }
 }
 

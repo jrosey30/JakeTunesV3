@@ -10,8 +10,15 @@
     "skipLibCheck": true,
     "outDir": "out/renderer",
     "rootDir": "src/renderer",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/renderer/**/*"],
-  "exclude": ["**/_archive/**"]
+  "include": [
+    "src/renderer/**/*",
+    "src/common/**/*"
+  ],
+  "exclude": [
+    "**/_archive/**"
+  ]
 }
