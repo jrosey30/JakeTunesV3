@@ -529,3 +529,7 @@
 /* Spool wind — held FF/REW: the reels blur, REW runs them backwards. */
 .spool--fast { animation-duration: 0.18s; }
 .spool--rev { animation-direction: reverse; }
+
+/* side-wide tape scrubber in the pill */
+.scrubber-fill--tape { background: #5c4a32 !important; }
+.scrubber-track--locked { cursor: default; }

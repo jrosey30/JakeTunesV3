@@ -7,6 +7,8 @@ import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../preview
 // map the playhead to the current setlist song while a merged live set
 // plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt } from '../../liveSets'
+import { subscribeMixtapes, getTapeSession, getDeckState, getMixtapes, liveTapeCounter, spoolTarget, setPendingTapeSeek } from '../../mixtapes'
+import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
@@ -103,7 +105,7 @@ function formatTime(s: number): string {
 
 export default function NowPlaying() {
   const { state } = usePlayback()
-  const { seek, togglePlayPause } = useAudio()
+  const { seek, togglePlayPause, playTrack } = useAudio()
   const barRef = useRef<HTMLDivElement>(null)
   const previewBarRef = useRef<HTMLDivElement>(null)
 
@@ -122,6 +124,49 @@ export default function NowPlaying() {
   useEffect(() => { void ensureLiveSetsLoaded() }, [])
   const liveEntry = state.nowPlaying ? (mergedTrackIndex().get(state.nowPlaying.id) ?? null) : null
   const liveCue = liveEntry ? cueAt(liveEntry, state.position * 1000) : null
+
+  // Mixtape side-scrubber (Jake: "the pill should show the track it's
+  // playing, but the scrubber should be all for Side A"). Engaged when
+  // the playing track sits on a tape that's in the session (playback)
+  // or in the recording deck. Renders a PARALLEL bar (preview-player
+  // pattern) — the protected per-song drag seam below stays untouched.
+  useSyncExternalStore(subscribeMixtapes, getTapeSession)
+  const { state: libState } = useLibrary()
+  const tapeSession = getTapeSession()
+  const tapeDeck = getDeckState()
+  const engagedTapeId = tapeSession?.mixtapeId ?? (tapeDeck?.recArmed ? tapeDeck.mixtapeId : null)
+  const engagedTape = engagedTapeId ? getMixtapes().find((m) => m.id === engagedTapeId) ?? null : null
+  const nowIdForTape = state.nowPlaying?.id
+  const onEngagedTape = !!engagedTape && nowIdForTape != null
+    && (engagedTape.sideA.includes(nowIdForTape) || engagedTape.sideB.includes(nowIdForTape))
+  const tapeDurOf = (id: number) => libState.tracks.find((t) => t.id === id)?.duration || undefined
+  const tapeCounter = onEngagedTape && engagedTape
+    ? liveTapeCounter(engagedTape, tapeDeck?.side || 'A', nowIdForTape, state.position, state.isPlaying, tapeDurOf)
+    : null
+  const tapeArmed = !!tapeDeck?.recArmed
+  const handleTapeScrub = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!engagedTape || !tapeCounter || tapeArmed) return // no scrubbing while REC is latched
+    const el = e.currentTarget
+    const rect = el.getBoundingClientRect()
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    const targetMs = pct * tapeCounter.budgetMs
+    const tgt = spoolTarget(engagedTape, tapeCounter.side, tapeCounter.usedMs, targetMs - tapeCounter.usedMs, tapeDurOf)
+    if (!tgt) return
+    if (tgt.trackId === nowIdForTape) {
+      const durMs = tapeDurOf(tgt.trackId) || 0
+      if (durMs > 0) seek(Math.min(0.99, tgt.fileSeekMs / durMs))
+      return
+    }
+    const sess = getTapeSession()
+    if (!sess) return
+    const queue = sess.tapeTrackIds
+      .map((id) => libState.tracks.find((t) => t.id === id))
+      .filter((t): t is NonNullable<typeof t> => !!t)
+    const idx = queue.findIndex((t) => t.id === tgt.trackId)
+    if (idx < 0) return
+    setPendingTapeSeek({ trackId: tgt.trackId, seekMs: tgt.fileSeekMs })
+    playTrack(queue[idx], queue, idx, undefined, true)
+  }, [engagedTape, tapeCounter, tapeArmed, nowIdForTape, libState.tracks, seek, playTrack])
 
   // Pause the user's music while a preview plays; resume it when the
   // preview ends/stops (the "pause music, resume after" behavior). Acts
@@ -415,12 +460,28 @@ export default function NowPlaying() {
                 track end. Strictly read-only; the scrubber drag-logic
                 seam (handleMouseDown, barRef) on the next line is
                 untouched per the do-not-touch list. */}
-            <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
-            <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
-              <div className="scrubber-fill" style={{ width: `${progress}%` }} />
-              <div className="scrubber-knob" style={{ left: `${progress}%` }} />
-            </div>
-            <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(state.duration) - Math.floor(state.position)))}</span>
+            {tapeCounter ? (
+              <>
+                {/* Side-wide tape scrubber — the needle sweeps SIDE {A|B},
+                    not the song. Click = spool there (locked during REC). */}
+                <span className="scrubber-time">{formatTime(Math.floor(tapeCounter.usedMs / 1000))}</span>
+                <div className={`scrubber-track scrubber-track--tape${tapeArmed ? ' scrubber-track--locked' : ''}`} onMouseDown={handleTapeScrub}
+                  title={tapeArmed ? `Recording Side ${tapeCounter.side} — the tape doesn't scrub while REC is down` : `Side ${tapeCounter.side} of the tape — click to spool`}>
+                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${(tapeCounter.usedMs / tapeCounter.budgetMs) * 100}%` }} />
+                  <div className="scrubber-knob" style={{ left: `${(tapeCounter.usedMs / tapeCounter.budgetMs) * 100}%` }} />
+                </div>
+                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(tapeCounter.leftMs / 1000)))}</span>
+              </>
+            ) : (
+              <>
+                <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
+                <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
+                  <div className="scrubber-fill" style={{ width: `${progress}%` }} />
+                  <div className="scrubber-knob" style={{ left: `${progress}%` }} />
+                </div>
+                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(state.duration) - Math.floor(state.position)))}</span>
+              </>
+            )}
           </div>
         </>
       ) : effectiveMode === 'sync' && syn ? (
