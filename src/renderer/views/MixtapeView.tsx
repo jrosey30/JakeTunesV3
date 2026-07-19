@@ -85,6 +85,7 @@ export default function MixtapeView() {
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [remixing, setRemixing] = useState(false)
+  const [pickedSide, setPickedSide] = useState<'A' | 'B'>('A')
   const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([])
   useEffect(() => {
     window.electronAPI.listMixtapeVoices?.().then((r) => { if (r?.ok) setVoices(r.voices) }).catch(() => {})
@@ -263,8 +264,15 @@ export default function MixtapeView() {
             const currentOnTape = currentId != null && (tape.sideA.includes(currentId) || tape.sideB.includes(currentId))
             const pressPlay = () => {
               if (armed) { if (!pb.isPlaying && pb.nowPlaying) togglePlayPause(); return }
-              if (currentOnTape) { if (!pb.isPlaying) togglePlayPause(); return }
-              playTape()
+              // resume only if the current song is on the PICKED side
+              const pickedIds = pickedSide === 'A' ? tape.sideA : tape.sideB
+              if (currentOnTape && currentId != null && pickedIds.includes(currentId)) {
+                if (!pb.isPlaying) togglePlayPause()
+                return
+              }
+              if (pickedSide === 'A') { playTape(); return }
+              // flip to Side B: skip the intro, start at B's first slot
+              startQueueAt(sideATracks.length)
             }
             // SPOOL WIND — hold FF/REW and the tape WINDS (Jake: "like an
             // actual tape... thats how old mixtapes merge with each other").
@@ -319,13 +327,24 @@ export default function MixtapeView() {
             // rolling live while the tail song records or plays.
             const counter = liveTapeCounter(
               tape,
-              loaded ? deckState!.side : resumeSide,
+              loaded && armed ? deckState!.side : pickedSide,
               currentId, pb.position, pb.isPlaying,
               (id) => byId.get(id)?.duration || undefined,
             )
+            // Playback shows MUSIC left; recording shows TAPE left.
+            const displayLeft = armed ? counter.leftMs : Math.max(0, counter.contentMs - counter.usedMs)
             return (
               <>
                 <div className="faceplate">
+                  <div className="fp-sides">
+                    {(['A', 'B'] as const).map((sd) => (
+                      <button key={sd} type="button"
+                        className={`fp-side-tab${(counter.side === sd) ? ' is-on' : ''}`}
+                        onClick={() => setPickedSide(sd)}
+                        title={`Flip the tape to Side ${sd} — PLAY plays this side`}
+                      >{sd}</button>
+                    ))}
+                  </div>
                   <div className={`fp-counter${rolling || winding ? ' fp-counter--rolling' : ''}`}
                     title="Tape left on this side — rolls while you record">
                     <span className="fp-counter-side">SIDE {winding ? winding.side : counter.side}</span>

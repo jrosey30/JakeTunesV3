@@ -229,7 +229,8 @@ export default function DeckBar() {
   const rolling = deck.recArmed && pb.isPlaying
   const counter = liveTapeCounter(tape, deck.side, nowId, pb.position, pb.isPlaying, durOf)
   const dispSide = counter.side
-  const dispLeft = counter.leftMs
+  // Recording counts the physical tape; playback counts the music.
+  const dispLeft = deck.recArmed ? counter.leftMs : Math.max(0, counter.contentMs - counter.usedMs)
   const cutCountdown = counter.cutCountdown
 
   const pressRec = () => {

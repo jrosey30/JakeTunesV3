@@ -157,14 +157,20 @@ export function liveTapeCounter(
   positionSec: number,
   isPlaying: boolean,
   durOf: (id: number) => number | undefined,
-): { side: 'A' | 'B'; leftMs: number; usedMs: number; budgetMs: number; cutCountdown: boolean } {
+): { side: 'A' | 'B'; leftMs: number; usedMs: number; budgetMs: number; contentMs: number; cutCountdown: boolean } {
   const budgetMs = (tape.tapeLength / 2) * 60_000
   const effDur = effectiveDurationFn(durOf, tape.startOffsets)
-  const staticFor = (side: 'A' | 'B') => {
+  // contentMs = how much MUSIC is on the side. Playback displays count
+  // against this (Jake: last track can't have "a lot of time left");
+  // recording counts against budgetMs — the blank tape is real there.
+  const contentFor = (side: 'A' | 'B') => {
     const ids = side === 'A' ? tape.sideA : tape.sideB
     const cut = side === 'A' ? tape.sideACutMs : tape.sideBCutMs
-    const used = cut !== undefined ? budgetMs : fitSide(ids, effDur, budgetMs).usedMs
-    return { side, leftMs: Math.max(0, budgetMs - used), usedMs: used, budgetMs, cutCountdown: false }
+    return cut !== undefined ? budgetMs : fitSide(ids, effDur, budgetMs).usedMs
+  }
+  const staticFor = (side: 'A' | 'B') => {
+    const used = contentFor(side)
+    return { side, leftMs: Math.max(0, budgetMs - used), usedMs: used, budgetMs, contentMs: contentFor(side), cutCountdown: false }
   }
   if (isPlaying && nowId != null) {
     for (const cfg of [
@@ -184,6 +190,7 @@ export function liveTapeCounter(
       if (live < budgetMs) {
         return {
           side: cfg.side, leftMs: budgetMs - live, usedMs: live, budgetMs,
+          contentMs: contentFor(cfg.side),
           cutCountdown: cfg.cut !== undefined && idx === cfg.ids.length - 1,
         }
       }

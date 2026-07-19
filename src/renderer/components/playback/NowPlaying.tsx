@@ -149,7 +149,8 @@ export default function NowPlaying() {
     const el = e.currentTarget
     const rect = el.getBoundingClientRect()
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    const targetMs = pct * tapeCounter.budgetMs
+    const totalMs = tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs
+    const targetMs = pct * totalMs
     const tgt = spoolTarget(engagedTape, tapeCounter.side, tapeCounter.usedMs, targetMs - tapeCounter.usedMs, tapeDurOf)
     if (!tgt) return
     if (tgt.trackId === nowIdForTape) {
@@ -464,13 +465,15 @@ export default function NowPlaying() {
               <>
                 {/* Side-wide tape scrubber — the needle sweeps SIDE {A|B},
                     not the song. Click = spool there (locked during REC). */}
+                {/* Playback runs against the MUSIC on the side; recording
+                    against the physical tape (blank included). */}
                 <span className="scrubber-time">{formatTime(Math.floor(tapeCounter.usedMs / 1000))}</span>
                 <div className={`scrubber-track scrubber-track--tape${tapeArmed ? ' scrubber-track--locked' : ''}`} onMouseDown={handleTapeScrub}
                   title={tapeArmed ? `Recording Side ${tapeCounter.side} — the tape doesn't scrub while REC is down` : `Side ${tapeCounter.side} of the tape — click to spool`}>
-                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${(tapeCounter.usedMs / tapeCounter.budgetMs) * 100}%` }} />
-                  <div className="scrubber-knob" style={{ left: `${(tapeCounter.usedMs / tapeCounter.budgetMs) * 100}%` }} />
+                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, (tapeCounter.usedMs / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
+                  <div className="scrubber-knob" style={{ left: `${Math.min(100, (tapeCounter.usedMs / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
                 </div>
-                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(tapeCounter.leftMs / 1000)))}</span>
+                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(((tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs) - tapeCounter.usedMs) / 1000)))}</span>
               </>
             ) : (
               <>

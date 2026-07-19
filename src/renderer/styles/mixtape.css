@@ -535,3 +535,23 @@
 .scrubber-track--locked { cursor: default; }
 .fp-counter--winding .fp-counter-digits { color: #f0d78a; text-shadow: 0 0 9px rgba(240, 210, 120, 0.6); }
 .fp-counter--winding .fp-counter-sub { color: #b09a50; animation: mic-blink 0.5s steps(2, start) infinite; }
+
+/* the flip — side tabs on the faceplate */
+.fp-sides { display: flex; flex-direction: column; gap: 3px; margin-right: 6px; }
+.fp-side-tab {
+  width: 26px; height: 25px;
+  border: 1px solid #141414;
+  border-radius: 4px;
+  background: linear-gradient(#5e5e5e, #3a3a3a);
+  color: #999;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 #757575, 0 2px 3px rgba(0,0,0,0.4);
+}
+.fp-side-tab.is-on {
+  background: linear-gradient(#f4eeda, #ddd3b8);
+  color: #1d3f8f;
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.35);
+}
