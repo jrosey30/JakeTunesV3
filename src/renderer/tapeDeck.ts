@@ -93,35 +93,48 @@ function engage(): void {
     const wow = ctx.createOscillator()
     wow.frequency.value = 0.5
     const wowDepth = ctx.createGain()
-    wowDepth.gain.value = 0.0006
+    wowDepth.gain.value = 0.0012
     wow.connect(wowDepth).connect(delay.delayTime)
     const flutter = ctx.createOscillator()
     flutter.frequency.value = 6.1
     const flutterDepth = ctx.createGain()
-    flutterDepth.gain.value = 0.00008
+    flutterDepth.gain.value = 0.0002
     flutter.connect(flutterDepth).connect(delay.delayTime)
     wow.start()
     flutter.start()
 
     // Cassette frequency shape: shave the digital sheen, soften the very
     // bottom, keep the mids honest.
+    // Soft tape saturation — rounds transients, unmistakably "tape".
+    const sat = ctx.createWaveShaper()
+    {
+      const n = 1024
+      const curve = new Float32Array(n)
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1
+        curve[i] = Math.tanh(2.2 * x) / Math.tanh(2.2)
+      }
+      sat.curve = curve
+      sat.oversample = '2x'
+    }
+
     const shelfHi = ctx.createBiquadFilter()
     shelfHi.type = 'highshelf'
-    shelfHi.frequency.value = 9000
-    shelfHi.gain.value = -3.5
+    shelfHi.frequency.value = 7200
+    shelfHi.gain.value = -7
     const lp = ctx.createBiquadFilter()
     lp.type = 'lowpass'
-    lp.frequency.value = 15500
+    lp.frequency.value = 13000
     lp.Q.value = 0.7
     const shelfLo = ctx.createBiquadFilter()
     shelfLo.type = 'lowshelf'
-    shelfLo.frequency.value = 55
-    shelfLo.gain.value = -1
+    shelfLo.frequency.value = 70
+    shelfLo.gain.value = -2
 
     // Tape glue — barely-there compression.
     const comp = ctx.createDynamicsCompressor()
-    comp.threshold.value = -20
-    comp.ratio.value = 1.5
+    comp.threshold.value = -22
+    comp.ratio.value = 2.4
     comp.knee.value = 24
     comp.attack.value = 0.01
     comp.release.value = 0.25
@@ -129,12 +142,13 @@ function engage(): void {
     master.disconnect()
     master.connect(input)
     input.connect(delay)
-    delay.connect(shelfHi)
+    delay.connect(sat)
+    sat.connect(shelfHi)
     shelfHi.connect(lp)
     lp.connect(shelfLo)
     shelfLo.connect(comp)
     comp.connect(ctx.destination)
-    outNodes = [delay, shelfHi, lp, shelfLo, comp, wow, flutter, wowDepth, flutterDepth]
+    outNodes = [delay, sat, shelfHi, lp, shelfLo, comp, wow, flutter, wowDepth, flutterDepth]
 
     // Hiss rides INTO the chain (it's on the tape, so it wows too).
     hissGain = ctx.createGain()
@@ -149,7 +163,7 @@ function engage(): void {
     // (pause = motor stopped = silence, like a real deck).
     hissWatch = window.setInterval(() => {
       const rolling = !!howler()?._howls?.some((h) => h.playing())
-      hissGain?.gain.setTargetAtTime(rolling ? 0.0022 : 0, ctx.currentTime, 0.08)
+      hissGain?.gain.setTargetAtTime(rolling ? 0.0055 : 0, ctx.currentTime, 0.08)
     }, 400)
 
     engaged = true

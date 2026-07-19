@@ -533,3 +533,5 @@
 /* side-wide tape scrubber in the pill */
 .scrubber-fill--tape { background: #5c4a32 !important; }
 .scrubber-track--locked { cursor: default; }
+.fp-counter--winding .fp-counter-digits { color: #f0d78a; text-shadow: 0 0 9px rgba(240, 210, 120, 0.6); }
+.fp-counter--winding .fp-counter-sub { color: #b09a50; animation: mic-blink 0.5s steps(2, start) infinite; }
