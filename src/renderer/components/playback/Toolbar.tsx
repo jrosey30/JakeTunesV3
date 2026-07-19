@@ -802,6 +802,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   function playSingleRadioSegment(seg: RadioSegment): Promise<void> {
     return new Promise((resolve) => {
       const caption = stripRadioAudioTags(seg.line)
+      // Tape-off-the-radio: the deck (if REC is down) tapes this DJ break.
+      window.dispatchEvent(new CustomEvent('jaketunes-radio-segment', { detail: { audioData: seg.audioData } }))
       const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
       const finish = () => {
         try { detachClipFromBroadcast(audio) } catch { /* ignore */ }

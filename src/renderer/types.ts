@@ -125,6 +125,8 @@ export interface Mixtape {
   startOffsets?: Record<string, number>
   createdAt: string
   inkColor?: string
+  // Season tape marker ('YYYY-MM') — Music Man's monthly auto-dub.
+  seasonal?: string
 }
 
 export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail'

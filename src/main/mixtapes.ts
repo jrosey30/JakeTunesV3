@@ -25,6 +25,7 @@ import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resource
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
 import { fitSide } from '../common/tape-physics'
 import { RADIO_CAST } from './cast'
+import { isSkitOrIntro } from './workout-sync.ts'
 
 const execP = promisify(execFile)
 
@@ -33,6 +34,9 @@ type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => 
 export interface MixtapesHost {
   claudeCall: ClaudeCall
   musicManCore: string
+  /** Season tapes: real listening data, supplied by index.ts. */
+  loadLibraryTracks?: () => Promise<Array<Record<string, unknown>>>
+  loadPlayEvents?: () => Promise<Array<{ id: number; ts: number }>>
 }
 
 export interface MixtapeLinerNote { id: number; note: string }
@@ -60,6 +64,8 @@ export interface Mixtape {
   createdAt: string
   /** J-card ink color the renderer drew the label with (stable per tape). */
   inkColor?: string
+  /** Season tape marker ('YYYY-MM') — auto-dubbed monthly, deduped by this. */
+  seasonal?: string
 }
 
 interface MixtapeInputTrack {
@@ -328,7 +334,89 @@ async function speechToSpeech(rawWebmPath: string, voiceId: string): Promise<str
   }
 }
 
+/**
+ * Season tapes — on the first days of each month, Music Man quietly dubs
+ * the HONEST tape of the month that just ended: the songs Jake actually
+ * played, ranked by real play events, sequenced by MM onto a C90 with
+ * liner notes. Lands on the shelf like any other tape. Skips thin months
+ * and never dubs the same month twice.
+ */
+const INKS_SEASON = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
+
+async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
+  if (!host.loadLibraryTracks || !host.loadPlayEvents) return
+  const now = new Date()
+  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const prevEnd = new Date(now.getFullYear(), now.getMonth(), 1)
+  const key = `${prevStart.getFullYear()}-${String(prevStart.getMonth() + 1).padStart(2, '0')}`
+  let all: Mixtape[]
+  try { all = await loadMixtapes() } catch { return } // torn store — never write
+  if (all.some((m) => m.seasonal === key)) return
+
+  const events = await host.loadPlayEvents()
+  const counts = new Map<number, number>()
+  for (const e of events) {
+    if (e.ts >= prevStart.getTime() && e.ts < prevEnd.getTime()) {
+      counts.set(e.id, (counts.get(e.id) || 0) + 1)
+    }
+  }
+  if (counts.size < 12) {
+    console.log(`[mixtapes] season ${key}: only ${counts.size} distinct plays — month too thin, no tape`)
+    return
+  }
+  const lib = await host.loadLibraryTracks()
+  const byId = new Map(lib.map((t) => [Number(t.id), t]))
+  const ranked = [...counts.entries()]
+    .sort((x, y) => y[1] - x[1])
+    .map(([id]) => byId.get(id))
+    .filter((t): t is Record<string, unknown> => !!t)
+    .map((t) => ({
+      id: Number(t.id), title: String(t.title || ''), artist: String(t.artist || ''),
+      album: String(t.album || ''), genre: String(t.genre || ''),
+      bpm: typeof t.bpm === 'number' ? t.bpm : null,
+      duration: typeof t.duration === 'number' ? t.duration : undefined,
+      playCount: typeof t.playCount === 'number' ? t.playCount : undefined,
+      rating: typeof t.rating === 'number' ? t.rating : undefined,
+    }))
+    .filter((t) => !isSkitOrIntro(t))
+    .slice(0, 30)
+  if (ranked.length < 12) return
+
+  const monthName = prevStart.toLocaleString('en-US', { month: 'long' })
+  const yy = String(prevStart.getFullYear()).slice(2)
+  const r = await buildMixtapeProposal(
+    host, ranked, 90,
+    `${monthName} ${prevStart.getFullYear()} — the month that actually happened`,
+    `This is the HONEST tape of ${monthName} ${prevStart.getFullYear()} — the songs Jake actually lived in, ranked by his real plays this month. Title it "${monthName} '${yy}" or riff very close. Sequence for MEMORY — how the month felt — not for a gym.`,
+  )
+  if (!r.ok) { console.warn('[mixtapes] season dub failed:', r.error); return }
+  const id = `mix-season-${key}`
+  const tape: Mixtape = {
+    id,
+    title: r.title,
+    commentary: r.commentary,
+    tapeLength: 90,
+    sideA: r.sideA,
+    sideB: r.sideB,
+    sideACutMs: r.sideACutMs,
+    sideBCutMs: r.sideBCutMs,
+    linerNotes: r.linerNotes,
+    createdAt: new Date().toISOString(),
+    inkColor: INKS_SEASON[prevStart.getMonth() % INKS_SEASON.length],
+    seasonal: key,
+  }
+  const cur = await loadMixtapes()
+  if (cur.some((m) => m.seasonal === key)) return // raced another writer
+  cur.unshift(tape)
+  await saveMixtapes(cur)
+  console.log(`[mixtapes] season tape dubbed: "${r.title}" (${key}) — ${r.sideA.length}+${r.sideB.length} songs`)
+}
+
 export function registerMixtapesIpc(host: MixtapesHost): void {
+  // Season tapes: check shortly after boot (let the app settle), then daily.
+  setTimeout(() => { void maybeDubSeasonTape(host).catch(() => {}) }, 90_000)
+  setInterval(() => { void maybeDubSeasonTape(host).catch(() => {}) }, 24 * 60 * 60 * 1000)
+
   ipcMain.handle('mixtape-voices', async () => {
     return { ok: true, voices: mixtapeVoiceRoster().map((v) => ({ id: v.id, name: v.name })) }
   })

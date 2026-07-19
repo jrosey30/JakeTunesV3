@@ -10670,6 +10670,13 @@ registerWorkoutSyncIpc({
 registerMixtapesIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
+  // Season tapes read the real listening record.
+  loadLibraryTracks: async () => {
+    const lib = (await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }
+    return Array.isArray(lib.tracks) ? lib.tracks : []
+  },
+  loadPlayEvents: async () =>
+    parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
 })
 
 // Music Man metadata scanner

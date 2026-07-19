@@ -9,8 +9,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
-import BlankTapeSheet from '../BlankTapeSheet'
-import MixtapeSheet from '../MixtapeSheet'
+import NewMixtapeSheet from '../NewMixtapeSheet'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
   home: <HomeIcon />,
@@ -258,7 +257,6 @@ export default function Sidebar() {
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const activeMixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const [showBlankTape, setShowBlankTape] = useState(false)
-  const [mixtapeFrom, setMixtapeFrom] = useState<Track[] | null>(null)
 
   useEffect(() => { void refreshMixtapes() }, [])
 
@@ -543,7 +541,7 @@ export default function Sidebar() {
             detail view routes via generic SET_VIEW. */}
         <SidebarSection title="MIXTAPES">
           <SidebarItem
-            label="Blank Tape…"
+            label="New Mixtape…"
             icon={<CassetteIcon />}
             selected={false}
             onClick={() => setShowBlankTape(true)}
@@ -644,24 +642,12 @@ export default function Sidebar() {
           items={[
             { label: 'Rename…', onClick: handleRenamePlaylist },
             { separator: true as const },
-            {
-              label: 'Music Man: make this a mixtape…',
-              onClick: () => {
-                const pl = state.playlists.find((x) => x.id === plCtxMenu.playlistId)
-                if (!pl) return
-                const byId = new Map(state.tracks.map((t) => [t.id, t]))
-                const tracks = (pl.trackIds || []).map((id) => byId.get(id)).filter((t): t is Track => !!t)
-                if (tracks.length >= 2) setMixtapeFrom(tracks)
-              },
-            },
-            { separator: true as const },
             { label: 'Delete Playlist', onClick: handleDeletePlaylist },
           ]}
           onClose={() => setPlCtxMenu(null)}
         />
       )}
-      {showBlankTape && <BlankTapeSheet onClose={() => setShowBlankTape(false)} />}
-      {mixtapeFrom && <MixtapeSheet tracks={mixtapeFrom} onClose={() => setMixtapeFrom(null)} />}
+      {showBlankTape && <NewMixtapeSheet onClose={() => setShowBlankTape(false)} />}
       {deleteConfirm && (
         <ConfirmDialog
           message={`Delete the playlist "${deleteConfirm.name}"?`}

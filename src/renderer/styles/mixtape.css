@@ -555,3 +555,40 @@
   transform: translateY(1px);
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.35);
 }
+
+/* ── the front door ── */
+.newmix-doors { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.newmix-door {
+  text-align: left;
+  border: 1px solid #c9bfa2;
+  background: #faf6ea;
+  border-radius: 6px;
+  padding: 12px 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.newmix-door:hover { background: #f2ecd9; border-color: #a89868; }
+.newmix-door-title {
+  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-size: 17px;
+  color: #1d3f8f;
+}
+.newmix-door-desc { font-size: 11.5px; color: #6b6045; line-height: 1.4; }
+.newmix-sources { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; max-height: 320px; overflow-y: auto; }
+.newmix-source {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  text-align: left;
+  border: 1px solid #ddd3b8;
+  background: #fffdf4;
+  border-radius: 4px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.newmix-source:hover { background: #f2ecd9; }
+.newmix-source-name { overflow-wrap: anywhere; }
+.newmix-source-count { color: #8a7f5e; font-size: 11px; margin-left: 8px; white-space: nowrap; }

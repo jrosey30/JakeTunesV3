@@ -228,6 +228,42 @@ export default function DeckBar() {
     return () => { cancelled = true }
   }, [micShouldRun, penMs, persist])
 
+  // ── Tape off the radio: while REC is down, WJLR's DJ breaks land on
+  // the tape as talkovers pinned right where the tape is — songs land
+  // via record-on-play, the DJ lands here. Taping off the air, 1996. ──
+  useEffect(() => {
+    const onRadioSegment = (e: Event) => {
+      const d = getDeckState()
+      if (!d?.recArmed) return
+      const audioData = (e as CustomEvent<{ audioData?: string }>).detail?.audioData
+      if (!audioData) return
+      const pin = { side: d.side, atMs: penMs() }
+      void (async () => {
+        try {
+          const bin = atob(audioData)
+          const buf = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
+          const r = await window.electronAPI.saveMixtapeIntro?.(buf.buffer)
+          const d2 = getDeckState()
+          if (r?.ok && r.path && d2) {
+            const fresh = getMixtapes().find((m) => m.id === d2.mixtapeId)
+            if (fresh) {
+              if (pin.side === 'A' && fresh.sideA.length === 0 && pin.atMs <= 500) {
+                await persist({ ...fresh, introPath: r.path })
+                flash('Taped the DJ off the air — opens the tape.')
+              } else {
+                await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: pin.side, atMs: pin.atMs, path: r.path }] })
+                flash(`Taped the DJ off the air at ${fmt(pin.atMs)}, Side ${pin.side}.`)
+              }
+            }
+          }
+        } catch (err) { console.warn('[deck] radio-segment tape failed:', err) }
+      })()
+    }
+    window.addEventListener('jaketunes-radio-segment', onRadioSegment)
+    return () => window.removeEventListener('jaketunes-radio-segment', onRadioSegment)
+  }, [penMs, persist])
+
   useEffect(() => () => { // unmount safety
     micStreamRef.current?.getTracks().forEach((t) => t.stop())
     if (micRecRef.current && micRecRef.current.state === 'recording') micRecRef.current.stop()

@@ -5,7 +5,6 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import MixtapeSheet from '../components/MixtapeSheet'
 import { getDeckState, layOnDeck } from '../mixtapes'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
@@ -75,7 +74,6 @@ export default function PlaylistView() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
-  const [mixtapeTracks, setMixtapeTracks] = useState<Track[] | null>(null)
   const [confirmAction, setConfirmAction] = useState<{ type: 'remove-tracks' | 'delete-playlist' | 'delete-tracks'; trackIds?: number[] } | null>(null)
   const [undoState, setUndoState] = useState<{ trackIds: number[]; atIndex: number; playlistId: string; message: string } | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
@@ -506,10 +504,6 @@ export default function PlaylistView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
-      ...(selected.length >= 2 ? [
-        { separator: true as const },
-        { label: `Make a Mixtape from ${selected.length} songs…`, onClick: () => setMixtapeTracks(selected) },
-      ] : []),
       ...(getDeckState() ? [
         {
           label: `Lay on the tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,
@@ -803,9 +797,6 @@ export default function PlaylistView() {
           })}
         </div>
       </div>
-      )}
-      {mixtapeTracks && (
-        <MixtapeSheet tracks={mixtapeTracks} onClose={() => setMixtapeTracks(null)} />
       )}
       {ctxMenu && (
         <ContextMenu
