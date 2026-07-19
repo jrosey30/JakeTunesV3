@@ -83,6 +83,7 @@ import {
   ejectOpticalMedia,
   audioHelperRelPath,
   convertAudio,
+  ensureFaststart,
   extensionForFormat,
   resolveImportFormat,
   type AudioFormat,
@@ -2818,6 +2819,7 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
       '-c:a', 'aac', '-b:a', `${targetKbps}k`,
       '-ar', '44100', '-ac', '2',
       '-map_metadata', '0',
+      '-movflags', '+faststart',
       tmp,
     ], { timeout: 600000 })
     await renameFS(tmp, cached)
@@ -5771,6 +5773,8 @@ async function importOneFile(
       destPath = join(destDir, fileName)
       try {
         await convertAudio(srcPath, destPath, chosenFmt, embedTags)
+        // Old iPods need moov-first; external pipelines often mux moov-last.
+        await ensureFaststart(destPath)
       } catch (convertErr) {
         console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
         finalExt = ext
@@ -14991,6 +14995,7 @@ app.whenReady().then(async () => {
           '-y', '-i', src, '-vn',
           '-c:a', 'aac', '-b:a', '256k',
           '-map_metadata', '0',
+          '-movflags', '+faststart',
           tmp,
         ], { timeout: 300000 })
         const { rename: renameFS } = await import('fs/promises')

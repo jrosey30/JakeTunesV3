@@ -419,6 +419,51 @@ export interface AudioTags {
  * here is logged but does not abort the rip — you'd rather have an
  * untagged file than no file.
  */
+/**
+ * iPod firmware needs the MP4 index (moov) BEFORE the audio data. ffmpeg
+ * muxes moov LAST by default, and files arriving from external pipelines
+ * (streamrip's own conversion, yt-dlp, etc.) often come that way — they
+ * play fine everywhere except 2004-era iPods, which skip them instantly
+ * (2026-07-19: 1,135 such files found in the library; "Veronica"/"WRTB"
+ * were Jake's first two). Lossless remux (-c copy) with +faststart when
+ * needed; no-op when the file is already well-ordered or not an mp4.
+ */
+export async function ensureFaststart(path: string): Promise<void> {
+  if (!/\.(m4a|mp4|m4b)$/i.test(path)) return
+  try {
+    const { open: openFile, rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
+    const fh = await openFile(path, 'r')
+    const order: string[] = []
+    try {
+      let pos = 0
+      const hdr = Buffer.alloc(16)
+      while (order.length < 8) {
+        const { bytesRead } = await fh.read(hdr, 0, 16, pos)
+        if (bytesRead < 8) break
+        let size = hdr.readUInt32BE(0)
+        const name = hdr.toString('latin1', 4, 8)
+        order.push(name)
+        if (size === 1) size = Number(hdr.readBigUInt64BE(8))
+        else if (size === 0) break
+        pos += size
+      }
+    } finally {
+      await fh.close()
+    }
+    const moov = order.indexOf('moov')
+    const mdat = order.indexOf('mdat')
+    if (moov < 0 || mdat < 0 || moov < mdat) return // fine as-is
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    const execP = promisify(execFile)
+    const tmp = path + '.faststart.m4a'
+    await execP('ffmpeg', ['-nostdin', '-y', '-i', path, '-map', '0', '-c', 'copy', '-movflags', '+faststart', tmp], { timeout: 120000, maxBuffer: 16 * 1024 * 1024 })
+    await renameFS(tmp, path).catch(async (err) => { await unlinkFS(tmp).catch(() => {}); throw err })
+  } catch (err) {
+    console.warn(`ensureFaststart: left ${path} as-is:`, err)
+  }
+}
+
 async function embedTags(path: string, tags: AudioTags): Promise<void> {
   const nonEmpty = Object.entries(tags).some(([, v]) => v !== undefined && v !== null && v !== '')
   if (!nonEmpty) return
