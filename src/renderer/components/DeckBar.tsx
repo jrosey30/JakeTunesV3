@@ -125,8 +125,34 @@ export default function DeckBar() {
   const sideIds = deck.side === 'A' ? tape.sideA : tape.sideB
   const sideCut = deck.side === 'A' ? tape.sideACutMs : tape.sideBCutMs
   const fit = fitSide(sideIds, durOf, budget)
-  const leftMs = sideCut !== undefined ? 0 : budget - fit.usedMs
   const rolling = deck.recArmed && pb.isPlaying
+
+  // The counter ROLLS (Jake: "why is it not counting down as soon as it
+  // starts recording"). While the tail song of a side is playing, tape
+  // remaining ticks down with the live playhead — landed math stays
+  // whole-song (that's the tape's truth), the display moves like the
+  // reel. Falls back to the static count between songs.
+  let dispSide: 'A' | 'B' = deck.side
+  let dispLeft = sideCut !== undefined ? 0 : budget - fit.usedMs
+  let cutCountdown = false
+  if (pb.isPlaying && nowId != null) {
+    for (const cfg of [
+      { label: 'A' as const, ids: tape.sideA, cut: tape.sideACutMs },
+      { label: 'B' as const, ids: tape.sideB, cut: tape.sideBCutMs },
+    ]) {
+      const idx = cfg.ids.indexOf(nowId)
+      if (idx < 0 || idx !== cfg.ids.length - 1) continue
+      let before = 0
+      for (let i = 0; i < idx; i++) before += durOf(cfg.ids[i]) || 210_000
+      const live = before + pb.position * 1000
+      if (live < budget) {
+        dispSide = cfg.label
+        dispLeft = budget - live
+        cutCountdown = cfg.cut !== undefined
+      }
+      break
+    }
+  }
 
   // Where the pen is on the tape right now: everything landed on this
   // side before the current song, plus how far the current song is in.
@@ -199,9 +225,12 @@ export default function DeckBar() {
         <span className="deckbar-status">
           {rolling ? '● RECORDING' : deck.recArmed ? 'REC DOWN — press play' : 'not recording'}
         </span>
-        <span className="deckbar-side">SIDE {deck.side} · {sideCut !== undefined || leftMs <= MIN_CUT_MS ? 'full' : `${fmt(leftMs)} left`}</span>
+        <span className="deckbar-side">SIDE {dispSide} · {dispLeft <= 0 ? 'full' : `${fmt(dispLeft)} left`}</span>
         {rolling && pb.nowPlaying && (
-          <span className="deckbar-nowrec">{String(pb.nowPlaying.title || '').slice(0, 34)} → tape</span>
+          <span className="deckbar-nowrec">
+            {String(pb.nowPlaying.title || '').slice(0, 34)} → tape
+            {cutCountdown ? ` — ends when the tape does (${fmt(dispLeft)})` : ''}
+          </span>
         )}
         {notice && <span className="deckbar-notice">{notice}</span>}
       </div>
