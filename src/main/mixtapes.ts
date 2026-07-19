@@ -82,17 +82,24 @@ const MAX_INPUT_SONGS = 150
 // SAME function the renderer's mixing deck uses for its live counter.
 
 async function loadMixtapes(): Promise<Mixtape[]> {
-  try {
-    const raw = await readFile(MIXTAPES_FILE(), 'utf-8')
-    const arr = JSON.parse(raw)
-    return Array.isArray(arr) ? arr : []
-  } catch {
-    return []
-  }
+  // Missing file = genuinely empty shelf. But an EXISTING file that
+  // fails to read/parse must THROW — returning [] here and then saving
+  // would silently wipe every tape (the torn-write landmine that has
+  // bitten library.json before). Callers that mutate handle the throw.
+  const { existsSync } = await import('fs')
+  if (!existsSync(MIXTAPES_FILE())) return []
+  const raw = await readFile(MIXTAPES_FILE(), 'utf-8')
+  const arr = JSON.parse(raw)
+  if (!Array.isArray(arr)) throw new Error('mixtapes.json is not an array — refusing to touch it')
+  return arr
 }
 
 async function saveMixtapes(all: Mixtape[]): Promise<void> {
-  await writeFile(MIXTAPES_FILE(), JSON.stringify(all, null, 2))
+  // Atomic: tmp + rename, so a killed write can never leave a torn file.
+  const tmp = MIXTAPES_FILE() + '.tmp'
+  await writeFile(tmp, JSON.stringify(all, null, 2))
+  const { rename } = await import('fs/promises')
+  await rename(tmp, MIXTAPES_FILE())
 }
 
 function fmtDur(ms: number): string {
@@ -327,8 +334,13 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
   })
 
   ipcMain.handle('mixtapes-list', async () => {
-    const mixtapes = await loadMixtapes()
-    return { ok: true, mixtapes }
+    try {
+      const mixtapes = await loadMixtapes()
+      return { ok: true, mixtapes }
+    } catch (err) {
+      console.error('[mixtapes] refusing to serve a possibly-torn store:', err)
+      return { ok: false, mixtapes: [] }
+    }
   })
 
   ipcMain.handle('build-mixtape', async (
