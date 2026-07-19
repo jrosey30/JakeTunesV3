@@ -13,7 +13,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeMic from '../components/MixtapeMic'
-import { getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes, pickInk } from '../mixtapes'
+import { getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession } from '../mixtapes'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -101,8 +101,19 @@ export default function MixtapeView() {
   const startQueueAt = useCallback((idx: number) => {
     stopIntro()
     const t = allTracks[idx]
-    if (t) playTrack(t, allTracks, idx, undefined, true)
-  }, [allTracks, playTrack, stopIntro])
+    if (!t || !tape) return
+    // TRUE tape physics: arm the cut points before the reels move. The
+    // Side A cut is the flip; the Side B cut is the end of the tape.
+    const cuts: Array<{ trackId: number; cutSec: number; thenStop: boolean }> = []
+    if (tape.sideACutMs && tape.sideA.length > 0) {
+      cuts.push({ trackId: tape.sideA[tape.sideA.length - 1], cutSec: tape.sideACutMs / 1000, thenStop: false })
+    }
+    if (tape.sideBCutMs && tape.sideB.length > 0) {
+      cuts.push({ trackId: tape.sideB[tape.sideB.length - 1], cutSec: tape.sideBCutMs / 1000, thenStop: true })
+    }
+    setTapeSession({ mixtapeId: tape.id, tapeTrackIds: allTracks.map((x) => x.id), cuts })
+    playTrack(t, allTracks, idx, undefined, true)
+  }, [allTracks, playTrack, stopIntro, tape])
 
   const playTape = useCallback(() => {
     if (allTracks.length === 0) return
@@ -132,22 +143,24 @@ export default function MixtapeView() {
   const durB = sideBTracks.reduce((s, t) => s + (t.duration || 0), 0)
   const sideBudget = (tape.tapeLength / 2) * 60_000
 
-  const renderSide = (label: 'A' | 'B', tracks: Track[], startIdx: number, dur: number) => (
+  const renderSide = (label: 'A' | 'B', tracks: Track[], startIdx: number, dur: number, cutMs?: number) => (
     <div className="jcard-side">
       <div className="jcard-side-head">
         <span className="jcard-side-label" style={{ color: ink }}>SIDE {label}</span>
-        <span className="jcard-side-time">{fmt(dur)} of {fmt(sideBudget)}</span>
+        <span className="jcard-side-time">{cutMs ? `full — ${fmt(sideBudget)}` : `${fmt(dur)} of ${fmt(sideBudget)}`}</span>
       </div>
       {tracks.map((t, i) => {
         const isNow = currentId === t.id
+        const isCut = !!cutMs && i === tracks.length - 1
         return (
           <div key={t.id} className={`jcard-row${isNow ? ' jcard-row--now' : ''}`}
             onDoubleClick={() => startQueueAt(startIdx + i)} title="Double-click to play from here">
             <span className="jcard-row-num">{i + 1}.</span>
             <span className="jcard-row-title">{t.title}</span>
             <span className="jcard-row-artist">{t.artist}</span>
-            <span className="jcard-row-time">{fmt(t.duration || 0)}</span>
+            <span className="jcard-row-time">{isCut ? fmt(cutMs!) : fmt(t.duration || 0)}</span>
             {notes.has(t.id) && <span className="jcard-row-note" style={{ color: ink }}>{notes.get(t.id)}</span>}
+            {isCut && <span className="jcard-row-note jcard-row-cut" style={{ color: ink }}>— tape runs out at {fmt(cutMs!)}. too bad.</span>}
           </div>
         )
       })}
@@ -182,8 +195,8 @@ export default function MixtapeView() {
       </div>
 
       <div className="jcard">
-        {renderSide('A', sideATracks, 0, durA)}
-        {renderSide('B', sideBTracks, sideATracks.length, durB)}
+        {renderSide('A', sideATracks, 0, durA, tape.sideACutMs)}
+        {renderSide('B', sideBTracks, sideATracks.length, durB, tape.sideBCutMs)}
       </div>
 
       {confirmDelete && (

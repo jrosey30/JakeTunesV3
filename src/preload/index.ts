@@ -517,7 +517,7 @@ const electronAPI = {
   }> => ipcRenderer.invoke('build-workout-sync-set', tracks, opts),
   listMixtapes: (): Promise<{ ok: boolean; mixtapes: unknown[] }> =>
     ipcRenderer.invoke('mixtapes-list'),
-  buildMixtape: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string): Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }> =>
+  buildMixtape: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string): Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; sideACutMs?: number; sideBCutMs?: number; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }> =>
     ipcRenderer.invoke('build-mixtape', tracks, tapeLength, dedication, note),
   saveMixtape: (tape: unknown): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('mixtape-save', tape),

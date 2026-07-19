@@ -192,3 +192,12 @@
 /* names never clip — wrap */
 .mixsheet-row-title { overflow-wrap: anywhere; }
 .mixsheet-row-artist { color: #7d7458; font-size: 11px; overflow-wrap: anywhere; text-align: right; max-width: 40%; }
+.mixtape-mic-device {
+  font-size: 11px;
+  max-width: 180px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  padding: 2px 4px;
+  color: #555;
+}

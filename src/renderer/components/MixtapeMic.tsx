@@ -16,12 +16,19 @@ interface Props {
 
 type MicState = 'idle' | 'recording' | 'processing' | 'ready' | 'error'
 
+interface MicDevice { deviceId: string; label: string }
+
 export default function MixtapeMic({ existingPath, onProcessed }: Props) {
   const [mic, setMic] = useState<MicState>(existingPath ? 'ready' : 'idle')
   const [path, setPath] = useState<string | null>(existingPath || null)
   const [error, setError] = useState('')
   const [previewing, setPreviewing] = useState(false)
   const [seconds, setSeconds] = useState(0)
+  // Any input works: the built-in Mac mic OR whatever Jake plugs in. The
+  // list refreshes live on devicechange, so plugging a real mic in while
+  // the sheet is open makes it appear. '' = system default.
+  const [devices, setDevices] = useState<MicDevice[]>([])
+  const [deviceId, setDeviceId] = useState<string>('')
   const recRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -40,10 +47,41 @@ export default function MixtapeMic({ existingPath, onProcessed }: Props) {
 
   useEffect(() => stopEverything, [])
 
+  useEffect(() => {
+    const list = async () => {
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices()
+        setDevices(all
+          .filter((d) => d.kind === 'audioinput')
+          .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${i + 1}` })))
+      } catch { /* enumeration blocked — default device still records */ }
+    }
+    void list()
+    navigator.mediaDevices.addEventListener('devicechange', list)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', list)
+  }, [])
+
   const startRecording = async () => {
     setError('')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // RAW capture — no macOS echo cancellation / noise suppression /
+      // auto gain. The 1979 chain is the only character the voice gets;
+      // a real mic plugged in comes through exactly as it sounds.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      })
+      // Labels are blank until the first grant — refresh now so the
+      // picker shows real device names ("MacBook Pro Microphone", "SM7B").
+      void navigator.mediaDevices.enumerateDevices().then((all) =>
+        setDevices(all
+          .filter((d) => d.kind === 'audioinput')
+          .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${i + 1}` })))
+      ).catch(() => {})
       streamRef.current = stream
       chunksRef.current = []
       const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' })
@@ -131,13 +169,27 @@ export default function MixtapeMic({ existingPath, onProcessed }: Props) {
           <button type="button" className="mixtape-mic-btn" onClick={preview}>
             {previewing ? '■ Stop' : '▶ Hear the tape'}
           </button>
-          <button type="button" className="mixtape-mic-btn mixtape-mic-btn--ghost" onClick={() => { discard(); void startRecording() }}>
-            Re-record
+          <button type="button" className="mixtape-mic-btn mixtape-mic-btn--ghost" onClick={() => { discard(); void startRecording() }}
+            title="No undo here — the old take is gone the moment you tape over it">
+            Tape over it
           </button>
           <button type="button" className="mixtape-mic-btn mixtape-mic-btn--ghost" onClick={discard}>
             Remove
           </button>
         </span>
+      )}
+      {devices.length > 1 && (mic === 'idle' || mic === 'ready') && (
+        <select
+          className="mixtape-mic-device"
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value)}
+          title="Which microphone records onto the tape"
+        >
+          <option value="">Default mic</option>
+          {devices.map((d) => (
+            <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
+          ))}
+        </select>
       )}
       {mic === 'error' && (
         <span className="mixtape-mic-status mixtape-mic-status--error">

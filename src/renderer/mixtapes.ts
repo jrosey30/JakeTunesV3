@@ -40,6 +40,24 @@ export async function refreshMixtapes(): Promise<Mixtape[]> {
   return cache
 }
 
+// ── Tape play session — TRUE tape physics enforcement ──────────────
+// Set when a tape starts playing; the always-mounted <TapeMonitor />
+// watches playback and, when the boundary song reaches the point where
+// the cassette runs out, cuts it off (advance = the flip to Side B,
+// stop = end of Side B). Cleared when playback leaves the tape.
+export interface TapeCut { trackId: number; cutSec: number; thenStop: boolean }
+export interface TapeSession { mixtapeId: string; tapeTrackIds: number[]; cuts: TapeCut[] }
+
+let tapeSession: TapeSession | null = null
+
+export function setTapeSession(s: TapeSession | null): void {
+  tapeSession = s
+  notify()
+}
+export function getTapeSession(): TapeSession | null {
+  return tapeSession
+}
+
 /** Stable per-tape ink color for the handwritten label. */
 const INKS = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 export function pickInk(seed: string): string {

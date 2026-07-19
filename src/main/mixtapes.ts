@@ -42,6 +42,10 @@ export interface Mixtape {
   tapeLength: 60 | 90 | 120
   sideA: number[]
   sideB: number[]
+  /** Tape ran out mid-song: ms into the LAST song of the side where the
+   *  cassette ends. Playback stops the song right there. */
+  sideACutMs?: number
+  sideBCutMs?: number
   linerNotes: MixtapeLinerNote[]
   introPath?: string
   createdAt: string
@@ -64,8 +68,11 @@ interface MixtapeInputTrack {
 const MIXTAPES_FILE = () => join(app.getPath('userData'), 'mixtapes.json')
 const INTROS_DIR = () => join(app.getPath('userData'), 'mixtape-intros')
 const MAX_INPUT_SONGS = 150
-// Real tapes had a little headroom past the printed length; allow 3%.
-const SIDE_SLACK = 1.03
+// TRUE tape limits (Jake: "absolutely true time limits... if i run out of
+// space, too bad"). No slack. A side that runs out mid-song CUTS the song
+// off right there — playback enforces the cut, the J-card marks it.
+// Under this remaining-tape floor we don't bother starting another song.
+const MIN_CUT_MS = 20_000
 
 async function loadMixtapes(): Promise<Mixtape[]> {
   try {
@@ -96,17 +103,29 @@ function extractJson(text: string): Record<string, unknown> | null {
   }
 }
 
+export interface TapeSides {
+  sideA: number[]
+  sideB: number[]
+  /** When set, the LAST song of that side gets cut off this many ms in —
+   *  the tape ran out. Playback stops the song right there. */
+  sideACutMs?: number
+  sideBCutMs?: number
+}
+
 /**
  * Enforce the physics of the tape regardless of what the model said:
- * only known ids, no dupes across sides, each side fits its budget
- * (trim from the end — the deep cuts fall off, like real life).
+ * only known ids, no dupes across sides, and ABSOLUTELY TRUE side
+ * lengths. The song that crosses the end of the side is kept and CUT
+ * at the boundary (if at least MIN_CUT_MS of tape remains) — exactly
+ * like a real cassette running out mid-chorus. Everything after it on
+ * that side falls off.
  */
 function enforceTape(
   rawA: unknown,
   rawB: unknown,
   byId: Map<number, MixtapeInputTrack>,
   sideBudgetMs: number,
-): { sideA: number[]; sideB: number[] } {
+): TapeSides {
   const seen = new Set<number>()
   const clean = (raw: unknown): number[] => {
     if (!Array.isArray(raw)) return []
@@ -119,36 +138,45 @@ function enforceTape(
     }
     return out
   }
-  const fit = (ids: number[]): number[] => {
+  const fit = (ids: number[]): { ids: number[]; cutMs?: number } => {
     let total = 0
     const out: number[] = []
     for (const id of ids) {
       const dur = Number(byId.get(id)?.duration) || 210_000 // unknown ≈ 3:30
-      if (total + dur > sideBudgetMs * SIDE_SLACK) continue
-      total += dur
-      out.push(id)
+      if (total + dur <= sideBudgetMs) {
+        total += dur
+        out.push(id)
+        continue
+      }
+      // This song crosses the end of the tape.
+      const remaining = sideBudgetMs - total
+      if (remaining >= MIN_CUT_MS) {
+        out.push(id)
+        return { ids: out, cutMs: remaining }
+      }
+      return { ids: out }
     }
-    return out
+    return { ids: out }
   }
-  return { sideA: fit(clean(rawA)), sideB: fit(clean(rawB)) }
+  const a = fit(clean(rawA))
+  const b = fit(clean(rawB))
+  return { sideA: a.ids, sideB: b.ids, sideACutMs: a.cutMs, sideBCutMs: b.cutMs }
 }
 
 /** Deterministic fallback when the model reply is unusable: keep the
- *  given order, fill Side A then Side B. */
+ *  given order, fill Side A then Side B — same true-limit physics. */
 function fallbackTape(
   tracks: MixtapeInputTrack[],
   sideBudgetMs: number,
-): { sideA: number[]; sideB: number[] } {
-  const sideA: number[] = []
-  const sideB: number[] = []
-  let a = 0
-  let b = 0
-  for (const t of tracks) {
-    const dur = Number(t.duration) || 210_000
-    if (a + dur <= sideBudgetMs * SIDE_SLACK) { sideA.push(t.id); a += dur }
-    else if (b + dur <= sideBudgetMs * SIDE_SLACK) { sideB.push(t.id); b += dur }
-  }
-  return { sideA, sideB }
+): TapeSides {
+  return enforceTape(
+    tracks.map((t) => t.id),
+    // Side B gets whatever Side A's fit() didn't consume — enforceTape's
+    // seen-set dedupe makes passing the full list here safe.
+    tracks.map((t) => t.id),
+    new Map(tracks.map((t) => [Number(t.id), t])),
+    sideBudgetMs,
+  )
 }
 
 async function buildMixtapeProposal(
@@ -163,6 +191,8 @@ async function buildMixtapeProposal(
   commentary: string
   sideA: number[]
   sideB: number[]
+  sideACutMs?: number
+  sideBCutMs?: number
   linerNotes: MixtapeLinerNote[]
   leftovers: number[]
   sideBudgetMs: number
@@ -181,7 +211,7 @@ async function buildMixtapeProposal(
   ).join('\n')
 
   const user = [
-    `Make a REAL cassette mixtape from these songs. This is a C${tapeLength}: two sides, ${tapeLength / 2}:00 minutes each. Physics are non-negotiable — each side's songs must fit its length.`,
+    `Make a REAL cassette mixtape from these songs. This is a C${tapeLength}: two sides, EXACTLY ${tapeLength / 2}:00 each. TRUE tape physics: when a side runs out, it runs out — if the last song runs past the end it gets CUT OFF mid-song, just like 1985. You may use that deliberately (a song swallowed by the leader is its own kind of ending) or land the side clean. No slack, no mercy.`,
     '',
     `Songs (id | title | artist | album | genre | bpm | length):`,
     list,
@@ -189,7 +219,7 @@ async function buildMixtapeProposal(
     dedication ? `The tape is dedicated: "${dedication}" — let that shape the mood and the title.` : '',
     note ? `Maker's note: ${note}` : '',
     '',
-    'Sequence for FLOW like someone who has made a hundred tapes: Side A opens with a grabber and closes on a high; Side B can dig deeper and the last song is the goodbye. Energy and key changes should feel intentional. If not everything fits, cut songs — the best TAPE wins, not the most songs.',
+    'Sequence for FLOW like someone who has made a hundred tapes: Side A opens with a grabber and closes on a high; Side B can dig deeper and the last song is the goodbye. Energy and key changes should feel intentional. If not everything fits, leave songs off — the best TAPE wins, not the most songs.',
     'Use ONLY the ids above.',
     '',
     'Return ONLY JSON:',
@@ -198,7 +228,7 @@ async function buildMixtapeProposal(
 
   let title = ''
   let commentary = ''
-  let sides: { sideA: number[]; sideB: number[] } | null = null
+  let sides: TapeSides | null = null
   let linerNotes: MixtapeLinerNote[] = []
   try {
     const reply = await host.claudeCall('mixtape-build', {

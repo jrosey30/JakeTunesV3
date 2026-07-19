@@ -111,6 +111,10 @@ export interface Mixtape {
   tapeLength: 60 | 90 | 120
   sideA: number[]
   sideB: number[]
+  // Tape ran out mid-song: ms into the LAST song of that side where the
+  // cassette ends. Playback stops the song right there (TapeMonitor).
+  sideACutMs?: number
+  sideBCutMs?: number
   linerNotes: Array<{ id: number; note: string }>
   introPath?: string
   createdAt: string
@@ -757,7 +761,7 @@ declare global {
         error?: string
       }>
       listMixtapes?: () => Promise<{ ok: boolean; mixtapes: Mixtape[] }>
-      buildMixtape?: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }>
+      buildMixtape?: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; sideACutMs?: number; sideBCutMs?: number; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }>
       saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
       deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
       saveMixtapeIntro?: (data: ArrayBuffer) => Promise<{ ok: boolean; path?: string; error?: string }>

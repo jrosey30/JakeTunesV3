@@ -45,6 +45,8 @@ export default function MixtapeSheet({ tracks, onClose }: Props) {
     commentary: string
     sideA: number[]
     sideB: number[]
+    sideACutMs?: number
+    sideBCutMs?: number
     linerNotes: Array<{ id: number; note: string }>
     leftovers: number[]
   } | null>(null)
@@ -72,6 +74,8 @@ export default function MixtapeSheet({ tracks, onClose }: Props) {
         commentary: r.commentary || '',
         sideA: r.sideA,
         sideB: r.sideB || [],
+        sideACutMs: r.sideACutMs,
+        sideBCutMs: r.sideBCutMs,
         linerNotes: r.linerNotes || [],
         leftovers: r.leftovers || [],
       })
@@ -93,6 +97,8 @@ export default function MixtapeSheet({ tracks, onClose }: Props) {
       tapeLength,
       sideA: proposal.sideA,
       sideB: proposal.sideB,
+      sideACutMs: proposal.sideACutMs,
+      sideBCutMs: proposal.sideBCutMs,
       linerNotes: proposal.linerNotes,
       introPath: introPath || undefined,
       createdAt: new Date().toISOString(),
@@ -109,17 +115,18 @@ export default function MixtapeSheet({ tracks, onClose }: Props) {
     onClose()
   }
 
-  const sideList = (label: 'A' | 'B', ids: number[]) => {
+  const sideList = (label: 'A' | 'B', ids: number[], cutMs?: number) => {
     const dur = ids.reduce((s, tid) => s + (byId.get(tid)?.duration || 0), 0)
     return (
       <div className="mixsheet-side">
-        <div className="mixsheet-side-head">SIDE {label} <span>{fmt(dur)}</span></div>
+        <div className="mixsheet-side-head">SIDE {label} <span>{cutMs ? 'full' : fmt(dur)}</span></div>
         {ids.map((tid, i) => {
           const t = byId.get(tid)
+          const isCut = !!cutMs && i === ids.length - 1
           return (
             <div key={tid} className="mixsheet-row">
               <span className="mixsheet-row-num">{i + 1}.</span>
-              <span className="mixsheet-row-title">{t?.title || `#${tid}`}</span>
+              <span className="mixsheet-row-title">{t?.title || `#${tid}`}{isCut ? ` — cuts off at ${fmt(cutMs!)}` : ''}</span>
               <span className="mixsheet-row-artist">{t?.artist || ''}</span>
             </div>
           )
@@ -136,7 +143,7 @@ export default function MixtapeSheet({ tracks, onClose }: Props) {
             <div className="activity-sheet-head">
               <h2 className="activity-sheet-title">Make a mixtape</h2>
               <p className="activity-sheet-sub">
-                {tracks.length} songs · {fmt(totalMs)} of music. Music Man sequences the two sides so they FIT the tape — if it's too much, the best tape wins and the rest stays off.
+                {tracks.length} songs · {fmt(totalMs)} of music. Music Man sequences the two sides against TRUE tape time — when a side runs out, the song cuts off right there, like 1985. No undo. You can always tape over it.
               </p>
             </div>
             <div className="activity-q">
@@ -196,8 +203,8 @@ export default function MixtapeSheet({ tracks, onClose }: Props) {
               )}
             </div>
             <div className="mixsheet-sides">
-              {sideList('A', proposal.sideA)}
-              {sideList('B', proposal.sideB)}
+              {sideList('A', proposal.sideA, proposal.sideACutMs)}
+              {sideList('B', proposal.sideB, proposal.sideBCutMs)}
             </div>
             {error && <div className="mixsheet-error">{error}</div>}
             <div className="activity-sheet-actions">
