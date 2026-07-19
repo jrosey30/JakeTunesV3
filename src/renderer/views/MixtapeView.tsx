@@ -14,6 +14,7 @@ import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek } from '../mixtapes'
+import { startWindSound, stopWindSound } from '../tapeDeck'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -105,6 +106,18 @@ export default function MixtapeView() {
   const sideBTracks = useMemo(() => (tape?.sideB || []).map((id) => byId.get(id)).filter((t): t is Track => !!t), [tape, byId])
   const allTracks = useMemo(() => [...sideATracks, ...sideBTracks], [sideATracks, sideBTracks])
   const notes = useMemo(() => new Map((tape?.linerNotes || []).map((n) => [n.id, n.note])), [tape])
+
+  // SPOOL WIND — holding FF/REW winds the tape for real: the head lifts
+  // (playback pauses), the spools accelerate 8x→32x, the deck squeals,
+  // and the counter races. Release and playback drops in wherever the
+  // ribbon landed — mid-song, next song, wherever. One ribbon.
+  const [winding, setWinding] = useState<null | { dir: 1 | -1; side: 'A' | 'B'; usedMs: number }>(null)
+  const windTimer = useRef<number | null>(null)
+  const windMeta = useRef<{ wasPlaying: boolean; startedAt: number }>({ wasPlaying: false, startedAt: 0 })
+  // Leaving the view mid-wind: kill the motor (mirrors start, house rule).
+  useEffect(() => () => {
+    if (windTimer.current != null) { clearInterval(windTimer.current); windTimer.current = null; stopWindSound() }
+  }, [])
 
   const stopIntro = useCallback(() => {
     if (introRef.current) { introRef.current.pause(); introRef.current = null }
@@ -208,8 +221,7 @@ export default function MixtapeView() {
         const isNow = currentId === t.id
         const isCut = !!cutMs && i === tracks.length - 1
         return (
-          <div key={t.id} className={`jcard-row${isNow ? ' jcard-row--now' : ''}`}
-            onDoubleClick={() => startQueueAt(startIdx + i)} title="Double-click to play from here">
+          <div key={t.id} className={`jcard-row${isNow ? ' jcard-row--now' : ''}`}>
             <span className="jcard-row-num">{i + 1}.</span>
             <span className="jcard-row-title">{t.title}</span>
             <span className="jcard-row-artist">{t.artist}</span>

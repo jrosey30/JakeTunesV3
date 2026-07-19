@@ -17,6 +17,10 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import { getTapeSession, setTapeSession, getMixtapes, getPendingTapeSeek, setPendingTapeSeek, subscribeMixtapes } from '../mixtapes'
+import { initTapeDeck } from '../tapeDeck'
+
+// Cassette voicing rides the same session lifecycle this monitor enforces.
+initTapeDeck()
 
 export default function TapeMonitor() {
   const { state: lib } = useLibrary()
