@@ -79,6 +79,10 @@ export default function MixtapeView() {
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [remixing, setRemixing] = useState(false)
+  const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([])
+  useEffect(() => {
+    window.electronAPI.listMixtapeVoices?.().then((r) => { if (r?.ok) setVoices(r.voices) }).catch(() => {})
+  }, [])
   const [dubbing, setDubbing] = useState(false)
   const [dubNotice, setDubNotice] = useState('')
   const mountRef = useRef<string>('')
@@ -234,7 +238,7 @@ export default function MixtapeView() {
             const armed = loaded && !!deckState?.recArmed
             const micOn = loaded && !!deckState?.micOn
             const resumeSide: 'A' | 'B' = tape.sideACutMs !== undefined ? 'B' : 'A'
-            const load = (over: { recArmed?: boolean; micOn?: boolean }) => {
+            const load = (over: { recArmed?: boolean; micOn?: boolean; micVoiceId?: string }) => {
               const cur = getDeckState()
               if (cur?.mixtapeId === tape.id) setDeckState({ ...cur, ...over })
               else setDeckState({ mixtapeId: tape.id, side: resumeSide, recArmed: false, micOn: false, ...over })
@@ -295,6 +299,19 @@ export default function MixtapeView() {
                     title="EJECT — take the tape out of the deck">
                     <span className="fp-shape fp-shape--eject" /><span className="fp-label">EJECT</span>
                   </button>
+                </div>
+                <div className="fp-voicerow">
+                  <span className="fp-voicerow-label">MIC VOICE</span>
+                  <select
+                    className="fp-voice-select"
+                    value={(loaded && deckState?.micVoiceId) || 'me'}
+                    onChange={(e) => load({ micVoiceId: e.target.value })}
+                    title="Whose voice goes on the tape — yours, or anyone from the station (your take, their voice)"
+                  >
+                    {(voices.length ? voices : [{ id: 'me', name: 'My voice' }]).map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className={`fp-status${rolling ? ' fp-status--recording' : armed ? ' fp-status--armed' : ''}`}>
                   {rolling ? `● RECORDING — ${String(pb.nowPlaying?.title || '').slice(0, 30)} → tape${micOn ? ' · MIC LIVE' : ''}`

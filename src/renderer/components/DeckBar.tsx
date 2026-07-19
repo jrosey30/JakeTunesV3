@@ -191,7 +191,7 @@ export default function DeckBar() {
               const blob = new Blob(micChunksRef.current, { type: 'audio/webm' })
               if (blob.size < 2000) return // a blip, not a take
               const buf = await blob.arrayBuffer()
-              const r = await window.electronAPI.saveMixtapeIntro?.(buf)
+              const r = await window.electronAPI.saveMixtapeIntro?.(buf, getDeckState()?.micVoiceId)
               const pin = micPinRef.current
               const d2 = getDeckState()
               if (r?.ok && r.path && pin && d2) {

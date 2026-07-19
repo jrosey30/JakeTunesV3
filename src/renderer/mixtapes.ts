@@ -69,6 +69,9 @@ export interface DeckState {
   /** MIC switch: on = mic is live/ready; it only records onto the tape
    *  while REC is also down (Jake's rule). */
   micOn?: boolean
+  /** Voice changer for talkovers: 'me' (default) = Jake's own voice;
+   *  otherwise a station cast id — ElevenLabs STS re-renders the take. */
+  micVoiceId?: string
 }
 
 let deckState: DeckState | null = null

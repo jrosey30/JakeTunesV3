@@ -24,6 +24,7 @@ import { promisify } from 'util'
 import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
 import { fitSide } from '../common/tape-physics'
+import { RADIO_CAST } from './cast'
 
 const execP = promisify(execFile)
 
@@ -278,7 +279,53 @@ async function process1979(rawPath: string, outPath: string): Promise<void> {
   ], { timeout: 30_000 })
 }
 
+/**
+ * Voice changer for talkovers (Jake: "ANY VOICE WE HAVE") — ElevenLabs
+ * speech-to-speech re-renders HIS take (timing, attitude, emphasis) in a
+ * station voice; the 1979 chain runs after, so it still sounds like it
+ * went to tape. 'me' (default) skips the swap entirely.
+ */
+function mixtapeVoiceRoster(): Array<{ id: string; name: string; voiceId?: string }> {
+  const mmVoice = process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR'
+  return [
+    { id: 'me', name: 'My voice' },
+    ...RADIO_CAST.map((m) => ({
+      id: m.id,
+      name: m.name,
+      voiceId: m.voiceId || (m.id === 'mm' ? mmVoice : undefined),
+    })).filter((m) => !!m.voiceId),
+  ]
+}
+
+async function speechToSpeech(rawWebmPath: string, voiceId: string): Promise<string> {
+  // ElevenLabs STS wants a clean audio file; decode the MediaRecorder
+  // webm to wav first (also normalizes weird opus headers).
+  const wav = rawWebmPath + '.wav'
+  await execP('ffmpeg', ['-nostdin', '-y', '-i', rawWebmPath, '-ar', '44100', '-ac', '1', wav], { timeout: 60_000 })
+  try {
+    const bytes = await readFile(wav)
+    const form = new FormData()
+    form.append('audio', new Blob([new Uint8Array(bytes)], { type: 'audio/wav' }), 'take.wav')
+    form.append('model_id', 'eleven_multilingual_sts_v2')
+    const res = await fetch(`https://api.elevenlabs.io/v1/speech-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY || '' },
+      body: form,
+    })
+    if (!res.ok) throw new Error(`elevenlabs sts ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const out = rawWebmPath + '.sts.mp3'
+    await writeFile(out, new Uint8Array(await res.arrayBuffer()))
+    return out
+  } finally {
+    await unlink(wav).catch(() => {})
+  }
+}
+
 export function registerMixtapesIpc(host: MixtapesHost): void {
+  ipcMain.handle('mixtape-voices', async () => {
+    return { ok: true, voices: mixtapeVoiceRoster().map((v) => ({ id: v.id, name: v.name })) }
+  })
+
   ipcMain.handle('mixtapes-list', async () => {
     const mixtapes = await loadMixtapes()
     return { ok: true, mixtapes }
@@ -433,23 +480,35 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
   // Raw mic capture in → 1979 cassette voice out. Returns the processed
   // path; the renderer previews it via ipod-audio:// and attaches it to
   // the tape with mixtape-save.
-  ipcMain.handle('save-mixtape-intro', async (_e, data: ArrayBuffer | Uint8Array) => {
+  ipcMain.handle('save-mixtape-intro', async (_e, data: ArrayBuffer | Uint8Array, voiceId?: string) => {
     const stamp = Date.now()
     const dir = INTROS_DIR()
     const rawPath = join(dir, `raw-${stamp}.webm`)
+    let stsPath: string | null = null
     try {
       await mkdir(dir, { recursive: true })
       const buf = data instanceof Uint8Array ? data : new Uint8Array(data)
       if (buf.byteLength < 1000) return { ok: false, error: 'Recording too short — try again.' }
       await writeFile(rawPath, buf)
+      // Voice changer: swap Jake's take into a station voice BEFORE the
+      // tape treatment, so the character still goes through 1979.
+      let sourcePath = rawPath
+      if (voiceId && voiceId !== 'me') {
+        const v = mixtapeVoiceRoster().find((x) => x.id === voiceId)
+        if (v?.voiceId) {
+          stsPath = await speechToSpeech(rawPath, v.voiceId)
+          sourcePath = stsPath
+        }
+      }
       const outPath = join(dir, `intro-${stamp}.m4a`)
-      await process1979(rawPath, outPath)
+      await process1979(sourcePath, outPath)
       return { ok: true, path: outPath }
     } catch (err) {
       console.warn('[mixtapes] intro processing failed:', err)
       return { ok: false, error: err instanceof Error ? err.message : 'intro processing failed' }
     } finally {
       await unlink(rawPath).catch(() => {})
+      if (stsPath) await unlink(stsPath).catch(() => {})
     }
   })
 }

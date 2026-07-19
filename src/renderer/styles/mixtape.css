@@ -506,3 +506,15 @@
 }
 .fp-counter-sub { font-size: 8px; letter-spacing: 1px; color: #7a8a5a; text-transform: uppercase; }
 .fp-counter--rolling .fp-counter-digits { color: #e8f7c0; text-shadow: 0 0 9px rgba(200, 240, 140, 0.6); }
+
+/* mic voice selector */
+.fp-voicerow { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
+.fp-voicerow-label { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; color: #999; }
+.fp-voice-select {
+  font-size: 11.5px;
+  border: 1px solid #b5b5b5;
+  border-radius: 4px;
+  background: linear-gradient(#fdfdfd, #ececec);
+  padding: 2px 6px;
+  max-width: 180px;
+}
