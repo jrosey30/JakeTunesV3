@@ -351,10 +351,18 @@ export default function MixtapeView() {
                     <span className="fp-counter-digits">
                       {winding
                         ? fmt(Math.max(0, sideBudget - winding.usedMs))
-                        : counter.leftMs <= 0 ? 'FULL' : fmt(counter.leftMs)}
+                        : armed
+                          ? (counter.leftMs <= 0 ? 'FULL' : fmt(counter.leftMs))
+                          : pb.isPlaying && currentOnTape
+                            ? fmt(displayLeft)
+                            : fmt(counter.contentMs)}
                     </span>
                     <span className="fp-counter-sub">
-                      {winding ? (winding.dir > 0 ? '›› winding' : '‹‹ winding') : counter.leftMs <= 0 ? 'tape over it' : 'left'}
+                      {winding
+                        ? (winding.dir > 0 ? '›› winding' : '‹‹ winding')
+                        : armed
+                          ? (counter.leftMs <= 0 ? 'tape over it' : 'tape left')
+                          : pb.isPlaying && currentOnTape ? 'left' : 'of music'}
                     </span>
                   </div>
                   <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => load({ recArmed: !armed })}
