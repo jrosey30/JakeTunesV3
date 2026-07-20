@@ -18,6 +18,7 @@ import {
 import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
+import { computeImportCredits } from './friend-imports-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
@@ -1089,7 +1090,14 @@ function normArtistKey(sname: string): string {
 // ── Listen to the List v2: friends ledger + capture-anything resolver ──
 ipcMain.handle('get-friends', async () => {
   const f = await friendsCache.get()
-  return { ok: true, friends: Object.values(f).sort((a, b) => b.adds - a.adds) }
+  // Rank by what Jake actually IMPORTED (2026-07-19: "just because they
+  // send me a song doesnt mean ill like it"), then hit-rate, then volume.
+  const friends = Object.values(f).map((x) => ({ ...x, imported: x.imported || 0 }))
+  friends.sort((a, b) =>
+    b.imported - a.imported ||
+    (b.got / Math.max(1, b.got + b.tossed)) - (a.got / Math.max(1, a.got + a.tossed)) ||
+    b.adds - a.adds)
+  return { ok: true, friends }
 })
 ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
   const key = String(name || '').trim().toLowerCase()
@@ -3072,7 +3080,7 @@ const discoveryFeedbackCache = new JsonFileCache<DiscoveryFeedback>(
 // Friends ledger — who sends Jake music and how reliable they are. Updated on
 // list adds ('add'), downloads that land ('got'), and tosses ('tossed');
 // the Scouts strip in Listen to the List ranks by hit rate.
-interface FriendEntry { name: string; adds: number; got: number; tossed: number; lastAt: number }
+interface FriendEntry { name: string; adds: number; got: number; tossed: number; lastAt: number; imported?: number }
 const friendsCache = new JsonFileCache<Record<string, FriendEntry>>(
   () => join(STATE_DIR, 'friends.json'),
   () => ({}),
@@ -12456,6 +12464,46 @@ startImessageCapture({
   stateFile: join(app.getPath('userData'), 'imessage-capture.json'),
   addRecommendation: (input) => addRecommendationCore(input),
 })
+
+// ── Friend import credit (2026-07-19): the Scouts ledger's `imported`
+// counter — a friend earns it only when their reco's song is ACTUALLY in
+// the library, arrived after they sent it. Logic in friend-imports-core.ts
+// (pure, tested); one credit per reco ever (ledger below). ──
+const importCreditCache = new JsonFileCache<{ credited: string[] }>(
+  () => join(STATE_DIR, 'reco-import-credit.json'),
+  () => ({ credited: [] }),
+  'reco-import-credit',
+)
+async function sweepFriendImports(): Promise<number> {
+  try {
+    const recos = await readRecommendationsFile()
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; dateAdded?: string }> }
+    const credited = new Set((await importCreditCache.get()).credited)
+    const credits = computeImportCredits(recos, lib.tracks || [], credited)
+    if (credits.length === 0) return 0
+    await friendsCache.update((cur) => {
+      for (const c of credits) {
+        const key = c.friend.trim().toLowerCase()
+        const f = cur[key] || { name: c.friend.trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
+        f.imported = (f.imported || 0) + 1
+        cur[key] = f
+      }
+      return cur
+    })
+    await importCreditCache.update((cur) => {
+      cur.credited = [...new Set([...cur.credited, ...credits.map((c) => c.recoId)])]
+      return cur
+    })
+    for (const c of credits) console.log(`[scouts] import credit → ${c.friend} (reco ${c.recoId})`)
+    return credits.length
+  } catch (err) {
+    console.warn('[scouts] import sweep failed:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+ipcMain.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }))
+setTimeout(() => { void sweepFriendImports() }, 30_000)
+setInterval(() => { void sweepFriendImports() }, 5 * 60_000)
 
 ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
   // Identity-wide delete: removing a song removes EVERY copy of it (the list

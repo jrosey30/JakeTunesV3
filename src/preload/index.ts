@@ -232,7 +232,8 @@ const electronAPI = {
   // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
   getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
   discoveryNotForMe: (artist: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('discovery-not-for-me', artist),
-  getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number }> }> => ipcRenderer.invoke('get-friends'),
+  getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }> => ipcRenderer.invoke('get-friends'),
+  sweepFriendImports: (): Promise<{ ok: boolean; credited: number }> => ipcRenderer.invoke('sweep-friend-imports'),
   friendEvent: (name: string, ev: 'add' | 'got' | 'tossed'): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-event', name, ev),
   captureResolveLink: (url: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => ipcRenderer.invoke('capture-resolve-link', url),
   getContacts: (): Promise<{ ok: boolean; names: string[] }> => ipcRenderer.invoke('get-contacts'),

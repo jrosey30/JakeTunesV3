@@ -35,7 +35,7 @@ import {
 } from '../listen-to-the-list/ltlDownload'
 import '../styles/listen-to-the-list.css'
 
-interface Friend { name: string; adds: number; got: number; tossed: number; lastAt: number }
+interface Friend { name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }
 
 /** Who sent this rec, parsed back out of the synced note ("… · from Ben · …"). */
 function friendOf(rec: Recommendation): string | null {
@@ -261,16 +261,19 @@ export default function ListenToTheListView() {
           {scouts.map((f) => {
             const verdicts = f.got + f.tossed
             const rate = verdicts > 0 ? Math.round((f.got / verdicts) * 100) : null
+            // The stat that matters: songs of theirs Jake actually IMPORTED
+            // ("just because they send me a song doesnt mean ill like it").
+            const stat = f.imported > 0 ? `${f.imported} ♪` : rate != null ? `${rate}%` : `${f.adds}`
             return (
               <button
                 type="button"
                 key={f.name}
                 className="ltl-scout"
-                title={`${f.adds} sent · ${f.got} got · ${f.tossed} tossed`}
+                title={`${f.adds} sent · ${f.imported} imported to library · ${f.got} got · ${f.tossed} tossed`}
                 onClick={() => setFrom(f.name)}
               >
                 {f.name}
-                <span className="ltl-scout-stat">{rate != null ? `${rate}%` : `${f.adds}`}</span>
+                <span className="ltl-scout-stat">{stat}</span>
               </button>
             )
           })}
