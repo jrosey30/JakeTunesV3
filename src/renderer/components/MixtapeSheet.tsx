@@ -183,12 +183,13 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
           return (
             <div key={tid} className={`mixsheet-row${isDead ? ' mixsheet-row--dead' : ''}`}>
               <span className="mixsheet-row-num">{i + 1}.</span>
-              <span className="mixsheet-row-title">
-                {t?.title || `#${tid}`}
+              <span className="mixsheet-row-text">
+                <span className="mixsheet-row-title">{t?.title || `#${tid}`}</span>
+                {t?.artist ? <span className="mixsheet-row-artist">{t.artist}</span> : null}
                 {isCut ? <em className="mixsheet-cut-note"> — cuts off at {fmt(fit.cutMs!)}</em> : null}
                 {isDead ? <em className="mixsheet-cut-note"> — didn't record</em> : null}
               </span>
-              <span className="mixsheet-row-artist">{t?.artist || ''}</span>
+              <span className="mixsheet-row-time">{t?.duration ? fmt(t.duration) : ''}</span>
               <span className="mixsheet-row-tools">
                 <button type="button" title="Nudge up" onClick={() => move(label, i, -1)}>↑</button>
                 <button type="button" title="Nudge down" onClick={() => move(label, i, 1)}>↓</button>

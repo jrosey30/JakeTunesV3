@@ -158,7 +158,7 @@
 }
 
 /* ── creation sheet ── */
-.mixsheet { width: 540px; max-height: 84vh; overflow-y: auto; }
+.mixsheet { width: 760px; max-width: 92vw; max-height: 84vh; overflow-y: auto; }
 .mixsheet .activity-chip small { font-size: 10px; opacity: 0.7; margin-left: 3px; }
 .mixsheet-error { color: #a03020; font-size: 12px; margin-bottom: 10px; }
 .mixsheet-building {
@@ -176,7 +176,7 @@
   background: #faf6ea;
   border-radius: 4px;
   padding: 8px 10px;
-  max-height: 300px;
+  max-height: 340px;
   overflow-y: auto;
 }
 .mixsheet-side-head {
@@ -188,17 +188,26 @@
   padding-bottom: 3px;
   margin-bottom: 6px;
 }
+/* One song = ONE calm line: "Title — Artist ... time [tools]".
+   Text flows and wraps at WORDS (never letter-splits, never clips);
+   the nudge tools stay invisible until the row is hovered. */
 .mixsheet-row {
   display: grid;
-  grid-template-columns: 18px 1fr auto;
-  column-gap: 6px;
-  font-size: 12px;
-  padding: 2px 0;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+  padding: 5px 4px;
+  border-bottom: 1px dashed #eee3c8;
 }
+.mixsheet-row:last-child { border-bottom: none; }
+.mixsheet-row:hover { background: #f5efdd; }
 .mixsheet-row-num { color: #9a8f6c; font-size: 10.5px; }
-/* names never clip — wrap */
-.mixsheet-row-title { overflow-wrap: anywhere; }
-.mixsheet-row-artist { color: #7d7458; font-size: 11px; overflow-wrap: anywhere; text-align: right; max-width: 40%; }
+.mixsheet-row-text { min-width: 0; overflow-wrap: break-word; line-height: 1.4; }
+.mixsheet-row-title { color: #2e2a1f; }
+.mixsheet-row-artist { color: #8a7f5e; font-size: 11.5px; }
+.mixsheet-row-artist::before { content: ' — '; color: #b3a87f; }
+.mixsheet-row-time { color: #9a8f6c; font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .mixtape-mic-device {
   font-size: 11px;
   max-width: 180px;
@@ -224,18 +233,26 @@
 .mixsheet-counter { font-size: 11px; color: #8a7f5e; font-family: -apple-system, sans-serif; }
 .mixsheet-row--dead { opacity: 0.42; }
 .mixsheet-cut-note { font-style: italic; font-size: 11px; color: #8a5a20; }
-.mixsheet-row-tools { display: inline-flex; gap: 2px; }
+.mixsheet-row-tools {
+  display: inline-flex;
+  gap: 3px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.mixsheet-row:hover .mixsheet-row-tools { opacity: 1; pointer-events: auto; }
 .mixsheet-row-tools button {
   border: 1px solid #d5cbb0;
   background: #fffdf4;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
-  padding: 2px 4px;
+  min-width: 22px;
+  padding: 3px 5px;
   cursor: pointer;
   color: #6b6045;
 }
-.mixsheet-row-tools button:hover { background: #f0e9d5; }
+.mixsheet-row-tools button:hover { background: #f0e9d5; border-color: #bfb18a; }
 .mixsheet-floor {
   display: flex;
   flex-wrap: wrap;
