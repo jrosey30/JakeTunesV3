@@ -54,9 +54,23 @@ export function classifyMusicLink(url: string): MusicLinkKind {
 
 export interface ResolvedLink { song?: string; artist?: string; album?: string }
 
+/** HTML page titles arrive entity-escaped ("weren&#x27;t for the wind",
+ *  "Me &amp; You") — decode before anything lands on the list.
+ *  ⚠️ TWIN consumers: parseSpotifyTitle below AND index.ts
+ *  capture-resolve-link (omnibox) — every raw <title>/og:title read must
+ *  pass through here. */
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+export function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&([a-z]+);/gi, (mm, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? mm)
+}
+
 /** Spotify page <title> → what it names. Track pages say "song (and
  *  lyrics) by", album pages "Album/Single/EP by". */
-export function parseSpotifyTitle(title: string): ResolvedLink | null {
+export function parseSpotifyTitle(rawTitle: string): ResolvedLink | null {
+  const title = decodeHtmlEntities(rawTitle)
   const m = title.match(/^(.*?)\s*[-–]\s*(?:song(?: and lyrics)? by|album by|single by|ep by)\s*(.*?)\s*\|\s*Spotify/i)
   if (!m) return null
   const isAlbum = /[-–]\s*(?:album|single|ep) by/i.test(title)

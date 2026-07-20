@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   extractMusicLinks, decodeAttributedBodyHex, classifyMusicLink,
   parseSpotifyTitle, parseAppleLookup, prettyHandle, normalizeMusicUrl,
-  buildContactsIndex, senderName, appleDateToMs,
+  buildContactsIndex, senderName, appleDateToMs, decodeHtmlEntities,
 } from '../imessage-capture-core.ts'
 
 describe('imessage-capture — extractMusicLinks', () => {
@@ -77,11 +77,31 @@ describe('imessage-capture — classifyMusicLink', () => {
   })
 })
 
+describe('imessage-capture — decodeHtmlEntities', () => {
+  it('decodes hex, decimal, and named entities (the Lorin Bloom captures)', () => {
+    assert.equal(decodeHtmlEntities('weren&#x27;t for the wind'), "weren't for the wind")
+    assert.equal(decodeHtmlEntities('I&#39;m with You'), "I'm with You")
+    assert.equal(decodeHtmlEntities('Me &amp; You &lt;3'), 'Me & You <3')
+  })
+
+  it('leaves clean text and unknown entities alone', () => {
+    assert.equal(decodeHtmlEntities('Plain Title'), 'Plain Title')
+    assert.equal(decodeHtmlEntities('AT&Tsomething'), 'AT&Tsomething')
+  })
+})
+
 describe('imessage-capture — parseSpotifyTitle', () => {
   it('track page', () => {
     assert.deepEqual(
       parseSpotifyTitle('You Can Call Me Al - song and lyrics by Paul Simon | Spotify'),
       { song: 'You Can Call Me Al', artist: 'Paul Simon' },
+    )
+  })
+
+  it('entity-escaped raw title decodes before parsing (the live bug)', () => {
+    assert.deepEqual(
+      parseSpotifyTitle('weren&#x27;t for the wind - song and lyrics by Ella Langley | Spotify'),
+      { song: "weren't for the wind", artist: 'Ella Langley' },
     )
   })
 

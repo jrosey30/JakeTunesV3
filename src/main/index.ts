@@ -17,6 +17,7 @@ import {
 } from './radio-memory'
 import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
 import { startImessageCapture } from './imessage-capture'
+import { decodeHtmlEntities } from './imessage-capture-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
@@ -1140,8 +1141,9 @@ ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok:
   try {
     if (/open\.spotify\.com\/(track|album)\//i.test(u)) {
       // Spotify page <title>: "Song - song and lyrics by Artist | Spotify"
+      // (entity-escaped in raw HTML — "weren&#x27;t" — decode before parsing)
       const html = await get(u)
-      const t = html?.match(/<title>([^<]+)<\/title>/i)?.[1] || ''
+      const t = decodeHtmlEntities(html?.match(/<title>([^<]+)<\/title>/i)?.[1] || '')
       const m = t.match(/^(.*?)\s*[-–]\s*(?:song(?: and lyrics)? by\s*)?(.*?)\s*\|\s*Spotify/i)
       if (m) return { ok: true, kind: 'spotify', title: m[1].trim(), artist: m[2].trim() }
       const oe = await get(`https://open.spotify.com/oembed?url=${encodeURIComponent(u)}`)
@@ -1167,11 +1169,11 @@ ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok:
       // as raw context; the user types/edits what they hear.
       return { ok: true, kind: 'tiktok', raw: j.title || undefined }
     }
-    // Generic: og:title
+    // Generic: og:title (entity-decoded — raw HTML attributes are escaped)
     const html = await get(u)
     const og = html?.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]
       || html?.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
-    return { ok: true, kind: 'link', raw: og || undefined }
+    return { ok: true, kind: 'link', raw: og ? decodeHtmlEntities(og) : undefined }
   } catch {
     return { ok: false }
   }
