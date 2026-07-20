@@ -17,6 +17,7 @@ import {
 } from './radio-memory'
 import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
 import { startImessageCapture } from './imessage-capture'
+import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
@@ -11012,7 +11013,6 @@ import {
   persistEmbeddingsMap as ragPersistEmbeddings,
   setEmbedding as ragSetEmbedding,
   topK as ragTopK,
-  cosine as ragCosine,
   isEmbeddingsConfigured as ragIsConfigured,
   analyzeEmbeddings as ragAnalyzeEmbeddings,
   pruneStaleEmbeddings as ragPruneStaleEmbeddings,
@@ -11036,39 +11036,10 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
 // vectors into its distinct SUB-VIBES. Bounded + cheap (~60 seeds × k × 10 iters).
 // Returns normalized cluster centroids. This is what lets a Brazilian-heavy but
 // eclectic playlist still surface its electronic / hip-hop / disco corners.
-function kmeansCentroids(vecs: Float32Array[], k: number, iters = 10): Float32Array[] {
-  const n = vecs.length
-  k = Math.max(1, Math.min(k, n))
-  const dim = vecs[0].length
-  const centroids: Float32Array[] = [vecs[0].slice()]
-  while (centroids.length < k) {
-    let far = 0, farD = -1
-    for (let i = 0; i < n; i++) {
-      let nearest = 2
-      for (const c of centroids) { const d = 1 - ragCosine(vecs[i], c); if (d < nearest) nearest = d }
-      if (nearest > farD) { farD = nearest; far = i }
-    }
-    centroids.push(vecs[far].slice())
-  }
-  for (let it = 0; it < iters; it++) {
-    const sums = centroids.map(() => new Float32Array(dim))
-    const counts = new Array(k).fill(0)
-    for (const v of vecs) {
-      let bi = 0, bs = -2
-      for (let c = 0; c < k; c++) { const s = ragCosine(v, centroids[c]); if (s > bs) { bs = s; bi = c } }
-      const sum = sums[bi]; for (let i = 0; i < dim; i++) sum[i] += v[i]; counts[bi]++
-    }
-    for (let c = 0; c < k; c++) {
-      if (counts[c] === 0) continue
-      const sum = sums[c]; let nm = 0
-      for (let i = 0; i < dim; i++) { sum[i] /= counts[c]; nm += sum[i] * sum[i] }
-      nm = Math.sqrt(nm) || 1
-      for (let i = 0; i < dim; i++) sum[i] /= nm
-      centroids[c] = sum
-    }
-  }
-  return centroids
-}
+// k-means + candidate scoring live in playlist-vibes.ts (pure, tested) —
+// including the 2026-07-19 quality floor that stops outlier-song clusters
+// from commanding a strip slot ("no reason why system of a down should be
+// there" on a pool playlist).
 
 // 4.5: brain-driven playlist suggestions. The old utils/playlistSuggest scored
 // library tracks by ARTIST/genre/decade string-match — so it just surfaced more
@@ -11108,26 +11079,12 @@ ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 
       gnorm = Math.sqrt(gnorm) || 1
       for (let i = 0; i < gdim; i++) gc[i] /= gnorm
     }
-    const LAMBDA = 0.3
-    // Cluster the seeds into the playlist's distinct SUB-VIBES, then score each
-    // candidate against its NEAREST sub-vibe (not the bland whole-playlist avg).
-    // The renderer round-robins the clusters → a Brazilian-heavy but eclectic
-    // playlist still surfaces its electronic / hip-hop / disco corners instead of
-    // collapsing onto the densest cluster. (Verified on the "Pool" playlist.)
-    const cents = kmeansCentroids(seeds, Math.max(1, Math.min(clusters, seeds.length)))
-    const perCluster: Array<Array<{ trackId: number; score: number }>> = cents.map(() => [])
-    for (const [tid, vec] of m) {
-      if (inPl.has(tid)) continue
-      let bi = 0, bs = -2
-      for (let c = 0; c < cents.length; c++) { const s = ragCosine(vec, cents[c]); if (s > bs) { bs = s; bi = c } }
-      const score = bs - (gc ? LAMBDA * ragCosine(vec, gc) : 0)
-      perCluster[bi].push({ trackId: tid, score })
+    // Sub-vibe clustering + scoring + the outlier quality floor — see
+    // playlist-vibes.ts for the design rules (and their history).
+    function* candidateEntries(): Generator<[number, Float32Array]> {
+      for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
-    const hits: Array<{ trackId: number; score: number; cluster: number }> = []
-    perCluster.forEach((list, c) => {
-      list.sort((a, b) => b.score - a.score)
-      for (const h of list.slice(0, 60)) hits.push({ trackId: h.trackId, score: h.score, cluster: c })
-    })
+    const hits = scorePlaylistCandidates(seeds, candidateEntries(), gc, clusters)
     return { ok: true, hits }
   } catch (err) {
     console.warn('[playlist-similar] failed:', err instanceof Error ? err.message : err)
