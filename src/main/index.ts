@@ -3079,6 +3079,46 @@ const mobilePlaylistsCache = new JsonFileCache<{ playlists: MobilePlaylistRecord
   () => ({ playlists: [] }),
   'mobile-playlists',
 )
+// ── Phone-authored state mirrors — NAS → LOCAL refresh ──────────────
+// The iOS app writes these on the NAS (via homemini). STATE_DIR is
+// frozen at boot, so a boot that raced the SMB mount runs the whole
+// session on the userData fallback — and nothing ever refreshed those
+// local mirrors, so phone playlists silently rotted (stale since
+// Jun 20 when Jake reported it, 2026-07-19). Refresh newer NAS copies
+// into userData at boot + every 5 minutes and bust the caches so the
+// next read serves fresh data in EITHER STATE_DIR mode.
+const PHONE_AUTHORED_FILES = [
+  'mobile-playlists.json', 'mobile-stars.json', 'mobile-plays.json', 'playlist-additions.json',
+]
+async function refreshPhoneAuthoredMirrors(): Promise<void> {
+  const nasDir = '/Volumes/JakeShared/JakeTunesState'
+  try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
+  let refreshed = 0
+  for (const name of PHONE_AUTHORED_FILES) {
+    try {
+      const nasPath = join(nasDir, name)
+      const localPath = join(app.getPath('userData'), name)
+      const nasStat = await stat(nasPath)
+      const localStat = await stat(localPath).catch(() => null)
+      if (!localStat || nasStat.mtimeMs > localStat.mtimeMs + 1000) {
+        const tmp = localPath + '.tmp'
+        await copyFile(nasPath, tmp)
+        const { rename: renameFS } = await import('fs/promises')
+        await renameFS(tmp, localPath)
+        refreshed++
+      }
+    } catch { /* per-file best effort */ }
+  }
+  if (refreshed > 0) {
+    mobilePlaylistsCache.invalidate()
+    mobileStarsCache.invalidate()
+    playlistAdditionsCache.invalidate()
+    console.log(`[phone-mirrors] refreshed ${refreshed} file(s) from NAS`)
+  }
+}
+setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
+setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
+
 const playlistAdditionsCache = new JsonFileCache<Record<string, string[]>>(
   () => join(STATE_DIR, 'playlist-additions.json'),
   () => ({}),
