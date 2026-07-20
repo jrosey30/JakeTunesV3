@@ -14,7 +14,7 @@ import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
-import { startWindSound, stopWindSound } from '../tapeDeck'
+import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -369,7 +369,7 @@ export default function MixtapeView() {
                           : pb.isPlaying && currentOnTape ? 'left' : 'of music'}
                     </span>
                   </div>
-                  <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => load({ recArmed: !armed })}
+                  <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => { mechanicalSound('rec'); load({ recArmed: !armed }) }}
                     title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
                   </button>
@@ -378,7 +378,7 @@ export default function MixtapeView() {
                     title="REWIND — hold it down and the tape winds back, screaming past the song joins. Let go to drop back in. Locked while REC is down.">
                     <span className="fp-shape fp-shape--rew" /><span className="fp-label">REW</span>
                   </button>
-                  <button className="fp-key fp-key--play" onClick={pressPlay}
+                  <button className="fp-key fp-key--play" onClick={() => { mechanicalSound('play'); pressPlay() }}
                     title={armed ? 'PLAY — roll the music you are recording' : 'PLAY — play this tape'}>
                     <span className="fp-shape fp-shape--tri" /><span className="fp-label">PLAY</span>
                   </button>
@@ -387,19 +387,19 @@ export default function MixtapeView() {
                     title="FAST-FORWARD — hold it down and the tape winds ahead, straight through the middle of songs. Let go to drop back in. Locked while REC is down.">
                     <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
                   </button>
-                  <button className="fp-key" onClick={() => { stopPlayback(); if (loaded) load({ recArmed: false, micOn: false }) }}
+                  <button className="fp-key" onClick={() => { mechanicalSound('stop'); stopPlayback(); if (loaded) load({ recArmed: false, micOn: false }) }}
                     title="STOP — everything stops and the REC latch pops out, like a real deck">
                     <span className="fp-shape fp-shape--stop" /><span className="fp-label">STOP</span>
                   </button>
-                  <button className="fp-key fp-key--pause" onClick={() => { if (pb.isPlaying) togglePlayPause() }}
+                  <button className="fp-key fp-key--pause" onClick={() => { if (pb.isPlaying) tapeMotorPause(togglePlayPause) }}
                     title="PAUSE — the music stops where it is. Recording waits.">
                     <span className="fp-shape fp-shape--bars" /><span className="fp-label">PAUSE</span>
                   </button>
-                  <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => load({ micOn: !micOn })}
+                  <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => { mechanicalSound('mic'); load({ micOn: !micOn }) }}
                     title="MIC — mic on means mic ready. Your voice records onto the tape only while REC is down.">
                     <span className="fp-shape fp-shape--mic"><MicShape /></span><span className="fp-label">MIC</span>
                   </button>
-                  <button className="fp-key fp-key--eject" onClick={() => { if (loaded) setDeckState(null) }} disabled={!loaded}
+                  <button className="fp-key fp-key--eject" onClick={() => { if (loaded) { mechanicalSound('eject'); setDeckState(null) } }} disabled={!loaded}
                     title="EJECT — take the tape out of the deck">
                     <span className="fp-shape fp-shape--eject" /><span className="fp-label">EJECT</span>
                   </button>

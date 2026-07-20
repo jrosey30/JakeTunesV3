@@ -17,7 +17,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { effectiveDurationFn } from '../../common/tape-physics'
 import { getTapeSession, setTapeSession, getMixtapes, getPendingTapeSeek, setPendingTapeSeek, subscribeMixtapes } from '../mixtapes'
-import { initTapeDeck } from '../tapeDeck'
+import { initTapeDeck, tapeMotorStart, tapeFlipRitual } from '../tapeDeck'
 
 // Cassette voicing rides the same session lifecycle this monitor enforces.
 initTapeDeck()
@@ -47,6 +47,18 @@ export default function TapeMonitor() {
       seekedForRef.current = null
     }
   }, [nowId])
+  const nowIdRef = useRef<number | undefined>(nowId)
+  nowIdRef.current = nowId
+
+  // The motor is lazy: every time the music STARTS while a tape is in
+  // (play, resume after pause, landing after a wind), it drawls up to
+  // speed — no matter which button did it, even the toolbar's.
+  const wasPlayingRef = useRef(false)
+  useEffect(() => {
+    const playing = pb.isPlaying
+    if (playing && !wasPlayingRef.current && getTapeSession()) tapeMotorStart()
+    wasPlayingRef.current = playing
+  }, [pb.isPlaying])
 
   // Session changed → fresh playthrough: reset one-shots, kill overlays.
   useEffect(() => {
@@ -127,7 +139,19 @@ export default function TapeMonitor() {
         pbDispatch({ type: 'STOP' })
         setTapeSession(null)
       } else {
-        pbDispatch({ type: 'NEXT_TRACK' })
+        // Side A runs out → THE FLIP. The deck ducks to dead air and plays
+        // the whole ritual (door, cassette turned in hand, door, PLAY);
+        // Side B's first song starts when the duck lifts — from 0:00, the
+        // way Side B always did. If the user grabs the transport or the
+        // boundary song ends naturally during the ritual, we stand down.
+        const sessionAtCut = session
+        const idAtCut = nowId
+        tapeFlipRitual()
+        window.setTimeout(() => {
+          if (getTapeSession() === sessionAtCut && nowIdRef.current === idAtCut) {
+            pbDispatch({ type: 'NEXT_TRACK' })
+          }
+        }, 1380)
       }
     }
   }, [session, nowId, pb.position, pbDispatch, mixtapes, lib.tracks, seek])

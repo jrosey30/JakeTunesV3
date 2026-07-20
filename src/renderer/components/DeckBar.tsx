@@ -24,6 +24,7 @@ import {
   subscribeMixtapes, refreshMixtapes, liveTapeCounter,
 } from '../mixtapes'
 import { fitSide, effectiveDurationFn } from '../../common/tape-physics'
+import { mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import type { Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -281,6 +282,7 @@ export default function DeckBar() {
   const cutCountdown = counter.cutCountdown
 
   const pressRec = () => {
+    mechanicalSound('rec')
     setDeckState({ ...deck, recArmed: !deck.recArmed })
   }
 
@@ -318,7 +320,7 @@ export default function DeckBar() {
       <div className="deckbar-transport">
         <button
           className="deckbar-btn deckbar-btn--play"
-          onClick={togglePlayPause}
+          onClick={() => { if (pb.isPlaying) tapeMotorPause(togglePlayPause); else { mechanicalSound('play'); togglePlayPause() } }}
           title={pb.isPlaying ? 'Pause the music' : 'Play the music'}
         >{pb.isPlaying ? <PauseIcon /> : <PlayIcon />}</button>
         <button
@@ -331,10 +333,10 @@ export default function DeckBar() {
       <div className="deckbar-minor">
         <button
           className={`deckbar-mini${deck.micOn ? ' is-talking' : ''}`}
-          onClick={() => setDeckState({ ...deck, micOn: !deck.micOn })}
+          onClick={() => { mechanicalSound('mic'); setDeckState({ ...deck, micOn: !deck.micOn }) }}
           title={deck.micOn ? 'Mic is ON — it records onto the tape while REC is down' : 'Mic on (records only while REC is down)'}
         ><MicSmallIcon /></button>
-        <button className="deckbar-mini deckbar-mini--eject" onClick={() => setDeckState(null)} title="Eject the tape">⏏</button>
+        <button className="deckbar-mini deckbar-mini--eject" onClick={() => { mechanicalSound('eject'); setDeckState(null) }} title="Eject the tape">⏏</button>
       </div>
     </div>
   )
