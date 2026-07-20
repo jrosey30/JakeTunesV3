@@ -234,6 +234,14 @@ const electronAPI = {
   discoveryNotForMe: (artist: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('discovery-not-for-me', artist),
   getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }> => ipcRenderer.invoke('get-friends'),
   sweepFriendImports: (): Promise<{ ok: boolean; credited: number }> => ipcRenderer.invoke('sweep-friend-imports'),
+  // 2026-07-20 — the sync journal: fired at boot when the last iPod sync
+  // died partway (stale device database until the user syncs again).
+  getIpodSyncJournal: (): Promise<{ phase: string; at?: string } | null> => ipcRenderer.invoke('get-ipod-sync-journal'),
+  onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, info: { phase: string; at?: string }) => callback(info)
+    ipcRenderer.on('ipod-sync-incomplete', handler)
+    return () => { ipcRenderer.removeListener('ipod-sync-incomplete', handler) }
+  },
   friendEvent: (name: string, ev: 'add' | 'got' | 'tossed'): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-event', name, ev),
   captureResolveLink: (url: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => ipcRenderer.invoke('capture-resolve-link', url),
   getContacts: (): Promise<{ ok: boolean; names: string[] }> => ipcRenderer.invoke('get-contacts'),

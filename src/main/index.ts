@@ -4539,13 +4539,54 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   }
   syncInFlight = true
   syncStartedAt = Date.now()
+  // Sync journal (2026-07-20): a marker that only a COMPLETED sync clears.
+  // The renderer crash left an iPod with fresh files and a stale iTunesDB
+  // (2,514 ghost entries, every song auto-skipping) and NOBODY knew until
+  // Jake hit play. If the app boots and this marker is still here, the
+  // last sync died partway — surface it loudly.
+  await writeSyncJournal('copy')
   try {
-    return await runSyncToIpod(tracks, playlists, convertOptions)
+    const result = await runSyncToIpod(tracks, playlists, convertOptions)
+    if ((result as { ok?: boolean })?.ok) await writeSyncJournal(null)
+    return result
   } finally {
     syncInFlight = false
     syncStartedAt = 0
   }
 })
+
+const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
+async function writeSyncJournal(phase: string | null): Promise<void> {
+  try {
+    if (phase === null) {
+      await unlink(IPOD_SYNC_JOURNAL_FILE()).catch(() => {})
+    } else {
+      await writeFile(IPOD_SYNC_JOURNAL_FILE(), JSON.stringify({ phase, at: new Date().toISOString() }), 'utf-8')
+    }
+  } catch { /* best effort — never block a sync on the journal */ }
+}
+// Pull side (authoritative — no boot race): the renderer asks once its
+// UI is actually mounted.
+ipcMain.handle('get-ipod-sync-journal', async (): Promise<{ phase: string; at?: string } | null> => {
+  try {
+    const j = JSON.parse(await readFile(IPOD_SYNC_JOURNAL_FILE(), 'utf-8')) as { phase?: string; at?: string }
+    return j?.phase ? { phase: j.phase, at: j.at } : null
+  } catch { return null }
+})
+// Boot check: an un-cleared journal means the last sync never finished —
+// the iPod's database is stale and the device will misbehave until the
+// user syncs again. Nag every boot until a successful sync clears it.
+setTimeout(async () => {
+  try {
+    const j = JSON.parse(await readFile(IPOD_SYNC_JOURNAL_FILE(), 'utf-8')) as { phase?: string; at?: string }
+    if (j?.phase) {
+      console.warn(`[sync] previous iPod sync never finished (died in ${j.phase} phase, ${j.at})`)
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send('ipod-sync-incomplete', { phase: j.phase, at: j.at })
+      }
+    }
+  } catch { /* no journal = last sync finished clean */ }
+}, 9_000)
 
 async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions): Promise<unknown> {
   // 4.5.0-109: reset cancel flag at the top of every sync.
@@ -4965,6 +5006,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // Switch the toolbar status to the writer phase — the
   // preflight is done; from here it's the iTunesDB rebuild + write
   // (sub-second) and then the post-sync verifier (seconds).
+  await writeSyncJournal('db')
   mainWindow?.webContents.send('sync-progress', {
     phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
   })
