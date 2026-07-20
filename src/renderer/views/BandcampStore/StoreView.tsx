@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState , useSyncExternalStore } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { setNotice } from '../../activity'
+import { subscribeMixtapes, getDeckState } from '../../mixtapes'
 import './store-header.css'
 
 // v4 Bandcamp Store: this view is just a layout placeholder for the

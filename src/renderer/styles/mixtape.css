@@ -192,8 +192,9 @@
    Text flows and wraps at WORDS (never letter-splits, never clips);
    the nudge tools stay invisible until the row is hovered. */
 .mixsheet-row {
+  position: relative;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   column-gap: 8px;
   align-items: baseline;
   font-size: 12.5px;
@@ -233,9 +234,19 @@
 .mixsheet-counter { font-size: 11px; color: #8a7f5e; font-family: -apple-system, sans-serif; }
 .mixsheet-row--dead { opacity: 0.42; }
 .mixsheet-cut-note { font-style: italic; font-size: 11px; color: #8a5a20; }
+/* Tools float OVER the row's right edge on hover — they reserve no
+   column, so the song text keeps the full line width. */
 .mixsheet-row-tools {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   gap: 3px;
+  padding: 2px 3px;
+  border-radius: 4px;
+  background: rgba(245, 239, 221, 0.95);
+  box-shadow: -8px 0 8px rgba(245, 239, 221, 0.9);
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease;
