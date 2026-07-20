@@ -32,6 +32,11 @@ type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => 
 export interface WorkoutSyncHost {
   claudeCall: ClaudeCall
   musicManCore: string
+  /** Track ids that can NEVER land on the iPod (full-concert-owned — the
+   *  sync drops them at copy time, so the picker must never offer them.
+   *  2026-07-20: MM picked 4 concert tracks → "exactly 1000" silently
+   *  synced as 996). */
+  getIneligibleTrackIds?: () => Promise<Set<number>>
 }
 
 const WORKOUT_TARGET = 1000
@@ -209,6 +214,19 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
     try {
       if (!Array.isArray(tracks) || tracks.length === 0) {
         return { ok: false, error: 'Library is empty — nothing to sync.' }
+      }
+      // Concert-owned tracks are unsyncable — drop them from the pool
+      // BEFORE the Music Man picks, so "exactly 1000" means 1000 on the
+      // device (enforced main-side, same as the sync's own filter).
+      if (host.getIneligibleTrackIds) {
+        try {
+          const out = await host.getIneligibleTrackIds()
+          if (out.size) {
+            const before = tracks.length
+            tracks = tracks.filter((t) => !out.has(Number(t.id)))
+            if (tracks.length !== before) console.log(`[workout-sync] ${before - tracks.length} concert-owned track(s) removed from the pick pool`)
+          }
+        } catch { /* no live sets → nothing to exclude */ }
       }
       const brief: ActivityBrief = opts?.brief || {
         activity: 'bop',

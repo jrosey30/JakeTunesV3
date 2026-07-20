@@ -4509,14 +4509,10 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   // songs not individually reimported (promoted). A promoted song is a normal
   // library track again and syncs as usual. Enforced main-side so the rule can't
   // be bypassed. ⚠️ mirrors libraryHiddenTrackIds in src/renderer/liveSets.ts.
+  // (Shared with the workout-sync picker — getConcertOwnedTrackIds — so the
+  // Music Man can't PICK what the sync would drop.)
   try {
-    const sets = await liveSetsCache.get()
-    const concertOwned = new Set<number>()
-    for (const e of Object.values(sets)) {
-      concertOwned.add(e.mergedTrackId)
-      const promoted = new Set(e.promotedTrackIds || [])
-      for (const c of e.cues) if (!promoted.has(c.trackId)) concertOwned.add(c.trackId)
-    }
+    const concertOwned = await getConcertOwnedTrackIds()
     if (concertOwned.size) {
       const before = tracks.length
       tracks = tracks.filter((t) => !concertOwned.has(Number(t.id)))
@@ -10761,10 +10757,26 @@ Their top genres: ${topGenres}`
   }
 })
 
+// Concert-owned track ids — unsyncable to the main iPod. ONE definition,
+// used by BOTH sync-to-ipod (copy-time drop) and the workout-sync picker
+// (pick-time exclusion). ⚠️ mirrors libraryHiddenTrackIds in
+// src/renderer/liveSets.ts.
+async function getConcertOwnedTrackIds(): Promise<Set<number>> {
+  const sets = await liveSetsCache.get()
+  const owned = new Set<number>()
+  for (const e of Object.values(sets)) {
+    owned.add(e.mergedTrackId)
+    const promoted = new Set(e.promotedTrackIds || [])
+    for (const c of e.cues) if (!promoted.has(c.trackId)) owned.add(c.trackId)
+  }
+  return owned
+}
+
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
+  getIneligibleTrackIds: getConcertOwnedTrackIds,
 })
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
