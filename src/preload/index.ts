@@ -236,6 +236,11 @@ const electronAPI = {
   friendEvent: (name: string, ev: 'add' | 'got' | 'tossed'): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-event', name, ev),
   captureResolveLink: (url: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => ipcRenderer.invoke('capture-resolve-link', url),
   getContacts: (): Promise<{ ok: boolean; names: string[] }> => ipcRenderer.invoke('get-contacts'),
+  // 2026-07-19 — iMessage capture: texted Spotify/Apple Music links auto-land
+  // on the list. Status drives the one-time Full Disk Access setup hint.
+  imessageCaptureStatus: (): Promise<{ ok: boolean; access: 'granted' | 'denied' | 'unknown'; lastScanAt?: string; error?: string; pending: number; recent: Array<{ url: string; song?: string; artist?: string; album?: string; from?: string; at: string; status: string }> }> =>
+    ipcRenderer.invoke('imessage-capture-status'),
+  imessageCaptureScanNow: (): Promise<{ ok: boolean; access: 'granted' | 'denied' | 'unknown' }> => ipcRenderer.invoke('imessage-capture-scan'),
   getDiscoverFeed: (force?: boolean): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }> => ipcRenderer.invoke('get-discover-feed', force),
   onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => callback(p)

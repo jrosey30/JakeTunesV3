@@ -78,6 +78,21 @@ export default function ListenToTheListView() {
     void window.electronAPI.getContacts?.().then((r) => { if (r?.ok) setContacts(r.names) })
   }, [])
 
+  // iMessage capture needs Full Disk Access ONCE — show the setup hint only
+  // while it's missing, re-check each minute, disappear forever after.
+  const [imsgDenied, setImsgDenied] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const check = () => {
+      void window.electronAPI.imessageCaptureStatus?.().then((r) => {
+        if (alive && r?.ok) setImsgDenied(r.access === 'denied')
+      })
+    }
+    check()
+    const t = setInterval(check, 60_000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+
   // Omnibox → form. A pasted URL resolves through main (oEmbed/OG) into a
   // song/artist guess; plain text just becomes the search seed.
   const handleOmni = async (raw: string) => {
@@ -162,6 +177,21 @@ export default function ListenToTheListView() {
           </button>
         )}
       </div>
+
+      {imsgDenied && (
+        <div className="ltl-imsg-setup">
+          Songs texted to you can land here automatically — JakeTunes just needs
+          Full Disk Access to see Messages.{' '}
+          <button
+            type="button"
+            className="ltl-imsg-setup-btn"
+            onClick={() => { void window.electronAPI.openExternalUrl?.('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles') }}
+          >
+            Open System Settings
+          </button>
+          <span className="ltl-imsg-setup-sub"> — flip on JakeTunes under Full Disk Access. No relaunch needed.</span>
+        </div>
+      )}
 
       {/* ── Capture: one box for everything ── */}
       <div className="ltl-add-wrap">

@@ -16,6 +16,7 @@ import {
   setShowPlan, clearShowPlan, formatPlanForPrompt, getShowPlan,
 } from './radio-memory'
 import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
+import { startImessageCapture } from './imessage-capture'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
@@ -12343,7 +12344,10 @@ ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boole
   return readRecoInflight
 })
 
-ipcMain.handle('add-recommendation', async (_event, input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> => {
+// Shared by the renderer's omnibox AND the iMessage watcher — one add path,
+// so attribution, friends-ledger ticks, identity dedupe, and outbox replay
+// behave identically no matter where a song came from.
+async function addRecommendationCore(input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> {
   // v2 capture: friend attribution + source link ride the synced `note`
   // field (backend passes note through verbatim), and the friend gets an
   // 'add' tick in the local ledger for the Scouts ranking.
@@ -12469,6 +12473,18 @@ ipcMain.handle('add-recommendation', async (_event, input: { song?: string; arti
     console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
     return { ok: false, error: err instanceof Error ? err.message : 'could not save recommendation' }
   }
+}
+ipcMain.handle('add-recommendation', (_event, input: Parameters<typeof addRecommendationCore>[0]) => addRecommendationCore(input))
+
+// ── iMessage capture (2026-07-19): Spotify / Apple Music links texted to
+// Jake land on the list automatically, credited "from <sender>". The
+// watcher lives in imessage-capture.ts; it feeds addRecommendationCore so
+// every capture gets the same dedupe/attribution/outbox treatment as a
+// hand-typed jot. State is V3-local (userData) — the laptop is the only
+// machine signed into Messages.
+startImessageCapture({
+  stateFile: join(app.getPath('userData'), 'imessage-capture.json'),
+  addRecommendation: (input) => addRecommendationCore(input),
 })
 
 ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
