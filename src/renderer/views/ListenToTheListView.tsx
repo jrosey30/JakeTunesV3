@@ -185,7 +185,7 @@ export default function ListenToTheListView() {
           <button
             type="button"
             className="ltl-imsg-setup-btn"
-            onClick={() => { void window.electronAPI.openExternalUrl?.('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles') }}
+            onClick={() => { void window.electronAPI.openFullDiskAccessSettings?.() }}
           >
             Open System Settings
           </button>

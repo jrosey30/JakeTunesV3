@@ -1863,6 +1863,17 @@ ipcMain.handle('open-external-url', async (_e, url: string): Promise<{ ok: boole
   }
 })
 
+// The iMessage-capture setup chip's button. Fixed target, zero renderer
+// input — the http(s)-only rule above stays intact for everything else.
+ipcMain.handle('open-full-disk-access-settings', async (): Promise<{ ok: boolean }> => {
+  try {
+    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
 // Async read used by handlers that need to gate behavior on a setting
 // (musicman-speak, sync-to-ipod, import-track, etc.). Returns null on
 // any failure; callers fall back to safe defaults.
