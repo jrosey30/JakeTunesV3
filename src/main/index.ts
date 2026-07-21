@@ -5120,6 +5120,35 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           console.warn('sync-to-ipod: iPod orphan cleanup failed (non-fatal):', ipodOrphErr)
         }
 
+        // ── DEVICE-TRUTH READBACK (2026-07-20, Jake: "my ipod had 6
+        // songs"). A sync that reported success once left a 6-entry
+        // catalog on the device. Never trust the writer's exit code
+        // alone: read the iTunesDB BACK off the device and compare.
+        // Wrote N, device must answer N — anything else is a FAILED
+        // sync (ok:false keeps the repair journal + boot nag alive).
+        try {
+          const readback = await readIpodDatabase()
+          const onDevice = readback.tracks.length
+          if (onDevice !== tracks.length) {
+            console.error(`sync-to-ipod: READBACK MISMATCH — wrote ${tracks.length} tracks, device catalog answers ${onDevice}`)
+            resolve({
+              ok: false,
+              error: `Sync verify failed: sent ${tracks.length} songs but the iPod's catalog shows ${onDevice}. Sync again — and if this repeats, tell Claude the two numbers.`,
+              copied, copyErrors,
+            })
+            return
+          }
+          console.log(`sync-to-ipod: readback verified — device catalog holds all ${onDevice} tracks`)
+        } catch (rbErr) {
+          console.warn('sync-to-ipod: readback failed (treating as sync failure):', rbErr)
+          resolve({
+            ok: false,
+            error: `Sync verify failed: could not read the iPod's catalog back (${rbErr instanceof Error ? rbErr.message : String(rbErr)}). Sync again before unplugging.`,
+            copied, copyErrors,
+          })
+          return
+        }
+
         resolve({
           ok: true,
           copied, copyErrors,
