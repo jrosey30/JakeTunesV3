@@ -188,8 +188,12 @@ export function selectWorkoutSyncSet(
 
   const demote = new Set(opts.demoteIds || [])
   const boost = new Set(opts.boostIds || [])
-  const scored = tracks
-    .filter((t) => !isSkitOrIntro(t))
+  // A track with no title or no artist can never sync (the iPod shows it
+  // blank and the sync gate refuses it) — exclude it from the pool up
+  // front so a blank never eats one of the 1000 slots (2026-07-21).
+  const named = (t: WorkoutTrack) => String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
+  const eligible = tracks.filter((t) => named(t) && !isSkitOrIntro(t))
+  const scored = eligible
     .map((t) => {
       let s = scoreWorkoutTrack(t, vibe, brief, weather)
       if (previous.has(t.id)) s -= 35
@@ -233,6 +237,19 @@ export function selectWorkoutSyncSet(
       if (scoreMap.has(t.id)) continue
       out.push(t.id)
       scoreMap.set(t.id, s)
+    }
+  }
+  // Guarantee the target (Jake: "always always always 1000"): `scored` was
+  // pruned to s>-20, so if the vibe scored too few positively we'd fall
+  // short. Backfill from EVERY remaining eligible (named, non-skit) track
+  // until we hit the target. Only a library with fewer than `target` named
+  // songs can come up short now — and that's a true, reportable shortage.
+  if (out.length < target) {
+    for (const t of eligible) {
+      if (out.length >= target) break
+      if (scoreMap.has(t.id)) continue
+      out.push(t.id)
+      scoreMap.set(t.id, -100)
     }
   }
 

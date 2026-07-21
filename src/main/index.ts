@@ -4607,6 +4607,70 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     return { ok: false, error: 'iPod is not mounted', copied: 0 }
   }
 
+  // ── KNOW EXACTLY WHAT WE SYNC (2026-07-21, Jake: "you need to know what
+  // you are syncing at all times... it should always always always get to
+  // 1000 songs exactly"). Before a single byte moves: assert every track
+  // has a title, an artist, AND a real local file. A blank-metadata or
+  // fileless track can NEVER reach the device again. Then write a full
+  // manifest (every song + the exact add/remove delta vs the last sync)
+  // to disk and the log, so we always have a record of what shipped. ──
+  {
+    const blanks: string[] = []
+    const fileless: string[] = []
+    for (const t of tracks) {
+      const title = String(t.title || '').trim()
+      const artist = String(t.artist || '').trim()
+      if (!title || !artist) { blanks.push(`id ${t.id}: title=${JSON.stringify(title)} artist=${JSON.stringify(artist)}`); continue }
+      const colon = String(t.path || '')
+      if (colon) {
+        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+        const ok = await stat(abs).then((s) => s.isFile()).catch(() => false)
+        if (!ok) fileless.push(`${title} — ${artist} (no local file: ${colon})`)
+      } else {
+        fileless.push(`${title} — ${artist} (no path)`)
+      }
+    }
+    if (blanks.length || fileless.length) {
+      const parts: string[] = []
+      if (blanks.length) parts.push(`${blanks.length} with blank title/artist`)
+      if (fileless.length) parts.push(`${fileless.length} with no playable file`)
+      console.error(`sync-to-ipod: REFUSING — ${tracks.length}-song set has bad tracks: ${parts.join(', ')}`)
+      for (const b of [...blanks, ...fileless].slice(0, 20)) console.error('   •', b)
+      return {
+        ok: false,
+        copied: 0,
+        error: `Sync refused — ${parts.join(' and ')} in the ${tracks.length}-song set. Nothing was sent. These have to be fixed (or dropped) before this set can sync cleanly.`,
+      }
+    }
+
+    // Manifest: exactly what this sync contains, and the delta from last time.
+    try {
+      const manifestPath = join(STATE_DIR, 'last-sync-manifest.json')
+      let prevIds = new Set<number>()
+      try {
+        const prev = JSON.parse(await readFile(manifestPath, 'utf-8')) as { tracks?: Array<{ id: number }> }
+        prevIds = new Set((prev.tracks || []).map((x) => x.id))
+      } catch { /* first manifest */ }
+      const curIds = new Set(tracks.map((t) => Number(t.id)))
+      const added = tracks.filter((t) => !prevIds.has(Number(t.id)))
+      const removedIds = [...prevIds].filter((id) => !curIds.has(id))
+      const manifest = {
+        syncedAt: new Date().toISOString(),
+        count: tracks.length,
+        added: added.length,
+        removed: removedIds.length,
+        tracks: tracks.map((t) => ({ id: Number(t.id), title: String(t.title || ''), artist: String(t.artist || ''), album: String(t.album || '') })),
+        addedTracks: added.map((t) => `${t.title} — ${t.artist}`),
+      }
+      const tmp = `${manifestPath}.${process.pid}.tmp`
+      await writeFile(tmp, JSON.stringify(manifest, null, 1), 'utf-8')
+      await rename(tmp, manifestPath)
+      console.log(`sync-to-ipod: MANIFEST — ${tracks.length} songs (all named + file-verified), +${added.length} added / -${removedIds.length} removed since last sync`)
+    } catch (mErr) {
+      console.warn('sync-to-ipod: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
+    }
+  }
+
   // ──────────────── PRE-SYNC SAFETY: LIBRARY DEDUP CHECK ────────────────
   // If two library entries point at the same audio file (same colon
   // path), they're unambiguously duplicates: both will emit separate
