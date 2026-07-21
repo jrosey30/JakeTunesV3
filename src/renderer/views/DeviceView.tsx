@@ -62,6 +62,10 @@ export default function DeviceView() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
   const [ipodName, setIpodName] = useState('iPod')
+  // 2026-07-20 (Jake: "this shouldnt say ~1000 songs. it has to be 1000"):
+  // the EXACT on-device catalog count, read from the iPod's own iTunesDB.
+  // null until a device answers; the Songs line falls back to the ~estimate.
+  const [deviceSongCount, setDeviceSongCount] = useState<number | null>(null)
   const [ipodCapacityBytes, setIpodCapacityBytes] = useState<number>(FALLBACK_CAPACITY_BYTES)
   // Real statfs() free bytes from the mounted iPod (via get-ipod-capacity).
   // Preferred over the library-sum estimate because library `fileSize` can
@@ -147,6 +151,24 @@ export default function DeviceView() {
     optManualManage: true,
     optDiskUse: true,
   })
+
+  // The EXACT on-device song count, straight from the iPod's own catalog
+  // (the sync's readback guard keeps that catalog honest). Refreshes on
+  // view open, after every sync finishes, and when a device mounts.
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      window.electronAPI.checkIpodMounted().then(async (r) => {
+        if (!alive) return
+        if (!r.mounted) { setDeviceSongCount(null); return }
+        const db = await window.electronAPI.getIpodDbTracks()
+        if (alive && db.ok) setDeviceSongCount(db.total)
+      }).catch(() => { if (alive) setDeviceSongCount(null) })
+    }
+    if (!syncing) refresh()
+    window.addEventListener('jaketunes-ipod-mounted', refresh)
+    return () => { alive = false; window.removeEventListener('jaketunes-ipod-mounted', refresh) }
+  }, [syncing])
 
   useEffect(() => {
     window.electronAPI.checkIpodMounted().then(r => {
@@ -531,8 +553,12 @@ export default function DeviceView() {
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Songs:</span>
             <span className="device-itunes-value">
-              ~{stats.trackCount.toLocaleString()} workout
-              {stats.libraryTotal > stats.trackCount
+              {deviceSongCount != null
+                // The device's own catalog — an exact, counted number.
+                ? `${deviceSongCount.toLocaleString()} workout`
+                // No device attached — the next sync's target, marked as such.
+                : `~${stats.trackCount.toLocaleString()} workout`}
+              {stats.libraryTotal > (deviceSongCount ?? stats.trackCount)
                 ? ` (of ${stats.libraryTotal.toLocaleString()} in library)`
                 : ''}
             </span>
