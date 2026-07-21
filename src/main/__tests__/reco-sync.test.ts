@@ -53,9 +53,29 @@ const PARITY_FIXTURES: Array<{ name: string; record: Record<string, string | und
     keys: ['angel|massiveattack'],
   },
   {
-    name: 'note-only jot has no identity keys',
+    name: 'artist-only row (band link, no song) → artist key — Jake: Die Spitz',
+    record: { artist: 'Die Spitz' },
+    keys: ['artist:diespitz'],
+  },
+  {
+    name: 'artist + album, no song → artist key alone (album omitted) — Victoryland',
+    record: { artist: 'Victoryland', album: 'My Heart is a Room with no cameras in it' },
+    keys: ['artist:victoryland'],
+  },
+  {
+    name: 'matched artist only, no song → artist key from matchedArtist',
+    record: { matchedArtist: 'Turnstile' },
+    keys: ['artist:turnstile'],
+  },
+  {
+    name: 'note-only jot → partial key (deletable, no longer keyless)',
     record: { note: 'check that band from the party' },
-    keys: [],
+    keys: ['partial:checkthatbandfromtheparty'],
+  },
+  {
+    name: 'album-only jot → partial key from album',
+    record: { album: 'Mezzanine' },
+    keys: ['partial:mezzanine'],
   },
 ]
 
@@ -70,7 +90,7 @@ test('solo isolation + dedupe fallback + pickBetterReco', () => {
   const pair = recordIdentityKeys({ song: 'Angel', artist: 'Massive Attack' })
   assert.deepEqual(solo.filter((k) => pair.includes(k)), [])
   assert.equal(recoDedupeKey({ song: 'X', artist: 'Y' }), 'x|y')
-  assert.equal(recoDedupeKey({ note: 'just a note' }), 'full:|||justanote')
+  assert.equal(recoDedupeKey({ note: 'just a note' }), 'partial:justanote')
   const resolved = { id: 'a', createdAt: '2026-01-01', matchedTitle: 'T', resolvedAt: '2026-01-01' }
   const newer = { id: 'b', createdAt: '2026-06-01' }
   assert.equal(pickBetterReco(resolved, newer).id, 'a')

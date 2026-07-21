@@ -52,6 +52,23 @@ export function recordIdentityKeys(r: RecoIdentityInput): string[] {
   if (!recoNorm(r.artist || '') && !recoNorm(r.matchedArtist || '') && recoNorm(r.song || '')) {
     keys.add(`solo:${recoNorm(r.song || '')}~${recoNorm(r.album || '')}~${recoNorm(r.note || '')}`)
   }
+  // Artist-anchored key for SONGLESS rows — a band or album link with no
+  // title. Symmetric to solo:. Without it these get ZERO identity keys, so
+  // a delete tombstones only the UUID and the next morning's re-sync
+  // re-adds them under a fresh UUID → immortal (Jake: Die Spitz &
+  // Victoryland "always show up even if deleted"). Keyed on the artist
+  // ALONE so any songless entry for that artist stays dead. ⚠️ TWIN:
+  // ~/JakeTunesMobile/backend/src/util/reco-identity.ts — keep identical.
+  const anyArtist = recoNorm(r.artist || '') || recoNorm(r.matchedArtist || '')
+  if (!raw && !matched && anyArtist) {
+    keys.add(`artist:${anyArtist}`)
+  }
+  // Absolute catch-all: a non-empty row must never be keyless (album-only
+  // or note-only jots), else it too becomes un-deletable.
+  if (keys.size === 0) {
+    const parts = [recoNorm(r.album || ''), recoNorm(r.note || '')].filter(Boolean)
+    if (parts.length) keys.add(`partial:${parts.join('~')}`)
+  }
   return [...keys]
 }
 
