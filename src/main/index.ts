@@ -4591,6 +4591,10 @@ setTimeout(async () => {
 async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions): Promise<unknown> {
   // 4.5.0-109: reset cancel flag at the top of every sync.
   syncCancelRequested = false
+  // Everything copied/written from here on carries an mtime ≥ this stamp;
+  // the orphan cleanup uses it to refuse to delete anything this sync
+  // touched (2026-07-21 shrinking-iPod fix).
+  const syncRunStartMs = Date.now()
   if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', copied: 0 }
   const IPOD_MOUNT = detectedIpodMount
   // Strip the trailing "iPod_Control/Music" segment whether it's / or \ delimited.
@@ -5111,10 +5115,13 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         let ipodOrphansDeleted = 0
         try {
           const ipodMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
-          const ipodResult = await cleanOrphansOnMusicRoot(ipodMusicRoot, tracks as Array<{ path?: string }>)
+          const ipodResult = await cleanOrphansOnMusicRoot(ipodMusicRoot, tracks as Array<{ path?: string }>, syncRunStartMs)
           ipodOrphansDeleted = ipodResult.deleted
           if (ipodOrphansDeleted > 0) {
             console.log(`sync-to-ipod: cleaned ${ipodOrphansDeleted} iPod orphan file(s), freed ${(ipodResult.bytesFreed / 1e9).toFixed(2)} GB`)
+          }
+          if (ipodResult.protected > 0) {
+            console.warn(`sync-to-ipod: orphan cleanup PROTECTED ${ipodResult.protected} freshly-written file(s) from deletion — the shrinking-iPod bug would have eaten these`)
           }
         } catch (ipodOrphErr) {
           console.warn('sync-to-ipod: iPod orphan cleanup failed (non-fatal):', ipodOrphErr)
@@ -5138,7 +5145,30 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             })
             return
           }
-          console.log(`sync-to-ipod: readback verified — device catalog holds all ${onDevice} tracks`)
+          // 2026-07-21: the catalog is NOT enough — Jake's device kept
+          // showing fewer songs than a 1000-record catalog because the
+          // FILES were being deleted out from under it. Count every
+          // catalog entry's actual file on disk. A catalog entry with no
+          // file is a song the firmware will drop → the real cause of
+          // "846 songs". Wrote N records, ALL N files must exist.
+          const musicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
+          const onDiskFiles = await walkAudioFilesUnder(musicRoot)
+          const onDiskBasenames = new Set(onDiskFiles.map((f) => f.split(/[/\\]/).pop() || ''))
+          let missingFiles = 0
+          for (const t of readback.tracks as Array<{ path?: string }>) {
+            const bn = colonPathBasename(String(t.path || ''))
+            if (bn && !onDiskBasenames.has(bn)) missingFiles++
+          }
+          if (missingFiles > 0) {
+            console.error(`sync-to-ipod: FILE READBACK MISMATCH — catalog lists ${onDevice} songs but ${missingFiles} have NO file on the device`)
+            resolve({
+              ok: false,
+              error: `Sync verify failed: the iPod's catalog lists ${onDevice} songs but ${missingFiles} of them have no audio file on the device — the device will show ${onDevice - missingFiles}. Sync again.`,
+              copied, copyErrors,
+            })
+            return
+          }
+          console.log(`sync-to-ipod: readback verified — ${onDevice} catalog records, all ${onDiskFiles.length} files present on disk`)
           // Retire the firmware's session scratch (2026-07-21: Jake's device
           // indexed the SAME perfect 1000-track DB as 854, then 892 after a
           // hard reset — boot-time merges of stale Play Counts / On-The-Go
@@ -5803,14 +5833,36 @@ async function purgeLibraryOrphans(): Promise<{ deleted: number; bytesFreed: num
   return { deleted, bytesFreed }
 }
 
-async function cleanOrphansOnMusicRoot(musicRoot: string, tracks: Array<{ path?: string }>): Promise<{ deleted: number; bytesFreed: number }> {
+// ⚠️ 2026-07-21: this deletes device files by BASENAME string-match — the
+// destructive-op-on-text-comparison pattern CLAUDE.md forbids (it deleted
+// tracks before). Root cause of Jake's shrinking iPod: successive syncs
+// showed 892→857→854→846 because a file freshly copied THIS sync whose
+// basename didn't line up with the set (convert-renames, path rewrites)
+// was matched as an "orphan" and deleted right after being written. The
+// `protectMtimeAfterMs` guard makes it structurally impossible to delete
+// anything this sync touched: a file modified at/after the sync started is
+// never an orphan, no matter what its name is. Only genuinely stale files
+// (old mtime AND unreferenced) are reclaimed.
+async function cleanOrphansOnMusicRoot(
+  musicRoot: string,
+  tracks: Array<{ path?: string }>,
+  protectMtimeAfterMs = 0,
+): Promise<{ deleted: number; bytesFreed: number; protected: number }> {
   const indexed = indexedBasenamesFromTracks(tracks)
   const files = await walkAudioFilesUnder(musicRoot)
   let deleted = 0
   let bytesFreed = 0
+  let protectedCount = 0
   for (const f of files) {
     if (!isDiskOrphanFile(f, indexed)) continue
     const s = await stat(f).catch(() => null)
+    // NEVER delete a file this sync just wrote — the guard that stops the
+    // shrinking-iPod bug at its root.
+    if (protectMtimeAfterMs > 0 && s && s.mtimeMs >= protectMtimeAfterMs - 2000) {
+      protectedCount++
+      console.warn(`[clean-orphans] PROTECTED freshly-written file, not deleting: ${f.split(/[/\\]/).pop()}`)
+      continue
+    }
     if (s) bytesFreed += s.size
     try {
       await unlink(f)
@@ -5819,7 +5871,7 @@ async function cleanOrphansOnMusicRoot(musicRoot: string, tracks: Array<{ path?:
       console.warn(`[clean-orphans] failed to delete ${f}:`, err)
     }
   }
-  return { deleted, bytesFreed }
+  return { deleted, bytesFreed, protected: protectedCount }
 }
 
 interface SingleImportResult {
