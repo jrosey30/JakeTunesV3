@@ -529,12 +529,14 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     mhods += build_string_mhod(2, path)
     mhod_count = 7
 
-    # Album artist (mhod type 32). Only emit if present — don't pollute the
-    # DB with empty strings.
-    album_artist = str(track.get('albumArtist', '') or '').strip()
-    if album_artist:
-        mhods += build_string_mhod(32, album_artist)
-        mhod_count += 1
+    # Album artist (mhod type 32). ALWAYS emitted (2026-07-21): Jake's
+    # 5.5g firmware requires the full mhod complement — the 72 tracks
+    # whose albumArtist was empty (and therefore had no mhod32) were
+    # silently dropped from Music > Songs at index-build time. Fall back
+    # to the artist, same value mhod22 carries.
+    album_artist = str(track.get('albumArtist', '') or '').strip() or str(track.get('artist', '') or '')
+    mhods += build_string_mhod(32, album_artist)
+    mhod_count += 1
 
     # Append preserved extra mhods from existing DB (composer, comment, artwork refs, etc.)
     if extra_mhods:
@@ -574,33 +576,51 @@ def build_sort_mhod(sort_key, sorted_indices):
     return bytes(rec)
 
 
+def _fold(s):
+    """Firmware-collation fold (2026-07-21): the iPod validates our mhod52
+    sort tables against ITS collation and DISCARDS entries it sees as
+    out-of-order. Python codepoint .lower() files 'Tiësto' after 'Tz' and
+    'Entrañas' after 'Entz'; the firmware collates ë→e, ñ→n — those 36
+    accented tracks vanished from Music > Songs. NFKD-strip combining
+    marks, normalize typographic quotes/dashes, casefold. Do NOT strip
+    a leading 'The ' — the firmware doesn't for our tables (proven by
+    the surviving The-prefixed artists).
+    ⚠️ TWIN in spirit: any future sort-table writer must use this fold."""
+    import unicodedata
+    s = unicodedata.normalize('NFKD', str(s or ''))
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = s.translate({0x2018: 0x27, 0x2019: 0x27, 0x201C: 0x22, 0x201D: 0x22,
+                     0x2013: 0x2D, 0x2014: 0x2D, 0x00A0: 0x20})
+    return s.casefold()
+
+
 def _sort_indices(tracks, sort_key):
     """Return list of track indices sorted by the given sort key."""
     def key_fn(idx):
         t = tracks[idx]
         if sort_key == 3:  # album
-            return (str(t.get('album', '') or '').lower(),
+            return (_fold(t.get('album', '')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
         elif sort_key == 4:  # artist
-            return (str(t.get('artist', '') or '').lower(),
-                    str(t.get('album', '') or '').lower(),
+            return (_fold(t.get('artist', '')),
+                    _fold(t.get('album', '')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
         elif sort_key == 5:  # genre
-            return (str(t.get('genre', '') or '').lower(),
-                    str(t.get('artist', '') or '').lower(),
-                    str(t.get('album', '') or '').lower())
+            return (_fold(t.get('genre', '')),
+                    _fold(t.get('artist', '')),
+                    _fold(t.get('album', '')))
         elif sort_key == 7:  # title
-            return (str(t.get('title', '') or '').lower(),)
+            return (_fold(t.get('title', '')),)
         elif sort_key == 18:  # artist + album + track (secondary sort)
-            return (str(t.get('artist', '') or '').lower(),
-                    str(t.get('album', '') or '').lower(),
+            return (_fold(t.get('artist', '')),
+                    _fold(t.get('album', '')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
         elif sort_key in (35, 36):  # album artist / composer sort
-            return (str(t.get('artist', '') or '').lower(),
-                    str(t.get('album', '') or '').lower(),
+            return (_fold(t.get('artist', '')),
+                    _fold(t.get('album', '')),
                     int(t.get('trackNumber', 0) or 0))
         return (idx,)  # unknown key — preserve insertion order
 
