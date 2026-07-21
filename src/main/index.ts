@@ -5139,6 +5139,14 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             return
           }
           console.log(`sync-to-ipod: readback verified — device catalog holds all ${onDevice} tracks`)
+          // Retire the firmware's session scratch (2026-07-21: Jake's device
+          // indexed the SAME perfect 1000-track DB as 854, then 892 after a
+          // hard reset — boot-time merges of stale Play Counts / On-The-Go
+          // state are the standing suspect, and real iTunes deletes these
+          // every sync so the firmware regenerates them against the new DB).
+          for (const scratch of ['Play Counts', 'OTGPlaylistInfo', 'OTGPlaylistInfo_DND']) {
+            try { await unlink(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', scratch)) } catch { /* absent = fine */ }
+          }
         } catch (rbErr) {
           console.warn('sync-to-ipod: readback failed (treating as sync failure):', rbErr)
           resolve({
