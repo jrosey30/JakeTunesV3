@@ -22,7 +22,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { pickBestStreamripMatch } from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch } from '../streamrip-match.ts'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -243,16 +243,40 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
     const query = [artist, title].filter(Boolean).join(' ')
-    const search = await searchCatalog({ query, source: 'qobuz', mediaType: wantAlbum ? 'album' : 'track', numResults: 25 })
-    if (!search.ok || !search.results?.length) {
-      return { ok: false, error: search.error || `No Qobuz match for “${query}”.` }
+    const mediaType = wantAlbum ? 'album' : 'track'
+
+    // ── Qobuz first (lossless when it has the track) ──
+    const qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
+    const qpick = qsearch.ok && qsearch.results?.length
+      ? pickBestStreamripMatch(title || query, artist, qsearch.results)
+      : null
+    if (qpick) {
+      const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
+      return { ...dl, matchDesc: qpick.desc }
     }
-    const pick = pickBestStreamripMatch(title || query, artist, search.results)
-    if (!pick) {
-      return { ok: false, error: `No close Qobuz match for “${query}”. Try the Download view to search manually.` }
+
+    // ── SoundCloud fallback (2026-07-22, Jake: "auto qobuz first"). Qobuz
+    // doesn't carry indie/underground singles (e.g. "Mr Vibe" by
+    // Villanova on Indie House Records); SoundCloud does, full-length.
+    // Only for single tracks — albums stay Qobuz-only (SoundCloud has no
+    // real album concept). Full track, ~128k MP3 (lossy but complete —
+    // beats a failed download for a track that exists nowhere lossless).
+    if (!wantAlbum) {
+      const ssearch = await searchCatalog({ query, source: 'soundcloud', mediaType: 'track', numResults: 15 })
+      const spick = ssearch.ok && ssearch.results?.length
+        ? pickBestSoundcloudMatch(title || query, artist, ssearch.results)
+        : null
+      if (spick) {
+        console.log(`[download] Qobuz had no match for "${query}" — falling back to SoundCloud: ${spick.desc}`)
+        const dl = await runDownload(['id', spick.source, spick.mediaType, spick.id])
+        return { ...dl, matchDesc: `${spick.desc} (SoundCloud)` }
+      }
     }
-    const dl = await runDownload(['id', pick.source, pick.mediaType, pick.id])
-    return { ...dl, matchDesc: pick.desc }
+
+    if (!qsearch.ok && !qsearch.results?.length) {
+      return { ok: false, error: qsearch.error || `No match for “${query}”.` }
+    }
+    return { ok: false, error: `Not on Qobuz${wantAlbum ? '' : ' or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
   })
 
   // Download a picked search result by its streamrip id.

@@ -1,9 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickBestStreamripMatch } from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch } from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
+}
+function schit(id: string, desc: string) {
+  return { source: 'soundcloud', mediaType: 'track', id, desc }
 }
 
 describe('pickBestStreamripMatch', () => {
@@ -19,5 +22,27 @@ describe('pickBestStreamripMatch', () => {
   it('returns null when no title matches', () => {
     const results = [hit('1', 'Creep by Radiohead')]
     assert.equal(pickBestStreamripMatch('Karma Police', 'Radiohead', results), null)
+  })
+})
+
+describe('pickBestSoundcloudMatch (Qobuz-gap fallback)', () => {
+  it('matches the real Villanova track SoundCloud returns (artist+title inside the label-uploaded desc)', () => {
+    const results = [
+      schit('2275039610|url', 'Villanova - Mr Vibe feat. Mike Dunn [Indie House Records] by Indie House Records'),
+      schit('2291240129|url', 'Villanova (FR) - Mr Vibe feat. Mike Dunn (Claude Monnet Remix) by Indie House Records'),
+    ]
+    const pick = pickBestSoundcloudMatch('Mr Vibe', 'Villanova', results)
+    // original upload preferred over the longer remix desc
+    assert.equal(pick?.id, '2275039610|url')
+  })
+
+  it('rejects a title match whose artist is absent (avoids grabbing a random cover)', () => {
+    const results = [schit('9', 'Some Kid - Mr Vibe (bedroom cover) by RandomUploader')]
+    assert.equal(pickBestSoundcloudMatch('Mr Vibe', 'Villanova', results), null)
+  })
+
+  it('returns null when the title is nowhere in the results', () => {
+    const results = [schit('9', 'Villanova - Different Song by Indie House Records')]
+    assert.equal(pickBestSoundcloudMatch('Mr Vibe', 'Villanova', results), null)
   })
 })
