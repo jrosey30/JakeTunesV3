@@ -23,6 +23,20 @@ describe('pickBestStreamripMatch', () => {
     const results = [hit('1', 'Creep by Radiohead')]
     assert.equal(pickBestStreamripMatch('Karma Police', 'Radiohead', results), null)
   })
+
+  // Regression (2026-07-24): album downloads always failed because the matcher
+  // hard-skipped every non-'track' row. An album query passes wantMediaType
+  // 'album' and MUST match album rows (Charli XCX "Music, Fashion, Film").
+  it('matches an ALBUM row when asked for an album', () => {
+    const results = [{ source: 'qobuz', mediaType: 'album', id: 'wy1feibmvq0fu', desc: 'Music, Fashion, Film by Charli XCX' }]
+    const pick = pickBestStreamripMatch('Music, Fashion, Film', 'Charli xcx', results, 'album')
+    assert.equal(pick?.id, 'wy1feibmvq0fu')
+  })
+
+  it('does NOT match an album row for a track query (default track gate holds)', () => {
+    const results = [{ source: 'qobuz', mediaType: 'album', id: 'a1', desc: 'Music, Fashion, Film by Charli XCX' }]
+    assert.equal(pickBestStreamripMatch('Music, Fashion, Film', 'Charli xcx', results), null)
+  })
 })
 
 describe('pickBestSoundcloudMatch (Qobuz-gap fallback)', () => {

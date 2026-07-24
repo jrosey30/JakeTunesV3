@@ -248,7 +248,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // ── Qobuz first (lossless when it has the track) ──
     const qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
     const qpick = qsearch.ok && qsearch.results?.length
-      ? pickBestStreamripMatch(title || query, artist, qsearch.results)
+      ? pickBestStreamripMatch(title || query, artist, qsearch.results, mediaType)
       : null
     if (qpick) {
       const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])

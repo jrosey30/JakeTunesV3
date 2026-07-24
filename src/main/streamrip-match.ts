@@ -10,16 +10,22 @@ export function parseStreamripDesc(desc: string): { title: string; artist: strin
   return { title: desc.trim(), artist: '' }
 }
 
-/** Pick the best Qobuz track hit for a reco title + artist. */
+/** Pick the best Qobuz hit for a reco title + artist. `wantMediaType` gates
+ *  which result rows are eligible — 'track' for a song query, 'album' for an
+ *  album query. This MUST match what the caller searched for: an album search
+ *  returns mediaType:'album' rows, and the old hard-coded `!== 'track'` skip
+ *  rejected every one of them, so album downloads silently failed (the Charli
+ *  XCX "Music, Fashion, Film" / "downloads only one song" bug, 2026-07-24). */
 export function pickBestStreamripMatch(
   wantTitle: string,
   wantArtist: string,
   results: StreamripSearchHit[],
+  wantMediaType: 'track' | 'album' = 'track',
 ): StreamripSearchHit | null {
   let best: StreamripSearchHit | null = null
   let bestScore = -1
   for (const r of results) {
-    if (r.mediaType !== 'track') continue
+    if (r.mediaType !== wantMediaType) continue
     const { title, artist } = parseStreamripDesc(r.desc)
     if (!recoTitleMatches(wantTitle, title)) continue
     let score = 2
