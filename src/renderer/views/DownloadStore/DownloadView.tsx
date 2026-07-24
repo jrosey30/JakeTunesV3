@@ -73,7 +73,9 @@ interface AlbumRow {
   owned: boolean
   score: number
   songs: number
+  collectionId?: number
 }
+const albumKey = (a: AlbumRow): string => `${norm(a.artist)}|${norm(a.album)}`
 
 // Page memory — the view unmounts on navigate-away; restore search state on return.
 interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
@@ -112,6 +114,35 @@ export default function DownloadView() {
   const [qMode, setQMode] = useState<'password' | 'token'>('password')
   const [qUserId, setQUserId] = useState('')
   const [qToken, setQToken] = useState('')
+
+  // Album expansion — the search only surfaces a few of an album's songs, so
+  // opening a card fetches its FULL tracklist from iTunes (2026-07-23, Jake:
+  // "there has to be an easier way to see all tracks on this album"). Raw
+  // tracks are cached per album key; owned/preview are computed at render.
+  const [expandedAlbums, setExpandedAlbums] = useState<Set<string>>(() => new Set())
+  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string }>>({})
+
+  const toggleAlbum = (a: AlbumRow) => {
+    const key = albumKey(a)
+    setExpandedAlbums((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) { next.delete(key); return next }
+      next.add(key)
+      // Lazy-fetch the tracklist the first time it's opened.
+      if (!albumTracks[key] && a.collectionId) {
+        setAlbumTracks((m) => ({ ...m, [key]: { loading: true } }))
+        window.electronAPI.itunesAlbumTracks?.(a.collectionId)
+          .then((r) => setAlbumTracks((m) => ({
+            ...m,
+            [key]: r?.ok && r.tracks?.length ? { loading: false, tracks: r.tracks } : { loading: false, error: 'Couldn’t load the tracklist.' },
+          })))
+          .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
+      } else if (!a.collectionId && !albumTracks[key]) {
+        setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'No tracklist available for this album.' } }))
+      }
+      return next
+    })
+  }
 
   const { state: lib } = useLibrary()
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
@@ -163,11 +194,14 @@ export default function DownloadView() {
         scoreResult(q, qTokens, s.song, s.artist) * 0.85,
       ) : 0
       const cur = albumMap.get(key)
-      if (cur) { cur.songs += 1; cur.score = Math.max(cur.score, albScore); if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl }
-      else albumMap.set(key, {
+      if (cur) {
+        cur.songs += 1; cur.score = Math.max(cur.score, albScore)
+        if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl
+        if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
+      } else albumMap.set(key, {
         kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
         owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
-        score: albScore, songs: 1,
+        score: albScore, songs: 1, collectionId: s.collectionId,
       })
     }
     const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, 8)
@@ -409,27 +443,92 @@ export default function DownloadView() {
     )
   }
 
+  const asSongRow = (t: ItunesSuggestion): SongRow => ({
+    kind: 'song', artist: t.artist, title: t.song, album: t.album,
+    artworkUrl: t.artworkUrl, previewUrl: t.previewUrl,
+    owned: libIndex.tracks.has(norm(t.song) + '|' + norm(t.artist)), score: 0,
+  })
+
+  // "Get all" grabs the whole album as ONE Qobuz album download (the same
+  // reliable album-id path the header Get uses), NOT a per-track loop. Reason
+  // (2026-07-24, the Charli XCX "Music, Fashion, Film" failure): Qobuz indexes
+  // albums but NOT always their individual tracks — a per-track search for
+  // "Card Declined" returns junk ("2 die 4" by Addison Rae), which the matcher
+  // correctly rejects, so 8/11 tracks "failed" even though the album is right
+  // there on Qobuz. One album download gets every track; the importer dedups
+  // the few already owned. asSongRow stays — individual track rows still use it.
+
+  const renderAlbumTrack = (t: ItunesSuggestion, i: number) => {
+    const s = asSongRow(t)
+    const qres = songQ(s)
+    const item = itemFor(qres)
+    const pid = `dl|${qres.id}`
+    const isPlaying = preview.playingId === pid
+    return (
+      <li key={qres.id} className={`download-track-row${item ? ` is-${item.status}` : ''}`}>
+        <span className="download-track-num">
+          {t.previewUrl ? (
+            <button
+              type="button"
+              className={`download-track-play${isPlaying ? ' is-on' : ''}`}
+              onClick={() => togglePreview(pid, t.previewUrl!, t.song, t.artist)}
+              title={isPlaying ? 'Stop preview' : '30s preview'}
+            >{isPlaying ? '❚❚' : '▶'}</button>
+          ) : (t.trackNumber ?? i + 1)}
+        </span>
+        <span className="download-track-title" title={t.song}>{t.song}</span>
+        {t.durationSecs ? <span className="download-track-dur">{mmss(t.durationSecs)}</span> : null}
+        {s.owned && <span className="download-owned download-owned--sm">In library</span>}
+        {renderAction(qres, item)}
+      </li>
+    )
+  }
+
   const renderAlbum = (a: AlbumRow, hero = false, i = 0) => {
     const qres = albumQ(a)
     const item = itemFor(qres)
+    const key = albumKey(a)
+    const isOpen = expandedAlbums.has(key)
+    const cache = albumTracks[key]
     return (
-      <li key={qres.id} className={`download-result-row${hero ? ' download-result-row--hero' : ''}${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
-        <span className="download-result-artwrap">
-          {a.artworkUrl
-            ? <img className="download-result-art" src={a.artworkUrl} alt="" loading="lazy" />
-            : <span className="download-result-art download-result-art--ph" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-              </span>}
-        </span>
-        <div className="download-result-body">
-          <span className="download-result-title" title={a.album}>{a.album}</span>
-          <span className="download-result-meta">
-            <span className="download-result-badge">ALBUM</span>
-            <span className="download-result-artist">{a.artist}</span>
-            {a.owned && <span className="download-owned">In your library</span>}
+      <li key={qres.id} className={`download-album${hero ? ' download-album--hero' : ''}${item ? ` is-${item.status}` : ''}${isOpen ? ' is-open' : ''}`} style={{ '--i': i } as CSSProperties}>
+        <div className="download-result-row download-album-header" onClick={() => toggleAlbum(a)} role="button" tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAlbum(a) } }}>
+          <svg className="download-album-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+          <span className="download-result-artwrap">
+            {a.artworkUrl
+              ? <img className="download-result-art" src={a.artworkUrl} alt="" loading="lazy" />
+              : <span className="download-result-art download-result-art--ph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+                </span>}
           </span>
+          <div className="download-result-body">
+            <span className="download-result-title" title={a.album}>{a.album}</span>
+            <span className="download-result-meta">
+              <span className="download-result-badge">ALBUM</span>
+              <span className="download-result-artist">{a.artist}</span>
+              {a.owned && <span className="download-owned">In your library</span>}
+            </span>
+          </div>
+          <span className="download-album-action" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
         </div>
-        {renderAction(qres, item)}
+        {isOpen && (
+          <div className="download-album-tracks">
+            {cache?.loading && <div className="download-album-tracks-note"><span className="dl-spinner" aria-hidden="true" /> Loading tracklist…</div>}
+            {cache?.error && <div className="download-album-tracks-note download-album-tracks-note--err">{cache.error}</div>}
+            {cache?.tracks && cache.tracks.length > 0 && (
+              <>
+                <div className="download-album-tracks-head">
+                  <span className="download-album-tracks-count">{cache.tracks.length} tracks</span>
+                  <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(albumQ(a)) }}>Get all</button>
+                </div>
+                <ul className="download-album-tracks-list" role="list">
+                  {cache.tracks.map((t, ti) => renderAlbumTrack(t, ti))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
       </li>
     )
   }
