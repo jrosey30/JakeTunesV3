@@ -429,7 +429,13 @@ export default function DeviceView() {
     const activity = await import('../activity')
     setSyncing(true)
     const name = review.payload.name
-    const playlists = assembleSyncPlaylists(finalTracks, state.playlists, name)
+    // MINIMAL DB (2026-07-24, "fix it by any means"): the iPod's database is
+    // byte-perfect but the firmware loads a heavy DB incompletely (a different
+    // partial count each sync). Strip it to the bare minimum for an activity
+    // sync — the auto master library list + ONLY this activity playlist, NOT
+    // Jake's 25 library playlists (which get written into two dataset sections
+    // = ~50 playlist structures). Pass [] as the library-playlist source.
+    const playlists = assembleSyncPlaylists(finalTracks, [], name)
     const wx = review.payload.weatherLine ? ` · ${review.payload.weatherLine}` : ''
     setSyncStatus({
       state: 'syncing',
