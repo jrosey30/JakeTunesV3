@@ -446,7 +446,7 @@ export default function DeviceView() {
       const result = await window.electronAPI.syncToIpod(finalTracks, playlists, {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
-      })
+      }, { wipeFirst: true })  // clean-slate rebuild every activity sync (Jake, 2026-07-24)
       if (result.alreadyRunning) {
         return
       }

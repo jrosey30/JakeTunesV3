@@ -742,7 +742,7 @@ declare global {
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
-      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{
+      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean }) => Promise<{
         ok: boolean
         copied?: number
         copyErrors?: number

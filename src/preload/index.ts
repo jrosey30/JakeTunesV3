@@ -510,8 +510,8 @@ const electronAPI = {
   // sources are transcoded + cached; their iPod destination filename
   // is rewritten to .m4a and the iTunesDB entry updated. Optional —
   // omitted means original-quality copy (legacy behavior).
-  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
-    ipcRenderer.invoke('sync-to-ipod', tracks, playlists, convertOptions),
+  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
+    ipcRenderer.invoke('sync-to-ipod', tracks, playlists, convertOptions, syncOpts),
   // 4.5.0-109: cancel an in-flight sync. Main flips a flag; the copy
   // loop checks it between files and bails with cancelled:true.
   cancelSync: (): Promise<{ ok: boolean; wasRunning: boolean }> =>

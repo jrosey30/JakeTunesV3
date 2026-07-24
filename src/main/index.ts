@@ -4545,7 +4545,7 @@ interface SyncConvertOptions {
   targetKbps: 128 | 192 | 256
 }
 
-ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
+ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
   // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
   // for full concerts). Drop the merged concert track AND any of its constituent
   // songs not individually reimported (promoted). A promoted song is a normal
@@ -4588,7 +4588,7 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   // last sync died partway — surface it loudly.
   await writeSyncJournal('copy')
   try {
-    const result = await runSyncToIpod(tracks, playlists, convertOptions)
+    const result = await runSyncToIpod(tracks, playlists, convertOptions, syncOpts)
     if ((result as { ok?: boolean })?.ok) await writeSyncJournal(null)
     return result
   } finally {
@@ -4630,7 +4630,7 @@ setTimeout(async () => {
   } catch { /* no journal = last sync finished clean */ }
 }, 9_000)
 
-async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions): Promise<unknown> {
+async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }): Promise<unknown> {
   // 4.5.0-109: reset cancel flag at the top of every sync.
   syncCancelRequested = false
   // Everything copied/written from here on carries an mtime ≥ this stamp;
@@ -4765,6 +4765,38 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // file's EMBEDDED TAGS (title + artist) actually agree with the
   // library entry's metadata. If tags disagree or are missing, we
   // fall back to copying the real file.
+  // ── WIPE-FIRST (2026-07-24, Jake: "just wipe the songs from the iPod each
+  // time i do activity sync, then rebuild to whatever number i pick"). Deletes
+  // every audio file under iPod_Control/Music/F00–F49 so the set is rebuilt from
+  // a clean slate — no leftover files, no stale/duplicate catalog entries piling
+  // up across syncs (a prime suspect in the firmware loading fewer songs than
+  // the DB holds). The iTunesDB is rewritten fresh from `tracks` below, so after
+  // this the device holds EXACTLY the picked set. Only activity sync passes
+  // wipeFirst; full-library sync + plug-in auto-repair do not.
+  if (syncOpts?.wipeFirst) {
+    mainWindow?.webContents.send('sync-progress', { phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
+    const wipeMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
+    let wiped = 0
+    try {
+      const { readdir: rdw } = await import('fs/promises')
+      for (let i = 0; i < 50; i++) {
+        const sub = join(wipeMusicRoot, `F${String(i).padStart(2, '0')}`)
+        const entries = await rdw(sub).catch(() => [] as string[])
+        for (const fn of entries) {
+          try { await unlink(join(sub, fn)); wiped++ } catch { /* leave what won't delete */ }
+        }
+      }
+      // Drop the firmware's play-count / on-the-go scratch so a clean rebuild
+      // isn't merged against stale session state.
+      for (const scratch of ['Play Counts', 'OTGPlaylistInfo', 'OTGPlaylistInfo_DND']) {
+        try { await unlink(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', scratch)) } catch { /* absent = fine */ }
+      }
+      console.log(`sync-to-ipod: WIPE-FIRST deleted ${wiped} existing audio file(s) — rebuilding clean to ${tracks.length}`)
+    } catch (e) {
+      console.warn('sync-to-ipod: wipe-first failed (continuing with incremental sync):', e)
+    }
+  }
+
   let copied = 0
   let copyErrors = 0
   const pathSep = IS_WINDOWS ? '\\' : '/'
