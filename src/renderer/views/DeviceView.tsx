@@ -5,6 +5,7 @@ import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
 import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
 
 // Fallback capacity shown before the main process reports the real size.
@@ -59,6 +60,13 @@ type SyncStatus = { state: 'idle' } | { state: 'syncing'; step: string } | { sta
 
 export default function DeviceView() {
   const { state, dispatch } = useLibrary()
+  // 2026-07-24 (Jake: "on top it says i have 8676 songs but on the bottom i have
+  // 8621. thats an issue!!"). The status bar counts REGULAR library songs — it
+  // excludes the individual tracks inside declared full concerts (3 concerts =
+  // 55 tracks: Nassau '80 24, Everything Will Change 17, Alive 2007 14). This
+  // view was using the raw state.tracks.length and so reported 8,676. Same
+  // source of truth as StatusBar now, so the two numbers always agree.
+  const regularTracks = useRegularLibraryTracks(state.tracks)
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
   const [ipodName, setIpodName] = useState('iPod')
@@ -299,9 +307,9 @@ export default function DeviceView() {
       otherPercent,
       freePercent,
       roomForSongs,
-      libraryTotal: state.tracks.length,
+      libraryTotal: regularTracks.length,
     }
-  }, [state.tracks, ipodCapacityBytes, ipodFreeBytes])
+  }, [state.tracks, regularTracks, ipodCapacityBytes, ipodFreeBytes])
 
   const ensureIpodMounted = async (): Promise<boolean> => {
     const mount = await window.electronAPI.checkIpodMounted()

@@ -1018,7 +1018,12 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     # then the freshly-rebuilt album list (type 4). The duplicate type-3
     # (identical payload to type 2) and the stale verbatim type-5 are dropped
     # entirely, and mhbd's child count is corrected to match.
-    datasets_out = [type1_section, type2_section, type4_section]
+    # 2026-07-24b: Finder ("The contents of the iPod could not be read") proved
+    # Apple's own parser rejects our DB. Real iTunes always emits the type-3
+    # (podcast/special playlist) dataset alongside type 2 — dropping it may be
+    # what Apple's parser refuses. Restore it, keeping the correct
+    # tracks-first order and still omitting the STALE verbatim type-5.
+    datasets_out = [type1_section, type2_section, type3_section, type4_section]
     body = bytearray()
     for ds in datasets_out:
         body += ds
