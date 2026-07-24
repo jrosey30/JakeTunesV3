@@ -5366,6 +5366,21 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           console.warn('sync-to-ipod: iPod orphan cleanup failed (non-fatal):', ipodOrphErr)
         }
 
+        // ── FLUSH TO CARD BEFORE "DONE" (2026-07-24, Jake: "the sync progress
+        // tracker is not accurate at all... maybe it isnt done"). The fskit/FAT32
+        // iPod holds the just-written iTunesDB in the Mac's WRITE CACHE; firing
+        // "done" here declared success before it was physically on the card, so
+        // the device kept counting UP for a while after (377 → 402 → …) as the
+        // cache drained. Force a full flush + remount so (a) the DB is truly
+        // committed to the card and it's safe to unplug at "done", and (b) the
+        // readback below reads the CARD, not the cache.
+        mainWindow?.webContents.send('sync-progress', { phase: 'db', current: 1, total: 1, title: 'Finishing — flushing everything to the iPod…' })
+        try {
+          const flush = await remountVolume(IPOD_MOUNT)
+          if (!flush.ok) console.warn(`sync-to-ipod: pre-"done" flush/remount failed (readback may read cache): ${flush.error}`)
+          else console.log('sync-to-ipod: flushed + remounted before verify — reading the card, not the cache')
+        } catch (fe) { console.warn('sync-to-ipod: pre-"done" flush threw:', fe) }
+
         // ── DEVICE-TRUTH READBACK (2026-07-20, Jake: "my ipod had 6
         // songs"). A sync that reported success once left a 6-entry
         // catalog on the device. Never trust the writer's exit code

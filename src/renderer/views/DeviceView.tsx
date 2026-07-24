@@ -537,11 +537,16 @@ export default function DeviceView() {
           total: landed,
           time: timeStr,
         })
+        // "done" now means everything is flushed + verified on the card (main
+        // remounts before declaring success). The iPod firmware still builds its
+        // own library index from the DB, so its on-screen count climbs up to the
+        // real number over the next moment — set that expectation so a mid-index
+        // read isn't mistaken for a short sync.
         activity.setSync({
           active: true,
-          step: `Synced “${name}” — ${landed} on device (verified)`,
+          step: `Synced ${landed} to the iPod — all verified on the card. Give it a moment to finish counting up to ${landed}.`,
         })
-        setTimeout(() => activity.setSync(null), 4000)
+        setTimeout(() => activity.setSync(null), 7000)
       }
     } catch (err) {
       console.error('Sync failed:', err)
