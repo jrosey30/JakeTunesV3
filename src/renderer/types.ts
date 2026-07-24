@@ -239,6 +239,13 @@ export interface ItunesSuggestion {
   artworkUrl?: string
   previewUrl?: string
   appleMusicUrl?: string
+  /** iTunes album (collection) id — lets the Download view expand an album
+   *  into its FULL tracklist via itunesAlbumTracks (2026-07-23). */
+  collectionId?: number
+  /** Track position within its album (from the album-tracks lookup). */
+  trackNumber?: number
+  /** Track length in seconds (from the album-tracks lookup). */
+  durationSecs?: number
 }
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
@@ -604,6 +611,7 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
+      itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string }>
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
       lookupRecoArtwork: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
@@ -739,6 +747,13 @@ declare global {
         copied?: number
         copyErrors?: number
         totalTracks?: number
+        // Verified-count truth (2026-07-24): target = number picked, landed =
+        // number that actually committed to the card (unmount/remount-verified),
+        // shortfall = target - landed, verifyAttempts = passes it took.
+        target?: number
+        landed?: number
+        shortfall?: number
+        verifyAttempts?: number
         error?: string
         cancelled?: boolean
         alreadyRunning?: boolean
@@ -749,7 +764,7 @@ declare global {
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
       cancelSync: () => Promise<{ ok: boolean; wasRunning: boolean }>
-      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => void) => () => void
+      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled'; current: number; total: number; title: string }) => void) => () => void
       onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number

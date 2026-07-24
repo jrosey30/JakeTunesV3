@@ -213,6 +213,7 @@ const electronAPI = {
   suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
+  itunesAlbumTracks: (collectionId: number) => ipcRenderer.invoke('itunes-album-tracks', collectionId),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
   // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
@@ -509,7 +510,7 @@ const electronAPI = {
   // sources are transcoded + cached; their iPod destination filename
   // is rewritten to .m4a and the iTunesDB entry updated. Optional —
   // omitted means original-quality copy (legacy behavior).
-  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
+  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
     ipcRenderer.invoke('sync-to-ipod', tracks, playlists, convertOptions),
   // 4.5.0-109: cancel an in-flight sync. Main flips a flag; the copy
   // loop checks it between files and bails with cancelled:true.

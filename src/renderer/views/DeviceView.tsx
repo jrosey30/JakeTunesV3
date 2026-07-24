@@ -518,17 +518,31 @@ export default function DeviceView() {
       setLastCommitted({ name, trackIds: finalTracks.map((t) => t.id) })
       const now = new Date()
       const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-      setSyncStatus({
-        state: 'done',
-        copied: result.copied || 0,
-        total: result.totalTracks || finalTracks.length,
-        time: timeStr,
-      })
-      activity.setSync({
-        active: true,
-        step: `Synced “${name}” — ${result.copied || 0} new · ${finalTracks.length} on device`,
-      })
-      setTimeout(() => activity.setSync(null), 4000)
+      // Verified-count truth (2026-07-24): `landed` is what actually committed to
+      // the card (unmount/remount-verified), not what we sent. If it fell short of
+      // the target, say so plainly instead of a false "done" — never claim a
+      // number the card doesn't hold.
+      const target = result.target ?? finalTracks.length
+      const landed = result.landed ?? (result.totalTracks || finalTracks.length)
+      const shortfall = result.shortfall ?? 0
+      if (shortfall > 0) {
+        const msg = `Only ${landed} of ${target} songs actually stuck on the iPod after ${result.verifyAttempts ?? 0} tries — the card keeps dropping writes. A reformat is likely needed to reach ${target}.`
+        setSyncStatus({ state: 'error', message: msg })
+        activity.setSync({ active: true, step: `iPod: ${landed}/${target} verified on device — card dropping writes` })
+        setTimeout(() => activity.setSync(null), 6000)
+      } else {
+        setSyncStatus({
+          state: 'done',
+          copied: result.copied || 0,
+          total: landed,
+          time: timeStr,
+        })
+        activity.setSync({
+          active: true,
+          step: `Synced “${name}” — ${landed} on device (verified)`,
+        })
+        setTimeout(() => activity.setSync(null), 4000)
+      }
     } catch (err) {
       console.error('Sync failed:', err)
       const msg = String(err)

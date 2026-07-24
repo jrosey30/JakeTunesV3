@@ -83,6 +83,7 @@ import {
   volumeNameFromMount,
   findIpodMount,
   ejectVolume,
+  remountVolume,
   hasOpticalMedia,
   ejectOpticalMedia,
   audioHelperRelPath,
@@ -92,6 +93,7 @@ import {
   resolveImportFormat,
   type AudioFormat,
 } from './platform'
+import { partitionLanded, type IntendedTrack } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerScotusArchive } from './scotus-archive'
@@ -1204,15 +1206,21 @@ ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
 // See src/main/discover-feed.ts for the grounding rules. Replaces the
 // single-lane "new releases only" radar as Discovery's engine (the radar
 // handler stays for back-compat until mobile migrates).
-let discoverFeedMem: { at: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> } | null = null
+// Feed generation version — BUMP whenever the generation logic changes (new
+// lanes, scoring, or — 2026-07-23 — the artwork match-validation). Any cached
+// feed with an older ver is discarded on load so a fix never leaves a stale,
+// wrong-art batch on screen ("you shouldn't have to know to hit refresh").
+const FEED_GEN_VERSION = 2
+type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
+let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
 // Jake (2026-07-14): "can it not look like this every time the app opens. it
 // should be there already... if it needs to update it will update." The feed
 // persists to disk and serves INSTANTLY on open; a stale feed refreshes in
 // the background and pushes the update to the renderer when ready.
-const discoverFeedDisk = new JsonFileCache<{ at: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }>(
+const discoverFeedDisk = new JsonFileCache<FeedCacheShape>(
   () => join(STATE_DIR, 'discover-feed.json'),
-  () => ({ at: 0, lanes: [] }),
+  () => ({ at: 0, ver: 0, lanes: [] }),
   'discover-feed',
 )
 let discoverGenInFlight = false
@@ -1248,8 +1256,8 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         const journalism = blocks.filter(Boolean).join('\n\n')
         if (!journalism) return
         const reply = await claudeCall('discover-brand-new', {
-          model: 'claude-sonnet-4-6', max_tokens: 1200, system: MUSIC_MAN_CORE,
-          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 10 this listener would love. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
+          model: 'claude-sonnet-4-6', max_tokens: 2000, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 18 this listener would love. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
         const block = reply.content[0]
         const text = block && block.type === 'text' ? block.text : ''
@@ -1262,11 +1270,11 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L2 · You're missing — MusicBrainz discography minus owned (pure grounding).
     const missingPromise = (async () => {
       try {
-        const tops = anchors.slice(0, 4)
+        const tops = anchors.slice(0, 7)
         for (const a of tops) {
           const disco = await fetchArtistDiscography(a.artist).catch(() => null)
           if (!disco) continue
-          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 2)
+          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 3)
           for (const al of missing) {
             cards.push({ lane: 'missing', type: 'album', artist: a.artist, title: al.title, year: String(al.year || ''), why: `You own ${a.tracks} ${a.artist} tracks — not this` })
           }
@@ -1279,24 +1287,24 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const llmLanes = (async () => {
       try {
         const reply = await claudeCall('discover-time-machine', {
-          model: 'claude-sonnet-4-6', max_tokens: 1400, system: MUSIC_MAN_CORE,
-          messages: [{ role: 'user', content: `${tasteLine}\n\nRecommend music from ANY era (1960s to last year — deliberately NOT this year's releases) adjacent to this taste that the listener plausibly does NOT own. Mix eras. Return ONLY JSON with two arrays:\n{"classics":[{"type":"album"|"artist","artist","title","year","why"}] (8 items), "songs":[{"artist","title","year","why"}] (8 items)}\nEvery "why" MUST be 8 words or fewer. No prose, no code fence.` }],
+          model: 'claude-sonnet-4-6', max_tokens: 2800, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nRecommend music from ANY era (1960s to last year — deliberately NOT this year's releases) adjacent to this taste that the listener plausibly does NOT own. Mix eras widely; go deep and surprising, not just the obvious canon. Return ONLY JSON with two arrays:\n{"classics":[{"type":"album"|"artist","artist","title","year","why"}] (18 items), "songs":[{"artist","title","year","why"}] (18 items)}\nEvery "why" MUST be 8 words or fewer. No prose, no code fence.` }],
         })
         const block = reply.content[0]
         const text = block && block.type === 'text' ? block.text : ''
         const m = text.match(/\{[\s\S]*\}/)
         const parsed = m ? JSON.parse(m[0]) as { classics?: Array<{ type?: string; artist?: string; title?: string; year?: string; why?: string }>; songs?: Array<{ artist?: string; title?: string; year?: string; why?: string }> } : {}
         // Verify each against iTunes — canonical name/art/year or it doesn't exist.
-        for (const c of (parsed.classics || []).slice(0, 8)) {
+        for (const c of (parsed.classics || []).slice(0, 18)) {
           if (!c.artist) continue
           const entity = c.type === 'artist' ? 'musicArtist' : 'album'
-          const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist')
+          const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title })
           if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl })
           await new Promise((r) => setTimeout(r, 250))   // stay polite with Apple
         }
-        for (const sng of (parsed.songs || []).slice(0, 8)) {
+        for (const sng of (parsed.songs || []).slice(0, 18)) {
           if (!sng.artist || !sng.title) continue
-          const v = await df.itunesVerify(`${sng.artist} ${sng.title}`, 'song')
+          const v = await df.itunesVerify(`${sng.artist} ${sng.title}`, 'song', { artist: sng.artist, title: sng.title })
           if (v) cards.push({ lane: 'songs', type: 'song', artist: v.artist, title: v.title, year: v.year || String(sng.year || ''), why: df.clipWhy(String(sng.why || '')), artUrl: v.artUrl, previewUrl: v.previewUrl })
           await new Promise((r) => setTimeout(r, 250))
         }
@@ -1311,7 +1319,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // just with the placeholder.
     for (const c of cards) {
       if (c.artUrl) continue
-      const v = await df.itunesVerify(`${c.artist} ${c.title}`, 'album').catch(() => null)
+      const v = await df.itunesVerify(`${c.artist} ${c.title}`, 'album', { artist: c.artist, title: c.title }).catch(() => null)
       if (v?.artUrl) { c.artUrl = v.artUrl; if (!c.year && v.year) c.year = v.year }
       await new Promise((r) => setTimeout(r, 200))
     }
@@ -1336,7 +1344,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       { id: 'songs', title: 'Songs to Try' },
     ]
     const lanes = laneDefs
-      .map((l) => ({ ...l, cards: visible.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 10) }))
+      .map((l) => ({ ...l, cards: visible.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
       .filter((l) => l.cards.length > 0)
 
     // Serve-count for rotation.
@@ -1352,8 +1360,8 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // Never cache an empty feed — a transient failure (Apple 403, Exa down)
     // must not stick; the next open retries.
     if (lanes.length > 0) {
-      discoverFeedMem = { at: nowMs, lanes }
-      await discoverFeedDisk.update(() => ({ at: nowMs, lanes }))
+      discoverFeedMem = { at: nowMs, ver: FEED_GEN_VERSION, lanes }
+      await discoverFeedDisk.update(() => ({ at: nowMs, ver: FEED_GEN_VERSION, lanes }))
       mainWindow?.webContents.send('discover-feed-updated', { lanes, generatedAt: nowMs })
     }
     return { ok: true, lanes, generatedAt: nowMs }
@@ -1366,11 +1374,15 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
 
 ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
   const isFresh = (at: number) => Date.now() - at < DISCOVER_TTL_MS
+  const currentVer = (c: FeedCacheShape | null) => (c?.ver ?? 0) === FEED_GEN_VERSION
   if (!discoverFeedMem) {
     const disk = await discoverFeedDisk.get()
-    if (disk.lanes.length) discoverFeedMem = disk
+    // Only adopt a cached feed built by the CURRENT generation logic — an
+    // older-version cache (e.g. pre artwork-validation) is discarded so its
+    // wrong covers never render; the regen path below rebuilds it fresh.
+    if (disk.lanes.length && currentVer(disk)) discoverFeedMem = disk
   }
-  if (!force && discoverFeedMem?.lanes.length) {
+  if (!force && discoverFeedMem?.lanes.length && currentVer(discoverFeedMem)) {
     // Serve what we have INSTANTLY; refresh behind the scenes if stale.
     if (!isFresh(discoverFeedMem.at)) void generateDiscoverFeed()
     return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true, stale: !isFresh(discoverFeedMem.at) }
@@ -1384,7 +1396,7 @@ app.whenReady().then(() => {
   setTimeout(() => {
     void (async () => {
       const disk = await discoverFeedDisk.get()
-      if (!disk.lanes.length || Date.now() - disk.at >= DISCOVER_TTL_MS) void generateDiscoverFeed()
+      if (!disk.lanes.length || (disk.ver ?? 0) !== FEED_GEN_VERSION || Date.now() - disk.at >= DISCOVER_TTL_MS) void generateDiscoverFeed()
     })()
   }, 25000)
 })
@@ -2857,6 +2869,14 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
 // ── Auto-detect iPod (cross-platform: scans /Volumes/ on macOS, drive letters on Windows) ──
 let detectedIpodMount: string | null = null  // Full mount path: "/Volumes/JACOBROSENB" or "E:\\"
 let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "E:"
+// Debounce: iFlash-modded iPods on macOS's fskit FAT32 driver FLAP — the
+// volume drops out of /Volumes for a scan or two while staying fully
+// readable, so a single missed poll would make the iPod vanish from the UI
+// mid-use (Jake 2026-07-23). Tolerate a few consecutive misses before we
+// believe it's really gone, and re-stat the last-known iTunesDB directly
+// (that read survives a /Volumes readdir hiccup) before counting a miss.
+let ipodMissStreak = 0
+const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
 
 // Wired up by the ipod-audio protocol handler inside app.whenReady().
 // Call with a list of absolute source-file paths to kick off background
@@ -2892,11 +2912,33 @@ ipcMain.handle('get-ipod-capacity', async () => {
 
 ipcMain.handle('check-ipod-mounted', async () => {
   try {
-    detectedIpodMount = await findIpodMount()
-    detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
-    if (detectedIpodMount) {
+    let mount = await findIpodMount()
+    // findIpodMount scans /Volumes, which can transiently miss a flapping
+    // fskit mount even while it's fully readable — re-stat the last-known
+    // iTunesDB directly before believing it's gone.
+    if (!mount && detectedIpodMount) {
+      try {
+        const { stat } = await import('fs/promises')
+        await stat(join(detectedIpodMount, 'iPod_Control', 'iTunes', 'iTunesDB'))
+        mount = detectedIpodMount
+      } catch { /* genuinely absent this poll */ }
+    }
+    if (mount) {
+      ipodMissStreak = 0
+      detectedIpodMount = mount
+      detectedIpodVolume = volumeNameFromMount(mount)
       return { mounted: true, name: detectedIpodVolume }
     }
+    // No mount this poll. If we recently had one, ride out a brief flap
+    // rather than yanking the iPod from the UI — only give up after a few
+    // consecutive misses (a real unplug clears within ~7.5s).
+    if (detectedIpodMount && ipodMissStreak < IPOD_MISS_THRESHOLD) {
+      ipodMissStreak++
+      return { mounted: true, name: detectedIpodVolume }
+    }
+    ipodMissStreak = 0
+    detectedIpodMount = null
+    detectedIpodVolume = null
     return { mounted: false, name: null }
   } catch {
     return { mounted: false, name: null }
@@ -5055,6 +5097,107 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     console.log(`sync-to-ipod: smart-match rewrote ${pathRewrites.length} track paths (saved that many redundant copies)`)
   }
 
+  // ── VERIFIED-COUNT LOOP (2026-07-24, Jake: "100 means 100, 250 means 250,
+  // 500 means 500, 1000 means 1000"). The iFlash/FAT32 iPod on macOS fskit
+  // accepts writes into the MOUNT CACHE and reports them present while only a
+  // subset physically commits to the card — so copyFile "succeeds", the cache
+  // says 500, but the device shows 299. Every read through the live mount is
+  // fooled (including the readback below and every probe). The only reliable
+  // check is to EVICT the cache (unmount + remount) and re-read from the card,
+  // recopy whatever didn't survive, and loop until the true committed count hits
+  // the target. Then reduce `tracks` to what verifiably landed so the iTunesDB
+  // built below can never claim more than the card holds. macOS-only; other
+  // platforms keep the prior behaviour (verifyRan stays false).
+  const syncTarget = tracks.length
+  let verifiedLanded = syncTarget
+  let verifyAttempts = 0
+  let verifyRan = false
+  if (IS_MAC && tracks.length > 0) {
+    // Intended set = every track that should have a real file on the device.
+    // Exclude streamed tracks (intentionally not copied) and any with no local
+    // source to verify/recopy from (those fall through to the old readback).
+    const verify: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
+    for (const t of tracks) {
+      const colonPath = String(t.path || '')
+      if (!colonPath) continue
+      const relPath = colonPath.replace(/:/g, pathSep)
+      const localFile = join(LOCAL_MOUNT, relPath)
+      try {
+        if (await isStreamedTrackFile(localFile)) continue
+        const sz = (await stat(localFile)).size
+        verify.push({ id: t.id as number, dstPath: join(IPOD_MOUNT, relPath), localFile, expectedSize: sz })
+      } catch { /* no local source — can't verify/recopy; leave to the old readback */ }
+    }
+    const MAX_VERIFY_PASSES = 4
+    let landedIds = new Set<number>()
+    if (verify.length > 0) {
+      const intended: IntendedTrack[] = verify.map((v) => ({ id: v.id, expectedSize: v.expectedSize }))
+      for (let pass = 1; pass <= MAX_VERIFY_PASSES; pass++) {
+        verifyAttempts = pass
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'verify', current: pass, total: MAX_VERIFY_PASSES,
+          title: `Verifying what actually landed on the iPod (pass ${pass})…`,
+        })
+        const rm = await remountVolume(IPOD_MOUNT)
+        if (!rm.ok) {
+          console.warn(`sync-to-ipod: verify remount failed (pass ${pass}): ${rm.error}`)
+          if (pass === 1) { verifyRan = false; break }  // couldn't verify at all → fall back to old path
+          break                                          // keep the last good landed set
+        }
+        verifyRan = true
+        // Re-read TRUE sizes from the card (cache evicted by the remount).
+        const landedSizeById = new Map<number, number>()
+        for (const v of verify) {
+          try { landedSizeById.set(v.id, (await stat(v.dstPath)).size) } catch { /* missing on the card */ }
+        }
+        const { landed, failed } = partitionLanded(intended, landedSizeById)
+        landedIds = new Set(landed)
+        console.log(`sync-to-ipod: verify pass ${pass} — ${landed.length}/${verify.length} truly on the card, ${failed.length} missing`)
+        if (failed.length === 0) break
+        if (pass === MAX_VERIFY_PASSES) break
+        if (syncCancelRequested) break
+        // Recopy only the ones that didn't survive; the NEXT pass's remount
+        // flushes them to the card and re-verifies.
+        const failedSet = new Set(failed)
+        let recopied = 0
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'verify', current: pass, total: MAX_VERIFY_PASSES,
+          title: `Re-copying ${failed.length} song(s) that didn't stick…`,
+        })
+        for (const v of verify) {
+          if (!failedSet.has(v.id)) continue
+          if (syncCancelRequested) break
+          try {
+            const dir = v.dstPath.substring(0, v.dstPath.lastIndexOf(pathSep))
+            await mkdir(dir, { recursive: true })
+            await copyFile(v.localFile, v.dstPath)
+            recopied++
+          } catch (e) { console.warn(`sync-to-ipod: recopy failed for track ${v.id}:`, e) }
+        }
+        console.log(`sync-to-ipod: verify pass ${pass} — recopied ${recopied} missing file(s)`)
+      }
+    }
+    if (verifyRan && landedIds.size === 0 && verify.length > 0) {
+      // Nothing committed to the card at all — never write an empty catalog over
+      // a working one. Report the honest zero and stop.
+      await writeSyncJournal(null)
+      return {
+        ok: false,
+        error: `Sync failed: none of the ${syncTarget} songs committed to the iPod's card — the card is dropping every write. A reformat is needed.`,
+        copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, attempts: verifyAttempts,
+      }
+    }
+    if (verifyRan) {
+      // Keep only verifiably-landed tracks so the iTunesDB matches the card. Any
+      // track excluded from the verify set (streamed / no local source) is dropped
+      // too — it has no file on the device and would only inflate the count.
+      const before = tracks.length
+      tracks = tracks.filter((t) => landedIds.has(t.id as number))
+      verifiedLanded = tracks.length
+      console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
+    }
+  }
+
   // The full-library tag-verification preflight that used to live here
   // was removed in 4.0.5. It read tags off every audio file on the
   // iPod every sync (~5 minutes over USB 2.0 on a 4500-track library)
@@ -5255,6 +5398,13 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           ok: true,
           copied, copyErrors,
           totalTracks: tracks.length,
+          // Verified-count truth (2026-07-24): what the user picked vs what
+          // actually committed to the card. shortfall>0 → the renderer shows an
+          // honest banner instead of a false success.
+          target: syncTarget,
+          landed: verifiedLanded,
+          shortfall: Math.max(0, syncTarget - verifiedLanded),
+          verifyAttempts,
           ipodOrphansDeleted,
           // Return the path rewrites so the renderer can update
           // library.json to match what actually ended up on the iPod.
@@ -13158,6 +13308,7 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
             artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
             previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
             appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+            collectionId: r.collectionId ? Number(r.collectionId) : undefined,
           }))
           .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
@@ -13201,6 +13352,47 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
     return { ok: true, results: ranked }
   } catch {
     return { ok: false, results: [] }
+  }
+})
+
+// Full tracklist for an album, by iTunes collection id. Powers the Download
+// view's "expand the album → see every track" (2026-07-23): the search only
+// returns the handful of songs that matched, so an album's real contents were
+// invisible. lookup?entity=song returns the collection record first, then every
+// track in order.
+ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string }> => {
+  const id = Number(collectionId)
+  if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
+  try {
+    const url = `https://itunes.apple.com/lookup?id=${id}&entity=song&limit=200`
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
+    if (!res.ok) return { ok: false, tracks: [] }
+    const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+    const rows = data.results || []
+    const collection = rows.find((r) => r.wrapperType === 'collection' || r.collectionType)
+    const tracks: ItunesSuggestion[] = rows
+      .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
+      .map((r) => ({
+        song: String(r.trackName ?? ''),
+        artist: String(r.artistName ?? ''),
+        album: r.collectionName ? String(r.collectionName) : undefined,
+        artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+        previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+        appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+        collectionId: id,
+        trackNumber: r.trackNumber ? Number(r.trackNumber) : undefined,
+        durationSecs: r.trackTimeMillis ? Math.round(Number(r.trackTimeMillis) / 1000) : undefined,
+      }))
+      .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
+    return {
+      ok: true,
+      tracks,
+      album: collection?.collectionName ? String(collection.collectionName) : undefined,
+      artist: collection?.artistName ? String(collection.artistName) : undefined,
+      artworkUrl: collection?.artworkUrl100 ? String(collection.artworkUrl100).replace('100x100', '400x400') : undefined,
+    }
+  } catch {
+    return { ok: false, tracks: [] }
   }
 })
 

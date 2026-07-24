@@ -296,6 +296,67 @@ export async function ejectVolume(mountPoint: string): Promise<void> {
 }
 
 /**
+ * Resolve a mounted volume's BSD device node (e.g. "/dev/disk9s2") from its
+ * mount point, via `diskutil info -plist`. Needed to unmount+remount a specific
+ * volume by node. macOS only; returns null if it can't be resolved.
+ */
+export async function resolveDeviceNode(mountPoint: string): Promise<string | null> {
+  if (!IS_MAC) return null
+  try {
+    const { stdout } = await execP('diskutil', ['info', '-plist', mountPoint], { timeout: 15000 })
+    const m = stdout.match(/<key>DeviceNode<\/key>\s*<string>(\/dev\/disk\d+s\d+)<\/string>/)
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Flush, then unmount + remount a volume to EVICT the macOS mount cache so
+ * subsequent reads come from the physical device, not cached pages. This is the
+ * only reliable way to see what truly committed on an fskit/FAT32 iPod whose
+ * cache reports writes that never reached the card (the "picked 500, got 299"
+ * bug — 2026-07-24).
+ *
+ * `diskutil eject` is deliberately NOT used: it powers the device down and macOS
+ * won't auto-remount a FAT32 volume (findIpodMount's remount fallback only
+ * handles Apple_HFS). `unmount`+`mount` by node keeps the device enumerated and
+ * diskutil restores it at the same /Volumes/NAME path.
+ *
+ * Never throws. Returns { ok, mountPoint } on success (mountPoint is where it
+ * came back — the same path in practice) or { ok:false, error }.
+ */
+export async function remountVolume(mountPoint: string): Promise<{ ok: boolean; mountPoint?: string; error?: string }> {
+  if (!IS_MAC) return { ok: false, error: 'remount is macOS-only' }
+  const node = await resolveDeviceNode(mountPoint)
+  if (!node) return { ok: false, error: `could not resolve device node for ${mountPoint}` }
+  // Flush all filesystems first so a clean unmount has the least left to write,
+  // and a forced-unmount fallback (below) can't drop already-synced bytes.
+  try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
+  // Unmount: clean by node, then by mount point, then forced — in that order, so
+  // we prefer a flushing unmount and only force if something still holds it.
+  let unmounted = false
+  for (const args of [['unmount', node], ['unmount', mountPoint], ['unmount', 'force', node]]) {
+    try { await execP('diskutil', args, { timeout: 30000 }); unmounted = true; break } catch { /* try next */ }
+  }
+  if (!unmounted) return { ok: false, error: `unmount failed for ${node}` }
+  // Remount by node — diskutil mount is synchronous and restores /Volumes/NAME.
+  try {
+    await execP('diskutil', ['mount', node], { timeout: 30000 })
+  } catch (e) {
+    return { ok: false, error: `mount failed for ${node}: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  // Confirm it's actually back. A DIRECT stat bypasses findIpodMount's 10s
+  // negative cache and the fskit /Volumes readdir flap; wait up to ~5s for the
+  // volume to settle after the flapping remount.
+  for (let i = 0; i < 10; i++) {
+    try { await stat(join(mountPoint, 'iPod_Control')); return { ok: true, mountPoint } } catch { /* not yet */ }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return { ok: false, error: `remounted but ${mountPoint} did not reappear` }
+}
+
+/**
  * Check if any optical drive currently has media inserted.
  *   macOS:   `drutil status` and parse output
  *   Windows: PowerShell query WMI for CD/DVD drives with media
