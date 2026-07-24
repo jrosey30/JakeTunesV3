@@ -429,13 +429,13 @@ export default function DeviceView() {
     const activity = await import('../activity')
     setSyncing(true)
     const name = review.payload.name
-    // MINIMAL DB (2026-07-24, "fix it by any means"): the iPod's database is
-    // byte-perfect but the firmware loads a heavy DB incompletely (a different
-    // partial count each sync). Strip it to the bare minimum for an activity
-    // sync — the auto master library list + ONLY this activity playlist, NOT
-    // Jake's 25 library playlists (which get written into two dataset sections
-    // = ~50 playlist structures). Pass [] as the library-playlist source.
-    const playlists = assembleSyncPlaylists(finalTracks, [], name)
+    // Playlists restored: the real root cause was the iTunesDB dataset assembly
+    // (album list written before the track list + a stale type-5 section copied
+    // verbatim from the old library, whose items pointed at deleted track ids —
+    // the Mini's index build aborted on the dangling ref). Fixed in
+    // core/db_reader.py (clean [tracks, playlists, albums] order, stale sections
+    // dropped, num_children corrected), so playlists are safe to write again.
+    const playlists = assembleSyncPlaylists(finalTracks, state.playlists, name)
     const wx = review.payload.weatherLine ? ` · ${review.payload.weatherLine}` : ''
     setSyncStatus({
       state: 'syncing',

@@ -1001,21 +1001,31 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     print(f"Built mhsd type 4 with {len(album_tuples)} albums", file=sys.stderr)
 
     # ── Assemble final database ──
+    #
+    # 2026-07-24 ROOT-CAUSE FIX (non-deterministic partial song count: device
+    # showed 8 / 299 / 366 / 402 for a structurally-perfect 500-track DB).
+    # The old code appended datasets in the TEMPLATE's order — which was
+    # [4, 1, 3, 2, 5], i.e. the album list BEFORE the track list — and, worse,
+    # copied any non-1/2/3/4 dataset (a stale type-5 mhlp) VERBATIM from the
+    # previous library's DB. On this iPod that stale type-5 held playlist items
+    # (mhip) pointing at track ids from an 8,671-track library that no longer
+    # exist in the 500-track list; the Mini firmware silently aborts its index
+    # build the moment it dereferences a missing id, rendering only the tracks
+    # it processed before the abort — a different count each time.
+    #
+    # The cure is a clean, standard, correctly-ordered DB built ONLY from
+    # current data: the TRACK LIST FIRST (type 1), then playlists (type 2),
+    # then the freshly-rebuilt album list (type 4). The duplicate type-3
+    # (identical payload to type 2) and the stale verbatim type-5 are dropped
+    # entirely, and mhbd's child count is corrected to match.
+    datasets_out = [type1_section, type2_section, type4_section]
     body = bytearray()
-    for sec in sections:
-        if sec['type'] == 1:
-            body += type1_section
-        elif sec['type'] == 2:
-            body += type2_section
-        elif sec['type'] == 3:
-            body += type3_section
-        elif sec['type'] == 4:
-            body += type4_section
-        else:
-            body += existing[sec['start']:sec['start'] + sec['total']]
+    for ds in datasets_out:
+        body += ds
 
     mhbd = bytearray(existing[:mhbd_hlen])
-    struct.pack_into('<I', mhbd, 8, mhbd_hlen + len(body))
+    struct.pack_into('<I', mhbd, 8, mhbd_hlen + len(body))       # total length
+    struct.pack_into('<I', mhbd, 20, len(datasets_out))         # num_children (offset 0x14; see line ~699)
 
     # Atomic write: stage to .tmp, fsync to force the bytes onto the
     # iPod's HFS+ volume (without this, macOS's delayed-write buffer
