@@ -15,6 +15,8 @@ export interface ActivityBrief {
   place: string
   social: SocialKind
   note?: string
+  /** How many songs to put on the iPod this sync. Default 1,000. */
+  target?: number
 }
 
 interface SavedProfile extends ActivityBrief {
@@ -43,14 +45,13 @@ const INTENSITIES: { id: Intensity; label: string }[] = [
   { id: 'medium', label: 'Medium' },
   { id: 'hard', label: 'Hard' },
 ]
-const SETTINGS: { id: SettingKind; label: string }[] = [
-  { id: 'city', label: 'City' },
-  { id: 'trail', label: 'Trail' },
-  { id: 'gym', label: 'Gym' },
-  { id: 'mountain', label: 'Mountain' },
-  { id: 'indoors', label: 'Indoors' },
-  { id: 'water', label: 'Water' },
+const SIZES: { id: number; label: string }[] = [
+  { id: 100, label: '100' },
+  { id: 250, label: '250' },
+  { id: 500, label: '500' },
+  { id: 1000, label: '1,000' },
 ]
+const DEFAULT_TARGET = 1000
 
 const DEFAULT: ActivityBrief = {
   activity: 'bop',
@@ -59,6 +60,7 @@ const DEFAULT: ActivityBrief = {
   place: 'Brooklyn',
   social: 'solo',
   note: '',
+  target: DEFAULT_TARGET,
 }
 
 export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
@@ -66,6 +68,14 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
   const [profiles, setProfiles] = useState<SavedProfile[]>([])
   const [weatherLine, setWeatherLine] = useState<string | null>(null)
   const [weatherBusy, setWeatherBusy] = useState(false)
+  // 2026-07-24 (Jake: "easier to use"). The sheet asked five questions every
+  // time. Only "how many" and "what are you doing" change the set materially;
+  // intensity/place/steer are refinements. They stay one tap away — and open
+  // automatically if a previous brief had actually set them, so nothing a user
+  // configured ever silently hides.
+  const [showMore, setShowMore] = useState<boolean>(
+    Boolean(initial?.note) || Boolean(initial?.place && initial.place !== DEFAULT.place),
+  )
 
   useEffect(() => {
     window.electronAPI.getActivityProfiles?.().then((r) => {
@@ -103,9 +113,24 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
         <div className="activity-sheet-head">
           <h2 className="activity-sheet-title">What are you doing?</h2>
           <p className="activity-sheet-sub">
-            Music Man builds ~1,000 tracks for this — weather and place included. Songs land at your convert setting.
+            Music Man reads your taste — what you star and play most — and builds a set that fits both
+            you and what you’re doing. Songs land at your convert setting.
             “Bopping Around” is everyday listening: hanging out, commuting, errands.
           </p>
+        </div>
+
+        <div className="activity-q">
+          <span className="activity-q-label">How many songs</span>
+          <div className="activity-chips">
+            {SIZES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`activity-chip${(brief.target ?? DEFAULT_TARGET) === s.id ? ' is-on' : ''}`}
+                onClick={() => set('target', s.id)}
+              >{s.label}</button>
+            ))}
+          </div>
         </div>
 
         {profiles.length > 0 && (
@@ -138,6 +163,15 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           </div>
         </div>
 
+        {!showMore && (
+          <button
+            type="button"
+            className="activity-more-toggle"
+            onClick={() => setShowMore(true)}
+          >Fine-tune — intensity, place, steer the vibe</button>
+        )}
+
+        {showMore && (<>
         <div className="activity-q">
           <span className="activity-q-label">Intensity</span>
           <div className="activity-chips">
@@ -147,20 +181,6 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
                 type="button"
                 className={`activity-chip${brief.intensity === a.id ? ' is-on' : ''}`}
                 onClick={() => set('intensity', a.id)}
-              >{a.label}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="activity-q">
-          <span className="activity-q-label">Setting</span>
-          <div className="activity-chips">
-            {SETTINGS.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                className={`activity-chip${brief.setting === a.id ? ' is-on' : ''}`}
-                onClick={() => set('setting', a.id)}
               >{a.label}</button>
             ))}
           </div>
@@ -181,30 +201,18 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
         </div>
 
         <div className="activity-q">
-          <span className="activity-q-label">With</span>
-          <div className="activity-chips">
-            <button
-              type="button"
-              className={`activity-chip${brief.social === 'solo' ? ' is-on' : ''}`}
-              onClick={() => set('social', 'solo')}
-            >Solo</button>
-            <button
-              type="button"
-              className={`activity-chip${brief.social === 'friends' ? ' is-on' : ''}`}
-              onClick={() => set('social', 'friends')}
-            >Friends</button>
-          </div>
-        </div>
-
-        <div className="activity-q">
-          <span className="activity-q-label">Anything else?</span>
+          <span className="activity-q-label">Steer the vibe</span>
           <input
             className="activity-place"
             value={brief.note || ''}
             onChange={(e) => set('note', e.target.value)}
-            placeholder="Optional — no lyrics, 90s hip-hop, keep it under 160 BPM…"
+            placeholder="90s hip-hop, no lyrics, funky, keep it moving…"
           />
+          <div className="activity-weather">
+            The brain reads this — the more specific, the better the picks.
+          </div>
         </div>
+        </>)}
 
         <div className="activity-sheet-actions">
           <button type="button" className="activity-btn activity-btn--ghost" onClick={onCancel}>Cancel</button>

@@ -157,7 +157,14 @@ export function scoreWorkoutTrack(
   if (WORKOUT_GENRE.test(genre)) score += 16
   if (SLOW_GENRE.test(genre)) score -= 18
 
-  score += Math.min(plays, 40) * 0.35
+  // FLAVOR (2026-07-24, Jake: "more variety more flavor"). This used to be
+  // min(plays,40)*0.35 — up to +14 purely for heavy rotation, which stacked
+  // with the ★ bonus to make every set a greatest-hits reel of the same 200
+  // songs. Play count is evidence a track is GOOD, but the 40th play says
+  // nothing the 8th didn't; the taste model (brainTerm, ±45) is the real
+  // quality signal now. Saturate the familiarity credit early so proven-good
+  // beats unproven, without letting "played constantly" bury a deep cut.
+  score += Math.min(plays, 8) * 0.7          // max +5.6, saturates fast
   score -= skips * 2.5
 
   if (rating >= 5) score += 14
@@ -210,6 +217,9 @@ export function selectWorkoutSyncSet(
   // places sync to sync, small enough that a great track never loses to a poor
   // one. This is the knob for "more variety" — raise it for wilder sets.
   const JITTER = 12
+  // How hard a brain-loved / barely-played track is pulled into the set. This
+  // is the "flavor" knob — raise it for more digging, lower it for comfort.
+  const DEEP_CUT = 22
   // A track with no title or no artist can never sync (the iPod shows it
   // blank and the sync gate refuses it) — exclude it from the pool up
   // front so a blank never eats one of the 1000 slots (2026-07-21).
@@ -259,6 +269,16 @@ export function selectWorkoutSyncSet(
       // bouncing straight back the sync after it was dropped.
       const seen = recentCounts.get(t.id) || 0
       if (seen > 0) s -= Math.min(45, 14 * seen)
+      // DEEP CUTS: a track the brain rates highly that Jake has barely played
+      // is the most interesting thing a set can contain — it's his taste, but
+      // not his habits. Gated on brain fit so this surfaces buried gems, never
+      // unheard junk (a low-fit track gets nothing). Scaled by how unplayed it
+      // is, so a never-played favourite-by-taste gets the full nudge.
+      const fit = opts.brainFitById?.get(t.id)
+      if (fit != null && fit >= 0.55) {
+        const plays = Number(t.playCount) || 0
+        if (plays <= 3) s += DEEP_CUT * fit * (1 - plays / 4)
+      }
       // VARIETY (2026-07-24, Jake: "more variety more flavor"). The jitter was
       // ±1 on a scale where the brain term alone spans ±45 — effectively zero.
       // With a hard top-N sort that made the same brief produce the same set
