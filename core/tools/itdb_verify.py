@@ -296,6 +296,17 @@ def verify(path, root=None, expect=None):
     stray = all_mtypes - ERA_SAFE_MHODS
     if stray:
         r.warn(f"mhod types beyond the era-safe set present: {sorted(stray)}")
+
+    # Typographic Unicode the 2005 firmware silently rejects (found 2026-07-25:
+    # a 250-track sync landed 247, and the exact 3 missing tracks were the only
+    # ones carrying U+2019). Latin-1 accents are fine — the device renders them.
+    hot = []
+    for t in tracks:
+        for s in (t.get('title', ''),):
+            if any(ord(c) > 0x2000 for c in s):
+                hot.append(t.get('title', '')[:40])
+    if hot:
+        r.err(f"{len(hot)} track(s) carry typographic Unicode >U+2000 — this device DROPS them: {hot[:4]}")
     if 32 in all_mtypes:
         r.err("mhod type 32 present on tracks — spec says binary video field; a string here is malformed")
 

@@ -338,10 +338,67 @@ def add_file_sizes(tracks):
 
 # ── iTunesDB Writer ──
 
+# Typographic characters that iTunes/macOS routinely put in tags but which this
+# iPod mini's 2005 firmware will not accept — a track carrying one is silently
+# dropped from Music > Songs at index-build time.
+#
+# ⚠️ FOUND EMPIRICALLY 2026-07-25. A 250-track sync landed 247. Exactly three
+# tracks in the set contained a character above U+2000 — Drake "B’s On The
+# Table", Beastie Boys "Something’s Got To Give", Turnstile "SEEIN’ STARS" —
+# all three carrying U+2019 (curly apostrophe). Three anomalies, three missing
+# songs. Everything else in the set was plain ASCII and landed.
+#
+# We fold to the obvious ASCII equivalent ONLY in the bytes written to the
+# iPod's database. library.json keeps the real characters, so titles are
+# unchanged everywhere else in JakeTunes — this is a device-compatibility
+# transform at the boundary, not a metadata edit.
+IPOD_CHAR_FOLD = {
+    '‘': "'", '’': "'",            # curly single quotes
+    '‚': "'", '‛': "'",
+    '“': '"', '”': '"',            # curly double quotes
+    '„': '"', '‟': '"',
+    '–': '-', '—': '-', '‒': '-', '―': '-',   # dashes
+    '‐': '-', '‑': '-',
+    '…': '...',                         # ellipsis
+    ' ': ' ', ' ': ' ', ' ': ' ', ' ': ' ',   # odd spaces
+    '™': 'TM', '®': '(R)', '©': '(C)',
+    '′': "'", '″': '"',            # prime marks
+    '´': "'", '`': "'",            # accents used as quotes
+}
+
+
+def fold_for_ipod(text):
+    """Fold characters the iPod firmware rejects down to safe ASCII.
+
+    Anything still above U+00FF after the explicit map is transliterated via
+    NFKD (é -> e) and, failing that, dropped — a title the device can render is
+    infinitely better than a track it refuses to list. See IPOD_CHAR_FOLD.
+    """
+    s = str(text or '')
+    if not s:
+        return ''
+    out = ''.join(IPOD_CHAR_FOLD.get(c, c) for c in s)
+    if any(ord(c) > 0xFF for c in out):
+        import unicodedata
+        folded = []
+        for c in out:
+            if ord(c) <= 0xFF:
+                folded.append(c)
+                continue
+            dec = unicodedata.normalize('NFKD', c)
+            ascii_only = ''.join(x for x in dec if ord(x) <= 0xFF and not unicodedata.combining(x))
+            folded.append(ascii_only)
+        out = ''.join(folded)
+    return out
+
+
 def build_string_mhod(str_type, text):
     """Build a UTF-16 string mhod record."""
     if not text:
         text = ''
+    # Type 2 is the FILE PATH — never fold it, the bytes must match the real
+    # on-disk name exactly or the track becomes unplayable.
+    text = str(text) if str_type == 2 else fold_for_ipod(text)
     str_bytes = str(text).encode('utf-16-le')
     total = 40 + len(str_bytes)
     rec = bytearray(total)
