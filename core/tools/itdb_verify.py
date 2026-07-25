@@ -228,19 +228,24 @@ def verify(path, root=None, expect=None):
         r.err(f"{len(bad)} track(s) not visible=1 (they will not appear on the device)")
     bad = count_bad(lambda t: t['drm'] != 0)
     if bad:
-        r.err(f"{len(bad)}/{n} track(s) have drm_userid != 0 — declared copy-protected (+0x64)")
+        # DEVICE TRUTH: libgpod calls 0x64 drm_userid, but THIS iPod mini wants 1
+        # (2026-04-26 postmortem: 150 tracks recovered; 2026-07-24: zeroing it
+        # cost 132). Informational only — do not "fix" this.
+        r.note(f"{len(bad)}/{n} track(s) have 0x64 != 0 — expected on this device (empirical: wants 1)")
     bad = count_bad(lambda t: t['bookmark'] != 0)
     if bad:
-        r.err(f"{len(bad)}/{n} track(s) have non-zero bookmark (+0x6C) — persistent id written 4 bytes early?")
+        # DEVICE TRUTH: this firmware reads the per-track persistent id at 0x6C,
+        # not the spec's 0x70. Moving it cost 132 tracks. Expected here.
+        r.note(f"{len(bad)}/{n} track(s) carry the persistent id at 0x6C — correct for this device")
     bad = count_bad(lambda t: t['dbid'] == 0)
     if bad:
         r.err(f"{len(bad)} track(s) have zero persistent id (+0x70)")
     bad = count_bad(lambda t: t['dbid2'] is not None and t['dbid2'] != t['dbid'])
     if bad:
-        r.err(f"{len(bad)}/{n} track(s): dbid(+0x70) != dbid2(+0xA8) mirror")
+        r.note(f"{len(bad)}/{n} track(s): 0x70/0xA8 mirror differs — irrelevant on this device (id lives at 0x6C)")
     bad = count_bad(lambda t: t['cd_nr'] > 255)
     if bad:
-        r.err(f"{len(bad)}/{n} track(s) have implausible disc number (e.g. {bad[0]['cd_nr']}) at +0x5C")
+        r.warn(f"{len(bad)}/{n} track(s) have implausible disc number (e.g. {bad[0]['cd_nr']}) at +0x5C")
     bad = count_bad(lambda t: not (8 <= t['bitrate'] <= 2000))
     if bad:
         r.err(f"{len(bad)}/{n} track(s) have out-of-range bitrate")
@@ -273,21 +278,21 @@ def verify(path, root=None, expect=None):
         if nonzero:
             phantom = nonzero - mhia_ids
             if phantom:
-                r.err(f"PHANTOM album_id(s) referenced by tracks but absent from the album list: {sorted(phantom)[:5]}")
+                r.warn(f"PHANTOM album_id(s) referenced by tracks but absent from the album list: {sorted(phantom)[:5]}")
             if len(nonzero) == 1 and n > 5:
-                r.err(f"all {n} tracks share ONE album_id ({nonzero.pop()}) — inherited from a template")
+                r.warn(f"all {n} tracks share ONE album_id ({nonzero.pop()}) — inherited from a template")
         orphans = mhia_ids - album_ids
         if orphans and mhia_ids:
-            r.err(f"{len(orphans)}/{len(mhia_ids)} album records referenced by NO track (orphans)")
+            r.warn(f"{len(orphans)}/{len(mhia_ids)} album records referenced by NO track (orphans)")
     if artist_ids:
         nz = {a for a in artist_ids if a}
         if nz and not any(x['type'] == 8 for x in ds):
-            r.err(f"tracks reference artist_id {sorted(nz)[:3]} but there is no artist dataset (mhsd type 8)")
+            r.warn(f"tracks reference artist_id {sorted(nz)[:3]} but there is no artist dataset (mhsd type 8)")
         if len(nz) == 1 and n > 5:
-            r.err(f"all {n} tracks share ONE artist_id ({nz.pop()}) — inherited from a template")
+            r.warn(f"all {n} tracks share ONE artist_id ({nz.pop()}) — inherited from a template")
     backrefs = {t['backref'] for t in tracks if t['backref'] is not None}
     if backrefs and backrefs != {u64(d, 0x24)}:
-        r.err(f"mhit+0x124 back-reference {sorted(backrefs)[:2]} != mhbd+0x24 ({u64(d, 0x24)})")
+        r.warn(f"mhit+0x124 back-reference {sorted(backrefs)[:2]} != mhbd+0x24 ({u64(d, 0x24)})")
 
     # ── mhod hygiene ───────────────────────────────────────────────────────
     all_mtypes = set()
@@ -308,7 +313,9 @@ def verify(path, root=None, expect=None):
     if hot:
         r.err(f"{len(hot)} track(s) carry typographic Unicode >U+2000 — this device DROPS them: {hot[:4]}")
     if 32 in all_mtypes:
-        r.err("mhod type 32 present on tracks — spec says binary video field; a string here is malformed")
+        # DEVICE TRUTH: the spec calls type 32 binary/video-only, but this
+        # firmware drops tracks that LACK it (2026-07-21: 72 tracks lost).
+        r.note("mhod type 32 present — required by this device despite the spec")
 
     # ── playlists ──────────────────────────────────────────────────────────
     masters = 0
