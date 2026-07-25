@@ -356,18 +356,37 @@ def build_string_mhod(str_type, text):
     return bytes(rec)
 
 
-def build_order_mhod():
-    """Build a type-100 ordering mhod (44 bytes, used inside mhip)."""
+def build_order_mhod(position):
+    """Build a type-100 ordering mhod (44 bytes, used inside mhip).
+
+    ⚠️ 2026-07-24 — THE POSITION FIELD WAS NEVER WRITTEN. This function used to
+    take no argument and emit 44 zero bytes after the header, so EVERY playlist
+    item in EVERY playlist reported position 0. The master library playlist had
+    500 songs all claiming the same slot; the firmware then built its Songs list
+    out of 500 colliding entries and produced a different partial count on every
+    boot (299/311/346/366/377/380/391/402 for a 500-track sync).
+    Per libgpod (write_playlist_mhips: `mhod.data.track_pos = i; ++i`) the
+    ordinal belongs at offset 0x18 of the type-100 mhod's data area.
+    """
     rec = bytearray(44)
     struct.pack_into('<4s', rec, 0, b'mhod')
     struct.pack_into('<I', rec, 4, 24)
     struct.pack_into('<I', rec, 8, 44)
     struct.pack_into('<I', rec, 12, 100)
+    struct.pack_into('<I', rec, 0x18, position)   # <-- the ordinal (0,1,2,…,n-1)
     return bytes(rec)
 
 
 def build_mhip(dbid, position, timestamp_mac=None):
-    """Build an mhip record (76-byte header + 44-byte type-100 mhod)."""
+    """Build an mhip record (76-byte header + 44-byte type-100 mhod).
+
+    ⚠️ 2026-07-24 — the caller's `position` used to be written to header offset
+    0x14, which is **podcastgroupid**, NOT the playlist ordinal (libgpod
+    itdb_itunesdb.c). So the ordinal went into a podcast-grouping field
+    (producing 1..500 there) while the real ordinal field stayed 0. Both halves
+    of that swap are corrected here: 0x14 is now 0, and the ordinal is passed
+    down to the type-100 mhod where it belongs.
+    """
     if timestamp_mac is None:
         timestamp_mac = int(time.time()) + MAC_EPOCH_OFFSET
     hdr = bytearray(76)
@@ -375,10 +394,10 @@ def build_mhip(dbid, position, timestamp_mac=None):
     struct.pack_into('<I', hdr, 4, 76)
     struct.pack_into('<I', hdr, 8, 120)     # total = 76 + 44
     struct.pack_into('<I', hdr, 0x0C, 1)    # mhod_count
-    struct.pack_into('<I', hdr, 0x14, position)
+    struct.pack_into('<I', hdr, 0x14, 0)    # podcastgroupid — NOT the ordinal
     struct.pack_into('<I', hdr, 0x18, dbid)
     struct.pack_into('<I', hdr, 0x1C, timestamp_mac)  # date added to playlist
-    return bytes(hdr) + build_order_mhod()
+    return bytes(hdr) + build_order_mhod(position)
 
 
 def _safe_int(val, default=0):
@@ -404,7 +423,8 @@ CODEC_MARKERS = {
 REBUILT_MHOD_TYPES = {1, 2, 3, 4, 5, 6, 22, 32}
 
 
-def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=False):
+def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=False,
+                      mhbd_id_0x24=0):
     """Build an mhit record.
     template_header: either the track's own header (existing track) or a generic template (new track).
     extra_mhods:     raw bytes of mhod types NOT in REBUILT_MHOD_TYPES, to preserve from existing DB.
@@ -450,8 +470,14 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
                   str(track.get('path') or '')).encode('utf-8')
     pdbid = int.from_bytes(hashlib.sha1(pdbid_seed).digest()[:8], 'little')
     pdbid |= 0x8000000000000000
-    struct.pack_into('<Q', hdr, 0x6C, pdbid)
-    struct.pack_into('<Q', hdr, 0x94, pdbid)
+    # ⚠️ 2026-07-24 — CORRECTED OFFSETS. This was written to 0x6C/0x94, four
+    # bytes early: per libgpod the 64-bit persistent id is `dbid` at **0x70**,
+    # mirrored as `dbid2` at **0xA8**; 0x6C is `bookmark_time`. So every track
+    # carried a garbage bookmark, a torn dbid, and a dbid2 that never matched.
+    struct.pack_into('<Q', hdr, 0x70, pdbid)
+    struct.pack_into('<Q', hdr, 0xA8, pdbid)
+    struct.pack_into('<I', hdr, 0x6C, 0)      # bookmark_time — must be 0
+    struct.pack_into('<I', hdr, 0x94, 0)      # clear the old mis-write
 
     # File size — only overwrite if we have a value (don't zero-out existing header data)
     fs = _safe_int(track.get('fileSize', 0))
@@ -497,7 +523,37 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     # not part of the filter we just diagnosed). A separate brief is
     # warranted to find the actual disc-info offsets and restore that
     # display.
-    struct.pack_into('<I', hdr, 0x64, 1)
+    # ⚠️ 2026-07-24 CORRECTION to the block above. The 2026-04-26 postmortem
+    # identified 0x64 as a "mediaKind classifier" and set it to 1. Per libgpod
+    # that is WRONG on both counts: **0x64 is `drm_userid`** (setting it to 1
+    # declares every track FairPlay-bound), and the real media type is
+    # **0xD0**, which this writer already sets to 1 correctly. Whatever the
+    # 04-26 investigation actually fixed, it was not this field. Zero the DRM
+    # field and set the media kind at its real offset.
+    struct.pack_into('<I', hdr, 0x64, 0)      # drm_userid — 0 = not DRM'd
+    if len(hdr) >= 0xD4:
+        struct.pack_into('<I', hdr, 0xD0, 1)  # mediatype: 1 = audio/music
+
+    # Disc number. The template carried 131073 (0x20001) on every track — a
+    # packed value from a field this writer never owned. Write a real one.
+    dn = _safe_int(track.get('discNumber', 0))
+    dc = _safe_int(track.get('discCount', 0))
+    struct.pack_into('<I', hdr, 0x5C, dn if 0 < dn < 256 else 1)
+    struct.pack_into('<I', hdr, 0x60, dc if 0 < dc < 256 else 1)
+
+    # Kill the inherited cross-references. These pointed at album/artist/
+    # composer records that exist NOWHERE in the file (all 500 tracks shared
+    # album_id 390175 and artist_id 381278), while the 326 real album records
+    # were referenced by nothing. 0 = "no grouping record", which is closed and
+    # true; a dangling pointer is neither. Guarded on header length because a
+    # classic-sized mhit does not reach these offsets at all.
+    for off in (0x120, 0x1E0, 0x1F4):
+        if len(hdr) >= off + 4:
+            struct.pack_into('<I', hdr, off, 0)
+    # mhit+0x124 is a documented back-reference to mhbd+0x24 (libgpod: "same as
+    # mhbd+0x24, purpose unknown"). Ours was 0 on every track. Carry the real one.
+    if len(hdr) >= 0x12C:
+        struct.pack_into('<Q', hdr, 0x124, mhbd_id_0x24)
 
     # For new tracks: set filetype marker and timestamps (template has wrong values)
     path = str(track.get('path', ''))
@@ -534,9 +590,14 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     # whose albumArtist was empty (and therefore had no mhod32) were
     # silently dropped from Music > Songs at index-build time. Fall back
     # to the artist, same value mhod22 carries.
-    album_artist = str(track.get('albumArtist', '') or '').strip() or str(track.get('artist', '') or '')
-    mhods += build_string_mhod(32, album_artist)
-    mhod_count += 1
+    # ⚠️ 2026-07-24: mhod type 32 REMOVED. The spec defines type 32 as a BINARY
+    # field iTunes 7.1 created for VIDEO tracks — we were writing a UTF-16
+    # string into it (a duplicate of the type-22 album artist), on audio tracks
+    # that should not carry it at all. A parser expecting binary and finding a
+    # string layout is a prime candidate for the modern-parser rejection
+    # (Finder: "The contents of the iPod could not be read"). The album artist
+    # is already carried correctly by mhod type 22 above.
+    _ = track.get('albumArtist')  # (kept in library.json; not an iTunesDB field here)
 
     # Append preserved extra mhods from existing DB (composer, comment, artwork refs, etc.)
     if extra_mhods:
@@ -683,7 +744,7 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
 
     items = bytearray()
     for i, d in enumerate(dbids):
-        items += build_mhip(d, i + 1)
+        items += build_mhip(d, i)      # ordinal is 0-based (libgpod: track_pos = i, from 0)
 
     total = hlen + len(mhods) + len(items)
     struct.pack_into('<I', hdr, 8, total)
@@ -884,7 +945,8 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
         per_track_hdr = path_to_mhit.get(path, template_mhit)
         extra_mhods = path_to_extra_mhods.get(path)
         track_data += build_mhit_record(t, track_dbids[t['id']], per_track_hdr,
-                                         extra_mhods=extra_mhods, is_new=is_new)
+                                         extra_mhods=extra_mhods, is_new=is_new,
+                                         mhbd_id_0x24=struct.unpack_from('<Q', existing, 0x24)[0])
 
     type1_mhsd = bytearray(96)
     struct.pack_into('<4s', type1_mhsd, 0, b'mhsd')
@@ -1023,7 +1085,21 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     # (podcast/special playlist) dataset alongside type 2 — dropping it may be
     # what Apple's parser refuses. Restore it, keeping the correct
     # tracks-first order and still omitting the STALE verbatim type-5.
-    datasets_out = [type1_section, type2_section, type3_section, type4_section]
+    # 2026-07-24: the type-4 ALBUM dataset is dropped. Its 326 mhia records were
+    # referenced by NO track (every track's album_id pointed at a phantom id
+    # instead), so it was pure orphan weight in the file. Album browsing on the
+    # device is driven by each track's album STRING mhod, which is intact. If we
+    # ever want a real album list, it has to be emitted with ids the tracks
+    # actually reference — an empty-but-closed graph beats a populated-but-broken one.
+    # 2026-07-24: emit ONLY [tracks, playlists]. Two earlier shapes were both
+    # wrong: the template order [4,1,3,2,5] (album list before tracks + a stale
+    # verbatim type-5), and then [1,2,3,4] — which duplicated the SAME playlist
+    # payload into type 2 and type 3, giving the file **two master playlists**
+    # (type 3 is for podcast playlists, not a copy of the library). A file with
+    # two masters has no single answer to "what is the song list". And type 4's
+    # album records were orphans (see below). Minimal + closed beats populated +
+    # contradictory.
+    datasets_out = [type1_section, type2_section]
     body = bytearray()
     for ds in datasets_out:
         body += ds

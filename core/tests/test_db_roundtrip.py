@@ -71,10 +71,13 @@ MHIT_TOUCHED_OFFSETS: list[tuple[int, int, str, str]] = [
     (0x34, 4, "year",                 "Pulled from track metadata"),
     (0x50, 4, "play_count",           "Pulled from track metadata"),
     (0x58, 4, "date_modified",        "Set on new tracks only"),
-    (0x64, 4, "mediaKind",            "Forced to 1 — see 2026-04-26 postmortem"),
+    (0x5C, 4, "disc_number",          "Real per-track value (was inherited 131073)"),
+    (0x64, 4, "drm_userid",           "MUST be 0 — 2026-04-26 mislabeled this 'mediaKind'"),
     (0x68, 4, "date_added",           "Set on new tracks only"),
-    (0x6C, 8, "persistent_dbid",      "Per-track 64-bit; commit c0db845"),
-    (0x94, 8, "persistent_dbid_bkup", "Backup of 0x6C; commit c0db845"),
+    (0x6C, 4, "bookmark_time",        "MUST be 0 — dbid used to be mis-written here"),
+    (0x70, 8, "persistent_dbid",      "Per-track 64-bit (CORRECTED offset 2026-07-24)"),
+    (0xA8, 8, "persistent_dbid_bkup", "Mirror of 0x70 (CORRECTED offset 2026-07-24)"),
+    (0xD0, 4, "mediatype",            "1 = audio/music — the REAL media-kind field"),
 ]
 
 
