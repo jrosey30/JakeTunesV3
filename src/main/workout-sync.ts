@@ -48,6 +48,22 @@ export interface WorkoutSelectOpts {
   demoteIds?: number[]
   /** Tracks Jake ADDED in review for this activity — boosted. */
   boostIds?: number[]
+  /** trackId → how many of the last few syncs contained it (any activity).
+   *  2026-07-24: `previousIds` only remembered the LAST set, so anything two
+   *  syncs back was fully fair game and the same favourites kept cycling.
+   *  This is a graded, decaying memory instead of a one-shot flag. */
+  recentCounts?: Map<number, number>
+  /** Brain fit 0..1 per track (taste + steer), from computeActivityBrainFit.
+   *  The dominant quality signal — folds the taste model into the score so
+   *  the picker stops grabbing genre-tagged junk (2026-07-23). Absent → the
+   *  heuristic runs alone (offline / no embeddings). */
+  brainFitById?: Map<number, number>
+  /** Taste-only fit 0..1 per track — drives the bottom-taste floor. */
+  tasteById?: Map<number, number>
+  /** Fraction of the eligible pool to floor out by taste in the primary
+   *  pass (default 0.2 = cut the bottom-taste fifth — "the shit"). Backfill
+   *  ignores the floor so `target` is still guaranteed. */
+  tasteFloorPct?: number
 }
 
 export interface WorkoutSelectResult {
@@ -188,22 +204,94 @@ export function selectWorkoutSyncSet(
 
   const demote = new Set(opts.demoteIds || [])
   const boost = new Set(opts.boostIds || [])
+  const recentCounts = opts.recentCounts || new Map<number, number>()
+  // How far a track can move on the score scale from luck alone. Sized against
+  // BRAIN_WEIGHT (45): big enough that comparable candidates genuinely trade
+  // places sync to sync, small enough that a great track never loses to a poor
+  // one. This is the knob for "more variety" — raise it for wilder sets.
+  const JITTER = 12
   // A track with no title or no artist can never sync (the iPod shows it
   // blank and the sync gate refuses it) — exclude it from the pool up
   // front so a blank never eats one of the 1000 slots (2026-07-21).
   const named = (t: WorkoutTrack) => String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
   const eligible = tracks.filter((t) => named(t) && !isSkitOrIntro(t))
+
+  // Brain term: the taste model is the dominant quality signal now. Cosine
+  // fit is tightly packed in this embedding space (~0.59 … 0.72 across the
+  // library), so a fixed center/scale washes out — instead we SELF-CALIBRATE
+  // off this run's own fit distribution: a track at the p90 corner of taste
+  // gets +BRAIN_WEIGHT, one at p10 gets −BRAIN_WEIGHT, median is neutral.
+  // That ~2·WEIGHT swing dominates the heuristic's ±40 so Jake's taste leads
+  // the pick, while BPM/energy still shape activity fit within it. Robust
+  // whether `fit` is taste-only (offline) or taste+context (steer note).
+  // No-embedding tracks get 0 and ride the heuristic alone.
+  const brainFit = opts.brainFitById
+  const BRAIN_WEIGHT = 45
+  let bMed = 0
+  let bHalf = 1
+  if (brainFit && brainFit.size > 0) {
+    const fv: number[] = []
+    for (const t of eligible) { const v = brainFit.get(t.id); if (v != null) fv.push(v) }
+    if (fv.length > 4) {
+      fv.sort((a, b) => a - b)
+      bMed = fv[Math.floor(0.5 * (fv.length - 1))]
+      const p10 = fv[Math.floor(0.1 * (fv.length - 1))]
+      const p90 = fv[Math.floor(0.9 * (fv.length - 1))]
+      bHalf = Math.max(1e-6, (p90 - p10) / 2)
+    }
+  }
+  const brainTerm = (id: number): number => {
+    const f = brainFit?.get(id)
+    if (f == null) return 0
+    const z = (f - bMed) / bHalf
+    return Math.max(-1.6, Math.min(1.6, z)) * BRAIN_WEIGHT
+  }
+
   const scored = eligible
     .map((t) => {
       let s = scoreWorkoutTrack(t, vibe, brief, weather)
+      s += brainTerm(t.id)
       if (previous.has(t.id)) s -= 35
       if (demote.has(t.id)) s -= 60   // Jake pulled this in review — learn it
       if (boost.has(t.id)) s += 20    // Jake added this in review — learn it
-      s += (rand() - 0.5) * 2
+      // Graded rotation memory: each recent appearance costs more than the
+      // last, so a track that keeps showing up sinks steadily instead of
+      // bouncing straight back the sync after it was dropped.
+      const seen = recentCounts.get(t.id) || 0
+      if (seen > 0) s -= Math.min(45, 14 * seen)
+      // VARIETY (2026-07-24, Jake: "more variety more flavor"). The jitter was
+      // ±1 on a scale where the brain term alone spans ±45 — effectively zero.
+      // With a hard top-N sort that made the same brief produce the same set
+      // every time. Give it real room to shuffle among comparable candidates.
+      s += (rand() - 0.5) * 2 * JITTER
       return { t, s }
     })
     .filter((x) => x.s > -20)
     .sort((a, b) => b.s - a.s || a.t.id - b.t.id)
+
+  // Taste floor: cut the bottom-taste fraction from the PRIMARY pass so the
+  // set stops carrying "shit" Jake's brain scores low. Only tracks with a
+  // real taste value are eligible to be floored (no-embedding tracks are
+  // never cut for a signal they lack). Backfill below ignores the floor, so
+  // "exactly `target`" is still guaranteed for any library ≥ target.
+  const tasteById = opts.tasteById
+  let tasteFloor = -Infinity
+  if (tasteById && tasteById.size > 0) {
+    const pct = Math.max(0, Math.min(0.6, opts.tasteFloorPct ?? 0.2))
+    if (pct > 0) {
+      const vals: number[] = []
+      for (const t of eligible) { const v = tasteById.get(t.id); if (v != null) vals.push(v) }
+      if (vals.length > 0) {
+        vals.sort((a, b) => a - b)
+        tasteFloor = vals[Math.min(vals.length - 1, Math.floor(pct * (vals.length - 1)))]
+      }
+    }
+  }
+  const belowFloor = (id: number): boolean => {
+    if (tasteFloor === -Infinity) return false
+    const v = tasteById?.get(id)
+    return v != null && v < tasteFloor
+  }
 
   // Diversity: at most 3 per artist AND 3 per album in the capped pass
   // (was 4 per artist, no album cap — Jake: "diversify a little more").
@@ -217,6 +305,9 @@ export function selectWorkoutSyncSet(
     for (const { t, s } of scored) {
       if (out.length >= target) break
       if (scoreMap.has(t.id)) continue
+      // Primary pass honors the taste floor; the relaxed pass drops it so a
+      // small library can still reach target.
+      if (!relaxCap && belowFloor(t.id)) continue
       const key = (t.artist || 'Unknown').toLowerCase().trim()
       const albumKey = `${key}|||${(t.album || '').toLowerCase().trim()}`
       const n = perArtist.get(key) || 0

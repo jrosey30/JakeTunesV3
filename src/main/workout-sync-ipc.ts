@@ -26,6 +26,10 @@ import {
   type WorkoutTrack,
   type WorkoutVibe,
 } from './workout-sync.ts'
+import { buildActivityQueryText } from './activity-context-core.ts'
+import { computeActivityBrainFit, type BrainFitResult } from './activity-brain.ts'
+import { pickTasteExemplars } from './discovery-brain.ts'
+import { getEmbeddingsMap, embedTexts } from './ai/embeddings.ts'
 
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
 
@@ -55,6 +59,10 @@ export interface SyncHistoryEntry {
   brief: ActivityBrief
   trackCount: number
   alacCount: number
+  /** The set's track ids. Added 2026-07-24 so the picker can rotate against the
+   *  last several syncs instead of only the immediately previous one — history
+   *  written before this is simply absent and contributes nothing. */
+  trackIds?: number[]
   /** Jake's review-sheet edits — the strongest taste signal we have. */
   added: SyncHistoryEdit[]
   removed: SyncHistoryEdit[]
@@ -266,15 +274,65 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       }).join('\n')
       const vibe = await askActivityVibe(host, tracks, brief, weather, prev?.name, historyLines || undefined)
       const target = Math.min(opts?.target ?? WORKOUT_TARGET, tracks.length)
+
+      // Brain fit — the taste model finally decides the set (Jake 2026-07-23:
+      // "get better at picking… you pick a lot of shit and miss on a lot of
+      // shit"). taste = precomputed embeddings vs his starred/heavy-rotation
+      // corners (works offline); ctx = the free-text steer embedded into a
+      // query vector (best-effort — no key/offline just drops it). Any
+      // failure → null → the heuristic picker runs exactly as before.
+      let brainFit: BrainFitResult | null = null
+      try {
+        const embById = await getEmbeddingsMap()
+        if (embById.size >= 100) {
+          let queryVec: Float32Array | null = null
+          try {
+            const [qv] = await embedTexts([buildActivityQueryText(brief)])
+            queryVec = qv || null
+          } catch { queryVec = null }
+          const fit = computeActivityBrainFit({
+            eligibleIds: tracks.map((t) => Number(t.id)),
+            embById,
+            exemplarIds: pickTasteExemplars(tracks),
+            queryVec,
+          })
+          if (fit.usable) {
+            brainFit = fit
+            console.log(`[workout-sync] brain fit on ${fit.fitById.size}/${tracks.length} tracks (ctx=${queryVec ? 'yes' : 'no'})`)
+          }
+        }
+      } catch (err) {
+        console.warn('[workout-sync] brain fit unavailable — heuristic only:', err instanceof Error ? err.message : err)
+      }
+
+      // Rotation memory across the last several syncs (2026-07-24, Jake: "more
+      // variety"). `prev` only carried the most recent set, so a track dropped
+      // one sync ago returned immediately. Count appearances across the recent
+      // history — ANY activity, since Jake notices repeats across the board —
+      // and let the picker apply a graded penalty.
+      const RECENT_SYNCS = 6
+      const recentCounts = new Map<number, number>()
+      for (const h of history.slice(0, RECENT_SYNCS)) {
+        for (const id of (h.trackIds || [])) {
+          recentCounts.set(Number(id), (recentCounts.get(Number(id)) || 0) + 1)
+        }
+      }
+      if (recentCounts.size) {
+        console.log(`[workout-sync] rotation memory: ${recentCounts.size} track(s) seen in the last ${RECENT_SYNCS} sync(s)`)
+      }
+
       const selected = selectWorkoutSyncSet(tracks, {
         target,
         previousIds: prev?.trackIds,
+        recentCounts,
         vibe,
         brief,
         weather,
         seed: Date.now(),
         demoteIds,
         boostIds,
+        brainFitById: brainFit?.fitById,
+        tasteById: brainFit?.tasteById,
       })
       if (selected.trackIds.length === 0) {
         return { ok: false, error: 'Could not build an activity set from this library.' }
@@ -335,6 +393,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         brief: payload.brief,
         trackCount: state.trackIds.length,
         alacCount: state.alacCount,
+        trackIds: state.trackIds,   // feeds the picker's multi-sync rotation memory
         added: Array.isArray(payload.added) ? payload.added : [],
         removed: Array.isArray(payload.removed) ? payload.removed : [],
       }).catch(() => {})
