@@ -43,25 +43,53 @@ interface ItunesHit {
   previewUrl?: string
 }
 
+/** Fuzzy field match: equal, one contains the other, or ≥60% token overlap.
+ *  Catches "The Garden" vs "Garden", "… (Deluxe)" suffixes, feat. noise. */
+function fieldMatches(a: string, b: string): boolean {
+  const na = normKey(a), nb = normKey(b)
+  if (!na || !nb) return false
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true
+  const ta = new Set(na.split(' ').filter(Boolean))
+  const tb = nb.split(' ').filter(Boolean)
+  if (tb.length === 0) return false
+  const hits = tb.filter((t) => ta.has(t)).length
+  return hits / Math.max(ta.size, tb.length) >= 0.6
+}
+
 /** Verify a candidate against iTunes Search; returns canonical fields or null.
  *  Tolerates Apple's occasional 403/rate-limit by simply returning null —
- *  an unverified card is dropped, never shown on faith. */
+ *  an unverified card is dropped, never shown on faith.
+ *
+ *  `want` (2026-07-23): when the caller KNOWS the artist/title (journalism +
+ *  MusicBrainz cards being dressed with art), we must not accept whatever
+ *  iTunes returns first — "The Garden Bootleg" was matching *With The Beatles*
+ *  and stamping the wrong cover on the card. With `want`, scan the top hits and
+ *  take the FIRST whose artist (and album title, for albums) actually matches;
+ *  return null (→ placeholder, honest) if none do. */
 export async function itunesVerify(
   term: string,
   entity: 'song' | 'album' | 'musicArtist',
+  want?: { artist?: string; title?: string },
 ): Promise<{ artist: string; title: string; year?: string; artUrl?: string; previewUrl?: string } | null> {
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=${entity}&limit=3`
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=${entity}&limit=6`
     const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
     if (!res.ok) return null
-    const data = await res.json() as { results?: ItunesHit[] }
-    const hit = (data.results || [])[0]
+    const results = (await res.json() as { results?: ItunesHit[] }).results || []
+    const titleOf = (h: ItunesHit) => entity === 'song' ? String(h.trackName || '').trim()
+      : entity === 'album' ? String(h.collectionName || '').trim()
+      : String(h.artistName || '').trim()
+    const hit = want
+      ? results.find((h) => {
+          const artistOk = !want.artist || fieldMatches(String(h.artistName || ''), want.artist)
+          const titleOk = !want.title || entity === 'musicArtist' || fieldMatches(titleOf(h), want.title)
+          return artistOk && titleOk
+        })
+      : results[0]
     if (!hit) return null
     const artist = String(hit.artistName || '').trim()
     if (!artist) return null
-    const title = entity === 'song' ? String(hit.trackName || '').trim()
-      : entity === 'album' ? String(hit.collectionName || '').trim()
-      : artist
+    const title = titleOf(hit)
     if (!title) return null
     return {
       artist,
