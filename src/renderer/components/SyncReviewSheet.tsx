@@ -5,9 +5,10 @@
  * substitutions if necessary and confirm that i am not adding a song that
  * is already in the 1000 songs music man picked."
  *
- * Shows every track in the proposed set badged NEW (will copy) or KEPT
- * (already on the iPod — the sync engine skips byte-identical files, so
- * crossover costs nothing), plus the list of songs leaving the device.
+ * Shows every track in the proposed set, plus what's currently on the device.
+ * (Until 2026-07-25 rows were badged NEW/KEPT and the header did incremental
+ * arithmetic — obsolete since activity syncs WIPE the iPod and rebuild it to
+ * exactly the proposed set. Nothing is "kept".)
  * Rows can be removed; the search box adds substitutions with a hard
  * duplicate guard (a song already in the set can't be added twice).
  * Nothing touches the iPod, and no state persists anywhere, until
@@ -45,11 +46,6 @@ export default function SyncReviewSheet({
 
   const idsInSet = useMemo(() => new Set(tracks.map((t) => t.id)), [tracks])
 
-  const { newCount, keptCount } = useMemo(() => {
-    let n = 0, k = 0
-    for (const t of tracks) (keepIds.has(t.id) ? k++ : n++)
-    return { newCount: n, keptCount: k }
-  }, [tracks, keepIds])
 
   // Songs leaving the device = files no proposed track claimed (from the
   // planner) PLUS any on-device (KEPT) track the user removes here.
@@ -92,15 +88,20 @@ export default function SyncReviewSheet({
           <p className="activity-sheet-sub">
             {commentary}{weatherLine ? ` — ${weatherLine}` : ''}
           </p>
+          {/* 2026-07-25 (Jake: "this is contradicting"). This line used to read
+              "500 songs · NEW 460 will copy · KEPT 40 already on iPod · 460
+              leaving the iPod" — arithmetic from an INCREMENTAL sync that no
+              longer happens. An activity sync now WIPES the iPod and rebuilds
+              it to exactly this set, so nothing is "kept" and the leaving count
+              is every song currently on the device. Say the true thing plainly
+              instead of a diff that no longer describes the operation. */}
           <p className="sync-review-counts">
-            <strong>{tracks.length}</strong> songs ·{' '}
-            <span className="sync-review-badge sync-review-badge--new">NEW {newCount}</span> will copy ·{' '}
-            <span className="sync-review-badge sync-review-badge--kept">KEPT {keptCount}</span> already on iPod
+            <strong>{tracks.length}</strong> songs — your iPod is wiped and rebuilt to exactly this set
             {leaving.length > 0 && (
               <>
                 {' · '}
                 <button type="button" className="sync-review-leaving-toggle" onClick={() => setShowLeaving((v) => !v)}>
-                  {leaving.length} leaving the iPod {showLeaving ? '▾' : '▸'}
+                  what&rsquo;s on it now {showLeaving ? '▾' : '▸'}
                 </button>
               </>
             )}
@@ -148,12 +149,10 @@ export default function SyncReviewSheet({
 
         <div className="sync-review-list">
           {tracks.map((t) => {
-            const kept = keepIds.has(t.id)
+            // No NEW/KEPT badge: under wipe-and-rebuild every song in this
+            // list is copied fresh, so "KEPT" was a promise the sync doesn't keep.
             return (
               <div key={t.id} className="sync-review-row">
-                <span className={`sync-review-badge ${kept ? 'sync-review-badge--kept' : 'sync-review-badge--new'}`}>
-                  {kept ? 'KEPT' : 'NEW'}
-                </span>
                 <span className="sync-review-row-title">{t.title}</span>
                 <span className="sync-review-row-artist">{t.artist}</span>
                 <button
@@ -174,7 +173,7 @@ export default function SyncReviewSheet({
             className="activity-btn activity-btn--go"
             disabled={tracks.length === 0}
             onClick={() => onConfirm(tracks)}
-          >Confirm &amp; Sync {tracks.length} songs ({newCount} new {newCount === 1 ? 'copy' : 'copies'})</button>
+          >Confirm &amp; Sync {tracks.length} songs</button>
         </div>
       </div>
     </div>
