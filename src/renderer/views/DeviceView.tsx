@@ -81,6 +81,9 @@ export default function DeviceView() {
   // library stores source-side ALAC sizes while the iPod holds smaller AAC
   // mirrors, leaving the synthetic free-space calc 50+GB off.
   const [ipodFreeBytes, setIpodFreeBytes] = useState<number | null>(null)
+  // Real filesystem from the mount table — the panel used to assert HFS+ on a
+  // FAT32 device (2026-07-25).
+  const [ipodFsName, setIpodFsName] = useState<string | null>(null)
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
   const [showActivitySheet, setShowActivitySheet] = useState(false)
@@ -187,6 +190,7 @@ export default function DeviceView() {
     window.electronAPI.getIpodCapacity().then(r => {
       if (r.ok && r.totalBytes && r.totalBytes > 0) setIpodCapacityBytes(r.totalBytes)
       if (r.ok && typeof r.freeBytes === 'number') setIpodFreeBytes(r.freeBytes)
+      if (r.ok && r.fsName) setIpodFsName(r.fsName)
     }).catch(() => {})
     // Load persisted device options out of ui-state.
     window.electronAPI.loadUiState().then(r => {
@@ -602,7 +606,7 @@ export default function DeviceView() {
           </div>
           <div className="device-itunes-info-line">
             <span className="device-itunes-label">Format:</span>
-            <span className="device-itunes-value">Mac OS Extended (Journaled)</span>
+            <span className="device-itunes-value">{ipodFsName || 'Unknown'}</span>
           </div>
         </div>
       </div>

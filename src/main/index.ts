@@ -2904,7 +2904,28 @@ ipcMain.handle('get-ipod-capacity', async () => {
     const s = await statfs(detectedIpodMount)
     const totalBytes = Number(s.blocks) * Number(s.bsize)
     const freeBytes = Number(s.bavail) * Number(s.bsize)
-    return { ok: true, totalBytes, freeBytes, mount: detectedIpodMount }
+    // Report the REAL filesystem. DeviceView hard-coded "Mac OS Extended
+    // (Journaled)" — flatly wrong for Jake's iFlash-modded Mini, which is
+    // FAT32/msdos. That matters beyond cosmetics: FAT32 vs HFS+ changes what a
+    // sync can assume (cluster geometry, the flapping fskit mount, cache
+    // behaviour), and the panel was asserting the opposite of reality.
+    let fsName: string | undefined
+    if (IS_MAC) {
+      try {
+        const { execFile: xf } = await import('child_process')
+        const { promisify: pf } = await import('util')
+        const { stdout } = await pf(xf)('/sbin/mount', [], { timeout: 5000 })
+        const line = stdout.split('\n').find((l: string) => l.includes(` on ${detectedIpodMount} `))
+        const m = line?.match(/\(([a-z0-9_]+)[,)]/i)
+        const raw = m?.[1]?.toLowerCase()
+        fsName = raw === 'msdos' ? 'MS-DOS (FAT32)'
+          : raw === 'hfs' ? 'Mac OS Extended (HFS+)'
+          : raw === 'apfs' ? 'APFS'
+          : raw === 'exfat' ? 'ExFAT'
+          : raw
+      } catch { /* leave undefined — the UI falls back to "Unknown" */ }
+    }
+    return { ok: true, totalBytes, freeBytes, mount: detectedIpodMount, fsName }
   } catch (err) {
     return { ok: false, error: String(err) }
   }

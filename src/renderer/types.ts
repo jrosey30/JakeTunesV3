@@ -707,7 +707,7 @@ declare global {
       resolveArtwork: (artist: string, album: string) => Promise<{ ok: boolean; hash: string | null }>
       migrateArtworkKey: (oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => Promise<{ ok: boolean; migrated?: boolean; hash?: string }>
       checkIpodMounted: () => Promise<{ mounted: boolean; name: string | null }>
-      getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }>
+      getIpodCapacity: () => Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; fsName?: string; error?: string }>
       getMusicLibraryPath: () => Promise<string>
       trackLocalState: (ipodPath: string) => Promise<'local' | 'streamed' | 'unknown'>
       loadDownloadsState: () => Promise<{ pinned: string[]; streaming: boolean }>

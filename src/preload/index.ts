@@ -407,7 +407,7 @@ const electronAPI = {
     ipcRenderer.invoke('migrate-artwork-key', oldArtist, oldAlbum, newArtist, newAlbum),
   checkIpodMounted: (): Promise<{ mounted: boolean; name: string | null }> =>
     ipcRenderer.invoke('check-ipod-mounted'),
-  getIpodCapacity: (): Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; error?: string }> =>
+  getIpodCapacity: (): Promise<{ ok: boolean; totalBytes?: number; freeBytes?: number; mount?: string; fsName?: string; error?: string }> =>
     ipcRenderer.invoke('get-ipod-capacity'),
   getMusicLibraryPath: (): Promise<string> =>
     ipcRenderer.invoke('get-music-library-path'),
