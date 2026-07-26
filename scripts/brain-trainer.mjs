@@ -136,19 +136,47 @@ function writeEmb(path, map) {
 // was fast or slow despite bpm sitting right in the library. Appending this
 // lifts mood retrieval +0.32/+0.36 AUC (validated /tmp/validate_mood.py 2026-06-26).
 // ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText — keep these in sync.
+// Rewritten 2026-07-26. See the TS twin for the full rationale + measurements.
+// Short version: the old line described all 8,730 tracks with 10 distinct
+// strings (33% identical, 60% with no energy statement, 259 self-contradicting
+// because a genre regex overrode the measured tempo). Now: bpm thresholds
+// calibrated to this library's real 72-152 spread, plus key/mode — 100% covered
+// by audio analysis and never previously used. 504 distinct descriptions.
 function tempoEnergy(t) {
   const b = Number(t.bpm) || 0
   if (b <= 0) return ''   // no bpm → say nothing (never fabricate)
-  const tempo = b >= 120 ? 'fast, up-tempo, driving' : b >= 90 ? 'mid-tempo, moderate groove' : 'slow, relaxed, downtempo'
-  const g = String(t.genre || '').toLowerCase()
-  // Only add energy/use-case for CLEAR high/low cases. Bland "medium energy /
-  // everyday listening" filler on the big mid-tempo middle of the library just
-  // dilutes precise genre queries (punk/house/new-wave) without helping any
-  // mood search. Tempo is always stated — it's factual and drives the win.
-  let mood = ''
-  if (b >= 130 || /punk|metal|grunge|hardcore|techno|drum/.test(g)) mood = '. energy: high-energy and intense. good for: working out, running, parties'
-  else if ((b > 0 && b <= 85) || /ambient|folk|acoustic|classical|jazz|soul/.test(g)) mood = '. energy: low-energy, mellow and calm. good for: late night, relaxing, winding down, chilling'
-  return `tempo: ${b} BPM, ${tempo}${mood}`
+  const tempo =
+    b < 88 ? 'slow, spacious, downtempo'
+    : b < 100 ? 'relaxed, loping mid-tempo'
+    : b < 112 ? 'steady mid-tempo groove'
+    : b < 122 ? 'brisk, forward-moving'
+    : b < 134 ? 'fast, driving, propulsive'
+    : 'very fast, urgent, relentless'
+
+  const parts = [`tempo: ${Math.round(b)} BPM, ${tempo}`]
+
+  const root = String(t.keyRoot || '').trim()
+  const mode = String(t.keyMode || '').trim().toLowerCase()
+  if (mode === 'minor' || mode === 'major') {
+    parts.push(mode === 'minor'
+      ? `key: ${root} minor — darker, moody, melancholy, introspective`
+      : `key: ${root} major — brighter, warmer, open, resolved`)
+  }
+
+  const fast = b >= 122
+  const slow = b < 100
+  const minor = mode === 'minor'
+  parts.push('good for: ' + (
+    fast && minor ? 'driving late-night, workout, intense focus'
+    : fast ? 'workout, running, parties, daytime energy'
+    : slow && minor ? 'late night, rainy day, winding down, solitude'
+    : slow ? 'morning, relaxing, background, easy listening'
+    : 'focus, walking, everyday listening'
+  ))
+
+  const cam = String(t.camelotKey || '').trim()
+  if (cam) parts.push(`camelot ${cam}`)
+  return parts.join(' · ')
 }
 
 // ⚠️ TWIN: src/main/ai/embeddings.ts subgenreText — keep in sync. Folds the AI
@@ -371,7 +399,7 @@ async function main() {
     const vecs = await openaiEmbed(texts)
     copyFileSync(EMB, EMB + '.bak')
     let n = 0
-    for (let i = 0; i < cands.length; i++) { const v = vecs[i]; if (v) { map.set(Number(cands[i].id), v); const e = desc[String(cands[i].id)]; if (e) e.te = (Number(cands[i].bpm) || 0) > 0; n++ } }
+    for (let i = 0; i < cands.length; i++) { const v = vecs[i]; if (v) { map.set(Number(cands[i].id), v); const e = desc[String(cands[i].id)]; if (e) e.te = (Number(cands[i].bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false; n++ } }
     const written = writeEmb(EMB, map)
     try {
       const check = readEmb(EMB)
@@ -410,14 +438,15 @@ async function main() {
   // tempo-less and not vibe-searchable. Each night we re-embed up to CATCHUP_CAP
   // such tracks (NO Gemma — reuses the descriptor) so every song becomes
   // vibe-searchable once it's been heard. `te` = tempo facts are in the vector.
-  const CATCHUP_CAP = 500
-  const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && desc[String(t.id)].te !== true).slice(0, CATCHUP_CAP)
+  const TEMPO_ENCODING_VERSION = 2   // bump when tempoEnergy()'s output changes
+  const CATCHUP_CAP = Number(process.env.BRAIN_TEMPO_CAP) || 500
+  const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && desc[String(t.id)].te !== TEMPO_ENCODING_VERSION).slice(0, CATCHUP_CAP)
   if (needTempo.length && !process.argv.includes('--meaning-catchup')) {   // --meaning-catchup isolates meaning: no tempo re-embeds to confound a before/after eval
     log(`tempo catch-up: ${needTempo.length} enriched track(s) gained bpm since enrichment — re-embedding with tempo (no Gemma)`)
     const cvecs = await openaiEmbed(needTempo.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
     copyFileSync(EMB, EMB + '.bak')
     let cn = 0
-    for (let i = 0; i < needTempo.length; i++) { const v = cvecs[i]; if (v) { map.set(Number(needTempo[i].id), v); desc[String(needTempo[i].id)].te = true; cn++ } }
+    for (let i = 0; i < needTempo.length; i++) { const v = cvecs[i]; if (v) { map.set(Number(needTempo[i].id), v); desc[String(needTempo[i].id)].te = TEMPO_ENCODING_VERSION; cn++ } }
     writeEmb(EMB, map)
     try {
       const check = readEmb(EMB)
@@ -525,7 +554,7 @@ async function main() {
     const v = vecs[i]; if (!v) continue
     const { t, d, m } = pending[i]
     map.set(Number(t.id), v)
-    desc[String(t.id)] = { d, m: m || undefined, at: new Date().toISOString(), artist: t.artist, title: t.title, te: (Number(t.bpm) || 0) > 0 }
+    desc[String(t.id)] = { d, m: m || undefined, at: new Date().toISOString(), artist: t.artist, title: t.title, te: (Number(t.bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false }
     if (!sample) sample = { artist: t.artist, title: t.title, d }
     enriched++
   }
