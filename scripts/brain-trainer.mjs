@@ -28,6 +28,7 @@ import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync } fro
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { hostname } from 'node:os'
 
 // STATE_DIR defaults to the desktop app's local dir, but JT_STATE_DIR lets the
 // homemini nightly job point it at the NAS canonical (/Volumes/JakeShared/
@@ -50,10 +51,54 @@ const MAGIC = 'EMBD', VERSION = 1
 
 const log = (...a) => console.log(new Date().toISOString(), '[brain-trainer]', ...a)
 
+// ── HEALTH REPORTING ─────────────────────────────────────────────────────────
+// 2026-07-25: this job died on 2026-07-21 (the NAS dropped, so library.json and
+// embeddings.bin were unreachable) and failed EVERY NIGHT for five nights while
+// logging FATAL to a file nobody reads. Jake only found out because he noticed
+// his mixes had gone stale. A nightly job that can fail silently for a week is
+// not a working system.
+//
+// Every run now writes brain-status.json next to the brain — ok/failed, when,
+// and why — and a failure additionally posts a macOS notification. The status
+// file is the durable signal (any other process, or a future UI, can read
+// "last successful run" and shout if it's older than a couple of days); the
+// notification is the immediate one.
+const STATUS = join(STATE_DIR, 'brain-status.json')
+// The status file must ALSO land somewhere readable when STATE_DIR is the NAS
+// and the NAS is exactly what's broken — otherwise the one job that knows about
+// the outage can't report it. Local copy is the fallback.
+const STATUS_LOCAL = join(homedir(), 'Library', 'Application Support', 'JakeTunes', 'brain-status.json')
+
+function writeStatus(payload) {
+  const body = JSON.stringify({ ...payload, at: new Date().toISOString(), host: hostname() }, null, 2)
+  for (const p of new Set([STATUS, STATUS_LOCAL])) {
+    try { writeFileSync(p, body) } catch { /* best-effort — never let reporting break the run */ }
+  }
+}
+
+// Deliberately SEPARATE from the async notify() further down: this one is
+// synchronous (so it lands before process.exit) and ignores BRAIN_QUIET — a
+// bulk run may suppress progress pings, but never a failure.
+function notifyFailure(title, message) {
+  try {
+    execFileSync('/usr/bin/osascript', ['-e',
+      `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}`],
+      { timeout: 5000, stdio: 'ignore' })
+  } catch { /* headless / no GUI session — the status file still carries it */ }
+}
+
+/** Log loudly, record the failure durably, notify, and exit non-zero. */
+function fatal(reason) {
+  log('FATAL: ' + reason)
+  writeStatus({ ok: false, error: reason })
+  notifyFailure('JakeTunes brain: nightly training FAILED', reason)
+  process.exit(1)
+}
+
 const KEY = (existsSync(ENV)
   ? (readFileSync(ENV, 'utf8').split('\n').find(l => l.startsWith('OPENAI_API_KEY=')) || '').slice('OPENAI_API_KEY='.length).trim().replace(/^["']|["']$/g, '')
   : '') || process.env.OPENAI_API_KEY || ''
-if (!KEY) { log('FATAL: no OPENAI_API_KEY (checked ~/JakeTunesV3/.env and env)'); process.exit(1) }
+if (!KEY) fatal('no OPENAI_API_KEY (checked ~/JakeTunesV3/.env and env)')
 
 // ── embeddings.bin (EMBD binary format, shared with src/main/ai/embeddings.ts) ──
 function readEmb(path) {
@@ -261,11 +306,11 @@ async function report(enrichedThisRun, doneTotal, total, sample) {
 }
 
 async function main() {
-  if (!existsSync(LIB) || !existsSync(EMB)) { log('FATAL: library.json or embeddings.bin missing'); process.exit(1) }
+  if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
   const tracks = Array.isArray(libRaw) ? libRaw : (libRaw.tracks || [])
   const { map, dim } = readEmb(EMB)
-  if (dim !== EMBED_DIM) { log(`FATAL: embeddings dim ${dim} != ${EMBED_DIM}`); process.exit(1) }
+  if (dim !== EMBED_DIM) fatal(`embeddings dim ${dim} != ${EMBED_DIM}`)
   const startCount = map.size
   const desc = existsSync(DESC) ? JSON.parse(readFileSync(DESC, 'utf8')) : {}
   const done = new Set(Object.keys(desc))
@@ -506,6 +551,9 @@ async function main() {
   )
   log(`done: +${enriched} enriched this run; brain now ${Object.keys(desc).length}/${total} (embeddings.bin ${written} vectors)`)
   log('the desktop→NAS sync will carry the richer brain to homemini on its next pass')
+  // Record the healthy run. "When did the brain last actually learn something?"
+  // becomes a fact on disk instead of something you infer from stale mixes.
+  writeStatus({ ok: true, enrichedThisRun: enriched, enrichedTotal: Object.keys(desc).length, ofTotal: total, vectors: written })
   await report(enriched, Object.keys(desc).length, total, sample)
 }
 
