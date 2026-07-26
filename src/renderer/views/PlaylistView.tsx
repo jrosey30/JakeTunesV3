@@ -27,6 +27,7 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 import { songsGridTemplate } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
+import { addToPlaylistEntry } from '../utils/playlistMenu'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -504,6 +505,7 @@ export default function PlaylistView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
+      addToPlaylistEntry(selected, state.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       ...(getDeckState() ? [
         {
           label: `Lay on the tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,

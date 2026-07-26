@@ -25,6 +25,7 @@ import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import { setNotice } from '../activity'
 import '../styles/albums.css'
+import { addToPlaylistEntry } from '../utils/playlistMenu'
 
 export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -76,6 +77,7 @@ export default function AlbumsView() {
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
+      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
     ]

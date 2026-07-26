@@ -14,6 +14,7 @@ import { canonicalArtist } from '../utils/artistAlias'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/coverflow.css'
+import { addToPlaylistEntry } from '../utils/playlistMenu'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
 /// over the classic Apple side-scroll rolodex). Same capability —
@@ -203,6 +204,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
+      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       { separator: true as const },
       { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(album.artist, album.name) }) },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },

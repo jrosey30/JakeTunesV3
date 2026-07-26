@@ -24,6 +24,7 @@ import { setNotice } from '../activity'
 import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import '../styles/artists.css'
+import { addToPlaylistEntry } from '../utils/playlistMenu'
 
 // A–Z jump rail letters; '#' collects digits/symbols.
 const AZ_LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
@@ -203,6 +204,7 @@ export default function ArtistsView() {
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
+      addToPlaylistEntry([track], lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       // Mirrors SongsView's "Start X Radio" (contributing-artists aware) so the
       // action exists where it's most natural — browsing an artist's albums.
       ...(() => {

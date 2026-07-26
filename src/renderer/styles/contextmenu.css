@@ -43,6 +43,36 @@
   pointer-events: none;
 }
 
+/* Submenu parent row ("Add to Playlist ▸") — the arrow sits hard right, and
+ * the row keeps its highlight while the flyout is open so the eye can follow
+ * the path from row to flyout. */
+.context-menu-item--parent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.context-menu-item--subopen {
+  background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
+  color: #fff;
+}
+
+.context-menu-arrow {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.75;
+  flex: 0 0 auto;
+}
+
+/* The flyout reuses .context-menu wholesale so it inherits the same chrome.
+ * It only needs to sit above its parent and skip the pop-in, which would
+ * read as a second, competing animation next to an already-open menu. */
+.context-menu--sub {
+  z-index: 101;
+  animation: none;
+}
+
 .context-menu-check {
   display: inline-block;
   width: 16px;

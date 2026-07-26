@@ -17,6 +17,7 @@ import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
+import { addToPlaylistEntry } from '../utils/playlistMenu'
 
 // 4.5: hierarchy page for one artist. Reached from ArtistsView via a
 // VIEW_ARTIST_DETAIL dispatch (sets currentView + activeArtist on the
@@ -138,6 +139,7 @@ export default function ArtistDetailView() {
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
+      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
     ]
   }, [playTrack, pbDispatch])
   const artist = lib.activeArtist || ''

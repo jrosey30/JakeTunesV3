@@ -32,6 +32,7 @@ import type { SortColumn, Track } from '../types'
 import { setNotice } from '../activity'
 import EmptyState from '../components/EmptyState'
 import '../styles/songs.css'
+import { addToPlaylistEntry } from '../utils/playlistMenu'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -485,6 +486,7 @@ export default function SongsView() {
       { separator: true as const },
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       ...(getDeckState() ? [
         {
           label: `Lay on the tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,

@@ -1,12 +1,19 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import '../styles/contextmenu.css'
 
 export interface MenuItem {
   label: string
-  onClick: () => void
+  /** Optional when `submenu` is present — a parent row opens its flyout
+   *  instead of performing an action. */
+  onClick?: () => void
   separator?: false
   disabled?: boolean
   checked?: boolean
+  /** Nested flyout, 2006-iTunes style ("Add to Playlist ▸"). Rendered in a
+   *  PORTAL, not as a DOM child: `.context-menu` sets `overflow-y: auto` for
+   *  long menus, which would clip an in-flow flyout to the parent's box. */
+  submenu?: MenuEntry[]
 }
 
 export interface MenuSeparator {
@@ -24,10 +31,19 @@ interface ContextMenuProps {
 
 export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const subRef = useRef<HTMLDivElement>(null)
+  // Which row's flyout is open, and where to draw it.
+  const [sub, setSub] = useState<{ i: number; x: number; y: number } | null>(null)
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      // The flyout lives in a portal, so it is NOT a DOM descendant of `ref`.
+      // Both boxes have to count as "inside" or clicking a submenu row would
+      // dismiss the menu before its onClick ran.
+      const t = e.target as Node
+      const inside = (ref.current && ref.current.contains(t)) ||
+                     (subRef.current && subRef.current.contains(t))
+      if (!inside) {
         onClose()
       }
     }
@@ -77,6 +93,45 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
     }
   }, [x, y])
 
+  // Same three-slot fitting for the flyout. A 26-playlist submenu is taller
+  // than most screens, so without this the bottom entries land under the
+  // statusbar with no way to reach them.
+  useEffect(() => {
+    const el = subRef.current
+    if (!el || !sub) return
+    const BUFFER = 12
+    const STATUS_H = 24
+    const maxBottom = window.innerHeight - STATUS_H - BUFFER
+    el.style.left = `${sub.x}px`
+    el.style.top = `${sub.y}px`
+    el.style.maxHeight = ''
+    const rect = el.getBoundingClientRect()
+    // Prefer opening to the right; flip to the parent menu's left if it
+    // would overflow, which is what the item's own menu edge gives us.
+    if (rect.right > window.innerWidth - BUFFER) {
+      const menu = ref.current?.getBoundingClientRect()
+      const flipped = (menu ? menu.left : sub.x) - rect.width + 2
+      el.style.left = `${Math.max(BUFFER, flipped)}px`
+    }
+    if (rect.bottom > maxBottom) {
+      const lifted = maxBottom - rect.height
+      if (lifted >= BUFFER) {
+        el.style.top = `${lifted}px`
+      } else {
+        el.style.top = `${BUFFER}px`
+        el.style.maxHeight = `${maxBottom - BUFFER}px`
+      }
+    }
+  }, [sub])
+
+  // Anchor a flyout to its parent row: to the right, top-aligned, flipping to
+  // the left when the right edge would run off screen.
+  const openSub = (i: number, el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    const menu = ref.current?.getBoundingClientRect()
+    setSub({ i, x: (menu ? menu.right : r.right) - 2, y: r.top - 4 })
+  }
+
   return (
     <div className="context-menu" ref={ref} style={{ left: x, top: y }}>
       {items.map((item, i) =>
@@ -85,22 +140,63 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
         ) : (
           <div
             key={i}
-            className={`context-menu-item ${item.disabled ? 'context-menu-item--disabled' : ''} ${item.checked !== undefined ? 'context-menu-item--checkable' : ''}`}
+            className={`context-menu-item ${item.disabled ? 'context-menu-item--disabled' : ''} ${item.checked !== undefined ? 'context-menu-item--checkable' : ''} ${item.submenu ? 'context-menu-item--parent' : ''} ${sub?.i === i ? 'context-menu-item--subopen' : ''}`}
+            onMouseEnter={(e) => {
+              if (item.disabled) return
+              // Entering any other row closes an open flyout; entering a parent
+              // row opens its own. Moving right INTO the flyout never crosses
+              // another row, so it stays open.
+              if (item.submenu) openSub(i, e.currentTarget)
+              else setSub(null)
+            }}
             onMouseDown={(e) => {
               e.stopPropagation()
-              if (!item.disabled) {
-                item.onClick()
-                if (item.checked === undefined) onClose()
-              }
+              if (item.disabled) return
+              if (item.submenu) { openSub(i, e.currentTarget); return }
+              item.onClick?.()
+              if (item.checked === undefined) onClose()
             }}
           >
             {item.checked !== undefined && (
               <span className="context-menu-check">{item.checked ? '✓' : ''}</span>
             )}
             {item.label}
+            {item.submenu && <span className="context-menu-arrow">▸</span>}
           </div>
         )
       )}
+
+      {sub && (() => {
+        const parent = items[sub.i]
+        const entries = (!parent.separator && parent.submenu) || []
+        return createPortal(
+          <div
+            className="context-menu context-menu--sub"
+            ref={subRef}
+            style={{ left: sub.x, top: sub.y }}
+          >
+            {entries.map((s, j) =>
+              s.separator ? (
+                <div key={j} className="context-menu-sep" />
+              ) : (
+                <div
+                  key={j}
+                  className={`context-menu-item ${s.disabled ? 'context-menu-item--disabled' : ''}`}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    if (s.disabled) return
+                    s.onClick?.()
+                    onClose()
+                  }}
+                >
+                  {s.label}
+                </div>
+              )
+            )}
+          </div>,
+          document.body
+        )
+      })()}
     </div>
   )
 }

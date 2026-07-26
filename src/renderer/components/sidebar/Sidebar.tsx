@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
+import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { useLibrary } from '../../context/LibraryContext'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
@@ -60,12 +61,11 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: "Songs You'd Star", id: 'youd-star' },
 ]
 
-// iPod playlists with these names duplicate the built-in smart playlists — hide them
-const SMART_PLAYLIST_NAMES = new Set([
-  'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated', 'Starred',
-  "Songs You'd Star",
-  'Classical Music', // empty iPod smart playlist
-])
+// iPod playlists with these names duplicate the built-in smart playlists — hide them.
+// Moved to utils/playlistMenu so the "Add to Playlist" submenu offers exactly the
+// playlists this section shows. Two copies would eventually disagree, and the menu
+// would list a playlist the sidebar doesn't.
+// (SMART_PLAYLIST_NAMES is imported above.)
 
 // iTunes 8 sidebar icons stayed COLORED (the monochrome conversion didn't
 // happen until iTunes 10). Each icon takes a category-tied color:
