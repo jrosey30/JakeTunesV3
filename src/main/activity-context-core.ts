@@ -48,6 +48,30 @@ export function labelActivity(a: ActivityKind): string {
   return map[a] || 'Activity'
 }
 
+/**
+ * The steer text the activity brain embeds into a query vector — the same
+ * situational voice as the library's own embeddings, so cosines are honest.
+ * The listener's free-text note is the star input: with the brain reading it
+ * semantically, "90s hip hop, no lyrics, keep it moving" actually biases the
+ * picks now (it used to just tweak a genre regex). Deliberately excludes
+ * weather/place minutiae — those are commentary flavor, not taste signal.
+ */
+export function buildActivityQueryText(brief: ActivityBrief): string {
+  const act = labelActivity(brief.activity)
+  const energy = brief.intensity === 'hard'
+    ? 'high-energy, driving, propulsive'
+    : brief.intensity === 'easy'
+      ? 'relaxed, mid-tempo, easy groove'
+      : 'balanced energy, steady momentum'
+  const mode = brief.activity === 'bop'
+    ? 'everyday listening — hanging out, commuting, errands; variety and vibe over BPM'
+    : `music to move to for ${act.toLowerCase()}`
+  const parts = [`${mode}. ${energy}.`]
+  const note = (brief.note || '').trim()
+  if (note) parts.push(note)
+  return parts.join(' ')
+}
+
 export function formatActivityContextForPrompt(ctx: ActivityBrainContext | null): string {
   if (!ctx?.brief) return ''
   const b = ctx.brief

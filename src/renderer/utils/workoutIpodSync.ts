@@ -71,7 +71,7 @@ export async function buildWorkoutIpodSyncPayload(
 ): Promise<{ ok: true; payload: WorkoutSyncPayload } | { ok: false; error: string }> {
   const res = await window.electronAPI.buildWorkoutSyncSet?.(
     allTracks.map(toWorkoutTrack),
-    brief ? { brief, saveProfile: true } : undefined,
+    brief ? { brief, saveProfile: true, target: brief.target ?? 1000 } : undefined,
   )
   if (!res?.ok || !res.trackIds?.length) {
     return { ok: false, error: res?.error || 'Could not build activity sync set.' }
