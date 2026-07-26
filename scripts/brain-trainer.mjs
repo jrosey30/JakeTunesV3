@@ -442,7 +442,16 @@ async function main() {
   const CATCHUP_CAP = Number(process.env.BRAIN_TEMPO_CAP) || 500
   const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && desc[String(t.id)].te !== TEMPO_ENCODING_VERSION).slice(0, CATCHUP_CAP)
   if (needTempo.length && !process.argv.includes('--meaning-catchup')) {   // --meaning-catchup isolates meaning: no tempo re-embeds to confound a before/after eval
-    log(`tempo catch-up: ${needTempo.length} enriched track(s) gained bpm since enrichment — re-embedding with tempo (no Gemma)`)
+    // Say WHY each track is here. Since `te` became a version, this batch mixes
+    // two different causes: tracks that genuinely gained bpm after enrichment
+    // (te absent) and tracks whose encoding is simply out of date (te = an older
+    // version). The old wording claimed all of them "gained bpm", which sent me
+    // looking at audio analysis when the real answer was an encoding bump —
+    // a log line that misstates its own trigger costs an hour later.
+    const freshBpm = needTempo.filter(t => desc[String(t.id)].te === undefined || desc[String(t.id)].te === false).length
+    const restated = needTempo.length - freshBpm
+    log(`tempo catch-up: re-embedding ${needTempo.length} track(s) with tempo/key encoding v${TEMPO_ENCODING_VERSION} (no Gemma) — `
+      + `${freshBpm} newly analysed, ${restated} on an older encoding`)
     const cvecs = await openaiEmbed(needTempo.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
     copyFileSync(EMB, EMB + '.bak')
     let cn = 0
