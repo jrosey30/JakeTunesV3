@@ -538,7 +538,7 @@ export interface ListeningMemoryData {
   observations: string[]
 }
 
-export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode'
+export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode' | 'bpm' | 'camelotKey'
 export type SortDirection = 'asc' | 'desc'
 
 declare global {

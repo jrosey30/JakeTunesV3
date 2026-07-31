@@ -96,6 +96,12 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   // Mono/stereo tag (Get Info "Channels"). Hidden by default — enable via the
   // header right-click column picker.
   { key: 'channelMode', label: 'Channels', defaultWidth: 70, minWidth: 50, resizable: true },
+  // 2026-07-31 (Jake): BPM + Camelot for harmonic mixing. Audio analysis
+  // already fills both on ~100% of the library, so these are pure display.
+  // Hidden by default like the other optional columns; enable from the
+  // header right-click picker.
+  { key: 'bpm', label: 'BPM', defaultWidth: 55, minWidth: 40, resizable: true },
+  { key: 'camelotKey', label: 'Key', defaultWidth: 55, minWidth: 40, resizable: true },
   // 4.5: 'rating' column REMOVED — the star now renders inline next to
   // the song title (hover-reveal when unstarred, always-visible when
   // starred). Right-click Star/Unstar still works via ratingMenuEntries.
@@ -221,6 +227,12 @@ const SongRow = memo(function SongRow({
             return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
           case 'channelMode':
             return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
+          case 'bpm':
+            return <div key={col.key} className="songs-cell songs-cell--num">{track.bpm ? Math.round(Number(track.bpm)) : ''}</div>
+          case 'camelotKey':
+            // Camelot next to the key it stands for — 8A means nothing on its
+            // own unless you already mix by the wheel.
+            return <div key={col.key} className="songs-cell songs-cell--num" title={track.keyRoot ? `${track.keyRoot} ${track.keyMode || ''}`.trim() : ''}>{track.camelotKey || ''}</div>
           default:
             return null
         }
@@ -251,7 +263,7 @@ export default function SongsView() {
   // channelMode starts hidden — it's a niche tag column; the header
   // right-click picker reveals it. (colsV in the saved state marks that the
   // user's hidden-set already knows about it.)
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['channelMode', 'subgenre']))
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['channelMode', 'subgenre', 'bpm', 'camelotKey']))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -999,6 +1011,7 @@ export default function SongsView() {
         const merged = [...savedHidden]
         if (v < 2) merged.push('channelMode')
         if (v < 3) merged.push('subgenre')
+          if (v < 4) { merged.push('bpm'); merged.push('camelotKey') }
         setHiddenCols(new Set(merged))
       }
       if (Array.isArray(savedOrder) && savedOrder.length > 0) {
@@ -1015,7 +1028,7 @@ export default function SongsView() {
     if (colSaveRef.current) clearTimeout(colSaveRef.current)
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
-        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 3 }
+        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 4 }
       }))
     }, 500)
   }, [colWidthMap, hiddenCols, columnOrder])
