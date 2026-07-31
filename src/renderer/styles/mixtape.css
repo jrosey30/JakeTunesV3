@@ -620,3 +620,16 @@
 .newmix-source:hover { background: #f2ecd9; }
 .newmix-source-name { overflow-wrap: anywhere; }
 .newmix-source-count { color: #8a7f5e; font-size: 11px; margin-left: 8px; white-space: nowrap; }
+
+/* Inline rename (2026-07-31). The editable title has to sit at exactly the
+ * same size/weight/position as the <h1> it replaces, or the hero jumps when
+ * you click it. Transparent field, no chrome until focus. */
+.mixtape-title--editable { cursor: text; }
+.mixtape-title--editable:hover { text-decoration: underline dotted rgba(0,0,0,0.25); text-underline-offset: 4px; }
+.mixtape-title--edit {
+  font: inherit; color: inherit; letter-spacing: inherit; line-height: inherit;
+  width: 100%; margin: 0; padding: 0;
+  background: transparent;
+  border: none; border-bottom: 1px solid rgba(0,0,0,0.28);
+  border-radius: 0; outline: none;
+}

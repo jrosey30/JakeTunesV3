@@ -84,6 +84,10 @@ export default function MixtapeView() {
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // Inline rename (2026-07-31, Jake: "ability to name my mixtapes"). Inline
+  // input, never window.prompt — that returns null silently in Electron's
+  // renderer and the rename would just quietly not happen.
+  const [renaming, setRenaming] = useState<string | null>(null)
   const [remixing, setRemixing] = useState(false)
   const [pickedSide, setPickedSide] = useState<'A' | 'B'>('A')
   const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([])
@@ -243,12 +247,42 @@ export default function MixtapeView() {
     </div>
   )
 
+  // Save through the existing mixtape-save, which already does a read-modify-
+  // write by id — so renaming can't disturb sides, liner notes or the intro.
+  // Empty/unchanged input is a no-op, not a blank tape name.
+  const commitRename = async (): Promise<void> => {
+    const next = (renaming ?? '').trim()
+    setRenaming(null)
+    if (!next || !tape || next === tape.title) return
+    await window.electronAPI.saveMixtape?.({ ...tape, title: next })
+    await refreshMixtapes()
+  }
+
   return (
     <div className="mixtape-view">
       <div className="mixtape-hero">
         <CassetteSvg title={tape.title} ink={ink} lengthLabel={`C${tape.tapeLength}`} spinning={tapeActive} side={side} wind={winding?.dir} />
         <div className="mixtape-hero-info">
-          <h1 className="mixtape-title">{tape.title}</h1>
+          {renaming !== null ? (
+            <input
+              className="mixtape-title mixtape-title--edit"
+              value={renaming}
+              autoFocus
+              onChange={(e) => setRenaming(e.target.value)}
+              onBlur={() => void commitRename()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
+                if (e.key === 'Escape') { e.preventDefault(); setRenaming(null) }
+              }}
+              aria-label="Mixtape name"
+            />
+          ) : (
+            <h1
+              className="mixtape-title mixtape-title--editable"
+              title="Click to rename"
+              onClick={() => setRenaming(tape.title)}
+            >{tape.title}</h1>
+          )}
           {tape.dedication && <div className="mixtape-dedication" style={{ color: ink }}>for: {tape.dedication}</div>}
           <p className="mixtape-commentary">{tape.commentary}</p>
           {(() => {
