@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import { useLibrary } from '../context/LibraryContext'
+import { sessionArtistImages, hashColor, initials, prefetchArtistPortraits } from '../utils/artistPortrait'
 import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
@@ -50,6 +51,33 @@ export default function NewForYouView() {
   const [generatedAt, setGeneratedAt] = useState<number | null>(feedAtCache)
   const [added, setAdded] = useState<Set<string>>(new Set())
   const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
+  // Real artist photos for the Overlooked lane. Jake, twice: "that's an
+  // album picture not an artist". Keyed by artist name; null = looked up,
+  // none available (fall back to initials, never to a cover in a circle).
+  const [portraits, setPortraits] = useState<Map<string, string | null>>(() => new Map(sessionArtistImages))
+
+  // Backfill portraits for whoever the Overlooked lane is showing. Bounded and
+  // batched inside the helper so the photo IPC isn't hammered; already-known
+  // names are skipped, so revisiting Discover costs nothing.
+  useEffect(() => {
+    if (owned.length === 0) return
+    let cancelled = false
+    void (async () => {
+      const pairs = await prefetchArtistPortraits(
+        owned.map((p) => p.artist),
+        portraits,
+        { cancelled: () => cancelled },
+      )
+      if (cancelled || pairs.length === 0) return
+      setPortraits((prev) => {
+        const next = new Map(prev)
+        for (const [name, slug] of pairs) next.set(name, slug)
+        return next
+      })
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owned])
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const { state: lib } = useLibrary()
   const { playTrack } = useAudio()
@@ -139,17 +167,19 @@ export default function NewForYouView() {
           <div className="df-lane-head">In Your Library — Overlooked</div>
           <div className="df-row">
             {owned.map((pk) => {
-              const hash = lib.artworkMap[`${pk.artist}|||${pk.album}`]
-                || lookupArtwork(lib.artworkMap, normalizedArtIndex, pk.artist, pk.album)
               return (
                 // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
                 // circles, artist name front and centered, album demoted to
                 // the tooltip alongside Music Man's pitch.
                 <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
                   <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
-                    {hash
-                      ? <AlbumArtImage hash={hash} alt={pk.artist} size={320} />
-                      : <div className="df-art-ph" aria-hidden="true">♪</div>}
+                    {/* An ARTIST card shows the ARTIST. Album art in a circle
+                        claims to be a photo of a person and isn't — that is
+                        what read as sloppy. Portrait when we have one, honest
+                        initials disc when we don't. Never a cover. */}
+                    {portraits.get(pk.artist)
+                      ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
+                      : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
                     <span className="df-play df-play--owned" aria-hidden="true">▶</span>
                   </button>
                   <div className="df-badge-row df-badge-row--center">

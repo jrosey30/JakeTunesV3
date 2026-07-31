@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { sessionArtistImages, ARTIST_PHOTO_PREFETCH_CAP, ARTIST_PHOTO_BATCH, hashColor, initials } from '../utils/artistPortrait'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
@@ -35,22 +36,10 @@ interface ArtistGroup {
   albums: { name: string; tracks: Track[] }[]
 }
 
-const AVATAR_COLORS = ['#c0392b', '#8e44ad', '#2980b9', '#27ae60', '#f39c12', '#d35400', '#1abc9c', '#7f8c8d']
-
-/** Survives ArtistsView unmount — avoids re-fetching photos on every visit. */
-const sessionArtistImages = new Map<string, string | null>()
-const ARTIST_PHOTO_PREFETCH_CAP = 32
-const ARTIST_PHOTO_BATCH = 3
-
-function hashColor(name: string): string {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0
-  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]
-}
-
-function initials(name: string): string {
-  return name.split(/\s+/).map(w => w[0] || '').join('').toUpperCase().slice(0, 2)
-}
+/* Artist avatar helpers now live in utils/artistPortrait so the Discover
+ * feed's artist cards and this list agree on what an artist looks like.
+ * Two copies would drift — the Overlooked lane was already showing album
+ * covers where this list showed portraits. */
 
 export default function ArtistsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()

@@ -97,3 +97,20 @@
 /* Owned lane = artist grammar: centered under the circle */
 .df-badge-row--center { justify-content: center; }
 .df-name--center { text-align: center; }
+
+/* Artist cards show the ARTIST (2026-07-28). Portrait fills the circle;
+ * when there's no photo we draw an initials disc rather than punching a
+ * square album cover into a circle — that misrepresented a cover as a
+ * picture of a person, which is what read as sloppy. */
+.df-portrait {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.df-initials {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  font-size: 44px; font-weight: 700; letter-spacing: 0.02em;
+  user-select: none;
+}
