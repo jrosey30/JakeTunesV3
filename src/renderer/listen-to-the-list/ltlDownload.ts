@@ -109,8 +109,15 @@ async function drainQueue(): Promise<void> {
 }
 
 /** Open the Download sidebar view with a search prefilled (manual fallback). */
-export function prefillDownloadView(rec: Recommendation): void {
+export function prefillDownloadView(rec: Recommendation, kind: 'album' | 'song' = 'song'): void {
   const { artist, title } = recoFields(rec)
   const query = [artist, title].filter(Boolean).join(' ')
-  window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { query } }))
+  // Carry WHAT this is, not just the words. Jake: album rows "just take me to
+  // the download search bar and doesnt work" — the receiver filled the box and
+  // never searched, so he landed on an empty page. It now runs the search, and
+  // for an album it opens that album's tracklist so he can take the whole
+  // thing or pick songs out of it.
+  window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', {
+    detail: { query, kind, artist, title },
+  }))
 }

@@ -242,7 +242,7 @@ export default function ListenToTheListView() {
   const openDownloadForReco = (rec: Recommendation) => {
     const f = friendOf(rec)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
-    prefillDownloadView(rec)
+    prefillDownloadView(rec, recoType(rec) === 'album' ? 'album' : 'song')
     dispatch({ type: 'SET_VIEW', view: 'download' })
   }
 

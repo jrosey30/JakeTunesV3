@@ -236,14 +236,34 @@ export default function DownloadView() {
   }, [])
 
   // Prefill search when opened from Listen to the List.
+  //
+  // 2026-07-31 — Jake: album rows on the list "just take me to the download
+  // search bar and doesnt work". They did exactly that: this handler set the
+  // query text, cleared the results, and never SEARCHED. You landed on an
+  // empty page with words in a box.
+  //
+  // Now it runs the search, and when the item is an album it opens that
+  // album's tracklist on arrival — so you get the whole record with "Get all"
+  // or any single song out of it, which is what an album row should have done
+  // all along. Everything below reuses the album expander that already exists;
+  // nothing about the tracklist UI is new.
+  const runSearchRef = useRef<(raw: string) => Promise<void>>()
+  const pendingExpandRef = useRef<{ artist: string; album: string } | null>(null)
   useEffect(() => {
     const onPrefill = (e: Event) => {
-      const q = (e as CustomEvent<{ query?: string }>).detail?.query?.trim()
+      const d = (e as CustomEvent<{ query?: string; kind?: string; artist?: string; title?: string }>).detail
+      const q = d?.query?.trim()
       if (!q) return
       setQuery(q)
       setResults([])
       setSearchErr(null)
       setNotice(null)
+      pendingExpandRef.current = d?.kind === 'album' && d.artist && d.title
+        ? { artist: d.artist, album: d.title }
+        : null
+      // Ref, not the closure: this effect has [] deps, so capturing runSearch
+      // directly would pin the first render's copy forever.
+      void runSearchRef.current?.(q)
     }
     window.addEventListener('jaketunes-download-prefill', onPrefill)
     return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)
@@ -252,6 +272,28 @@ export default function DownloadView() {
   useEffect(() => {
     pageCache = { query, results, pasteUrl }
   }, [query, results, pasteUrl])
+
+  useEffect(() => { runSearchRef.current = runSearch })
+
+  // Results have landed — if we arrived here from an ALBUM row on the list,
+  // open that album's tracklist. `ranked` is derived from `results`, so this
+  // fires exactly once per search, and the ref is cleared so a later manual
+  // search never re-expands behind the user's back.
+  useEffect(() => {
+    const want = pendingExpandRef.current
+    if (!want) return
+    const all = [ranked.hero, ...ranked.albums].filter(
+      (r): r is AlbumRow => !!r && (r as AlbumRow).kind === 'album',
+    )
+    if (all.length === 0) return          // still searching / nothing matched yet
+    const wa = norm(want.artist), wl = norm(want.album)
+    const match = all.find((a) => norm(a.artist) === wa && norm(a.album) === wl)
+      || all.find((a) => norm(a.album) === wl)
+      || all[0]
+    pendingExpandRef.current = null
+    if (match && !expandedAlbums.has(albumKey(match))) toggleAlbum(match)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ranked])
 
   // INSTANT search: iTunes answers in ~200ms with art + previews. Newest
   // keystroke wins; Qobuz is only touched when a Get button is clicked.
