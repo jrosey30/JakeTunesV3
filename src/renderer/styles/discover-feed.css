@@ -42,14 +42,22 @@
 .df-nope {
   position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%;
   border: none; cursor: pointer; background: rgba(20, 16, 12, 0.55); color: rgba(255, 255, 255, 0.9);
-  font-size: 11px; line-height: 1; opacity: 0; transition: opacity 130ms ease, background 130ms ease;
+  /* Same fix as .df-play — the `✕` glyph sat off-centre for the same reason. */
+  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 0;
+  opacity: 0; transition: opacity 130ms ease, background 130ms ease;
 }
 .df-card:hover .df-nope { opacity: 1; }
 .df-nope:hover { background: rgba(160, 40, 30, 0.9); }
 .df-play {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
-  background: rgb(var(--brand-orange-rgb)); color: #fff; font-size: 13px; padding-left: 2px;
+  /* Flex-centred, not text-centred. The old rule centred nothing: the mark was
+     a `▶` glyph laid out on a text baseline, so it sat high and left inside the
+     disc, and `padding-left: 2px` was an attempt to nudge it back by hand. The
+     mark is an SVG now (TransportIcons) and carries its own optical offset, so
+     the button's only job is to put it dead centre. */
+  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 0;
+  background: rgb(var(--brand-orange-rgb)); color: #fff;
   opacity: 0; transition: opacity 140ms ease; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
 }
 .df-card:hover .df-play, .df-play--on { opacity: 1; }

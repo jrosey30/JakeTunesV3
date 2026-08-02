@@ -21,6 +21,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { sessionArtistImages, hashColor, initials, prefetchArtistPortraits } from '../utils/artistPortrait'
 import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
+import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import type { RediscoveryPick } from '../types'
 import '../styles/discover-feed.css'
@@ -182,7 +183,7 @@ export default function NewForYouView() {
                     {portraits.get(pk.artist)
                       ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
                       : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
-                    <span className="df-play df-play--owned" aria-hidden="true">▶</span>
+                    <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
                   </button>
                   <div className="df-badge-row df-badge-row--center">
                     <span className="df-type df-type--owned">Artist</span>
@@ -212,11 +213,11 @@ export default function NewForYouView() {
                       : <div className="df-art-ph" aria-hidden="true">♪</div>}
                     {c.brainPct != null && <div className="df-pct" title="Brain match vs your taste">{c.brainPct}%</div>}
                     <button type="button" className="df-nope" title={`Never show ${c.artist} again`} aria-label="Not for me"
-                      onClick={() => notForMe(c)}>✕</button>
+                      onClick={() => notForMe(c)}><CloseIcon /></button>
                     {c.previewUrl && (
                       <button type="button" className={`df-play${isPlaying ? ' df-play--on' : ''}`}
                         onClick={() => togglePreview(id, c.previewUrl!, c.title, c.artist)}
-                        title={isPlaying ? 'Stop' : 'Preview'}>{isPlaying ? '❚❚' : '▶'}</button>
+                        title={isPlaying ? 'Stop' : 'Preview'}>{isPlaying ? <PauseIcon /> : <PlayIcon />}</button>
                     )}
                   </div>
                   <div className="df-badge-row">
