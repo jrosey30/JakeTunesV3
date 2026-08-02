@@ -32,6 +32,8 @@ export class JsonFileCache<T> {
   private loadPromise: Promise<T> | null = null
   private writeChain: Promise<void> = Promise.resolve()
   private writesInFlight = 0
+  /** A flush is queued but hasn't begun serializing — further updates ride it. */
+  private flushQueued = false
   // 4.5.0-107 data-safety guard: true if the cache loaded as fallback
   // because the file existed but couldn't be read/parsed. In that mode
   // we REFUSE writes — otherwise a one-time read failure would let the
@@ -40,11 +42,20 @@ export class JsonFileCache<T> {
   // and re-trying after fixing the underlying disk/permission issue.
   private loadedAsErrorFallback = false
 
-  constructor(
-    private readonly pathFn: () => string,
-    private readonly fallback: () => T,
-    private readonly label: string,
-  ) {}
+  // Plain fields, not constructor parameter properties. Node's
+  // --experimental-strip-types (what `npm test` runs on) cannot parse
+  // parameter properties, so the shorthand made this file impossible to
+  // import from a test — which is why the app's most data-critical writer
+  // had no coverage. Behaviour is identical; it is just spellable now.
+  private readonly pathFn: () => string
+  private readonly fallback: () => T
+  private readonly label: string
+
+  constructor(pathFn: () => string, fallback: () => T, label: string) {
+    this.pathFn = pathFn
+    this.fallback = fallback
+    this.label = label
+  }
 
   /** Returns the cached value, loading from disk on first access. */
   async get(): Promise<T> {
@@ -135,8 +146,7 @@ export class JsonFileCache<T> {
   }
 
   private scheduleFlush(): void {
-    const snapshot = this.cache
-    if (snapshot === null) return
+    if (this.cache === null) return
     if (this.loadedAsErrorFallback) {
       // Safety lock: a real on-disk file existed but we couldn't read
       // it. Flushing our empty-fallback would silently wipe whatever's
@@ -145,8 +155,25 @@ export class JsonFileCache<T> {
       console.warn(`[state-cache:${this.label}] WRITE DROPPED — initial load failed; refusing to overwrite existing on-disk file.`)
       return
     }
+    // COALESCE: one pending write absorbs every update queued behind it.
+    //
+    // Each flush serializes the WHOLE file, so a bulk path paid the full size
+    // per item: the audio-analysis sweep calls persistOverrideFields once per
+    // track, which against a 4.1 MB metadata-overrides.json meant ~37 GB of
+    // writes to record 8,812 results. Imports and the Cynthia sweeps pay the
+    // same tax. Disk never fell behind, but it is pure waste.
+    //
+    // Safe because the write reads `this.cache` when it RUNS, not when it was
+    // scheduled — so a collapsed write persists the latest state, not a stale
+    // snapshot. `queued` clears at the START of the task, so an update that
+    // lands mid-serialize schedules a fresh write instead of being swallowed.
+    if (this.flushQueued) return
+    this.flushQueued = true
     this.writesInFlight++
     this.writeChain = this.writeChain.then(async () => {
+      this.flushQueued = false
+      const snapshot = this.cache
+      if (snapshot === null) { this.writesInFlight--; return }
       const path = this.pathFn()
       const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
       try {
