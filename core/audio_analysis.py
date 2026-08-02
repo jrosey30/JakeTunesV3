@@ -93,9 +93,68 @@ def _load_slice(path: str, sr: int = 22050, dur: float = 90.0):
     return librosa.load(path, mono=True, sr=sr)
 
 
+_es = None
+_es_tried = False
+
+
+def _essentia():
+    """Essentia's RhythmExtractor2013, imported once. None if unavailable."""
+    global _es, _es_tried
+    if not _es_tried:
+        _es_tried = True
+        try:
+            import essentia
+            import essentia.standard as es
+            essentia.log.infoActive = False
+            essentia.log.warningActive = False
+            _es = es
+        except Exception:
+            _es = None
+    return _es
+
+
 def _bpm_from(y, sr) -> float:
-    """beat_track + octave-clamp into [70,160] (librosa's common failure mode
-    is locking onto the half/double-tempo harmonic). 0.0 on failure."""
+    """Tempo via Essentia RhythmExtractor2013, librosa as fallback. 0.0 on failure.
+
+    2026-08-02. The previous implementation was librosa.beat.beat_track followed
+    by a hard octave clamp:
+
+        while bpm > 160: bpm /= 2
+        while bpm <  70: bpm *= 2
+
+    That produced a physically impossible library: 8,812 tracks and NOT ONE
+    below 70 or above 160. Fast music was silently halved — and it poisoned the
+    brain too, since a 172 BPM track recorded as 86 gets described to the
+    embedding as "slow, spacious, downtempo, good for winding down".
+
+    Measured against AcousticBrainz (an independent reference) on a 15-track
+    ground-truth set spanning the suspect genres and the ordinary bulk:
+
+        librosa + clamp        10/15 within 5%
+        Essentia               14/15 within 5%
+
+    Essentia recovered the cases a wider clamp could never have fixed — e.g.
+    Minutemen "Viet Nam" was off by a 3:2 metrical error (107.7 vs 161.9), not
+    an octave, and came back exact. It is also the same engine that produced
+    the reference numbers, so the library now agrees with the wider world.
+
+    NOTE the range is no longer forced. A returned value is used as measured;
+    [40, 250] is a sanity bound for obvious failures, not a folding window.
+    """
+    es = _essentia()
+    if es is not None:
+        try:
+            # RhythmExtractor2013 wants 44.1k mono; _load_slice hands us 22.05k.
+            librosa, np = _lazy()
+            y44 = librosa.resample(y, orig_sr=sr, target_sr=44100) if sr != 44100 else y
+            bpm, _b, conf, _e, _i = es.RhythmExtractor2013(method="multifeature")(
+                np.ascontiguousarray(y44, dtype="float32"))
+            bpm = float(bpm)
+            if 40.0 <= bpm <= 250.0:
+                return round(bpm, 1)
+        except Exception:
+            pass    # fall through to librosa
+
     librosa, np = _lazy()
     if y.size == 0:
         return 0.0
@@ -103,10 +162,10 @@ def _bpm_from(y, sr) -> float:
     bpm = float(np.asarray(tempo).flatten()[0])
     if bpm <= 0:
         return 0.0
-    while bpm > 160 and bpm > 0:
-        bpm /= 2
-    while bpm < 70 and bpm > 0:
-        bpm *= 2
+    # Fallback path only. Kept because SOME number beats none, but the clamp is
+    # gone — a folded value is worse than an honest out-of-range one.
+    if bpm < 40.0 or bpm > 250.0:
+        return 0.0
     return round(bpm, 1)
 
 
