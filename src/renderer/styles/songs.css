@@ -449,3 +449,37 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   pointer-events: none;
 }
+
+
+/* BPM + Camelot colour coding (2026-08-02, Jake's ask).
+ *
+ * Tinted CELL BACKGROUNDS, not coloured text — the value has to stay readable
+ * on both stripe colours of the alternating rows, and a wash reads faster when
+ * you're scanning a whole column for a band. */
+.songs-cell--num { border-radius: 3px; }
+
+/* Tempo: cool/slow -> warm/fast, matching the encoding's own bands. */
+.bpm-a { background: rgba( 70,120,180,0.16); }   /* < 88   spacious      */
+.bpm-b { background: rgba( 70,160,160,0.16); }   /* < 100  loping        */
+.bpm-c { background: rgba(110,170,110,0.16); }   /* < 112  steady        */
+.bpm-d { background: rgba(210,170, 70,0.18); }   /* < 122  brisk         */
+.bpm-e { background: rgba(220,130, 60,0.20); }   /* < 134  driving       */
+.bpm-f { background: rgba(200, 70, 60,0.20); }   /* >=134  relentless    */
+
+/* Camelot: hue = wheel position, so 7A/8A/8B look related and 2A/8A don't.
+ * A (minor) sits lighter, B (major) fuller — same hue, different weight. */
+.cam-1 { --cam-h: 0; }
+.cam-2 { --cam-h: 30; }
+.cam-3 { --cam-h: 60; }
+.cam-4 { --cam-h: 90; }
+.cam-5 { --cam-h: 120; }
+.cam-6 { --cam-h: 150; }
+.cam-7 { --cam-h: 180; }
+.cam-8 { --cam-h: 210; }
+.cam-9 { --cam-h: 240; }
+.cam-10 { --cam-h: 270; }
+.cam-11 { --cam-h: 300; }
+.cam-12 { --cam-h: 330; }
+[class*="cam-"] { background: hsla(var(--cam-h) 65% 55% / 0.15); }
+.cam-A { background: hsla(var(--cam-h) 55% 55% / 0.13); }
+.cam-B { background: hsla(var(--cam-h) 75% 52% / 0.22); }

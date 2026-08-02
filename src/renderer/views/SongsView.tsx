@@ -109,6 +109,19 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   // filter quietly drops it because no def matches the key.
 ]
 
+// Column layout survives view changes (2026-08-02). Jake: "everytime i leave
+// the song view page key and bpm columns are out of view."
+//
+// Two faults, one symptom. hiddenCols was component state seeded from a
+// hardcoded default, so every unmount/remount reset it — and the restore event
+// is dispatched ONCE at app startup by App.tsx, with its listener living inside
+// this component, so navigating here later missed it entirely. Only the opt-in
+// columns showed the bug: everything else is visible by default, so a reset
+// looked like nothing had happened.
+//
+// Same module-cache pattern the Download and Discover views already use.
+let colsCache: { hidden: string[]; widths: Record<string, number>; order: string[] } | null = null
+
 // Columns that cannot be hidden
 const ALWAYS_VISIBLE = new Set(['playing', 'title'])
 
@@ -227,12 +240,26 @@ const SongRow = memo(function SongRow({
             return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
           case 'channelMode':
             return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
-          case 'bpm':
-            return <div key={col.key} className="songs-cell songs-cell--num">{track.bpm ? Math.round(Number(track.bpm)) : ''}</div>
-          case 'camelotKey':
+          case 'bpm': {
+            // Warm = fast. Scanning a column for a tempo band shouldn't require
+            // reading every number. Tint the cell, keep the digits dark so they
+            // stay legible on both stripe colours.
+            const b = Number(track.bpm) || 0
+            const band = b === 0 ? '' : b < 88 ? 'a' : b < 100 ? 'b' : b < 112 ? 'c' : b < 122 ? 'd' : b < 134 ? 'e' : 'f'
+            return <div key={col.key} className={`songs-cell songs-cell--num${band ? ` bpm-${band}` : ''}`}>{b ? Math.round(b) : ''}</div>
+          }
+          case 'camelotKey': {
             // Camelot next to the key it stands for — 8A means nothing on its
             // own unless you already mix by the wheel.
-            return <div key={col.key} className="songs-cell songs-cell--num" title={track.keyRoot ? `${track.keyRoot} ${track.keyMode || ''}`.trim() : ''}>{track.camelotKey || ''}</div>
+            //
+            // Colour follows the WHEEL, not the alphabet: positions 1..12 walk
+            // the hue circle, so harmonic neighbours (7A/8A/8B) look related and
+            // a compatible run is visible at a glance. A vs B (minor vs major)
+            // differ in weight, not hue — same spot on the wheel.
+            const m = /^(\d{1,2})([AB])$/i.exec(String(track.camelotKey || '').trim())
+            const cls = m ? ` cam-${m[1]} cam-${m[2].toUpperCase()}` : ''
+            return <div key={col.key} className={`songs-cell songs-cell--num${cls}`} title={track.keyRoot ? `${track.keyRoot} ${track.keyMode || ''}`.trim() : ''}>{track.camelotKey || ''}</div>
+          }
           default:
             return null
         }
@@ -263,7 +290,7 @@ export default function SongsView() {
   // channelMode starts hidden — it's a niche tag column; the header
   // right-click picker reveals it. (colsV in the saved state marks that the
   // user's hidden-set already knows about it.)
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['channelMode', 'subgenre', 'bpm', 'camelotKey']))
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(colsCache?.hidden ?? ['channelMode', 'subgenre', 'bpm', 'camelotKey']))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -272,7 +299,7 @@ export default function SongsView() {
   // Persists with the rest of the column state. Defensive about new
   // columns added in future versions — those get appended at the end
   // rather than being lost from the saved order.
-  const [columnOrder, setColumnOrder] = useState<string[]>(() => ALL_COLUMN_DEFS.map(c => c.key))
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => colsCache?.order ?? ALL_COLUMN_DEFS.map(c => c.key))
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
@@ -1013,6 +1040,7 @@ export default function SongsView() {
         if (v < 3) merged.push('subgenre')
           if (v < 4) { merged.push('bpm'); merged.push('camelotKey') }
         setHiddenCols(new Set(merged))
+        colsCache = { ...(colsCache ?? { widths: {}, order: [] }), hidden: merged } as typeof colsCache
       }
       if (Array.isArray(savedOrder) && savedOrder.length > 0) {
         setColumnOrder(savedOrder.filter((k: unknown): k is string => typeof k === 'string'))
@@ -1026,6 +1054,9 @@ export default function SongsView() {
   const colSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (colSaveRef.current) clearTimeout(colSaveRef.current)
+    // Cache SYNCHRONOUSLY — the disk write is debounced 500ms, but a remount can
+    // happen sooner than that, and it must not read a stale layout.
+    colsCache = { hidden: Array.from(hiddenCols), widths: colWidthMap, order: columnOrder }
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
         detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 4 }
