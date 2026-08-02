@@ -29,6 +29,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { hostname } from 'node:os'
+import { pathToFileURL } from 'node:url'
 
 // STATE_DIR defaults to the desktop app's local dir, but JT_STATE_DIR lets the
 // homemini nightly job point it at the NAS canonical (/Volumes/JakeShared/
@@ -333,6 +334,16 @@ async function report(enrichedThisRun, doneTotal, total, sample) {
     `+${enrichedThisRun} learned tonight · ${doneTotal.toLocaleString()}/${total.toLocaleString()} (${pct}%) · ~${nights} night${nights === 1 ? '' : 's'} to go${taste}`)
 }
 
+/** Bump when tempoEnergy()'s output changes — every track re-embeds.
+ *
+ *  MODULE scope on purpose. It used to be declared partway down main(), while
+ *  `--reembed-all` (higher up the same function) already referenced it: a
+ *  temporal dead zone, so that flag threw "Cannot access
+ *  'TEMPO_ENCODING_VERSION' before initialization" — but only AFTER paying
+ *  OpenAI to embed all ~8,800 tracks and writing the .bak, so it burned the
+ *  money and saved nothing. Up here it cannot be shadowed by execution order. */
+const TEMPO_ENCODING_VERSION = 2
+
 async function main() {
   if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
@@ -399,7 +410,7 @@ async function main() {
     const vecs = await openaiEmbed(texts)
     copyFileSync(EMB, EMB + '.bak')
     let n = 0
-    for (let i = 0; i < cands.length; i++) { const v = vecs[i]; if (v) { map.set(Number(cands[i].id), v); const e = desc[String(cands[i].id)]; if (e) e.te = (Number(cands[i].bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false; n++ } }
+    for (let i = 0; i < cands.length; i++) { const v = vecs[i]; if (v) { map.set(Number(cands[i].id), v); const e = desc[String(cands[i].id)]; if (e) { e.te = (Number(cands[i].bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false; e.teb = Number(cands[i].bpm) || 0 } n++ } }
     const written = writeEmb(EMB, map)
     try {
       const check = readEmb(EMB)
@@ -438,9 +449,26 @@ async function main() {
   // tempo-less and not vibe-searchable. Each night we re-embed up to CATCHUP_CAP
   // such tracks (NO Gemma — reuses the descriptor) so every song becomes
   // vibe-searchable once it's been heard. `te` = tempo facts are in the vector.
-  const TEMPO_ENCODING_VERSION = 2   // bump when tempoEnergy()'s output changes
   const CATCHUP_CAP = Number(process.env.BRAIN_TEMPO_CAP) || 500
-  const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && desc[String(t.id)].te !== TEMPO_ENCODING_VERSION).slice(0, CATCHUP_CAP)
+  const TEMPO_DRIFT = 1.5            // bpm; below this the tempo sentence can't change
+  // `teb` = the bpm that was actually folded into the vector.
+  //
+  // 2026-08-02: `te` alone gates on the ENCODING version, so it fires when
+  // tempoEnergy()'s wording changes but NEVER when the tempo itself does. That
+  // was invisible until the audio analyser was fixed: ~43% of the library's
+  // bpms moved (many by a full octave — 86.1 -> 172.3), and every one of those
+  // vectors would have gone on describing a fast song as "slow, spacious,
+  // downtempo, good for winding down" forever, because te was already 2.
+  // Recording the encoded bpm makes a tempo CORRECTION self-healing.
+  //
+  // Entries written before this field exists have no `teb`, so they read as
+  // stale and re-embed once — deliberate, since there is no way to know what
+  // tempo they were built from. CATCHUP_CAP bounds the nightly cost.
+  const tempoStale = (t, e) => {
+    if (e.te !== TEMPO_ENCODING_VERSION) return true
+    return Math.abs((Number(t.bpm) || 0) - (Number(e.teb) || 0)) > TEMPO_DRIFT
+  }
+  const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && tempoStale(t, desc[String(t.id)])).slice(0, CATCHUP_CAP)
   if (needTempo.length && !process.argv.includes('--meaning-catchup')) {   // --meaning-catchup isolates meaning: no tempo re-embeds to confound a before/after eval
     // Say WHY each track is here. Since `te` became a version, this batch mixes
     // two different causes: tracks that genuinely gained bpm after enrichment
@@ -449,13 +477,18 @@ async function main() {
     // looking at audio analysis when the real answer was an encoding bump —
     // a log line that misstates its own trigger costs an hour later.
     const freshBpm = needTempo.filter(t => desc[String(t.id)].te === undefined || desc[String(t.id)].te === false).length
-    const restated = needTempo.length - freshBpm
+    // Third cause since `teb` exists: the encoding is current but the measured
+    // tempo moved under it (a re-analysis corrected the bpm). Counted apart so
+    // the line can't send the next reader hunting an encoding bump that never
+    // happened — the same trap the two-cause split was written to avoid.
+    const retuned = needTempo.filter(t => desc[String(t.id)].te === TEMPO_ENCODING_VERSION).length
+    const restated = needTempo.length - freshBpm - retuned
     log(`tempo catch-up: re-embedding ${needTempo.length} track(s) with tempo/key encoding v${TEMPO_ENCODING_VERSION} (no Gemma) — `
-      + `${freshBpm} newly analysed, ${restated} on an older encoding`)
+      + `${freshBpm} newly analysed, ${restated} on an older encoding, ${retuned} whose bpm changed`)
     const cvecs = await openaiEmbed(needTempo.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
     copyFileSync(EMB, EMB + '.bak')
     let cn = 0
-    for (let i = 0; i < needTempo.length; i++) { const v = cvecs[i]; if (v) { map.set(Number(needTempo[i].id), v); desc[String(needTempo[i].id)].te = TEMPO_ENCODING_VERSION; cn++ } }
+    for (let i = 0; i < needTempo.length; i++) { const v = cvecs[i]; if (v) { map.set(Number(needTempo[i].id), v); const e = desc[String(needTempo[i].id)]; e.te = TEMPO_ENCODING_VERSION; e.teb = Number(needTempo[i].bpm) || 0; cn++ } }
     writeEmb(EMB, map)
     try {
       const check = readEmb(EMB)
@@ -563,7 +596,7 @@ async function main() {
     const v = vecs[i]; if (!v) continue
     const { t, d, m } = pending[i]
     map.set(Number(t.id), v)
-    desc[String(t.id)] = { d, m: m || undefined, at: new Date().toISOString(), artist: t.artist, title: t.title, te: (Number(t.bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false }
+    desc[String(t.id)] = { d, m: m || undefined, at: new Date().toISOString(), artist: t.artist, title: t.title, te: (Number(t.bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false, teb: Number(t.bpm) || 0 }
     if (!sample) sample = { artist: t.artist, title: t.title, d }
     enriched++
   }
@@ -595,4 +628,14 @@ async function main() {
   await report(enriched, Object.keys(desc).length, total, sample)
 }
 
-main().catch(e => { log('FATAL', e.message); process.exit(1) })
+// Run ONLY when invoked as the command, never on import.
+//
+// This file used to call main() at module scope, so merely importing it — to
+// read a constant, to unit-test a helper, to check that it loads — started a
+// real training run: Gemma calls, paid OpenAI embeddings, and a rewrite of
+// embeddings.bin + brain-descriptors.json. I did exactly that while verifying
+// an unrelated fix and re-embedded 500 tracks by accident. A module that runs
+// itself on import is a landmine for every tool that touches it.
+if (import.meta.url === pathToFileURL(process.argv[1] || '.').href) {
+  main().catch(e => { log('FATAL', e.message); process.exit(1) })
+}
