@@ -759,7 +759,7 @@ async function audioAnalysisWorker(): Promise<void> {
   }
 }
 
-function enqueueAudioAnalysis(job: AudioAnalysisJob): void {
+function enqueueAudioAnalysis(job: AudioAnalysisJob, opts?: { batch?: boolean }): void {
   // Brief 010: re-enabled with subprocess hardening (Phase 1) and
   // queue persistence (Phase 2). The 4.2.12 disable predated proper
   // isolation — librosa now runs in its own subprocess via spawn()
@@ -768,8 +768,19 @@ function enqueueAudioAnalysis(job: AudioAnalysisJob): void {
   // a brief gate-open window. De-dupe by trackId so re-queueing on
   // app restart (or a backfill click on an already-queued track) is
   // a no-op.
-  if (audioAnalysisQueue.some(j => j.trackId === job.trackId)) return
+  //
+  // `batch` (2026-08-02): the caller owns dedupe, persist and kick for the
+  // whole set. Without it, enqueuing a full-library backfill SIGABRTs the app:
+  // per-job persist meant 8,812 concurrent atomic writes, each stringifying
+  // the entire growing queue (~1 MB by the midpoint) — thousands of live file
+  // descriptors and multi-GB of allocation in one tick. The per-job `.some()`
+  // scan is quadratic at that size too. This is not hypothetical: the
+  // MusicMan backfill button takes exactly this path, and its own comment
+  // promises "a 6000+ track backfill" — it has simply never been handed one,
+  // because the library was already analyzed.
+  if (!opts?.batch && audioAnalysisQueue.some(j => j.trackId === job.trackId)) return
   audioAnalysisQueue.push(job)
+  if (opts?.batch) return
   void persistQueue()
   kickAudioAnalysisWorker()
 }
@@ -6532,13 +6543,20 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
 ipcMain.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
+  // Dedupe against a Set instead of re-scanning the array per job, and persist
+  // ONCE for the whole batch — see enqueueAudioAnalysis's `batch` note. A
+  // full-library enqueue is a single write here instead of one per track.
+  const queued = new Set(audioAnalysisQueue.map(j => j.trackId))
   let enqueued = 0
   for (const j of jobs) {
+    if (queued.has(j.trackId)) continue
+    queued.add(j.trackId)
     const abs = join(LOCAL_MOUNT, j.colonPath.replace(/:/g, pathSep))
-    const before = audioAnalysisQueue.length
-    enqueueAudioAnalysis({ trackId: j.trackId, path: abs, fingerprint: j.fingerprint })
-    if (audioAnalysisQueue.length > before) enqueued++
+    enqueueAudioAnalysis({ trackId: j.trackId, path: abs, fingerprint: j.fingerprint }, { batch: true })
+    enqueued++
   }
+  await persistQueue()
+  kickAudioAnalysisWorker()
   return { ok: true, enqueued, totalQueued: audioAnalysisQueue.length }
 })
 
