@@ -114,3 +114,18 @@
   font-size: 44px; font-weight: 700; letter-spacing: 0.02em;
   user-select: none;
 }
+
+/* "Because you play X" — the bridge from something owned to something new
+ * (2026-07-31). This is the single most useful line on a card, so it reads
+ * above the why rather than under it, and the artist name carries the weight.
+ * The why below it says what actually carries over. */
+.df-because {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-secondary, #6a604e);
+}
+.df-because b {
+  font-weight: 700;
+  color: rgb(var(--brand-orange-rgb));
+}

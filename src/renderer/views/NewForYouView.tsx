@@ -32,6 +32,8 @@ interface FeedCard {
   title: string
   year?: string
   why: string
+  /** Artist already in the library this pick bridges from. */
+  because?: string
   artUrl?: string
   previewUrl?: string
   brainPct?: number
@@ -223,6 +225,9 @@ export default function NewForYouView() {
                   </div>
                   <div className="df-name" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
                   {c.type !== 'artist' && <div className="df-artist" title={c.artist}>{c.artist}</div>}
+                  {c.because
+                    ? <div className="df-because">Because you play <b>{c.because}</b></div>
+                    : null}
                   {c.why && <div className="df-why">{c.why}</div>}
                   <button type="button" className={`df-add${isAdded ? ' df-add--done' : ''}`}
                     disabled={isAdded} onClick={() => void addToList(c)}>

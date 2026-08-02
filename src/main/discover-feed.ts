@@ -32,6 +32,15 @@ export interface FeedCard {
   artUrl?: string
   previewUrl?: string
   brainPct?: number
+  /** The artist ALREADY IN THE LIBRARY this pick bridges from — the "you play
+   *  a lot of X, so try Y" link. Jake asked for this by name: a recommendation
+   *  with no stated reason reads as random, and the generic `why` lines were
+   *  filler ("Boards of Canada. That's the whole reason.").
+   *
+   *  MUST be validated against the real taste anchors before it is set. A
+   *  fabricated "because you like …" is worse than none — it claims to know
+   *  the listener and gets it wrong. Unvalidated = left undefined. */
+  because?: string
 }
 
 interface ItunesHit {
