@@ -334,6 +334,60 @@ async function report(enrichedThisRun, doneTotal, total, sample) {
     `+${enrichedThisRun} learned tonight · ${doneTotal.toLocaleString()}/${total.toLocaleString()} (${pct}%) · ~${nights} night${nights === 1 ? '' : 's'} to go${taste}`)
 }
 
+const OVERRIDES = join(STATE_DIR, 'metadata-overrides.json')
+
+/**
+ * Layer metadata-overrides.json onto the raw library tracks, in place.
+ * ⚠️ TWIN: src/renderer/App.tsx (metadata overrides apply) — keep in sync.
+ *
+ * JakeTunes treats library.json as the master and metadata-overrides.json as
+ * the layer on top; the app merges them AT LOAD. The audio analyser writes
+ * bpm/keyRoot/keyMode/camelotKey only into the override layer, and Cynthia's
+ * genre corrections live there too. library.json is rewritten only when the
+ * renderer happens to save, which is not guaranteed to have happened — its copy
+ * can be arbitrarily old.
+ *
+ * This trainer read library.json RAW, so it learned stale facts. After the
+ * 2026-08-02 analyser fix corrected 4,027 tempos (846 of them by a full
+ * octave), the canonical library.json still called System Of A Down's "Sad
+ * Statue" 86.1 BPM where the analyser had measured 172.3 — so it would have
+ * been embedded as "slow, spacious, downtempo, good for winding down", the
+ * exact wrongness the fix set out to remove.
+ *
+ * Fingerprint validation is copied deliberately, not defensively: track IDs
+ * shift when the iTunesDB track set changes, and applying an override whose
+ * fingerprint no longer matches was the root cause of the hybrid-row metadata
+ * bug. v1 entries (no `fields`) can't be validated at all, so they're ignored.
+ */
+const NUMERIC_OVERRIDE_FIELDS = new Set([
+  'playCount', 'rating', 'duration', 'fileSize',
+  'year', 'trackNumber', 'trackCount', 'discNumber', 'discCount',
+  'lastPlayedAt', 'skipCount',
+  'bpm', 'audioAnalysisAt',
+])
+
+function applyMetadataOverrides(tracks) {
+  if (!existsSync(OVERRIDES)) return
+  let ov
+  try { ov = JSON.parse(readFileSync(OVERRIDES, 'utf8')) } catch (e) {
+    log('metadata-overrides.json unreadable — training on library.json alone:', e.message)
+    return
+  }
+  let applied = 0, stale = 0, legacy = 0
+  for (const t of tracks) {
+    const entry = ov[String(t.id)]
+    if (!entry || typeof entry !== 'object') continue
+    if (!entry.fields) { legacy++; continue }
+    const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+    if (entry.fp !== fp) { stale++; continue }
+    for (const [field, value] of Object.entries(entry.fields)) {
+      t[field] = NUMERIC_OVERRIDE_FIELDS.has(field) && typeof value === 'string' ? (Number(value) || 0) : value
+    }
+    applied++
+  }
+  log(`metadata overrides: applied ${applied}${stale ? `, skipped ${stale} stale` : ''}${legacy ? `, ${legacy} legacy` : ''}`)
+}
+
 /** Bump when tempoEnergy()'s output changes — every track re-embeds.
  *
  *  MODULE scope on purpose. It used to be declared partway down main(), while
@@ -348,6 +402,7 @@ async function main() {
   if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
   const tracks = Array.isArray(libRaw) ? libRaw : (libRaw.tracks || [])
+  applyMetadataOverrides(tracks)
   const { map, dim } = readEmb(EMB)
   if (dim !== EMBED_DIM) fatal(`embeddings dim ${dim} != ${EMBED_DIM}`)
   const startCount = map.size
