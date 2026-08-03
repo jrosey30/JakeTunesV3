@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
+import { primeColumnCacheFromUiState } from './utils/columnState'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
 import { NavigationProvider, useNavigation } from './context/NavigationContext'
@@ -923,8 +924,24 @@ function AppInner() {
             dispatch({ type: 'SET_SORT', column: ui.sortColumn as import('./types').SortColumn })
           }
         }
-        // Column state is restored via custom event so SongsView can pick it up
+        // Column state: PRIME the shared cache first, then fire the event.
+        //
+        // The event alone never worked on a cold launch. We are inside the
+        // startup load here, so this component is still rendering
+        // <SplashScreen/> (see the `!uiReady` return) and SongsView — which
+        // owns the listener — is not mounted. The event went into an empty
+        // room, SongsView later seeded from its hardcoded defaults, and its
+        // save effect then wrote those defaults over the user's real layout.
+        // That is why bpm/camelotKey vanished on every restart while
+        // ui-state.json still listed them in columnOrder.
+        //
+        // Priming a module-scope cache that SongsView seeds from is
+        // order-independent, so it works whenever the view mounts. The event
+        // stays for live updates.
         if (ui.colWidthMap || ui.hiddenCols || ui.columnOrder) {
+          primeColumnCacheFromUiState({
+            colWidthMap: ui.colWidthMap, hiddenCols: ui.hiddenCols, columnOrder: ui.columnOrder, colsV: ui.colsV,
+          })
           window.dispatchEvent(new CustomEvent('jaketunes-restore-columns', {
             detail: { colWidthMap: ui.colWidthMap, hiddenCols: ui.hiddenCols, columnOrder: ui.columnOrder, colsV: ui.colsV }
           }))

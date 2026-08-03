@@ -895,15 +895,60 @@ function uiStatePath(): string {
 }
 
 ipcMain.handle('load-ui-state', async () => {
+  const path = uiStatePath()
+  let data: string
   try {
-    const data = await readFile(uiStatePath(), 'utf-8')
-    return { ok: true, state: JSON.parse(data) }
+    data = await readFile(path, 'utf-8')
   } catch {
+    return { ok: false, state: null }   // no file yet — first run
+  }
+  try {
+    return { ok: true, state: JSON.parse(data) }
+  } catch (err) {
+    // A corrupt ui-state used to fail SILENTLY here: every launch fell back to
+    // defaults, so Jake's Songs columns (bpm + camelotKey are in columnOrder
+    // and not hidden) vanished on every restart and it read as the column
+    // feature being broken. Found 2026-08-02 with 22 trailing bytes of an
+    // older, longer write stuck on the end — see the save handler.
+    //
+    // Salvage the leading object if there is one: the real state is usually
+    // intact and only the tail is garbage, so this restores the user's layout
+    // instead of resetting it. Keep the bad file for diagnosis either way.
+    console.warn('[ui-state] unparseable —', err instanceof Error ? err.message : err)
+    // Parse the longest valid JSON prefix (a raw_decode equivalent). The
+    // corruption seen in the wild is a good object with junk appended, so the
+    // prefix carries the real layout.
+    let recovered: unknown = null
+    for (let end = data.length; end > 1; end--) {
+      if (data[end - 1] !== '}') continue
+      try { recovered = JSON.parse(data.slice(0, end)); break } catch { /* keep shrinking */ }
+    }
+    try {
+      const { rename: renameFS } = await import('fs/promises')
+      await renameFS(path, `${path}.corrupt-${Date.now()}`)
+    } catch { /* best effort */ }
+    if (recovered && typeof recovered === 'object') {
+      console.warn('[ui-state] recovered the leading object — layout preserved')
+      return { ok: true, state: recovered as Record<string, unknown> }
+    }
     return { ok: false, state: null }
   }
 })
 
+// Serializes save-ui-state so its read-modify-write can't interleave. Without
+// this, two concurrent saves each read the same `current`, and whichever
+// renames last wins — silently dropping the other's fields. That is the same
+// class of loss the deep-merge below was added to prevent, just from
+// concurrency rather than from a caller's partial.
+let uiStateWriteChain: Promise<unknown> = Promise.resolve()
+
 ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => {
+  const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
+  uiStateWriteChain = run.catch(() => {})
+  return run
+})
+
+async function saveUiStateSerialized(uiState: Record<string, unknown>): Promise<{ ok: boolean }> {
   // Bug #3: this used to be a full-overwrite write. Callers all do a
   // load-spread-save pattern in the renderer, but when `loadUiState`
   // returned null/empty (transient parse failure during atomic rename,
@@ -925,7 +970,21 @@ ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => 
       if (typeof current !== 'object' || current === null) current = {}
     } catch { /* no file yet or parse fail — start fresh */ }
     const merged = { ...current, ...uiState }
-    const tmp = path + '.partial.json'
+    // UNIQUE tmp name, and every save serialized on uiStateWriteChain.
+    //
+    // The tmp path used to be the fixed `path + '.partial.json'`, so two saves
+    // in flight at once both wrote THAT file. Interleave a shorter payload over
+    // a longer one and the tail of the long write survives past the end of the
+    // short one — then rename() atomically installs the garbage. That is
+    // exactly what was on disk on 2026-08-02: a valid 656-char object with 22
+    // trailing bytes of an older write. JSON.parse threw on every launch, the
+    // app silently fell back to defaults, and Jake's bpm/camelotKey columns
+    // disappeared every restart even though they were correctly persisted.
+    //
+    // Atomic rename only protects readers from a HALF-WRITTEN file; it does
+    // nothing when two writers share the staging file. JsonFileCache already
+    // gets this right (pid + time + random) — same idiom here.
+    const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
     await writeFile(tmp, JSON.stringify(merged), 'utf-8')
     const { rename: renameFS } = await import('fs/promises')
     await renameFS(tmp, path)
@@ -933,7 +992,7 @@ ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => 
   } catch {
     return { ok: false }
   }
-})
+}
 
 // User-preference settings (4.0 §6.7). Distinct from ui-state.json which
 // tracks transient UI position (sidebar width, current view, etc.). This

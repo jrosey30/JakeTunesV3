@@ -4,6 +4,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
+import { getColumnCache, setColumnCache, primeColumnCacheFromUiState, DEFAULT_HIDDEN } from '../utils/columnState'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
@@ -120,7 +121,10 @@ const ALL_COLUMN_DEFS: ColDef[] = [
 // looked like nothing had happened.
 //
 // Same module-cache pattern the Download and Discover views already use.
-let colsCache: { hidden: string[]; widths: Record<string, number>; order: string[] } | null = null
+// The cache itself moved to utils/columnState so App.tsx can PRIME it at
+// startup — the restore CustomEvent fires while this view is still unmounted,
+// so the event alone could never restore anything on a cold launch.
+
 
 // Columns that cannot be hidden
 const ALWAYS_VISIBLE = new Set(['playing', 'title'])
@@ -290,7 +294,7 @@ export default function SongsView() {
   // channelMode starts hidden — it's a niche tag column; the header
   // right-click picker reveals it. (colsV in the saved state marks that the
   // user's hidden-set already knows about it.)
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(colsCache?.hidden ?? ['channelMode', 'subgenre', 'bpm', 'camelotKey']))
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(getColumnCache()?.hidden ?? DEFAULT_HIDDEN))
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>(() =>
     Object.fromEntries(ALL_COLUMN_DEFS.map(c => [c.key, c.defaultWidth]))
   )
@@ -299,7 +303,10 @@ export default function SongsView() {
   // Persists with the rest of the column state. Defensive about new
   // columns added in future versions — those get appended at the end
   // rather than being lost from the saved order.
-  const [columnOrder, setColumnOrder] = useState<string[]>(() => colsCache?.order ?? ALL_COLUMN_DEFS.map(c => c.key))
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    const cached = getColumnCache()?.order
+    return cached && cached.length > 0 ? cached : ALL_COLUMN_DEFS.map(c => c.key)
+  })
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
@@ -1031,16 +1038,11 @@ export default function SongsView() {
         setColWidthMap(prev => ({ ...prev, ...savedWidths }))
       }
       if (Array.isArray(savedHidden)) {
-        // New columns can't appear in a hiddenCols saved before they existed, so
-        // default each hidden ONCE per version bump; saves at-or-after a version
-        // carry the user's real choice. colsV 2 = channelMode; colsV 3 = subgenre.
-        const v = typeof colsV === 'number' ? colsV : 0
-        const merged = [...savedHidden]
-        if (v < 2) merged.push('channelMode')
-        if (v < 3) merged.push('subgenre')
-          if (v < 4) { merged.push('bpm'); merged.push('camelotKey') }
-        setHiddenCols(new Set(merged))
-        colsCache = { ...(colsCache ?? { widths: {}, order: [] }), hidden: merged } as typeof colsCache
+        // Version-migration lives in primeColumnCacheFromUiState so this path
+        // and App.tsx's startup priming cannot drift apart.
+        primeColumnCacheFromUiState({ hiddenCols: savedHidden, colsV })
+        const primed = getColumnCache()?.hidden
+        if (primed) setHiddenCols(new Set(primed))
       }
       if (Array.isArray(savedOrder) && savedOrder.length > 0) {
         setColumnOrder(savedOrder.filter((k: unknown): k is string => typeof k === 'string'))
@@ -1056,7 +1058,7 @@ export default function SongsView() {
     if (colSaveRef.current) clearTimeout(colSaveRef.current)
     // Cache SYNCHRONOUSLY — the disk write is debounced 500ms, but a remount can
     // happen sooner than that, and it must not read a stale layout.
-    colsCache = { hidden: Array.from(hiddenCols), widths: colWidthMap, order: columnOrder }
+    setColumnCache({ hidden: Array.from(hiddenCols), widths: colWidthMap, order: columnOrder })
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
         detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 4 }
