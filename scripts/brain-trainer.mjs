@@ -355,6 +355,23 @@ async function main() {
   const done = new Set(Object.keys(desc))
   const total = tracks.filter(t => t.artist || t.title).length
 
+  // Count only descriptors that still belong to a track in the library.
+  //
+  // desc keeps entries for tracks that have since left the library, and those
+  // orphans were being counted as progress: on 2026-07-29 the status read
+  // "8784 / 8761" — over 100% — and since remaining = max(0, total - done), it
+  // announced "Fully trained" while 51 real songs had never been described at
+  // all. A health file that overstates itself is worse than none; this is the
+  // same trap the tempo-catchup log line was rewritten to avoid.
+  //
+  // Deliberately NOT pruning the orphans. library.json is on the NAS and has
+  // been observed torn mid-write; a transiently short read would make this
+  // delete descriptors permanently. Counting honestly is free and safe —
+  // reclaiming the space is a separate, deliberate job.
+  const libIds = new Set(tracks.map(t => String(t.id)))
+  const enrichedCount = () => Object.keys(desc).reduce((n, k) => n + (libIds.has(k) ? 1 : 0), 0)
+  const orphanCount = () => Object.keys(desc).length - enrichedCount()
+
   // Grounded lyrics sidecar (written by scripts/lyrics-fetch.mjs, mirrored from
   // the laptop). lyricTextFor returns the plain lyric text (synced cues stripped)
   // for a track, or null when there are no lyrics / it's an instrumental / a miss
@@ -387,7 +404,7 @@ async function main() {
 
   // On-demand status check (no enrichment): `node brain-trainer.mjs --status`
   if (process.argv.includes('--status')) {
-    const done = Object.keys(desc).length, remaining = Math.max(0, total - done)
+    const done = enrichedCount(), remaining = Math.max(0, total - done)
     const pct = total ? Math.round((done / total) * 100) : 0, nights = Math.ceil(remaining / BATCH)
     const msg = remaining === 0
       ? `Fully trained — all ${total.toLocaleString()} tracks understood by sound + mood.`
@@ -563,8 +580,18 @@ async function main() {
     })
     .slice(0, BATCH)
 
-  log(`${Object.keys(desc).length}/${total} tracks enriched so far; processing ${batch.length} this run (batch=${BATCH})`)
-  if (batch.length === 0) { log('library fully enriched — nothing to do tonight'); return }
+  log(`${enrichedCount()}/${total} tracks enriched so far; processing ${batch.length} this run (batch=${BATCH})`)
+  if (batch.length === 0) {
+    log('library fully enriched — nothing to do tonight')
+    // Record the healthy no-op. This path returned WITHOUT writing status, so a
+    // quiet night left brain-status.json untouched and "last successful run"
+    // aged as though the job had died — on 2026-08-02 the file read four days
+    // stale while the job was in fact running fine every night. That is exactly
+    // the silent-failure mode this file's health reporting was added to kill:
+    // "nothing to do" and "never ran" must not look identical on disk.
+    writeStatus({ ok: true, enrichedThisRun: 0, enrichedTotal: enrichedCount(), ofTotal: total, vectors: startCount, orphans: orphanCount() })
+    return
+  }
 
   // 1) Gemma descriptors (sequential; free, local). Skip-on-fail, retry next run.
   const pending = []
@@ -620,12 +647,12 @@ async function main() {
     pending.map(({ t, d }) => ({ id: t.id, text: moodText(t, d) })).filter(e => e.text),
     'nightly',
   )
-  log(`done: +${enriched} enriched this run; brain now ${Object.keys(desc).length}/${total} (embeddings.bin ${written} vectors)`)
+  log(`done: +${enriched} enriched this run; brain now ${enrichedCount()}/${total} (embeddings.bin ${written} vectors)` + (orphanCount() ? ` · ${orphanCount()} orphan descriptor(s) from tracks no longer in the library` : '') + `)`)
   log('the desktop→NAS sync will carry the richer brain to homemini on its next pass')
   // Record the healthy run. "When did the brain last actually learn something?"
   // becomes a fact on disk instead of something you infer from stale mixes.
-  writeStatus({ ok: true, enrichedThisRun: enriched, enrichedTotal: Object.keys(desc).length, ofTotal: total, vectors: written })
-  await report(enriched, Object.keys(desc).length, total, sample)
+  writeStatus({ ok: true, enrichedThisRun: enriched, enrichedTotal: enrichedCount(), ofTotal: total, vectors: written, orphans: orphanCount() })
+  await report(enriched, enrichedCount(), total, sample)
 }
 
 // Run ONLY when invoked as the command, never on import.
