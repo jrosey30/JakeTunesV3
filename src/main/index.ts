@@ -1,6 +1,8 @@
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey } from './path-safety'
+import { computeDeletedPaths } from './library-deletions'
+import { refuseIfNotMainWindow } from './ipc-guard'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -4075,9 +4077,16 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     // opted in. Tracks are still removed from library.json — just not
     // mirrored to the iPod automatically. They'll go on the next manual
     // sync. Default-off matches the user's "don't surprise me" expectation.
+    // FAIL CLOSED (2026-08-03). This read `if (sync && sync.… === false) return`
+    // — it only bailed when the flag was EXPLICITLY false, so a missing key, an
+    // absent settings file, or a parse failure all fell through to deleting
+    // files off the iPod. That contradicted the comment directly above it, and
+    // the failure modes it ignored are exactly the ones you get on a fresh
+    // machine or a bad read. An opt-in destructive action must require the
+    // opt-in to be present, not merely not-refused.
     const settings = await readAppSettingsAsync()
     const sync = settings?.sync as { autoRemoveDeletedFromIpod?: boolean } | undefined
-    if (sync && sync.autoRemoveDeletedFromIpod === false) {
+    if (sync?.autoRemoveDeletedFromIpod !== true) {
       return
     }
     try {
@@ -4175,6 +4184,11 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
 let librarySaveChain: Promise<unknown> = Promise.resolve()
 
 ipcMain.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+  // Only our own top-level window may rewrite the library. `ipcMain.handle`
+  // answers any frame in the app, and the Bandcamp store runs a remote page
+  // in a <webview> in this session.
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'save-library', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   const run = librarySaveChain.then(
     () => saveLibraryImpl(tracks, playlists, force),
     () => saveLibraryImpl(tracks, playlists, force),
@@ -4257,12 +4271,14 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     // Any path that disappeared = a candidate deletion. Catches every
     // removal mechanism (right-click, playlist removal, batch delete)
     // without each call site pushing to the iPod itself.
-    let deletedPaths: string[] = []
-    {
-      const prevPaths = new Set(prevTracks.map((t) => t.path).filter(Boolean) as string[])
-      const newPaths = new Set((tracks as Array<{ path?: string }>).map((t) => t.path).filter(Boolean) as string[])
-      for (const p of prevPaths) if (!newPaths.has(p)) deletedPaths.push(p)
-    }
+    // Gated on IDENTITY, not on path text — see library-deletions.ts. The old
+    // version diffed path sets, so a track whose path changed while the track
+    // still existed (re-import, sync rewrite, colon-path normalization) looked
+    // like a deletion and had its audio unlinked underneath it.
+    let deletedPaths: string[] = computeDeletedPaths(
+      prevTracks as Array<{ id?: number | string; path?: string }>,
+      tracks as Array<{ id?: number | string; path?: string }>,
+    )
 
     // ── Atomic write: tmp file → rename ──
     // Without this, any other process reading library.json
@@ -4668,6 +4684,9 @@ interface SyncConvertOptions {
 }
 
 ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
+  // Same guard as save-library: this one writes to the iPod.
+  const refusedSync = refuseIfNotMainWindow(_e, mainWindow, 'sync-to-ipod', { ok: false, copied: 0, error: 'refused-sender' } as const)
+  if (refusedSync) return refusedSync
   // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
   // for full concerts). Drop the merged concert track AND any of its constituent
   // songs not individually reimported (promoted). A promoted song is a normal

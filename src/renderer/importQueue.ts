@@ -404,12 +404,24 @@ async function runWorker(): Promise<void> {
         }
         // Roll back the id we reserved — nothing landed in the library.
         nextLibraryId = Math.min(nextLibraryId, id)
-        // 4.4.13 — Inbox auto-import. Library already has this track;
-        // the source in the inbox is still pure dead weight whether
-        // the import was fresh or a dupe-skip. Clear it.
-        if (next.deleteSourceOnSuccess) {
-          try { await window.electronAPI.deleteInboxSource(next.srcPath) } catch { /* best-effort */ }
-        }
+        // 2026-08-03: the source is NO LONGER deleted on a dupe verdict.
+        //
+        // "Dupe" here is decided by `title|artist|duration` text (see
+        // importOneFile's dupeFingerprints) — not by audio identity. A live
+        // version, a remaster, or a different master that rounds to the same
+        // duration all collide. The old code deleted the inbox source on that
+        // verdict, so a text collision permanently destroyed a file that was
+        // never imported and that the library does not contain.
+        //
+        // CLAUDE.md: destructive operations may not gate on text comparison;
+        // where text is the only signal, it needs explicit confirmation. The
+        // successful-import branch above still deletes, because there the file
+        // demonstrably landed in the library. Here nothing landed, so the file
+        // stays in the inbox where it is visible and recoverable — a passive
+        // check rather than more machinery.
+        //
+        // Cost is inbox clutter: a true re-drop will be re-detected each scan.
+        // That is the cheap error; deleting an unheard recording is not.
       } else {
         // 4.4.42 / 4.4.44: distinguish "source file disappeared" from real
         // failures. Jake's screenshot showed a wall of red "Error: ENOENT"

@@ -24,7 +24,8 @@
  * So: the staging name is unique per write (pid + time + random), never
  * derived from the destination alone.
  */
-import { writeFile, rename, unlink } from 'node:fs/promises'
+import { writeFile, rename, unlink, mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 
 /** Unique staging path — never collides, even between two writes in one tick. */
 function stagingPathFor(destPath: string): string {
@@ -44,6 +45,9 @@ function stagingPathFor(destPath: string): string {
 export async function writeJsonAtomic(destPath: string, data: unknown, pretty = true): Promise<void> {
   const tmp = stagingPathFor(destPath)
   try {
+    // Create the parent if it's missing — taken from the audit's version, which
+    // got this right. (Its staging path was the bug; this part was not.)
+    await mkdir(dirname(destPath), { recursive: true })
     await writeFile(tmp, JSON.stringify(data, null, pretty ? 2 : undefined), 'utf-8')
     await rename(tmp, destPath)
   } catch (err) {
