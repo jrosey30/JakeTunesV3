@@ -69,10 +69,10 @@ export interface QueueItem {
   addedAt: number
   /**
    * 4.4.13 — If true, the worker calls window.electronAPI.deleteInboxSource(srcPath)
-   * after a successful import OR a dupe-skip. Used by the inbox auto-import
-   * (main/inbox-watcher.ts) to keep the inbox empty as imports complete.
-   * Main-side delete is path-gated to the watched inbox so this can't be
-   * abused into deleting arbitrary files.
+   * after a successful NEW import only. Dupe-skips never delete: the main-side
+   * dupe hint is a text signature (title|artist|duration), not audio identity,
+   * and deleting on that signal permanently lost distinct source files.
+   * Main-side delete is still path-gated to the watched inbox.
    * Failed imports do NOT trigger the delete — the source has to stay so
    * the user can retry.
    */
@@ -403,12 +403,10 @@ async function runWorker(): Promise<void> {
         }
         // Roll back the id we reserved — nothing landed in the library.
         nextLibraryId = Math.min(nextLibraryId, id)
-        // 4.4.13 — Inbox auto-import. Library already has this track;
-        // the source in the inbox is still pure dead weight whether
-        // the import was fresh or a dupe-skip. Clear it.
-        if (next.deleteSourceOnSuccess) {
-          try { await window.electronAPI.deleteInboxSource(next.srcPath) } catch { /* best-effort */ }
-        }
+        // Do NOT delete inbox source on text-signature dupe-skip.
+        // fingerprintTrack is title|artist|duration — not audio identity.
+        // Distinct masters / live cuts with the same tags would be lost.
+        // Sources are only removed after a successful new import below.
       } else {
         // 4.4.42 / 4.4.44: distinguish "source file disappeared" from real
         // failures. Jake's screenshot showed a wall of red "Error: ENOENT"

@@ -45,6 +45,9 @@ import { registerSquidStore } from './squid-store'
 import { registerStreamripStore } from './streamrip-store'
 import { registerRecommendationsIpc, warmRecommendationsSync, getActiveRecommendationIdentityKeys } from './recommendations'
 import { registerDiscoveryBrainIpc } from './discovery-brain'
+import { resolveContainedPath, sanitizeArtworkHash } from './path-safety'
+import { assertTrustedMainSender } from './ipc-guard'
+import { writeJsonAtomic } from './atomic-write'
 import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
@@ -1511,9 +1514,13 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     // opted in. Tracks are still removed from library.json — just not
     // mirrored to the iPod automatically. They'll go on the next manual
     // sync. Default-off matches the user's "don't surprise me" expectation.
+    //
+    // Fail-CLOSED: only mirror when the setting is explicitly `true`.
+    // Missing/corrupt settings previously returned null and the old
+    // `=== false` check failed open, deleting from the iPod by surprise.
     const settings = await readAppSettingsAsync()
     const sync = settings?.sync as { autoRemoveDeletedFromIpod?: boolean } | undefined
-    if (sync && sync.autoRemoveDeletedFromIpod === false) {
+    if (sync?.autoRemoveDeletedFromIpod !== true) {
       return
     }
     try {
@@ -1555,8 +1562,13 @@ function scheduleDbRebuild(deletedPaths: string[]) {
   }, 1500)
 }
 
-ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+ipcMain.handle('save-library', async (e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
   try {
+    const trust = assertTrustedMainSender(e, mainWindow)
+    if (!trust.ok) {
+      console.warn('save-library: rejected untrusted sender:', trust.error)
+      return { ok: false, error: trust.error }
+    }
     if ((!tracks || (tracks as unknown[]).length === 0) && !force) {
       // Check if there's already a non-empty library on disk; refuse to overwrite.
       try {
@@ -1568,19 +1580,26 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
       } catch { /* no existing file — writing an empty one is fine */ }
     }
 
-    // ── Detect deleted paths so we can clean up disk + iPod ──
-    // Compare the previous library.json on disk to the new track list.
-    // Any path that disappeared = a deletion to commit. This catches
-    // every removal mechanism (right-click delete, playlist removal,
-    // batch delete, Verify & Repair drop, etc.) without each call
-    // site having to remember to push to the iPod.
+    // ── Detect deleted tracks by STABLE ID, not path text ──
+    // Path-only diffs are unsafe: sync smart-match / fingerprint heal
+    // rewrite `path` while keeping the same track id. Treating the old
+    // path as a deletion unlinked the original audio file (P0).
+    // A disappeared path whose id still exists is a rewrite — leave the
+    // old file alone. Only unlink when the track id itself is gone.
     let deletedPaths: string[] = []
     try {
       const prevRaw = await readFile(LIBRARY_PATH, 'utf-8')
-      const prev = JSON.parse(prevRaw) as { tracks?: Array<{ path?: string }> }
-      const prevPaths = new Set((prev.tracks || []).map(t => t.path).filter(Boolean) as string[])
-      const newPaths = new Set((tracks as Array<{ path?: string }>).map(t => t.path).filter(Boolean) as string[])
-      for (const p of prevPaths) if (!newPaths.has(p)) deletedPaths.push(p)
+      const prev = JSON.parse(prevRaw) as { tracks?: Array<{ id?: number; path?: string }> }
+      const newIds = new Set(
+        (tracks as Array<{ id?: number }>)
+          .map(t => t.id)
+          .filter((id): id is number => typeof id === 'number'),
+      )
+      for (const t of prev.tracks || []) {
+        if (typeof t.id !== 'number') continue
+        if (newIds.has(t.id)) continue
+        if (t.path) deletedPaths.push(t.path)
+      }
     } catch { /* first save, no diff */ }
 
     // ── Atomic write: tmp file → rename ──
@@ -1594,23 +1613,9 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
     // level: observers see either the old full file or the new full
     // file, never a mid-write slice.
     const library = { tracks, playlists: playlists || [] }
-    const tmp = LIBRARY_PATH + '.partial.json'
-    await writeFile(tmp, JSON.stringify(library, null, 2))
-    const { rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
-    // Brief 016: pre-stamp lastSelfWriteMtimeMs BEFORE the rename so the
-    // fsWatch handler (which fires synchronously with the rename) reads
-    // a fresh value when it compares mtimes. Previously the stamp landed
-    // AFTER the await stat below, but fsWatch's own async stat() could
-    // resolve first and observe lastSelfWriteMtimeMs as 0 (or a stale
-    // value), produce the `self 0` smoking-gun in the logs, and dispatch
-    // library-external-change for what was really our own write.
-    //
-    // The post-rename stat below still runs to refine the value to the
-    // actual on-disk mtime — both writes stay within the watcher's
-    // 2-second skip window, so a small Date.now() vs. stat.mtimeMs drift
-    // doesn't matter.
+    // Atomic write via shared helper (tmp → rename).
     lastSelfWriteMtimeMs = Date.now()
-    await renameFS(tmp, LIBRARY_PATH)
+    await writeJsonAtomic(LIBRARY_PATH, library)
     try {
       const s = await stat(LIBRARY_PATH)
       lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
@@ -1633,7 +1638,7 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
       const pathSep = IS_WINDOWS ? '\\' : '/'
       for (const colon of deletedPaths) {
         const rel = colon.replace(/:/g, pathSep)
-        try { await unlinkFS(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
+        try { await unlink(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
       }
       scheduleDbRebuild(deletedPaths)
     }
@@ -1740,11 +1745,9 @@ ipcMain.handle('get-ipod-db-tracks', async () => {
 // That used to happen when filename-only smart-matching linked a
 // library entry to the wrong file (e.g. a Beatles entry ended up
 // playing Pink Floyd because both files had the same basename
-// "imported_3713.m4a"). The smart-match step in this handler now
-// tag-verifies, AND the preflight below verifies every remaining
-// track's existing path too, so even a library.json that got
-// corrupted by some OTHER flow can't write incorrect paths into the
-// iPod database.
+// The preflight below verifies every remaining track's existing path
+// via audioFingerprint (identity-first). Text/tag smart-match for path
+// rewrites was removed — alt-path reuse requires fingerprint equality.
 // Module-level lock so a second sync-to-ipod invocation can't fire
 // while one is already in flight. Without this, two paths can race:
 // (1) the user clicks Sync, (2) the auto-sync-on-mount listener in
@@ -1754,7 +1757,9 @@ ipcMain.handle('get-ipod-db-tracks', async () => {
 // random write failures from two writers stomping the same iTunesDB.
 let syncInFlight = false
 
-ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
+ipcMain.handle('sync-to-ipod', async (e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>) => {
+  const trust = assertTrustedMainSender(e, mainWindow)
+  if (!trust.ok) return { ok: false, error: trust.error }
   if (syncInFlight) {
     return { ok: false, error: 'A sync is already in progress', copied: 0, copyErrors: 0 }
   }
@@ -1932,58 +1937,32 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     })
   }
 
-  // Second pass: if we have any alt-path candidates, batch-verify
-  // their embedded tags against the library metadata via tag_reader.
-  const rewriteCandidatePaths = candidates.map(c => c.altIpodPath).filter((p): p is string => !!p)
-  const tagsByPath = new Map<string, { title: string; artist: string; ok: boolean }>()
-  if (rewriteCandidatePaths.length > 0) {
-    try {
-      const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
-      const read = await new Promise<string>((resolve, reject) => {
-        const py = spawn(PYTHON_CMD ?? 'python3', [tagReaderScript])
-        let stdout = ''
-        let stderr = ''
-        py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-        py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-        py.on('error', reject)
-        py.on('close', (code: number) => {
-          if (code === 0) resolve(stdout)
-          else reject(new Error(`tag_reader exit ${code}: ${stderr}`))
-        })
-        py.stdin.on('error', reject)  // EPIPE-safe — see scheduleDbRebuild for why
-        try {
-          py.stdin.write(JSON.stringify(rewriteCandidatePaths))
-          py.stdin.end()
-        } catch (err) { reject(err) }
-      })
-      const arr = JSON.parse(read) as Array<{ path: string; title?: string; artist?: string; ok?: boolean }>
-      for (const t of arr) {
-        tagsByPath.set(t.path, { title: t.title || '', artist: t.artist || '', ok: !!t.ok })
-      }
-    } catch (err) {
-      console.warn('sync-to-ipod: tag verification failed, will fall back to copy:', err)
-      // tagsByPath stays empty → no smart-match rewrites will be accepted.
-    }
-  }
+  // Second pass used to batch-verify embedded tags for alt-path
+  // candidates via tag_reader + text normalize. That text gate is gone
+  // (identity-first fingerprint match below). Keep the candidate list
+  // as-is; fingerprint checks run per alt path.
 
   const toCopy: Array<{ local: string; ipod: string; title: string }> = []
   const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
   let rewritesVetoed = 0
+  // Hash-only compare: "sha1:<hex>|<dur>" → "sha1:<hex>"
+  const fpHash = (fp: string | null | undefined): string | null => {
+    if (!fp || !fp.startsWith('sha1:')) return null
+    return fp.split('|')[0]
+  }
   for (const c of candidates) {
     if (c.altIpodPath) {
-      const t = tagsByPath.get(c.altIpodPath)
-      const libTitle  = normalize(c.track.title)
-      const libArtist = normalize(c.track.artist)
-      const fileTitle  = t ? normalize(t.title)  : ''
-      const fileArtist = t ? normalize(t.artist) : ''
-
-      // Accept the rewrite only if the file's tags (or at least one of
-      // them) actually identify this as the same song. This is the
-      // permanent fix for the Beatles/Pink Floyd cross-linking bug.
-      const titleOk  = libTitle  && fileTitle  && (libTitle  === fileTitle  || libTitle.includes(fileTitle)  || fileTitle.includes(libTitle))
-      const artistOk = libArtist && fileArtist && (libArtist === fileArtist || libArtist.includes(fileArtist) || fileArtist.includes(libArtist))
-
-      if (titleOk && artistOk) {
+      // Identity-first: accept an existing iPod file as this track ONLY when
+      // the stored audioFingerprint matches the file on disk. Title/artist
+      // substring matching previously rewrote paths across unrelated songs
+      // (Beatles/Pink Floyd) and then save-library deleted the old file.
+      const storedHash = fpHash(typeof c.track.audioFingerprint === 'string' ? c.track.audioFingerprint : null)
+      let altHash: string | null = null
+      if (storedHash) {
+        const altFp = await computeAudioFingerprint(c.altIpodPath, Number(c.track.duration || 0))
+        altHash = fpHash(altFp)
+      }
+      if (storedHash && altHash && storedHash === altHash) {
         const altRel = c.altIpodPath.slice(IPOD_MOUNT.length + 1)
         const altColonPath = ':' + altRel.split(pathSep).join(':')
         pathRewrites.push({
@@ -1993,7 +1972,8 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         })
         continue
       }
-      // Tags didn't match — don't silently re-link. Copy the real file.
+      // No fingerprint, or fingerprints disagree — copy the known local source.
+      // Do NOT fall back to text matching (CLAUDE.md destructive-ops rule).
       rewritesVetoed += 1
     }
 
@@ -2004,7 +1984,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     })
   }
   if (rewritesVetoed > 0) {
-    console.log(`sync-to-ipod: vetoed ${rewritesVetoed} filename-only smart-matches (tags disagreed with library)`)
+    console.log(`sync-to-ipod: vetoed ${rewritesVetoed} filename-only smart-matches (fingerprint required; text match disabled)`)
   }
 
   const totalToCopy = toCopy.length
@@ -2388,6 +2368,8 @@ const _normFingerprint = (s: unknown): string => String(s || '')
   .replace(/\s*\b(feat(?:uring)?|ft)\b\.?[^)]*/ig, '')
   .replace(/[()[\]{}"',.\-!?:;#/\\]+/g, ' ')
   .replace(/\s+/g, ' ').trim().toLowerCase()
+// ⚠️ TWIN: display/grouping only — NEVER authorize deletion or overwrite.
+// Content identity is computeAudioFingerprint / audioFingerprint on Track.
 
 // Why this set exists:
 // `save-library` on the renderer side is debounced ~1s, so during a
@@ -2405,6 +2387,8 @@ const _normFingerprint = (s: unknown): string => String(s || '')
 const sessionImportedFingerprints = new Set<string>()
 
 function fingerprintTrack(t: { title?: unknown; artist?: unknown; duration?: unknown }): string | null {
+  // Text signature for in-session import de-dupe HINTS only.
+  // Must not authorize inbox source deletion (see importQueue).
   const title  = _normFingerprint(t.title)
   const artist = _normFingerprint(t.artist)
   const dur    = Math.round(Number(t.duration || 0) / 1000)
@@ -2439,6 +2423,9 @@ async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
 // Format: "sha1:<hex16>|<duration_ms>". Duration is included so a
 // re-encode that produced byte-different but-same-song output (very
 // rare in practice) still has a chance of matching by partial.
+// ⚠️ TWIN: core/tools/refresh_fingerprints.py → compute_fingerprint
+// Node Math.round vs Python round() (bankers) diverge on *.5 durations —
+// keep both in view when changing the window size or format string.
 async function computeAudioFingerprint(absPath: string, durationMs: number): Promise<string | null> {
   try {
     const fh = await open(absPath, 'r')
@@ -7338,11 +7325,19 @@ app.whenReady().then(async () => {
   protocol.handle('album-art', async (request) => {
     const url = request.url.replace('album-art://', '')
     const rawHash = decodeURIComponent(url.split('?')[0].replace('.jpg', ''))
-    // Strip cache-bust suffix (e.g. "abc123_1713100000000" → "abc123")
-    const hash = rawHash.replace(/_\d+$/, '')
+    const hash = sanitizeArtworkHash(rawHash)
+    if (!hash) {
+      return new Response('Bad hash', { status: 400, headers: { 'Cache-Control': 'no-store' } })
+    }
     const filePath = join(getArtworkDir(), `${hash}.jpg`)
+    // Contained under artwork dir — hash is hex-only so join cannot escape,
+    // but still resolve-check in case getArtworkDir() is weirdly configured.
+    const safe = await resolveContainedPath(filePath, [getArtworkDir()])
+    if (!safe) {
+      return new Response('Forbidden', { status: 403, headers: { 'Cache-Control': 'no-store' } })
+    }
     try {
-      const data = await readFile(filePath)
+      const data = await readFile(safe)
       // Buffer<ArrayBufferLike> doesn't satisfy BodyInit's stricter
       // ArrayBuffer constraint under the latest @types/node — slice into
       // a fresh ArrayBuffer so the body is unambiguously sized memory
@@ -7654,7 +7649,18 @@ app.whenReady().then(async () => {
 
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
-    let filePath = rawPath
+    // Containment: only serve audio under the music library mount(s) or
+    // the play-cache. With webSecurity:false, an unrestricted protocol is
+    // a local-file read primitive for any renderer XSS.
+    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const allowedRoots = [LOCAL_MOUNT, PLAY_CACHE, MUSIC_DIR]
+    if (detectedIpodMount) allowedRoots.push(detectedIpodMount)
+    const contained = await resolveContainedPath(rawPath, allowedRoots)
+    if (!contained) {
+      console.warn('[ipod-audio] rejected path outside music/cache roots')
+      return new Response('Forbidden', { status: 403 })
+    }
+    let filePath = contained
     let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
     try {
       // If the source is ALAC, swap in a cached AAC transcode. Silent
@@ -7664,15 +7670,18 @@ app.whenReady().then(async () => {
         // 4.4.85: prefer the library-side codec hint over ffprobe. AAC
         // files were eating ~200-500 ms per first-play running ffprobe
         // to discover they're already AAC.
-        const hint = codecByAbsPath.get(rawPath)
+        const hint = codecByAbsPath.get(contained)
         if (hint) {
           if (hint === 'alac') {
-            const srcStat = await stat(rawPath).catch(() => null)
+            const srcStat = await stat(contained).catch(() => null)
             if (srcStat) {
-              const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+              const cached = await aacCachePath(contained, srcStat.mtimeMs).catch(() => null)
               if (cached) {
-                filePath = cached
-                ext = '.m4a'
+                const safeCache = await resolveContainedPath(cached, [PLAY_CACHE])
+                if (safeCache) {
+                  filePath = safeCache
+                  ext = '.m4a'
+                }
               }
             }
           }
@@ -7681,12 +7690,15 @@ app.whenReady().then(async () => {
           // Legacy track (no codec field on Track) — fall through to the
           // original ffprobe path, which caches its own answer in
           // memory for this session.
-          const srcStat = await stat(rawPath).catch(() => null)
+          const srcStat = await stat(contained).catch(() => null)
           if (srcStat) {
-            const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+            const cached = await aacCachePath(contained, srcStat.mtimeMs).catch(() => null)
             if (cached) {
-              filePath = cached
-              ext = '.m4a'
+              const safeCache = await resolveContainedPath(cached, [PLAY_CACHE])
+              if (safeCache) {
+                filePath = safeCache
+                ext = '.m4a'
+              }
             }
           }
         }

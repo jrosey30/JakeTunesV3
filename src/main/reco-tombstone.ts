@@ -59,6 +59,11 @@ export function tombstoneKeysForRecord(r: RecoTombstoneRecord): string[] {
   return keys
 }
 
+/**
+ * Text identity for display grouping / tombstone filtering only.
+ * Must NOT authorize multi-row deletion — delete by stable id alone.
+ * @deprecated Prefer id equality for destructive ops.
+ */
 export function recordsMatchForDelete(a: RecoTombstoneRecord, b: RecoTombstoneRecord): boolean {
   const idA = recoRecordIdentityKey(a)
   const idB = recoRecordIdentityKey(b)

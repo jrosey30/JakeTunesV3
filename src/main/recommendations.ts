@@ -24,7 +24,6 @@ import {
   recoMatchKey,
   recoRecordIdentityKey,
   recoRecordKey,
-  recordsMatchForDelete,
   tombstoneKeysForRecord,
   RECO_FULL_TOMBSTONE_PREFIX,
   RECO_IDENTITY_TOMBSTONE_PREFIX,
@@ -433,18 +432,6 @@ async function deleteRemoteRecommendation(id: string): Promise<void> {
   }
 }
 
-/** DELETE every homemini row that matches the deleted record (all ids for same song/note). */
-async function purgeRemoteMatches(target: RecommendationRecord): Promise<string[]> {
-  const backend = (await fetchRecommendationsFromBackend()) ?? []
-  const doomed = backend.filter((r) => recordsMatchForDelete(target, r) || String(r.id) === String(target.id))
-  const ids = [...new Set(doomed.map((r) => String(r.id)))]
-  await Promise.all(ids.map((id) => deleteRemoteRecommendation(id)))
-  if (ids.length > 0) {
-    console.log(`[reco] purged ${ids.length} remote cop${ids.length === 1 ? 'y' : 'ies'} for`, target.song || target.note || target.id)
-  }
-  return ids
-}
-
 async function pushLocalOnlyRecommendations(
   local: RecommendationRecord[],
   backendRaw: RecommendationRecord[] | null,
@@ -696,7 +683,7 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
     }
   })
 
-  ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
+  ipcMain.handle('delete-recommendation', async (event, id: string): Promise<{ ok: boolean; error?: string }> => {
     const rid = String(id)
     try {
       const all = await readRecommendationsFile()
@@ -710,31 +697,19 @@ export function registerRecommendationsIpc(h: RecommendationsHost): void {
         return { ok: true }
       }
 
-      // Every local copy of this song/note (duplicate-id disease).
-      const localMatches = all.filter((r) => recordsMatchForDelete(target, r) || String(r.id) === rid)
-      const remoteIds = await purgeRemoteMatches(target)
-
-      const tombstoneEntries = new Set<string>()
-      const doomedIds = new Set<string>()
-      for (const r of localMatches) {
-        for (const k of tombstoneKeysForRecord(r)) tombstoneEntries.add(k)
-        doomedIds.add(String(r.id))
-      }
-      for (const remoteId of remoteIds) {
-        tombstoneEntries.add(remoteId)
-        doomedIds.add(remoteId)
-      }
-
+      // Delete ONLY the confirmed stable id. Text-identity cascade used to
+      // wipe every other local/remote row with the same song/artist when
+      // the UI confirmed a single item (CLAUDE.md destructive-ops rule).
+      // Identity tombstones still block resurrection of the same song.
+      const tombstoneEntries = new Set<string>(tombstoneKeysForRecord(target))
       await addRecommendationTombstones([...tombstoneEntries])
-      const next = all.filter((r) => !doomedIds.has(String(r.id)))
+      const next = all.filter((r) => String(r.id) !== rid)
       await writeRecommendationsFile(next)
-
-      // Belt-and-suspenders: DELETE every id we know about, not only local ones.
-      await Promise.all([...doomedIds].map((did) => deleteRemoteRecommendation(did)))
+      await deleteRemoteRecommendation(rid)
 
       recommendationsSyncedAtMs = 0
       suggestResultCache = null
-      console.log(`[reco] deleted`, target.song || target.note || rid, `(${doomedIds.size} id(s) tombstoned)`)
+      console.log(`[reco] deleted`, target.song || target.note || rid, `(id ${rid})`)
       return { ok: true }
     } catch (err) {
       console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)

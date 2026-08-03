@@ -142,8 +142,19 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
   const [djExiting, setDjExiting] = useState(false)
   const savedVolumeRef = useRef(0.8)
   const djAudioRef = useRef<HTMLAudioElement | null>(null)
+  // Cancellable fade intervals — cancel/undo must clearInterval so a
+  // late tick cannot fight setVolume(saved) after cancel.
+  const fadeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const clearFadeInterval = useCallback(() => {
+    if (fadeIntervalRef.current != null) {
+      clearInterval(fadeIntervalRef.current)
+      fadeIntervalRef.current = null
+    }
+  }, [])
 
   const fadeVolumeIn = useCallback(() => {
+    clearFadeInterval()
     const target = savedVolumeRef.current
     const start = target * 0.15
     let step = 0
@@ -152,14 +163,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       if (step >= 30) {
         setVolume(target)
         clearInterval(fade)
+        if (fadeIntervalRef.current === fade) fadeIntervalRef.current = null
       } else {
         setVolume(start + (target - start) * (step / 30))
       }
     }, 50)
-  }, [setVolume])
+    fadeIntervalRef.current = fade
+  }, [setVolume, clearFadeInterval])
 
   const fadeVolumeOut = useCallback((): Promise<void> => {
     return new Promise(resolve => {
+      clearFadeInterval()
       const start = savedVolumeRef.current
       const target = start * 0.15
       let step = 0
@@ -168,13 +182,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         if (step >= 20) {
           setVolume(target)
           clearInterval(fade)
+          if (fadeIntervalRef.current === fade) fadeIntervalRef.current = null
           resolve()
         } else {
           setVolume(start - (start - target) * (step / 20))
         }
       }, 50)
+      fadeIntervalRef.current = fade
     })
-  }, [setVolume])
+  }, [setVolume, clearFadeInterval])
 
   // Global fade for any Music Man speech (MusicManView, SmartPlaylistView, etc.)
   const isFadedRef = useRef(false)
@@ -206,6 +222,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // 4.4.14: invalidate any in-flight startDjSet run so a stale
       // IPC response can't proceed after cancel.
       djModeGenerationRef.current += 1
+      clearFadeInterval()
       setAutoDjMode(false) // immediately clear module-level flag
       if (djAudioRef.current) {
         // 4.4.14: disconnect the broadcast source BEFORE nulling.
@@ -215,8 +232,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
-        setVolume(savedVolumeRef.current)
       }
+      setVolume(savedVolumeRef.current)
       setAutoDj(false)
       setDjActive(false)
       setDjLoading(false)
@@ -226,7 +243,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
     window.addEventListener('musicman-dj-cancel', handler)
     return () => window.removeEventListener('musicman-dj-cancel', handler)
-  }, [setVolume])
+  }, [setVolume, clearFadeInterval])
 
   // Sync auto-DJ mode to audio module. Either DJ-Set's autoDj OR the
   // user-toggled Radio Mode triggers the between-track event the
@@ -671,13 +688,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     // If actively speaking or autoDj is lingering from a previous mic click, stop everything
     if (djActive || autoDj) {
       djCancelledRef.current = true
+      clearFadeInterval()
       if (djAudioRef.current) {
         // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
         detachClipFromBroadcast(djAudioRef.current)
         djAudioRef.current.pause()
         djAudioRef.current = null
-        setVolume(savedVolumeRef.current)
       }
+      setVolume(savedVolumeRef.current)
       setAutoDj(false)
       setDjActive(false)
       setDjLoading(false)
@@ -735,7 +753,30 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
             setDjText('')
           }
           await fadeVolumeOut()
-          await audio.play()
+          if (djCancelledRef.current) {
+            clearFadeInterval()
+            if (djAudioRef.current) {
+              detachClipFromBroadcast(djAudioRef.current)
+              djAudioRef.current.pause()
+              djAudioRef.current = null
+            }
+            setVolume(savedVolumeRef.current)
+            setDjActive(false)
+            setAutoDj(false)
+            setDjLoading(false)
+            setDjText('')
+            return
+          }
+          try {
+            await audio.play()
+          } catch (err) {
+            console.error('[DJ] Audio play rejected:', err)
+            setVolume(savedVolumeRef.current)
+            djAudioRef.current = null
+            setDjActive(false)
+            setAutoDj(false)
+            setDjText('')
+          }
           return
         } else {
           console.warn('[DJ] TTS failed or no audio:', tts.error)
@@ -749,7 +790,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
-  }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
+  }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn, clearFadeInterval])
 
   // Auto-DJ / Radio Mode: listen for track transitions. Either flag
   // arms the listener; the body picks which prompt + cache to use.
@@ -1251,6 +1292,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           await fadeVolumeOut()
+          if (djCancelledRef.current || isStale()) {
+            clearFadeInterval()
+            if (djAudioRef.current) {
+              detachClipFromBroadcast(djAudioRef.current)
+              djAudioRef.current.pause()
+              djAudioRef.current = null
+            }
+            setVolume(savedVolumeRef.current)
+            return
+          }
           await new Promise<void>((resolve) => {
             audio.onended = () => {
               djAudioRef.current = null
@@ -1264,7 +1315,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
               isFadedRef.current = false
               resolve()
             }
-            audio.play()
+            audio.play().catch(() => {
+              djAudioRef.current = null
+              setVolume(savedVolumeRef.current)
+              isFadedRef.current = false
+              resolve()
+            })
           })
         } else {
           setDjLoading(false)
@@ -1297,7 +1353,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjLoading(false)
       setDjText('')
     }
-  }, [lib.tracks, pb.volume, playTrack, setVolume])
+  }, [lib.tracks, pb.volume, playTrack, setVolume, fadeVolumeOut, fadeVolumeIn, clearFadeInterval])
 
   const handleDjModeClick = useCallback(() => {
     if (djModeActive) {
@@ -1306,6 +1362,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // 4.4.14: invalidate any in-flight startDjSet so a stale IPC
       // response can't proceed (rapid off-then-on within 500ms).
       djModeGenerationRef.current += 1
+      clearFadeInterval()
       setDjModeActive(false)
       setDjModeLoading(false)
       setDjModeTheme('')
@@ -1328,7 +1385,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     djCancelledRef.current = false
     setDjModeActive(true)
     startDjSet()
-  }, [djModeActive, startDjSet])
+  }, [djModeActive, startDjSet, clearFadeInterval, setVolume])
 
   // Listen for DJ Mode toggle from sidebar button
   useEffect(() => {

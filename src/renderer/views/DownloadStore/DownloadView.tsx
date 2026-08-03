@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { takeDownloadPrefill } from '../../listen-to-the-list/ltlDownload'
 import './download-store.css'
 
 // streamrip "Download" view — replaces the embedded web-store browser views
@@ -37,6 +38,7 @@ let pageCache: DownloadCache = {
 // streamrip result descs end with " by <artist>" ("Creep by Radiohead",
 // "Sub Urban - Cradles [NCS Release] by Sub Urban"). Split on the LAST " by "
 // to feed the app's artist-verified iTunes art lookup.
+// ⚠️ TWIN: src/main/streamrip-match.ts → parseStreamripDesc
 function parseDesc(desc: string): { artist: string; title: string } {
   const i = desc.lastIndexOf(' by ')
   if (i > 0) return { title: desc.slice(0, i).trim(), artist: desc.slice(i + 4).trim() }
@@ -90,15 +92,23 @@ export default function DownloadView() {
   }, [])
 
   // Prefill search when opened from Listen to the List (failed match fallback).
+  // Prefer the latched query (survives mount-order), then also listen for
+  // live events if the view is already mounted.
   useEffect(() => {
-    const onPrefill = (e: Event) => {
-      const q = (e as CustomEvent<{ query?: string }>).detail?.query?.trim()
-      if (!q) return
-      setQuery(q)
+    const apply = (q: string) => {
+      const trimmed = q.trim()
+      if (!trimmed) return
+      setQuery(trimmed)
       setResults([])
       setArt({})
       setSearchErr(null)
       setNotice(null)
+    }
+    const latched = takeDownloadPrefill()
+    if (latched) apply(latched)
+    const onPrefill = (e: Event) => {
+      const q = (e as CustomEvent<{ query?: string }>).detail?.query?.trim()
+      if (q) apply(q)
     }
     window.addEventListener('jaketunes-download-prefill', onPrefill)
     return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)

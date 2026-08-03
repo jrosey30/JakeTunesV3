@@ -4,6 +4,7 @@ import { recoArtistMatches, recoTitleMatches } from './reco-match.ts'
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
 
 /** streamrip result descs end with " by <artist>" — split on the LAST " by ". */
+// ⚠️ TWIN: src/renderer/views/DownloadStore/DownloadView.tsx → parseDesc
 export function parseStreamripDesc(desc: string): { title: string; artist: string } {
   const i = desc.lastIndexOf(' by ')
   if (i > 0) return { title: desc.slice(0, i).trim(), artist: desc.slice(i + 4).trim() }

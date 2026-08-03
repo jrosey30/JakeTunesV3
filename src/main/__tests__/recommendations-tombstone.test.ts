@@ -30,10 +30,23 @@ test('full-key tombstone blocks note-only jots re-minted with new id', () => {
   assert.ok(isRecordTombstoned(tombstones, resurrected))
 })
 
-test('recordsMatchForDelete matches song identity across different ids', () => {
+test('recordsMatchForDelete matches song identity across different ids (grouping only)', () => {
   const a = rec({ id: '1', song: 'Teardrop', artist: 'Massive Attack' })
   const b = rec({ id: '2', song: 'Teardrop', artist: 'Massive Attack', matchedTitle: 'Teardrop', matchedArtist: 'Massive Attack' })
   assert.ok(recordsMatchForDelete(a, b))
+})
+
+test('delete authorization is by id — distinct ids stay distinct even when text matches', () => {
+  // Mirrors the fortification: UI deletes one id; cascade-by-text is forbidden.
+  const a = rec({ id: '1', song: 'Teardrop', artist: 'Massive Attack' })
+  const b = rec({ id: '2', song: 'Teardrop', artist: 'Massive Attack' })
+  assert.notEqual(String(a.id), String(b.id))
+  assert.ok(recordsMatchForDelete(a, b)) // text still groups
+  // But tombstoneKeysForRecord includes the specific id — deleting "1"
+  // does not remove "2" from a filtered list keyed by id alone.
+  const remaining = [a, b].filter((r) => String(r.id) !== '1')
+  assert.equal(remaining.length, 1)
+  assert.equal(remaining[0].id, '2')
 })
 
 test('id tombstone alone blocks exact id resurrection', () => {

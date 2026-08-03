@@ -109,8 +109,24 @@ async function drainQueue(): Promise<void> {
 }
 
 /** Open the Download sidebar view with a search prefilled (manual fallback). */
+let pendingDownloadPrefill: string | null = null
+
+export function takeDownloadPrefill(): string | null {
+  const q = pendingDownloadPrefill
+  pendingDownloadPrefill = null
+  return q
+}
+
+export function peekDownloadPrefill(): string | null {
+  return pendingDownloadPrefill
+}
+
 export function prefillDownloadView(rec: Recommendation): void {
   const { artist, title } = recoFields(rec)
   const query = [artist, title].filter(Boolean).join(' ')
+  // Latch before the event: DownloadView mounts after SET_VIEW, so a
+  // one-shot CustomEvent dispatched first is often lost. The view reads
+  // takeDownloadPrefill() on mount and also listens for the event.
+  pendingDownloadPrefill = query
   window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { query } }))
 }
