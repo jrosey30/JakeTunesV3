@@ -137,12 +137,26 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
     setDropIndex(null)
   }, [resolveTracks, dropIndex, state.queueIndex, state.queue, state.nowPlaying, dispatch, playTrack])
 
+  /** Dropping on the Now Playing block means "play this next" → slot 0. */
+  const handleNowPlayingDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropIndex(0)
+  }, [])
+
   const handlePanelDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    // Only set drop at end if not over a specific item
-    if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('queue-list') || (e.target as HTMLElement).classList.contains('queue-empty')) {
-      setDropIndex(upcoming.length)
-    }
+    // Anything that reaches HERE is not over a row and not over Now Playing —
+    // both of those stopPropagation — so it means "end of queue".
+    //
+    // This used to additionally require the target to be the panel itself,
+    // `.queue-list`, or `.queue-empty`. Every other pixel (section labels, the
+    // repeat note, padding, the gap under the last row) therefore left
+    // dropIndex untouched: no indicator, and a drop that either did nothing or
+    // silently used a stale position from wherever the cursor had last been.
+    // A panel that shows no indicator while still accepting the drop is the
+    // dishonest part — you cannot tell a dead zone from a working one.
+    setDropIndex(upcoming.length)
   }, [upcoming.length])
 
   return (
@@ -194,8 +208,18 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
         <button className="queue-clear" onClick={() => dispatch({ type: 'CLEAR_QUEUE' })}>Clear</button>
         <button className="queue-close" onClick={requestClose}>&times;</button>
       </div>
+      {/* The Now Playing block is a DROP TARGET meaning "play this next".
+          It used to have no drag handlers at all, so dropping on it — the
+          natural gesture for "I want this next" — showed no drop indicator
+          and silently did nothing. Reordering worked only if you happened to
+          land on one of the Up Next rows; aim an inch higher and the drag
+          died with no feedback. Mapping it to dropIndex 0 puts the indicator
+          at the top of Up Next, which is exactly where the track will land. */}
       {state.nowPlaying && (
-        <div className="queue-section">
+        <div
+          className="queue-section"
+          onDragOver={handleNowPlayingDragOver}
+        >
           <div className="queue-section-label">Now Playing</div>
           <div className="queue-item queue-item--playing">
             <div className="queue-item-title">{state.nowPlaying.title}</div>
