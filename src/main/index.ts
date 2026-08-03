@@ -4163,7 +4163,31 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
   }
 }
 
-ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+// Serialize library saves. Two concurrent save-library calls both stage through
+// the FIXED `library.json.partial.json` sidecar, so a shorter payload landing
+// over a longer one leaves the tail of the long write past the end of the short
+// one — and rename() then atomically installs the corruption. That is exactly
+// how ui-state.json ended up unparseable (fixed 2026-08-03), and the same
+// class of bug already bit the overrides writer once before (see the note near
+// writeOverridesSerialized).
+//
+// The sidecar name cannot simply be made unique: the crash-recovery scanner
+// looks for `${libraryPath}.partial.json` by name. So the overlap is removed
+// instead. This is the highest-stakes file in the app — the NAS copy has been
+// zeroed once already — and the renderer's 1s debounce does NOT prevent
+// overlap: an 8.6 MB pretty-printed write to SMB can outlast the next debounce.
+let librarySaveChain: Promise<unknown> = Promise.resolve()
+
+ipcMain.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+  const run = librarySaveChain.then(
+    () => saveLibraryImpl(tracks, playlists, force),
+    () => saveLibraryImpl(tracks, playlists, force),
+  )
+  librarySaveChain = run.catch(() => {})
+  return run
+})
+
+async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?: boolean) {
   // Bug #1 guard: if we booted in local-fallback mode and NAS later
   // reappeared, our in-memory tracks are stale relative to whatever
   // workmini/homemini wrote to NAS while we were offline. Saving here
@@ -4371,7 +4395,7 @@ ipcMain.handle('save-library', async (_e, tracks: unknown[], playlists?: unknown
   } catch (err) {
     return { ok: false, error: String(err) }
   }
-})
+}
 
 // ── Watch library.json for EXTERNAL modifications ──
 // If our Python maintenance scripts (repair_mismatches.py, etc.) or any
