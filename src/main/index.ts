@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
+import { writeJsonAtomic } from './atomic-write'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -3601,10 +3602,7 @@ async function readPins(): Promise<string[]> {
 }
 async function writePins(pinned: string[]): Promise<void> {
   await mkdir(app.getPath('userData'), { recursive: true })
-  const p = downloadsStatePath()
-  const tmp = p + '.tmp'
-  await writeFile(tmp, JSON.stringify({ pinned, updatedAt: new Date().toISOString() }, null, 2), 'utf-8')
-  await rename(tmp, p)
+  await writeJsonAtomic(downloadsStatePath(), { pinned, updatedAt: new Date().toISOString() })
 }
 
 // ── Streaming migration helpers (hoisted to module scope 2026-07-09) ────────
@@ -3789,10 +3787,7 @@ async function readStreamConvertQueue(): Promise<StreamConvertItem[]> {
   } catch { return [] }
 }
 async function writeStreamConvertQueue(items: StreamConvertItem[]): Promise<void> {
-  const p = streamConvertQueuePath()
-  const tmp = p + '.tmp'
-  await writeFile(tmp, JSON.stringify({ items, updatedAt: new Date().toISOString() }, null, 2), 'utf-8')
-  await rename(tmp, p)
+  await writeJsonAtomic(streamConvertQueuePath(), { items, updatedAt: new Date().toISOString() })
 }
 async function enqueueStreamConvert(ipodPath: string, fingerprint: string | undefined, enqueuedAt: number): Promise<void> {
   try {
