@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
+import { resolveContainedPath, isSafeCacheKey } from './path-safety'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -15449,6 +15450,13 @@ app.whenReady().then(async () => {
     const rawHash = decodeURIComponent(pathPart.replace('.jpg', ''))
     // Strip cache-bust suffix (e.g. "abc123_1713100000000" → "abc123")
     const hash = rawHash.replace(/_\d+$/, '')
+    // The hash is joined onto the artwork dir below, so it must be one of OUR
+    // keys and not a path. Unvalidated, `album-art://..%2F..%2Fsecret.jpg`
+    // walks straight out of the cache directory.
+    if (!isSafeCacheKey(hash)) {
+      console.warn('[album-art] refused key:', hash.slice(0, 80))
+      return new Response('Forbidden', { status: 403 })
+    }
     // Thumbnail tier (2026-07-08, "art loads sporadically"): grid cells
     // were decoding the FULL cover (median ~400KB, some multi-MB) into
     // 150px tiles, dozens at a time — the pop-in. `?s=NNN` serves a
@@ -16007,6 +16015,29 @@ app.whenReady().then(async () => {
 
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
+
+    // CONTAINMENT (2026-08-03, from the Cursor "fortify internal piping" audit).
+    // This handler used to hand `rawPath` straight to stat/read: an absolute
+    // path taken out of a URL and served verbatim. Anything able to issue an
+    // ipod-audio:// URL could read any file the app can read — and the Bandcamp
+    // store loads a real remote page in a webview in this same session, so
+    // "only our own renderer talks to us" was never actually true.
+    //
+    // Every legitimate source is listed. streamRoot matters specifically
+    // because streamed tracks are SYMLINKS pointing outside the music dir;
+    // leaving it out would refuse them and silently break playback on the
+    // machine that streams (workmini sets it). See path-safety.ts.
+    const contained = await resolveContainedPath(rawPath, [
+      MUSIC_DIR,
+      join(app.getPath('userData'), 'play-cache'),
+      detectedIpodMount,
+      await readStreamRoot(),
+    ])
+    if (!contained) {
+      console.warn('[ipod-audio] refused out-of-root path:', rawPath.slice(0, 120))
+      return new Response('Forbidden', { status: 403 })
+    }
+
     let filePath = rawPath
     let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
 
