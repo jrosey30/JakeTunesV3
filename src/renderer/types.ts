@@ -644,6 +644,11 @@ declare global {
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
       savePlaylists: (playlists: Playlist[]) => Promise<{ ok: boolean }>
       getClaudeStats: () => Promise<{ ok: boolean; sessionCallCount: number; callsToday: number; dailyCeiling: number; lastResetDate: string; cachedKeys: string[] }>
+      // Declared to match src/preload/index.ts:240-241. Both the preload
+      // method and the main handler exist; only this type surface had drifted,
+      // which made the renderer typecheck report them as missing.
+      getIpodSyncJournal: () => Promise<{ phase: string; at?: string } | null>
+      onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => () => void
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       // Brief 010 Phase 3 + Brief 014a: audio-analysis worker progress
       // subscription. Per-track fields are populated on completed jobs;

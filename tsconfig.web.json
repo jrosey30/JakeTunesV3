@@ -9,7 +9,9 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "out/renderer",
-    "rootDir": "src/renderer",
+    "rootDir": "src",
+    "allowImportingTsExtensions": true,
+    "emitDeclarationOnly": true,
     "types": [
       "node"
     ]
