@@ -1,6 +1,11 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { buildWorkoutIpodSyncPayload, assembleSyncPlaylists, type WorkoutSyncPayload } from '../utils/workoutIpodSync'
+// Called in runFullLibrarySync below. The comment at the top of this file has
+// named this as the shared source of sync playlists since it was extracted, but
+// the import was never added — so a full library sync threw ReferenceError
+// before copying anything.
+import { buildSmartPlaylistsForSync } from '../utils/smartPlaylists'
 import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
 import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -366,7 +371,15 @@ export default function DeviceView() {
         setTimeout(() => activity.setSync(null), 4000)
         return
       }
-      setSyncStatus({ state: 'done', message: `Synced ${result.totalTracks ?? state.tracks.length} tracks.` })
+      // Must match the 'done' variant's shape: the success renderer reads
+      // total/copied/time directly, so a `message` here left total undefined
+      // and threw on .toLocaleString() the moment the sync succeeded.
+      setSyncStatus({
+        state: 'done',
+        copied: result.copied ?? 0,
+        total: result.totalTracks ?? state.tracks.length,
+        time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      })
       activity.setSync({ active: true, step: 'Sync complete' })
       setTimeout(() => activity.setSync(null), 4000)
     } catch (err) {
