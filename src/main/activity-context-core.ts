@@ -17,6 +17,13 @@ export interface ActivityBrief {
   place: string
   social: SocialKind
   note?: string
+  /** Stamped when the brief is saved. Optional because briefs written before
+   *  2026-07 lack it — those read as undated, and an undated brief is treated
+   *  as STALE rather than fresh (see activityContextAgeMs). Already present on
+   *  real data: the saved profile carries it through into the context. */
+  updatedAt?: string
+  /** Target set size, carried on saved profiles. */
+  target?: number
 }
 
 export interface ActivityWeather {
@@ -72,8 +79,44 @@ export function buildActivityQueryText(brief: ActivityBrief): string {
   return parts.join(' ')
 }
 
-export function formatActivityContextForPrompt(ctx: ActivityBrainContext | null): string {
+/** How long an activity brief counts as "what the listener is doing right now".
+ *
+ *  A brief describes a SESSION — a run, a lift, a ski day — not a standing
+ *  fact about the listener. 12h is deliberately generous (a set built the
+ *  night before a morning run still counts) while ruling out last week's. */
+export const ACTIVITY_CONTEXT_TTL_MS = 12 * 60 * 60 * 1000
+
+/** Newest timestamp on the context, ms. 0 when it carries none. */
+export function activityContextAgeMs(ctx: ActivityBrainContext | null, nowMs: number): number {
+  if (!ctx) return Number.POSITIVE_INFINITY
+  const stamps = [ctx.updatedAt, ctx.brief?.updatedAt]
+    .map((s) => (s ? Date.parse(s) : NaN))
+    .filter((n) => Number.isFinite(n)) as number[]
+  if (stamps.length === 0) return Number.POSITIVE_INFINITY
+  return nowMs - Math.max(...stamps)
+}
+
+/**
+ * Render the activity brief for a prompt — or nothing, if it has gone stale.
+ *
+ * STALENESS GATE (2026-08-03). Jake: "it keeps talking about my run and not the
+ * song. its knowledge has regressed greatly." The block below announces itself
+ * as "live situational context" and tells the model to shape commentary and
+ * tone around the activity. It had no expiry, so a run brief from 2026-07-25
+ * was still steering every Music Man utterance NINE DAYS later — including the
+ * mic button, whose entire job is to talk about the track that's playing.
+ *
+ * The brief is only omitted from PROMPTS. Activity Sync still reads it raw via
+ * getActivityBrainContextSync() to pick tracks, so an old profile remains
+ * usable for building a set — it just stops pretending the listener is
+ * currently mid-run.
+ */
+export function formatActivityContextForPrompt(
+  ctx: ActivityBrainContext | null,
+  nowMs: number = Date.now(),
+): string {
   if (!ctx?.brief) return ''
+  if (activityContextAgeMs(ctx, nowMs) > ACTIVITY_CONTEXT_TTL_MS) return ''
   const b = ctx.brief
   const lines = [
     `ACTIVITY CONTEXT (what the listener is doing / preparing for — use this to shape music picks, commentary, and tone):`,
