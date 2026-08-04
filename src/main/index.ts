@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
-import { resolveContainedPath, isSafeCacheKey } from './path-safety'
+import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { refuseIfNotMainWindow } from './ipc-guard'
@@ -26,7 +26,7 @@ import { decodeHtmlEntities } from './imessage-capture-core'
 import { computeImportCredits } from './friend-imports-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
-import { join } from 'path'
+import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
@@ -16166,7 +16166,36 @@ app.whenReady().then(async () => {
       return new Response('Forbidden', { status: 403 })
     }
 
-    let filePath = rawPath
+    // ── Fall back to library.streamRoot when the local copy isn't there.
+    //
+    // The renderer only ever builds LOCAL paths — musicRoot + the track's
+    // colon path. That is fine while every file has a local copy, and wrong
+    // the moment one doesn't. The policy here is deliberately that audio
+    // lives on the NAS and not on this disk, so "no local copy" is a normal
+    // state, not an error — but this handler stat()ed the local path, got
+    // ENOENT, and returned 404. The track then looks broken in exactly the
+    // way a corrupt file looks broken: it's in the library, it has artwork
+    // and a duration, and pressing play does nothing. Which is what happened
+    // to "NY Lipps (Dries Van Noten 2020 Rework)" — a clean 14-minute
+    // lossless file sitting on the NAS, unplayable, and re-downloading it
+    // could never have helped because the bytes were never the problem.
+    //
+    // streamRoot was already trusted by the containment check above; it just
+    // was not consulted when resolving. Local still wins when present, so
+    // this costs one failed stat on a path that is about to fail anyway.
+    let resolvedPath = rawPath
+    const localMountRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    if (isPathInside(rawPath, localMountRoot) && !existsSync(rawPath)) {
+      const alt = await readStreamRoot()
+      if (alt) {
+        const candidate = join(alt, relative(localMountRoot, rawPath))
+        if (existsSync(candidate)) {
+          resolvedPath = candidate
+        }
+      }
+    }
+
+    let filePath = resolvedPath
     let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
 
     // ── Streaming migration Stage 1 (2026-07-09): stream a NON-LOCAL track
@@ -16190,7 +16219,7 @@ app.whenReady().then(async () => {
       // otherwise every symlinked track is hijacked to homemini and normal NAS
       // playback breaks. This gate is the fix for the 2026-07-10 workmini regression.
       if (!streamed && (await readStreamSourceCached()) === 'homemini') {
-        try { streamed = (await lstat(rawPath)).isSymbolicLink() } catch { /* real local file */ }
+        try { streamed = (await lstat(resolvedPath)).isSymbolicLink() } catch { /* real local file */ }
       }
       if (streamed) {
         const id = await trackIdForAbsPath(rawPath)
@@ -16212,9 +16241,9 @@ app.whenReady().then(async () => {
         const hint = codecByAbsPath.get(rawPath)
         if (hint) {
           if (hint === 'alac') {
-            const srcStat = await stat(rawPath).catch(() => null)
+            const srcStat = await stat(resolvedPath).catch(() => null)
             if (srcStat) {
-              const cached = await aacCachePath(rawPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
+              const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
               if (cached) {
                 filePath = cached
                 ext = '.m4a'
@@ -16226,9 +16255,9 @@ app.whenReady().then(async () => {
           // Legacy track (no codec field on Track) — fall through to the
           // original ffprobe path, which caches its own answer in
           // memory for this session.
-          const srcStat = await stat(rawPath).catch(() => null)
+          const srcStat = await stat(resolvedPath).catch(() => null)
           if (srcStat) {
-            const cached = await aacCachePath(rawPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
+            const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
             if (cached) {
               filePath = cached
               ext = '.m4a'
