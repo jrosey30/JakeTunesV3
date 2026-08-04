@@ -26,6 +26,7 @@ import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import { setNotice } from '../activity'
 import '../styles/albums.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { setAlbumDragPayload } from '../utils/trackDrag'
 
 export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -271,6 +272,10 @@ export default function AlbumsView() {
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAlbum(key) } }}
               role="button"
               tabIndex={0}
+              draggable
+              /* Drag a whole album onto a playlist. In running order, not the
+                 grouping order, so the playlist reads the way the record does. */
+              onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(album.tracks).map(t => t.id))}
             >
               <div className="album-card-art">
                 {artHash ? (

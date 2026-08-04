@@ -28,6 +28,7 @@ import type { Track } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { setTrackDragPayload } from '../utils/trackDrag'
 
 const GRID = '44px minmax(0, 1.8fr) minmax(0, 1.2fr) 70px'
 const fmtDur = (ms?: number): string => {
@@ -203,6 +204,8 @@ export default function MixDetailView() {
                 onDoubleClick={() => handleDoubleClick(idx)}
                 onContextMenu={(e) => handleContextMenu(e, track, idx)}
                 title={`${track.title} — ${track.artist}`}
+                draggable
+                onDragStart={(e) => setTrackDragPayload(e, track.id, lib.selectedTrackIds)}
               >
                 <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-page-tracknum">{idx + 1}</span>}</div>
                 <div className="songs-cell songs-cell--title"><span className="title-row-text">{track.title || ''}</span></div>

@@ -18,6 +18,7 @@ import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { setAlbumDragPayload } from '../utils/trackDrag'
 
 // 4.5: hierarchy page for one artist. Reached from ArtistsView via a
 // VIEW_ARTIST_DETAIL dispatch (sets currentView + activeArtist on the
@@ -656,6 +657,10 @@ export default function ArtistDetailView() {
                         })
                       }}
                       onContextMenu={(e) => { e.preventDefault(); setAlbumCtx({ x: e.clientX, y: e.clientY, name: album.name, tracks: album.tracks }) }}
+                      draggable
+                      /* Drag an album straight from the artist page onto a
+                         playlist; running order, same as the Albums grid. */
+                      onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(album.tracks).map(t => t.id))}
                       title={`Open ${album.name}`}
                     >
                       <div className="artist-detail-album-art">
