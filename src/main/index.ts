@@ -466,6 +466,35 @@ function stopPowerSaveBlocker() {
   }
   powerSaveBlockerId = null
 }
+// ── app-lifetime suspension blocker, released only when truly idle ────────
+// Its own id, separate from the playback blocker above: the two have different
+// lifetimes, and sharing a counter would let whichever stopped first silently
+// release the other.
+let lifetimeBlockerId: number | null = null
+// Set once the main window has actually been created. Guards the release below
+// against startup: BrowserWindow count dips to zero transiently while the app
+// is still coming up, and 'window-all-closed' fires on that dip.
+let mainWindowEverCreated = false
+function startLifetimeSuspensionBlocker(): void {
+  if (lifetimeBlockerId !== null) return
+  try {
+    lifetimeBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+    console.log('[powerSave] lifetime suspension blocker started id=', lifetimeBlockerId)
+  } catch (err) {
+    console.warn('[powerSave] lifetime blocker failed:', err)
+  }
+}
+function stopLifetimeSuspensionBlocker(): void {
+  if (lifetimeBlockerId === null) return
+  try {
+    powerSaveBlocker.stop(lifetimeBlockerId)
+    console.log('[powerSave] lifetime suspension blocker stopped id=', lifetimeBlockerId)
+  } catch (err) {
+    console.warn('[powerSave] lifetime stop failed:', err)
+  }
+  lifetimeBlockerId = null
+}
+
 ipcMain.on('set-playback-active', (_e, active: boolean) => {
   playbackActive = !!active
   if (active) {
@@ -2032,6 +2061,7 @@ ipcMain.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
 
 async function createWindow(): Promise<void> {
   const saved = await loadWindowState()
+  mainWindowEverCreated = true
 
   mainWindow = new BrowserWindow({
     width: saved?.width ?? 1200,
@@ -15664,12 +15694,20 @@ app.whenReady().then(async () => {
   // a long beachball. A music library app lives half its life covered
   // by other windows: hold an app-LIFETIME suspension blocker. Display
   // sleep is unaffected; this only opts out of App Nap / app suspension.
-  try {
-    const id = powerSaveBlocker.start('prevent-app-suspension')
-    console.log('[powerSave] app-lifetime suspension blocker id=', id)
-  } catch (err) {
-    console.warn('[powerSave] app-lifetime blocker failed:', err)
-  }
+  //
+  // 2026-08-04 — released once the app is genuinely idle.
+  //
+  // The note above is right that display sleep is unaffected, but stops one
+  // line short: 'prevent-app-suspension' is a NoIdleSleep assertion, so it also
+  // stops the MACHINE idle-sleeping. On macOS closing the last window does not
+  // quit, so JakeTunes could sit windowless holding that assertion for as long
+  // as it was left open — found exactly that way: zero windows, nothing
+  // playing, the Mac unable to idle-sleep.
+  //
+  // What this guards is a SUSPENDED RENDERER you come back to. With no window
+  // there is no renderer to suspend, so the assertion buys nothing and costs
+  // sleep. Released when the last window closes, re-taken on activate.
+  startLifetimeSuspensionBlocker()
 
   // Show the window before heavy startup IO (artwork self-heal, memory
   // loads, ipod-audio handler registration). Splash + library load give
@@ -16497,12 +16535,28 @@ app.whenReady().then(async () => {
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+      startLifetimeSuspensionBlocker()   // a renderer to protect again
+    }
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin') { app.quit(); return }
+  // macOS keeps the app alive with no windows. Drop the suspension assertion
+  // so an idle app stops holding the machine awake.
+  //
+  // Two guards, both learned the hard way. The window count dips to zero
+  // transiently during startup and this event fires on that dip — releasing
+  // there left the app with NO App Nap protection for its whole session, which
+  // is the freeze the blocker exists to prevent. So: refuse before the main
+  // window has ever been created, and re-check after a beat that the count is
+  // still zero rather than trusting the edge.
+  if (!mainWindowEverCreated) return
+  setTimeout(() => {
+    if (BrowserWindow.getAllWindows().length === 0) stopLifetimeSuspensionBlocker()
+  }, 2000)
 })
 
 // 4.4.13: stop the inbox watcher cleanly on quit. Chokidar holds native
