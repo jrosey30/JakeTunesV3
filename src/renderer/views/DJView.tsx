@@ -54,6 +54,11 @@ export default function DJView() {
 
   const [picker, setPicker] = useState<DeckId | null>(null)
   const [query, setQuery] = useState('')
+  // Lesson is the DEFAULT. The console — two decks, tempo, three-band EQ,
+  // filter, crossfader, all live at once — is a cockpit, and every control on
+  // it can wreck the sound. Someone learning needs one thing at a time; the
+  // full desk is there for when they want it, not before.
+  const [mode, setMode] = useState<'lesson' | 'console'>('lesson')
   const [browse, setBrowse] = useState('')
   const [onlyCompatible, setOnlyCompatible] = useState(false)
 
@@ -447,6 +452,12 @@ export default function DJView() {
       <header className="booth-header">
         <h1 className="booth-title">DJ</h1>
         <div className="booth-header-right">
+          <button
+            className="booth-mode-toggle"
+            onClick={() => setMode((m) => (m === 'lesson' ? 'console' : 'lesson'))}
+          >
+            {mode === 'lesson' ? 'Show all controls' : 'Back to lesson'}
+          </button>
           {challenge ? (
             <>
               <div className="booth-score">
@@ -472,6 +483,29 @@ export default function DJView() {
       {err && <div className="booth-error" role="alert">{err}</div>}
 
 
+      {mode === 'lesson' ? (
+        <LessonStage
+          advice={coach}
+          live={liveDeck}
+          incoming={incomingDeck}
+          loaded={loaded}
+          playing={playing}
+          kills={kills}
+          bending={bending[incomingDeck]}
+          crate={crateRows}
+          browse={browse}
+          onBrowse={setBrowse}
+          onLoad={loadDeck}
+          onSync={() => doSync(incomingDeck)}
+          onPlayIncoming={() => void togglePlay(incomingDeck)}
+          onPlayLive={() => void togglePlay(loaded[liveDeck] ? liveDeck : incomingDeck)}
+          onKill={toggleKill}
+          onNudge={startBend}
+          onNudgeEnd={endBend}
+          onDragStart={onTrackDragStart}
+        />
+      ) : (
+      <>
       <CoachPanel
         advice={coach}
         incoming={incomingDeck}
@@ -562,6 +596,9 @@ export default function DJView() {
 
 
 
+      </>
+      )}
+
       {picker && (
         <div className="booth-picker-backdrop" onClick={() => setPicker(null)}>
           <div className="booth-picker" onClick={(e) => e.stopPropagation()}>
@@ -588,6 +625,159 @@ export default function DJView() {
               ))}
             </ul>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── lesson stage ───────────────────────────────────────────────────────────
+/**
+ * One step. One control. Nothing else on screen.
+ *
+ * The console shows every control at once, which is right for someone who
+ * already knows what they all do and wrong for everyone else — it reads as a
+ * wall where any button might ruin the sound. This shows the single control the
+ * current step needs, at a size you cannot miss, with the reason underneath.
+ *
+ * It drives off the SAME coach advice as the console, so the two can never
+ * disagree about what to do next.
+ */
+function LessonStage(props: {
+  advice: ReturnType<typeof advise>
+  live: DeckId
+  incoming: DeckId
+  loaded: Record<DeckId, Track | null>
+  playing: Record<DeckId, boolean>
+  kills: Record<DeckId, Record<'low' | 'mid' | 'high', boolean>>
+  bending: -1 | 0 | 1
+  crate: Track[]
+  browse: string
+  onBrowse: (v: string) => void
+  onLoad: (id: DeckId, t: Track) => void
+  onSync: () => void
+  onPlayIncoming: () => void
+  onPlayLive: () => void
+  onKill: (id: DeckId, band: 'low' | 'mid' | 'high') => void
+  onNudge: (id: DeckId, dir: -1 | 1) => void
+  onNudgeEnd: (id: DeckId) => void
+  onDragStart: (t: Track, e: React.DragEvent) => void
+}) {
+  const a = props.advice
+  const step = a.step
+  // 'idle' covers two different situations: nothing loaded yet (pick a song),
+  // and something loaded but stopped (press play). Treating both as "pick a
+  // song" left the stage telling you to press play with no button on it.
+  const anyLoaded = !!props.loaded.A || !!props.loaded.B
+  const needsTrack = step === 'load' || (step === 'idle' && !anyLoaded)
+  const needsStart = step === 'idle' && anyLoaded
+  const drift = a.drift ?? 0
+  const pct = 50 + Math.max(-0.5, Math.min(0.5, drift)) * 100
+  const locked = a.drift !== undefined && step !== 'phase'
+
+  // Which deck the step's control belongs to. The bass swap acts on the track
+  // that is currently out there; everything else acts on the one coming in.
+  const target = step === 'bass-swap' ? props.live : props.incoming
+
+  return (
+    <div className="lesson">
+      <div className="lesson-now">
+        {(['A', 'B'] as DeckId[]).map((d) => (
+          <span key={d} className={`lesson-now-deck${props.playing[d] ? ' is-playing' : ''}`}>
+            <em>{d}</em>
+            {props.loaded[d] ? props.loaded[d]!.title : 'empty'}
+          </span>
+        ))}
+      </div>
+
+      <p className="lesson-instruction">{a.instruction}</p>
+      <p className="lesson-why">{a.why}</p>
+
+      {typeof a.countdown === 'number' && Number.isFinite(a.countdown) && (
+        <div className="lesson-count">
+          <span className="lesson-count-num">{a.countdown.toFixed(1)}</span>
+          <span className="lesson-count-label">seconds — go when this hits zero</span>
+        </div>
+      )}
+
+      {needsStart && (
+        <button className="lesson-action" onClick={props.onPlayLive}>
+          PLAY deck {props.loaded[props.live] ? props.live : props.incoming}
+        </button>
+      )}
+
+      {step === 'tempo' && (
+        <button className="lesson-action" onClick={props.onSync}>SYNC</button>
+      )}
+
+      {step === 'cue' && (
+        <button className="lesson-action" onClick={props.onPlayIncoming}>
+          PLAY deck {props.incoming}
+        </button>
+      )}
+
+      {step === 'phase' && (
+        <div className="lesson-phase">
+          <div className="lesson-meter">
+            <div className="lesson-meter-centre" />
+            <div
+              className={`lesson-meter-marker${locked ? ' is-locked' : ''}`}
+              style={{ left: `${pct}%` }}
+            />
+          </div>
+          <div className="lesson-nudge">
+            <button
+              className={`lesson-action lesson-action-wide${props.bending === -1 ? ' is-on' : ''}`}
+              onMouseDown={() => props.onNudge(props.incoming, -1)}
+              onMouseUp={() => props.onNudgeEnd(props.incoming)}
+              onMouseLeave={() => props.onNudgeEnd(props.incoming)}
+            >
+              − SLOW IT
+            </button>
+            <button
+              className={`lesson-action lesson-action-wide${props.bending === 1 ? ' is-on' : ''}`}
+              onMouseDown={() => props.onNudge(props.incoming, 1)}
+              onMouseUp={() => props.onNudgeEnd(props.incoming)}
+              onMouseLeave={() => props.onNudgeEnd(props.incoming)}
+            >
+              SPEED IT +
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(step === 'bring-in' || step === 'bass-swap') && (
+        <button
+          className={`lesson-action${props.kills[target].low ? ' is-on' : ''}`}
+          onClick={() => props.onKill(target, 'low')}
+        >
+          {props.kills[target].low ? 'BASS IS OFF' : 'TURN BASS OFF'} — deck {target}
+        </button>
+      )}
+
+      {needsTrack && (
+        <div className="lesson-pick">
+          <input
+            className="lesson-pick-search"
+            placeholder="Search your songs…"
+            value={props.browse}
+            onChange={(e) => props.onBrowse(e.target.value)}
+          />
+          <ul className="lesson-pick-list">
+            {props.crate.slice(0, 60).map((t) => (
+              <li key={t.id}>
+                <button
+                  className="lesson-pick-item"
+                  draggable
+                  onDragStart={(e) => props.onDragStart(t, e)}
+                  onClick={() => props.onLoad(props.loaded[props.live] ? props.incoming : props.live, t)}
+                >
+                  <span className="lesson-pick-name">{t.title}</span>
+                  <span className="lesson-pick-artist">{t.artist}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

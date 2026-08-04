@@ -642,3 +642,140 @@
 .booth-crossfader { margin: 10px auto; }
 .booth-xf-range { height: 24px; }
 .booth-crate-head { margin-bottom: 6px; }
+
+/* ── lesson stage ──────────────────────────────────────────────────────────
+ * Deliberately close to empty. The console failed as a teaching surface
+ * because everything was visible at once and any control could ruin the
+ * sound; this shows the one control the step needs and hides the rest.
+ * Generous type and one big target — you are meant to read it while your
+ * attention is on the music, not on the screen.
+ */
+.lesson {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 8px;
+  overflow-y: auto;
+}
+
+.lesson-now { display: flex; gap: 18px; margin-bottom: 22px; }
+.lesson-now-deck {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--booth-dim);
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lesson-now-deck em {
+  font-style: normal; font-weight: 800; font-size: 11px;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: inline-grid; place-items: center; flex: none;
+  background: #2c2c30; color: var(--booth-dim);
+}
+.lesson-now-deck.is-playing { color: var(--booth-text); }
+.lesson-now-deck.is-playing em { background: var(--booth-accent); color: #1a1a1a; }
+
+.lesson-instruction {
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0 0 10px;
+  max-width: 22ch;                 /* short line — this is read at a glance */
+}
+.lesson-why {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--booth-dim);
+  margin: 0 0 26px;
+  max-width: 56ch;
+}
+
+.lesson-count { margin-bottom: 22px; }
+.lesson-count-num {
+  display: block;
+  font-size: 62px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--booth-accent);
+  font-variant-numeric: tabular-nums;
+}
+.lesson-count-label { font-size: 11px; color: var(--booth-dim); letter-spacing: 0.05em; }
+
+/* One target, hard to miss, hard to mistake for anything else. */
+.lesson-action {
+  background: var(--booth-accent);
+  border: none;
+  color: #1a1a1a;
+  border-radius: 10px;
+  padding: 18px 44px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 90ms ease, background 120ms ease;
+}
+.lesson-action:hover { background: #efa055; }
+.lesson-action:active { transform: translateY(1px); }
+.lesson-action.is-on { background: var(--booth-kill); color: #fff; }
+.lesson-action-wide { min-width: 190px; }
+
+.lesson-phase { display: flex; flex-direction: column; align-items: center; gap: 20px; width: min(520px, 88%); }
+.lesson-nudge { display: flex; gap: 14px; }
+.lesson-meter {
+  position: relative; width: 100%; height: 22px;
+  background: #0f0f11; border-radius: 11px;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,0.9);
+}
+.lesson-meter-centre {
+  position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+  margin-left: -1px; background: rgba(255,255,255,0.3);
+}
+.lesson-meter-marker {
+  position: absolute; top: 3px; bottom: 3px; width: 10px; margin-left: -5px;
+  border-radius: 5px; background: var(--booth-kill);
+  transition: left 60ms linear, background 160ms ease;
+}
+.lesson-meter-marker.is-locked {
+  background: #7ac74f; box-shadow: 0 0 14px rgba(122,199,79,0.8);
+}
+
+.lesson-pick { width: min(680px, 94%); }
+.lesson-pick-search {
+  width: 100%;
+  background: var(--booth-bg);
+  border: 1px solid var(--booth-edge);
+  border-radius: 8px;
+  color: var(--booth-text);
+  padding: 10px 14px;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+.lesson-pick-search:focus { outline: none; border-color: var(--booth-accent); }
+.lesson-pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; text-align: left; }
+.lesson-pick-item {
+  width: 100%;
+  display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: baseline;
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  border-radius: 7px;
+  padding: 10px 14px;
+  color: var(--booth-text);
+  font-size: 14px;
+  cursor: pointer;
+}
+.lesson-pick-item:hover { border-color: var(--booth-accent); }
+.lesson-pick-name, .lesson-pick-artist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-pick-artist { color: var(--booth-dim); font-size: 12px; }
+
+.booth-mode-toggle {
+  background: none;
+  border: 1px solid var(--booth-edge);
+  color: var(--booth-dim);
+  border-radius: 5px;
+  padding: 6px 12px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.booth-mode-toggle:hover { border-color: var(--booth-accent); color: var(--booth-text); }

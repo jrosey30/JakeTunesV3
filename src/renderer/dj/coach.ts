@@ -58,8 +58,8 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
   if (!live.loaded && !incoming.loaded) {
     return {
       step: 'idle',
-      instruction: 'Load a track onto deck A and press play.',
-      why: 'The deck that is already playing is the one the crowd is hearing. Everything else gets matched to it.',
+      instruction: 'Pick a song to start with.',
+      why: 'This is the one that will already be playing when you mix the next track in. Everything else gets matched to it, so pick something you know well.',
       satisfied: false,
     }
   }
@@ -67,7 +67,7 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
   if (!incoming.loaded) {
     return {
       step: 'load',
-      instruction: 'Load your next track onto the other deck.',
+      instruction: 'Now pick the song to mix into.',
       why: 'Drag one in from the list below, or click it. That list is already filtered to tracks close enough in speed to blend, in keys that will not clash with what is playing.',
       satisfied: false,
     }
@@ -76,8 +76,8 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
   if (live.loaded && !live.playing && !incoming.playing) {
     return {
       step: 'idle',
-      instruction: 'Press play on the deck you want to mix out of.',
-      why: 'You always mix FROM something. Start the record that is already out there.',
+      instruction: 'Press play to start it.',
+      why: 'You always mix FROM something. Get this one going first, then we bring the next one in underneath it.',
       satisfied: false,
     }
   }
