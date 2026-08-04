@@ -1,4 +1,4 @@
-import { crossfadeGains, syncRate } from './beatgrid.ts'
+import { crossfadeGains, syncRate, phaseDelta, beatPeriod } from './beatgrid.ts'
 
 /**
  * Two-deck DJ engine.
@@ -296,7 +296,44 @@ export class DJEngine {
     this.deck(id).trim.gain.setTargetAtTime(Math.max(0, Math.min(1.5, gain)), this.ctx.currentTime, 0.01)
   }
 
-  /** Match `id`'s tempo to the other deck's CURRENT effective tempo. */
+  /**
+   * Pitch bend — the digital equivalent of putting a finger on the platter.
+   *
+   * Held, not toggled: the deck runs a few percent fast or slow for exactly as
+   * long as the key is down, then snaps back to the tempo it had. That is the
+   * gesture that fixes PHASE without touching TEMPO, and it is the one motion
+   * that actually has to be learned by feel, so it needs to behave like the
+   * physical thing rather than like a setting.
+   */
+  private bendBase = new Map<DeckId, number>()
+
+  startBend(id: DeckId, direction: -1 | 1, amount = 0.04): void {
+    const d = this.deck(id)
+    if (this.bendBase.has(id)) return          // already bending; don't compound
+    this.bendBase.set(id, d.rate)
+    d.setRate(d.rate * (1 + direction * amount))
+  }
+
+  endBend(id: DeckId): void {
+    const base = this.bendBase.get(id)
+    if (base === undefined) return
+    this.bendBase.delete(id)
+    this.deck(id).setRate(base)
+  }
+
+  /**
+   * SYNC: match the other deck's tempo AND land on its beat.
+   *
+   * Tempo alone is not sync. Matching BPM and leaving the downbeats wherever
+   * they happened to fall is precisely the thing that sounds broken — the two
+   * records run at the same speed while stumbling over each other, which is
+   * worse than an honest mismatch because nothing about the tempo readout
+   * explains it. The phase correction is what makes the button do what its
+   * name promises.
+   *
+   * Only nudges the playhead when both decks are running; aligning a stopped
+   * deck against a moving one would be stale by the time it started.
+   */
   sync(id: DeckId): number {
     const me = this.deck(id)
     const other = this.deck(id === 'A' ? 'B' : 'A')
@@ -304,6 +341,17 @@ export class DJEngine {
     const otherEffective = other.bpm * other.rate
     const r = syncRate(me.bpm, otherEffective)
     me.setRate(r)
+
+    if (me.playing && other.playing) {
+      const d = phaseDelta(
+        other.position, other.bpm, other.beatOffset,
+        me.position, me.bpm, me.beatOffset,
+      )
+      // d > 0 means I'm behind, so jump forward to meet them. The shift is
+      // always under half a beat, so it is inaudible as a jump.
+      const period = beatPeriod(me.bpm)
+      if (period > 0 && Math.abs(d) > 0.001) me.seek(me.position + d * period)
+    }
     return r
   }
 

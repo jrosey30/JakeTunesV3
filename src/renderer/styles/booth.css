@@ -403,3 +403,111 @@
   display: grid; gap: 4px;
   max-height: 52vh; overflow-y: auto;
 }
+
+/* ── the coach ─────────────────────────────────────────────────────────────
+ * Sits above the decks because it is the thing you read while your hands are
+ * busy. Two columns: what to do on the left, the measurement on the right.
+ */
+.booth-coach {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 20px;
+  align-items: center;
+  background: linear-gradient(180deg, #202024, #191a1d);
+  border: 1px solid var(--booth-edge);
+  border-left: 3px solid var(--booth-accent);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+}
+@media (max-width: 900px) { .booth-coach { grid-template-columns: 1fr; } }
+
+.booth-coach-step {
+  display: inline-block;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--booth-accent);
+  margin-bottom: 5px;
+}
+.booth-coach-instruction {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+/* The reason is deliberately quieter than the instruction but still readable —
+   it is the part that teaches, not decoration. */
+.booth-coach-why {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--booth-dim);
+  max-width: 62ch;
+}
+
+.booth-coach-side { display: flex; align-items: center; gap: 20px; }
+
+.booth-coach-count { text-align: center; }
+.booth-coach-count-num {
+  display: block; font-size: 22px; font-weight: 700; color: var(--booth-accent);
+}
+.booth-coach-count-label {
+  display: block; font-size: 9px; letter-spacing: 0.1em; color: var(--booth-dim);
+}
+
+/* ── phase meter ───────────────────────────────────────────────────────────
+ * The whole reason this feature exists. Tempo is a number you can read; phase
+ * is the thing you normally can only hear, and not being able to see it is why
+ * beatmatching takes people months. Centre is locked; the marker drifts to the
+ * side you need to correct toward.
+ */
+.booth-align { width: 190px; }
+.booth-align-scale {
+  display: flex; justify-content: space-between;
+  font-size: 9px; letter-spacing: 0.08em; color: #61616a; margin-bottom: 3px;
+}
+.booth-align-track {
+  position: relative;
+  height: 12px;
+  background: #0f0f11;
+  border-radius: 6px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.9);
+  overflow: hidden;
+}
+.booth-align-centre {
+  position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+  margin-left: -1px; background: rgba(255,255,255,0.28);
+}
+.booth-align-marker {
+  position: absolute; top: 1px; bottom: 1px; width: 6px;
+  margin-left: -3px; border-radius: 3px;
+  background: var(--booth-kill);
+  transition: left 60ms linear, background 160ms ease;
+}
+.booth-align-marker.is-locked { background: #7ac74f; box-shadow: 0 0 10px rgba(122,199,79,0.7); }
+.booth-align-read {
+  display: block; text-align: center; margin-top: 4px;
+  font-size: 10px; letter-spacing: 0.08em; color: var(--booth-kill);
+}
+.booth-align-read.is-locked { color: #7ac74f; }
+
+/* ── nudge ─────────────────────────────────────────────────────────────── */
+.booth-nudge { display: flex; align-items: center; gap: 6px; }
+.booth-nudge-btn {
+  background: var(--booth-bg);
+  border: 1px solid var(--booth-edge);
+  color: var(--booth-text);
+  border-radius: 5px;
+  padding: 10px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  user-select: none;
+}
+.booth-nudge-btn:hover { border-color: var(--booth-accent); }
+.booth-nudge-btn.is-on {
+  background: var(--booth-accent); border-color: var(--booth-accent); color: #1a1a1a;
+}
+.booth-nudge-deck { font-size: 9px; letter-spacing: 0.08em; color: var(--booth-dim); }

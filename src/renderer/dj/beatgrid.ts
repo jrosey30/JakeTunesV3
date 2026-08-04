@@ -124,6 +124,65 @@ export function parseCamelot(k?: string): { n: number; letter: 'A' | 'B' } | nul
 }
 
 /**
+ * Where you are WITHIN the current beat, 0..1. 0 is exactly on it.
+ *
+ * This is the number the whole craft turns on. Two records at identical BPM
+ * still sound like a mess if their downbeats don't coincide, and "matched
+ * tempo" is not the same thing as "in phase" — which is the single hardest
+ * idea to convey to someone learning, because you cannot see it, you can only
+ * hear it as a stumble.
+ */
+export function beatPhase(t: number, bpm: number, offset = 0): number {
+  const p = beatPeriod(bpm)
+  if (p === 0) return 0
+  const x = ((t - offset) % p) / p
+  return x < 0 ? x + 1 : x
+}
+
+/**
+ * How far deck B's beat sits from deck A's, in BEATS, wrapped to (-0.5, 0.5].
+ *
+ * Signed so it can say which way to nudge rather than just "wrong": negative
+ * means B is ahead (running early — slow it down), positive means B is behind.
+ * Wrapping at half a beat is what makes it useful: being 0.9 of a beat late is
+ * really being 0.1 early, and telling someone to slow down in that case would
+ * send them the long way round.
+ */
+export function phaseDelta(
+  posA: number, bpmA: number, offsetA: number,
+  posB: number, bpmB: number, offsetB: number,
+): number {
+  if (!bpmA || !bpmB) return 0
+  let d = beatPhase(posA, bpmA, offsetA) - beatPhase(posB, bpmB, offsetB)
+  while (d > 0.5) d -= 1
+  while (d <= -0.5) d += 1
+  return d
+}
+
+/** Within a twentieth of a beat is inaudible — call that locked. */
+export const LOCK_TOLERANCE = 0.05
+
+export function isPhaseLocked(delta: number, tolerance = LOCK_TOLERANCE): boolean {
+  return Math.abs(delta) <= tolerance
+}
+
+/**
+ * Seconds until the next phrase line — where a DJ actually makes a move.
+ * Returns Infinity when there's no grid to count against, so callers can show
+ * "—" instead of a fake countdown.
+ */
+export function secondsToNextPhrase(
+  t: number, bpm: number, offset = 0, beatsPerBar = 4, barsPerPhrase = 4,
+): number {
+  const p = beatPeriod(bpm)
+  if (p === 0) return Infinity
+  const phraseLen = p * beatsPerBar * barsPerPhrase
+  const since = (t - offset) % phraseLen
+  const rem = since < 0 ? -since : phraseLen - since
+  return rem === phraseLen ? 0 : rem
+}
+
+/**
  * How close are two tempos, as a fraction? Used to rank mix candidates —
  * a track needing a 2% nudge is a far better next record than one needing 18%,
  * even if both are technically within the fader's range.

@@ -3,7 +3,8 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
 import { DJEngine, type DeckId } from '../dj/engine'
-import { beatsInRange, camelotCompatible, tempoDistance } from '../dj/beatgrid'
+import { beatsInRange, camelotCompatible, tempoDistance, LOCK_TOLERANCE } from '../dj/beatgrid'
+import { advise, type DeckReading } from '../dj/coach'
 import {
   buildPrompts, matchPrompt, judge, applyHit, emptyRun, accuracy, multiplierFor,
   type Prompt, type DJAction, type Verdict, type RunState,
@@ -280,6 +281,24 @@ export default function DJView() {
     setLastVerdict({ v, at: Date.now() })
   }, [challenge, challengeDeck, prompts, xfader, toggleKill, moveXfader, changeFilter, hushLibrary])
 
+  // ── nudge (pitch bend) ───────────────────────────────────────────────────
+  // Held, not toggled. This is the motion that fixes PHASE without touching
+  // TEMPO, and it is the one thing in DJing that can only be learned by feel,
+  // so it has to behave like a finger on a platter rather than like a setting.
+  const [bending, setBending] = useState<Record<DeckId, -1 | 0 | 1>>({ A: 0, B: 0 })
+  const startBend = useCallback((id: DeckId, dir: -1 | 1) => {
+    const e = engineRef.current
+    if (!e) return
+    e.startBend(id, dir)
+    setBending((s) => ({ ...s, [id]: dir }))
+  }, [])
+  const endBend = useCallback((id: DeckId) => {
+    const e = engineRef.current
+    if (!e) return
+    e.endBend(id)
+    setBending((s) => ({ ...s, [id]: 0 }))
+  }, [])
+
   // ── keyboard: this is the instrument ─────────────────────────────────────
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -299,6 +318,10 @@ export default function DJView() {
       else if (k === 'l') { claim(); doSync('B') }
       else if (ev.key === 'ArrowLeft') { claim(); moveXfader(Math.max(-1, xfader - 0.1)) }
       else if (ev.key === 'ArrowRight') { claim(); moveXfader(Math.min(1, xfader + 0.1)) }
+      else if (k === 'z') { claim(); if (!ev.repeat) startBend('A', -1) }
+      else if (k === 'x') { claim(); if (!ev.repeat) startBend('A', 1) }
+      else if (k === ',') { claim(); if (!ev.repeat) startBend('B', -1) }
+      else if (k === '.') { claim(); if (!ev.repeat) startBend('B', 1) }
       // Space would toggle the library transport we deliberately paused on the
       // way in. Swallow it rather than let the booth restart the thing it muted.
       else if (ev.key === ' ') { claim() }
@@ -311,9 +334,51 @@ export default function DJView() {
     // the next song. preventDefault does nothing about that -- it cancels the
     // default action, not other listeners. Capturing means we see the event
     // first and can stop it before the transport ever hears it.
+    const onKeyUp = (ev: KeyboardEvent) => {
+      const k = ev.key.toLowerCase()
+      if (k === 'z' || k === 'x') endBend('A')
+      else if (k === ',' || k === '.') endBend('B')
+    }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [performAction, togglePlay, cue, doSync, moveXfader, xfader])
+    window.addEventListener('keyup', onKeyUp, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      // A bend still held when the view unmounts would leave the deck
+      // permanently detuned. Release both on the way out.
+      endBend('A'); endBend('B')
+    }
+  }, [performAction, togglePlay, cue, doSync, moveXfader, xfader, startBend, endBend])
+
+  // ── what the coach sees ──────────────────────────────────────────────────
+  // "Live" is whichever deck the crossfader is currently favouring; the other
+  // one is what you are bringing in. With only one running, that one is live.
+  const readingFor = useCallback((id: DeckId): DeckReading => {
+    const e = engineRef.current
+    const d = e?.deck(id)
+    return {
+      loaded: !!loaded[id],
+      playing: !!playing[id],
+      position: pos[id],
+      bpm: d?.bpm ?? 0,
+      beatOffset: d?.beatOffset ?? 0,
+      rate: rate[id],
+      camelotKey: loaded[id]?.camelotKey,
+      bassKilled: kills[id].low,
+    }
+  }, [loaded, playing, pos, rate, kills])
+
+  const liveDeck: DeckId = useMemo(() => {
+    if (playing.A && !playing.B) return 'A'
+    if (playing.B && !playing.A) return 'B'
+    return xfader <= 0 ? 'A' : 'B'
+  }, [playing.A, playing.B, xfader])
+  const incomingDeck: DeckId = liveDeck === 'A' ? 'B' : 'A'
+
+  const coach = useMemo(
+    () => advise(readingFor(liveDeck), readingFor(incomingDeck)),
+    [readingFor, liveDeck, incomingDeck],
+  )
 
   // ── "mixes well out of this" suggestions ─────────────────────────────────
   const suggestions = useMemo(() => {
@@ -383,6 +448,14 @@ export default function DJView() {
           verdict={lastVerdict}
         />
       )}
+
+      <CoachPanel
+        advice={coach}
+        incoming={incomingDeck}
+        onNudge={startBend}
+        onNudgeEnd={endBend}
+        bending={bending[incomingDeck]}
+      />
 
       <div className="booth-decks">
         {(['A', 'B'] as DeckId[]).map((id) => (
@@ -474,6 +547,87 @@ export default function DJView() {
         </div>
       )}
     </div>
+  )
+}
+
+// ── the coach ──────────────────────────────────────────────────────────────
+/**
+ * One instruction at a time, plus the reason for it.
+ *
+ * The "why" line is the part that actually teaches. A prompt that says "press
+ * SYNC" trains a button-press; the same prompt with "match tempo first, or any
+ * alignment you make drifts apart within a bar" trains the reasoning, and the
+ * reasoning is what transfers to real equipment.
+ */
+function CoachPanel(props: {
+  advice: ReturnType<typeof advise>
+  incoming: DeckId
+  bending: -1 | 0 | 1
+  onNudge: (id: DeckId, dir: -1 | 1) => void
+  onNudgeEnd: (id: DeckId) => void
+}) {
+  const { advice: a, incoming } = props
+  const drift = a.drift ?? 0
+  const locked = a.step !== 'phase' && a.drift !== undefined
+  // Meter spans +/- half a beat; clamp so a wild reading can't leave the box.
+  const pct = 50 + Math.max(-0.5, Math.min(0.5, drift)) * 100
+
+  return (
+    <section className={`booth-coach booth-coach-${a.step}`}>
+      <div className="booth-coach-main">
+        <span className="booth-coach-step">{a.step.replace('-', ' ')}</span>
+        <p className="booth-coach-instruction">{a.instruction}</p>
+        <p className="booth-coach-why">{a.why}</p>
+      </div>
+
+      <div className="booth-coach-side">
+        {typeof a.countdown === 'number' && Number.isFinite(a.countdown) && (
+          <div className="booth-coach-count">
+            <span className="booth-coach-count-num">{a.countdown.toFixed(1)}s</span>
+            <span className="booth-coach-count-label">to phrase</span>
+          </div>
+        )}
+
+        {a.drift !== undefined && (
+          <div className="booth-align">
+            <div className="booth-align-scale">
+              <span className="booth-align-edge">slow</span>
+              <span className="booth-align-edge">fast</span>
+            </div>
+            <div className="booth-align-track">
+              <div className="booth-align-centre" />
+              <div
+                className={`booth-align-marker${locked ? ' is-locked' : ''}`}
+                style={{ left: `${pct}%` }}
+              />
+            </div>
+            <span className={`booth-align-read${locked ? ' is-locked' : ''}`}>
+              {locked ? 'IN PHASE' : `${drift > 0 ? '+' : ''}${drift.toFixed(2)} beat`}
+            </span>
+          </div>
+        )}
+
+        <div className="booth-nudge">
+          <button
+            className={`booth-nudge-btn${props.bending === -1 ? ' is-on' : ''}`}
+            onMouseDown={() => props.onNudge(incoming, -1)}
+            onMouseUp={() => props.onNudgeEnd(incoming)}
+            onMouseLeave={() => props.onNudgeEnd(incoming)}
+          >
+            − NUDGE
+          </button>
+          <span className="booth-nudge-deck">deck {incoming}</span>
+          <button
+            className={`booth-nudge-btn${props.bending === 1 ? ' is-on' : ''}`}
+            onMouseDown={() => props.onNudge(incoming, 1)}
+            onMouseUp={() => props.onNudgeEnd(incoming)}
+            onMouseLeave={() => props.onNudgeEnd(incoming)}
+          >
+            NUDGE +
+          </button>
+        </div>
+      </div>
+    </section>
   )
 }
 
