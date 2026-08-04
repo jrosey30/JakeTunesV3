@@ -8,7 +8,7 @@ import {
   buildPrompts, matchPrompt, judge, applyHit, emptyRun, accuracy, multiplierFor,
   type Prompt, type DJAction, type Verdict, type RunState,
 } from '../dj/scoring'
-import '../styles/dj.css'
+import '../styles/booth.css'
 
 /**
  * DJ mode — two decks you actually play, with an optional scored challenge
@@ -285,19 +285,34 @@ export default function DJView() {
     const onKey = (ev: KeyboardEvent) => {
       const el = ev.target as HTMLElement | null
       if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return
+      // Modified keys stay with the app -- Cmd-F, Cmd-Q and friends are not ours.
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return
       const k = ev.key.toLowerCase()
-      if (ACTION_KEYS[k]) { ev.preventDefault(); performAction(ACTION_KEYS[k]); return }
-      if (k === 'q') { ev.preventDefault(); void togglePlay('A') }
-      else if (k === 'p') { ev.preventDefault(); void togglePlay('B') }
-      else if (k === 'w') { ev.preventDefault(); cue('A') }
-      else if (k === 'o') { ev.preventDefault(); cue('B') }
-      else if (k === 's') { ev.preventDefault(); doSync('A') }
-      else if (k === 'l') { ev.preventDefault(); doSync('B') }
-      else if (ev.key === 'ArrowLeft') { ev.preventDefault(); moveXfader(Math.max(-1, xfader - 0.1)) }
-      else if (ev.key === 'ArrowRight') { ev.preventDefault(); moveXfader(Math.min(1, xfader + 0.1)) }
+      const claim = () => { ev.preventDefault(); ev.stopPropagation() }
+
+      if (ACTION_KEYS[k]) { claim(); performAction(ACTION_KEYS[k]); return }
+      if (k === 'q') { claim(); void togglePlay('A') }
+      else if (k === 'p') { claim(); void togglePlay('B') }
+      else if (k === 'w') { claim(); cue('A') }
+      else if (k === 'o') { claim(); cue('B') }
+      else if (k === 's') { claim(); doSync('A') }
+      else if (k === 'l') { claim(); doSync('B') }
+      else if (ev.key === 'ArrowLeft') { claim(); moveXfader(Math.max(-1, xfader - 0.1)) }
+      else if (ev.key === 'ArrowRight') { claim(); moveXfader(Math.min(1, xfader + 0.1)) }
+      // Space would toggle the library transport we deliberately paused on the
+      // way in. Swallow it rather than let the booth restart the thing it muted.
+      else if (ev.key === ' ') { claim() }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // CAPTURE phase, and stopPropagation on anything we claim.
+    //
+    // The app's transport shortcuts live on the window and BUBBLE, so a bubble
+    // listener here fires alongside them rather than instead of them: pressing
+    // an arrow in the booth nudged the crossfader AND skipped the library to
+    // the next song. preventDefault does nothing about that -- it cancels the
+    // default action, not other listeners. Capturing means we see the event
+    // first and can stop it before the transport ever hears it.
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [performAction, togglePlay, cue, doSync, moveXfader, xfader])
 
   // ── "mixes well out of this" suggestions ─────────────────────────────────
@@ -334,23 +349,23 @@ export default function DJView() {
   }, [challenge, challengeDeck, prompts, pos])
 
   return (
-    <div className="dj-view">
-      <header className="dj-header">
-        <h1 className="dj-title">DJ</h1>
-        <div className="dj-header-right">
+    <div className="booth-view">
+      <header className="booth-header">
+        <h1 className="booth-title">DJ</h1>
+        <div className="booth-header-right">
           {challenge ? (
             <>
-              <div className="dj-score">
-                <span className="dj-score-value">{run.score.toLocaleString()}</span>
-                <span className="dj-score-meta">
+              <div className="booth-score">
+                <span className="booth-score-value">{run.score.toLocaleString()}</span>
+                <span className="booth-score-meta">
                   {multiplierFor(run.streak)}× · {run.streak} streak · {accuracy(run)}%
                 </span>
               </div>
-              <button className="dj-btn dj-btn-stop" onClick={stopChallenge}>End run</button>
+              <button className="booth-btn booth-btn-stop" onClick={stopChallenge}>End run</button>
             </>
           ) : (
             <button
-              className="dj-btn dj-btn-challenge"
+              className="booth-btn booth-btn-challenge"
               disabled={!loaded.A && !loaded.B}
               onClick={() => startChallenge(loaded.A ? 'A' : 'B')}
             >
@@ -360,7 +375,7 @@ export default function DJView() {
         </div>
       </header>
 
-      {err && <div className="dj-error" role="alert">{err}</div>}
+      {err && <div className="booth-error" role="alert">{err}</div>}
 
       {challenge && (
         <ChallengeLane
@@ -369,7 +384,7 @@ export default function DJView() {
         />
       )}
 
-      <div className="dj-decks">
+      <div className="booth-decks">
         {(['A', 'B'] as DeckId[]).map((id) => (
           <DeckPanel
             key={id}
@@ -393,38 +408,38 @@ export default function DJView() {
         ))}
       </div>
 
-      <div className="dj-crossfader">
-        <span className="dj-xf-label">A</span>
+      <div className="booth-crossfader">
+        <span className="booth-xf-label">A</span>
         <input
           type="range" min={-1} max={1} step={0.01} value={xfader}
           onChange={(e) => moveXfader(Number(e.target.value))}
-          className="dj-xf-range" aria-label="Crossfader"
+          className="booth-xf-range" aria-label="Crossfader"
         />
-        <span className="dj-xf-label">B</span>
+        <span className="booth-xf-label">B</span>
       </div>
 
-      <div className="dj-keys">
+      <div className="booth-keys">
         {(Object.keys(ACTION_LABEL) as DJAction[]).map((a) => (
-          <button key={a} className="dj-key" onClick={() => performAction(a)}>
-            <span className="dj-key-cap">{ACTION_KEYCAP[a]}</span>
-            <span className="dj-key-label">{ACTION_LABEL[a]}</span>
+          <button key={a} className="booth-key" onClick={() => performAction(a)}>
+            <span className="booth-key-cap">{ACTION_KEYCAP[a]}</span>
+            <span className="booth-key-label">{ACTION_LABEL[a]}</span>
           </button>
         ))}
-        <span className="dj-keys-hint">
+        <span className="booth-keys-hint">
           Q/P play · W/O cue · S/L sync · ←/→ crossfader
         </span>
       </div>
 
       {suggestions.length > 0 && (
-        <section className="dj-suggest">
-          <h2 className="dj-suggest-title">Mixes cleanly out of this</h2>
-          <ul className="dj-suggest-list">
+        <section className="booth-suggest">
+          <h2 className="booth-suggest-title">Mixes cleanly out of this</h2>
+          <ul className="booth-suggest-list">
             {suggestions.map((t) => (
               <li key={t.id}>
-                <button className="dj-suggest-item" onClick={() => void loadDeck(loaded.A ? 'B' : 'A', t)}>
-                  <span className="dj-suggest-name">{t.title}</span>
-                  <span className="dj-suggest-artist">{t.artist}</span>
-                  <span className="dj-suggest-meta">{Math.round(Number(t.bpm))} · {t.camelotKey}</span>
+                <button className="booth-suggest-item" onClick={() => void loadDeck(loaded.A ? 'B' : 'A', t)}>
+                  <span className="booth-suggest-name">{t.title}</span>
+                  <span className="booth-suggest-artist">{t.artist}</span>
+                  <span className="booth-suggest-meta">{Math.round(Number(t.bpm))} · {t.camelotKey}</span>
                 </button>
               </li>
             ))}
@@ -433,22 +448,22 @@ export default function DJView() {
       )}
 
       {picker && (
-        <div className="dj-picker-backdrop" onClick={() => setPicker(null)}>
-          <div className="dj-picker" onClick={(e) => e.stopPropagation()}>
+        <div className="booth-picker-backdrop" onClick={() => setPicker(null)}>
+          <div className="booth-picker" onClick={(e) => e.stopPropagation()}>
             <input
-              className="dj-picker-input" autoFocus placeholder={`Load deck ${picker}…`}
+              className="booth-picker-input" autoFocus placeholder={`Load deck ${picker}…`}
               value={query} onChange={(e) => setQuery(e.target.value)}
             />
-            <ul className="dj-picker-list">
+            <ul className="booth-picker-list">
               {pickerResults.map((t) => (
                 <li key={t.id}>
                   <button
-                    className="dj-picker-item"
+                    className="booth-picker-item"
                     onClick={() => { const d = picker; setPicker(null); setQuery(''); void loadDeck(d, t) }}
                   >
-                    <span className="dj-picker-name">{t.title}</span>
-                    <span className="dj-picker-artist">{t.artist}</span>
-                    <span className="dj-picker-meta">
+                    <span className="booth-picker-name">{t.title}</span>
+                    <span className="booth-picker-artist">{t.artist}</span>
+                    <span className="booth-picker-meta">
                       {t.bpm ? Math.round(Number(t.bpm)) : '—'} · {t.camelotKey || '—'}
                     </span>
                   </button>
@@ -469,18 +484,18 @@ function ChallengeLane(props: {
 }) {
   const fresh = props.verdict && Date.now() - props.verdict.at < 600 ? props.verdict.v : null
   return (
-    <div className="dj-lane">
-      <div className="dj-lane-target" />
+    <div className="booth-lane">
+      <div className="booth-lane-target" />
       {props.items.map(({ p, frac, done }) => (
         <div
           key={p.id}
-          className={`dj-note dj-note-${p.action}${done ? ' is-done' : ''}`}
+          className={`booth-note booth-note-${p.action}${done ? ' is-done' : ''}`}
           style={{ left: `${Math.max(0, Math.min(100, frac * 100))}%` }}
         >
           {ACTION_KEYCAP[p.action]}
         </div>
       ))}
-      {fresh && <div className={`dj-verdict dj-verdict-${fresh}`}>{fresh.toUpperCase()}</div>}
+      {fresh && <div className={`booth-verdict booth-verdict-${fresh}`}>{fresh.toUpperCase()}</div>}
     </div>
   )
 }
@@ -556,47 +571,50 @@ function DeckPanel(props: {
   }, [deck, props.position, bpm])
 
   return (
-    <section className={`dj-deck dj-deck-${id}`}>
-      <header className="dj-deck-head">
-        <span className="dj-deck-id">{id}</span>
-        <button className="dj-deck-load" onClick={props.onPick}>
+    <section className={`booth-deck booth-deck-${id}`}>
+      <header className="booth-deck-head">
+        <span className="booth-deck-id">{id}</span>
+        <button className="booth-deck-load" onClick={props.onPick}>
           {props.loading ? 'Loading…' : track ? track.title : `Load deck ${id}`}
         </button>
       </header>
-      <div className="dj-deck-meta">
-        <span className="dj-deck-artist">{track?.artist || '—'}</span>
-        <span className="dj-deck-nums">
+      <div className="booth-deck-meta">
+        <span className="booth-deck-artist">{track?.artist || '—'}</span>
+        <span className="booth-deck-nums">
           {effBpm ? effBpm.toFixed(1) : '—'} BPM
-          {props.rate !== 1 && <em className="dj-deck-drift"> {props.rate > 1 ? '+' : ''}{((props.rate - 1) * 100).toFixed(1)}%</em>}
-          {track?.camelotKey && <span className="dj-deck-key">{track.camelotKey}</span>}
+          {props.rate !== 1 && <em className="booth-deck-drift"> {props.rate > 1 ? '+' : ''}{((props.rate - 1) * 100).toFixed(1)}%</em>}
+          {track?.camelotKey && <span className="booth-deck-key">{track.camelotKey}</span>}
         </span>
       </div>
 
-      <canvas ref={canvasRef} className="dj-wave" />
-
-      <div className="dj-transport">
-        <button className="dj-btn" onClick={props.onCue} disabled={!track}>CUE</button>
-        <button className="dj-btn dj-btn-play" onClick={props.onPlay} disabled={!track}>
-          {props.playing ? 'PAUSE' : 'PLAY'}
-        </button>
-        <button className="dj-btn" onClick={props.onSync} disabled={!track}>SYNC</button>
+      <div className="booth-wave-wrap">
+        <canvas ref={canvasRef} className="booth-wave" />
+        {!track && <div className="booth-wave-empty">no track loaded</div>}
       </div>
 
-      <label className="dj-tempo">
-        <span className="dj-tempo-label">TEMPO</span>
+      <div className="booth-transport">
+        <button className="booth-btn" onClick={props.onCue} disabled={!track}>CUE</button>
+        <button className="booth-btn booth-btn-play" onClick={props.onPlay} disabled={!track}>
+          {props.playing ? 'PAUSE' : 'PLAY'}
+        </button>
+        <button className="booth-btn" onClick={props.onSync} disabled={!track}>SYNC</button>
+      </div>
+
+      <label className="booth-tempo">
+        <span className="booth-tempo-label">TEMPO</span>
         <input
           type="range" min={0.92} max={1.08} step={0.001} value={props.rate}
           onChange={(e) => props.onRate(Number(e.target.value))}
           disabled={!track} aria-label={`Deck ${id} tempo`}
         />
-        <button className="dj-tempo-reset" onClick={() => props.onRate(1)} disabled={!track}>0</button>
+        <button className="booth-tempo-reset" onClick={() => props.onRate(1)} disabled={!track}>0</button>
       </label>
 
-      <div className="dj-eq">
+      <div className="booth-eq">
         {(['high', 'mid', 'low'] as const).map((band) => (
           <button
             key={band}
-            className={`dj-eq-kill${props.kills[band] ? ' is-killed' : ''}`}
+            className={`booth-eq-kill${props.kills[band] ? ' is-killed' : ''}`}
             onClick={() => props.onKill(band)}
             disabled={!track}
           >
@@ -605,8 +623,8 @@ function DeckPanel(props: {
         ))}
       </div>
 
-      <label className="dj-filter">
-        <span className="dj-filter-label">FILTER</span>
+      <label className="booth-filter">
+        <span className="booth-filter-label">FILTER</span>
         <input
           type="range" min={-1} max={1} step={0.01} value={props.filterAmt}
           onChange={(e) => props.onFilter(Number(e.target.value))}

@@ -1,0 +1,405 @@
+/* DJ mode — a dark booth inside a light app.
+ *
+ * The rest of JakeTunes is the 2006 iTunes shell. This one view goes dark on
+ * purpose: every piece of DJ hardware ever made is black with a lit meter,
+ * because in a dark room a bright panel is the only thing you can't read. It
+ * also makes the mode-switch unmistakable — you know at a glance that the keys
+ * now do something different.
+ *
+ * Accent is the app orange (#e0812e) so it still reads as JakeTunes.
+ */
+
+.booth-view {
+  --booth-bg: #141416;
+  --booth-panel: #1c1c1f;
+  --booth-edge: #2c2c30;
+  --booth-text: #e8e8ea;
+  --booth-dim: #8a8a90;
+  --booth-accent: #e0812e;
+  --booth-cue: #4da3ff;
+  --booth-kill: #d9483f;
+
+  background: var(--booth-bg);
+  color: var(--booth-text);
+  min-height: 100%;
+  padding: 20px 24px 40px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+.booth-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.booth-title {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin: 0;
+}
+.booth-header-right { display: flex; align-items: center; gap: 12px; }
+.booth-score { text-align: right; line-height: 1.15; }
+.booth-score-value { display: block; font-size: 24px; font-weight: 700; color: var(--booth-accent); }
+.booth-score-meta { display: block; font-size: 11px; color: var(--booth-dim); }
+
+.booth-error {
+  background: rgba(217, 72, 63, 0.14);
+  border: 1px solid rgba(217, 72, 63, 0.5);
+  color: #ffb3ae;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+/* ── buttons ────────────────────────────────────────────────────────────── */
+.booth-btn {
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  color: var(--booth-text);
+  border-radius: 5px;
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.booth-btn:hover:not(:disabled) { background: #26262a; border-color: #3a3a40; }
+.booth-btn:disabled { opacity: 0.35; cursor: default; }
+.booth-btn-play { min-width: 74px; }
+.booth-btn-challenge { background: var(--booth-accent); border-color: var(--booth-accent); color: #1a1a1a; }
+.booth-btn-challenge:hover:not(:disabled) { background: #efa055; border-color: #efa055; }
+.booth-btn-stop { border-color: var(--booth-kill); color: #ff9a92; }
+
+/* ── decks ──────────────────────────────────────────────────────────────── */
+.booth-decks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 900px) { .booth-decks { grid-template-columns: 1fr; } }
+
+.booth-deck {
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  border-radius: 10px;
+  padding: 14px;
+}
+.booth-deck-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.booth-deck-id {
+  /* 26px badge holding a 15px glyph — a ratio, so it stays right if the
+     type scale moves. */
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--booth-accent);
+  color: #1a1a1a;
+  font-size: 15px;
+  font-weight: 800;
+  flex: none;
+}
+.booth-deck-load {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--booth-text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  /* Track names are bounded here but must never be clipped mid-word into
+     nonsense — one line, honest ellipsis only when there is truly no room. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+}
+.booth-deck-load:hover { color: var(--booth-accent); }
+.booth-deck-meta {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; color: var(--booth-dim); margin-bottom: 10px; gap: 10px;
+}
+.booth-deck-artist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.booth-deck-nums { flex: none; color: var(--booth-text); font-weight: 600; }
+.booth-deck-drift { color: var(--booth-accent); font-style: normal; font-size: 11px; }
+.booth-deck-key {
+  margin-left: 8px;
+  border: 1px solid var(--booth-edge);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+  color: var(--booth-dim);
+}
+
+.booth-wave {
+  width: 100%;
+  height: 84px;
+  display: block;
+  background: var(--booth-bg);
+  border-radius: 6px;
+}
+
+.booth-transport { display: flex; gap: 8px; margin-bottom: 12px; }
+
+.booth-tempo { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.booth-tempo-label, .booth-filter-label {
+  font-size: 10px; letter-spacing: 0.1em; color: var(--booth-dim); width: 46px; flex: none;
+}
+.booth-tempo input, .booth-filter input { flex: 1; }
+
+/* ── faders ──────────────────────────────────────────────────────────────
+ * Hand-built rather than accent-color. A default range control is a light
+ * grey pill that looks pasted on top of a dark panel, and it gives no sense
+ * of centre — which is exactly the information a tempo fader and a
+ * crossfader exist to convey. These get a recessed track, a machined thumb,
+ * and a centre detent you can see at a glance.
+ */
+.booth-view input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 22px;
+  cursor: pointer;
+}
+.booth-view input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #0f0f11;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+.booth-view input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  /* 16px thumb on a 4px track — the ratio that reads as a physical cap
+     without swallowing the groove it rides in. */
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 3px;
+  background: linear-gradient(#5a5a62, #34343a);
+  border: 1px solid #6a6a74;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.booth-view input[type="range"]:hover::-webkit-slider-thumb { border-color: var(--booth-accent); }
+.booth-view input[type="range"]:disabled { opacity: 0.3; cursor: default; }
+.booth-view input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--booth-accent);
+  outline-offset: 2px;
+}
+
+/* Centre detent — a hairline behind the middle of a bipolar control. */
+.booth-tempo, .booth-filter, .booth-crossfader { position: relative; }
+.booth-tempo::after, .booth-filter::after, .booth-crossfader::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 12px;
+  margin-top: -6px;
+  background: rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+}
+
+/* The crossfader is the biggest gesture in the room; give it the throw. */
+.booth-xf-range { height: 30px; }
+.booth-xf-range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; }
+.booth-xf-range::-webkit-slider-thumb {
+  width: 22px;
+  height: 26px;
+  margin-top: -10px;
+  border-radius: 4px;
+  background: linear-gradient(#6d6d78, #3a3a42);
+}
+.booth-tempo-reset {
+  background: none; border: 1px solid var(--booth-edge); color: var(--booth-dim);
+  border-radius: 4px; width: 24px; height: 22px; font-size: 11px; cursor: pointer; flex: none;
+}
+
+.booth-eq { display: flex; gap: 8px; margin-bottom: 12px; }
+.booth-eq-kill {
+  flex: 1;
+  background: var(--booth-bg);
+  border: 1px solid var(--booth-edge);
+  color: var(--booth-dim);
+  border-radius: 5px;
+  padding: 9px 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.booth-eq-kill.is-killed {
+  background: var(--booth-kill);
+  border-color: var(--booth-kill);
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(217, 72, 63, 0.35), 0 0 14px rgba(217, 72, 63, 0.45);
+}
+.booth-eq-kill:disabled { opacity: 0.35; cursor: default; }
+
+.booth-filter { display: flex; align-items: center; gap: 10px; }
+
+/* ── crossfader ─────────────────────────────────────────────────────────── */
+.booth-crossfader {
+  display: flex; align-items: center; gap: 14px;
+  margin: 20px auto;
+  max-width: 620px;
+}
+.booth-xf-label { font-size: 13px; font-weight: 800; color: var(--booth-dim); }
+.booth-xf-range { flex: 1; }
+
+/* ── deck empty state ────────────────────────────────────────────────────
+ * An unloaded deck was a black rectangle, which reads as broken rather than
+ * as waiting. Say what it wants.
+ */
+.booth-wave-wrap { position: relative; margin-bottom: 12px; }
+.booth-wave-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #313137;
+  border-radius: 6px;
+  color: #5c5c64;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+/* ── the four action keys ───────────────────────────────────────────────── */
+.booth-keys {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+.booth-key {
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--booth-text);
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 64px;
+}
+.booth-key:hover { border-color: var(--booth-accent); }
+.booth-key-cap { font-size: 16px; font-weight: 800; color: var(--booth-accent); }
+.booth-key-label { font-size: 9px; letter-spacing: 0.1em; color: var(--booth-dim); }
+.booth-keys-hint { font-size: 11px; color: var(--booth-dim); margin-left: 8px; }
+
+/* ── challenge lane ─────────────────────────────────────────────────────── */
+.booth-lane {
+  position: relative;
+  height: 68px;
+  background: linear-gradient(90deg, rgba(224,129,46,0.16), transparent 45%);
+  border: 1px solid var(--booth-edge);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.booth-lane-target {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: var(--booth-accent);
+  box-shadow: 0 0 12px rgba(224, 129, 46, 0.8);
+}
+/* Notes travel right→left toward the target line at left:0. */
+.booth-note {
+  position: absolute; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 7px;
+  font-size: 14px; font-weight: 800;
+  background: var(--booth-panel);
+  border: 2px solid var(--booth-accent);
+  color: var(--booth-text);
+}
+.booth-note-bass-kill { border-color: var(--booth-kill); }
+.booth-note-crossfade { border-color: var(--booth-accent); }
+.booth-note-filter { border-color: var(--booth-cue); }
+.booth-note-cue-drop { border-color: #7ac74f; }
+.booth-note.is-done { opacity: 0.2; }
+
+.booth-verdict {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 20px; font-weight: 800; letter-spacing: 0.12em;
+  pointer-events: none;
+}
+.booth-verdict-perfect { color: #7ac74f; }
+.booth-verdict-great { color: var(--booth-accent); }
+.booth-verdict-good { color: var(--booth-cue); }
+.booth-verdict-miss { color: var(--booth-kill); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .booth-verdict { animation: booth-pop 420ms ease-out; }
+}
+@keyframes booth-pop {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+  40%  { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* ── suggestions ────────────────────────────────────────────────────────── */
+.booth-suggest-title {
+  font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--booth-dim); margin: 0 0 8px;
+}
+.booth-suggest-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.booth-suggest-item, .booth-picker-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--booth-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.booth-suggest-item:hover, .booth-picker-item:hover { border-color: var(--booth-accent); }
+.booth-suggest-artist, .booth-picker-artist { color: var(--booth-dim); }
+.booth-suggest-meta, .booth-picker-meta { color: var(--booth-dim); font-size: 11px; white-space: nowrap; }
+.booth-suggest-name, .booth-suggest-artist,
+.booth-picker-name, .booth-picker-artist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── load picker ────────────────────────────────────────────────────────── */
+.booth-picker-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid; place-items: start center;
+  padding-top: 10vh;
+  z-index: 400;
+}
+.booth-picker {
+  width: min(680px, 92vw);
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
+}
+.booth-picker-input {
+  width: 100%;
+  background: var(--booth-bg);
+  border: 1px solid var(--booth-edge);
+  border-radius: 6px;
+  color: var(--booth-text);
+  padding: 9px 12px;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.booth-picker-input:focus { outline: none; border-color: var(--booth-accent); }
+.booth-picker-list {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; gap: 4px;
+  max-height: 52vh; overflow-y: auto;
+}
