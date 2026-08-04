@@ -161,3 +161,85 @@ export function matchPrompt(
   }
   return best && bestD <= WINDOWS.good ? best : null
 }
+
+// ── guided mix scoring ─────────────────────────────────────────────────────
+/**
+ * Grading the mix itself, rather than a rhythm game played next to it.
+ *
+ * The first version of challenge mode was falling notes and four keys. It
+ * scored reflexes, which is a different skill from DJing and taught none of it:
+ * you could max the score without ever having blended two records. These grade
+ * the actual moves — when you brought the track in, how tight the beats were
+ * when you did, when you swapped the bass — so the score and the quality of the
+ * mix are the same measurement.
+ */
+
+export type MoveId = 'bring-in' | 'phase-lock' | 'bass-swap'
+
+export interface MoveGrade {
+  move: MoveId
+  verdict: Verdict
+  points: number
+  /** Plain feedback naming the error and its direction. */
+  note: string
+}
+
+/**
+ * Grade a move that was supposed to land on a block boundary.
+ *
+ * `secondsToBoundary` is the countdown at the instant they acted: near zero
+ * means they hit the start of a block. Early and late are called out
+ * separately, because they are different mistakes with different fixes and
+ * "off" tells you nothing about which way to correct.
+ */
+export function gradeOnBoundary(
+  move: MoveId, secondsToBoundary: number, blockSeconds: number,
+): MoveGrade {
+  // Distance to the NEAREST boundary: acting 0.2s before the next block is
+  // early, not 7.8s late.
+  const raw = blockSeconds > 0
+    ? (secondsToBoundary > blockSeconds / 2 ? secondsToBoundary - blockSeconds : secondsToBoundary)
+    : secondsToBoundary
+  const err = Math.abs(raw)
+  const verdict = judge(err)
+  const early = raw > 0
+  const ms = Math.round(err * 1000)
+  const note = verdict === 'perfect'
+    ? 'Right on the block — that is the one.'
+    : verdict === 'miss'
+      ? `${(err).toFixed(1)}s ${early ? 'early' : 'late'}. Watch the counter and move as it reaches zero.`
+      : `${ms}ms ${early ? 'early — you are rushing it' : 'late — let it come to you'}.`
+  return { move, verdict, points: POINTS[verdict], note }
+}
+
+/**
+ * Grade how well the beats were locked at the moment the track came in.
+ * Drift is in beats; a twentieth of a beat is inaudible.
+ */
+export function gradePhase(driftBeats: number): MoveGrade {
+  const d = Math.abs(driftBeats)
+  const verdict: Verdict =
+    d <= 0.02 ? 'perfect' : d <= 0.05 ? 'great' : d <= 0.12 ? 'good' : 'miss'
+  const note = verdict === 'perfect'
+    ? 'Locked. Nobody could hear a seam there.'
+    : verdict === 'miss'
+      ? `Beats were ${d.toFixed(2)} of a beat apart — that is audible as a stumble. Nudge until the meter is green BEFORE you bring it in.`
+      : `${d.toFixed(2)} of a beat out — close, and it would pass under a bass swap.`
+  return { move: 'phase-lock', verdict, points: POINTS[verdict], note }
+}
+
+/** Plain summary of a finished run — what to work on, not just a number. */
+export function summarise(grades: MoveGrade[]): { score: number; headline: string; advice: string } {
+  if (grades.length === 0) {
+    return { score: 0, headline: 'No moves recorded', advice: 'Start a run and mix one track into another.' }
+  }
+  const score = grades.reduce((s, g) => s + g.points, 0)
+  const best = POINTS.perfect * grades.length
+  const pct = Math.round((score / best) * 100)
+  const worst = grades.reduce((w, g) => (g.points < w.points ? g : w), grades[0])
+  const headline = pct >= 90 ? 'That was a clean mix.'
+    : pct >= 65 ? 'Solid — one thing to tighten.'
+    : pct >= 35 ? 'It landed, but it was audible.'
+    : 'Rough. Slow down and do one step at a time.'
+  return { score, headline, advice: worst.note }
+}

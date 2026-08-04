@@ -63,7 +63,11 @@ test('once tempo matches, it calls the phase and the DIRECTION', () => {
   )
   assert.equal(behind.step, 'phase')
   assert.equal(behind.nudge, 1)
-  assert.match(behind.instruction, /BEHIND/)
+  // Wording is plain-language now, but it must still name the direction and
+  // point at the matching control — the nudge value alone could be right while
+  // the sentence tells you to do the opposite.
+  assert.match(behind.instruction, /behind/i)
+  assert.match(behind.instruction, /NUDGE \+/)
 
   const ahead = advise(
     deck({ bpm: 120, position: 0 }),
@@ -71,7 +75,8 @@ test('once tempo matches, it calls the phase and the DIRECTION', () => {
   )
   assert.equal(ahead.step, 'phase')
   assert.equal(ahead.nudge, -1)
-  assert.match(ahead.instruction, /AHEAD/)
+  assert.match(ahead.instruction, /ahead/i)
+  assert.match(ahead.instruction, /NUDGE −/)
 })
 
 test('locked and in phase, it moves on to the bass', () => {

@@ -511,3 +511,134 @@
   background: var(--booth-accent); border-color: var(--booth-accent); color: #1a1a1a;
 }
 .booth-nudge-deck { font-size: 9px; letter-spacing: 0.08em; color: var(--booth-dim); }
+
+/* ── the crate ─────────────────────────────────────────────────────────────
+ * The library, sat under the decks where every DJ program puts it, because
+ * the gesture people already have is "grab a record and throw it on a deck".
+ */
+.booth-crate { margin-bottom: 22px; }
+.booth-crate-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.booth-crate-title {
+  font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--booth-dim); margin: 0; flex: none;
+}
+.booth-crate-search {
+  flex: 1; max-width: 340px;
+  background: var(--booth-bg);
+  border: 1px solid var(--booth-edge);
+  border-radius: 6px;
+  color: var(--booth-text);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.booth-crate-search:focus { outline: none; border-color: var(--booth-accent); }
+.booth-crate-hint { font-size: 11px; color: #5c5c64; }
+.booth-crate-list {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; gap: 3px;
+  max-height: 260px; overflow-y: auto;
+}
+.booth-crate-item {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  background: var(--booth-panel);
+  border: 1px solid var(--booth-edge);
+  border-radius: 5px;
+  padding: 7px 11px;
+  font-size: 13px;
+  cursor: grab;
+}
+.booth-crate-item:hover { border-color: var(--booth-accent); }
+.booth-crate-item:active { cursor: grabbing; }
+.booth-crate-name, .booth-crate-artist {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.booth-crate-artist { color: var(--booth-dim); }
+.booth-crate-meta { color: var(--booth-dim); font-size: 11px; white-space: nowrap; }
+
+/* A deck being dragged over says so — a drop target with no feedback reads as
+   not a target at all. */
+.booth-deck.is-drag-over {
+  border-color: var(--booth-accent);
+  box-shadow: 0 0 0 1px var(--booth-accent), 0 0 22px rgba(224, 129, 46, 0.28);
+}
+.booth-deck.is-drag-over .booth-wave-empty {
+  border-color: var(--booth-accent);
+  color: var(--booth-accent);
+}
+
+/* ── layout: the library must be reachable without scrolling ───────────────
+ * The first cut stacked coach, decks, crossfader, a key row and THEN the
+ * crate, so the library sat below the fold showing two rows and you had to
+ * scroll past every control to reach your own songs. Real DJ software gives
+ * the browser permanent residency for exactly this reason.
+ *
+ * Column layout, fixed-height controls, crate takes whatever is left and
+ * scrolls internally. The page itself never scrolls.
+ */
+.booth-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding-bottom: 16px;
+}
+.booth-coach, .booth-decks, .booth-crossfader { flex: none; }
+.booth-crossfader { margin: 14px auto; }
+
+.booth-crate {
+  flex: 1;
+  min-height: 0;              /* without this the list refuses to shrink */
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+.booth-crate-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+.booth-crate-head { flex: none; flex-wrap: wrap; }
+
+.booth-crate-filter {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--booth-dim); cursor: pointer; user-select: none;
+}
+.booth-crate-filter input { accent-color: var(--booth-accent); margin: 0; }
+
+/* Waveforms get shorter so two decks plus the crate fit one screen. */
+.booth-wave { height: 64px; }
+
+/* ── compaction pass ───────────────────────────────────────────────────────
+ * Measured after the layout change: controls ate 699px of an 895px viewport
+ * and left the crate 156px — about four rows. The controls are glanced at; the
+ * library is read and searched. Give the height to the library.
+ */
+.booth-view { padding-top: 14px; }
+.booth-header { margin-bottom: 10px; }
+.booth-title { font-size: 20px; }
+
+.booth-coach { padding: 10px 14px; margin-bottom: 12px; gap: 14px; }
+.booth-coach-instruction { font-size: 14px; margin-bottom: 3px; }
+.booth-coach-why { font-size: 11px; line-height: 1.35; }
+.booth-coach-count-num { font-size: 18px; }
+
+.booth-decks { gap: 12px; }
+.booth-deck { padding: 10px 12px; }
+.booth-deck-head { margin-bottom: 4px; }
+.booth-deck-load { font-size: 14px; }
+.booth-deck-meta { margin-bottom: 6px; }
+.booth-wave { height: 52px; }
+.booth-wave-wrap { margin-bottom: 8px; }
+.booth-transport { margin-bottom: 8px; }
+.booth-btn { padding: 5px 12px; }
+.booth-tempo { margin-bottom: 6px; }
+.booth-eq { margin-bottom: 6px; }
+.booth-eq-kill { padding: 6px 0; }
+.booth-view input[type="range"] { height: 18px; }
+
+.booth-crossfader { margin: 10px auto; }
+.booth-xf-range { height: 24px; }
+.booth-crate-head { margin-bottom: 6px; }

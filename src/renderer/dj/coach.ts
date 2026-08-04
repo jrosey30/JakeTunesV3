@@ -68,7 +68,7 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
     return {
       step: 'load',
       instruction: 'Load your next track onto the other deck.',
-      why: 'Pick one that is close in tempo and harmonically compatible — the list below is filtered to exactly those.',
+      why: 'Drag one in from the list below, or click it. That list is already filtered to tracks close enough in speed to blend, in keys that will not clash with what is playing.',
       satisfied: false,
     }
   }
@@ -91,8 +91,8 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
     const faster = inEff > liveEff
     return {
       step: 'tempo',
-      instruction: `Press SYNC on the incoming deck${faster ? '' : ''} — it is ${Math.abs(inEff - liveEff).toFixed(1)} BPM ${faster ? 'fast' : 'slow'}.`,
-      why: 'Match tempo before anything else. If the tempos differ, any alignment you make drifts apart again within a bar.',
+      instruction: `Press SYNC on the other deck — it is running ${Math.abs(inEff - liveEff).toFixed(1)} BPM too ${faster ? 'fast' : 'slow'}.`,
+      why: 'Get both tracks to the same speed first. If they differ even slightly, anything you line up now slides apart again a few seconds later.',
       satisfied: false,
     }
   }
@@ -101,8 +101,8 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
     const c = secondsToNextPhrase(live.position, live.bpm, live.beatOffset)
     return {
       step: 'cue',
-      instruction: 'Start the incoming deck on the next phrase line.',
-      why: 'Dance music is built in 4-bar phrases. Coming in on the seam is what makes a mix sound intentional instead of dropped in.',
+      instruction: 'Wait for the counter to reach zero, then press PLAY on the other deck.',
+      why: 'Tracks are built out of repeating blocks of 16 beats. Starting the next one exactly as a new block begins is what makes a mix sound deliberate instead of dropped on top. The counter is the time until the next one.',
       countdown: c,
       satisfied: c < 0.25,
     }
@@ -117,9 +117,9 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
     return {
       step: 'phase',
       instruction: drift > 0
-        ? 'Incoming deck is BEHIND — hold NUDGE + to catch it up.'
-        : 'Incoming deck is AHEAD — hold NUDGE − to let it fall back.',
-      why: 'Same tempo is not the same as in time. The beats have to land together, or you hear it as a stumble even though both records are at the same BPM.',
+        ? 'The new track is dragging behind — hold NUDGE + until the meter turns green.'
+        : 'The new track is running ahead — hold NUDGE − until the meter turns green.',
+      why: 'Same speed is not the same as in step. Both tracks can sit at an identical BPM and still have their beats landing at different moments, which your ear hears as a stumble. Nudge shoves this one forward or back until they land together.',
       nudge: drift > 0 ? 1 : -1,
       drift,
       satisfied: false,
@@ -129,8 +129,8 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
   if (!incoming.bassKilled) {
     return {
       step: 'bring-in',
-      instruction: 'Kill the bass on the incoming deck, then bring the crossfader toward it.',
-      why: 'Two basslines at once turns to mud and eats all the headroom. Drop one out and you can have both records audible at the same time.',
+      instruction: 'Mute the bass on the new track (its LOW button), then slide the crossfader toward it.',
+      why: 'Two basslines at once turn to mud — they fight each other and everything gets loud and shapeless. Mute the low end on the incoming track and you can have both playing together and still hear each one clearly.',
       drift,
       nudge: 0,
       satisfied: false,
@@ -140,8 +140,8 @@ export function advise(live: DeckReading, incoming: DeckReading): CoachAdvice {
   const c = secondsToNextPhrase(live.position, live.bpm, live.beatOffset)
   return {
     step: 'bass-swap',
-    instruction: 'On the next phrase, swap the bass: outgoing down, incoming up.',
-    why: 'The bass swap is the moment the mix actually turns over. Landing it on a phrase line is what makes the change feel like it was meant.',
+    instruction: 'At zero, swap the bass over: LOW off on the old track, LOW back on the new one.',
+    why: 'This is the moment the mix actually turns over. The low end is what your ear follows, so whichever track has the bass is the one people think is playing. Do it as a new block starts and the handover sounds intended.',
     countdown: c,
     drift,
     nudge: 0,

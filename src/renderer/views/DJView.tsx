@@ -3,11 +3,10 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
 import { DJEngine, type DeckId } from '../dj/engine'
-import { beatsInRange, camelotCompatible, tempoDistance, LOCK_TOLERANCE } from '../dj/beatgrid'
+import { beatsInRange, camelotCompatible, tempoDistance, phaseDelta, secondsToNextPhrase, beatPeriod } from '../dj/beatgrid'
 import { advise, type DeckReading } from '../dj/coach'
 import {
-  buildPrompts, matchPrompt, judge, applyHit, emptyRun, accuracy, multiplierFor,
-  type Prompt, type DJAction, type Verdict, type RunState,
+  gradeOnBoundary, gradePhase, summarise, type MoveGrade,
 } from '../dj/scoring'
 import '../styles/booth.css'
 
@@ -20,14 +19,6 @@ import '../styles/booth.css'
  * move on the actual audio, so a good run and a good mix are the same event.
  */
 
-const LOOKAHEAD_SEC = 4          // how far up the lane a prompt is visible
-const ACTION_KEYS: Record<string, DJAction> = { d: 'bass-kill', f: 'crossfade', j: 'filter', k: 'cue-drop' }
-const ACTION_LABEL: Record<DJAction, string> = {
-  'bass-kill': 'BASS', 'crossfade': 'FADE', 'filter': 'FILTER', 'cue-drop': 'DROP',
-}
-const ACTION_KEYCAP: Record<DJAction, string> = {
-  'bass-kill': 'D', 'crossfade': 'F', 'filter': 'J', 'cue-drop': 'K',
-}
 
 export default function DJView() {
   const { state } = useLibrary()
@@ -54,16 +45,17 @@ export default function DJView() {
   const [pos, setPos] = useState<Record<DeckId, number>>({ A: 0, B: 0 })
 
   // ── challenge state ──────────────────────────────────────────────────────
+  // A run scores the MIX, not a reflex game: each real move is graded as it
+  // happens, so a good score and a good mix are the same event.
   const [challenge, setChallenge] = useState(false)
-  const [challengeDeck, setChallengeDeck] = useState<DeckId>('A')
-  const [prompts, setPrompts] = useState<Prompt[]>([])
-  const [run, setRun] = useState<RunState>(emptyRun)
-  const [lastVerdict, setLastVerdict] = useState<{ v: Verdict; at: number } | null>(null)
-  const resolvedRef = useRef<Set<number>>(new Set())
-  const [, forceLane] = useState(0)
+  const [grades, setGrades] = useState<MoveGrade[]>([])
+  const [lastGrade, setLastGrade] = useState<MoveGrade | null>(null)
+  const [summary, setSummary] = useState<ReturnType<typeof summarise> | null>(null)
 
   const [picker, setPicker] = useState<DeckId | null>(null)
   const [query, setQuery] = useState('')
+  const [browse, setBrowse] = useState('')
+  const [onlyCompatible, setOnlyCompatible] = useState(false)
 
   // ── boot the engine once, tear it down completely on unmount ─────────────
   useEffect(() => {
@@ -95,6 +87,11 @@ export default function DJView() {
   // WE were the one who paused it. Resuming something the user had already
   // stopped would be its own surprise.
   const resumeOnLeaveRef = useRef(false)
+  const liveDeckRef = useRef<DeckId>('A')
+  // gradeMove is defined further down (it needs liveDeck); the transport
+  // callbacks above reach it through a ref rather than being reordered, which
+  // keeps every other dependency chain intact.
+  const gradeMoveRef = useRef<((m: 'bring-in' | 'bass-swap') => void) | null>(null)
   useEffect(() => {
     if (pb.isPlaying) {
       resumeOnLeaveRef.current = true
@@ -120,7 +117,6 @@ export default function DJView() {
       if (e) {
         setPos({ A: e.a.position, B: e.b.position })
         setPlaying({ A: e.a.playing, B: e.b.playing })
-        if (challenge) forceLane((n) => (n + 1) % 1_000_000)
       }
       raf = requestAnimationFrame(tick)
     }
@@ -131,6 +127,21 @@ export default function DJView() {
   const absPathFor = useCallback((t: Track): string => {
     return musicRoot + String(t.path || '').replace(/:/g, '/')
   }, [musicRoot])
+
+  // ── drag a track onto a deck ─────────────────────────────────────────────
+  // Every real DJ program works this way: the library sits under the decks and
+  // you throw a record onto whichever one is free. Clicking a row to load works
+  // too, but drag is the gesture people already have in their hands.
+  //
+  // Custom MIME rather than text/plain: the songs list already puts a row key
+  // on text/plain for its own reordering, and a deck accepting that would try
+  // to load whatever happened to be dragged past it.
+  const DRAG_TYPE = 'application/x-jaketunes-dj-track'
+
+  const onTrackDragStart = useCallback((t: Track, e: React.DragEvent) => {
+    e.dataTransfer.setData(DRAG_TYPE, String(t.id))
+    e.dataTransfer.effectAllowed = 'copy'
+  }, [])
 
   const loadDeck = useCallback(async (id: DeckId, t: Track) => {
     const e = engineRef.current
@@ -150,6 +161,21 @@ export default function DJView() {
     }
   }, [absPathFor, musicRoot])
 
+  const [dragOver, setDragOver] = useState<DeckId | null>(null)
+  const onDeckDragOver = useCallback((id: DeckId, e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return
+    e.preventDefault()                 // without this the drop never fires
+    e.dataTransfer.dropEffect = 'copy'
+    setDragOver(id)
+  }, [])
+  const onDeckDrop = useCallback((id: DeckId, e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOver(null)
+    const raw = e.dataTransfer.getData(DRAG_TYPE)
+    const t = tracks.find((x) => x.id === Number(raw))
+    if (t) void loadDeck(id, t)
+  }, [tracks, loadDeck])
+
   /**
    * Belt and braces for the mount-time pause: if the library player has come
    * back to life while we're in here (auto-advance, a global shortcut), a deck
@@ -168,7 +194,12 @@ export default function DJView() {
     await e.resume()
     const d = e.deck(id)
     if (d.playing) d.pause()
-    else { hushLibrary(); d.play() }
+    else {
+      hushLibrary()
+      // Starting the deck that ISN'T live is the bring-in — the graded move.
+      if (id !== liveDeckRef.current) gradeMoveRef.current?.('bring-in')
+      d.play()
+    }
     setPlaying((s) => ({ ...s, [id]: d.playing }))
   }, [hushLibrary])
 
@@ -198,6 +229,9 @@ export default function DJView() {
   const toggleKill = useCallback((id: DeckId, band: 'low' | 'mid' | 'high') => {
     const e = engineRef.current
     if (!e) return
+    // Killing the LOW on the live deck is the bass swap — the moment the mix
+    // turns over, and the move worth grading.
+    if (band === 'low' && id === liveDeckRef.current) gradeMoveRef.current?.('bass-swap')
     setKills((s) => {
       const on = !s[id][band]
       e.setEq(id, band, on ? -40 : 0)
@@ -220,66 +254,52 @@ export default function DJView() {
   }, [])
 
   // ── challenge: build the chart from the deck's own beat grid ──────────────
-  const startChallenge = useCallback((id: DeckId) => {
-    const e = engineRef.current
-    const d = e?.deck(id)
-    // Needs both a decoded buffer and a known tempo — a chart without a grid
-    // would be prompts on nothing.
-    if (!e || !d || !d.buffer || !d.bpm) return
-    resolvedRef.current = new Set()
-    setRun(emptyRun())
-    setChallengeDeck(id)
-    setPrompts(buildPrompts({
-      bpm: d.bpm,
-      offset: d.beatOffset,
-      from: Math.max(d.position, d.beatOffset) + 4,   // a bar of runway before the first call
-      to: d.duration,
-      deck: id,
-    }))
+  const startChallenge = useCallback(() => {
+    setGrades([])
+    setLastGrade(null)
+    setSummary(null)
     setChallenge(true)
   }, [])
 
   const stopChallenge = useCallback(() => {
     setChallenge(false)
-    setPrompts([])
-    resolvedRef.current = new Set()
-  }, [])
+    setSummary(summarise(grades))
+  }, [grades])
 
   /**
-   * Perform a move AND score it. One path, so the game can never reward
-   * something the audio didn't actually do.
+   * Grade a move at the instant it happens.
+   *
+   * Hooked to the REAL controls rather than to a separate prompt chart, so
+   * there is no way to score well without having actually mixed. `live` is the
+   * deck the crowd is hearing; every move is measured against its block grid.
    */
-  const performAction = useCallback((action: DJAction) => {
+  const gradeMove = useCallback((move: 'bring-in' | 'bass-swap') => {
     const e = engineRef.current
-    if (!e) return
-    const id = challenge ? challengeDeck : (xfader <= 0 ? 'A' : 'B')
-    const other: DeckId = id === 'A' ? 'B' : 'A'
+    if (!e || !challenge) return
+    const live = e.deck(liveDeckRef.current)
+    if (!live.bpm) return
+    const block = beatPeriod(live.bpm) * 16
+    const toBoundary = secondsToNextPhrase(live.position, live.bpm, live.beatOffset)
+    const g = gradeOnBoundary(move, toBoundary, block)
+    setGrades((prev) => [...prev, g])
+    setLastGrade(g)
 
-    switch (action) {
-      case 'bass-kill': toggleKill(id, 'low'); break
-      case 'crossfade': moveXfader(xfader <= 0 ? 1 : -1); break
-      case 'filter': {
-        // Momentary sweep — open again shortly after, the way a hand does.
-        changeFilter(id, -0.75)
-        window.setTimeout(() => changeFilter(id, 0), 420)
-        break
-      }
-      case 'cue-drop': {
-        const d = e.deck(other)
-        if (d.snapshot().loaded) { hushLibrary(); d.seek(d.cuePoint); d.play() }
-        break
+    // Bringing a track in is two skills at once: WHEN you started it, and
+    // whether the beats were together when you did. Grade both or the lesson
+    // is only half taught.
+    if (move === 'bring-in') {
+      const inc = e.deck(liveDeckRef.current === 'A' ? 'B' : 'A')
+      if (inc.bpm) {
+        const pg = gradePhase(phaseDelta(
+          live.position, live.bpm, live.beatOffset,
+          inc.position, inc.bpm, inc.beatOffset,
+        ))
+        setGrades((prev) => [...prev, pg])
+        setLastGrade(pg)
       }
     }
-
-    if (!challenge) return
-    const t = e.deck(challengeDeck).position
-    const p = matchPrompt(prompts, resolvedRef.current, action, t)
-    if (!p) { setRun((r) => applyHit(r, 'miss')); setLastVerdict({ v: 'miss', at: Date.now() }); return }
-    resolvedRef.current.add(p.id)
-    const v = judge(t - p.time)
-    setRun((r) => applyHit(r, v))
-    setLastVerdict({ v, at: Date.now() })
-  }, [challenge, challengeDeck, prompts, xfader, toggleKill, moveXfader, changeFilter, hushLibrary])
+  }, [challenge])
+  gradeMoveRef.current = gradeMove
 
   // ── nudge (pitch bend) ───────────────────────────────────────────────────
   // Held, not toggled. This is the motion that fixes PHASE without touching
@@ -309,7 +329,6 @@ export default function DJView() {
       const k = ev.key.toLowerCase()
       const claim = () => { ev.preventDefault(); ev.stopPropagation() }
 
-      if (ACTION_KEYS[k]) { claim(); performAction(ACTION_KEYS[k]); return }
       if (k === 'q') { claim(); void togglePlay('A') }
       else if (k === 'p') { claim(); void togglePlay('B') }
       else if (k === 'w') { claim(); cue('A') }
@@ -348,7 +367,7 @@ export default function DJView() {
       // permanently detuned. Release both on the way out.
       endBend('A'); endBend('B')
     }
-  }, [performAction, togglePlay, cue, doSync, moveXfader, xfader, startBend, endBend])
+  }, [togglePlay, cue, doSync, moveXfader, xfader, startBend, endBend])
 
   // ── what the coach sees ──────────────────────────────────────────────────
   // "Live" is whichever deck the crossfader is currently favouring; the other
@@ -374,6 +393,7 @@ export default function DJView() {
     return xfader <= 0 ? 'A' : 'B'
   }, [playing.A, playing.B, xfader])
   const incomingDeck: DeckId = liveDeck === 'A' ? 'B' : 'A'
+  liveDeckRef.current = liveDeck
 
   const coach = useMemo(
     () => advise(readingFor(liveDeck), readingFor(incomingDeck)),
@@ -403,15 +423,24 @@ export default function DJView() {
       String(t.artist || '').toLowerCase().includes(q)).slice(0, 60)
   }, [tracks, query])
 
-  const visiblePrompts = useMemo(() => {
-    if (!challenge) return []
-    const e = engineRef.current
-    if (!e) return []
-    const now = e.deck(challengeDeck).position
-    return prompts
-      .filter((p) => p.time >= now - 0.25 && p.time <= now + LOOKAHEAD_SEC)
-      .map((p) => ({ p, frac: (p.time - now) / LOOKAHEAD_SEC, done: resolvedRef.current.has(p.id) }))
-  }, [challenge, challengeDeck, prompts, pos])
+  // Crate: what you drag from. Capped at 120 rows — this is a browse-and-grab
+  // list, not the full library view, and rendering 8,800 draggable rows would
+  // cost more than it gives.
+  // One list, not two. Search and "only what mixes" are filters ON the crate
+  // rather than a separate suggestions section further down the page — the
+  // library has to be reachable without scrolling past everything else.
+  const crateRows = useMemo(() => {
+    const q = browse.trim().toLowerCase()
+    const base = onlyCompatible && suggestions.length > 0 ? suggestions : tracks
+    const pool = q
+      ? base.filter((t) =>
+          String(t.title || '').toLowerCase().includes(q) ||
+          String(t.artist || '').toLowerCase().includes(q) ||
+          String(t.album || '').toLowerCase().includes(q))
+      : base
+    return pool.slice(0, 300)
+  }, [tracks, browse, onlyCompatible, suggestions])
+
 
   return (
     <div className="booth-view">
@@ -421,9 +450,9 @@ export default function DJView() {
           {challenge ? (
             <>
               <div className="booth-score">
-                <span className="booth-score-value">{run.score.toLocaleString()}</span>
+                <span className="booth-score-value">{grades.reduce((a, g) => a + g.points, 0).toLocaleString()}</span>
                 <span className="booth-score-meta">
-                  {multiplierFor(run.streak)}× · {run.streak} streak · {accuracy(run)}%
+                  {grades.length} move{grades.length === 1 ? '' : 's'} graded
                 </span>
               </div>
               <button className="booth-btn booth-btn-stop" onClick={stopChallenge}>End run</button>
@@ -432,7 +461,7 @@ export default function DJView() {
             <button
               className="booth-btn booth-btn-challenge"
               disabled={!loaded.A && !loaded.B}
-              onClick={() => startChallenge(loaded.A ? 'A' : 'B')}
+              onClick={startChallenge}
             >
               Challenge
             </button>
@@ -442,12 +471,6 @@ export default function DJView() {
 
       {err && <div className="booth-error" role="alert">{err}</div>}
 
-      {challenge && (
-        <ChallengeLane
-          items={visiblePrompts}
-          verdict={lastVerdict}
-        />
-      )}
 
       <CoachPanel
         advice={coach}
@@ -462,6 +485,10 @@ export default function DJView() {
           <DeckPanel
             key={id}
             id={id}
+            dragOver={dragOver === id}
+            onDragOver={(e) => onDeckDragOver(id, e)}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={(e) => onDeckDrop(id, e)}
             track={loaded[id]}
             loading={loading[id]}
             playing={playing[id]}
@@ -491,34 +518,49 @@ export default function DJView() {
         <span className="booth-xf-label">B</span>
       </div>
 
-      <div className="booth-keys">
-        {(Object.keys(ACTION_LABEL) as DJAction[]).map((a) => (
-          <button key={a} className="booth-key" onClick={() => performAction(a)}>
-            <span className="booth-key-cap">{ACTION_KEYCAP[a]}</span>
-            <span className="booth-key-label">{ACTION_LABEL[a]}</span>
-          </button>
-        ))}
-        <span className="booth-keys-hint">
-          Q/P play · W/O cue · S/L sync · ←/→ crossfader
-        </span>
-      </div>
+      <section className="booth-crate">
+        <div className="booth-crate-head">
+          <h2 className="booth-crate-title">Your crate</h2>
+          <input
+            className="booth-crate-search"
+            placeholder="Search your library…"
+            value={browse}
+            onChange={(e) => setBrowse(e.target.value)}
+          />
+          {suggestions.length > 0 && (
+            <label className="booth-crate-filter">
+              <input
+                type="checkbox"
+                checked={onlyCompatible}
+                onChange={(e) => setOnlyCompatible(e.target.checked)}
+              />
+              mixes with what is playing
+            </label>
+          )}
+          <span className="booth-crate-hint">drag onto a deck · double-click loads the free one</span>
+        </div>
+        <ul className="booth-crate-list">
+          {crateRows.map((t) => (
+            <li key={t.id}>
+              <div
+                className="booth-crate-item"
+                draggable
+                onDragStart={(e) => onTrackDragStart(t, e)}
+                onDoubleClick={() => void loadDeck(loaded.A ? 'B' : 'A', t)}
+              >
+                <span className="booth-crate-name">{t.title}</span>
+                <span className="booth-crate-artist">{t.artist}</span>
+                <span className="booth-crate-meta">
+                  {t.bpm ? Math.round(Number(t.bpm)) : '—'} · {t.camelotKey || '—'}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      {suggestions.length > 0 && (
-        <section className="booth-suggest">
-          <h2 className="booth-suggest-title">Mixes cleanly out of this</h2>
-          <ul className="booth-suggest-list">
-            {suggestions.map((t) => (
-              <li key={t.id}>
-                <button className="booth-suggest-item" onClick={() => void loadDeck(loaded.A ? 'B' : 'A', t)}>
-                  <span className="booth-suggest-name">{t.title}</span>
-                  <span className="booth-suggest-artist">{t.artist}</span>
-                  <span className="booth-suggest-meta">{Math.round(Number(t.bpm))} · {t.camelotKey}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+
+
 
       {picker && (
         <div className="booth-picker-backdrop" onClick={() => setPicker(null)}>
@@ -532,6 +574,8 @@ export default function DJView() {
                 <li key={t.id}>
                   <button
                     className="booth-picker-item"
+                    draggable
+                    onDragStart={(e) => onTrackDragStart(t, e)}
                     onClick={() => { const d = picker; setPicker(null); setQuery(''); void loadDeck(d, t) }}
                   >
                     <span className="booth-picker-name">{t.title}</span>
@@ -584,7 +628,7 @@ function CoachPanel(props: {
         {typeof a.countdown === 'number' && Number.isFinite(a.countdown) && (
           <div className="booth-coach-count">
             <span className="booth-coach-count-num">{a.countdown.toFixed(1)}s</span>
-            <span className="booth-coach-count-label">to phrase</span>
+            <span className="booth-coach-count-label">til drop-in point</span>
           </div>
         )}
 
@@ -631,32 +675,13 @@ function CoachPanel(props: {
   )
 }
 
-// ── falling prompt lane ────────────────────────────────────────────────────
-function ChallengeLane(props: {
-  items: Array<{ p: Prompt; frac: number; done: boolean }>
-  verdict: { v: Verdict; at: number } | null
-}) {
-  const fresh = props.verdict && Date.now() - props.verdict.at < 600 ? props.verdict.v : null
-  return (
-    <div className="booth-lane">
-      <div className="booth-lane-target" />
-      {props.items.map(({ p, frac, done }) => (
-        <div
-          key={p.id}
-          className={`booth-note booth-note-${p.action}${done ? ' is-done' : ''}`}
-          style={{ left: `${Math.max(0, Math.min(100, frac * 100))}%` }}
-        >
-          {ACTION_KEYCAP[p.action]}
-        </div>
-      ))}
-      {fresh && <div className={`booth-verdict booth-verdict-${fresh}`}>{fresh.toUpperCase()}</div>}
-    </div>
-  )
-}
-
 // ── one deck ───────────────────────────────────────────────────────────────
 function DeckPanel(props: {
   id: DeckId
+  dragOver: boolean
+  onDragOver: (e: React.DragEvent) => void
+  onDragLeave: () => void
+  onDrop: (e: React.DragEvent) => void
   track: Track | null
   loading: boolean
   playing: boolean
@@ -725,7 +750,12 @@ function DeckPanel(props: {
   }, [deck, props.position, bpm])
 
   return (
-    <section className={`booth-deck booth-deck-${id}`}>
+    <section
+      className={`booth-deck booth-deck-${id}${props.dragOver ? ' is-drag-over' : ''}`}
+      onDragOver={props.onDragOver}
+      onDragLeave={props.onDragLeave}
+      onDrop={props.onDrop}
+    >
       <header className="booth-deck-head">
         <span className="booth-deck-id">{id}</span>
         <button className="booth-deck-load" onClick={props.onPick}>
@@ -743,7 +773,7 @@ function DeckPanel(props: {
 
       <div className="booth-wave-wrap">
         <canvas ref={canvasRef} className="booth-wave" />
-        {!track && <div className="booth-wave-empty">no track loaded</div>}
+        {!track && <div className="booth-wave-empty">{props.dragOver ? 'drop to load' : 'drag a track here'}</div>}
       </div>
 
       <div className="booth-transport">

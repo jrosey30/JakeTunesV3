@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   judge, multiplierFor, emptyRun, applyHit, accuracy, buildPrompts, matchPrompt,
-  WINDOWS, POINTS, type Prompt,
+  WINDOWS, POINTS, gradeOnBoundary, gradePhase, summarise, type Prompt,
 } from '../../renderer/dj/scoring.ts'
 
 test('judgement windows are symmetric around the beat', () => {
@@ -100,4 +100,46 @@ test('a resolved prompt cannot be hit twice', () => {
 test('an input miles from any prompt matches nothing', () => {
   const prompts: Prompt[] = [{ id: 0, time: 10, action: 'filter', deck: 'A' }]
   assert.equal(matchPrompt(prompts, new Set(), 'filter', 14), null)
+})
+
+test('a move just after a block wraps to a small LATE error, not a huge one', () => {
+  // 8s block. A countdown reading 7.9s means the boundary passed 0.1s ago --
+  // they were a tenth late, not 7.9 seconds off. Without the wrap this grades
+  // as a catastrophic miss and the feedback is nonsense.
+  const g = gradeOnBoundary('bring-in', 7.9, 8)
+  assert.match(g.note, /late/)
+  assert.ok(!/7\.9/.test(g.note), 'must not report the raw countdown as the error')
+  assert.equal(g.verdict, 'good')     // 0.1s -> inside the widest window
+})
+
+test('early and late are named separately', () => {
+  assert.match(gradeOnBoundary('bass-swap', 0.06, 8).note, /early/)
+  assert.match(gradeOnBoundary('bass-swap', 7.94, 8).note, /late/)
+})
+
+test('dead on the block is perfect', () => {
+  const g = gradeOnBoundary('bring-in', 0, 8)
+  assert.equal(g.verdict, 'perfect')
+  assert.equal(g.points, POINTS.perfect)
+})
+
+test('phase grading is tighter than button timing, and says which', () => {
+  assert.equal(gradePhase(0).verdict, 'perfect')
+  assert.equal(gradePhase(0.04).verdict, 'great')
+  assert.equal(gradePhase(0.3).verdict, 'miss')
+  assert.match(gradePhase(0.3).note, /stumble/)
+})
+
+test('the summary names the WEAKEST move, which is what to practise', () => {
+  const good = gradeOnBoundary('bring-in', 0, 8)
+  const bad = gradePhase(0.4)
+  const s = summarise([good, bad])
+  assert.equal(s.advice, bad.note)
+  assert.ok(s.score > 0)
+})
+
+test('an empty run does not divide by zero', () => {
+  const s = summarise([])
+  assert.equal(s.score, 0)
+  assert.ok(s.advice.length > 0)
 })
