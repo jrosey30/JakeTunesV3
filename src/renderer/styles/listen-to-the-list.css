@@ -790,3 +790,33 @@
   white-space: nowrap;
 }
 .ltl-tri.is-selected .ltl-friend-chip { background: rgba(var(--brand-orange-rgb), 0.22); }
+
+/* ── in-flight and failed rows ─────────────────────────────────────────────
+ * Pressing Get used to relocate the row into a separate "Getting" section
+ * further down, so from where the click happened the row simply vanished.
+ * Status now rides on the row. And failure had no rendering at all — an
+ * errored row fell back into the list looking exactly like one that had never
+ * been tried, so "it failed" and "I ignored it" were indistinguishable.
+ */
+.ltl-tri-getting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--brand-orange, #e0812e);
+  white-space: nowrap;
+}
+
+.ltl-tri-failed {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #c0392b;
+  border: 1px solid rgba(192, 57, 43, 0.45);
+  background: rgba(192, 57, 43, 0.08);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}

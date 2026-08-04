@@ -127,7 +127,11 @@ export default function ListenToTheListView() {
     const removing = (r: Recommendation) => r.id === tossing?.id || autoRemovedRef.current.has(r.id)
     const visible = recs.filter((r) => !removing(r))
     const gettingList = visible.filter((r) => isGetting(r))
-    const undecided = visible.filter((r) => !isGetting(r) && !isDone(r))
+    // Rows in flight STAY in the list. They used to be moved into a separate
+    // "Getting" zone lower down, so pressing Get read as the row disappearing
+    // with no explanation. The status now rides on the row itself, where the
+    // click happened and where the eye already is.
+    const undecided = visible.filter((r) => !isDone(r))
     const songs = undecided.filter((r) => recoType(r) === 'song')
     const albums = undecided.filter((r) => recoType(r) === 'album')
     const artists = undecided.filter((r) => recoType(r) === 'artist')
@@ -255,6 +259,7 @@ export default function ListenToTheListView() {
     const note = humanNoteOf(r)
     const canDl = canDownloadReco(r)
     const isAlbum = recoType(r) === 'album'
+    const dl = dlOf(r.id)
     return (
       <div
         key={r.id}
@@ -286,9 +291,24 @@ export default function ListenToTheListView() {
           </div>
         </div>
         <div className="ltl-tri-actions" onClick={(e) => e.stopPropagation()}>
-          {isAlbum
-            ? <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Pick tracks in Download">Tracks</button>
-            : canDl && <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Get it (Enter)">Get</button>}
+          {dl.state === 'queued' || dl.state === 'downloading' ? (
+            <span className="ltl-tri-getting" title="Importing…">
+              <span className="ltl-tri-spinner" aria-hidden="true" />
+              {dl.state === 'downloading' ? 'Getting…' : 'Queued…'}
+            </span>
+          ) : dl.state === 'error' ? (
+            <>
+              {/* Failure was previously rendered NOWHERE — an errored row fell
+                  back into the list looking exactly like one never tried, so a
+                  failed import was indistinguishable from an ignored one. */}
+              <span className="ltl-tri-failed" title={dl.error || 'Download failed'}>FAILED</span>
+              <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title={dl.error || 'Try again'}>Retry</button>
+            </>
+          ) : isAlbum ? (
+            <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Pick tracks in Download">Tracks</button>
+          ) : canDl && (
+            <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Get it (Enter)">Get</button>
+          )}
           <button type="button" className="ltl-tri-toss" onClick={() => tossReco(r)} title="Toss it (X)">✕</button>
         </div>
       </div>
@@ -416,26 +436,6 @@ export default function ListenToTheListView() {
       )}
 
       {/* ── Getting ── */}
-      {getting.length > 0 && (
-        <div className="ltl-zone">
-          <div className="ltl-zone-head"><span className="ltl-zone-label ltl-zone-label--getting">Getting</span><span className="ltl-zone-count">{getting.length}</span></div>
-          <div className="ltl-tri-list">
-            {getting.map((r) => {
-              const st = dlOf(r.id)
-              return (
-                <div key={r.id} className="ltl-tri ltl-tri--getting">
-                  <div className="ltl-tri-art">{r.artworkUrl ? <img src={r.artworkUrl} alt="" loading="lazy" /> : <span className="ltl-tri-art-ph" aria-hidden="true">♪</span>}</div>
-                  <div className="ltl-tri-body">
-                    <div className="ltl-tri-name">{displayRecoName(r)}</div>
-                    <div className="ltl-tri-sub"><span className="ltl-tri-status">{st.state === 'downloading' ? 'Downloading…' : 'Queued…'}</span></div>
-                  </div>
-                  <div className="ltl-tri-actions"><span className="ltl-tri-spinner" aria-hidden="true" /></div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
 
       {/* ── Undo toast ── */}
       {tossing && (
