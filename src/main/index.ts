@@ -5484,9 +5484,15 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
               path: String(t.path || ''),
               duration: Number(t.duration || 0),
               audioFingerprint: typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined,
+              audioMissing: t.audioMissing === true,
             }))
           try {
-            verificationUpdates = await verifyAndHealTracks(inputs, [IPOD_MOUNT, LOCAL_MOUNT])
+            // Every root that can hold audio — including library.streamRoot.
+            // This call used to pass only [iPod, local], so a track kept solely
+            // on the NAS resolved nowhere and got stamped audioMissing by a
+            // routine iPod sync. That is how a clean file ended up wearing a
+            // warning badge.
+            verificationUpdates = await verifyAndHealTracks(inputs, await candidateMusicMounts())
             const healedPaths = verificationUpdates.filter(u => u.path).length
             const backfilled = verificationUpdates.filter(u => u.audioFingerprint).length
             const flagged = verificationUpdates.filter(u => u.audioMissing).length
@@ -5798,8 +5804,15 @@ async function candidateMusicMounts(): Promise<string[]> {
   ]
   try {
     const settings = await readAppSettingsAsync()
-    const lib = (settings?.library ?? null) as { musicRoot?: string } | null
+    const lib = (settings?.library ?? null) as { musicRoot?: string; streamRoot?: string } | null
     if (lib?.musicRoot && typeof lib.musicRoot === 'string') roots.push(lib.musicRoot)
+    // streamRoot is a real mount holding real audio. Leaving it out meant a
+    // track whose only copy lives on the NAS resolved nowhere, so the verifier
+    // stamped audioMissing on it and the UI put a warning badge next to a file
+    // that is perfectly fine — and, worse, the dead-track chain counts that
+    // same signal. Keeping audio off the local disk is the intended setup here,
+    // so "not local" must never read as "gone".
+    if (lib?.streamRoot && typeof lib.streamRoot === 'string') roots.push(lib.streamRoot)
   } catch { /* settings unreadable — auto-detect roots still apply */ }
   if (detectedIpodMount) roots.push(detectedIpodMount)
   const seen = new Set<string>()
@@ -5999,6 +6012,10 @@ interface VerifyTrackInput {
   path: string
   duration: number
   audioFingerprint?: string
+  // Current flag, so a track that is fine again can have it RETRACTED.
+  // Without this the verifier could only ever stamp audioMissing, never
+  // clear it, and a warning badge outlived the problem that caused it.
+  audioMissing?: boolean
 }
 interface VerifyTrackUpdate {
   id: number
@@ -6095,7 +6112,10 @@ async function verifyAndHealTracks(
     // must NEVER be flagged audioMissing. Skipping here is the single chokepoint
     // that keeps the dead-track deletion chain (scan/remove-dead-tracks + the
     // post-sync verifier) and the expensive F-dir fingerprint index off them.
-    if (absNow && await isStreamedTrackFile(absNow)) continue
+    if (absNow && await isStreamedTrackFile(absNow)) {
+      if (tr.audioMissing) updates.push({ id: tr.id, audioMissing: false })
+      continue
+    }
     if (absNow) {
       // File exists at expected path. Backfill fingerprint if missing.
       // (One-time per track; after that the field is permanent and only
@@ -6108,7 +6128,8 @@ async function verifyAndHealTracks(
       // Stored fingerprint present — verify against the current file.
       const cur = await computeAudioFingerprint(absNow, tr.duration)
       if (cur && cur === tr.audioFingerprint) {
-        // Healthy. Nothing to do.
+        // Healthy. Retract a stale flag; otherwise nothing to do.
+        if (tr.audioMissing) updates.push({ id: tr.id, audioMissing: false })
         continue
       }
       // Stored fingerprint differs from the current file. Two cases:
