@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, 
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey } from './path-safety'
 import { computeDeletedPaths } from './library-deletions'
+import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { refuseIfNotMainWindow } from './ipc-guard'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
@@ -360,6 +361,10 @@ interface AudioAnalysisResult {
   keyRoot?: string
   keyMode?: 'major' | 'minor' | ''
   camelotKey?: string
+  /** 0..1 — how much the three Essentia key profiles agreed, scaled by their
+   *  strength. They are unanimous on only ~58% of this library, so a key
+   *  without this number is an assertion the data does not support. */
+  keyConfidence?: number
   error?: string
 }
 
@@ -637,6 +642,7 @@ interface AudioAnalysisDispatch {
   keyRoot: string | null
   keyMode: 'major' | 'minor' | '' | null
   camelotKey: string | null
+  keyConfidence: number | null
   ok: boolean
 }
 
@@ -653,6 +659,7 @@ async function processAudioResult(job: AudioAnalysisJob, result: AudioAnalysisRe
     if (result.keyRoot) fields.keyRoot = result.keyRoot
     if (result.keyMode) fields.keyMode = result.keyMode
     if (result.camelotKey) fields.camelotKey = result.camelotKey
+    if (typeof result.keyConfidence === 'number') fields.keyConfidence = String(result.keyConfidence)
     console.log(`[audio-analysis] ${job.trackId}: bpm=${result.bpm ?? '—'} key=${result.keyRoot || '—'}${result.keyMode ? ' ' + result.keyMode : ''} camelot=${result.camelotKey || '—'}`)
   } else {
     console.warn(`[audio-analysis] ${job.trackId} failed: ${result.error || 'unknown error'}`)
@@ -666,6 +673,7 @@ async function processAudioResult(job: AudioAnalysisJob, result: AudioAnalysisRe
     trackId: job.trackId,
     audioAnalysisAt,
     bpm: result.ok && typeof result.bpm === 'number' && result.bpm > 0 ? result.bpm : null,
+    keyConfidence: result.ok && typeof result.keyConfidence === 'number' ? result.keyConfidence : null,
     keyRoot: result.ok ? (result.keyRoot ?? null) : null,
     keyMode: result.ok ? (result.keyMode ?? null) : null,
     camelotKey: result.ok ? (result.camelotKey ?? null) : null,
@@ -5886,7 +5894,33 @@ async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const libData = JSON.parse(raw) as { tracks?: Array<Record<string, unknown>> }
+    const sep = IS_WINDOWS ? '\\' : '/'
+    // Audio does not have to be local — library.streamRoot points at the NAS,
+    // and on this setup most files live only there. Checking the local root
+    // alone would call thousands of perfectly good tracks "missing" and let
+    // them all be re-imported as duplicates.
+    const roots = [MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')]
+    const streamRoot = await readStreamRoot()
+    if (streamRoot) roots.push(streamRoot)
     for (const t of libData.tracks || []) {
+      // An entry with NO PLAYABLE FILE must not block its own replacement.
+      //
+      // Dupe detection is text — title|artist|duration — so a library row whose
+      // audio is missing, or which was found to hold the WRONG song, still
+      // claimed the signature and made every re-download a "dupe". Jake hit
+      // this twice: re-downloading Soulwax "NY Lipps" from the Download area
+      // silently did nothing, and replacing Drake's "Tuscan Leather" was
+      // refused even though the entry's file was actually The Motion. The
+      // library said "you already have this" while being unable to play it.
+      //
+      // Skipping fileless rows costs one stat per track at import time and
+      // makes the broken case self-healing: if we cannot play it, we do not
+      // get to veto acquiring it.
+      const rel = String(t.path || '')
+      if (rel) {
+        const sub = rel.replace(/:/g, sep)
+        if (!roots.some((r) => existsSync(join(r, sub)))) continue
+      }
       const fp = fingerprintTrack({ title: t.title, artist: t.artist, duration: t.duration })
       if (fp) set.add(fp)
     }
@@ -6623,6 +6657,7 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
     if (result.keyRoot) fields.keyRoot = result.keyRoot
     if (result.keyMode) fields.keyMode = result.keyMode
     if (result.camelotKey) fields.camelotKey = result.camelotKey
+    if (typeof result.keyConfidence === 'number') fields.keyConfidence = String(result.keyConfidence)
   }
   try {
     await persistOverrideFields(trackId, fields, fingerprint)
@@ -15666,7 +15701,51 @@ app.whenReady().then(async () => {
   // the source file changes.
   const codecCache = new Map<string, { mtime: number; codec: string }>()
 
-  async function aacCachePath(src: string, srcMtime: number): Promise<string | null> {
+  // Cache file name = <pathHash>-<contentTag>.m4a.
+  //
+  // ⚠️ The content tag is the whole point. This used to be <pathHash>.m4a with
+  // a freshness test of `cache.mtime >= source.mtime`, and that test is not an
+  // identity check — mtime moves BACKWARD all the time. Unzip a Bandcamp
+  // archive and the files carry their original timestamps; rsync -a, Finder
+  // copies and restores from backup all preserve the source mtime. So
+  // replacing a bad file with a good one left the old cache entry looking
+  // "fresh" forever, and the app kept serving the bad audio no matter how many
+  // times the user re-downloaded. That is exactly what happened: an audit
+  // found 11 tracks whose cache disagreed with their source, including two
+  // 30-second preview clips standing in for full songs ("The Sweet Escape",
+  // "Beaches In Tennessee") long after the real files had been put in place.
+  //
+  // Size+mtime as a TAG rather than an ordering has no direction to get wrong:
+  // any replacement changes the tag, which changes the file name, which misses
+  // the cache and re-transcodes. A file with identical size and mtime is the
+  // same file.
+  function cacheNameFor(src: string, size: number, mtimeMs: number): { pathHash: string; file: string } {
+    return {
+      pathHash: pathHashFor(src),
+      file: join(PLAY_CACHE, playCacheName(src, size, mtimeMs)),
+    }
+  }
+
+  // Drop every other cache entry for this source. Because the name encodes
+  // content, a superseded file is dead weight the moment we transcode a new
+  // one — without this the cache would grow one entry per edit, forever.
+  async function evictOtherCacheEntries(pathHash: string, keep: string): Promise<void> {
+    try {
+      const { readdir } = await import('fs/promises')
+      for (const name of await readdir(PLAY_CACHE)) {
+        if (!isEntryFor(name, pathHash)) continue
+        const full = join(PLAY_CACHE, name)
+        if (full === keep) continue
+        await unlink(full).catch(() => {})
+      }
+    } catch { /* cache dir unreadable — nothing to evict */ }
+  }
+
+  async function aacCachePath(
+    src: string,
+    srcMtime: number,
+    srcSize: number,
+  ): Promise<string | null> {
     const { execFile } = await import('child_process')
     const { promisify } = await import('util')
     const execP = promisify(execFile)
@@ -15689,12 +15768,28 @@ app.whenReady().then(async () => {
     }
     if (codec !== 'alac') return null  // AAC and others play fine raw
 
-    const hash = createHash('sha1').update(src).digest('hex').slice(0, 16)
-    const cached = join(PLAY_CACHE, `${hash}.m4a`)
+    const { pathHash, file: cached } = cacheNameFor(src, srcSize, srcMtime)
     try {
       const cStat = await stat(cached)
-      if (cStat.mtimeMs >= srcMtime) return cached  // fresh
+      // Name match IS the freshness proof. Size guard only rejects the
+      // empty file a crashed transcode can leave behind.
+      if (cStat.size > 0) return cached
     } catch { /* not cached yet */ }
+
+    // Adopt a pre-content-tag entry rather than re-transcoding all ~2,900 of
+    // them. Each was checked against its source before this shipped and the
+    // 11 that disagreed were deleted, so what remains is known-good work.
+    // Adoption renames it under the content tag, so from here on a replaced
+    // source correctly misses the cache.
+    const legacy = join(PLAY_CACHE, legacyPlayCacheName(src))
+    try {
+      const lStat = await stat(legacy)
+      if (lStat.size > 0) {
+        const { rename: renameFS } = await import('fs/promises')
+        await renameFS(legacy, cached)
+        return cached
+      }
+    } catch { /* no legacy entry */ }
 
     // Need to transcode. Dedupe concurrent requests.
     const existing = transcodeInFlight.get(src)
@@ -15720,6 +15815,7 @@ app.whenReady().then(async () => {
         ], { timeout: 300000 })
         const { rename: renameFS } = await import('fs/promises')
         await renameFS(tmp, cached)
+        await evictOtherCacheEntries(pathHash, cached)
         return cached
       } catch (err) {
         // Clean up the partial tmp file so we don't leave garbage.
@@ -15756,7 +15852,7 @@ app.whenReady().then(async () => {
         const p = paths[idx]
         try {
           const s = await stat(p)
-          await aacCachePath(p, s.mtimeMs).catch(() => {})
+          await aacCachePath(p, s.mtimeMs, s.size).catch(() => {})
         } catch { /* file missing — skip */ }
       }
     }
@@ -15828,12 +15924,12 @@ app.whenReady().then(async () => {
 
         // Was the cache already fresh BEFORE this call? Need to know
         // so we can report "transcoded" honestly (not just "had cache").
-        const hash = createHash('sha1').update(abs).digest('hex').slice(0, 16)
-        const cachePath = join(PLAY_CACHE, `${hash}.m4a`)
+        // Same naming rule as aacCachePath, or the count lies.
+        const { file: cachePath } = cacheNameFor(abs, srcStat.size, srcStat.mtimeMs)
         const cBefore = await stat(cachePath).catch(() => null)
-        const wasFresh = cBefore && cBefore.mtimeMs >= srcStat.mtimeMs
+        const wasFresh = !!cBefore && cBefore.size > 0
 
-        const cacheRet = await aacCachePath(abs, srcStat.mtimeMs).catch(() => null)
+        const cacheRet = await aacCachePath(abs, srcStat.mtimeMs, srcStat.size).catch(() => null)
         processed++
         if (cacheRet && !wasFresh) transcoded++
 
@@ -15994,16 +16090,29 @@ app.whenReady().then(async () => {
       return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
     }
 
-    // Build the set of expected cache filenames (one per library track,
-    // hashed-from-abs-path). Only tracks whose abs path actually exists
-    // — tracks pointing at missing files have no valid cache anyway.
+    // Build the set of path hashes still claimed by a library track.
+    //
+    // ⚠️ TWIN: cacheNameFor() above owns the naming rule. Match on the PATH
+    // HASH PREFIX, never on a whole filename — cache files are
+    // <pathHash>-<contentTag>.m4a, and an exact-name test written against the
+    // old <pathHash>.m4a format silently classifies every single entry as an
+    // orphan and wipes the whole 21 GB cache. Prefix matching survives the
+    // content tag changing, which is the entire point of the tag.
+    //
+    // Both roots: a track's audio can live on library.streamRoot (the NAS)
+    // rather than locally, and the cache is keyed on whichever path was
+    // actually served.
+    const roots = [LOCAL_MOUNT]
+    const sRoot = await readStreamRoot()
+    if (sRoot) roots.push(sRoot)
     const expected = new Set<string>()
     for (const t of (lib.tracks || [])) {
       const colon = t.path || ''
       if (!colon) continue
-      const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
-      const hash = createHash('sha1').update(abs).digest('hex').slice(0, 16)
-      expected.add(`${hash}.m4a`)
+      for (const r of roots) {
+        const abs = join(r, colon.replace(/:/g, pathSep))
+        expected.add(createHash('sha1').update(abs).digest('hex').slice(0, 16))
+      }
     }
 
     const { readdir } = await import('fs/promises')
@@ -16018,7 +16127,7 @@ app.whenReady().then(async () => {
     let bytesFreed = 0
     for (const f of entries) {
       if (!f.endsWith('.m4a')) continue
-      if (expected.has(f)) continue
+      if ([...expected].some((h) => isEntryFor(f, h))) continue
       const fp = join(PLAY_CACHE, f)
       const s = await stat(fp).catch(() => null)
       if (s) bytesFreed += s.size
@@ -16105,7 +16214,7 @@ app.whenReady().then(async () => {
           if (hint === 'alac') {
             const srcStat = await stat(rawPath).catch(() => null)
             if (srcStat) {
-              const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+              const cached = await aacCachePath(rawPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
               if (cached) {
                 filePath = cached
                 ext = '.m4a'
@@ -16119,7 +16228,7 @@ app.whenReady().then(async () => {
           // memory for this session.
           const srcStat = await stat(rawPath).catch(() => null)
           if (srcStat) {
-            const cached = await aacCachePath(rawPath, srcStat.mtimeMs).catch(() => null)
+            const cached = await aacCachePath(rawPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
             if (cached) {
               filePath = cached
               ext = '.m4a'
