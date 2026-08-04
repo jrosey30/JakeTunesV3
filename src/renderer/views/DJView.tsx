@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
 import { DJEngine, type DeckId } from '../dj/engine'
 import { beatsInRange, camelotCompatible, tempoDistance } from '../dj/beatgrid'
@@ -29,6 +30,7 @@ const ACTION_KEYCAP: Record<DJAction, string> = {
 
 export default function DJView() {
   const { state } = useLibrary()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const tracks = state.tracks
 
   // ── engine ───────────────────────────────────────────────────────────────
@@ -81,6 +83,33 @@ export default function DJView() {
     }
   }, [])
 
+  // ── the booth owns the room ──────────────────────────────────────────────
+  // The decks run on their own AudioContext, which means nothing stops the
+  // library player on its way in — open DJ mode mid-song and you'd hear the
+  // song AND the decks on top of each other. Two decks overlapping is the
+  // whole point of a crossfader; the library player overlapping them is just
+  // two things shouting.
+  //
+  // So: pause it on the way in, and put it back on the way out, but only if
+  // WE were the one who paused it. Resuming something the user had already
+  // stopped would be its own surprise.
+  const resumeOnLeaveRef = useRef(false)
+  useEffect(() => {
+    if (pb.isPlaying) {
+      resumeOnLeaveRef.current = true
+      pbDispatch({ type: 'PAUSE' })
+    }
+    return () => {
+      if (resumeOnLeaveRef.current) {
+        resumeOnLeaveRef.current = false
+        pbDispatch({ type: 'RESUME' })
+      }
+    }
+    // Mount/unmount only. Re-running this on every isPlaying change would
+    // fight the user for control of the transport.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── playhead / lane refresh ──────────────────────────────────────────────
   useEffect(() => {
     if (!ready) return
@@ -120,15 +149,27 @@ export default function DJView() {
     }
   }, [absPathFor, musicRoot])
 
+  /**
+   * Belt and braces for the mount-time pause: if the library player has come
+   * back to life while we're in here (auto-advance, a global shortcut), a deck
+   * starting must not stack on top of it.
+   */
+  const hushLibrary = useCallback(() => {
+    if (pb.isPlaying) {
+      resumeOnLeaveRef.current = true
+      pbDispatch({ type: 'PAUSE' })
+    }
+  }, [pb.isPlaying, pbDispatch])
+
   const togglePlay = useCallback(async (id: DeckId) => {
     const e = engineRef.current
     if (!e) return
     await e.resume()
     const d = e.deck(id)
     if (d.playing) d.pause()
-    else d.play()
+    else { hushLibrary(); d.play() }
     setPlaying((s) => ({ ...s, [id]: d.playing }))
-  }, [])
+  }, [hushLibrary])
 
   const cue = useCallback((id: DeckId) => {
     const e = engineRef.current
@@ -224,7 +265,7 @@ export default function DJView() {
       }
       case 'cue-drop': {
         const d = e.deck(other)
-        if (d.snapshot().loaded) { d.seek(d.cuePoint); d.play() }
+        if (d.snapshot().loaded) { hushLibrary(); d.seek(d.cuePoint); d.play() }
         break
       }
     }
@@ -237,7 +278,7 @@ export default function DJView() {
     const v = judge(t - p.time)
     setRun((r) => applyHit(r, v))
     setLastVerdict({ v, at: Date.now() })
-  }, [challenge, challengeDeck, prompts, xfader, toggleKill, moveXfader, changeFilter])
+  }, [challenge, challengeDeck, prompts, xfader, toggleKill, moveXfader, changeFilter, hushLibrary])
 
   // ── keyboard: this is the instrument ─────────────────────────────────────
   useEffect(() => {
