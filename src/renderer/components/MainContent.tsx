@@ -11,6 +11,7 @@ import MixtapeView from '../views/MixtapeView'
 import MixDetailView from '../views/MixDetailView'
 import GenresView from '../views/GenresView'
 import DiscoveryView from '../views/DiscoveryView'
+import DJView from '../views/DJView'
 import MusicManView from '../views/MusicManView'
 import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
@@ -66,6 +67,7 @@ export default function MainContent() {
     case 'mix-detail': viewElement = <MixDetailView />; break
     case 'genres': viewElement = <GenresView />; break
     case 'discovery': viewElement = <DiscoveryView />; break
+    case 'dj': viewElement = <DJView />; break
     // Back-compat: the old standalone view names still resolve, landing on
     // the matching Discovery tab (nothing dispatches them now but the sidebar
     // 'discovery' entry — kept so any stray/deep-linked nav still works).

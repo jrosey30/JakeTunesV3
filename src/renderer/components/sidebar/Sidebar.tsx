@@ -443,6 +443,21 @@ export default function Sidebar() {
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
           />
           <SidebarItem
+            label="DJ"
+            icon={(
+              /* Two platters and a crossfader, 14x14 on the same 16-unit grid every
+                 sibling icon uses so it sits on the shared baseline. */
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#e0812e" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="4.6" cy="5.4" r="2.9" />
+                <circle cx="11.4" cy="5.4" r="2.9" />
+                <path d="M2 12.4h12" />
+                <path d="M8 10.9v3" />
+              </svg>
+            )}
+            selected={state.currentView === 'dj'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'dj' })}
+          />
+          <SidebarItem
             label="Beck v. Prupis"
             icon={(
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
