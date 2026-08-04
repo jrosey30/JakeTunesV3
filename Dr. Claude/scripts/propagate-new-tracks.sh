@@ -48,38 +48,23 @@ if [[ ! -d "$NAS" ]]; then
 fi
 [[ -d "$NAS" ]] || { echo "✗ NAS hub unreachable — cannot propagate"; exit 1; }
 
-# ── 2. Copy any library track the hub is missing ─────────────────────
-say "checking the hub for missing audio"
-MISSING=$(/usr/bin/python3 - "$LOCAL" "$NAS" "$STATE/library.json" <<'PY'
-import json, os, sys
-local, nas, libp = sys.argv[1], sys.argv[2], sys.argv[3]
-d = json.load(open(libp)); tracks = d["tracks"] if isinstance(d, dict) else d
-for t in tracks:
-    rel = str(t.get("path", "")).lstrip(":").replace(":", os.sep)
-    if not rel:
-        continue
-    if os.path.exists(os.path.join(local, rel)) and not os.path.exists(os.path.join(nas, rel)):
-        print(rel)
-PY
-)
-COUNT=$(printf '%s' "$MISSING" | grep -c . || true)
-if [[ "$COUNT" -eq 0 ]]; then
-  say "hub already has every track"
-else
-  say "$COUNT track(s) to copy to the hub"
-  while IFS= read -r rel; do
-    [[ -z "$rel" ]] && continue
-    dest="$NAS/$rel"
-    $DRY && { echo "   would copy $rel"; continue; }
-    mkdir -p "$(dirname "$dest")"
-    # .part then rename: a half-copied file must never look like a real track
-    if cp "$LOCAL/$rel" "$dest.part" && mv "$dest.part" "$dest"; then
-      echo "   ✓ $rel"
-    else
-      echo "   ✗ FAILED $rel"; rm -f "$dest.part" 2>/dev/null
-    fi
-  done <<< "$MISSING"
-fi
+# ── 2. Sync audio to the hub (missing OR changed) ────────────────────
+# rsync, not a hand-rolled loop. The first version compared os.path.getsize()
+# per track, which meant ~8,800 stat() calls across SMB-over-Tailscale and took
+# longer than the 10-minute timeout. rsync does the same size/mtime comparison
+# in one pass, and unlike an existence check it also carries REPAIRED files —
+# a re-encoded or replaced track keeps its path, so "does it exist" propagates
+# nothing and the other machines keep serving the bad audio.
+say "syncing audio to the hub (missing or changed)"
+# --size-only: the hub is SMB, and SMB does not round-trip mtimes faithfully,
+# so a plain -a comparison called 4,105 identical files 'changed' and wanted
+# to re-push 63 GB. Size alone is the honest signal here — a re-encode or a
+# replaced track always changes it, and audio files never change size in place.
+RSYNC_FLAGS=(-a --size-only --info=stats2 --include='*/' --include='*.m4a' --include='*.mp3' --include='*.flac' --exclude='*')
+$DRY && RSYNC_FLAGS+=(--dry-run)
+rsync "${RSYNC_FLAGS[@]}" "$LOCAL/iPod_Control/Music/" "$NAS/iPod_Control/Music/" 2>&1 \
+  | grep -E "Number of regular files transferred|Total transferred file size" | sed 's/^/   /' \
+  || echo "   ⚠ hub rsync reported errors"
 
 $DRY && { say "dry run — stopping before remote steps"; exit 0; }
 
@@ -119,6 +104,17 @@ for t in tracks:
         skipped += 1
 print('   linked %d · already present %d · not on NAS yet %d' % (made, skipped, nofile))
 PY"
+
+# ── 4b. homemini's SERVING root ──────────────────────────────────────
+# The stream backend reads MUSIC_ROOT=~/Music/JakeTunesLibrary, a local copy —
+# NOT the NAS. Fixing the hub alone leaves homemini serving stale audio, which
+# is how three repaired tracks kept streaming their broken versions.
+say "syncing homemini's serving root (rsync, size-based)"
+rsync -a --size-only --info=stats2 \
+  --include='*/' --include='*.m4a' --include='*.mp3' --include='*.flac' --exclude='*' \
+  "$LOCAL/iPod_Control/Music/" "$HM:Music/JakeTunesLibrary/iPod_Control/Music/" 2>&1 \
+  | grep -E "Number of regular files transferred|Total transferred file size" | sed 's/^/   /' \
+  || echo "   ⚠ homemini music rsync had errors"
 
 # ── 5. Restart the stream backend so new ids are servable ────────────
 say "restarting homemini's stream backend (it reads library.json at startup)"
