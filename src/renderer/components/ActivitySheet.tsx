@@ -79,7 +79,11 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
 
   useEffect(() => {
     window.electronAPI.getActivityProfiles?.().then((r) => {
-      if (r?.ok && r.profiles) setProfiles(r.profiles as SavedProfile[])
+      // The IPC declares its payload as Record<string, unknown>[]; the rows are
+      // SavedProfile-shaped in practice. Routing through unknown is what TS
+      // asks for on a cast between non-overlapping types, and is a no-op at
+      // runtime — the assertion was always doing this, just implicitly.
+      if (r?.ok && r.profiles) setProfiles(r.profiles as unknown as SavedProfile[])
     }).catch(() => {})
   }, [])
 

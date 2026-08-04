@@ -634,7 +634,11 @@ declare global {
       // fingerprintSummary feed the "Seeded from" chips + "because you play X" reasoning.
       getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; brainPct?: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
       discoveryNotForMe: (artist: string) => Promise<{ ok: boolean }>
-      getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number }> }>
+      getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }>
+      sweepFriendImports: () => Promise<{ ok: boolean; credited: number }>
+      imessageCaptureStatus: () => Promise<{ ok: boolean; access: 'granted' | 'denied' | 'unknown'; lastScanAt?: string; error?: string; pending: number; recent: Array<{ url: string; song?: string; artist?: string; album?: string; from?: string; at: string; status: string }> }>
+      openFullDiskAccessSettings: () => Promise<{ ok: boolean }>
+
       friendEvent: (name: string, ev: 'add' | 'got' | 'tossed') => Promise<{ ok: boolean }>
       captureResolveLink: (url: string) => Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }>
       getContacts: () => Promise<{ ok: boolean; names: string[] }>

@@ -176,7 +176,13 @@ export default function ConcertDetailView() {
           </div>
           <div className="concert-hero-stat">{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)} · one continuous set</div>
           <div className="concert-hero-actions">
-            <button className="concert-btn concert-btn--play" onClick={playLiveSet}>▶ {setPlaying ? 'Playing' : 'Play the Show'}</button>
+            {/* Wrapped, NOT passed directly: React hands the click handler a
+                MouseEvent as its first argument, which would land in
+                `startFrac`. `?? null` only catches null/undefined, so the event
+                object survived into pendingSeekRef, the `!= null` guard below
+                passed, and "Play the Show" seeked to a MouseEvent instead of
+                starting at the top. seek() takes 0..1. */}
+            <button className="concert-btn concert-btn--play" onClick={() => playLiveSet()}>▶ {setPlaying ? 'Playing' : 'Play the Show'}</button>
             <button
               className={`concert-btn concert-btn--crowd${crowdOn ? ' is-on' : ''}`}
               onClick={() => setConcertCrowdEnabled(!crowdOn)}

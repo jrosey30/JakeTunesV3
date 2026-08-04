@@ -126,7 +126,14 @@ async function pump(): Promise<void> {
         const r = it.result.kind === 'query'
           ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
-        if (it.status === 'canceled') { /* user killed it mid-flight — keep that verdict */ }
+        // Read through a widened alias. TypeScript narrows it.status to
+        // 'downloading' before the await and cannot see that cancel() mutates
+        // it DURING the await, so it calls this comparison unreachable. The
+        // runtime behaviour is correct and load-bearing — without this branch a
+        // download the user cancelled mid-flight would be overwritten with
+        // 'done' or 'failed' and the cancel would appear to do nothing.
+        const statusNow = it.status as QStatus
+        if (statusNow === 'canceled') { /* user killed it mid-flight — keep that verdict */ }
         else if (r?.ok) {
           it.status = 'done'
           it.imported = r.imported ?? 0
@@ -136,7 +143,8 @@ async function pump(): Promise<void> {
           it.error = r?.error || 'Download failed.'
         }
       } catch (e) {
-        if (it.status !== 'canceled') {
+        const statusAfterThrow = it.status as QStatus
+        if (statusAfterThrow !== 'canceled') {
           it.status = 'failed'
           it.error = e instanceof Error ? e.message : 'Download failed.'
         }
