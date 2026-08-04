@@ -565,6 +565,20 @@
   font-weight: 700;
   color: rgb(var(--brand-orange-rgb));
 }
+/* Only an EARNED credit gets the brand colour. "3 sent" / "40% kept" are
+   context, not score, and used to render in the same orange at the same
+   weight as a real point — which is how a friend who sent one song Jake
+   already owned looked like he'd scored. Muted and lighter, so the eye can
+   tell a tally from an achievement without reading the words. */
+.ltl-scout-stat--muted {
+  font-weight: 500;
+  color: rgba(85, 78, 64, 0.55);
+}
+/* A friend who has actually earned something keeps a warm tint on the chip. */
+.ltl-scout--scored {
+  background: rgba(var(--brand-orange-rgb), 0.08);
+  border-color: rgba(var(--brand-orange-rgb), 0.28);
+}
 
 /* Friend byline under a jotted row */
 .ltl-row-wrap { position: relative; }

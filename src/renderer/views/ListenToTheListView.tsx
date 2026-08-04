@@ -358,10 +358,32 @@ export default function ListenToTheListView() {
           {scouts.map((f) => {
             const verdicts = f.got + f.tossed
             const rate = verdicts > 0 ? Math.round((f.got / verdicts) * 100) : null
-            const stat = f.imported > 0 ? `${f.imported} ♪` : rate != null ? `${rate}%` : `${f.adds}`
+            // A SCORE and a SEND COUNT must not look alike.
+            //
+            // This fell through to a bare `${f.adds}`, so a friend who had sent
+            // one song Jake already owned rendered as "1" — beside someone who
+            // had actually earned a credit, rendered as "1 ♪". Jake read that as
+            // Joey scoring a point for a duplicate. The SCORING was already
+            // right (computeImportCredits requires the library copy to post-date
+            // the reco, so a song he already owned earns nothing); only the chip
+            // misrepresented it. A bare number reads as a score no matter what
+            // it counts.
+            //
+            // Now a naked number is only ever an earned credit. Everything else
+            // carries a word, and the tooltip keeps the full breakdown.
+            const stat = f.imported > 0
+              ? `${f.imported} ♪`
+              : rate != null ? `${rate}% kept` : `${f.adds} sent`
             return (
-              <button type="button" key={f.name} className="ltl-scout" title={`${f.adds} sent · ${f.imported} imported · ${f.got} got · ${f.tossed} tossed`} onClick={() => setFromWho(f.name)}>
-                {f.name}<span className="ltl-scout-stat">{stat}</span>
+              <button
+                type="button"
+                key={f.name}
+                className={`ltl-scout${f.imported > 0 ? ' ltl-scout--scored' : ''}`}
+                title={`${f.adds} sent · ${f.imported} imported · ${f.got} got · ${f.tossed} tossed`}
+                onClick={() => setFromWho(f.name)}
+              >
+                {f.name}
+                <span className={`ltl-scout-stat${f.imported > 0 ? '' : ' ltl-scout-stat--muted'}`}>{stat}</span>
               </button>
             )
           })}
