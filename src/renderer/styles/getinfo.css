@@ -239,8 +239,14 @@
 
 .getinfo-lyrics {
   flex: 1;
-  max-height: 180px;
-  overflow-y: auto;
+  /* 180px held ~4 lines of a ~40-line lyric — about 70% of the sheet was out
+     of view, and because the text simply stopped mid-line with no scrollbar in
+     sight it read as broken rather than as scrollable. Verified the box always
+     DID scroll (a real wheel event moves it); the problem was that nothing said
+     so, and a 180px target is easy to drift off, at which point the song list
+     behind scrolls instead and it feels like nothing works. */
+  max-height: 340px;
+  overflow-y: scroll;      /* scroll, not auto: the bar is the affordance */
   font-size: 11px;
   line-height: 1.5;
   color: #333;
@@ -249,7 +255,19 @@
   user-select: text;
   -webkit-user-select: text;
   padding: 5px 8px;
-  background: #fafafa;
+  /* Shadow-scroll cue. Measured that macOS still draws an OVERLAY scrollbar
+     here (gutter came back 2px — just the borders), so styling
+     ::-webkit-scrollbar alone leaves nothing on screen to say the sheet
+     continues. These four layers do it without JS: the two `local` gradients
+     scroll with the content and mask the edges, the two `scroll` radial
+     gradients stay pinned and read as a shadow — so a shadow appears at the
+     bottom only while there is more to read, and fades out at the end. */
+  background:
+    linear-gradient(#fafafa 30%, rgba(250, 250, 250, 0)) top / 100% 22px no-repeat local,
+    linear-gradient(rgba(250, 250, 250, 0), #fafafa 70%) bottom / 100% 22px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) top / 100% 9px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) bottom / 100% 9px no-repeat scroll;
+  background-color: #fafafa;
   border: 1px solid #d8d8d8;
   border-radius: 4px;
 }
@@ -359,3 +377,28 @@
 .getinfo-btn--ok:active {
   background: linear-gradient(180deg, #2a6db8 0%, #1d5a9e 100%);
 }
+
+/* Make the lyrics scrollbar impossible to miss.
+ *
+ * The app-wide 15px platinum bar is right for a full-height list and far too
+ * heavy inside a small inset field, so this one gets a slim always-drawn bar in
+ * the same palette. It has to be always-drawn rather than overlay: the whole
+ * complaint was that nothing indicated the sheet continued past the visible
+ * lines. */
+.getinfo-lyrics::-webkit-scrollbar {
+  width: 10px;
+  background: transparent;
+}
+.getinfo-lyrics::-webkit-scrollbar-track,
+.getinfo-lyrics::-webkit-scrollbar-track-piece {
+  background: #efefef;
+  border-left: 1px solid #dcdcdc;
+  box-shadow: none;
+}
+.getinfo-lyrics::-webkit-scrollbar-thumb:vertical {
+  background: #b9b4ab;
+  border: 2px solid #efefef;
+  border-radius: 5px;
+  box-shadow: none;
+}
+.getinfo-lyrics::-webkit-scrollbar-thumb:vertical:hover { background: var(--brand-orange, #e0812e); }
