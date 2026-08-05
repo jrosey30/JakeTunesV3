@@ -5693,7 +5693,14 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             console.error(`sync-to-ipod: READBACK MISMATCH — wrote ${tracks.length} tracks, device catalog answers ${onDevice}`)
             resolve({
               ok: false,
-              error: `Sync verify failed: sent ${tracks.length} songs but the iPod's catalog shows ${onDevice}. Sync again — and if this repeats, tell Claude the two numbers.`,
+              // Name the LAYER. This fires when the catalog (one file, the
+              // iPod's table of contents) doesn't match what we sent — which
+              // reads as "everything failed" even when every song is verified
+              // on the card. Jake hit exactly that: 250 songs safe, catalog
+              // write crashed, banner said "sync failed" with no hint that the
+              // music was fine. Say what is actually at risk (nothing) and
+              // what the fix is (resync rewrites just the catalog).
+              error: `Your songs are fine — ${verifiedLanded || copied} of ${tracks.length} are verified on the iPod. What failed is the CATALOG (the iPod's table of contents): it lists ${onDevice}. Sync again to rewrite it — no music needs re-copying.`,
               copied, copyErrors,
             })
             return
