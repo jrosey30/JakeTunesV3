@@ -781,9 +781,34 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     type1 = next(s for s in sections if s['type'] == 1)
     mhlt_pos  = type1['start'] + type1['hlen']
     mhlt_hlen = struct.unpack_from('<I', existing, mhlt_pos + 4)[0]
+    existing_track_count = struct.unpack_from('<I', existing, mhlt_pos + 8)[0]
     first_mhit = mhlt_pos + mhlt_hlen
-    mhit_hlen  = struct.unpack_from('<I', existing, first_mhit + 4)[0]
-    template_mhit = bytearray(existing[first_mhit : first_mhit + mhit_hlen])
+    # 2026-08-05: an EMPTY existing DB has no mhit to use as a template.
+    # `first_mhit` then points at whatever section follows the bare mhlt, the
+    # "hlen" read from those bytes is garbage, and build_mhit_record crashes
+    # (struct.error: buffer too small) BEFORE writing — leaving the device
+    # with the old catalog and the sync stuck at "Writing iTunesDB...".
+    # This is exactly the state a wiped/fresh card is in, so a single empty
+    # sync used to brick every subsequent sync until a valid DB reappeared.
+    # Fall back to a zeroed header of the Mini-era mhit size (0x9C — the
+    # highest offset build_mhit_record writes is 0x94+8 = 0x9C, and every
+    # field it does not write is a benign zero default). 'mhit' magic and
+    # header length are set so downstream size arithmetic stays honest.
+    MHIT_HLEN_DEFAULT = 0x9C
+    if existing_track_count == 0 or first_mhit + 8 > len(existing):
+        template_mhit = bytearray(MHIT_HLEN_DEFAULT)
+        struct.pack_into('<4s', template_mhit, 0, b'mhit')
+        struct.pack_into('<I', template_mhit, 4, MHIT_HLEN_DEFAULT)
+        print(f"No existing mhit to reuse (empty DB) — synthesized {MHIT_HLEN_DEFAULT}-byte template", file=sys.stderr)
+    else:
+        mhit_hlen  = struct.unpack_from('<I', existing, first_mhit + 4)[0]
+        if mhit_hlen < MHIT_HLEN_DEFAULT or first_mhit + mhit_hlen > len(existing):
+            template_mhit = bytearray(MHIT_HLEN_DEFAULT)
+            struct.pack_into('<4s', template_mhit, 0, b'mhit')
+            struct.pack_into('<I', template_mhit, 4, MHIT_HLEN_DEFAULT)
+            print(f"Existing mhit template invalid (hlen={mhit_hlen}) — synthesized {MHIT_HLEN_DEFAULT}-byte template", file=sys.stderr)
+        else:
+            template_mhit = bytearray(existing[first_mhit : first_mhit + mhit_hlen])
 
     # ── Build path → dbid, path → per-track mhit header, path → extra mhods ──
     path_to_dbid = {}
