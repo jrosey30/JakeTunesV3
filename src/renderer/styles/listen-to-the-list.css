@@ -820,3 +820,42 @@
   padding: 2px 7px;
   white-space: nowrap;
 }
+
+/* ── triage-first header ───────────────────────────────────────────────────
+ * The page used to stack four jobs vertically — capture box, live suggestions,
+ * Friends leaderboard, permission banner — and only then the inbox, which was
+ * itself split into Songs/Albums/Artists. The thing you came to do was last on
+ * the page and had three possible starting points.
+ *
+ * Now the list IS the page. Adding and Friends are still one click away, but
+ * they are things you choose to open rather than things you scroll past.
+ */
+.ltl-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.ltl-tool {
+  border: 1px solid #c6c0b6;
+  background: linear-gradient(180deg, #fdfcfa 0%, #efece6 100%);
+  color: #4a4640;
+  border-radius: 5px;
+  padding: 4px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ltl-tool:hover { background: linear-gradient(180deg, #fff 0%, #f6f3ee 100%); }
+.ltl-tool.is-on {
+  background: linear-gradient(180deg, #e8a765 0%, var(--brand-orange, #e0812e) 100%);
+  border-color: #c06d1f;
+  color: #fff;
+}
+.ltl-tool--add { font-weight: 700; }
+
+/* One list, so it needs its own breathing room now that no zone header
+   separates the runs. */
+.ltl-tri-list { margin-top: 10px; }

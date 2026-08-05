@@ -122,30 +122,36 @@ export default function ListenToTheListView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recs, dlMap])
 
-  // ── Zones: inbox grouped by type (songs → albums → artists) + getting ─────
-  const { groups, inboxFlat, getting } = useMemo(() => {
+  // ── ONE ordered list ──────────────────────────────────────────────────────
+  // This used to be split into Songs / Albums / Artists zones, which meant
+  // "what do I deal with next" had three possible answers and your eye had to
+  // pick. It is an inbox: there is exactly one next thing. Ordered by what
+  // needs YOU, not by what kind of thing it is —
+  //   1. failed      — something went wrong and only you can decide to retry
+  //   2. in flight   — happening now, so it stays visible where you left it
+  //   3. everything else, oldest first, because the list is a queue
+  const { inboxFlat } = useMemo(() => {
     const removing = (r: Recommendation) => r.id === tossing?.id || autoRemovedRef.current.has(r.id)
-    const visible = recs.filter((r) => !removing(r))
-    const gettingList = visible.filter((r) => isGetting(r))
-    // Rows in flight STAY in the list. They used to be moved into a separate
-    // "Getting" zone lower down, so pressing Get read as the row disappearing
-    // with no explanation. The status now rides on the row itself, where the
-    // click happened and where the eye already is.
-    const undecided = visible.filter((r) => !isDone(r))
-    const songs = undecided.filter((r) => recoType(r) === 'song')
-    const albums = undecided.filter((r) => recoType(r) === 'album')
-    const artists = undecided.filter((r) => recoType(r) === 'artist')
-    const grps = [
-      { key: 'song', label: 'Songs', items: songs },
-      { key: 'album', label: 'Albums', items: albums },
-      { key: 'artist', label: 'Artists', items: artists },
-    ].filter((g) => g.items.length > 0)
-    return { groups: grps, inboxFlat: [...songs, ...albums, ...artists], getting: gettingList }
+    const visible = recs.filter((r) => !removing(r) && !isDone(r))
+    const rank = (r: Recommendation): number => {
+      const st = dlMap.get(r.id)?.state
+      if (st === 'error') return 0
+      if (st === 'queued' || st === 'downloading') return 1
+      return 2
+    }
+    const ordered = [...visible].sort((a, b) => {
+      const d = rank(a) - rank(b)
+      if (d !== 0) return d
+      return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+    })
+    return { inboxFlat: ordered }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recs, dlMap, tossing])
 
   // ── Triage selection (index into the flat inbox order) ────────────────────
   const [sel, setSel] = useState(0)
+  const [showAdd, setShowAdd] = useState(false)
+  const [showFriends, setShowFriends] = useState(false)
   useEffect(() => { setSel((s) => Math.max(0, Math.min(s, inboxFlat.length - 1))) }, [inboxFlat.length])
   const selRef = useRef<HTMLDivElement>(null)
   useEffect(() => { selRef.current?.scrollIntoView({ block: 'nearest' }) }, [sel])
@@ -326,7 +332,25 @@ export default function ListenToTheListView() {
             {inboxFlat.length > 0 ? `${inboxFlat.length} to decide` : recs.length > 0 ? 'Inbox zero ✓' : ''}
           </span>
         </div>
-        {inboxFlat.length > 0 && <span className="ltl-kbd-hint">Space preview · Enter get · X toss · ↑↓ move</span>}
+        <div className="ltl-header-tools">
+          {inboxFlat.length > 0 && <span className="ltl-kbd-hint">Space preview · Enter get · X toss · ↑↓ move</span>}
+          <button
+            type="button"
+            className={`ltl-tool${showFriends ? ' is-on' : ''}`}
+            onClick={() => setShowFriends((v) => !v)}
+            title="Who sends you what"
+          >
+            Friends
+          </button>
+          <button
+            type="button"
+            className={`ltl-tool ltl-tool--add${showAdd ? ' is-on' : ''}`}
+            onClick={() => { setShowAdd((v) => !v); if (!showAdd) setTimeout(() => omniRef.current?.focus(), 30) }}
+            title="Jot something down"
+          >
+            {showAdd ? 'Close' : '+ Add'}
+          </button>
+        </div>
       </div>
 
       {imsgDenied && (
@@ -337,6 +361,7 @@ export default function ListenToTheListView() {
       )}
 
       {/* ── Capture ── */}
+      {showAdd && (
       <div className="ltl-add-wrap">
         <form className="ltl-capture" onSubmit={handleSubmit}>
           <input ref={omniRef} className="ltl-omni" placeholder="Drop a song, a Spotify/YouTube/TikTok link, or a hunch…"
@@ -371,8 +396,9 @@ export default function ListenToTheListView() {
           </div>
         )}
       </div>
+      )}
 
-      {scouts.length > 0 && (
+      {showFriends && scouts.length > 0 && (
         <div className="ltl-scouts">
           <span className="ltl-scouts-label">Friends</span>
           {scouts.map((f) => {
@@ -422,17 +448,9 @@ export default function ListenToTheListView() {
           </div>
         </div>
       ) : (
-        <>
-          {groups.map((g, gi) => {
-            const offset = groups.slice(0, gi).reduce((n, gg) => n + gg.items.length, 0)
-            return (
-              <div className="ltl-zone" key={g.key}>
-                <div className="ltl-zone-head"><span className="ltl-zone-label">{g.label}</span><span className="ltl-zone-count">{g.items.length}</span></div>
-                <div className="ltl-tri-list">{g.items.map((r, j) => renderTriageRow(r, offset + j))}</div>
-              </div>
-            )
-          })}
-        </>
+        <div className="ltl-tri-list">
+          {inboxFlat.map((r, i) => renderTriageRow(r, i))}
+        </div>
       )}
 
       {/* ── Getting ── */}
