@@ -110,6 +110,26 @@ export default function HomeView() {
   useScrollPersistence('home-row-tours', tourDatesRowRef)
   useScrollPersistence('home-row-upcoming', upcomingRowRef)
 
+  // ── one-paint gate ────────────────────────────────────────────────────────
+  // Home fires six independent fetches (memory, rediscover, news+releases,
+  // tour dates, upcoming, weather) and each card used to pop in whenever its
+  // data landed — the page assembled in random order over seconds (Jake: "the
+  // features on every page need to load at same time"). Hold one skeleton
+  // until all slots settle, capped at 2.5s: tour dates can take 3-8s cold
+  // (Bandsintown across 60 artists) and holding the whole Home page on that
+  // would be worse than one late card. Warm visits paint once, instantly.
+  const [homeSettled, setHomeSettled] = useState({ memory: false, rediscovery: false, newsRel: false, tour: false, upcoming: false, weather: false })
+  const settleHome = useCallback((k: keyof typeof homeSettled) => {
+    setHomeSettled((s) => (s[k] ? s : { ...s, [k]: true }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const [homeCapHit, setHomeCapHit] = useState(false)
+  useEffect(() => {
+    const cap = setTimeout(() => setHomeCapHit(true), 2500)
+    return () => clearTimeout(cap)
+  }, [])
+  const pageReady = homeCapHit || Object.values(homeSettled).every(Boolean)
+
   // Brain #1 — Listening Memory. One fetch per mount; main computes streaks/
   // habits from the local play log (no network). Null → card hidden.
   const [memory, setMemory] = useState<ListeningMemoryData | null>(null)
@@ -118,6 +138,7 @@ export default function HomeView() {
     window.electronAPI.getListeningMemory?.().then((r) => {
       if (!cancelled && r?.ok && r.insights) setMemory(r as ListeningMemoryData)
     }).catch(() => { /* card just doesn't render */ })
+      .finally(() => { if (!cancelled) settleHome('memory') })
     return () => { cancelled = true }
   }, [])
 
@@ -130,6 +151,7 @@ export default function HomeView() {
     window.electronAPI.getRediscovery?.().then((r) => {
       if (!cancelled && r?.ok && r.picks) setRediscovery(r.picks)
     }).catch(() => { /* section just doesn't render */ })
+      .finally(() => { if (!cancelled) settleHome('rediscovery') })
     return () => { cancelled = true }
   }, [])
   const playRediscovery = useCallback((pick: RediscoveryPick) => {
@@ -154,6 +176,8 @@ export default function HomeView() {
         if (cancelled) return
         setNews([])
         setReleases([])
+      } finally {
+        if (!cancelled) settleHome('newsRel')
       }
     })()
     // 4.4.32: tour dates run separately because the cold-cache call
@@ -167,6 +191,8 @@ export default function HomeView() {
       } catch {
         if (cancelled) return
         setTourDates([])
+      } finally {
+        if (!cancelled) settleHome('tour')
       }
     })()
     // 4.4.34: upcoming releases also runs separately. MusicBrainz
@@ -179,6 +205,8 @@ export default function HomeView() {
       } catch {
         if (cancelled) return
         setUpcoming([])
+      } finally {
+        if (!cancelled) settleHome('upcoming')
       }
     })()
     return () => { cancelled = true }
@@ -284,6 +312,7 @@ export default function HomeView() {
     void window.electronAPI.getBrooklynWeather().then(r => {
       if (!cancelled && r.ok) setWeather(r.weather)
     }).catch(() => { /* fall through to date-only header */ })
+      .finally(() => { if (!cancelled) settleHome('weather') })
     return () => { cancelled = true }
   }, [])
 
@@ -515,6 +544,18 @@ export default function HomeView() {
     if (card.tracks.length === 0) return
     flashCard(card.key)
     playTrack(card.tracks[0], card.tracks, 0, undefined, true)
+  }
+
+  // One paint for the whole page (or the 2.5s cap for cold network sections).
+  if (!pageReady) {
+    return (
+      <div className="home-view">
+        <div className="page-gate" role="status" aria-label="Loading">
+          <div className="page-gate-name">{greeting}</div>
+          <div className="page-gate-bar"><span /></div>
+        </div>
+      </div>
+    )
   }
 
   return (

@@ -391,6 +391,22 @@ export default function AlbumDetailView() {
 
   // Fetch factual credits + Music Man blurb when the album changes.
   // Deferred so the track list paints before Claude/MB IPC competes.
+  // ── one-paint gate ────────────────────────────────────────────────────────
+  // The tracklist used to paint instantly and the credits/blurb block arrive
+  // whenever its IPC returned — the page assembled in two visible steps
+  // (Jake: "features on every page need to load at same time"). Hold one
+  // skeleton until the info settles, with a 2.5s cap: a cold blurb is an LLM
+  // call, and past the cap the page paints with that one section in its
+  // existing loading state rather than holding the whole album hostage.
+  const [infoSettled, setInfoSettled] = useState(false)
+  const [infoCapHit, setInfoCapHit] = useState(false)
+  useEffect(() => {
+    setInfoSettled(false); setInfoCapHit(false)
+    const cap = setTimeout(() => setInfoCapHit(true), 2500)
+    return () => clearTimeout(cap)
+  }, [albumArtist, albumName])
+  const pageReady = tracks.length === 0 || infoSettled || infoCapHit
+
   useEffect(() => {
     if (tracks.length === 0) return
     let cancelled = false
@@ -409,7 +425,7 @@ export default function AlbumDetailView() {
           if (!(info?.ok && info.credits) && !(b?.ok && b.blurb)) setInfoError(true)
         } catch {
           if (!cancelled) setInfoError(true)
-        } finally { if (!cancelled) setInfoLoading(false) }
+        } finally { if (!cancelled) { setInfoLoading(false); setInfoSettled(true) } }
       })()
     }, 280)
     return () => { cancelled = true; window.clearTimeout(timer) }
@@ -478,6 +494,17 @@ export default function AlbumDetailView() {
         credits!.producer && `Produced by ${credits!.producer}`,
       ].filter(Boolean).join(' · ')
     : ''
+
+  if (!pageReady) {
+    return (
+      <div className="album-page">
+        <div className="page-gate" role="status" aria-label="Loading">
+          <div className="page-gate-name">{albumName}</div>
+          <div className="page-gate-bar"><span /></div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="album-page">

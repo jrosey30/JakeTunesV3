@@ -273,14 +273,38 @@ export default function ArtistDetailView() {
   // "Paul McCartney & Wings") still pulls the real Paul McCartney photo
   // / wiki / discography instead of returning empty.
   const lookupName = useMemo(() => canonicalArtist(artist), [artist, aliasVersion])
+  // ── one-paint gate ────────────────────────────────────────────────────────
+  // This page used to fire four independent fetches (photo, related, wiki,
+  // discography) and paint each section whenever its data landed — the page
+  // assembled itself in random order over several seconds (Jake: "the
+  // features on every page need to load at same time, not sporadically").
+  // Every async slot now reports completion, and the page holds one skeleton
+  // until they've all settled, then paints ONCE. Exception: a cold
+  // MusicBrainz discography can take ~15s (their 1 req/s limit), so past a
+  // 5s cap the page paints with only that section in its loading state —
+  // one clearly-marked late arrival instead of five random ones.
+  const [settled, setSettled] = useState({ photo: false, related: false, wiki: false, disco: false })
+  const settle = useCallback((k: 'photo' | 'related' | 'wiki' | 'disco') => {
+    setSettled((s) => (s[k] ? s : { ...s, [k]: true }))
+  }, [])
+  const [discoCapHit, setDiscoCapHit] = useState(false)
+  useEffect(() => {
+    setSettled({ photo: false, related: false, wiki: false, disco: false })
+    setDiscoCapHit(false)
+    const cap = setTimeout(() => setDiscoCapHit(true), 5000)
+    return () => clearTimeout(cap)
+  }, [lookupName])
+  const pageReady = settled.photo && settled.related && settled.wiki && (settled.disco || discoCapHit)
+
   const [photoSlug, setPhotoSlug] = useState<string | null>(null)
   useEffect(() => {
-    if (!lookupName) return
+    if (!lookupName) { settle('photo'); return }
     let cancelled = false
     window.electronAPI.getArtistImage(lookupName).then(r => {
       if (cancelled) return
       setPhotoSlug(r.ok ? r.slug : null)
     }).catch(() => { /* keep null — UI shows the monogram fallback */ })
+      .finally(() => { if (!cancelled) settle('photo') })
     return () => { cancelled = true }
   }, [lookupName])
 
@@ -298,8 +322,8 @@ export default function ArtistDetailView() {
     return s
   }, [lib.tracks, aliasVersion])
   useEffect(() => {
-    if (!lookupName) { setRelated([]); return }
-    if (relatedArtistsCache[lookupName]) { setRelated(relatedArtistsCache[lookupName]); return }
+    if (!lookupName) { setRelated([]); settle('related'); return }
+    if (relatedArtistsCache[lookupName]) { setRelated(relatedArtistsCache[lookupName]); settle('related'); return }
     let cancelled = false
     setRelatedLoading(true)
     window.electronAPI.getRelatedArtists?.(lookupName).then((r) => {
@@ -307,7 +331,7 @@ export default function ArtistDetailView() {
       const list = (r?.ok && r.related) ? r.related : []
       relatedArtistsCache[lookupName] = list
       setRelated(list)
-    }).catch(() => { /* leave empty */ }).finally(() => { if (!cancelled) setRelatedLoading(false) })
+    }).catch(() => { /* leave empty */ }).finally(() => { if (!cancelled) { setRelatedLoading(false); settle('related') } })
     return () => { cancelled = true }
   }, [lookupName])
 
@@ -323,7 +347,7 @@ export default function ArtistDetailView() {
   const [expandedAlbumTitle, setExpandedAlbumTitle] = useState<string | null>(null)
   const personaNames = useMemo(() => personas.map(p => p.name).join('|'), [personas])
   useEffect(() => {
-    if (personas.length === 0) return
+    if (personas.length === 0) { settle('disco'); return }
     let cancelled = false
     setExpandedAlbumTitle(null)
     setDiscoByPersona(new Map(personas.map(p => [p.name, 'loading' as const])))
@@ -339,6 +363,7 @@ export default function ArtistDetailView() {
       const m = new Map<string, DiscographyAlbum[] | 'loading' | 'empty'>()
       for (const [name, value] of results) m.set(name, value)
       setDiscoByPersona(m)
+      settle('disco')
     })
     return () => { cancelled = true }
     // personaNames captures the identity of the set without re-running
@@ -365,7 +390,7 @@ export default function ArtistDetailView() {
   const [wiki, setWiki] = useState<{ extract: string | null; pageUrl: string | null } | null>(null)
   const [wikiLoading, setWikiLoading] = useState(false)
   useEffect(() => {
-    if (!lookupName) return
+    if (!lookupName) { settle('wiki'); return }
     let cancelled = false
     setWikiLoading(true)
     setWiki(null)
@@ -373,7 +398,7 @@ export default function ArtistDetailView() {
       if (cancelled) return
       setWiki({ extract: r.extract, pageUrl: r.pageUrl })
     }).catch(() => { /* leave wiki null */ })
-      .finally(() => { if (!cancelled) setWikiLoading(false) })
+      .finally(() => { if (!cancelled) { setWikiLoading(false); settle('wiki') } })
     return () => { cancelled = true }
   }, [lookupName])
 
@@ -407,6 +432,20 @@ export default function ArtistDetailView() {
       <div className="artist-detail">
         <button className="artist-detail-back" onClick={goBack}>{backLabel}</button>
         <div className="artist-detail-empty">No artist selected.</div>
+      </div>
+    )
+  }
+
+  // One paint: hold a quiet skeleton until every section is ready (or the
+  // discography cap fires). Library data is already in memory, so this gate
+  // costs at most the slowest of photo/related/wiki — typically <1s warm.
+  if (!pageReady) {
+    return (
+      <div className="artist-detail-view">
+        <div className="page-gate" role="status" aria-label="Loading">
+          <div className="page-gate-name">{artist}</div>
+          <div className="page-gate-bar"><span /></div>
+        </div>
       </div>
     )
   }

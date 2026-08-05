@@ -800,6 +800,30 @@ async function audioAnalysisWorker(): Promise<void> {
   }
 }
 
+/**
+ * Enqueue BPM/key analysis for a freshly-imported track — the one call every
+ * import road must make (Jake, 2026-08-05: "analyzing key and bpm should
+ * happen right after the song is imported automatically, i should not have to
+ * press a button").
+ *
+ * It existed on the drag-drop road only; CD rips and store downloads — the
+ * road Jake actually uses — skipped it, so every downloaded song sat
+ * unanalyzed until the Music Man backfill button was pressed. One helper, all
+ * roads, no drift.
+ */
+function enqueueAnalysisForImportedTrack(t: Record<string, unknown>): void {
+  const colon = String(t.path || '')
+  const trackId = Number(t.id) || 0
+  if (!colon || trackId <= 0) return
+  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const pathSep = IS_WINDOWS ? '\\' : '/'
+  const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
+  const title = String(t.title || '').toLowerCase().trim()
+  const artist = String(t.artist || '').toLowerCase().trim()
+  const duration = Number(t.duration) || 0
+  enqueueAudioAnalysis({ trackId, path: abs, fingerprint: `${title}|${artist}|${duration}` })
+}
+
 function enqueueAudioAnalysis(job: AudioAnalysisJob, opts?: { batch?: boolean }): void {
   // Brief 010: re-enabled with subprocess hardening (Phase 1) and
   // queue persistence (Phase 2). The 4.2.12 disable predated proper
@@ -15230,6 +15254,9 @@ ipcMain.handle('rip-cd-tracks', async (_e,
         // contributingArtists. Collab splits stay one-shot.
         contributingArtists: [metadata.artist || ''],
       })
+      // BPM/key analysis starts the moment the rip lands — CD rips were the
+      // other road that skipped it.
+      enqueueAnalysisForImportedTrack(imported[imported.length - 1] as unknown as Record<string, unknown>)
 
       // Send per-track progress to renderer, including the just-imported
       // track record so the library can add it immediately instead of
@@ -15400,6 +15427,8 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
     const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints, undefined, source)
     if (r.ok && r.track) {
       tracks.push(r.track)
+      // BPM/key analysis starts the moment the song lands — same as drag-drop.
+      enqueueAnalysisForImportedTrack(r.track)
       const fp = fingerprintTrack({ title: r.track.title, artist: r.track.artist, duration: r.track.duration })
       if (fp) sessionImportedFingerprints.add(fp)
       done += 1
