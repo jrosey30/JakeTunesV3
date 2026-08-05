@@ -23,7 +23,8 @@ import {
 import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
-import { computeImportCredits } from './friend-imports-core'
+import { computeImportCredits, pairKeys, friendOfNote } from './friend-imports-core'
+import { computeStandings, computeAlbumCredits, creditKindOf, albumKeyOfStrings, type CreditRecord } from './friend-standings-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
@@ -3295,6 +3296,14 @@ const friendsCache = new JsonFileCache<Record<string, FriendEntry>>(
   () => join(STATE_DIR, 'friends.json'),
   () => ({}),
   'friends',
+)
+// Friend credit RECORDS — the identity behind each earned credit, so points
+// can be recomputed against the live library (deletion-aware standings).
+// friends.json keeps the counters; this keeps the evidence.
+const friendCreditsCache = new JsonFileCache<{ credits: import('./friend-standings-core.ts').CreditRecord[] }>(
+  () => join(STATE_DIR, 'friend-credits.json'),
+  () => ({ credits: [] }),
+  'friend-credits',
 )
 const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
   () => join(STATE_DIR, 'mobile-stars.json'),
@@ -13260,12 +13269,45 @@ const importCreditCache = new JsonFileCache<{ credited: string[] }>(
 async function sweepFriendImports(): Promise<number> {
   try {
     const recos = await readRecommendationsFile()
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; dateAdded?: string }> }
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; album?: string; dateAdded?: string }> }
     const credited = new Set((await importCreditCache.get()).credited)
-    const credits = computeImportCredits(recos, lib.tracks || [], credited)
-    if (credits.length === 0) return 0
+    const tracks = lib.tracks || []
+
+    // Song credits (existing matcher) — but only for song-kind recos, so an
+    // album reco that happens to carry a title can't double-earn.
+    const songRecos = recos.filter((r) => creditKindOf(r as Parameters<typeof creditKindOf>[0]) === 'song')
+    const credits = computeImportCredits(songRecos, tracks, credited)
+    // Album credits (2026-08-05, the standings feature): +5 material.
+    const albumHits = computeAlbumCredits(recos as Parameters<typeof computeAlbumCredits>[0], tracks, credited, friendOfNote)
+
+    if (credits.length === 0 && albumHits.length === 0) return 0
+
+    // Per-credit RECORDS with the identity the award was granted on —
+    // standings recompute points from these against the live library, which
+    // is what makes "minus 1 when I delete it" automatic.
+    const recoById = new Map(recos.map((r) => [String(r.id), r]))
+    const now = new Date().toISOString()
+    const newRecords: CreditRecord[] = []
+    for (const c of credits) {
+      const r = recoById.get(c.recoId)
+      if (!r) continue
+      const title = String(r.matchedTitle || r.song || '').trim()
+      const artist = String(r.matchedArtist || r.artist || '').trim()
+      newRecords.push({
+        recoId: c.recoId, friend: c.friend, kind: 'song',
+        label: artist ? `${title} — ${artist}` : title,
+        keys: pairKeys(r), creditedAt: now,
+      })
+    }
+    for (const h of albumHits) {
+      newRecords.push({
+        recoId: h.recoId, friend: h.friend, kind: 'album',
+        label: h.label, albumKey: h.albumKey, n0: h.n0, creditedAt: now,
+      })
+    }
+
     await friendsCache.update((cur) => {
-      for (const c of credits) {
+      for (const c of [...credits, ...albumHits]) {
         const key = c.friend.trim().toLowerCase()
         const f = cur[key] || { name: c.friend.trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
         f.imported = (f.imported || 0) + 1
@@ -13273,17 +13315,67 @@ async function sweepFriendImports(): Promise<number> {
       }
       return cur
     })
-    await importCreditCache.update((cur) => {
-      cur.credited = [...new Set([...cur.credited, ...credits.map((c) => c.recoId)])]
+    await friendCreditsCache.update((cur) => {
+      const have = new Set(cur.credits.map((r) => r.recoId))
+      for (const r of newRecords) if (!have.has(r.recoId)) cur.credits.push(r)
       return cur
     })
-    for (const c of credits) console.log(`[scouts] import credit → ${c.friend} (reco ${c.recoId})`)
-    return credits.length
+    await importCreditCache.update((cur) => {
+      cur.credited = [...new Set([...cur.credited, ...newRecords.map((r) => r.recoId)])]
+      return cur
+    })
+    for (const r of newRecords) console.log(`[scouts] ${r.kind} credit → ${r.friend} (${r.label})`)
+    return newRecords.length
   } catch (err) {
     console.warn('[scouts] import sweep failed:', err instanceof Error ? err.message : err)
     return 0
   }
 }
+
+/**
+ * Standings: friends ranked by deletion-aware points. Points are computed
+ * fresh from credit records vs the live library on every call — nothing has
+ * to fire when Jake deletes a song for the board to be right.
+ *
+ * Migration: credits earned before records existed (the bare `imported`
+ * counters) become flat +1 "legacy" entries once, so history isn't erased —
+ * but they carry no identity and can never go negative.
+ */
+ipcMain.handle('get-friend-standings', async () => {
+  try {
+    const ledger = await friendsCache.get()
+    const store = await friendCreditsCache.get()
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; album?: string }> }
+
+    const recorded = new Map<string, number>()
+    for (const r of store.credits) {
+      if (r.legacy) continue
+      const k = r.friend.trim().toLowerCase()
+      recorded.set(k, (recorded.get(k) ?? 0) + 1)
+    }
+    const legacyHave = new Set(store.credits.filter((r) => r.legacy).map((r) => r.recoId))
+    const toMigrate: CreditRecord[] = []
+    for (const [key, f] of Object.entries(ledger)) {
+      const missing = (f.imported || 0) - (recorded.get(key) ?? 0)
+      for (let i = 0; i < missing; i++) {
+        const id = `legacy:${key}:${i}`
+        if (legacyHave.has(id)) continue
+        toMigrate.push({
+          recoId: id, friend: f.name, kind: 'song',
+          label: 'Imported before standings existed', creditedAt: '', legacy: true,
+        })
+      }
+    }
+    if (toMigrate.length > 0) {
+      await friendCreditsCache.update((cur) => { cur.credits.push(...toMigrate); return cur })
+    }
+
+    const all = toMigrate.length > 0 ? (await friendCreditsCache.get()).credits : store.credits
+    return { ok: true, standings: computeStandings(all, ledger, lib.tracks || []) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
 ipcMain.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }))
 setTimeout(() => { void sweepFriendImports() }, 30_000)
 setInterval(() => { void sweepFriendImports() }, 5 * 60_000)

@@ -44,7 +44,10 @@ export function friendOfNote(note: string | undefined): string | null {
   return m ? m[1].trim() : null
 }
 
-function pairKeys(r: CreditableReco): string[] {
+/** Exported for the standings sweep: a CreditRecord must carry the SAME keys
+ *  the credit was granted on, or deletion checks would use a different
+ *  identity than the award did. */
+export function pairKeys(r: CreditableReco): string[] {
   const keys: string[] = []
   const raw = recoNorm(r.song || '') && recoNorm(r.artist || '')
     ? `${recoNorm(r.song || '')}|${recoNorm(r.artist || '')}` : null

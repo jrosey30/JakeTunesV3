@@ -256,7 +256,20 @@ export default function ListenToTheListView() {
     dispatch({ type: 'SET_VIEW', view: 'download' })
   }
 
-  const scouts = friends.filter((f) => f.adds > 0).slice(0, 8)
+  // ── Standings (2026-08-05, Jake: "i want the friends area to look like
+  // standings") — points are computed in main against the LIVE library, so a
+  // deletion shows up here on the next open without any event wiring.
+  type Standing = NonNullable<Awaited<ReturnType<NonNullable<typeof window.electronAPI.getFriendStandings>>>['standings']>[number]
+  const [standings, setStandings] = useState<Standing[]>([])
+  const [openFriend, setOpenFriend] = useState<string | null>(null)
+  useEffect(() => {
+    if (!showFriends) return
+    let cancelled = false
+    void window.electronAPI.getFriendStandings?.().then((r) => {
+      if (!cancelled && r?.ok && r.standings) setStandings(r.standings)
+    }).catch(() => { /* keep last */ })
+    return () => { cancelled = true }
+  }, [showFriends, friends, recs.length])
 
   const renderTriageRow = (r: Recommendation, i: number) => {
     const selected = i === sel
@@ -398,41 +411,46 @@ export default function ListenToTheListView() {
       </div>
       )}
 
-      {showFriends && scouts.length > 0 && (
-        <div className="ltl-scouts">
-          <span className="ltl-scouts-label">Friends</span>
-          {scouts.map((f) => {
-            const verdicts = f.got + f.tossed
-            const rate = verdicts > 0 ? Math.round((f.got / verdicts) * 100) : null
-            // A SCORE and a SEND COUNT must not look alike.
-            //
-            // This fell through to a bare `${f.adds}`, so a friend who had sent
-            // one song Jake already owned rendered as "1" — beside someone who
-            // had actually earned a credit, rendered as "1 ♪". Jake read that as
-            // Joey scoring a point for a duplicate. The SCORING was already
-            // right (computeImportCredits requires the library copy to post-date
-            // the reco, so a song he already owned earns nothing); only the chip
-            // misrepresented it. A bare number reads as a score no matter what
-            // it counts.
-            //
-            // Now a naked number is only ever an earned credit. Everything else
-            // carries a word, and the tooltip keeps the full breakdown.
-            const stat = f.imported > 0
-              ? `${f.imported} ♪`
-              : rate != null ? `${rate}% kept` : `${f.adds} sent`
-            return (
+      {showFriends && (
+        <div className="ltl-standings">
+          <div className="ltl-standings-head">
+            <span className="ltl-standings-col-name">Friend</span>
+            <span className="ltl-standings-col-pts">Points</span>
+          </div>
+          {standings.length === 0 && <div className="ltl-standings-empty">No standings yet — points land when a friend's send gets imported.</div>}
+          {standings.map((f, i) => (
+            <div key={f.name} className="ltl-standing">
               <button
                 type="button"
-                key={f.name}
-                className={`ltl-scout${f.imported > 0 ? ' ltl-scout--scored' : ''}`}
-                title={`${f.adds} sent · ${f.imported} imported · ${f.got} got · ${f.tossed} tossed`}
-                onClick={() => setFromWho(f.name)}
+                className={`ltl-standing-row${openFriend === f.name ? ' is-open' : ''}`}
+                onClick={() => setOpenFriend((cur) => (cur === f.name ? null : f.name))}
+                title="Click for details"
               >
-                {f.name}
-                <span className={`ltl-scout-stat${f.imported > 0 ? '' : ' ltl-scout-stat--muted'}`}>{stat}</span>
+                <span className="ltl-standing-rank">{i + 1}</span>
+                <span className="ltl-standing-name">{f.name}</span>
+                <span className={`ltl-standing-pts${f.points < 0 ? ' is-neg' : ''}`}>{f.points}</span>
               </button>
-            )
-          })}
+              {openFriend === f.name && (
+                <div className="ltl-standing-detail">
+                  <div className="ltl-standing-context">{f.adds} sent · {f.credits.length} imported · {f.tossed} tossed</div>
+                  {f.credits.length === 0 && <div className="ltl-standing-line ltl-standing-line--muted">Nothing imported from {f.name} yet.</div>}
+                  {f.credits.map((c, j) => (
+                    <div key={j} className="ltl-standing-line">
+                      <span className="ltl-standing-what">{c.record.label}</span>
+                      <span className={`ltl-standing-status ltl-standing-status--${c.status}`}>
+                        {c.status === 'kept' ? (c.record.kind === 'album' ? 'album kept' : 'kept')
+                          : c.status === 'partial' ? 'album, partly kept'
+                          : c.status === 'deleted' ? 'deleted'
+                          : 'imported'}
+                      </span>
+                      <span className={`ltl-standing-delta${c.points < 0 ? ' is-neg' : ''}`}>{c.points > 0 ? `+${c.points}` : c.points}</span>
+                    </div>
+                  ))}
+                  <button type="button" className="ltl-standing-tag" onClick={() => setFromWho(f.name)}>Tag next add as from {f.name}</button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

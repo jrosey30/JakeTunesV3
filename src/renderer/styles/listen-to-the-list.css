@@ -859,3 +859,85 @@
 /* One list, so it needs its own breathing room now that no zone header
    separates the runs. */
 .ltl-tri-list { margin-top: 10px; }
+
+/* ── Friends standings ─────────────────────────────────────────────────────
+ * A league table, not a chip cloud: one row per friend, points on the right,
+ * click the row for the itemized case file. Points can go NEGATIVE (deleted
+ * imports), and a red number should look like a deficit, not a decoration.
+ */
+.ltl-standings {
+  margin: 10px 0 14px;
+  border: 1px solid #d8d2c6;
+  border-radius: 8px;
+  background: #fdfcfa;
+  overflow: hidden;
+}
+.ltl-standings-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 14px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #8d867a;
+  border-bottom: 1px solid #e6e0d5;
+}
+.ltl-standings-empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: #9a938a;
+  font-style: italic;
+}
+.ltl-standing + .ltl-standing { border-top: 1px solid #efe9df; }
+.ltl-standing-row {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+.ltl-standing-row:hover, .ltl-standing-row.is-open { background: #f5f1e9; }
+.ltl-standing-rank { font-size: 11px; font-weight: 700; color: #b3ab9d; }
+.ltl-standing-name { font-weight: 600; color: #3d3a34; }
+.ltl-standing-pts {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand-orange, #e0812e);
+}
+.ltl-standing-pts.is-neg { color: #c0392b; }
+
+.ltl-standing-detail { padding: 4px 14px 12px 50px; }
+.ltl-standing-context { font-size: 11px; color: #9a938a; margin-bottom: 6px; }
+.ltl-standing-line {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.ltl-standing-line--muted { color: #9a938a; font-style: italic; }
+.ltl-standing-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4a4640; }
+.ltl-standing-status { font-size: 10px; letter-spacing: 0.04em; color: #8d867a; white-space: nowrap; }
+.ltl-standing-status--deleted { color: #c0392b; }
+.ltl-standing-status--partial { color: #b07a2a; }
+.ltl-standing-delta { font-weight: 700; font-variant-numeric: tabular-nums; color: #4c8a3f; }
+.ltl-standing-delta.is-neg { color: #c0392b; }
+.ltl-standing-tag {
+  margin-top: 8px;
+  font-size: 11px;
+  border: 1px solid #d8d2c6;
+  background: linear-gradient(180deg, #fdfcfa 0%, #efece6 100%);
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: #4a4640;
+}
+.ltl-standing-tag:hover { background: linear-gradient(180deg, #fff 0%, #f6f3ee 100%); }

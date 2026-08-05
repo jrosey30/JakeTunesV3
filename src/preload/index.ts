@@ -234,6 +234,7 @@ const electronAPI = {
   getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
   discoveryNotForMe: (artist: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('discovery-not-for-me', artist),
   getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }> => ipcRenderer.invoke('get-friends'),
+  getFriendStandings: (): Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }> => ipcRenderer.invoke('get-friend-standings'),
   sweepFriendImports: (): Promise<{ ok: boolean; credited: number }> => ipcRenderer.invoke('sweep-friend-imports'),
   // 2026-07-20 — the sync journal: fired at boot when the last iPod sync
   // died partway (stale device database until the user syncs again).
