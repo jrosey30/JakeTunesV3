@@ -4776,6 +4776,37 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
   }
 })
 
+interface SyncReport {
+  syncedAt: string
+  target: number
+  landed: number
+  shortfall: number
+  verifyPasses: number
+  copied: number
+  copyErrors: number
+  failed: Array<{ id: number; title: string; artist: string; path: string }>
+}
+/**
+ * A durable record of what a sync LOST.
+ *
+ * The journal next door answers "did the last sync finish"; this answers "what
+ * did it drop, and was it the same songs as last time". Keeps the previous
+ * report alongside the current one, because the whole diagnostic value is in
+ * the comparison: identical failures point at those files, a different set
+ * every run points at the card dropping writes.
+ */
+const IPOD_SYNC_REPORT_FILE = () => join(app.getPath('userData'), 'last-sync-report.json')
+const IPOD_SYNC_REPORT_PREV = () => join(app.getPath('userData'), 'prev-sync-report.json')
+async function writeSyncReport(r: SyncReport): Promise<void> {
+  try {
+    await copyFile(IPOD_SYNC_REPORT_FILE(), IPOD_SYNC_REPORT_PREV()).catch(() => {})
+    await writeJsonAtomic(IPOD_SYNC_REPORT_FILE(), r)
+    if (r.shortfall > 0) {
+      console.warn(`sync-to-ipod: SHORT — ${r.shortfall} of ${r.target} never committed. Report: ${IPOD_SYNC_REPORT_FILE()}`)
+    }
+  } catch { /* diagnostics must never break a sync */ }
+}
+
 const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
 async function writeSyncJournal(phase: string | null): Promise<void> {
   try {
@@ -5403,6 +5434,30 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       // track excluded from the verify set (streamed / no local source) is dropped
       // too — it has no file on the device and would only inflate the count.
       const before = tracks.length
+      // Capture WHO failed before the filter throws them away. Until now the
+      // only record of a short sync was a console line in a stdout nobody
+      // captures: Jake could see "250 asked, 235 arrived" and there was no way
+      // to answer the question that decides everything — are the SAME tracks
+      // failing every time (a file problem, fixable) or DIFFERENT ones (the
+      // card dropping writes, which means hardware). Persist it.
+      const failedNow = tracks
+        .filter((t) => !landedIds.has(t.id as number))
+        .map((t) => ({
+          id: t.id as number,
+          title: String((t as Record<string, unknown>).title ?? ''),
+          artist: String((t as Record<string, unknown>).artist ?? ''),
+          path: String((t as Record<string, unknown>).path ?? ''),
+        }))
+      void writeSyncReport({
+        syncedAt: new Date().toISOString(),
+        target: syncTarget,
+        landed: landedIds.size,
+        shortfall: syncTarget - landedIds.size,
+        verifyPasses: verifyAttempts,
+        copied,
+        copyErrors,
+        failed: failedNow,
+      })
       tracks = tracks.filter((t) => landedIds.has(t.id as number))
       verifiedLanded = tracks.length
       console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
