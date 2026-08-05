@@ -99,3 +99,52 @@ describe('selectWorkoutSyncSet — taste floor + brain term', () => {
     assert.equal(r.trackIds.length, 40)
   })
 })
+
+describe('selectWorkoutSyncSet — 2-per-artist rule (Jake, 2026-08-05)', () => {
+  const mkBy = (id: number, artist: string): WorkoutTrack => ({
+    id, title: `T${id}`, artist, album: `Album ${artist}`, genre: 'rock', bpm: 120, duration: 200000,
+  })
+
+  it('never takes more than 2 songs from one artist when others are available', () => {
+    // 10 artists × 10 songs each. Target 20 = exactly 2 per artist.
+    const tracks: WorkoutTrack[] = []
+    for (let a = 0; a < 10; a++) for (let i = 0; i < 10; i++) tracks.push(mkBy(a * 10 + i, `Artist${a}`))
+    const r = selectWorkoutSyncSet(tracks, { target: 20, seed: 3 })
+    assert.equal(r.trackIds.length, 20)
+    const byArtist = new Map<string, number>()
+    for (const id of r.trackIds) {
+      const a = `Artist${Math.floor(id / 10)}`
+      byArtist.set(a, (byArtist.get(a) || 0) + 1)
+    }
+    for (const [a, n] of byArtist) assert.ok(n <= 2, `${a} got ${n} songs — the cap is 2`)
+  })
+
+  it('the cap holds even when the taste floor is relaxed', () => {
+    // Every track is below a harsh floor, so the relaxed pass does the picking.
+    // The OLD code dropped the artist cap there too; the rule says it holds.
+    const tracks: WorkoutTrack[] = []
+    const tasteById = new Map<number, number>()
+    for (let a = 0; a < 10; a++) for (let i = 0; i < 10; i++) {
+      const id = a * 10 + i
+      tracks.push(mkBy(id, `Artist${a}`))
+      tasteById.set(id, 0.05)
+    }
+    const r = selectWorkoutSyncSet(tracks, { target: 20, tasteById, tasteFloorPct: 0.9, seed: 3 })
+    assert.equal(r.trackIds.length, 20)
+    const byArtist = new Map<string, number>()
+    for (const id of r.trackIds) {
+      const a = `Artist${Math.floor(id / 10)}`
+      byArtist.set(a, (byArtist.get(a) || 0) + 1)
+    }
+    for (const [a, n] of byArtist) assert.ok(n <= 2, `${a} got ${n} in the relaxed pass — cap must hold there too`)
+  })
+
+  it('the full-count promise still wins when the library cannot do 2-per-artist', () => {
+    // 3 artists, 30 songs, target 20. Two per artist yields only 6; the
+    // guaranteed backfill must still deliver 20 rather than a short sync.
+    const tracks: WorkoutTrack[] = []
+    for (let a = 0; a < 3; a++) for (let i = 0; i < 10; i++) tracks.push(mkBy(a * 10 + i, `Artist${a}`))
+    const r = selectWorkoutSyncSet(tracks, { target: 20, seed: 3 })
+    assert.equal(r.trackIds.length, 20, 'count promise outranks the cap when they truly conflict')
+  })
+})

@@ -313,36 +313,42 @@ export function selectWorkoutSyncSet(
     return v != null && v < tasteFloor
   }
 
-  // Diversity: at most 3 per artist AND 3 per album in the capped pass
-  // (was 4 per artist, no album cap — Jake: "diversify a little more").
-  const CAP = 3
+  // Diversity: at most 2 per artist — Jake, 2026-08-05: "only 2 songs allowed
+  // per artist on activity sync. new rule." (History: 4 → 3 "diversify a
+  // little more" → 2.) The artist cap is a RULE, not a preference, so unlike
+  // the old version the relaxed pass no longer waives it — relaxing there
+  // only drops the taste floor. The cap gives way solely in the guaranteed
+  // backfill below, when the library genuinely cannot reach the target on
+  // two-per-artist, because "always always always the full count" is the one
+  // promise that outranks it — and that concession is logged, not silent.
+  // A separate album cap is now redundant: two per artist already bounds any
+  // one album by the same artist at two.
+  const CAP = 2
   const perArtist = new Map<string, number>()
-  const perAlbum = new Map<string, number>()
   const out: number[] = []
   const scoreMap = new Map<number, number>()
 
-  const takePass = (relaxCap: boolean) => {
+  const takePass = (relaxFloor: boolean) => {
     for (const { t, s } of scored) {
       if (out.length >= target) break
       if (scoreMap.has(t.id)) continue
       // Primary pass honors the taste floor; the relaxed pass drops it so a
-      // small library can still reach target.
-      if (!relaxCap && belowFloor(t.id)) continue
+      // small library can still reach target. The artist cap holds in BOTH.
+      if (!relaxFloor && belowFloor(t.id)) continue
       const key = (t.artist || 'Unknown').toLowerCase().trim()
-      const albumKey = `${key}|||${(t.album || '').toLowerCase().trim()}`
       const n = perArtist.get(key) || 0
-      const an = perAlbum.get(albumKey) || 0
-      if (!relaxCap && (n >= CAP || (t.album && an >= CAP))) continue
+      if (n >= CAP) continue
       out.push(t.id)
       scoreMap.set(t.id, s)
       perArtist.set(key, n + 1)
-      perAlbum.set(albumKey, an + 1)
     }
   }
 
   takePass(false)
   if (out.length < target) takePass(true)
   if (out.length < target) {
+    const shortBy = target - out.length
+    console.warn(`[workout-sync] artist cap (2) relaxed to fill the last ${shortBy} slot(s) — not enough distinct artists at this target`)
     for (const { t, s } of scored) {
       if (out.length >= target) break
       if (scoreMap.has(t.id)) continue
