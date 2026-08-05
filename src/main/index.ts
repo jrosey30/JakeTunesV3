@@ -4807,6 +4807,43 @@ async function writeSyncReport(r: SyncReport): Promise<void> {
   } catch { /* diagnostics must never break a sync */ }
 }
 
+/**
+ * Per-song write confirmation (Jake, 2026-08-05: "is there a way to confirm
+ * after each song? it might take longer but still").
+ *
+ * copyFile() returning success only means macOS accepted the bytes into its
+ * page cache. On this iPod's modded CF card the lie surfaces later: gigabytes
+ * of dirty cache flush at eject, the card drops writes mid-flush, and files
+ * that "copied fine" are missing afterwards (the 2026-06 flapping-mount
+ * corruption, and the likely shape of 250-synced/235-landed). So after every
+ * copy we force THIS file's pages to the device (fsync) and re-stat both
+ * sides. Slower per song — Jake accepted that explicitly — and it converts
+ * one giant fragile flush at eject into many small confirmed ones.
+ *
+ * The remount verify at the end of the sync remains the physical proof; this
+ * catches failures at write time, names the exact song, and keeps the dirty
+ * cache near zero so the eject flush has almost nothing left to lose.
+ */
+async function confirmWriteOnCard(src: string, dst: string): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const fh = await open(dst, 'r+')
+    try { await fh.sync() } finally { await fh.close() }
+    const [sSt, dSt] = await Promise.all([stat(src), stat(dst)])
+    if (sSt.size !== dSt.size) return { ok: false, reason: `on-card size ${dSt.size} != source ${sSt.size}` }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+/** Filesystem-wide flush, awaited. Bounds how much the eject can drop. */
+const flushCardCaches = (): Promise<void> => new Promise((resolve) => {
+  try {
+    const p = spawn('/bin/sync')
+    p.on('close', () => resolve())
+    p.on('error', () => resolve())
+  } catch { resolve() }
+})
+
 const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
 async function writeSyncJournal(phase: string | null): Promise<void> {
   try {
@@ -5193,6 +5230,8 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // existing pathRewrites array before the iTunesDB writer runs so
   // the device sees the converted file at its new path.
   const convertedPathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  // Per-song confirm bookkeeping: fsync per file, /bin/sync every few songs.
+  let sinceFlush = 0
   // Map local → trackId so we can look up the right pathRewrite entry
   // during the copy loop without re-walking the tracks array.
   const trackByLocal = new Map<string, Record<string, unknown>>()
@@ -5298,6 +5337,18 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       const dir = dstToCopy.substring(0, dstToCopy.lastIndexOf(pathSep))
       await mkdir(dir, { recursive: true })
       await copyFile(srcToCopy, dstToCopy)
+      // Confirm THIS song is on the card before moving to the next.
+      const conf = await confirmWriteOnCard(srcToCopy, dstToCopy)
+      if (!conf.ok) {
+        console.error(`sync-to-ipod: write NOT confirmed for "${title}" — ${conf.reason}`)
+        copyErrors++
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'copy', current: copied + copyErrors, total: totalToCopy,
+          title: `✗ did not stick: ${title}`,
+        })
+        continue
+      }
+      if (++sinceFlush >= 8) { await flushCardCaches(); sinceFlush = 0 }
       copied++
       // 4.5: orphan cleanup — when a lossless source (.flac/.wav/.aif)
       // is converted, the destination filename changes to .m4a. The
@@ -5321,6 +5372,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
     })
   }
+  // One last filesystem-wide flush so the DB write and the eject start from
+  // a clean slate — nothing of the audio left in the page cache to lose.
+  await flushCardCaches()
   // Merge the convert-driven path rewrites into the existing array
   // so the smart-match block below picks them up alongside its own.
   if (convertedPathRewrites.length > 0) {
@@ -5413,6 +5467,11 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             const dir = v.dstPath.substring(0, v.dstPath.lastIndexOf(pathSep))
             await mkdir(dir, { recursive: true })
             await copyFile(v.localFile, v.dstPath)
+            // Same per-song confirmation as the main loop — a recopy that only
+            // reached the page cache is exactly what the next remount pass
+            // would find missing again.
+            const conf = await confirmWriteOnCard(v.localFile, v.dstPath)
+            if (!conf.ok) { console.warn(`sync-to-ipod: recopy NOT confirmed for track ${v.id} — ${conf.reason}`); continue }
             recopied++
           } catch (e) { console.warn(`sync-to-ipod: recopy failed for track ${v.id}:`, e) }
         }
