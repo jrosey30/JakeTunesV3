@@ -426,38 +426,43 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     }}
                   />
                 </label>
-                {([
-                  ['widthLow', 'Bass (below 250 Hz)', 0, 1, 'mono', 'natural'],
-                  ['widthMid', 'Body (250 Hz – 5 kHz)', 1, 1.5, 'natural', 'wide'],
-                  ['widthHigh', 'Air (above 5 kHz)', 1, 2.2, 'natural', 'very wide'],
-                ] as Array<[('widthLow' | 'widthMid' | 'widthHigh'), string, number, number, string, string]>).map(([key, label, min, max, lo, hi]) => (
-                  <div key={key} style={{ opacity: draft.audio.widthOn ? 1 : 0.45, marginBottom: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b665e' }}>
-                      <span>{label}</span>
-                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                        {key === 'widthLow'
-                          ? (draft.audio[key] <= 0.02 ? 'mono' : `${Math.round(draft.audio[key] * 100)}%`)
-                          : `+${Math.round((draft.audio[key] - 1) * 100)}%`}
-                      </span>
+                {(() => {
+                  // ONE slider (Jake: "can we simplify it?"). The three-band
+                  // engine stays underneath; this morphs all three along the
+                  // tuned curve: bass slides toward mono, body takes up to
+                  // +15%, air up to +60%. 100% = the tuned preset.
+                  const x = Math.max(0, Math.min(1, (draft.audio.widthHigh - 1) / 0.6))
+                  const setAmount = (nx: number) => {
+                    const audio = {
+                      ...draft.audio,
+                      widthLow: Math.round((1 - nx) * 100) / 100,
+                      widthMid: Math.round((1 + 0.15 * nx) * 100) / 100,
+                      widthHigh: Math.round((1 + 0.6 * nx) * 100) / 100,
+                    }
+                    setDraft({ ...draft, audio })
+                    setEnhanceConfig(audio)
+                  }
+                  return (
+                    <div style={{ opacity: draft.audio.widthOn ? 1 : 0.45, marginBottom: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b665e' }}>
+                        <span>Amount</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(x * 100)}%</span>
+                      </div>
+                      <input
+                        type="range" min={0} max={1} step={0.05}
+                        value={x}
+                        disabled={!draft.audio.widthOn}
+                        onChange={(e) => setAmount(Number(e.target.value))}
+                        style={{ width: '100%' }}
+                      />
                     </div>
-                    <input
-                      type="range" min={min} max={max} step={0.05}
-                      value={draft.audio[key]}
-                      disabled={!draft.audio.widthOn}
-                      onChange={(e) => {
-                        const audio = { ...draft.audio, [key]: Number(e.target.value) }
-                        setDraft({ ...draft, audio })
-                        setEnhanceConfig(audio)
-                      }}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                ))}
+                  )
+                })()}
                 <CorrelationMeter />
                 <p className="imp-help" style={{ marginTop: 6 }}>
-                  Three registers, three honest numbers: bass stays mono (side content
-                  down there only makes the low end unstable), the vocal band takes a
-                  nudge, the air above 5 kHz is where width actually reads as space.
+                  One knob, three registers underneath: as you push it, bass narrows to
+                  mono (stable low end), the vocal band takes a gentle nudge, and the
+                  air above 5 kHz opens wide — each register getting only what suits it.
                   Watch the meter — under 0.3 and you've broken mono compatibility.
                 </p>
               </div>

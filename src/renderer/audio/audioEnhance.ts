@@ -184,6 +184,16 @@ function applyConfig(): void {
   applyBandWidth(bands.low, cfg.widthOn ? clamp(cfg.widthLow, 0, 1.2) : 1)
   applyBandWidth(bands.mid, cfg.widthOn ? clamp(cfg.widthMid, 0, 1.5) : 1)
   applyBandWidth(bands.high, cfg.widthOn ? clamp(cfg.widthHigh, 0, 2.2) : 1)
+  // −1 dB engage trim. Widening raises side-channel peaks (worst case ×w in
+  // the high band); without headroom a hot master clips at the destination —
+  // and clipping is the one processing artifact that is never "taste". The
+  // cost is that width-on plays 1 dB quieter than width-off in an A/B; that
+  // is honest physics, not a bug.
+  if (sumL && sumR) {
+    const trim = cfg.widthOn ? 0.891 : 1
+    sumL.gain.value = trim
+    sumR.gain.value = trim
+  }
   const feed = cfg.crossfeedOn ? CF_FEED_LINEAR * clamp(cfg.crossfeedAmount, 0, 1) : 0
   // Renormalize so mono content (which receives direct + feed) stays at
   // unity — engaging crossfeed must never push the master into clipping.

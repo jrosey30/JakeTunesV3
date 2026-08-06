@@ -35,13 +35,19 @@ export function pathHashFor(src: string): string {
   return createHash('sha1').update(src).digest('hex').slice(0, 16)
 }
 
-/** Full cache file name for one exact version of one source file. */
+/** Full cache file name for one exact version of one source file.
+ *
+ * 2026-08-06: extension went .m4a → .flac when the cache switched from lossy
+ * AAC-256 mirrors to LOSSLESS FLAC (Chromium decodes FLAC natively; decoded
+ * PCM is bit-identical to the ALAC source — verified by MD5 of the decoded
+ * stream). Old .m4a entries are superseded, never adopted: a lossy file must
+ * not masquerade as the lossless cache. */
 export function playCacheName(src: string, size: number, mtimeMs: number): string {
   const tag = createHash('sha1')
     .update(`${size}:${Math.round(mtimeMs)}`)
     .digest('hex')
     .slice(0, 10)
-  return `${pathHashFor(src)}-${tag}.m4a`
+  return `${pathHashFor(src)}-${tag}.flac`
 }
 
 /**

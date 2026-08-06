@@ -16042,6 +16042,42 @@ app.whenReady().then(async () => {
     } catch { /* cache dir unreadable — nothing to evict */ }
   }
 
+  // ── cache size cap ────────────────────────────────────────────────────────
+  // FLAC entries are ~3x the old AAC ones, and a full-library lossless cache
+  // would be ~95 GB — the no-local-space rule caps it at ~20 GB (parity with
+  // the AAC cache it replaced). Least-recently-touched entries fall off; the
+  // hot set stays lossless-instant, cold tracks pay ~1s to re-transcode.
+  const PLAY_CACHE_CAP_BYTES = 20 * 1024 * 1024 * 1024
+  let enforcingCap = false
+  async function enforceCacheCap(justWritten: string): Promise<void> {
+    if (enforcingCap) return
+    enforcingCap = true
+    try {
+      const { readdir } = await import('fs/promises')
+      const names = await readdir(PLAY_CACHE)
+      const entries: Array<{ p: string; size: number; at: number }> = []
+      let total = 0
+      for (const n of names) {
+        if (!n.endsWith('.m4a') && !n.endsWith('.flac')) continue
+        const p = join(PLAY_CACHE, n)
+        try {
+          const st = await stat(p)
+          entries.push({ p, size: st.size, at: st.atimeMs || st.mtimeMs })
+          total += st.size
+        } catch { /* raced a delete */ }
+      }
+      if (total <= PLAY_CACHE_CAP_BYTES) return
+      entries.sort((a, b) => a.at - b.at)
+      for (const e of entries) {
+        if (total <= PLAY_CACHE_CAP_BYTES) break
+        if (e.p === justWritten) continue
+        try { await unlink(e.p); total -= e.size } catch { /* already gone */ }
+      }
+    } catch { /* cap enforcement must never break playback */ } finally {
+      enforcingCap = false
+    }
+  }
+
   async function aacCachePath(
     src: string,
     srcMtime: number,
@@ -16077,20 +16113,9 @@ app.whenReady().then(async () => {
       if (cStat.size > 0) return cached
     } catch { /* not cached yet */ }
 
-    // Adopt a pre-content-tag entry rather than re-transcoding all ~2,900 of
-    // them. Each was checked against its source before this shipped and the
-    // 11 that disagreed were deleted, so what remains is known-good work.
-    // Adoption renames it under the content tag, so from here on a replaced
-    // source correctly misses the cache.
-    const legacy = join(PLAY_CACHE, legacyPlayCacheName(src))
-    try {
-      const lStat = await stat(legacy)
-      if (lStat.size > 0) {
-        const { rename: renameFS } = await import('fs/promises')
-        await renameFS(legacy, cached)
-        return cached
-      }
-    } catch { /* no legacy entry */ }
+    // NOTE: pre-FLAC entries (.m4a, lossy AAC-256) are deliberately NOT
+    // adopted — a lossy mirror must not masquerade as the lossless cache.
+    // They are swept by evictOtherCacheEntries when the FLAC lands.
 
     // Need to transcode. Dedupe concurrent requests.
     const existing = transcodeInFlight.get(src)
@@ -16105,18 +16130,24 @@ app.whenReady().then(async () => {
       // guarantees the final path is either complete or absent.
       // .partial.m4a (not .tmp) so ffmpeg recognizes the mp4 container
       // format from the extension. Rename on success is still atomic.
-      const tmp = cached + '.partial.m4a'
+      const tmp = cached + '.partial.flac'
       try {
+        // FLAC, not AAC (2026-08-06): the cache used to hand Chromium a lossy
+        // 256k mirror of every ALAC file — the single biggest quality ceiling
+        // in the whole playback path. FLAC decodes natively in Chromium and
+        // its decoded PCM is bit-identical to the ALAC source (proved by MD5
+        // of the decoded streams). compression_level 0 encodes ~100x realtime
+        // at ~1.03x the ALAC size, so a cache miss costs about a second.
         await execP('ffmpeg', [
           '-y', '-i', src, '-vn',
-          '-c:a', 'aac', '-b:a', '256k',
+          '-c:a', 'flac', '-compression_level', '0',
           '-map_metadata', '0',
-          '-movflags', '+faststart',
           tmp,
         ], { timeout: 300000 })
         const { rename: renameFS } = await import('fs/promises')
         await renameFS(tmp, cached)
         await evictOtherCacheEntries(pathHash, cached)
+        void enforceCacheCap(cached)
         return cached
       } catch (err) {
         // Clean up the partial tmp file so we don't leave garbage.
@@ -16146,10 +16177,31 @@ app.whenReady().then(async () => {
   // in a few minutes without starving the renderer.
   prewarmAlacCache = async (paths: string[]) => {
     const CONCURRENCY = 4
+    // With the 20 GB cap, warming past the cap is pure churn — each new entry
+    // would evict another. Warm until full, then stop and say so.
+    let capReached = false
+    const atCap = async (): Promise<boolean> => {
+      try {
+        const { readdir } = await import('fs/promises')
+        let total = 0
+        for (const n of await readdir(PLAY_CACHE)) {
+          if (!n.endsWith('.m4a') && !n.endsWith('.flac')) continue
+          try { total += (await stat(join(PLAY_CACHE, n))).size } catch { /* raced */ }
+        }
+        return total >= PLAY_CACHE_CAP_BYTES
+      } catch { return false }
+    }
     let i = 0
     const worker = async (): Promise<void> => {
       while (i < paths.length) {
+        if (capReached) return
         const idx = i++
+        // Re-check the cap every 25 files — cheap, and bounds the overshoot.
+        if (idx % 25 === 0 && await atCap()) {
+          capReached = true
+          console.log(`[play-cache] prewarm stopped at the ${(PLAY_CACHE_CAP_BYTES / 1e9).toFixed(0)} GB cap — hot set is warm, cold tracks transcode on first play`)
+          return
+        }
         const p = paths[idx]
         try {
           const s = await stat(p)
@@ -16427,7 +16479,7 @@ app.whenReady().then(async () => {
     let pruned = 0
     let bytesFreed = 0
     for (const f of entries) {
-      if (!f.endsWith('.m4a')) continue
+      if (!f.endsWith('.m4a') && !f.endsWith('.flac')) continue   // cache holds both eras
       if ([...expected].some((h) => isEntryFor(f, h))) continue
       const fp = join(PLAY_CACHE, f)
       const s = await stat(fp).catch(() => null)
@@ -16547,7 +16599,7 @@ app.whenReady().then(async () => {
               const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
               if (cached) {
                 filePath = cached
-                ext = '.m4a'
+                ext = cached.slice(cached.lastIndexOf('.')).toLowerCase()
               }
             }
           }
@@ -16561,7 +16613,7 @@ app.whenReady().then(async () => {
             const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
             if (cached) {
               filePath = cached
-              ext = '.m4a'
+              ext = cached.slice(cached.lastIndexOf('.')).toLowerCase()
             }
           }
         }
