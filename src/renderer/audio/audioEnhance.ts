@@ -227,6 +227,7 @@ function insert(): boolean {
   inserted = true
   attachCorrelation(c, cfMerger)
   if (c.state === 'suspended') void c.resume()
+  console.log('[audioEnhance] chain spliced into the master path')
   return true
 }
 
@@ -242,18 +243,30 @@ function bypass(): void {
   inserted = false
 }
 
-/** Apply the full enhancement config. Both off → true bypass. */
+/** Apply the full enhancement config. Both off → true bypass.
+ *
+ * 2026-08-06 hardening: the boot-time call arrives before Howler's ctx
+ * reliably exists, and the original one-shot retry could die silently — an
+ * exception anywhere in the attempt killed the chain with no rearm and no
+ * log, leaving the whole panel as placebo (found live: music playing, meter
+ * pinned at 1.00 = tap hearing silence). Now: every attempt is exception-
+ * proof, failure keeps a persistent retry alive until the splice actually
+ * lands, and both outcomes log to the main-stdout capture. */
 export function setEnhanceConfig(next: Partial<EnhanceConfig>): void {
   cfg = { ...cfg, ...next }
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
   const wantInsert = cfg.widthOn || cfg.crossfeedOn
-  if (!wantInsert) { bypass(); return }
-  if (!insert()) {
-    // Howler's ctx isn't up yet (no track has played) — retry until it is.
+  if (!wantInsert) {
+    try { bypass() } catch (e) { console.warn('[audioEnhance] bypass failed:', e) }
+    return
+  }
+  let ok = false
+  try { ok = insert() } catch (e) { console.warn('[audioEnhance] insert threw:', e) }
+  if (!ok) {
     retryTimer = setTimeout(() => { retryTimer = null; setEnhanceConfig({}) }, 600)
     return
   }
-  applyConfig()
+  try { applyConfig() } catch (e) { console.warn('[audioEnhance] applyConfig failed:', e) }
 }
 
 export function getEnhanceConfig(): EnhanceConfig {
