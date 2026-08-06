@@ -44,7 +44,7 @@ import { assembleSyncPlaylists } from './utils/workoutIpodSync'
 import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
 import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
-import { setStereoWidth } from './audio/audioEnhance'
+import { setEnhanceConfig } from './audio/audioEnhance'
 import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded } from './liveSets'
@@ -141,7 +141,7 @@ function AppInner() {
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
       setEqSettings(merged.eq)
-      setStereoWidth(merged.audio.stereoWidth)
+      setEnhanceConfig(merged.audio)
     })
   }, [])
 
@@ -1709,7 +1709,7 @@ function AppInner() {
               setAppSettings(next)
               setCrossfadeSettings(next.crossfade)
               setEqSettings(next.eq)
-              setStereoWidth(next.audio.stereoWidth)
+              setEnhanceConfig(next.audio)
               setSettingsOpen(false)
             }}
           />

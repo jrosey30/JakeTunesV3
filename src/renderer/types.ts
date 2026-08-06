@@ -447,7 +447,18 @@ export interface AppSettings {
     callRouteDeviceLabel: string   // '' = not configured yet
     // 4.5: opt-in master-output stereo-width enhancer. 1.0 = off (transparent);
     // up to ~1.8 widens panned content while preserving the mono center.
+    // Kept for settings-file migration — the band controls below supersede it.
     stereoWidth: number
+    // 2026-08-06 band-split width: Linkwitz-Riley crossovers at 250 Hz / 5 kHz,
+    // independent width per band. Low defaults to hard mono (0) — bass side
+    // content only destabilizes the low end.
+    widthOn: boolean
+    widthLow: number      // 0 = mono … 1 = natural (max 1.2)
+    widthMid: number      // 1 = natural … 1.5
+    widthHigh: number     // 1 = natural … 2.2
+    // bs2b-style headphone crossfeed: separate toggle, one amount control.
+    crossfeedOn: boolean
+    crossfeedAmount: number   // 0..1 of the standard 700 Hz / −4.5 dB feed
   }
   // Brief 023: removed `mobile.snapshotExportPath`. The mobile-sync
   // feature (Export Snapshot for Mobile / Apply Mobile Overrides) is
@@ -474,7 +485,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // Default-on with empty path → main resolves to ~/Music2/_inbox.
   inbox: { enabled: true, path: '' },
   // Off until the user picks a speaker in Preferences → Audio.
-  audio: { callRouteEnabled: false, callRouteDeviceLabel: '', stereoWidth: 1.3 },
+  audio: {
+    callRouteEnabled: false, callRouteDeviceLabel: '', stereoWidth: 1.3,
+    // Width ON by default at the migration of the old 1.3 broadband default:
+    // mono bass, gentle body, open air.
+    widthOn: true, widthLow: 0, widthMid: 1.15, widthHigh: 1.6,
+    crossfeedOn: false, crossfeedAmount: 1.0,
+  },
 }
 
 export type RepeatMode = 'off' | 'all' | 'one'

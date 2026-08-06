@@ -60,7 +60,12 @@ say "syncing audio to the hub (missing or changed)"
 # so a plain -a comparison called 4,105 identical files 'changed' and wanted
 # to re-push 63 GB. Size alone is the honest signal here — a re-encode or a
 # replaced track always changes it, and audio files never change size in place.
-RSYNC_FLAGS=(-a --size-only --info=stats2 --include='*/' --include='*.m4a' --include='*.mp3' --include='*.flac' --exclude='*')
+# --no-links: NEVER carry symlinks. A symlinked local track means "the truth
+# for this file IS the NAS" — pushing the link hubward overwrites the real
+# bytes with a link pointing at itself. That is not hypothetical: it destroyed
+# the 1.7 GB Alive 2007 merged concert on 2026-08-04 (found 08-06). The hub
+# holds real files only.
+RSYNC_FLAGS=(-a --no-links --size-only --info=stats2 --include='*/' --include='*.m4a' --include='*.mp3' --include='*.flac' --exclude='*')
 $DRY && RSYNC_FLAGS+=(--dry-run)
 rsync "${RSYNC_FLAGS[@]}" "$LOCAL/iPod_Control/Music/" "$NAS/iPod_Control/Music/" 2>&1 \
   | grep -E "Number of regular files transferred|Total transferred file size" | sed 's/^/   /' \
@@ -69,6 +74,17 @@ rsync "${RSYNC_FLAGS[@]}" "$LOCAL/iPod_Control/Music/" "$NAS/iPod_Control/Music/
 $DRY && { say "dry run — stopping before remote steps"; exit 0; }
 
 # ── 3. Metadata to both machines ─────────────────────────────────────
+# workmini runs the app too, and a running app OVERWRITES a pushed
+# library.json with its stale in-memory state on its next save — the push
+# "succeeds" and then silently unhappens (2026-08-05: Jake's last-24h music
+# missing on workmini; the app had clobbered the push within minutes).
+# Single-writer rule: quit it, push, relaunch after the links step.
+WM_APP_WAS_RUNNING=false
+if ssh "$WM" 'pgrep -f "JakeTunes.app/Contents/MacOS/JakeTunes" >/dev/null' 2>/dev/null; then
+  WM_APP_WAS_RUNNING=true
+  say "workmini app is running — quitting it so the push can't be clobbered"
+  ssh "$WM" 'osascript -e "tell application \"JakeTunes\" to quit" 2>/dev/null; for i in 1 2 3 4 5 6 7 8; do pgrep -f "JakeTunes.app/Contents/MacOS/JakeTunes" >/dev/null || break; sleep 1; done'
+fi
 say "pushing library metadata"
 for host in "$WM" "$HM"; do
   for f in library.json metadata-overrides.json; do
@@ -105,12 +121,18 @@ for t in tracks:
 print('   linked %d · already present %d · not on NAS yet %d' % (made, skipped, nofile))
 PY"
 
+# relaunch workmini's app now that its library + links are fresh
+if $WM_APP_WAS_RUNNING; then
+  say "relaunching workmini's app on the fresh library"
+  ssh "$WM" 'open -a /Applications/JakeTunes.app' 2>/dev/null || echo "   ⚠ relaunch failed — open it by hand"
+fi
+
 # ── 4b. homemini's SERVING root ──────────────────────────────────────
 # The stream backend reads MUSIC_ROOT=~/Music/JakeTunesLibrary, a local copy —
 # NOT the NAS. Fixing the hub alone leaves homemini serving stale audio, which
 # is how three repaired tracks kept streaming their broken versions.
 say "syncing homemini's serving root (rsync, size-based)"
-rsync -a --size-only --info=stats2 \
+rsync -a --no-links --size-only --info=stats2 \
   --include='*/' --include='*.m4a' --include='*.mp3' --include='*.flac' --exclude='*' \
   "$LOCAL/iPod_Control/Music/" "$HM:Music/JakeTunesLibrary/iPod_Control/Music/" 2>&1 \
   | grep -E "Number of regular files transferred|Total transferred file size" | sed 's/^/   /' \

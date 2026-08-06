@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { AppSettings, DEFAULT_APP_SETTINGS, ImportFormatChoice } from '../types'
 import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
+import { getCorrelation, setEnhanceConfig } from '../audio/audioEnhance'
 import { getCaptionsOn, setCaptionsOn } from '../activity'
 import '../styles/import-convert.css'
 
@@ -27,6 +28,37 @@ const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'Audio', 'AI']
 
 // Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
 // 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
+/**
+ * Live L/R correlation meter. Width tuning was guesswork by ear; this is the
+ * number that says when wide became broken: >0.5 safe, 0.3–0.5 getting wide,
+ * <0.3 mono compatibility is gone. Polls ~8 Hz only while mounted (the EQ tab).
+ */
+function CorrelationMeter() {
+  const [corr, setCorr] = useState(1)
+  useEffect(() => {
+    const t = setInterval(() => setCorr(getCorrelation()), 120)
+    return () => clearInterval(t)
+  }, [])
+  const pct = Math.max(0, Math.min(100, ((corr + 1) / 2) * 100))
+  const color = corr >= 0.5 ? '#4c8a3f' : corr >= 0.3 ? '#b07a2a' : '#c0392b'
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#8d867a', marginBottom: 3 }}>
+        <span>L/R correlation</span>
+        <span style={{ color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{corr.toFixed(2)}</span>
+      </div>
+      <div style={{ position: 'relative', height: 8, background: '#e8e4dc', borderRadius: 4, overflow: 'hidden' }}>
+        {/* danger zone shading below 0.3 (left of 65%) */}
+        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '65%', background: 'rgba(192,57,43,0.10)' }} />
+        <div style={{ position: 'absolute', left: `calc(${pct}% - 2px)`, top: 0, bottom: 0, width: 4, background: color, borderRadius: 2, transition: 'left 100ms linear' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#b3ab9d', marginTop: 2 }}>
+        <span>−1 · out of phase</span><span>0.3</span><span>+1 · mono</span>
+      </div>
+    </div>
+  )
+}
+
 function bandLabel(hz: number): string {
   return hz >= 1000 ? `${hz / 1000}k` : String(hz)
 }
@@ -92,6 +124,15 @@ interface LastSync {
 }
 
 export default function SettingsModal({ initial, onClose, onSaved }: Props) {
+  // The width/crossfeed sliders apply LIVE while dragging (tuning by ear needs
+  // to be audible), so Cancel must put the sound back the way it was. Wrap
+  // onClose: revert the audio chain to the settings the modal OPENED with.
+  // Save overwrites `initial` upstream, so the saved path stays live.
+  const closeAndRevertAudio = () => {
+    setEnhanceConfig(initial.audio)
+    onClose()
+  }
+
   const [draft, setDraft] = useState<AppSettings>(initial)
   const [radioCaptions, setRadioCaptions] = useState(getCaptionsOn())  // 4.5 radioV2 CC toggle
   const [tab, setTab] = useState<Tab>('Playback')
@@ -279,11 +320,11 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   }
 
   return (
-    <div className="imp-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="imp-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) closeAndRevertAudio() }}>
       <div className="imp-modal" role="dialog" aria-modal="true" style={{ minWidth: 460 }}>
         <div className="imp-header">
           <h2>Preferences</h2>
-          <button className="imp-close" onClick={onClose} title="Close">×</button>
+          <button className="imp-close" onClick={closeAndRevertAudio} title="Close">×</button>
         </div>
 
         {/* Tab strip */}
@@ -368,31 +409,97 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
 
           {tab === 'EQ' && (
             <>
-              {/* Stereo-width enhancer — inserted at the master output, so unlike
-                  the EQ below it DOES affect normal (Web Audio) playback. */}
+              {/* Band-split stereo width — inserted at the master output, so unlike
+                  the EQ below it DOES affect normal (Web Audio) playback.
+                  Changes apply LIVE (setEnhanceConfig on every drag) — width is
+                  tuned by ear against the meter, not blind until Save. */}
               <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid #e0ded8' }}>
                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
                   <span>Stereo width</span>
-                  <span style={{ color: draft.audio.stereoWidth > 1.01 ? '#1f7a8c' : '#9a958c' }}>
-                    {draft.audio.stereoWidth > 1.01 ? `+${Math.round((draft.audio.stereoWidth - 1) * 100)}%` : 'Off'}
-                  </span>
+                  <input
+                    type="checkbox"
+                    checked={draft.audio.widthOn}
+                    onChange={(e) => {
+                      const audio = { ...draft.audio, widthOn: e.target.checked }
+                      setDraft({ ...draft, audio })
+                      setEnhanceConfig(audio)
+                    }}
+                  />
                 </label>
-                <input
-                  type="range"
-                  min={1.0}
-                  max={1.8}
-                  step={0.05}
-                  value={draft.audio.stereoWidth}
-                  onChange={(e) => setDraft({
-                    ...draft,
-                    audio: { ...draft.audio, stereoWidth: Number(e.target.value) },
-                  })}
-                  style={{ width: '100%' }}
-                />
+                {([
+                  ['widthLow', 'Bass (below 250 Hz)', 0, 1, 'mono', 'natural'],
+                  ['widthMid', 'Body (250 Hz – 5 kHz)', 1, 1.5, 'natural', 'wide'],
+                  ['widthHigh', 'Air (above 5 kHz)', 1, 2.2, 'natural', 'very wide'],
+                ] as Array<[('widthLow' | 'widthMid' | 'widthHigh'), string, number, number, string, string]>).map(([key, label, min, max, lo, hi]) => (
+                  <div key={key} style={{ opacity: draft.audio.widthOn ? 1 : 0.45, marginBottom: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b665e' }}>
+                      <span>{label}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {key === 'widthLow'
+                          ? (draft.audio[key] <= 0.02 ? 'mono' : `${Math.round(draft.audio[key] * 100)}%`)
+                          : `+${Math.round((draft.audio[key] - 1) * 100)}%`}
+                      </span>
+                    </div>
+                    <input
+                      type="range" min={min} max={max} step={0.05}
+                      value={draft.audio[key]}
+                      disabled={!draft.audio.widthOn}
+                      onChange={(e) => {
+                        const audio = { ...draft.audio, [key]: Number(e.target.value) }
+                        setDraft({ ...draft, audio })
+                        setEnhanceConfig(audio)
+                      }}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                ))}
+                <CorrelationMeter />
                 <p className="imp-help" style={{ marginTop: 6 }}>
-                  Widens panned instruments + backing vocals while keeping the center
-                  (lead vocal, bass, kick) solid. Far left = off (playback untouched).
-                  Subtle wins — try +20–30% and trust your ears.
+                  Three registers, three honest numbers: bass stays mono (side content
+                  down there only makes the low end unstable), the vocal band takes a
+                  nudge, the air above 5 kHz is where width actually reads as space.
+                  Watch the meter — under 0.3 and you've broken mono compatibility.
+                </p>
+              </div>
+
+              {/* Headphone crossfeed — separate toggle so it can be A/B'd against
+                  width. Feeds each ear a little of the other channel, low-passed
+                  and ~260 µs late, the way a head does it for speakers. */}
+              <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid #e0ded8' }}>
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
+                  <span>Headphone crossfeed</span>
+                  <input
+                    type="checkbox"
+                    checked={draft.audio.crossfeedOn}
+                    onChange={(e) => {
+                      const audio = { ...draft.audio, crossfeedOn: e.target.checked }
+                      setDraft({ ...draft, audio })
+                      setEnhanceConfig(audio)
+                    }}
+                  />
+                </label>
+                <div style={{ opacity: draft.audio.crossfeedOn ? 1 : 0.45 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6b665e' }}>
+                    <span>Amount</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(draft.audio.crossfeedAmount * 100)}%</span>
+                  </div>
+                  <input
+                    type="range" min={0} max={1} step={0.05}
+                    value={draft.audio.crossfeedAmount}
+                    disabled={!draft.audio.crossfeedOn}
+                    onChange={(e) => {
+                      const audio = { ...draft.audio, crossfeedAmount: Number(e.target.value) }
+                      setDraft({ ...draft, audio })
+                      setEnhanceConfig(audio)
+                    }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <p className="imp-help" style={{ marginTop: 6 }}>
+                  For headphones only — biggest win on hard-panned '60s/'70s mixes
+                  (drums all-left, vocals all-right stops being exhausting). 100% is
+                  the standard bs2b setting. Leave off on speakers; the room does this
+                  for free.
                 </p>
               </div>
 
@@ -995,7 +1102,7 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
         </div>
 
         <div className="imp-footer">
-          <button className="imp-btn imp-btn--cancel" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="imp-btn imp-btn--cancel" onClick={closeAndRevertAudio} disabled={saving}>Cancel</button>
           <button className="imp-btn imp-btn--start" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </button>
