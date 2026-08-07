@@ -207,6 +207,25 @@ async function saveState(file: string, state: CaptureState): Promise<void> {
 
 let scanning = false
 let lastStatus: { access: 'granted' | 'denied' | 'unknown'; lastScanAt?: string; error?: string } = { access: 'unknown' }
+let fdaRegressionNotified = false
+async function notifyFdaRegression(): Promise<void> {
+  try {
+    const { dialog, shell } = await import('electron')
+    const r = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Texted songs are not being captured',
+      message: 'JakeTunes lost Full Disk Access — songs friends text you are NOT landing on your list.',
+      detail: 'This usually happens after the app is updated (macOS ties the permission to the app\'s signature). Nothing is lost: once access is restored, every missed text is captured retroactively.\n\nIn the list, remove JakeTunes with −, then re-add it with + from Applications.',
+      buttons: ['Open Full Disk Access Settings', 'Later'],
+      defaultId: 0,
+    })
+    if (r.response === 0) {
+      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
+    }
+  } catch (e) {
+    console.warn('[imsg] FDA regression notice failed:', e)
+  }
+}
 
 export function startImessageCapture(host: ImessageCaptureHost): void {
   const scan = async (): Promise<void> => {
@@ -238,6 +257,19 @@ async function scanOnce(host: ImessageCaptureHost): Promise<void> {
   const probe = await queryDb('SELECT MAX(ROWID) AS rowid, NULL AS guid, NULL AS text, NULL AS body_hex, NULL AS sender, 0 AS date FROM message')
   if (!probe.ok) {
     lastStatus = { access: probe.denied ? 'denied' : 'unknown', error: probe.denied ? undefined : probe.error.slice(0, 200) }
+    // ── LOUD failure on REGRESSION (2026-08-07, Jake: "this cant happen
+    // again") ─────────────────────────────────────────────────────────────
+    // Full Disk Access is tied to the app's code signature, so replacing the
+    // bundle (every reinstall) can silently revoke it. The capture then goes
+    // blind while texted songs pile up unseen — Lorin sent two and nobody
+    // knew for days; the only tell was a quiet banner. A DENIED probe on a
+    // watcher that has previously captured (lastRowId > 0 = it worked
+    // before) is a regression, not a first-run state, and gets a real
+    // dialog: once per app session, with the settings one click away.
+    if (probe.denied && state.lastRowId > 0 && !fdaRegressionNotified) {
+      fdaRegressionNotified = true
+      void notifyFdaRegression()
+    }
     return
   }
   lastStatus = { access: 'granted', lastScanAt: new Date().toISOString() }
