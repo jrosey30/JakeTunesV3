@@ -22,7 +22,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, pickBestSoundcloudMatch } from '../streamrip-match.ts'
+import { rankStreamripCandidates, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -171,13 +171,28 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     await rm(staged.staging, { recursive: true, force: true }).catch(() => {})
   }
 
-  /** Real duration of a staged file, via ffprobe (PATH already carries
-   *  homebrew). null = probe unavailable/failed — treated as "can't judge",
-   *  never as a mismatch, so a broken ffprobe can't brick downloads. */
-  async function probeDurationSec(file: string): Promise<number | null> {
-    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], 30_000)
-    const v = parseFloat((res.stdout || '').trim())
-    return Number.isFinite(v) && v > 0 ? v : null
+  /** Real duration + title/album TAGS of a staged file, via ffprobe (PATH
+   *  already carries homebrew). null fields = probe unavailable/failed —
+   *  treated as "can't judge", never as a mismatch, so a broken ffprobe
+   *  can't brick downloads.
+   *
+   *  Why tags matter (2026-08-07, the As/Is catch): Qobuz's search desc for
+   *  the As/Is - Live "Your Body Is a Wonderland" is the CLEAN title, and
+   *  that live cut runs 249.75s vs the studio's 249.6s — both the marker
+   *  guard and the duration gate sailed right past it. The downloaded
+   *  file's own tags said "(Live at Cynthia Woods Mitchell Pavilion…)" /
+   *  album "As/Is - Live". The file never lies about itself. */
+  async function probeStagedFile(file: string): Promise<{ durSec: number | null; title: string; album: string }> {
+    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:format_tags=title,album', '-of', 'json', file], 30_000)
+    try {
+      const parsed = JSON.parse(res.stdout || '{}') as { format?: { duration?: string; tags?: Record<string, string> } }
+      const v = parseFloat(parsed.format?.duration || '')
+      const tags = parsed.format?.tags || {}
+      const tag = (k: string) => String(tags[k] ?? tags[k.toUpperCase()] ?? '').trim()
+      return { durSec: Number.isFinite(v) && v > 0 ? v : null, title: tag('title'), album: tag('album') }
+    } catch {
+      return { durSec: null, title: '', album: '' }
+    }
   }
 
   // Download stage 2: import staged audio into the library + tell the renderer.
@@ -304,18 +319,32 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // Verified path: the caller knows the exact version. Try the top
       // candidates in rank order; a wrong-length file never leaves staging.
       const wantSec = durationMs / 1000
+      const albumHint = (opts?.album || '').trim()
       const misses: string[] = []
       for (const cand of ranked.slice(0, 3)) {
         const st = await stageRip(['id', cand.source, cand.mediaType, cand.id])
         if (!st.ok) { misses.push(`“${cand.desc}”: ${st.error}`); continue }
-        const durSec = st.staged.files.length === 1 ? await probeDurationSec(st.staged.files[0]) : null
-        if (durSec == null || Math.abs(durSec - wantSec) <= DURATION_TOLERANCE_SEC) {
+        const probe = st.staged.files.length === 1 ? await probeStagedFile(st.staged.files[0]) : null
+        // Three independent witnesses, all from the actual file:
+        //  · length within tolerance of the version the user picked
+        //  · the file's TITLE tag carries no unrequested version marker
+        //  · the file's ALBUM tag carries none either (allowing the words of
+        //    the requested title + album hint) — catches live-album cuts
+        //    whose track title is clean and whose length matches the studio
+        //    take (the As/Is 249.75s-vs-249.6s case).
+        const durBad = probe?.durSec != null && Math.abs(probe.durSec - wantSec) > DURATION_TOLERANCE_SEC
+        const titleMarker = probe?.title ? unwantedVersionOf(title, probe.title) : null
+        const albumMarker = probe?.album ? unwantedVersionOf(`${title} ${albumHint}`, probe.album) : null
+        if (probe == null || (!durBad && !titleMarker && !albumMarker)) {
           const dl = await importStaged(st.staged)
           return { ...dl, matchDesc: cand.desc }
         }
         await discardStaged(st.staged)
-        console.log(`[download] rejected wrong-length candidate for “${title}”: “${cand.desc}” runs ${fmtDur(durSec)}, wanted ${fmtDur(wantSec)}`)
-        misses.push(`“${cand.desc}” runs ${fmtDur(durSec)}`)
+        const why = durBad ? `runs ${fmtDur(probe.durSec)}, wanted ${fmtDur(wantSec)}`
+          : titleMarker ? `is tagged “${probe.title}” (${titleMarker})`
+          : `is from “${probe.album}” (${albumMarker})`
+        console.log(`[download] rejected wrong-version candidate for “${title}”: “${cand.desc}” ${why}`)
+        misses.push(`“${cand.desc}” ${why}`)
       }
       return { ok: false, error: `Qobuz doesn’t have the exact version you picked (${fmtDur(wantSec)}). Found: ${misses.join(' · ')}. Try pasting a link in the Download view.` }
     }
