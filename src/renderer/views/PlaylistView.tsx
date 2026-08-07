@@ -25,7 +25,7 @@ import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
-import { songsGridTemplate } from '../utils/songsGridTemplate'
+import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
 
@@ -138,6 +138,7 @@ export default function PlaylistView() {
   const visibleCols = ALL_COLUMN_DEFS.filter(c => !hiddenCols.has(c.key))
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
   const gridTemplate = songsGridTemplate(visibleCols, colWidths)
+  const gridTemplateFixed = songsGridTemplateFixed(colWidths)
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -722,6 +723,9 @@ export default function PlaylistView() {
           ))}
         </div>
         <div className="songs-body">
+          {/* Fixed-px width anchor: owns .songs-view scrollWidth so rows
+              (contain:inline-size) can't inflate past the header. */}
+          <div className="songs-body-width-sizer" style={{ gridTemplateColumns: gridTemplateFixed }} aria-hidden="true" />
           {sortedTracks.map((track, i) => {
             const isPlaying = pb.nowPlaying?.id === track.id
             const isSelected = selectedIds.has(track.id)

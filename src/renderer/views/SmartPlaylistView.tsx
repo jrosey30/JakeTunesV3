@@ -20,7 +20,7 @@ import TrackGridView from '../components/TrackGridView'
 import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
 import { setNotice } from '../activity'
-import { songsGridTemplate } from '../utils/songsGridTemplate'
+import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
 import '../styles/songs.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
@@ -596,6 +596,7 @@ export default function SmartPlaylistView() {
 
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
   const gridTemplate = songsGridTemplate(visibleCols, colWidths)
+  const gridTemplateFixed = songsGridTemplateFixed(colWidths)
 
   const handleColResize = useCallback((colKey: string, colIndex: number, e: React.MouseEvent) => {
     e.preventDefault()
@@ -1105,6 +1106,9 @@ export default function SmartPlaylistView() {
         ))}
       </div>
       <div className="songs-body">
+        {/* Fixed-px width anchor: owns .songs-view scrollWidth so rows
+            (contain:inline-size) can't inflate past the header. */}
+        <div className="songs-body-width-sizer" style={{ gridTemplateColumns: gridTemplateFixed }} aria-hidden="true" />
         {sortedTracks.map((track, i) => {
           const isPlaying = pbState.nowPlaying?.id === track.id
           const isSelected = selectedIds.has(track.id)

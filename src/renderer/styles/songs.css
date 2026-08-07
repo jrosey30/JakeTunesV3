@@ -132,6 +132,12 @@
      table width. Parent .songs-body uses width:max-content +
      min-width:100% so rows always match header width. */
   width: 100%;
+  /* Header-offset fix (2026-08-07, "look at the column headers...theyre
+     offset"): in-flow rows (Playlist/SmartPlaylist) must not contribute
+     their max-content to .songs-body — a long title inflated the row's
+     minmax(…,1fr) track past the header's and every column right of Name
+     drifted. The fixed-px width-sizer owns the scroll width instead. */
+  contain: inline-size;
 }
 
 /* 4.5: neutral pale grey alt-row. Earlier values were either too
