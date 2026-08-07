@@ -23,6 +23,7 @@ import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { rankStreamripCandidates, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
+import { recoTitleMatches } from '../reco-match.ts'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -321,6 +322,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const wantSec = durationMs / 1000
       const albumHint = (opts?.album || '').trim()
       const misses: string[] = []
+      // A clean file from the WRONG album (usually a compilation carrying the
+      // same studio master) is acceptable — but only if no candidate matches
+      // the album the user actually picked. Keep the best such file staged as
+      // a fallback while we keep looking for the canonical-album copy.
+      let fallback: { staged: StagedRip; desc: string } | null = null
       for (const cand of ranked.slice(0, 3)) {
         const st = await stageRip(['id', cand.source, cand.mediaType, cand.id])
         if (!st.ok) { misses.push(`“${cand.desc}”: ${st.error}`); continue }
@@ -336,8 +342,16 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const titleMarker = probe?.title ? unwantedVersionOf(title, probe.title) : null
         const albumMarker = probe?.album ? unwantedVersionOf(`${title} ${albumHint}`, probe.album) : null
         if (probe == null || (!durBad && !titleMarker && !albumMarker)) {
-          const dl = await importStaged(st.staged)
-          return { ...dl, matchDesc: cand.desc }
+          const albumMatches = !albumHint || !probe?.album || recoTitleMatches(albumHint, probe.album)
+          if (albumMatches) {
+            if (fallback) await discardStaged(fallback.staged)
+            const dl = await importStaged(st.staged)
+            return { ...dl, matchDesc: cand.desc }
+          }
+          // Clean but off-album — hold it, prefer a canonical-album copy.
+          if (!fallback) { fallback = { staged: st.staged, desc: cand.desc }; continue }
+          await discardStaged(st.staged)
+          continue
         }
         await discardStaged(st.staged)
         const why = durBad ? `runs ${fmtDur(probe.durSec)}, wanted ${fmtDur(wantSec)}`
@@ -345,6 +359,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           : `is from “${probe.album}” (${albumMarker})`
         console.log(`[download] rejected wrong-version candidate for “${title}”: “${cand.desc}” ${why}`)
         misses.push(`“${cand.desc}” ${why}`)
+      }
+      if (fallback) {
+        console.log(`[download] no canonical-album copy of “${title}” on Qobuz — importing clean off-album master (“${fallback.desc}”)`)
+        const dl = await importStaged(fallback.staged)
+        return { ...dl, matchDesc: fallback.desc }
       }
       return { ok: false, error: `Qobuz doesn’t have the exact version you picked (${fmtDur(wantSec)}). Found: ${misses.join(' · ')}. Try pasting a link in the Download view.` }
     }
