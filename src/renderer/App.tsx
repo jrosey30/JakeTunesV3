@@ -723,15 +723,28 @@ function AppInner() {
   // ADD_IMPORTED_TRACKS + the debounced saveLibrary make the adoption
   // CANONICAL: it lands in library.json, publishes to the NAS, homemini
   // pulls it, and the mobile backend drops its now-redundant sidecar row.
-  const absorbMobileImports = useCallback((rows: unknown[]) => {
+  const absorbMobileImports = useCallback((rows: unknown[], overrides?: Record<string, { fp?: string; fields?: Record<string, string> }>) => {
     try {
       const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
       const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
-      const eligible = (rows || []).filter((raw): raw is import('./types').Track => {
+      let eligible = (rows || []).filter((raw): raw is import('./types').Track => {
         const t = raw as { id?: unknown; path?: unknown }
         return typeof t?.id === 'number' && typeof t?.path === 'string' &&
           !existingIds.has(t.id) && !existingPaths.has(t.path as string)
       })
+      // Phone Get Info edits ride in with the absorb (boot-pull path): the
+      // boot overlay ran BEFORE these tracks existed, so without this the
+      // absorbed songs showed raw file tags until the next restart ("the
+      // info didnt change from what i changed it to on mobile").
+      if (overrides) {
+        eligible = eligible.map((t) => {
+          const entry = overrides[String(t.id)]
+          if (!entry?.fields) return t
+          const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+          if (entry.fp !== fp) return t
+          return { ...t, ...entry.fields }
+        })
+      }
       if (eligible.length) {
         // dateAdded arrives VERBATIM from the phone's import moment — the
         // absorbed songs slot into date-added history where they were
@@ -757,7 +770,7 @@ function AppInner() {
   useEffect(() => {
     if (importsPulledRef.current || libState.tracks.length === 0) return
     importsPulledRef.current = true
-    window.electronAPI.getMobileImports?.().then((p) => absorbMobileImports(p.tracks)).catch(() => {})
+    window.electronAPI.getMobileImports?.().then((p) => absorbMobileImports(p.tracks, p.overrides)).catch(() => {})
   }, [libState.tracks.length, absorbMobileImports])
 
   // Phone song-info edits arriving MID-SESSION (main mirrors the NAS file

@@ -3477,12 +3477,14 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
 // a just-restarted app absorbs rows adopted while it was closed.
 ipcMain.handle('get-mobile-imports', async () => {
   await refreshPhoneAuthoredMirrors().catch(() => {})
+  let overrides: Record<string, { fp?: string; fields?: Record<string, string> }> = {}
+  try { overrides = await mobileMetadataOverridesCache.get() } catch { /* none yet */ }
   try {
     const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
     const parsed = JSON.parse(raw) as { tracks?: unknown[] }
-    return { tracks: Array.isArray(parsed?.tracks) ? parsed.tracks : [] }
+    return { tracks: Array.isArray(parsed?.tracks) ? parsed.tracks : [], overrides }
   } catch {
-    return { tracks: [] }
+    return { tracks: [], overrides }
   }
 })
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
