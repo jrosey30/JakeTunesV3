@@ -97,6 +97,19 @@ test('standings rank by points and keep zero-point friends on the board', () => 
   assert.equal(rows[2].credits.length, 0, 'winless friend still listed')
 })
 
+// Jake's rule (2026-08-07): "dan sent a podcast so he should not show in
+// standings until he sends a legitimate song. that is the rule." A ledger
+// entry with zero adds/credits/tosses = nothing legitimate ever landed —
+// hidden from the board entirely, reappears on the first real song.
+test('a friend with no legitimate song sent does not appear at all', () => {
+  const ledger = {
+    'lorin bloom': { name: 'Lorin Bloom', adds: 13, tossed: 9 },
+    'dan gottlieb': { name: 'Dan Gottlieb', adds: 0, tossed: 0 },
+  }
+  const rows = computeStandings([], ledger, LIB)
+  assert.deepEqual(rows.map((r) => r.name), ['Lorin Bloom'])
+})
+
 test('a friend whose only import was deleted goes NEGATIVE on the board', () => {
   const lib = LIB.filter((t) => t.title !== 'Body Funk')
   const rows = computeStandings([songCredit()], { 'joey levine': { name: 'Joey Levine' } }, lib)
