@@ -715,6 +715,36 @@ function AppInner() {
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)
   }, [])
 
+  // Phone Qobuz DOWNLOADS arriving from the NAS sidecar (main mirrors +
+  // pushes every 5 minutes and once at boot). Absorb any track the library
+  // doesn't have — by id AND path, so a row whose id was independently
+  // taken by a desktop import is skipped (the mobile backend re-ids those
+  // itself within a minute and the next push absorbs the corrected row).
+  // ADD_IMPORTED_TRACKS + the debounced saveLibrary make the adoption
+  // CANONICAL: it lands in library.json, publishes to the NAS, homemini
+  // pulls it, and the mobile backend drops its now-redundant sidecar row.
+  useEffect(() => {
+    const off = window.electronAPI.onMobileImportsUpdated?.((p) => {
+      try {
+        const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
+        const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
+        const eligible = (p.tracks || []).filter((raw): raw is import('./types').Track => {
+          const t = raw as { id?: unknown; path?: unknown; title?: unknown }
+          return typeof t?.id === 'number' && typeof t?.path === 'string' &&
+            !existingIds.has(t.id) && !existingPaths.has(t.path as string)
+        })
+        if (eligible.length) {
+          console.log(`[phone-sync] absorbing ${eligible.length} phone download(s) into the library`)
+          dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: eligible })
+        }
+      } catch (err) {
+        console.error('[phone-imports handler] crash-guard:', err)
+      }
+    })
+    return () => { off?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Phone song-info edits arriving MID-SESSION (main mirrors the NAS file
   // every 5 minutes and pushes fresh entries here). Same fingerprint rule as
   // the boot apply below: an entry only applies if its fp still matches the

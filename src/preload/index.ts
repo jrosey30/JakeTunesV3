@@ -256,6 +256,13 @@ const electronAPI = {
   getDiscoverFeed: (force?: boolean): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }> => ipcRenderer.invoke('get-discover-feed', force),
   // Phone song-info edits mirrored down from the NAS mid-session — the
   // renderer fingerprint-validates and applies them live (seamless sync).
+  // Phone Qobuz downloads mirrored down from the NAS — the renderer absorbs
+  // any it doesn't already have into the library (seamless sync, downloads leg).
+  onMobileImportsUpdated: (callback: (p: { tracks: unknown[] }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { tracks: unknown[] }) => callback(p)
+    ipcRenderer.on('mobile-imports-updated', handler)
+    return () => { ipcRenderer.removeListener('mobile-imports-updated', handler) }
+  },
   onMobileOverridesUpdated: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => callback(p)
     ipcRenderer.on('mobile-overrides-updated', handler)

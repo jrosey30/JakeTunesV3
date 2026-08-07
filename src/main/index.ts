@@ -3412,7 +3412,16 @@ const PHONE_AUTHORED_FILES = [
   // the NAS and simply never came down (Jake: "why arent the song info
   // updates appearing from my phone?? SEAMLESS SYNCING!!!").
   'mobile-metadata-overrides.json',
+  // Phone Qobuz downloads (Brief-128/130 sidecar). Same 2026-08-07 lesson,
+  // bigger stakes: the audio was already in the vault and the records on
+  // the NAS, but nothing here ever read them — songs downloaded on the
+  // phone simply never existed on desktop (Jake: "songs i downloaded on
+  // mobile are not on desktop. why???"). Mirrored + pushed to the renderer,
+  // which absorbs them into the library via ADD_IMPORTED_TRACKS; the mobile
+  // backend then drops absorbed rows from its sidecar automatically.
+  'mobile-imports.json',
 ]
+let mobileImportsPushedOnce = false
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   const nasDir = '/Volumes/JakeShared/JakeTunesState'
   try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
@@ -3447,6 +3456,20 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
         mainWindow?.webContents.send('mobile-overrides-updated', { overrides: ov })
       } catch { /* next boot's overlay still applies them */ }
     }
+  }
+  // Phone downloads: push on change AND once per launch (the mirror can
+  // already be current at boot, but the renderer still needs the rows to
+  // absorb anything adopted while the app was closed).
+  if (refreshedNames.includes('mobile-imports.json') || !mobileImportsPushedOnce) {
+    try {
+      const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
+      const parsed = JSON.parse(raw) as { tracks?: unknown[] }
+      const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
+      if (tracks.length > 0 && mainWindow) {
+        mainWindow.webContents.send('mobile-imports-updated', { tracks })
+        mobileImportsPushedOnce = true
+      }
+    } catch { /* no imports yet, or window not up — next tick retries */ }
   }
 }
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
