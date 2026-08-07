@@ -3421,7 +3421,6 @@ const PHONE_AUTHORED_FILES = [
   // backend then drops absorbed rows from its sidecar automatically.
   'mobile-imports.json',
 ]
-let mobileImportsPushedOnce = false
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   const nasDir = '/Volumes/JakeShared/JakeTunesState'
   try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
@@ -3457,21 +3456,35 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
       } catch { /* next boot's overlay still applies them */ }
     }
   }
-  // Phone downloads: push on change AND once per launch (the mirror can
-  // already be current at boot, but the renderer still needs the rows to
-  // absorb anything adopted while the app was closed).
-  if (refreshedNames.includes('mobile-imports.json') || !mobileImportsPushedOnce) {
+  // Phone downloads: push on mid-session change. Boot-time absorb is
+  // renderer-PULLED (get-mobile-imports below) — a boot push raced the
+  // React listener mount and vanished silently (found live 2026-08-07:
+  // Jake restarted, nothing absorbed, "is it though????").
+  if (refreshedNames.includes('mobile-imports.json')) {
     try {
       const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
       const parsed = JSON.parse(raw) as { tracks?: unknown[] }
       const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
       if (tracks.length > 0 && mainWindow) {
         mainWindow.webContents.send('mobile-imports-updated', { tracks })
-        mobileImportsPushedOnce = true
       }
-    } catch { /* no imports yet, or window not up — next tick retries */ }
+    } catch { /* no imports yet — next tick retries */ }
   }
 }
+
+// Renderer pulls the phone-download sidecar AFTER its library loads —
+// deterministic ordering, no boot race. Refreshes the NAS mirror first so
+// a just-restarted app absorbs rows adopted while it was closed.
+ipcMain.handle('get-mobile-imports', async () => {
+  await refreshPhoneAuthoredMirrors().catch(() => {})
+  try {
+    const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
+    const parsed = JSON.parse(raw) as { tracks?: unknown[] }
+    return { tracks: Array.isArray(parsed?.tracks) ? parsed.tracks : [] }
+  } catch {
+    return { tracks: [] }
+  }
+})
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
 setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
 

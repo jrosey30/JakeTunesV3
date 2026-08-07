@@ -256,6 +256,7 @@ const electronAPI = {
   getDiscoverFeed: (force?: boolean): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }> => ipcRenderer.invoke('get-discover-feed', force),
   // Phone song-info edits mirrored down from the NAS mid-session — the
   // renderer fingerprint-validates and applies them live (seamless sync).
+  getMobileImports: (): Promise<{ tracks: unknown[] }> => ipcRenderer.invoke('get-mobile-imports'),
   // Phone Qobuz downloads mirrored down from the NAS — the renderer absorbs
   // any it doesn't already have into the library (seamless sync, downloads leg).
   onMobileImportsUpdated: (callback: (p: { tracks: unknown[] }) => void) => {

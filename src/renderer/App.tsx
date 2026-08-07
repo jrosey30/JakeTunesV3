@@ -723,27 +723,42 @@ function AppInner() {
   // ADD_IMPORTED_TRACKS + the debounced saveLibrary make the adoption
   // CANONICAL: it lands in library.json, publishes to the NAS, homemini
   // pulls it, and the mobile backend drops its now-redundant sidecar row.
-  useEffect(() => {
-    const off = window.electronAPI.onMobileImportsUpdated?.((p) => {
-      try {
-        const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
-        const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
-        const eligible = (p.tracks || []).filter((raw): raw is import('./types').Track => {
-          const t = raw as { id?: unknown; path?: unknown; title?: unknown }
-          return typeof t?.id === 'number' && typeof t?.path === 'string' &&
-            !existingIds.has(t.id) && !existingPaths.has(t.path as string)
-        })
-        if (eligible.length) {
-          console.log(`[phone-sync] absorbing ${eligible.length} phone download(s) into the library`)
-          dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: eligible })
-        }
-      } catch (err) {
-        console.error('[phone-imports handler] crash-guard:', err)
+  const absorbMobileImports = useCallback((rows: unknown[]) => {
+    try {
+      const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
+      const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
+      const eligible = (rows || []).filter((raw): raw is import('./types').Track => {
+        const t = raw as { id?: unknown; path?: unknown }
+        return typeof t?.id === 'number' && typeof t?.path === 'string' &&
+          !existingIds.has(t.id) && !existingPaths.has(t.path as string)
+      })
+      if (eligible.length) {
+        // dateAdded arrives VERBATIM from the phone's import moment — the
+        // absorbed songs slot into date-added history where they were
+        // actually downloaded, never as the library's newest (Jake:
+        // "they should not show up as the newest").
+        console.log(`[phone-sync] absorbing ${eligible.length} phone download(s) into the library`)
+        dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: eligible })
       }
-    })
+    } catch (err) {
+      console.error('[phone-imports absorb] crash-guard:', err)
+    }
+  }, [dispatch])
+
+  // Mid-session pushes (mirror tick sees the sidecar change).
+  useEffect(() => {
+    const off = window.electronAPI.onMobileImportsUpdated?.((p) => absorbMobileImports(p.tracks))
     return () => { off?.() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [absorbMobileImports])
+
+  // Boot-time absorb: PULL once the library is actually loaded. The old
+  // boot PUSH raced this component's mount and vanished (2026-08-07 live).
+  const importsPulledRef = useRef(false)
+  useEffect(() => {
+    if (importsPulledRef.current || libState.tracks.length === 0) return
+    importsPulledRef.current = true
+    window.electronAPI.getMobileImports?.().then((p) => absorbMobileImports(p.tracks)).catch(() => {})
+  }, [libState.tracks.length, absorbMobileImports])
 
   // Phone song-info edits arriving MID-SESSION (main mirrors the NAS file
   // every 5 minutes and pushes fresh entries here). Same fingerprint rule as
