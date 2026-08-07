@@ -10635,6 +10635,18 @@ If the search results below give you the answer, USE IT confidently. If your tra
 
 When you DO need to acknowledge uncertainty, do it in ONE clause inside a confident answer — not as the whole reply. ("…last I knew Abe Laboriel Jr. was still on drums, that's been the case for like 20 years.")
 
+PLAYLIST REQUESTS — you have a create_playlist TOOL and you USE it.
+When the user asks for a playlist/mix/list of songs: call create_playlist
+with CONCRETE tracks — real titles + artists chosen from the library
+context and taste profile below (they must be songs the user plausibly
+OWNS; the tool only accepts library matches and tells you what missed so
+you can swap). Honor constraints literally (count, one-per-artist, year).
+NEVER answer a playlist request with prose only, NEVER pad with picks you
+can't name ("whatever's freshest from X" is a firing offense), NEVER
+sneak in a track that violates a stated constraint. After the tool
+returns, confirm in 1-2 sentences with a couple of highlights — the
+playlist itself is already in their sidebar; don't recite it.
+
 This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}`
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
@@ -10648,24 +10660,83 @@ This response is shown as text in a chat panel, but the user may click a speaker
 
   try {
     const convo: Anthropic.Messages.MessageParam[] = messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-    // 4.5.0-50 kept chat at max_tokens 220 as a hard anti-ramble ceiling;
-    // 600 gives a recommendation-heavy reply room to breathe. Brevity is
-    // governed by the prompt (1–3 sentences), not the token ceiling.
-    const response = await claudeCall('musicman-chat', { model: 'claude-sonnet-4-6', max_tokens: 600, system: systemPrompt, messages: convo })
+    // 2026-08-07 (Jake: "isnt he supposed to make playlists???? hes been
+    // AWFUL"): the Music Man has HANDS now — a create_playlist tool that
+    // resolves his picks against the real library, so a playlist request
+    // produces a playlist in the sidebar, not a wall of prose. 1400
+    // tokens because list assembly needs room; brevity of the VISIBLE
+    // reply is governed by the prompt.
+    const playlistTool: Anthropic.Messages.Tool = {
+      name: 'create_playlist',
+      description: 'Create a real playlist in the user\'s sidebar from library tracks. Returns which picks matched their library and which missed (swap the misses and call again if needed — max one retry).',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          name: { type: 'string', description: 'Playlist name — short, evocative, no quotes' },
+          tracks: {
+            type: 'array',
+            items: { type: 'object', properties: { title: { type: 'string' }, artist: { type: 'string' } }, required: ['title', 'artist'] },
+            description: 'Concrete picks, in play order',
+          },
+        },
+        required: ['name', 'tracks'],
+      },
+    }
+    let createdPlaylist: { name: string; trackIds: number[] } | null = null
+    const resolvePlaylist = async (input: { name?: string; tracks?: Array<{ title?: string; artist?: string }> }) => {
+      const lib = (await libraryCache.get() as { tracks?: Array<{ id: number; title?: string; artist?: string; albumArtist?: string }> }).tracks ?? []
+      const trackIds: number[] = []
+      const matchedDesc: string[] = []
+      const missed: string[] = []
+      const usedArtists = new Set<string>()
+      for (const want of input.tracks ?? []) {
+        const wt = String(want.title || ''); const wa = String(want.artist || '')
+        const hit = lib.find((t) => recoTitleMatches(wt, String(t.title || '')) && recoArtistMatches(wa, String(t.albumArtist || t.artist || '')))
+        if (!hit) { missed.push(`${wt} — ${wa}`); continue }
+        const ak = String(hit.albumArtist || hit.artist || '').toLowerCase().trim()
+        if (usedArtists.has(ak)) { missed.push(`${wt} — ${wa} (artist already in list)`); continue }
+        usedArtists.add(ak)
+        trackIds.push(hit.id)
+        matchedDesc.push(`${hit.title} — ${hit.artist}`)
+      }
+      if (trackIds.length > 0) {
+        createdPlaylist = { name: String(input.name || 'Music Man Mix').slice(0, 60), trackIds }
+      }
+      return { matched: matchedDesc.length, missed, note: trackIds.length ? 'Playlist created in the sidebar.' : 'Nothing matched the library — pick songs the user actually owns.' }
+    }
+
+    let response = await claudeCall('musicman-chat', { model: 'claude-sonnet-4-6', max_tokens: 1400, system: systemPrompt, messages: convo, tools: [playlistTool] })
+    for (let round = 0; round < 2 && response.stop_reason === 'tool_use'; round++) {
+      const toolUses = response.content.filter((b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use')
+      const results: Anthropic.Messages.ToolResultBlockParam[] = []
+      for (const tu of toolUses) {
+        const out = tu.name === 'create_playlist'
+          ? await resolvePlaylist(tu.input as { name?: string; tracks?: Array<{ title?: string; artist?: string }> })
+          : { error: 'unknown tool' }
+        results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out) })
+      }
+      convo.push({ role: 'assistant', content: response.content })
+      convo.push({ role: 'user', content: results })
+      response = await claudeCall('musicman-chat', { model: 'claude-sonnet-4-6', max_tokens: 1400, system: systemPrompt, messages: convo, tools: [playlistTool] })
+    }
 
     // Aggregate text across any text blocks in the response.
     const textRaw = response.content
       .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
       .map(b => b.text)
-      .join(' ')
+      .join('\n')
       .trim()
-    // Stripped version for display — same regex used by the mic-button
-    // caption stripper. Strips [bracket-only-letters-and-spaces] tags
-    // without touching legitimate uses of square brackets in song titles
-    // or quoted strings (those have digits/punctuation inside).
-    const text = textRaw.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+    // Strip performance tags WITHOUT flattening structure — the old
+    // `\s+ → ' '` collapse destroyed every newline the model wrote,
+    // which is exactly how a 50-song list became an unreadable wall
+    // (2026-08-07). Newlines survive; runs of spaces/tabs collapse.
+    const text = textRaw
+      .replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
     if (text) noteMusicManUtterance('chat', text)
-    return { ok: true, text, textRaw }
+    return { ok: true, text, textRaw, createdPlaylist }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, text: `Error: ${msg}`, textRaw: `Error: ${msg}` }

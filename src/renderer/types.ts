@@ -565,7 +565,7 @@ declare global {
       getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
-      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string; textRaw: string }>
+      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
       // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
