@@ -17,6 +17,7 @@
  * ltlDownload (serial Qobuz queue), previewPlayer, friends/Scouts ledger.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, subscribePreview, togglePreview, stopPreview } from '../previewPlayer'
@@ -472,7 +473,7 @@ export default function ListenToTheListView() {
 
       {/* ── Inbox (triage) ── */}
       {loading ? (
-        <div className="ltl-loading">Loading…</div>
+        <PageGate note="Fetching the list…" layout="list" />
       ) : inboxEmpty ? (
         <div className="ltl-inboxzero">
           <div className="ltl-inboxzero-mark" aria-hidden="true">✓</div>

@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import { useLibrary } from '../context/LibraryContext'
@@ -571,10 +572,7 @@ export default function HomeView() {
   if (!pageReady) {
     return (
       <div className="home-view">
-        <div className="page-gate" role="status" aria-label="Loading">
-          <div className="page-gate-name">{greeting}</div>
-          <div className="page-gate-bar"><span /></div>
-        </div>
+        <PageGate title={greeting} note="Warming up the room…" layout="grid" />
       </div>
     )
   }

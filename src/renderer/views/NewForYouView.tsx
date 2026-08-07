@@ -16,6 +16,7 @@
  * discographies minus what the library owns.
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import { useLibrary } from '../context/LibraryContext'
@@ -202,7 +203,7 @@ export default function NewForYouView() {
       </div>
 
       {loading && lanes.length === 0 && (
-        <div className="df-loading">Reading your taste…</div>
+        <PageGate note="Reading your taste…" layout="grid" />
       )}
       {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
 

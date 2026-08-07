@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -442,10 +443,7 @@ export default function ArtistDetailView() {
   if (!pageReady) {
     return (
       <div className="artist-detail-view">
-        <div className="page-gate" role="status" aria-label="Loading">
-          <div className="page-gate-name">{artist}</div>
-          <div className="page-gate-bar"><span /></div>
-        </div>
+        <PageGate title={artist} note="Pulling the records off the shelf…" layout="grid" />
       </div>
     )
   }
