@@ -97,6 +97,11 @@ interface WorkoutSyncState {
   commentary: string
   syncedAt: string
   alacCount: number
+  /** The convert settings this set was ACTUALLY synced with — the plug-in
+   *  auto-repair replays these when ui-state's convert prefs are missing
+   *  (they got clobbered once and every repair silently aborted;
+   *  2026-08-07). Replaying the recorded choice is not a silent default. */
+  convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }
   brief?: ActivityBrief
 }
 
@@ -367,6 +372,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
     payload: {
       trackIds: number[]; name: string; commentary: string; alacCount: number
       brief: ActivityBrief; weather?: ActivityWeather | null
+      convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }
       added?: Array<{ id: number; title: string; artist: string }>
       removed?: Array<{ id: number; title: string; artist: string }>
     },
@@ -381,6 +387,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         commentary: String(payload.commentary || ''),
         syncedAt: new Date().toISOString(),
         alacCount: Number(payload.alacCount) || 0,
+        convertOptions: payload.convertOptions,
         brief: payload.brief,
       }
       await saveState(state)

@@ -49,13 +49,17 @@ function schedulePersistScrollCache(): void {
 async function flushScrollCacheToUiState(): Promise<void> {
   if (scrollCache.size === 0) return
   try {
-    if (!uiStateSnapshot) {
-      const r = await window.electronAPI.loadUiState()
-      uiStateSnapshot = (r.ok && r.state && typeof r.state === 'object') ? r.state as Record<string, unknown> : {}
-    }
+    // ALWAYS merge onto the freshest on-disk state — never a held snapshot.
+    // A snapshot merge resurrects stale state and ERASES fields other
+    // writers added after the snapshot loaded: that clobber class is how
+    // Device view's optConvertBitrate vanished from ui-state, which made
+    // every plug-in auto-repair silently abort (2026-08-07, the 500-vs-103
+    // iPod investigation).
+    const r = await window.electronAPI.loadUiState()
+    const base = (r.ok && r.state && typeof r.state === 'object') ? r.state as Record<string, unknown> : (uiStateSnapshot ?? {})
     const scrollPositions: Record<string, ScrollPosition> = {}
     for (const [k, v] of scrollCache) scrollPositions[k] = v
-    const merged = { ...uiStateSnapshot, [SCROLL_UI_KEY]: scrollPositions }
+    const merged = { ...base, [SCROLL_UI_KEY]: scrollPositions }
     uiStateSnapshot = merged
     await window.electronAPI.saveUiState(merged)
   } catch {

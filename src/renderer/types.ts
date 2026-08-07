@@ -822,8 +822,8 @@ declare global {
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
-      commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
-      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }>
+      commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
+      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
       getActivityBrainContext?: () => Promise<{ ok: boolean; context?: unknown; promptBlock?: string }>
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>

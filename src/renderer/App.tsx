@@ -679,10 +679,13 @@ function AppInner() {
       } catch (err) {
         abortReason = `exception while reading ui-state: ${err instanceof Error ? err.message : String(err)}`
       }
-      if (!convertOptions) {
-        console.warn(`[auto-sync] ABORTED — convert preference unreadable: ${abortReason}. Open Device view and click Apply to commit a known-good convert state.`)
-        return
-      }
+      // No early return on unreadable prefs — the confirmed set may carry
+      // the convert settings it was ACTUALLY synced with (recorded at
+      // commit time), and replaying that exact choice is not a silent
+      // default. 2026-08-07: a ui-state clobber erased the prefs and every
+      // plug-in repair silently aborted here for a console.warn nobody
+      // sees — while Jake's iPod sat with a firmware-mangled index that
+      // one repair pass would have rebuilt.
       // 2026-07-18 REVIEW GATE: plug-in auto-sync REPAIRS the last
       // CONFIRMED set only — the exact trackIds committed after the last
       // successful review-confirmed sync. It never rebuilds/rotates (that
@@ -697,6 +700,16 @@ function AppInner() {
             console.log('[auto-sync] no confirmed activity set — waiting for a manual Activity Sync')
             return
           }
+          // Prefer live ui-state prefs; fall back to the convert settings
+          // RECORDED with the confirmed set. Only if neither exists do we
+          // abort — and then VISIBLY, not into the console void.
+          const stored = (prev.state as { convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 } }).convertOptions
+          const convertToUse = convertOptions ?? stored ?? null
+          if (!convertToUse) {
+            console.warn(`[auto-sync] ABORTED — convert preference unreadable (${abortReason}) and none recorded with the confirmed set.`)
+            setNotice('iPod plugged in, but the repair sync was skipped — open Device view and press Apply once to set convert preferences.')
+            return
+          }
           const idSet = new Set(prev.state.trackIds)
           const setTracks = lib.tracks.filter((t) => idSet.has(t.id))
           if (setTracks.length === 0) {
@@ -704,8 +717,8 @@ function AppInner() {
             return
           }
           const playlists = assembleSyncPlaylists(setTracks, lib.playlists || [], prev.state.name)
-          console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertOptions)
-          await window.electronAPI.syncToIpod(setTracks, playlists, convertOptions)
+          console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertToUse)
+          await window.electronAPI.syncToIpod(setTracks, playlists, convertToUse)
         } catch (err) {
           console.warn('[auto-sync] failed:', err)
         }
