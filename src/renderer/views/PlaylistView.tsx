@@ -170,6 +170,19 @@ export default function PlaylistView() {
   const [suggestRotate, setSuggestRotate] = useState(0)
   const [vibeHits, setVibeHits] = useState<Array<{ trackId: number; score: number; cluster: number }>>([])
   const [vibeClusterSeeds, setVibeClusterSeeds] = useState<number[]>([])
+  // Taste-ledger loop: learned per-playlist blend weights + the diag map
+  // (each shown candidate's blend components) that verdict events carry.
+  const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number }>>({})
+  const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number }>())
+  useEffect(() => {
+    void window.electronAPI.getTasteWeights?.().then((r) => {
+      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number }> })?.playlists
+      if (pl) setTasteWeights(pl)
+    })
+  }, [])
+  const ledger = (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => {
+    void window.electronAPI.tasteLedgerAppend?.(events)
+  }
   useEffect(() => { setSuggestRotate(0) }, [state.activePlaylistId])
   // Re-fetch whenever the playlist's MEMBERSHIP changes — adding a song (the +,
   // or manually), removing one, or swapping one for another all re-center the
@@ -191,10 +204,14 @@ export default function PlaylistView() {
     return () => { cancelled = true }
   }, [state.activePlaylistId, plMembershipKey])
   const suggestions = useMemo(
-    () => vibeHits.length
-      ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate, vibeClusterSeeds)
-      : suggestForPlaylist(allPlaylistTracks, state.tracks, 5, suggestRotate),
-    [allPlaylistTracks, state.tracks, vibeHits, vibeClusterSeeds, suggestRotate],
+    () => {
+      suggestDiag.current = new Map()
+      return vibeHits.length
+        ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate, vibeClusterSeeds,
+            (playlist ? tasteWeights[playlist.id] : undefined) ?? {}, suggestDiag.current)
+        : suggestForPlaylist(allPlaylistTracks, state.tracks, 5, suggestRotate)
+    },
+    [allPlaylistTracks, state.tracks, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
 
@@ -294,6 +311,13 @@ export default function PlaylistView() {
       setSelectedIds(new Set())
     } else if (confirmAction.type === 'delete-playlist') {
       dispatch({ type: 'REMOVE_PLAYLIST', id: playlist.id })
+      if (playlist.id.startsWith('mm-')) {
+        void window.electronAPI.tasteLedgerAppend?.([{
+          surface: 'mm-playlist', verdict: 'reject',
+          key: { playlistId: playlist.id },
+          ctx: { name: playlist.name },
+        }])
+      }
     }
     setConfirmAction(null)
   }, [playlist, confirmAction, dispatch])
@@ -616,7 +640,16 @@ export default function PlaylistView() {
             <span className="pl-suggest-title">Suggested for this playlist</span>
             <button
               className="pl-suggest-refresh"
-              onClick={() => setSuggestRotate(r => r + 1)}
+              onClick={() => {
+                if (playlist) {
+                  ledger(suggestions.map((sg) => ({
+                    surface: 'strip', verdict: 'pass',
+                    key: { trackId: sg.id, playlistId: playlist.id },
+                    ctx: suggestDiag.current.get(sg.id) ?? {},
+                  })))
+                }
+                setSuggestRotate(r => r + 1)
+              }}
               title="Show different suggestions"
               aria-label="More suggestions"
             >↻</button>
@@ -635,7 +668,11 @@ export default function PlaylistView() {
                   </div>
                   <button
                     className="pl-suggest-add"
-                    onClick={() => { if (playlist) dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [s.id] }) }}
+                    onClick={() => {
+                      if (!playlist) return
+                      dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [s.id] })
+                      ledger([{ surface: 'strip', verdict: 'accept', key: { trackId: s.id, playlistId: playlist.id }, ctx: suggestDiag.current.get(s.id) ?? {} }])
+                    }}
                     title={`Add "${s.title}" to this playlist`}
                     aria-label={`Add ${s.title}`}
                   >＋</button>

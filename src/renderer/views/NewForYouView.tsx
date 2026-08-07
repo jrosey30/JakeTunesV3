@@ -176,6 +176,11 @@ export default function NewForYouView() {
 
   const notForMe = (c: FeedCard) => {
     void window.electronAPI.discoveryNotForMe?.(c.artist)
+    void window.electronAPI.tasteLedgerAppend?.([{
+      surface: 'discover', verdict: 'reject',
+      key: { artist: c.artist, title: c.title },
+      ctx: { lane: c.lane, type: c.type },
+    }])
     const next = lanes.map((l) => ({ ...l, cards: l.cards.filter((x) => x.artist !== c.artist) })).filter((l) => l.cards.length > 0)
     feedCache = next
     setLanes(next)
@@ -184,6 +189,11 @@ export default function NewForYouView() {
   const addToList = async (c: FeedCard) => {
     const id = cardId(c)
     setAdded((s) => new Set(s).add(id))
+    void window.electronAPI.tasteLedgerAppend?.([{
+      surface: 'discover', verdict: 'accept',
+      key: { artist: c.artist, title: c.title },
+      ctx: { lane: c.lane, type: c.type },
+    }])
     await window.electronAPI.addRecommendation({
       song: c.type === 'song' ? c.title : undefined,
       album: c.type === 'album' ? c.title : undefined,

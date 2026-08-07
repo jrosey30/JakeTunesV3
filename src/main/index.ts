@@ -13794,6 +13794,54 @@ async function sweepFriendImports(): Promise<number> {
  * counters) become flat +1 "legacy" entries once, so history isn't erased —
  * but they carry no identity and can never go negative.
  */
+// ── Taste ledger (2026-08-07, "ok go go go") ─────────────────────────
+// One append-only stream of every silent verdict Jake gives: strip
+// suggestions added vs refreshed past, Discover +Lists vs vetoes, Music
+// Man playlists kept vs deleted, review-gate adds/removes. The nightly
+// learner (scripts/taste-ledger-learn.py) turns it into per-playlist
+// blend weights; the KPI snapshot turns it into the acceptance rate.
+// Desktop main is the single writer.
+const TASTE_LEDGER_PATH = () => join(app.getPath('userData'), 'taste-ledger.jsonl')
+const TASTE_WEIGHTS_PATH = () => join(app.getPath('userData'), 'taste-weights.json')
+type TasteEvent = {
+  surface: 'strip' | 'discover' | 'mm-playlist' | 'review-gate'
+  verdict: 'accept' | 'reject' | 'pass'
+  key?: Record<string, unknown>
+  ctx?: Record<string, unknown>
+}
+ipcMain.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
+  try {
+    if (!Array.isArray(events) || events.length === 0) return { ok: true, appended: 0 }
+    const lines = events
+      .filter((ev) => ev && typeof ev === 'object' && ev.surface && ev.verdict)
+      .slice(0, 50)
+      .map((ev) => JSON.stringify({ ts: new Date().toISOString(), surface: ev.surface, verdict: ev.verdict, key: ev.key ?? {}, ctx: ev.ctx ?? {} }))
+    if (lines.length === 0) return { ok: true, appended: 0 }
+    await appendFile(TASTE_LEDGER_PATH(), lines.join('\n') + '\n', 'utf-8')
+    return { ok: true, appended: lines.length }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+// Per-playlist blend weights the nightly learner writes; the suggestion
+// strip multiplies its blend components by these. mtime-cached.
+let tasteWeightsCache: { at: number; mtime: number; weights: Record<string, unknown> } | null = null
+ipcMain.handle('get-taste-weights', async () => {
+  try {
+    const p = TASTE_WEIGHTS_PATH()
+    const st = await stat(p).catch(() => null)
+    if (!st) return { ok: true, weights: {} }
+    if (tasteWeightsCache && tasteWeightsCache.mtime === st.mtimeMs) {
+      return { ok: true, weights: tasteWeightsCache.weights }
+    }
+    const weights = JSON.parse(await readFile(p, 'utf-8')) as Record<string, unknown>
+    tasteWeightsCache = { at: Date.now(), mtime: st.mtimeMs, weights }
+    return { ok: true, weights }
+  } catch {
+    return { ok: true, weights: {} }
+  }
+})
+
 ipcMain.handle('get-friend-standings', async () => {
   try {
     const ledger = await friendsCache.get()

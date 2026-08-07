@@ -391,6 +391,21 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         brief: payload.brief,
       }
       await saveState(state)
+      // Taste ledger (2026-08-07): the review gate is the purest verdict
+      // stream there is — Jake literally marking wrong picks. Append the
+      // edits so the nightly learner and the acceptance KPI see them.
+      try {
+        const { appendFile } = await import('node:fs/promises')
+        const ledger = join(app.getPath('userData'), 'taste-ledger.jsonl')
+        const evts: string[] = []
+        for (const tr of (payload.added ?? [])) {
+          evts.push(JSON.stringify({ ts: state.syncedAt, surface: 'review-gate', verdict: 'accept', key: { trackId: tr.id }, ctx: { set: state.name } }))
+        }
+        for (const tr of (payload.removed ?? [])) {
+          evts.push(JSON.stringify({ ts: state.syncedAt, surface: 'review-gate', verdict: 'reject', key: { trackId: tr.id }, ctx: { set: state.name } }))
+        }
+        if (evts.length) await appendFile(ledger, evts.join('\n') + '\n', 'utf-8')
+      } catch { /* ledger is best-effort */ }
       // Ledger every confirmed sync (with Jake's review edits) — feeds
       // the next build's demote/boost lists, the vibe prompt digest, and
       // (via the NAS mirror) the nightly brain jobs on homemini.

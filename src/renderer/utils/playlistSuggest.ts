@@ -172,6 +172,9 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
  * electronic / hip-hop corners). ↻ advances the rank within each cluster.
  * Falls back to suggestForPlaylist (metadata) when no embeddings exist.
  */
+export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number }
+export interface SuggestDiag { vn: number; g: number; b: number; ta: number }
+
 export function suggestFromVibeHits<T extends SuggestibleTrack>(
   playlistTracks: T[],
   library: T[],
@@ -179,6 +182,12 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   limit = 5,
   rotate = 0,
   clusterSeeds: number[] = [],
+  // Taste-ledger loop (2026-08-07): learned per-playlist multipliers from
+  // the nightly learner, plus an out-map of each candidate's blend
+  // components so accept/pass events record WHY a pick ranked where it
+  // did — the learner needs that to know which dial to turn.
+  weights: SuggestBlendWeights = {},
+  diagOut?: Map<number, SuggestDiag>,
 ): T[] {
   if (playlistTracks.length === 0 || hits.length === 0 || limit <= 0) return []
   // Seat eligibility by SEED SHARE (2026-08-07, Jake: "pool dos sometimes
@@ -203,7 +212,7 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   }
   const byId = new Map(library.map(t => [t.id, t]))
   const inPlaylist = new Set(playlistTracks.map(t => t.id))
-  const albumKey = (t: T): string => norm(t.albumArtist || t.artist) + ' ' + norm(t.album)
+  const albumKey = (t: T): string => norm(t.albumArtist || t.artist) + ' ' + norm(t.album)
   const plArtists = new Set(playlistTracks.map(t => norm(t.albumArtist || t.artist)).filter(Boolean))
   const plAlbums = new Set(playlistTracks.map(albumKey).filter(s => s.length > 1))
 
@@ -261,7 +270,9 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       // stars + play history nudge the songs he'd actually ADD above
       // equal-vibe strangers. Small weight — fit still leads.
       const taste = Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
-      return { t, s: 0.45 * vn + 0.22 * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * taste }
+      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste })
+      const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1
+      return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste }
     })
     scored.sort((a, b) => b.s - a.s)
     const fr = scored.filter(x => !plArtists.has(norm(x.t.albumArtist || x.t.artist))).map(x => x.t)

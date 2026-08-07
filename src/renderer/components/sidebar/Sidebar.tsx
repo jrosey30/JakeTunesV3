@@ -674,6 +674,13 @@ export default function Sidebar() {
           confirmLabel="Delete"
           onConfirm={() => {
             dispatch({ type: 'REMOVE_PLAYLIST', id: deleteConfirm.id })
+            if (deleteConfirm.id.startsWith('mm-')) {
+              void window.electronAPI.tasteLedgerAppend?.([{
+                surface: 'mm-playlist', verdict: 'reject',
+                key: { playlistId: deleteConfirm.id },
+                ctx: { name: deleteConfirm.name },
+              }])
+            }
             setDeleteConfirm(null)
           }}
           onCancel={() => setDeleteConfirm(null)}

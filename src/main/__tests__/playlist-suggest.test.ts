@@ -223,3 +223,53 @@ test('a 1-candidate cluster can no longer pin a permanent squatter slot', () => 
   }
   assert.ok(appearances <= 2, `squatter appeared ${appearances}/6 refreshes — must rotate out like everyone else`)
 })
+
+// ── Taste-ledger weights + diag (2026-08-07, "ok go go go"). The strip
+// records every accept/pass with its blend components (SuggestDiag) and
+// the nightly learner feeds per-playlist weights back in. These tests pin
+// the renderer half of that loop: diag covers every scored candidate, and
+// the weights actually move the ranking. ──
+import { type SuggestBlendWeights, type SuggestDiag } from '../../renderer/utils/playlistSuggest.ts'
+
+test('diagOut records blend components for every returned pick', () => {
+  const { playlist, library, hits } = vibeFixture()
+  const diag = new Map<number, SuggestDiag>()
+  const picks = suggestFromVibeHits(playlist, library, hits, 5, 0, [9, 1], {}, diag)
+  assert.equal(picks.length, 5)
+  for (const p of picks) {
+    const d = diag.get(p.id)
+    assert.ok(d, `pick ${p.id} must have a diag entry`)
+    for (const k of ['vn', 'g', 'b', 'ta'] as const) {
+      assert.equal(typeof d[k], 'number', `${k} must be numeric`)
+      assert.ok(Number.isFinite(d[k]), `${k} must be finite`)
+    }
+  }
+})
+
+test('weights are optional — empty weights match the unweighted ranking', () => {
+  const { playlist, library, hits } = vibeFixture()
+  const bare = suggestFromVibeHits(playlist, library, hits, 5, 0, [8, 2])
+  const weighted = suggestFromVibeHits(playlist, library, hits, 5, 0, [8, 2], {})
+  assert.deepEqual(weighted.map((p) => p.id), bare.map((p) => p.id))
+})
+
+test('a suppressed vibe weight demotes the pure-vibe pick', () => {
+  // Two candidates in one cluster: one wins on vibe score alone, the other
+  // on genre fit. With vibe crushed to the 0.5 floor and genre boosted to
+  // the 1.5 ceiling, the genre-fit candidate must outrank the vibe one.
+  const playlist: SuggestibleTrack[] = Array.from({ length: 6 }, (_, i) => (
+    { id: 2000 + i, title: `p${i}`, artist: `punk${i}`, subgenrePath: 'Punk › Hardcore' }
+  ))
+  const vibePick: SuggestibleTrack = { id: 1, title: 'vibe', artist: 'A', subgenrePath: 'Jazz › Bebop' }
+  const genrePick: SuggestibleTrack = { id: 2, title: 'genre', artist: 'B', subgenrePath: 'Punk › Hardcore' }
+  const hits = [
+    { trackId: 1, score: 0.9, cluster: 0 },
+    { trackId: 2, score: 0.55, cluster: 0 },
+  ]
+  const library = [vibePick, genrePick]
+  const bare = suggestFromVibeHits(playlist, library, hits, 2, 0, [6])
+  assert.equal(bare[0]?.id, 1, 'fixture sanity: vibe candidate leads unweighted')
+  const w: SuggestBlendWeights = { vibe: 0.5, genre: 1.5 }
+  const weighted = suggestFromVibeHits(playlist, library, hits, 2, 0, [6], w)
+  assert.equal(weighted[0]?.id, 2, 'genre-fit candidate must lead under learned weights')
+})

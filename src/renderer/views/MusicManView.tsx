@@ -166,6 +166,11 @@ export default function MusicManView() {
       if (result.createdPlaylist && result.createdPlaylist.trackIds.length > 0) {
         const playlist = { id: `mm-${Date.now()}`, name: result.createdPlaylist.name, trackIds: result.createdPlaylist.trackIds }
         dispatch({ type: 'ADD_PLAYLIST', playlist })
+        void window.electronAPI.tasteLedgerAppend?.([{
+          surface: 'mm-playlist', verdict: 'accept',
+          key: { playlistId: playlist.id },
+          ctx: { name: playlist.name, trackCount: playlist.trackIds.length },
+        }])
       }
       // 4.5: store BOTH the stripped text (for display) and the raw text with
       // [scoff]/[laughs] tags intact (for the speaker button to feed ElevenLabs

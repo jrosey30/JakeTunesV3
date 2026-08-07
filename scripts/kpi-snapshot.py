@@ -153,6 +153,21 @@ def main():
     snap['newTracks28d'] = found + hauled
     snap['foundShare'] = round(found / (found + hauled), 4) if (found + hauled) else None
 
+    # ── 7. Suggestion acceptance (taste-ledger.jsonl, 28d) — the number
+    # the nightly weight learner is supposed to move. strip: accepts per
+    # shown-and-refreshed batch; discover: adds vs vetoes. ──
+    cutoff_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now - WINDOW_DAYS * 86400))
+    tl = defaultdict(int)
+    for ev in jlines('taste-ledger.jsonl'):
+        if str(ev.get('ts', '')) >= cutoff_iso:
+            tl[(ev.get('surface'), ev.get('verdict'))] += 1
+    strip_acc, strip_pass = tl[('strip', 'accept')], tl[('strip', 'pass')]
+    disc_acc, disc_rej = tl[('discover', 'accept')], tl[('discover', 'reject')]
+    snap['stripAcceptRate'] = round(strip_acc / (strip_acc + strip_pass), 4) if (strip_acc + strip_pass) else None
+    snap['stripVerdicts'] = strip_acc + strip_pass
+    snap['discoverAcceptRate'] = round(disc_acc / (disc_acc + disc_rej), 4) if (disc_acc + disc_rej) else None
+    snap['mmPlaylistsKept'] = tl[('mm-playlist', 'accept')] - tl[('mm-playlist', 'reject')]
+
     # ── Coverage (representation health) ──
     n = len(tracks)
     snap['libraryTracks'] = n
