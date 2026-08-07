@@ -1447,30 +1447,56 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
           const ap = famOf(a.artist).includes('punk') ? 1 : 0
           const bp = famOf(b.artist).includes('punk') ? 1 : 0
           return bp - ap || b.score - a.score
-        }).slice(0, 3)
+        }).slice(0, 4)
         const seen = new Set<string>()
-        const picks: Array<{ name: string; connection: string; anchor: string }> = []
+        const picks: Array<{ name: string; connection: string; anchor: string; sampleTitle?: string }> = []
         for (const a of ranked) {
           const neighbors = await fetchSceneNeighbors(a.artist)
           for (const nb of neighbors) {
             const key = nk(nb.name)
             if (!key || seen.has(key) || ownedArtists.has(key)) continue
             seen.add(key)
-            picks.push({ name: nb.name, connection: nb.connection, anchor: a.artist })
+            picks.push({ name: nb.name, connection: nb.connection, anchor: a.artist, sampleTitle: nb.sampleTitle })
           }
         }
-        // Existence gate via iTunes (same honesty rule as the LLM lanes):
-        // a scene neighbor only becomes a card with a real record + cover.
+        // WILDCARD HOPS (2026-08-07, Jake: "i need more scene
+        // recommendations… thats the shit i love to find"): the clerk
+        // follows two first-hop neighbors DEEPER into their own label
+        // orbits — hop two is where the underground lives (Ceremony sat
+        // exactly one label-orbit past the library's edge).
+        const wildcards = picks.filter((p) => p.connection.startsWith('label-mates')).slice(0, 2)
+        for (const w of wildcards) {
+          const deeper = await fetchSceneNeighbors(w.name)
+          for (const nb of deeper) {
+            const key = nk(nb.name)
+            if (!key || seen.has(key) || ownedArtists.has(key)) continue
+            seen.add(key)
+            picks.push({ name: nb.name, connection: `deep cut · ${nb.connection}`, anchor: w.anchor, sampleTitle: nb.sampleTitle })
+          }
+        }
+        // Existence gate: iTunes first, but the UNDERGROUND lives off
+        // Apple's map — on an iTunes miss, verify through MusicBrainz +
+        // Cover Art Archive using the release we saw on the label roster.
+        // A Bandcamp-only band with a real record still becomes a card.
         let made = 0
         let tried = 0
         for (const p of picks) {
-          if (made >= 8 || tried >= 24) break
+          if (made >= 12 || tried >= 36) break
           tried++
           const v = await df.itunesVerify(p.name, 'album', { artist: p.name }).catch(() => null)
           await new Promise((r) => setTimeout(r, 250))
-          if (!v?.artUrl) continue
-          cards.push({ lane: 'scene', type: 'album', artist: v.artist, title: v.title, year: v.year, why: df.clipWhy(p.connection), artUrl: v.artUrl, because: p.anchor })
-          made++
+          if (v?.artUrl) {
+            cards.push({ lane: 'scene', type: 'album', artist: v.artist, title: v.title, year: v.year, why: df.clipWhy(p.connection), artUrl: v.artUrl, because: p.anchor })
+            made++
+            continue
+          }
+          if (p.sampleTitle) {
+            const caa = await fetchCaaArtwork(p.name, p.sampleTitle).catch(() => null)
+            if (caa) {
+              cards.push({ lane: 'scene', type: 'album', artist: p.name, title: p.sampleTitle, why: df.clipWhy(p.connection), artUrl: caa, because: p.anchor })
+              made++
+            }
+          }
         }
         console.log(`[discover] scene lane: ${made} cards from ${picks.length} neighbors (${ranked.map((a) => a.artist).join(', ')})`)
       } catch (err) { console.warn('[discover] scene lane failed:', err) }
@@ -2840,12 +2866,12 @@ function discoCachePath(artist: string): string {
 // rosters, one hop past the library's edge. Majors are excluded — a
 // scene is Bridge Nine or Deathwish, not Universal.
 const SCENE_MAJOR_LABELS = /columbia|universal|warner|atlantic|interscope|capitol|epic\b|rca|island|geffen|republic|\bemi\b|sony|virgin|mercury|elektra|arista|def jam|polydor/i
-async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string; connection: string }>> {
+async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string; connection: string; sampleTitle?: string }>> {
   const headers = {
     'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
     'Accept': 'application/json',
   }
-  const out = new Map<string, string>()
+  const out = new Map<string, { connection: string; sampleTitle?: string }>()
   try {
     const libraryGenres = await getLibraryGenresForArtist(anchor)
     const canon = await resolveCanonicalArtist(anchor, { libraryGenres })
@@ -2858,7 +2884,7 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
       for (const r of rel.relations || []) {
         const n = r.artist?.name
         if (n && n.toLowerCase() !== anchor.toLowerCase() && !out.has(n)) {
-          out.set(n, `${r.type || 'connected'} · ${anchor}`)
+          out.set(n, { connection: `${r.type || 'connected'} · ${anchor}` })
         }
       }
     }
@@ -2866,7 +2892,7 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
     await mbThrottle()
     const relsRes = await fetch(`https://musicbrainz.org/ws/2/release?artist=${canon.mbid}&inc=labels&fmt=json&limit=25`, { headers, signal: AbortSignal.timeout(8000) })
     if (relsRes.ok) {
-      const data = await relsRes.json() as { releases?: Array<{ 'label-info'?: Array<{ label?: { id?: string; name?: string } }> }> }
+      const data = await relsRes.json() as { releases?: Array<{ title?: string; 'label-info'?: Array<{ label?: { id?: string; name?: string } }> }> }
       const labelCount = new Map<string, { id: string; name: string; n: number }>()
       for (const rl of data.releases || []) {
         for (const li of rl['label-info'] || []) {
@@ -2882,19 +2908,19 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
         await mbThrottle()
         const rosterRes = await fetch(`https://musicbrainz.org/ws/2/release?label=${lb.id}&inc=artist-credits&fmt=json&limit=60`, { headers, signal: AbortSignal.timeout(8000) })
         if (!rosterRes.ok) continue
-        const roster = await rosterRes.json() as { releases?: Array<{ 'artist-credit'?: Array<{ name?: string }> }> }
+        const roster = await rosterRes.json() as { releases?: Array<{ title?: string; 'artist-credit'?: Array<{ name?: string }> }> }
         for (const rl of roster.releases || []) {
           for (const ac of rl['artist-credit'] || []) {
             const n = ac.name
             if (n && n.toLowerCase() !== anchor.toLowerCase() && !out.has(n)) {
-              out.set(n, `label-mates with ${anchor} on ${lb.name}`)
+              out.set(n, { connection: `label-mates with ${anchor} on ${lb.name}`, sampleTitle: rl.title })
             }
           }
         }
       }
     }
   } catch { /* scene reach is best-effort */ }
-  return [...out.entries()].map(([name, connection]) => ({ name, connection }))
+  return [...out.entries()].map(([name, v]) => ({ name, connection: v.connection, sampleTitle: v.sampleTitle }))
 }
 
 async function fetchArtistDiscography(artist: string): Promise<DiscographyResult | null> {
