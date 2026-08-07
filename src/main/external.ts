@@ -416,7 +416,16 @@ async function enrichReleaseReview(item: MusicNewsItem): Promise<void> {
       if (idx > 0) item.artist = og.slice(0, idx).trim()
     }
     const g = html.match(/"genre":"([^"]{2,40})"/)?.[1]
-    if (g) item.genre = decodeEntities(g)
+    if (g) {
+      // The capture is a RAW JSON string body — Pitchfork escapes "/" as
+      // backslash-u-002F inside its embedded JSON, and passing that
+      // through verbatim rendered the escape sequence as literal text on
+      // Home's New This Week cards (Jake, 2026-08-07). Re-quote +
+      // JSON.parse decodes every JSON escape; entities decoded after.
+      let s = g
+      try { s = JSON.parse(`"${g}"`) as string } catch { /* keep raw */ }
+      item.genre = decodeEntities(s)
+    }
   } catch { /* leave un-enriched */ }
 }
 

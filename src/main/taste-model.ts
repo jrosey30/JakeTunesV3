@@ -87,9 +87,16 @@ function topMapEntry(m: Map<string, number>): string {
 export function getTasteAnchors(tracks: TrackLike[], limit = 8): TasteAnchor[] {
   interface Agg { artist: string; plays: number; tracks: number; skips: number; genres: Map<string, number> }
   const byArtist = new Map<string, Agg>()
+  // Compilation shelves masquerade as artists: "Various Artists" carries
+  // hundreds of tracks and out-scores every real band, then Discovery
+  // anchors on it — pulling random VA compilations from MusicBrainz into
+  // "You're Missing" and printing "Because you play Various Artists"
+  // (Jake, 2026-08-07: "sloppy, inconsistent... absolutely despise").
+  // A pseudo-artist can never be a taste anchor.
+  const PSEUDO_ARTIST = /^(various(\s+(artists|interprets))?|va|soundtrack|original\s+(motion\s+picture\s+)?soundtrack|original\s+(broadway\s+|london\s+)?cast(\s+recording)?|unknown(\s+artist)?|compilation|karaoke)$/i
   for (const t of tracks) {
     const name = (t.albumArtist || t.artist || '').trim()
-    if (!name) continue
+    if (!name || PSEUDO_ARTIST.test(name)) continue
     const key = norm(name)
     let a = byArtist.get(key)
     if (!a) {

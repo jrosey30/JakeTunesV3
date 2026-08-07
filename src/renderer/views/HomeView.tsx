@@ -22,7 +22,9 @@
  * separate state.
  */
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
+import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
@@ -99,6 +101,22 @@ export default function HomeView() {
   // "still loading"; [] means "loaded but empty".
   const [news, setNews] = useState<MusicNewsItem[] | null>(null)
   const [releases, setReleases] = useState<MusicNewsItem[] | null>(null)
+  // 30s iTunes preview per New This Week album, fetched on first ▶ press
+  // (Jake, 2026-08-07: "a way to preview a song from each of those new
+  // albums without leaving that screen"). link → url; null = looked up,
+  // iTunes has nothing (button hides rather than lying).
+  const [releasePreviews, setReleasePreviews] = useState<Map<string, string | null>>(() => new Map())
+  const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
+  const previewRelease = async (e: React.MouseEvent, item: MusicNewsItem): Promise<void> => {
+    e.stopPropagation()   // the card itself opens the review link
+    const known = releasePreviews.get(item.link)
+    if (known) { togglePreview(item.link, known, item.title, item.artist || ''); return }
+    if (known === null) return
+    const r = await window.electronAPI.lookupRecoArtwork?.({ artist: item.artist || '', title: item.title })
+    const url = r?.previewUrl || null
+    setReleasePreviews((m) => new Map(m).set(item.link, url))
+    if (url) togglePreview(item.link, url, item.title, item.artist || '')
+  }
   const [tourDates, setTourDates] = useState<TourDate[] | null>(null)
   const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(null)
   const newsRowRef = useRef<HTMLDivElement>(null)
@@ -993,6 +1011,16 @@ export default function HomeView() {
                         <circle cx="20" cy="20" r="2" fill="#999" />
                       </svg>
                     </div>
+                  )}
+                  {item.artist && releasePreviews.get(item.link) !== null && (
+                    <button
+                      type="button"
+                      className={`home-release-play${preview.playingId === item.link ? ' home-release-play--on' : ''}`}
+                      title={preview.playingId === item.link ? 'Stop' : 'Preview a song from this album'}
+                      onClick={(e) => void previewRelease(e, item)}
+                    >
+                      {preview.playingId === item.link ? <PauseIcon /> : <PlayIcon />}
+                    </button>
                   )}
                 </div>
                 <div className="home-album-info">

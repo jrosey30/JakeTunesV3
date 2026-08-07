@@ -1346,7 +1346,9 @@ ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
 // lanes, scoring, or — 2026-07-23 — the artwork match-validation). Any cached
 // feed with an older ver is discarded on load so a fix never leaves a stale,
 // wrong-art batch on screen ("you shouldn't have to know to hit refresh").
-const FEED_GEN_VERSION = 2
+// v3 (2026-08-07): pseudo-artist anchors ("Various Artists") purged — a
+// feed built by v2 carries VA-compilation junk cards and must regenerate.
+const FEED_GEN_VERSION = 3
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000

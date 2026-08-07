@@ -22,7 +22,6 @@ import { sessionArtistImages, hashColor, initials, prefetchArtistPortraits } fro
 import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
-import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import type { RediscoveryPick } from '../types'
 import '../styles/discover-feed.css'
 
@@ -44,6 +43,11 @@ interface Lane { id: string; title: string; cards: FeedCard[] }
 let feedCache: Lane[] | null = null
 let feedAtCache: number | null = null
 let rediscCache: RediscoveryPick[] | null = null
+// A background refresh that lands while Jake is LOOKING at the page must
+// not reshuffle it (the "glitchy" feel — cards jumping mid-browse). The
+// fresh feed parks here and is adopted on the NEXT visit; only per-card
+// enrichment (art, preview, year, brain %) merges into the open page.
+let pendingFeed: { lanes: Lane[]; generatedAt: number } | null = null
 
 const cardId = (c: FeedCard) => `disc|${c.artist}|${c.title}`.toLowerCase()
 
@@ -84,11 +88,6 @@ export default function NewForYouView() {
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
   const { state: lib } = useLibrary()
   const { playTrack } = useAudio()
-  // Same normalized artwork lookup Home uses — a raw \`artist|||album\` key
-  // misses the map's normalization and rendered Jake's OWN albums as gray
-  // placeholders (his screenshot, 2026-07-14).
-  const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
-
   // "In Your Library" — music Jake OWNS but overlooks (the rediscovery
   // engine). One click PLAYS it: no list, no download — it's sitting
   // right there.
@@ -120,14 +119,51 @@ export default function NewForYouView() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { if (feedCache === null) void load() }, [])
+  useEffect(() => {
+    // A refresh that landed while the page was closed is adopted now —
+    // fresh content appears BETWEEN visits, never under Jake's cursor.
+    if (pendingFeed) {
+      feedCache = pendingFeed.lanes; feedAtCache = pendingFeed.generatedAt
+      setLanes(pendingFeed.lanes); setGeneratedAt(pendingFeed.generatedAt)
+      pendingFeed = null
+      return
+    }
+    if (feedCache === null) void load()
+  }, [])
 
-  // A stale feed serves instantly; when the background refresh lands, main
-  // pushes the fresh lanes here — the page quietly updates in place.
+  // A stale feed serves instantly; when the background refresh lands, only
+  // per-card enrichment (art, preview, year, brain %) merges into the open
+  // page — cards never appear, vanish, or reorder mid-browse. The full
+  // fresh feed waits for the next visit (pendingFeed above).
   useEffect(() => {
     const off = window.electronAPI.onDiscoverFeedUpdated?.((p) => {
-      feedCache = p.lanes; feedAtCache = p.generatedAt
-      setLanes(p.lanes); setGeneratedAt(p.generatedAt)
+      setLanes((cur) => {
+        if (cur.length === 0) {
+          feedCache = p.lanes; feedAtCache = p.generatedAt
+          setGeneratedAt(p.generatedAt)
+          return p.lanes
+        }
+        pendingFeed = { lanes: p.lanes, generatedAt: p.generatedAt }
+        const key = (c: FeedCard) => `${c.artist}|${c.title}`.toLowerCase()
+        const fresh = new Map<string, FeedCard>()
+        for (const l of p.lanes) for (const c of l.cards) fresh.set(key(c), c)
+        const merged = cur.map((l) => ({
+          ...l,
+          cards: l.cards.map((c) => {
+            const f = fresh.get(key(c))
+            if (!f) return c
+            return {
+              ...c,
+              artUrl: c.artUrl || f.artUrl,
+              previewUrl: c.previewUrl || f.previewUrl,
+              year: c.year || f.year,
+              brainPct: f.brainPct ?? c.brainPct,
+            }
+          }),
+        }))
+        feedCache = merged
+        return merged
+      })
     })
     return () => { off?.() }
   }, [])
@@ -208,9 +244,11 @@ export default function NewForYouView() {
               return (
                 <div key={id} className={`df-card${c.type === 'artist' ? ' df-card--artist' : ''}`}>
                   <div className="df-art">
-                    {c.artUrl
-                      ? <img src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
-                      : <div className="df-art-ph" aria-hidden="true">♪</div>}
+                    {/* Placeholder always renders UNDER the image: a cover
+                        that 404s hides itself and the ♪ shows — never a
+                        blank hole (inconsistency Jake flagged). */}
+                    <div className="df-art-ph" aria-hidden="true">♪</div>
+                    {c.artUrl && <img src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
                     {c.brainPct != null && <div className="df-pct" title="Brain match vs your taste">{c.brainPct}%</div>}
                     <button type="button" className="df-nope" title={`Never show ${c.artist} again`} aria-label="Not for me"
                       onClick={() => notForMe(c)}><CloseIcon /></button>
