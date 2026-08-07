@@ -68,7 +68,17 @@ def main():
         if sg:
             key_to_sub[((t.get('artist') or '').lower().strip(), (t.get('title') or '').lower().strip())] = sg
     cutoff_s = now - WINDOW_DAYS * 86400
-    for ev in jlines('listening-log.jsonl'):
+    mobile_plays = 0
+    def all_listen_events():
+        nonlocal mobile_plays
+        for ev in jlines('listening-log.jsonl'):
+            yield ev
+        # Phone parity (2026-08-07): the mobile backend logs the same event
+        # shape; the homemini sync pulls it here. One brain, both devices.
+        for ev in jlines('mobile-listening-log.jsonl'):
+            mobile_plays += 1
+            yield ev
+    for ev in all_listen_events():
         ts = ev.get('ts')
         try:
             t_ev = time.mktime(time.strptime(str(ts)[:19], '%Y-%m-%dT%H:%M:%S'))
@@ -93,6 +103,7 @@ def main():
             if pct >= 80:
                 rides += 1
     snap['plays28d'] = plays
+    snap['mobileEvents'] = mobile_plays
     snap['skipRate'] = round(skips / plays, 4) if plays else None
     snap['completionRate'] = round(rides / pct_n, 4) if pct_n else None
     snap['completionSampled'] = pct_n
