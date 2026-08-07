@@ -17,6 +17,7 @@
  * ltlDownload (serial Qobuz queue), previewPlayer, friends/Scouts ledger.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, subscribePreview, togglePreview, stopPreview } from '../previewPlayer'
 import { formatAppDate } from '../utils/formatDate'
@@ -51,6 +52,8 @@ export default function ListenToTheListView() {
   const { dispatch } = useLibrary()
   const { recs, loading, adding, addFromForm, deleteRecommendation, EMPTY_FORM } = useListenToTheList()
 
+  const ltlPageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('ltl-page', ltlPageRef)
   const [form, setForm] = useState<AddFormState>(EMPTY_FORM)
   const [omni, setOmni] = useState('')
   const [fromWho, setFromWho] = useState('')
@@ -350,7 +353,7 @@ export default function ListenToTheListView() {
   const inboxEmpty = !loading && inboxFlat.length === 0
 
   return (
-    <div className="ltl-view ltl-view--v3">
+    <div className="ltl-view ltl-view--v3" ref={ltlPageRef}>
       <div className="ltl-header">
         <div className="ltl-header-titles">
           <h1 className="ltl-title">Listen to the List</h1>

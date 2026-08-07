@@ -4,6 +4,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled, getCrowdParams, setCrowdParams } from '../concertCrowd'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getConcertKey, subscribeConcertKey } from '../concertNav'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -40,6 +41,10 @@ export default function ConcertDetailView() {
   useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
   const albumKey = useSyncExternalStore(subscribeConcertKey, getConcertKey)
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
+  // Page memory, per concert — position in one setlist shouldn't bleed
+  // into another's.
+  const concertPageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence(`concert:${albumKey}`, concertPageRef)
 
   const liveSet = liveSetFor(albumKey, lib.tracks)
   const mergedTrack = liveSet ? (lib.tracks.find((t) => t.id === liveSet.mergedTrackId) ?? null) : null
@@ -139,7 +144,7 @@ export default function ConcertDetailView() {
 
   if (!liveSet || !mergedTrack) {
     return (
-      <div className="concert-detail">
+      <div className="concert-detail" ref={concertPageRef}>
         <button className="concert-back" onClick={() => libDispatch({ type: 'SET_VIEW', view: 'concerts' })}>← Live Concerts</button>
         <div className="concerts-empty">This concert is no longer available.</div>
       </div>

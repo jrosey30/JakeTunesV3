@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
@@ -102,6 +103,8 @@ const albumQ = (r: AlbumRow): QResult => ({
 })
 
 export default function DownloadView() {
+  const downloadPageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('download-page', downloadPageRef)
   const [status, setStatus] = useState<RipStatus | null>(null)
   const [query, setQuery] = useState(pageCache.query)
   const [searching, setSearching] = useState(false)
@@ -584,7 +587,7 @@ export default function DownloadView() {
   }
 
   return (
-    <div className="download-view">
+    <div className="download-view" ref={downloadPageRef}>
       <div className="download-card">
         <div className="download-head">
           <span className="download-eyebrow">Get music</span>

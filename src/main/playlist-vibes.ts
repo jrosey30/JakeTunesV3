@@ -89,9 +89,20 @@ export function scorePlaylistCandidates(
   candidates: Iterable<[number, Float32Array]>,
   globalCentroid: Float32Array | null,
   clusters = 5,
-): VibeHit[] {
-  if (seeds.length === 0) return []
+): { hits: VibeHit[]; clusterSeeds: number[] } {
+  if (seeds.length === 0) return { hits: [], clusterSeeds: [] }
   const cents = kmeansCentroids(seeds, Math.max(1, Math.min(clusters, seeds.length)))
+  // How many PLAYLIST songs seeded each sub-vibe. The renderer weights
+  // strip seats by this share: farthest-point init deliberately hands an
+  // outlier its own cluster (that's the quality-floor design), but a
+  // 1-song corner on a 21-track playlist must not buy a guaranteed seat —
+  // that's how Pantera kept landing on pool dos (Jake, 2026-08-07).
+  const clusterSeeds = new Array<number>(cents.length).fill(0)
+  for (const s of seeds) {
+    let bi = 0, bs = -2
+    for (let c = 0; c < cents.length; c++) { const sim = cosine(s, cents[c]); if (sim > bs) { bs = sim; bi = c } }
+    clusterSeeds[bi]++
+  }
   const perCluster: Array<Array<{ trackId: number; score: number; rawSim: number }>> = cents.map(() => [])
   for (const [tid, vec] of candidates) {
     let bi = 0, bs = -2
@@ -115,5 +126,5 @@ export function scorePlaylistCandidates(
     servable.sort((a, b) => b.score - a.score)
     for (const h of servable.slice(0, PER_CLUSTER_POOL)) hits.push({ trackId: h.trackId, score: h.score, cluster: c })
   })
-  return hits
+  return { hits, clusterSeeds }
 }

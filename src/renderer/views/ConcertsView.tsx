@@ -1,4 +1,5 @@
-import { useMemo, useSyncExternalStore, useCallback } from 'react'
+import { useMemo, useRef, useSyncExternalStore, useCallback } from 'react'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { subscribeLiveSets, getLiveSetsSnapshot } from '../liveSets'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
@@ -85,8 +86,10 @@ export default function ConcertsView() {
     libDispatch({ type: 'SET_VIEW', view: 'concert-detail' })
   }, [libDispatch])
 
+  const concertsPageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('concerts-page', concertsPageRef)
   return (
-    <div className="concerts-view albums-view">
+    <div className="concerts-view albums-view" ref={concertsPageRef}>
       <div className="concerts-header">
         <h2 className="concerts-title">Full Live Concerts</h2>
         <span className="concerts-count">

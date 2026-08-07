@@ -11992,7 +11992,7 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
 // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
 // regardless of artist. The renderer then filters for freshness (new artists,
 // no same-album) + diversity. We return a generous pool so ↻ has real variety.
-ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }> }> => {
+ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
   try {
     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
     const m = await ragGetEmbeddingsMap()
@@ -12028,11 +12028,11 @@ ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 
     function* candidateEntries(): Generator<[number, Float32Array]> {
       for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
-    const hits = scorePlaylistCandidates(seeds, candidateEntries(), gc, clusters)
-    return { ok: true, hits }
+    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, clusters)
+    return { ok: true, hits, clusterSeeds }
   } catch (err) {
     console.warn('[playlist-similar] failed:', err instanceof Error ? err.message : err)
-    return { ok: false, hits: [] }
+    return { ok: false, hits: [], clusterSeeds: [] }
   }
 })
 

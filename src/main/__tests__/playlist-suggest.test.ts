@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { suggestForPlaylist, type SuggestibleTrack } from '../../renderer/utils/playlistSuggest.ts'
+import { suggestForPlaylist, suggestFromVibeHits, type SuggestibleTrack } from '../../renderer/utils/playlistSuggest.ts'
 
 let nextId = 1
 function t(over: Partial<SuggestibleTrack>): SuggestibleTrack {
@@ -87,4 +87,52 @@ test('deterministic: same inputs → same picks', () => {
     suggestForPlaylist(pl, lib, 5, 0).map(p => p.id),
     suggestForPlaylist(pl, lib, 5, 0).map(p => p.id),
   )
+})
+
+// ── suggestFromVibeHits: seat eligibility + refresh rotation ──────────────
+// Jake, 2026-08-07: "pool dos sometimes suggests like pantera or rage
+// against the machine" (a 1-song outlier corner bought a guaranteed strip
+// seat) and "refresh ... eliminates songs from the recommendations as i
+// keep pressing. cant happen" (unwrapped rotate ran off the pools).
+
+function vibeFixture() {
+  const playlist: SuggestibleTrack[] = Array.from({ length: 10 }, (_, i) => ({ id: 1000 + i, title: `pool ${i}`, artist: `chill${i}`, genre: 'Chill' }))
+  const chillLib: SuggestibleTrack[] = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, title: `groove ${i}`, artist: `artist${i}`, genre: 'Chill' }))
+  const metalLib: SuggestibleTrack[] = [
+    { id: 90, title: 'Walk', artist: 'Pantera', genre: 'Metal' },
+    { id: 91, title: 'Bulls on Parade', artist: 'Rage Against the Machine', genre: 'Metal' },
+  ]
+  const hits = [
+    ...chillLib.map((tr, i) => ({ trackId: tr.id, score: 0.8 - i * 0.01, cluster: 0 })),
+    ...metalLib.map((tr, i) => ({ trackId: tr.id, score: 0.85 - i * 0.01, cluster: 1 })),
+  ]
+  return { playlist, library: [...chillLib, ...metalLib], hits }
+}
+
+test('a 1-seed outlier cluster earns NO seat on a real playlist', () => {
+  const { playlist, library, hits } = vibeFixture()
+  const picks = suggestFromVibeHits(playlist, library, hits, 5, 0, [9, 1])
+  assert.equal(picks.length, 5)
+  assert.ok(!picks.some((p) => p.genre === 'Metal'), 'no metal from the 1-seed corner')
+})
+
+test('a genuine 2+ seed corner keeps its seat (eclectic playlists still surface corners)', () => {
+  const { playlist, library, hits } = vibeFixture()
+  const picks = suggestFromVibeHits(playlist, library, hits, 5, 0, [8, 2])
+  assert.ok(picks.some((p) => p.genre === 'Metal'), 'real corner represented')
+})
+
+test('tiny playlists keep every cluster — each song IS the vibe', () => {
+  const { library, hits } = vibeFixture()
+  const tiny: SuggestibleTrack[] = Array.from({ length: 4 }, (_, i) => ({ id: 1000 + i, title: `s${i}`, artist: `a${i}` }))
+  const picks = suggestFromVibeHits(tiny, library, hits, 5, 0, [3, 1])
+  assert.ok(picks.some((p) => p.genre === 'Metal'))
+})
+
+test('refresh NEVER empties the strip — rotate wraps forever', () => {
+  const { playlist, library, hits } = vibeFixture()
+  for (let rotate = 0; rotate < 40; rotate++) {
+    const picks = suggestFromVibeHits(playlist, library, hits, 5, rotate, [9, 1])
+    assert.equal(picks.length, 5, `rotate=${rotate} must still fill the strip`)
+  }
 })

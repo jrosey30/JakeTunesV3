@@ -23,6 +23,7 @@ import GetInfoModal from '../components/GetInfoModal'
 import MixArtwork from '../components/MixArtwork'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { getActiveMix, getMixReturnView } from '../utils/activeMix'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { setNotice } from '../activity'
 import type { Track } from '../types'
 import '../styles/songs.css'
@@ -44,6 +45,8 @@ export default function MixDetailView() {
   const { openCynthia } = useCynthia()
 
   const mix = getActiveMix()
+  const mixTracklistRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence(`mix-detail:${mix?.id ?? 'none'}`, mixTracklistRef)
   const tracks = mix?.tracks ?? []
   const lastClickedIdx = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
@@ -184,7 +187,7 @@ export default function MixDetailView() {
         </div>
       </div>
 
-      <div className="album-page-tracklist songs-view">
+      <div className="album-page-tracklist songs-view" ref={mixTracklistRef}>
         <div className="songs-header" style={{ gridTemplateColumns: GRID }}>
           <div className="songs-header-cell" style={{ textAlign: 'center', justifyContent: 'center' }}>#</div>
           <div className="songs-header-cell">Name</div>

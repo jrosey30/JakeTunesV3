@@ -8,6 +8,7 @@
  * and spool animation follow the live playback state.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -84,6 +85,8 @@ export default function MixtapeView() {
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const mixPageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('mixtapes-page', mixPageRef)
   // Inline rename (2026-07-31, Jake: "ability to name my mixtapes"). Inline
   // input, never window.prompt — that returns null silently in Electron's
   // renderer and the rename would just quietly not happen.
@@ -259,7 +262,7 @@ export default function MixtapeView() {
   }
 
   return (
-    <div className="mixtape-view">
+    <div className="mixtape-view" ref={mixPageRef}>
       <div className="mixtape-hero">
         <CassetteSvg title={tape.title} ink={ink} lengthLabel={`C${tape.tapeLength}`} spinning={tapeActive} side={side} wind={winding?.dir} />
         <div className="mixtape-hero-info">

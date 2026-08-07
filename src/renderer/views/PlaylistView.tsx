@@ -169,6 +169,7 @@ export default function PlaylistView() {
   // surfaced more songs by the artists already on the playlist.
   const [suggestRotate, setSuggestRotate] = useState(0)
   const [vibeHits, setVibeHits] = useState<Array<{ trackId: number; score: number; cluster: number }>>([])
+  const [vibeClusterSeeds, setVibeClusterSeeds] = useState<number[]>([])
   useEffect(() => { setSuggestRotate(0) }, [state.activePlaylistId])
   // Re-fetch whenever the playlist's MEMBERSHIP changes — adding a song (the +,
   // or manually), removing one, or swapping one for another all re-center the
@@ -181,15 +182,19 @@ export default function PlaylistView() {
     const ids = playlist?.trackIds ?? []
     if (ids.length === 0) { setVibeHits([]); return }
     window.electronAPI.playlistSimilar(ids, 5)
-      .then(r => { if (!cancelled) setVibeHits(r.ok ? r.hits : []) })
-      .catch(() => { if (!cancelled) setVibeHits([]) })
+      .then(r => {
+        if (cancelled) return
+        setVibeHits(r.ok ? r.hits : [])
+        setVibeClusterSeeds(r.ok ? (r.clusterSeeds ?? []) : [])
+      })
+      .catch(() => { if (!cancelled) { setVibeHits([]); setVibeClusterSeeds([]) } })
     return () => { cancelled = true }
   }, [state.activePlaylistId, plMembershipKey])
   const suggestions = useMemo(
     () => vibeHits.length
-      ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate)
+      ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate, vibeClusterSeeds)
       : suggestForPlaylist(allPlaylistTracks, state.tracks, 5, suggestRotate),
-    [allPlaylistTracks, state.tracks, vibeHits, suggestRotate],
+    [allPlaylistTracks, state.tracks, vibeHits, vibeClusterSeeds, suggestRotate],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
 

@@ -15,7 +15,8 @@
  * they got here; "You're Missing" comes straight from MusicBrainz
  * discographies minus what the library owns.
  */
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import { useLibrary } from '../context/LibraryContext'
 import { sessionArtistImages, hashColor, initials, prefetchArtistPortraits } from '../utils/artistPortrait'
@@ -62,6 +63,10 @@ export default function NewForYouView() {
   // album picture not an artist". Keyed by artist name; null = looked up,
   // none available (fall back to initials, never to a cover in a circle).
   const [portraits, setPortraits] = useState<Map<string, string | null>>(() => new Map(sessionArtistImages))
+  // Page memory (2026-08-07, Jake: "many pages like home, discovery dont
+  // remember where i was when i leave page").
+  const pageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('discover-page', pageRef)
 
   // Backfill portraits for whoever the Overlooked lane is showing. Bounded and
   // batched inside the helper so the photo IPC isn't hammered; already-known
@@ -187,7 +192,7 @@ export default function NewForYouView() {
   }
 
   return (
-    <div className="df-view">
+    <div className="df-view" ref={pageRef}>
       <div className="df-head">
         <h1 className="df-title">Discover</h1>
         {generatedAt && <span className="df-updated">{new Date(generatedAt).toLocaleDateString()}</span>}
