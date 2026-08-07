@@ -1459,6 +1459,9 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
             seen.add(key)
             mine.push({ name: nb.name, connection: nb.connection, anchor: a.artist, sampleTitle: nb.sampleTitle })
           }
+          // The scene SHELF (label-mates) is the point; ex-member and
+          // side-project trivia rides behind it, not ahead of it.
+          mine.sort((x, y) => Number(y.connection.startsWith('label-mates')) - Number(x.connection.startsWith('label-mates')))
           perAnchor.push(mine)
         }
         // Round-robin the anchors so one band's orbit can't flood the
@@ -2926,10 +2929,18 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
         const rosterRes = await fetch(`https://musicbrainz.org/ws/2/release?label=${lb.id}&inc=artist-credits&fmt=json&limit=60`, { headers, signal: AbortSignal.timeout(8000) })
         if (!rosterRes.ok) continue
         const roster = await rosterRes.json() as { 'release-count'?: number; releases?: Array<{ title?: string; 'artist-credit'?: Array<{ name?: string }> }> }
-        // A catalog in the thousands is a DISTRIBUTOR, not a scene —
-        // Cargo Music (blink's early distro) rosters Celia Cruz. Scenes
-        // are Bridge Nine-sized.
-        if ((roster['release-count'] ?? 0) > 400) continue
+        // Distributor detector by ROSTER SHAPE (2026-08-07, the Celia
+        // Cruz incident): a scene label's releases REPEAT its bands (SST:
+        // ~20 artists per 60 releases); a distributor's are strangers
+        // shipping boxes (Cargo). Release counts proved useless (SST 564
+        // vs Cargo 240) and MB label "type" is usually unset — the shape
+        // of the roster itself is the honest signal.
+        if ((roster['release-count'] ?? 0) > 1500) continue
+        const rosterArtists = new Set<string>()
+        for (const rl of roster.releases || []) {
+          for (const ac of rl['artist-credit'] || []) if (ac.name) rosterArtists.add(ac.name.toLowerCase())
+        }
+        if (rosterArtists.size > 35) continue
         for (const rl of roster.releases || []) {
           for (const ac of rl['artist-credit'] || []) {
             const n = ac.name
