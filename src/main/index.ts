@@ -1449,15 +1449,30 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
           return bp - ap || b.score - a.score
         }).slice(0, 4)
         const seen = new Set<string>()
-        const picks: Array<{ name: string; connection: string; anchor: string; sampleTitle?: string }> = []
+        const perAnchor: Array<Array<{ name: string; connection: string; anchor: string; sampleTitle?: string }>> = []
         for (const a of ranked) {
           const neighbors = await fetchSceneNeighbors(a.artist)
+          const mine: typeof perAnchor[number] = []
           for (const nb of neighbors) {
             const key = nk(nb.name)
             if (!key || seen.has(key) || ownedArtists.has(key)) continue
             seen.add(key)
-            picks.push({ name: nb.name, connection: nb.connection, anchor: a.artist, sampleTitle: nb.sampleTitle })
+            mine.push({ name: nb.name, connection: nb.connection, anchor: a.artist, sampleTitle: nb.sampleTitle })
           }
+          perAnchor.push(mine)
+        }
+        // Round-robin the anchors so one band's orbit can't flood the
+        // lane (v1 shipped 10/10 blink-182 cards).
+        const picks: typeof perAnchor[number] = []
+        for (let rank = 0; picks.length < 60; rank++) {
+          let any = false
+          for (const mine of perAnchor) {
+            const p = mine[rank]
+            if (!p) continue
+            any = true
+            picks.push(p)
+          }
+          if (!any) break
         }
         // WILDCARD HOPS (2026-08-07, Jake: "i need more scene
         // recommendations… thats the shit i love to find"): the clerk
@@ -2883,6 +2898,8 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
       const rel = await relRes.json() as { relations?: Array<{ type?: string; artist?: { name?: string } }> }
       for (const r of rel.relations || []) {
         const n = r.artist?.name
+        // Tribute/parody acts point AT the anchor, not into their scene.
+        if (/tribute|parody/i.test(r.type || '')) continue
         if (n && n.toLowerCase() !== anchor.toLowerCase() && !out.has(n)) {
           out.set(n, { connection: `${r.type || 'connected'} · ${anchor}` })
         }
@@ -2908,7 +2925,11 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
         await mbThrottle()
         const rosterRes = await fetch(`https://musicbrainz.org/ws/2/release?label=${lb.id}&inc=artist-credits&fmt=json&limit=60`, { headers, signal: AbortSignal.timeout(8000) })
         if (!rosterRes.ok) continue
-        const roster = await rosterRes.json() as { releases?: Array<{ title?: string; 'artist-credit'?: Array<{ name?: string }> }> }
+        const roster = await rosterRes.json() as { 'release-count'?: number; releases?: Array<{ title?: string; 'artist-credit'?: Array<{ name?: string }> }> }
+        // A catalog in the thousands is a DISTRIBUTOR, not a scene —
+        // Cargo Music (blink's early distro) rosters Celia Cruz. Scenes
+        // are Bridge Nine-sized.
+        if ((roster['release-count'] ?? 0) > 400) continue
         for (const rl of roster.releases || []) {
           for (const ac of rl['artist-credit'] || []) {
             const n = ac.name
