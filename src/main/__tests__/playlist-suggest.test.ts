@@ -136,3 +136,10 @@ test('refresh NEVER empties the strip — rotate wraps forever', () => {
     assert.equal(picks.length, 5, `rotate=${rotate} must still fill the strip`)
   }
 })
+
+test('an ECLECTIC playlist (no dominant vibe) keeps every corner', () => {
+  const { playlist, library, hits } = vibeFixture()
+  // Five vibes, none holding half the playlist — nothing gets dropped.
+  const picks = suggestFromVibeHits(playlist, library, hits, 5, 0, [3, 2, 2, 2, 1])
+  assert.ok(picks.some((p) => p.genre === 'Metal'), 'no vibe dropped on a mosaic playlist')
+})
