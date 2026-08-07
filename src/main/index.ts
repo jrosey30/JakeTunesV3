@@ -13255,10 +13255,18 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
     album: input.album?.trim() || undefined,
     note: noteBits.length ? noteBits.join(' · ') : undefined,
   }
-  if (input.from?.trim()) {
+  // The 'add' tick fires ONLY when a row actually lands on the list — at the
+  // success returns below, never up front. The old top-of-function tick
+  // counted (a) failed captures — Dan Gottlieb's podcast-episode link showed
+  // as "1 sent" with nothing ever listed — and (b) DEDUPED re-adds, which is
+  // exactly how Lorin's two retro-captured songs double-counted 13 → 15
+  // on top of their manual adds (both 2026-08-07).
+  const fromName = input.from?.trim() || ''
+  const tickFriendAdd = (): void => {
+    if (!fromName) return
     void friendsCache.update((cur) => {
-      const key = input.from!.trim().toLowerCase()
-      const f = cur[key] || { name: input.from!.trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
+      const key = fromName.toLowerCase()
+      const f = cur[key] || { name: fromName, adds: 0, got: 0, tossed: 0, lastAt: 0 }
       f.adds += 1; f.lastAt = Date.now(); cur[key] = f
       return cur
     })
@@ -13344,6 +13352,7 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
       console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
     }
     scheduleRecoConvergeSync()
+    tickFriendAdd()
     return { ok: true, recommendation }
   }
 
@@ -13365,6 +13374,7 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
     ])
     suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
     console.log('[reco] saved locally + queued for homemini (backend', backendStatus ?? 'unreachable', ') —', local.id)
+    tickFriendAdd()
     return { ok: true, recommendation: local, savedLocally: true }
   } catch (err) {
     console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
