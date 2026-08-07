@@ -188,3 +188,38 @@ test('METAL VOL 1: family fills the pool even when raw tags are thin', () => {
   assert.ok(ids.has(20) || ids.has(21), 'punk-family candidates surface despite mismatched raw tags')
   assert.ok(!ids.has(30) && !ids.has(31), 'different-continent tracks stay out')
 })
+
+test('every refresh press replaces the ENTIRE strip until the pool wraps', () => {
+  // Big pools on both clusters — consecutive pages must be disjoint.
+  const playlist: SuggestibleTrack[] = Array.from({ length: 10 }, (_, i) => ({ id: 1000 + i, title: `pl ${i}`, artist: `pl${i}` }))
+  const library: SuggestibleTrack[] = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, title: `song ${i}`, artist: `band${i}` }))
+  const hits = library.map((t, i) => ({ trackId: t.id, score: 0.9 - i * 0.005, cluster: i % 2 }))
+  const seen = new Set<number>()
+  let prev: number[] = []
+  for (let rotate = 0; rotate < 5; rotate++) {
+    const picks = suggestFromVibeHits(playlist, library, hits, 5, rotate, [5, 5])
+    assert.equal(picks.length, 5, `rotate=${rotate} fills the strip`)
+    const ids = picks.map((p) => p.id)
+    assert.equal(new Set([...prev, ...ids]).size, prev.length + 5, `rotate=${rotate}: all five slots turned over`)
+    prev = ids
+    ids.forEach((i) => seen.add(i))
+  }
+  assert.ok(seen.size >= 25, 'five presses = twenty-five distinct songs')
+})
+
+test('a 1-candidate cluster can no longer pin a permanent squatter slot', () => {
+  const playlist: SuggestibleTrack[] = Array.from({ length: 10 }, (_, i) => ({ id: 1000 + i, title: `pl ${i}`, artist: `pl${i}` }))
+  const bigCluster: SuggestibleTrack[] = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, title: `groove ${i}`, artist: `g${i}` }))
+  const loner: SuggestibleTrack = { id: 99, title: 'The Squatter', artist: 'Loner' }
+  const library = [...bigCluster, loner]
+  const hits = [
+    ...bigCluster.map((t, i) => ({ trackId: t.id, score: 0.9 - i * 0.01, cluster: 0 })),
+    { trackId: 99, score: 0.95, cluster: 1 },
+  ]
+  let appearances = 0
+  for (let rotate = 0; rotate < 6; rotate++) {
+    const picks = suggestFromVibeHits(playlist, library, hits, 5, rotate, [8, 2])
+    if (picks.some((p) => p.id === 99)) appearances++
+  }
+  assert.ok(appearances <= 2, `squatter appeared ${appearances}/6 refreshes — must rotate out like everyone else`)
+})

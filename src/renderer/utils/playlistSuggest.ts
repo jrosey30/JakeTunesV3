@@ -257,7 +257,11 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       const key = (t.camelotKey || '').toUpperCase()
       const keyFit = key ? (compat.has(key) ? 1 : 0.15) : 0.5
       const gFit = genreFit(t, gProfile)
-      return { t, s: 0.5 * vn + 0.22 * gFit + 0.18 * bpmFit + keyWeight * keyFit }
+      // Taste voice (2026-08-07, Jake: "the AI has no feel for playlists"):
+      // stars + play history nudge the songs he'd actually ADD above
+      // equal-vibe strangers. Small weight — fit still leads.
+      const taste = Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
+      return { t, s: 0.45 * vn + 0.22 * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * taste }
     })
     scored.sort((a, b) => b.s - a.s)
     const fr = scored.filter(x => !plArtists.has(norm(x.t.albumArtist || x.t.artist))).map(x => x.t)
@@ -269,26 +273,40 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     .sort((a, b) => (clusterSeeds[b[0]] ?? 0) - (clusterSeeds[a[0]] ?? 0))
     .map(([, list]) => blendSort(list))
 
-  // Round-robin ONE per cluster at rank `rotate + pass`, distinct artist — so
-  // every eligible sub-vibe is represented and ↻ (rotate++) turns over each
-  // cluster's next track. Indices WRAP (2026-08-07, Jake: "sometimes
-  // eliminates songs from the recommendations as i keep pressing. cant
-  // happen") — the old unwrapped index ran off each pool's end, clusters
-  // went silent one by one, and enough ↻ presses emptied the strip. Now ↻
-  // cycles the pools forever.
-  const picks: T[] = []
-  const seen = new Set<string>()
-  for (let pass = 0; picks.length < limit && pass < 60; pass++) {
-    for (let c = 0; c < clusterLists.length && picks.length < limit; c++) {
-      const list = clusterLists[c]
-      if (list.length === 0) continue
-      const t = list[(rotate + pass) % list.length]
-      if (!t || picks.includes(t)) continue
-      const a = norm(t.albumArtist || t.artist)
-      if (seen.has(a)) continue
-      seen.add(a)
-      picks.push(t)
+  // Interleave the clusters round-robin into ONE ranked pool (denser
+  // sub-vibes lead each round; one-per-artist until the pool runs thin),
+  // then PAGE the strip through it. Every ↻ press replaces ALL five slots
+  // (2026-08-07, Jake: "a lot of songs that stay every refresh, in the
+  // same spots. all 5 need to rotate") — the old per-cluster modulo pinned
+  // a 1-candidate cluster to the same song in the same slot forever.
+  // Pages walk the whole pool before wrapping, so a healthy playlist gives
+  // dozens of fully-fresh strips.
+  const pool: T[] = []
+  const inPool = new Set<T>()
+  const perArtist = new Map<string, number>()
+  for (let cap = 1; cap <= 3 && pool.length < limit * 12; cap++) {
+    for (let rank = 0; ; rank++) {
+      let any = false
+      for (const list of clusterLists) {
+        const t = list[rank]
+        if (!t) continue
+        any = true
+        if (inPool.has(t)) continue
+        const a = norm(t.albumArtist || t.artist)
+        if ((perArtist.get(a) || 0) >= cap) continue
+        perArtist.set(a, (perArtist.get(a) || 0) + 1)
+        inPool.add(t)
+        pool.push(t)
+      }
+      if (!any) break
     }
+  }
+  if (pool.length === 0) return []
+  if (pool.length <= limit) return pool
+  const start = (rotate * limit) % pool.length
+  const picks: T[] = []
+  for (let i = 0; i < pool.length && picks.length < limit; i++) {
+    picks.push(pool[(start + i) % pool.length])
   }
   return picks
 }
