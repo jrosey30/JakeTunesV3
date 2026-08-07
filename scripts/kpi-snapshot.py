@@ -89,6 +89,8 @@ def main():
         kind = ev.get('t')
         if kind not in ('p', 's'):
             continue
+        if ev.get('ar') == '__parity-test__':
+            continue   # endpoint verification marker, not listening
         plays += 1
         sg = key_to_sub.get(((ev.get('ar') or '').lower().strip(), (ev.get('ti') or '').lower().strip()))
         if kind == 's':
