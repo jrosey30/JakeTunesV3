@@ -216,6 +216,7 @@ const electronAPI = {
   itunesAlbumTracks: (collectionId: number) => ipcRenderer.invoke('itunes-album-tracks', collectionId),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
+  lookupAlbumPreview: (input: { artist: string; album: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => ipcRenderer.invoke('lookup-album-preview', input),
   // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
   getAlbumInfo: (artist: string, album: string, year?: string) => ipcRenderer.invoke('get-album-info', artist, album, year),
   getAlbumBlurb: (artist: string, album: string, year?: string | number) => ipcRenderer.invoke('get-album-blurb', artist, album, year),

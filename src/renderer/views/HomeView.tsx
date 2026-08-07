@@ -112,7 +112,10 @@ export default function HomeView() {
     const known = releasePreviews.get(item.link)
     if (known) { togglePreview(item.link, known, item.title, item.artist || ''); return }
     if (known === null) return
-    const r = await window.electronAPI.lookupRecoArtwork?.({ artist: item.artist || '', title: item.title })
+    // iTunes-with-Deezer-fallback lookup in main — survives Apple's
+    // rate-limit windows, which is what made the first cut of this
+    // button die silently (Jake: "shit dont work!!!!").
+    const r = await window.electronAPI.lookupAlbumPreview?.({ artist: item.artist || '', album: item.title })
     const url = r?.previewUrl || null
     setReleasePreviews((m) => new Map(m).set(item.link, url))
     if (url) togglePreview(item.link, url, item.title, item.artist || '')
@@ -1012,11 +1015,13 @@ export default function HomeView() {
                       </svg>
                     </div>
                   )}
-                  {item.artist && releasePreviews.get(item.link) !== null && (
+                  {item.artist && (
+                    // A miss stays VISIBLE (muted disc, honest tooltip) —
+                    // a button that silently vanishes reads as broken.
                     <button
                       type="button"
-                      className={`home-release-play${preview.playingId === item.link ? ' home-release-play--on' : ''}`}
-                      title={preview.playingId === item.link ? 'Stop' : 'Preview a song from this album'}
+                      className={`home-release-play${preview.playingId === item.link ? ' home-release-play--on' : ''}${releasePreviews.get(item.link) === null ? ' home-release-play--none' : ''}`}
+                      title={releasePreviews.get(item.link) === null ? 'No preview available for this album' : preview.playingId === item.link ? 'Stop' : 'Preview a song from this album'}
                       onClick={(e) => void previewRelease(e, item)}
                     >
                       {preview.playingId === item.link ? <PauseIcon /> : <PlayIcon />}

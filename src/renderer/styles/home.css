@@ -1078,3 +1078,5 @@
 .home-release-card:hover .home-release-play,
 .home-release-card .home-release-play--on { opacity: 1; }
 .home-release-card .home-release-play:hover { background: rgba(20, 16, 12, 0.82); }
+.home-release-card .home-release-play--none { opacity: 0.35; cursor: default; }
+.home-release-card:hover .home-release-play--none { opacity: 0.35; }

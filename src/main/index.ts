@@ -12767,6 +12767,35 @@ async function fetchCaaArtwork(artist: string, title: string): Promise<string | 
   return result
 }
 
+// 30s preview of A SONG OFF an album, for playing in place (Home's New
+// This Week, 2026-08-07). iTunes first; Deezer keyless fallback because
+// Apple 403-limits this IP under load and the preview button then died
+// SILENTLY (Jake: "shit dont work!!!!"). Deezer search is plain-text, so
+// the artist MUST match and an album match is preferred — junk hits
+// (a Henze symphony for a metal query) get filtered, and an honest miss
+// beats a wrong song.
+ipcMain.handle('lookup-album-preview', async (_event, input: { artist?: string; album?: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => {
+  const artist = (input?.artist || '').trim()
+  const album = (input?.album || '').trim()
+  if (artist.length < 2 || album.length < 1) return {}
+  try {
+    const rows = await fetchItunesRecoRows(`${artist} ${album}`, 25)
+    const same = rows.filter((r) => recoArtistMatches(artist, r.artist) && r.previewUrl)
+    const best = same.find((r) => recoTitleMatches(album, r.album || '')) || same[0]
+    if (best?.previewUrl) return { previewUrl: best.previewUrl, trackTitle: best.song }
+  } catch { /* fall through to Deezer */ }
+  try {
+    const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(`${artist} ${album}`)}&limit=10`, { signal: AbortSignal.timeout(6000) })
+    if (res.ok) {
+      const data = await res.json() as { data?: Array<{ preview?: string; title?: string; artist?: { name?: string }; album?: { title?: string } }> }
+      const hits = (data.data || []).filter((d) => d.preview && recoArtistMatches(artist, d.artist?.name || ''))
+      const best = hits.find((d) => recoTitleMatches(album, d.album?.title || '')) || hits[0]
+      if (best?.preview) return { previewUrl: best.preview, trackTitle: best.title }
+    }
+  } catch { /* no preview to be had */ }
+  return {}
+})
+
 ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> => {
   const artist = (input?.artist || '').trim()
   const title = (input?.title || '').trim()

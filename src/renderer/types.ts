@@ -632,6 +632,7 @@ declare global {
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
       lookupRecoArtwork: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
+      lookupAlbumPreview?: (input: { artist: string; album: string }) => Promise<{ previewUrl?: string; trackTitle?: string }>
       // Album detail page (4.5.0-115): factual credits (MusicBrainz + iTunes,
       // honest gaps where unknown) and a grounded Music Man blurb.
       getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
