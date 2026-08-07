@@ -12029,7 +12029,40 @@ ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 
       for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
     const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, clusters)
-    return { ok: true, hits, clusterSeeds }
+    // Candidate DIVERSITY (2026-08-07, Jake: "it seems to only suggest
+    // other songs by bands already in that playlist"): measured on Pool
+    // Dos, 101 of 162 raw candidates were catalog-mates of the playlist's
+    // own artists — an artist's other songs are always the nearest
+    // embedding neighbors, so they flood the pools before variety gets a
+    // seat. Balance each cluster's pool: max 2 candidates per artist, and
+    // playlist-resident artists capped at ~25% of the pool. Relevance is
+    // preserved (embedding-ranked walk); the strip finally breathes.
+    const libForArtists = (await libraryCache.get() as { tracks?: Array<{ id: number; artist?: string; albumArtist?: string }> }).tracks ?? []
+    const artistOf = new Map(libForArtists.map((t) => [t.id, String(t.albumArtist || t.artist || '').toLowerCase().trim()]))
+    const plArtistSet = new Set(playlistIds.map((id) => artistOf.get(id)).filter(Boolean))
+    const byClusterHits = new Map<number, typeof hits>()
+    for (const h of hits) {
+      const arr = byClusterHits.get(h.cluster) ?? []
+      arr.push(h)
+      byClusterHits.set(h.cluster, arr)
+    }
+    const balanced: typeof hits = []
+    for (const arr of byClusterHits.values()) {
+      arr.sort((a, b) => b.score - a.score)
+      const perArtist = new Map<string, number>()
+      const plCap = Math.max(6, Math.floor(arr.length * 0.25))
+      let plCount = 0
+      for (const h of arr) {
+        const a = artistOf.get(h.trackId) || ''
+        if ((perArtist.get(a) || 0) >= 2) continue
+        const isPl = plArtistSet.has(a)
+        if (isPl && plCount >= plCap) continue
+        perArtist.set(a, (perArtist.get(a) || 0) + 1)
+        if (isPl) plCount++
+        balanced.push(h)
+      }
+    }
+    return { ok: true, hits: balanced, clusterSeeds }
   } catch (err) {
     console.warn('[playlist-similar] failed:', err instanceof Error ? err.message : err)
     return { ok: false, hits: [], clusterSeeds: [] }
