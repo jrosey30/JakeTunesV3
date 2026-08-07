@@ -746,17 +746,23 @@
   100% { transform: translateX(350%); }
 }
 
-/* ── PageGate v2 (2026-08-07): the page's own skeleton shimmering into
-   place + a live equalizer — replaces the name-and-lonely-bar void.
+/* ── PageGate v3 (2026-08-07): a ghost of the INCOMING page — real title
+   in its real position, photo/cover placeholder beside it, blocks on the
+   page's own left-aligned grid, shimmering until content lands in place.
    Appears only on genuinely slow loads (the component self-delays). ── */
-.page-gate--v2 { gap: 10px; padding-top: 12vh; animation: pg-fade-in 240ms ease-out both; }
-.page-gate--v2 .page-gate-name { font-size: 26px; color: #4d483f; letter-spacing: -0.02em; }
+.page-gate--v3 {
+  display: flex; flex-direction: column; align-items: stretch; gap: 26px;
+  padding: 36px 28px; animation: pg-fade-in 240ms ease-out both;
+}
+.page-gate--v3 .page-gate-name {
+  font-size: 30px; font-weight: 700; color: #33302a; letter-spacing: -0.02em;
+}
 .page-gate-note { font-size: 12px; color: #99917f; font-style: italic; }
-.page-gate-eq { display: flex; align-items: flex-end; gap: 3px; height: 18px; }
+.pg-sub { display: flex; align-items: center; gap: 10px; }
+.page-gate-eq { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; }
 .page-gate-eq span {
-  width: 4px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #e0812e);
-  animation: pg-eq 900ms ease-in-out infinite;
-  transform-origin: bottom;
+  width: 3px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #e0812e);
+  animation: pg-eq 900ms ease-in-out infinite; transform-origin: bottom;
 }
 .page-gate-eq span:nth-child(1) { animation-delay: 0ms;   height: 60%; }
 .page-gate-eq span:nth-child(2) { animation-delay: 140ms; height: 95%; }
@@ -766,7 +772,6 @@
 @keyframes pg-eq { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
 @keyframes pg-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
-.page-gate-skeleton { width: min(760px, 86%); margin-top: 26px; display: flex; flex-direction: column; gap: 26px; }
 .pg-shimmer {
   background: linear-gradient(100deg, #eae7e0 38%, #f4f1ea 50%, #eae7e0 62%);
   background-size: 220% 100%;
@@ -774,14 +779,17 @@
 }
 @keyframes pg-shimmer { from { background-position: 130% 0; } to { background-position: -90% 0; } }
 
-.pg-hero { display: flex; gap: 20px; align-items: center; }
-.pg-cover { width: 128px; height: 128px; border-radius: 8px; flex: 0 0 auto; box-shadow: 0 4px 14px rgba(70, 55, 40, 0.10); }
-.pg-hero-lines { display: flex; flex-direction: column; gap: 12px; flex: 1; }
+.pg-hero { display: flex; gap: 22px; align-items: center; }
+.pg-photo { width: 132px; height: 132px; border-radius: 10px; flex: 0 0 auto; box-shadow: 0 4px 14px rgba(70, 55, 40, 0.10); }
+.pg-photo--round { border-radius: 50%; }
+.pg-hero-text { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pg-list-head { display: flex; flex-direction: column; gap: 8px; }
+.pg-section { width: 140px; height: 11px; border-radius: 6px; }
 .pg-row { display: flex; gap: 16px; }
 .pg-card { display: flex; flex-direction: column; gap: 7px; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
-.pg-card-art { width: 108px; height: 108px; border-radius: 8px; box-shadow: 0 3px 10px rgba(70, 55, 40, 0.08); }
+.pg-card-art { width: 118px; height: 118px; border-radius: 8px; box-shadow: 0 3px 10px rgba(70, 55, 40, 0.08); }
 .pg-line { height: 12px; border-radius: 6px; }
 .pg-line--thin { height: 8px; border-radius: 4px; }
-.pg-list { display: flex; flex-direction: column; gap: 13px; }
+.pg-list { display: flex; flex-direction: column; gap: 13px; max-width: 720px; }
 .pg-listrow { display: flex; align-items: center; gap: 12px; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
 .pg-dot { width: 26px; height: 26px; border-radius: 6px; flex: 0 0 auto; }

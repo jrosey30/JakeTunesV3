@@ -1,17 +1,20 @@
 /**
- * PageGate v2 — the loading treatment for whole pages (2026-08-07, Jake:
- * "can we make these loading pages way way way less boring and way better?").
+ * PageGate v3 — the loading treatment for whole pages.
  *
- * The old gate was a name and a lonely 3px bar on an empty cream void. This
- * one shows the SHAPE of the page that's coming — a shimmering skeleton of
- * the hero + card row + text lines — under the title and a small live
- * equalizer in brand orange. The page reads as "assembling", not "stalled".
+ * v2 lesson (Jake, 2026-08-07: "THIS JUST looks so awkward"): a CENTERED
+ * title block floating above LEFT-aligned skeleton blobs reads as two
+ * layouts fighting. The gate must be a ghost of the INCOMING page — the
+ * real title sitting exactly where the page will put it (left, in the
+ * hero, beside the photo/cover placeholder), every block on the page's
+ * own grid — so the content replaces it in place instead of the whole
+ * screen rearranging.
  *
- * Layouts: 'grid' (artist/discover — card row leads), 'hero' (album — big
- * cover + lines lead), 'list' (list-shaped pages). All-SVG/CSS, no emoji,
- * warm register only — same rules as everything else in the shell.
+ * Renders NOTHING for the first 280ms: warm loads never show a loading
+ * page at all ("only when absolutely necessary").
+ *
+ * Layouts: 'grid' (artist — round photo + album card row), 'hero'
+ * (album — square cover + tracklist rows), 'list' (list pages).
  */
-
 import { useEffect, useState } from 'react'
 
 interface PageGateProps {
@@ -20,10 +23,6 @@ interface PageGateProps {
   layout?: 'grid' | 'hero' | 'list'
 }
 
-/** Render NOTHING for the first 280ms — a warm load resolves inside that
- *  window and the user never sees a loading page at all (2026-08-07, Jake:
- *  "doesnt need to be on every click. its annoying. only when absolutely
- *  necessary"). Only a genuinely cold load earns the skeleton. */
 const GATE_DELAY_MS = 280
 
 export default function PageGate({ title, note, layout = 'grid' }: PageGateProps) {
@@ -34,43 +33,51 @@ export default function PageGate({ title, note, layout = 'grid' }: PageGateProps
   }, [])
   if (!visible) return null
   return (
-    <div className="page-gate page-gate--v2" role="status" aria-label="Loading">
-      {title && <div className="page-gate-name">{title}</div>}
-      <div className="page-gate-eq" aria-hidden="true">
-        <span /><span /><span /><span /><span />
-      </div>
-      {note && <div className="page-gate-note">{note}</div>}
-      <div className={`page-gate-skeleton page-gate-skeleton--${layout}`} aria-hidden="true">
-        {layout === 'hero' && (
-          <div className="pg-hero">
-            <div className="pg-cover pg-shimmer" />
-            <div className="pg-hero-lines">
-              <div className="pg-line pg-shimmer" style={{ width: '56%' }} />
-              <div className="pg-line pg-shimmer" style={{ width: '34%' }} />
-              <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '44%' }} />
+    <div className={`page-gate page-gate--v3 page-gate--${layout}`} role="status" aria-label="Loading">
+      {layout !== 'list' && (
+        <div className="pg-hero">
+          <div className={`pg-photo pg-shimmer${layout === 'grid' ? ' pg-photo--round' : ''}`} />
+          <div className="pg-hero-text">
+            {title && <div className="page-gate-name">{title}</div>}
+            <div className="pg-sub">
+              <span className="page-gate-eq" aria-hidden="true"><span /><span /><span /><span /><span /></span>
+              {note && <span className="page-gate-note">{note}</span>}
             </div>
+            <div className="pg-line pg-line--thin pg-shimmer" style={{ width: 180 }} />
           </div>
-        )}
-        {layout !== 'list' && (
-          <div className="pg-row">
-            {Array.from({ length: 5 }, (_, i) => (
-              <div key={i} className="pg-card" style={{ animationDelay: `${i * 80}ms` }}>
-                <div className="pg-card-art pg-shimmer" />
-                <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '80%' }} />
-                <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '55%' }} />
-              </div>
-            ))}
+        </div>
+      )}
+      {layout === 'list' && (
+        <div className="pg-list-head">
+          {title && <div className="page-gate-name">{title}</div>}
+          <div className="pg-sub">
+            <span className="page-gate-eq" aria-hidden="true"><span /><span /><span /><span /><span /></span>
+            {note && <span className="page-gate-note">{note}</span>}
           </div>
-        )}
-        <div className="pg-list">
-          {Array.from({ length: layout === 'list' ? 6 : 3 }, (_, i) => (
-            <div key={i} className="pg-listrow" style={{ animationDelay: `${i * 60}ms` }}>
-              <div className="pg-dot pg-shimmer" />
-              <div className="pg-line pg-shimmer" style={{ width: `${76 - i * 7}%` }} />
+        </div>
+      )}
+      <div className="pg-section pg-shimmer" aria-hidden="true" />
+      {layout === 'grid' && (
+        <div className="pg-row" aria-hidden="true">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="pg-card" style={{ animationDelay: `${i * 80}ms` }}>
+              <div className="pg-card-art pg-shimmer" />
+              <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '78%' }} />
+              <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '46%' }} />
             </div>
           ))}
         </div>
-      </div>
+      )}
+      {layout !== 'grid' && (
+        <div className="pg-list" aria-hidden="true">
+          {Array.from({ length: layout === 'list' ? 6 : 5 }, (_, i) => (
+            <div key={i} className="pg-listrow" style={{ animationDelay: `${i * 60}ms` }}>
+              <div className="pg-dot pg-shimmer" />
+              <div className="pg-line pg-shimmer" style={{ width: `${72 - i * 6}%` }} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
