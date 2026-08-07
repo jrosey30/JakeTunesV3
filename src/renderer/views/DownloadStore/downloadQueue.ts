@@ -20,6 +20,9 @@ export interface QResult {
   artist?: string
   title?: string
   album?: string
+  /** Exact-version length from the iTunes pick — main verifies the Qobuz
+   *  file against it before import (wrong-version guard, 2026-08-07). */
+  durationMs?: number
 }
 export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
@@ -124,7 +127,7 @@ async function pump(): Promise<void> {
       emit()
       try {
         const r = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album })
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates

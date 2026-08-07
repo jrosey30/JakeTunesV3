@@ -254,6 +254,13 @@ const electronAPI = {
   imessageCaptureScanNow: (): Promise<{ ok: boolean; access: 'granted' | 'denied' | 'unknown' }> => ipcRenderer.invoke('imessage-capture-scan'),
   openFullDiskAccessSettings: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('open-full-disk-access-settings'),
   getDiscoverFeed: (force?: boolean): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }> => ipcRenderer.invoke('get-discover-feed', force),
+  // Phone song-info edits mirrored down from the NAS mid-session — the
+  // renderer fingerprint-validates and applies them live (seamless sync).
+  onMobileOverridesUpdated: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => callback(p)
+    ipcRenderer.on('mobile-overrides-updated', handler)
+    return () => { ipcRenderer.removeListener('mobile-overrides-updated', handler) }
+  },
   onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => callback(p)
     ipcRenderer.on('discover-feed-updated', handler)
@@ -728,7 +735,7 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
-  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active'),

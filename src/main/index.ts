@@ -1510,12 +1510,71 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       discoverFeedMem = { at: nowMs, ver: FEED_GEN_VERSION, lanes }
       await discoverFeedDisk.update(() => ({ at: nowMs, ver: FEED_GEN_VERSION, lanes }))
       mainWindow?.webContents.send('discover-feed-updated', { lanes, generatedAt: nowMs })
+      // If Apple rate-limited during THIS build, cards persisted artless —
+      // re-dress them instead of serving gray placeholders until the TTL.
+      void backfillDiscoverArt()
     }
     return { ok: true, lanes, generatedAt: nowMs }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'discover failed' }
   } finally {
     discoverGenInFlight = false
+  }
+}
+
+// ── Discover art backfill ───────────────────────────────────────────
+// 2026-08-07 (Jake: "WHY IS SO MUCH ALBUM ART MISSING OMG"): a feed built
+// while Apple was 403-ing this IP persisted with EVERY card artless, and
+// nothing ever retried — the TTL happily served gray placeholders for days.
+// This re-dresses artless cards in the SERVED feed in place (iTunes verified
+// lookup, then Cover Art Archive for releases iTunes doesn't know yet),
+// persists, and pushes the same discover-feed-updated event the background
+// regen uses so an open page fills in live. Never regenerates cards — Jake's
+// current picks keep their spots and just gain covers.
+let discoverArtBackfillRunning = false
+let discoverArtBackfillLastTry = 0
+async function backfillDiscoverArt(): Promise<void> {
+  if (discoverArtBackfillRunning) return
+  const mem = discoverFeedMem
+  if (!mem?.lanes?.length) return
+  type CardLike = import('./discover-feed.ts').FeedCard
+  // Artist cards are dressed by the portrait system, not album covers.
+  const artless = mem.lanes.flatMap((l) => l.cards as CardLike[]).filter((c) => !c.artUrl && c.type !== 'artist')
+  if (artless.length === 0) return
+  // A whole-pass failure usually means Apple is 403-ing right now — back off
+  // instead of hammering; the next serve after the window retries.
+  if (Date.now() - discoverArtBackfillLastTry < 10 * 60_000) return
+  discoverArtBackfillRunning = true
+  discoverArtBackfillLastTry = Date.now()
+  try {
+    const df = await import('./discover-feed.ts')
+    let fixed = 0
+    for (const c of artless) {
+      const entity = c.type === 'song' ? 'song' as const : 'album' as const
+      const v = await df.itunesVerify(`${c.artist} ${c.title}`, entity, { artist: c.artist, title: c.title }).catch(() => null)
+      if (v?.artUrl) {
+        c.artUrl = v.artUrl
+        if (!c.year && v.year) c.year = v.year
+        if (c.type === 'song' && !c.previewUrl && v.previewUrl) c.previewUrl = v.previewUrl
+        fixed++
+      } else {
+        const caa = await fetchCaaArtwork(c.artist, c.title).catch(() => null)
+        if (caa) { c.artUrl = caa; fixed++ }
+      }
+      await new Promise((r) => setTimeout(r, 350))   // stay polite with Apple
+    }
+    if (fixed > 0) {
+      await discoverFeedDisk.update(() => ({ at: mem.at, ver: mem.ver ?? FEED_GEN_VERSION, lanes: mem.lanes }))
+      mainWindow?.webContents.send('discover-feed-updated', { lanes: mem.lanes, generatedAt: mem.at })
+      // Progress was made — let the next serve finish the stragglers without
+      // waiting out the backoff window.
+      discoverArtBackfillLastTry = 0
+      console.log(`[discover] art backfill dressed ${fixed}/${artless.length} card(s)`)
+    } else {
+      console.log(`[discover] art backfill could not dress any of ${artless.length} card(s) — likely rate-limited, retrying after backoff`)
+    }
+  } finally {
+    discoverArtBackfillRunning = false
   }
 }
 
@@ -1530,8 +1589,10 @@ ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
     if (disk.lanes.length && currentVer(disk)) discoverFeedMem = disk
   }
   if (!force && discoverFeedMem?.lanes.length && currentVer(discoverFeedMem)) {
-    // Serve what we have INSTANTLY; refresh behind the scenes if stale.
+    // Serve what we have INSTANTLY; refresh behind the scenes if stale, and
+    // re-dress any artless cards (see backfillDiscoverArt above).
     if (!isFresh(discoverFeedMem.at)) void generateDiscoverFeed()
+    void backfillDiscoverArt()
     return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true, stale: !isFresh(discoverFeedMem.at) }
   }
   return generateDiscoverFeed()
@@ -1543,7 +1604,14 @@ app.whenReady().then(() => {
   setTimeout(() => {
     void (async () => {
       const disk = await discoverFeedDisk.get()
-      if (!disk.lanes.length || (disk.ver ?? 0) !== FEED_GEN_VERSION || Date.now() - disk.at >= DISCOVER_TTL_MS) void generateDiscoverFeed()
+      if (!disk.lanes.length || (disk.ver ?? 0) !== FEED_GEN_VERSION || Date.now() - disk.at >= DISCOVER_TTL_MS) {
+        void generateDiscoverFeed()
+      } else {
+        // Feed is fresh — but if it carries artless cards (built during an
+        // Apple 403 window), dress them before Jake ever opens the tab.
+        if (!discoverFeedMem) discoverFeedMem = disk
+        void backfillDiscoverArt()
+      }
     })()
   }, 25000)
 })
@@ -3329,13 +3397,26 @@ const mobilePlaylistsCache = new JsonFileCache<{ playlists: MobilePlaylistRecord
 // Jun 20 when Jake reported it, 2026-07-19). Refresh newer NAS copies
 // into userData at boot + every 5 minutes and bust the caches so the
 // next read serves fresh data in EITHER STATE_DIR mode.
+// Song-info edits made ON THE PHONE — same {id: {fp, fields}} shape as the
+// desktop's metadata-overrides.json, but a separate file so each device
+// stays the single writer of its own edits. V3 never writes this; it
+// mirrors + overlays it (see load-metadata-overrides).
+const mobileMetadataOverridesCache = new JsonFileCache<Record<string, { fp?: string; fields?: Record<string, string> }>>(
+  () => join(STATE_DIR, 'mobile-metadata-overrides.json'),
+  () => ({}),
+  'mobile-metadata-overrides',
+)
 const PHONE_AUTHORED_FILES = [
   'mobile-playlists.json', 'mobile-stars.json', 'mobile-plays.json', 'playlist-additions.json',
+  // Missing from this list until 2026-08-07 — phone song-info edits landed on
+  // the NAS and simply never came down (Jake: "why arent the song info
+  // updates appearing from my phone?? SEAMLESS SYNCING!!!").
+  'mobile-metadata-overrides.json',
 ]
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   const nasDir = '/Volumes/JakeShared/JakeTunesState'
   try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
-  let refreshed = 0
+  const refreshedNames: string[] = []
   for (const name of PHONE_AUTHORED_FILES) {
     try {
       const nasPath = join(nasDir, name)
@@ -3347,15 +3428,25 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
         await copyFile(nasPath, tmp)
         const { rename: renameFS } = await import('fs/promises')
         await renameFS(tmp, localPath)
-        refreshed++
+        refreshedNames.push(name)
       }
     } catch { /* per-file best effort */ }
   }
-  if (refreshed > 0) {
+  if (refreshedNames.length > 0) {
     mobilePlaylistsCache.invalidate()
     mobileStarsCache.invalidate()
     playlistAdditionsCache.invalidate()
-    console.log(`[phone-mirrors] refreshed ${refreshed} file(s) from NAS`)
+    mobileMetadataOverridesCache.invalidate()
+    console.log(`[phone-mirrors] refreshed ${refreshedNames.length} file(s) from NAS: ${refreshedNames.join(', ')}`)
+    // Fresh phone song-info edits — push them to the open window so they
+    // apply live (SEAMLESS), not on next launch. The renderer validates each
+    // entry's fingerprint against the live track before applying.
+    if (refreshedNames.includes('mobile-metadata-overrides.json')) {
+      try {
+        const ov = await mobileMetadataOverridesCache.get()
+        mainWindow?.webContents.send('mobile-overrides-updated', { overrides: ov })
+      } catch { /* next boot's overlay still applies them */ }
+    }
   }
 }
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
@@ -13827,6 +13918,9 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
             previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
             appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
             collectionId: r.collectionId ? Number(r.collectionId) : undefined,
+            // Length of the EXACT version this row represents — the download
+            // path verifies the Qobuz file against it (wrong-version guard).
+            durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
           }))
           .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
@@ -13918,7 +14012,28 @@ ipcMain.handle('load-metadata-overrides', async () => {
   // 4.5.0-106: served from in-memory cache after first load (≤1ms vs the
   // 50-500ms NAS round-trip pre-cache). Cache is the source of truth from
   // the moment writeOverridesSerialized's synchronous mutate returns.
-  return { ok: true, overrides: await overridesCache.get() }
+  //
+  // 2026-08-07: phone-authored edits (mobile-metadata-overrides.json, same
+  // {id: {fp, fields}} shape) OVERLAY the desktop's own overrides here.
+  // Same-id entries field-merge when fingerprints agree — the phone's
+  // albumArtist edit lands on top of the desktop's bpm/key analysis, not
+  // instead of it. A mismatched fingerprint keeps the desktop entry: the
+  // renderer would skip the stale-fp entry anyway, and desktop entries
+  // carry analysis fields worth keeping. Desktop file is NEVER written
+  // with phone entries — each device stays the single writer of its file.
+  const base = await overridesCache.get() as Record<string, unknown>
+  type OvEntry = { fp?: string; fields?: Record<string, string> }
+  const merged: Record<string, unknown> = { ...base }
+  try {
+    const mobile = await mobileMetadataOverridesCache.get()
+    for (const [id, entry] of Object.entries(mobile)) {
+      if (!entry || typeof entry !== 'object' || !entry.fields) continue
+      const cur = merged[id] as OvEntry | undefined
+      if (!cur || !cur.fields) { merged[id] = entry; continue }
+      if (cur.fp === entry.fp) merged[id] = { fp: cur.fp, fields: { ...cur.fields, ...entry.fields } }
+    }
+  } catch { /* phone overlay is best-effort; desktop overrides still serve */ }
+  return { ok: true, overrides: merged }
 })
 
 // Save a metadata override for a single track.

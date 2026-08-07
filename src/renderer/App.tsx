@@ -715,6 +715,33 @@ function AppInner() {
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)
   }, [])
 
+  // Phone song-info edits arriving MID-SESSION (main mirrors the NAS file
+  // every 5 minutes and pushes fresh entries here). Same fingerprint rule as
+  // the boot apply below: an entry only applies if its fp still matches the
+  // track at that id — never on faith. The reducer coerces numeric fields.
+  useEffect(() => {
+    const off = window.electronAPI.onMobileOverridesUpdated?.((p) => {
+      const updates: { id: number; field: string; value: string | boolean }[] = []
+      const byId = new Map(libStateRef.current.tracks.map((t) => [String(t.id), t]))
+      for (const [id, entry] of Object.entries(p.overrides || {})) {
+        if (!entry || typeof entry !== 'object' || !entry.fields) continue
+        const t = byId.get(id)
+        if (!t) continue
+        const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+        if (entry.fp !== fp) continue
+        for (const [field, value] of Object.entries(entry.fields)) {
+          updates.push({ id: t.id, field, value })
+        }
+      }
+      if (updates.length) {
+        console.log(`[phone-sync] applying ${updates.length} field edit(s) from the phone live`)
+        dispatch({ type: 'UPDATE_TRACKS', updates })
+      }
+    })
+    return () => { off?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     Promise.all([
       window.electronAPI.loadTracks(),

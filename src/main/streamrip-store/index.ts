@@ -22,7 +22,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch } from '../streamrip-match.ts'
+import { rankStreamripCandidates, pickBestSoundcloudMatch } from '../streamrip-match.ts'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -134,10 +134,15 @@ export interface SearchResult { source: string; mediaType: string; id: string; d
 export function registerStreamripStore(deps: StreamripDeps): void {
   type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string }
 
-  // Shared download core: stage → run a rip subcommand (`url …` or `id …`) →
-  // sweep for audio → import. Quality 4 = max the service allows; the app's
-  // own import step converts to the user's library format afterward.
-  async function runDownload(ripSubcmd: string[]): Promise<DownloadResult> {
+  // Download stage 1: run a rip subcommand (`url …` or `id …`) into a fresh
+  // staging dir and sweep it for audio. The caller decides whether to import
+  // (importStaged) or discard (discardStaged) — the split exists so
+  // download-by-query can VERIFY a candidate's duration against the version
+  // the user actually picked before it ever touches the library
+  // (2026-08-07: Qobuz text search shipped a re-recorded Etta James and a
+  // live John Mayer; the wrong version must die in staging, not in the app).
+  interface StagedRip { staging: string; files: string[] }
+  async function stageRip(ripSubcmd: string[]): Promise<{ ok: true; staged: StagedRip } | { ok: false; error: string }> {
     const rip = await resolveRip()
     if (!rip) return { ok: false, error: 'streamrip isn’t installed. Run: pipx install streamrip' }
     let staging = ''
@@ -152,9 +157,33 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], 1000 * 60 * 20)
       const files = await collectAudio(staging)
       if (files.length === 0) {
+        await rm(staging, { recursive: true, force: true }).catch(() => {})
         return { ok: false, error: tailMessage(res) || `streamrip downloaded nothing (exit ${res.code}). That service may need login in streamrip’s config.` }
       }
-      const summary = await deps.importDownloaded(files, 'streamrip')
+      return { ok: true, staged: { staging, files } }
+    } catch (err) {
+      if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async function discardStaged(staged: StagedRip): Promise<void> {
+    await rm(staged.staging, { recursive: true, force: true }).catch(() => {})
+  }
+
+  /** Real duration of a staged file, via ffprobe (PATH already carries
+   *  homebrew). null = probe unavailable/failed — treated as "can't judge",
+   *  never as a mismatch, so a broken ffprobe can't brick downloads. */
+  async function probeDurationSec(file: string): Promise<number | null> {
+    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], 30_000)
+    const v = parseFloat((res.stdout || '').trim())
+    return Number.isFinite(v) && v > 0 ? v : null
+  }
+
+  // Download stage 2: import staged audio into the library + tell the renderer.
+  async function importStaged(staged: StagedRip): Promise<DownloadResult> {
+    try {
+      const summary = await deps.importDownloaded(staged.files, 'streamrip')
       const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
         ? (summary as unknown as Array<Record<string, unknown>>)
         : ((summary as unknown as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
@@ -172,8 +201,18 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     } finally {
-      if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
+      await rm(staged.staging, { recursive: true, force: true }).catch(() => {})
     }
+  }
+
+  // Shared download core: stage → import, no verification between. Used by the
+  // pasted-link and picked-id paths, where the user chose the exact catalog
+  // item themselves. Quality 4 = max the service allows; the app's own import
+  // step converts to the user's library format afterward.
+  async function runDownload(ripSubcmd: string[]): Promise<DownloadResult> {
+    const st = await stageRip(ripSubcmd)
+    if (!st.ok) return { ok: false, error: st.error }
+    return importStaged(st.staged)
   }
 
   // Abort every in-flight rip process (download or search). The queue marks
@@ -235,22 +274,53 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   })
 
   // One-shot: search Qobuz for artist+title, pick the best match, download + import.
-  // Used by Listen to the List so the renderer doesn't round-trip search → pick → download.
-  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
+  // Used by Listen to the List and the Download view so the renderer doesn't
+  // round-trip search → pick → download. `durationMs` (when the caller knows
+  // the exact version — the Download view's iTunes pick carries it) turns on
+  // download-time verification: a candidate whose real length is off by more
+  // than DURATION_TOLERANCE_SEC is discarded in staging and the next-ranked
+  // candidate is tried. Qobuz's desc gives NO album/length, so a live-album
+  // cut with a clean title ("Your Body Is a Wonderland" from a live record)
+  // is undetectable before download — the file's own clock is the only
+  // trustworthy witness.
+  const DURATION_TOLERANCE_SEC = 5
+  const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
+  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
     const artist = (opts?.artist || '').trim()
-    // album set -> resolve a whole ALBUM on Qobuz; else a single track.
+    // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
     const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
+    const durationMs = !wantAlbum && typeof opts?.durationMs === 'number' && opts.durationMs > 1000 ? opts.durationMs : 0
     const query = [artist, title].filter(Boolean).join(' ')
     const mediaType = wantAlbum ? 'album' : 'track'
 
     // ── Qobuz first (lossless when it has the track) ──
     const qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
-    const qpick = qsearch.ok && qsearch.results?.length
-      ? pickBestStreamripMatch(title || query, artist, qsearch.results, mediaType)
-      : null
-    if (qpick) {
+    const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
+      ? rankStreamripCandidates(title || query, artist, qsearch.results, mediaType)
+      : { ranked: [], rejectedVersions: [] }
+    if (ranked.length && durationMs) {
+      // Verified path: the caller knows the exact version. Try the top
+      // candidates in rank order; a wrong-length file never leaves staging.
+      const wantSec = durationMs / 1000
+      const misses: string[] = []
+      for (const cand of ranked.slice(0, 3)) {
+        const st = await stageRip(['id', cand.source, cand.mediaType, cand.id])
+        if (!st.ok) { misses.push(`“${cand.desc}”: ${st.error}`); continue }
+        const durSec = st.staged.files.length === 1 ? await probeDurationSec(st.staged.files[0]) : null
+        if (durSec == null || Math.abs(durSec - wantSec) <= DURATION_TOLERANCE_SEC) {
+          const dl = await importStaged(st.staged)
+          return { ...dl, matchDesc: cand.desc }
+        }
+        await discardStaged(st.staged)
+        console.log(`[download] rejected wrong-length candidate for “${title}”: “${cand.desc}” runs ${fmtDur(durSec)}, wanted ${fmtDur(wantSec)}`)
+        misses.push(`“${cand.desc}” runs ${fmtDur(durSec)}`)
+      }
+      return { ok: false, error: `Qobuz doesn’t have the exact version you picked (${fmtDur(wantSec)}). Found: ${misses.join(' · ')}. Try pasting a link in the Download view.` }
+    }
+    if (ranked.length) {
+      const qpick = ranked[0]
       const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
       return { ...dl, matchDesc: qpick.desc }
     }
@@ -275,6 +345,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
     if (!qsearch.ok && !qsearch.results?.length) {
       return { ok: false, error: qsearch.error || `No match for “${query}”.` }
+    }
+    if (rejectedVersions.length) {
+      // Everything that matched was a different recording. Failing loudly beats
+      // silently shipping a re-record/live cut (Jake, 2026-08-07).
+      return { ok: false, error: `Qobuz only has other versions of “${title}” (${rejectedVersions.slice(0, 3).join(', ')}). Try pasting a link in the Download view.` }
     }
     return { ok: false, error: `Not on Qobuz${wantAlbum ? '' : ' or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
   })

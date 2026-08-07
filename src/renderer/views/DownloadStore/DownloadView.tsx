@@ -62,6 +62,9 @@ interface SongRow {
   album?: string
   artworkUrl?: string
   previewUrl?: string
+  /** Length of this exact iTunes version — rides along to the Qobuz resolve
+   *  so the downloaded file can be verified against it (wrong-version guard). */
+  durationSecs?: number
   owned: boolean
   score: number
 }
@@ -82,11 +85,14 @@ interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: 
 let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
 
 // Queue entries resolve on Qobuz AT DOWNLOAD TIME by artist+title/album.
+// durationMs pins the EXACT version the user clicked — main verifies the
+// downloaded file against it, so a re-record/live cut can't slip in.
 const songQ = (r: SongRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'track',
   id: `q|track|${norm(r.artist)}|${norm(r.title)}`,
   desc: `${r.title} — ${r.artist}`,
-  artist: r.artist, title: r.title,
+  artist: r.artist, title: r.title, album: r.album,
+  durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
@@ -180,6 +186,7 @@ export default function DownloadView() {
         kind: 'song' as const,
         artist: s.artist, title: s.song, album: s.album,
         artworkUrl: s.artworkUrl, previewUrl: s.previewUrl,
+        durationSecs: s.durationSecs,
         owned, score: base > 0 && titleHit ? base + 0.5 : base,
       }
     }).filter((s) => !q || s.score > 0)
@@ -488,6 +495,7 @@ export default function DownloadView() {
   const asSongRow = (t: ItunesSuggestion): SongRow => ({
     kind: 'song', artist: t.artist, title: t.song, album: t.album,
     artworkUrl: t.artworkUrl, previewUrl: t.previewUrl,
+    durationSecs: t.durationSecs,
     owned: libIndex.tracks.has(norm(t.song) + '|' + norm(t.artist)), score: 0,
   })
 
