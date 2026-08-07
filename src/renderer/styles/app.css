@@ -773,21 +773,21 @@
 @keyframes pg-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 .pg-shimmer {
-  background: linear-gradient(100deg, #eae7e0 38%, #f4f1ea 50%, #eae7e0 62%);
+  background: linear-gradient(100deg, #e4dfd4 38%, #f1ede4 50%, #e4dfd4 62%);
   background-size: 220% 100%;
   animation: pg-shimmer 1.5s linear infinite;
 }
 @keyframes pg-shimmer { from { background-position: 130% 0; } to { background-position: -90% 0; } }
 
 .pg-hero { display: flex; gap: 22px; align-items: center; }
-.pg-photo { width: 132px; height: 132px; border-radius: 10px; flex: 0 0 auto; box-shadow: 0 4px 14px rgba(70, 55, 40, 0.10); }
+.pg-photo { width: 132px; height: 132px; border-radius: 10px; flex: 0 0 auto; box-shadow: 0 4px 14px rgba(70, 55, 40, 0.12); border: 1px solid rgba(85, 78, 64, 0.07); }
 .pg-photo--round { border-radius: 50%; }
 .pg-hero-text { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .pg-list-head { display: flex; flex-direction: column; gap: 8px; }
 .pg-section { width: 140px; height: 11px; border-radius: 6px; }
 .pg-row { display: flex; gap: 16px; }
 .pg-card { display: flex; flex-direction: column; gap: 7px; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
-.pg-card-art { width: 118px; height: 118px; border-radius: 8px; box-shadow: 0 3px 10px rgba(70, 55, 40, 0.08); }
+.pg-card-art { width: 118px; height: 118px; border-radius: 8px; box-shadow: 0 3px 10px rgba(70, 55, 40, 0.10); border: 1px solid rgba(85, 78, 64, 0.07); }
 .pg-line { height: 12px; border-radius: 6px; }
 .pg-line--thin { height: 8px; border-radius: 4px; }
 .pg-list { display: flex; flex-direction: column; gap: 13px; max-width: 720px; }
