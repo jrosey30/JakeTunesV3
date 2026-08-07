@@ -23,7 +23,7 @@ import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { rankStreamripCandidates, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
-import { recoTitleMatches } from '../reco-match.ts'
+import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -172,6 +172,48 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     await rm(staged.staging, { recursive: true, force: true }).catch(() => {})
   }
 
+  // ── Bandcamp co-resolver (2026-08-07, Jake: "bandcamp is very much
+  // used by me too. use both equally") ─────────────────────────────
+  // Bandcamp has no sanctioned automated PURCHASE path — the store view
+  // stays the checkout. But its public search + full-track streams give
+  // the same honest tier as the SoundCloud fallback ("lossy but complete
+  // beats a failed download"), and the scene bands Jake hunts live here
+  // when Qobuz has never heard of them. matchDesc says "Bandcamp stream"
+  // so the tier is never hidden.
+  async function bandcampSearch(text: string, kind: 'a' | 't'): Promise<Array<{ name: string; band: string; url: string }>> {
+    try {
+      const res = await fetch('https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
+        body: JSON.stringify({ search_text: text, search_filter: kind, fan_id: null, full_page: false }),
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) return []
+      const d = await res.json() as { auto?: { results?: Array<{ type?: string; name?: string; band_name?: string; item_url_path?: string }> } }
+      return (d.auto?.results || [])
+        .filter((r) => r.type === kind && r.name && r.band_name && r.item_url_path)
+        .map((r) => ({ name: String(r.name), band: String(r.band_name), url: String(r.item_url_path) }))
+    } catch { return [] }
+  }
+
+  async function stageBandcamp(url: string): Promise<{ ok: true; staged: StagedRip } | { ok: false; error: string }> {
+    let staging = ''
+    try {
+      staging = await mkdtemp(join(tmpdir(), 'jaketunes-bc-'))
+      const res = await run('yt-dlp', ['-x', '--audio-format', 'm4a', '--audio-quality', '0', '--embed-metadata',
+        '-o', join(staging, '%(playlist_index|00)02d - %(title)s.%(ext)s'), url], 1000 * 60 * 20)
+      const files = await collectAudio(staging)
+      if (files.length === 0) {
+        await rm(staging, { recursive: true, force: true }).catch(() => {})
+        return { ok: false, error: tailMessage(res) || `Bandcamp fetch produced nothing (exit ${res.code}).` }
+      }
+      return { ok: true, staged: { staging, files } }
+    } catch (err) {
+      if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   /** Real duration + title/album TAGS of a staged file, via ffprobe (PATH
    *  already carries homebrew). null fields = probe unavailable/failed —
    *  treated as "can't judge", never as a mismatch, so a broken ffprobe
@@ -316,6 +358,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
       ? rankStreamripCandidates(title || query, artist, qsearch.results, mediaType)
       : { ranked: [], rejectedVersions: [] }
+    let qobuzMisses: string[] | null = null
     if (ranked.length && durationMs) {
       // Verified path: the caller knows the exact version. Try the top
       // candidates in rank order; a wrong-length file never leaves staging.
@@ -365,12 +408,45 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const dl = await importStaged(fallback.staged)
         return { ...dl, matchDesc: fallback.desc }
       }
-      return { ok: false, error: `Qobuz doesn’t have the exact version you picked (${fmtDur(wantSec)}). Found: ${misses.join(' · ')}. Try pasting a link in the Download view.` }
+      // Do NOT return — Bandcamp gets its turn (2026-08-07, "use both
+      // equally"); the misses ride along for the final error message.
+      qobuzMisses = misses
     }
-    if (ranked.length) {
+    if (ranked.length && !qobuzMisses) {
       const qpick = ranked[0]
       const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
       return { ...dl, matchDesc: qpick.desc }
+    }
+
+    // ── Bandcamp — equal citizen (2026-08-07, Jake: "bandcamp is very
+    // much used by me too. use both equally"). Scene bands live here when
+    // Qobuz has never heard of them. Full-track stream tier (same honesty
+    // class as the SoundCloud fallback); the store view stays the checkout
+    // for buying the record properly. Same guards as Qobuz: artist must
+    // match, version markers rejected, and with a known duration the
+    // staged file must prove itself before import.
+    const bcResults = await bandcampSearch(query, wantAlbum ? 'a' : 't')
+    const bcPick = bcResults.find((r) =>
+      (!artist || recoArtistMatches(artist, r.band)) &&
+      recoTitleMatches(title, r.name) &&
+      !unwantedVersionOf(title, r.name))
+    if (bcPick) {
+      const st = await stageBandcamp(bcPick.url)
+      if (st.ok) {
+        let acceptable = true
+        if (!wantAlbum && durationMs && st.staged.files.length === 1) {
+          const probe = await probeStagedFile(st.staged.files[0])
+          const durBad = probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > DURATION_TOLERANCE_SEC
+          const marker = probe.title ? unwantedVersionOf(title, probe.title) : null
+          if (durBad || marker) acceptable = false
+        }
+        if (acceptable) {
+          console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
+          const dl = await importStaged(st.staged)
+          return { ...dl, matchDesc: `${bcPick.name} — ${bcPick.band} (Bandcamp stream)` }
+        }
+        await discardStaged(st.staged)
+      }
     }
 
     // ── SoundCloud fallback (2026-07-22, Jake: "auto qobuz first"). Qobuz
@@ -393,6 +469,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
     if (!qsearch.ok && !qsearch.results?.length) {
       return { ok: false, error: qsearch.error || `No match for “${query}”.` }
+    }
+    if (qobuzMisses) {
+      return { ok: false, error: `Neither Qobuz nor Bandcamp has the exact version you picked. Qobuz found: ${qobuzMisses.join(' · ')}. Try pasting a link in the Download view.` }
     }
     if (rejectedVersions.length) {
       // Everything that matched was a different recording. Failing loudly beats
