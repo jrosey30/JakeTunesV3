@@ -697,12 +697,19 @@ export default function SmartPlaylistView() {
         window.dispatchEvent(new Event('musicman-speaking-start'))
         await new Promise<void>(resolve => {
           // The fade handler over in Toolbar fires `musicman-fade-ready`
-          // once the volume duck is in place; we then start playback. Wrap
-          // the resolver in an EventListener-shaped function so the DOM
-          // typings accept it (resolve takes `value`, listeners take `Event`).
-          const listener: EventListener = () => resolve()
-          window.addEventListener('musicman-fade-ready', listener, { once: true })
-          setTimeout(() => resolve(), 2000)
+          // once the volume duck is in place; we then start playback.
+          // If the 2s timeout wins, remove the listener so it can't leak.
+          let settled = false
+          const finish = () => {
+            if (settled) return
+            settled = true
+            window.removeEventListener('musicman-fade-ready', listener)
+            clearTimeout(timer)
+            resolve()
+          }
+          const listener: EventListener = () => finish()
+          window.addEventListener('musicman-fade-ready', listener)
+          const timer = window.setTimeout(finish, 2000)
         })
         const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
         attachClipToBroadcast(audio)

@@ -89,7 +89,7 @@
 /* Clickable when the album has a single resolvable artist — drills to the
    artist detail page (album → artist navigation). */
 .album-page-artist--link { cursor: pointer; width: fit-content; }
-.album-page-artist--link:hover { color: #bb4308; text-decoration: underline; }
+.album-page-artist--link:hover { color: var(--brand-orange, #bb4308); text-decoration: underline; }
 
 .album-page-title {
   margin: 0 0 8px;
@@ -125,7 +125,7 @@
 
 .album-page-play {
   border: 1px solid #963505;
-  background: linear-gradient(180deg, #d77b27 0%, #bb4308 100%);
+  background: linear-gradient(180deg, var(--brand-orange-light, #d6601f) 0%, var(--brand-orange, #bb4308) 100%);
   color: #fff8f2;
   box-shadow: 0 2px 6px rgba(187, 67, 8, 0.32);
 }
@@ -134,7 +134,7 @@
 .album-page-shuffle {
   border: 1px solid #bfb9b0;
   background: rgba(255, 255, 255, 0.85);
-  color: #bb4308;
+  color: var(--brand-orange, #bb4308);
 }
 .album-page-shuffle:hover { background: #fff; }
 
@@ -179,7 +179,7 @@
   appearance: none;
   border: none;
   background: transparent;
-  color: #bb4308;
+  color: var(--brand-orange, #bb4308);
   font-size: 12px;
   font-weight: 600;
   padding: 8px 0 0;

@@ -251,7 +251,7 @@
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .activity-more-toggle:hover {
-  background: rgba(224, 129, 46, 0.07);
-  border-color: #e0812e;
-  color: #b5651d;
+  background: rgba(var(--brand-orange-rgb), 0.07);
+  border-color: var(--brand-orange-glow, #e0812e);
+  color: var(--brand-orange, #bb4308);
 }

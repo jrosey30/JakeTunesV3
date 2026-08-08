@@ -48,8 +48,17 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
   const resolveTracks = useCallback((e: React.DragEvent) => {
     const data = e.dataTransfer.getData('application/jaketunes-tracks')
     if (!data) return []
-    const ids: number[] = JSON.parse(data)
-    return ids.map(id => libState.tracks.find(t => t.id === id)).filter(Boolean) as typeof libState.tracks
+    try {
+      const ids: unknown = JSON.parse(data)
+      if (!Array.isArray(ids)) return []
+      return ids
+        .filter((id): id is number => typeof id === 'number')
+        .map(id => libState.tracks.find(t => t.id === id))
+        .filter(Boolean) as typeof libState.tracks
+    } catch {
+      /* ignore bad MIME payload — same guard as SidebarItem */
+      return []
+    }
   }, [libState.tracks])
 
   const handleItemDragOver = useCallback((e: React.DragEvent, i: number) => {

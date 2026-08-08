@@ -94,8 +94,8 @@
   transition: box-shadow 120ms ease-out, background 120ms ease-out;
 }
 .concert-btn--play {
-  background: linear-gradient(180deg, #e89a4a, #bb4308);
-  border-color: #a03c08;
+  background: linear-gradient(180deg, var(--brand-orange-light, #d6601f), var(--brand-orange, #bb4308));
+  border-color: var(--brand-orange-border, #7f2803);
   color: #fff;
 }
 .concert-btn--play:hover { filter: brightness(1.05); }
@@ -159,11 +159,11 @@
 .cj-row--played .cj-num, .cj-row--played .cj-name, .cj-row--played .cj-dur { color: #b8b3a8; }
 
 /* current — the bloom */
-.cj-row--current .cj-line--top { background: #e0812e; }
+.cj-row--current .cj-line--top { background: var(--brand-orange-glow, #e0812e); }
 .cj-row--current .cj-node {
   width: 16px; height: 16px;
-  background: #bb4308; border-color: #bb4308;
-  box-shadow: 0 0 0 5px rgba(224, 129, 46, 0.20);
+  background: var(--brand-orange, #bb4308); border-color: var(--brand-orange, #bb4308);
+  box-shadow: 0 0 0 5px rgba(var(--brand-orange-rgb), 0.20);
   margin-top: 12px;
 }
 
@@ -190,7 +190,7 @@
   flex: 1;
   background: #fff;
   border: 1px solid #e6c9a8;
-  border-left: 4px solid #bb4308;
+  border-left: 4px solid var(--brand-orange, #bb4308);
   border-radius: 7px;
   padding: 11px 15px;
   margin: 4px 0 10px;
@@ -200,7 +200,7 @@
 .cj-card-title { font-size: 20px; font-weight: 700; line-height: 1.15; margin: 1px 0 6px; color: #1c1c1c; }
 .cj-card-prog { display: flex; align-items: center; gap: 11px; }
 .cj-card-bar { flex: 1; height: 5px; background: #efe6d6; border-radius: 3px; overflow: hidden; }
-.cj-card-fill { height: 100%; background: #e0812e; border-radius: 3px; transition: width 240ms linear; }
+.cj-card-fill { height: 100%; background: var(--brand-orange-glow, #e0812e); border-radius: 3px; transition: width 240ms linear; }
 .cj-card-time { font-size: 12px; color: #8a6a2a; font-variant-numeric: tabular-nums; }
 
 /* Companion — the tour-book layer below the journey */

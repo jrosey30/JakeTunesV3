@@ -1033,7 +1033,9 @@ export default function SongsView() {
   // Restore column state from saved UI state
   useEffect(() => {
     const handler = (e: Event) => {
-      const { colWidthMap: savedWidths, hiddenCols: savedHidden, columnOrder: savedOrder, colsV } = (e as CustomEvent).detail
+      const detail = (e as CustomEvent).detail
+      if (!detail || typeof detail !== 'object') return
+      const { colWidthMap: savedWidths, hiddenCols: savedHidden, columnOrder: savedOrder, colsV } = detail
       if (savedWidths && typeof savedWidths === 'object') {
         setColWidthMap(prev => ({ ...prev, ...savedWidths }))
       }

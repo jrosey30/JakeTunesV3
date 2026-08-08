@@ -101,7 +101,7 @@
   font-size: var(--font-body);
   font-weight: 600;
   color: #fff;
-  background: #bb4308;
+  background: var(--brand-orange, #bb4308);
   border: 1px solid #963505;
   border-radius: 4px;
   cursor: pointer;
@@ -187,7 +187,7 @@
 .ltl-suggest-artist {
   font-size: var(--font-body);
   font-weight: 600;
-  color: #bb4308;
+  color: var(--brand-orange, #bb4308);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -324,7 +324,7 @@
 
 .ltl-link {
   font-size: var(--font-label);
-  color: #bb4308;
+  color: var(--brand-orange, #bb4308);
   text-decoration: none;
 }
 
@@ -805,7 +805,7 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: var(--brand-orange, #e0812e);
+  color: var(--brand-orange, #bb4308);
   white-space: nowrap;
 }
 
@@ -850,7 +850,7 @@
 }
 .ltl-tool:hover { background: linear-gradient(180deg, #fff 0%, #f6f3ee 100%); }
 .ltl-tool.is-on {
-  background: linear-gradient(180deg, #e8a765 0%, var(--brand-orange, #e0812e) 100%);
+  background: linear-gradient(180deg, #e8a765 0%, var(--brand-orange, #bb4308) 100%);
   border-color: #c06d1f;
   color: #fff;
 }
@@ -909,7 +909,7 @@
 .ltl-standing-pts {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: var(--brand-orange, #e0812e);
+  color: var(--brand-orange, #bb4308);
 }
 .ltl-standing-pts.is-neg { color: #c0392b; }
 
