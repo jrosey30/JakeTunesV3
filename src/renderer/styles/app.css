@@ -21,7 +21,16 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: radial-gradient(ellipse at 50% 28%, #faf8f1 0%, #f4f0e4 58%, #ebe5d4 100%);
+  /* 2026-08-08: the launch field is the LOGO'S white, same as --white
+     (rgb 253,253,253). It was still the old cream gradient after the token
+     moved — Jake: "the launch loading page background does not match the
+     white of the new new logo". A whisper of falloff at the edges keeps it
+     from reading as a flat sheet, but the centre IS the logo's white. */
+  /* FLAT --white, exactly. Any gradient or wash made the field drift warm
+     against the mark; measured corners at (245,242,240) vs the logo's
+     (253,253,253). The boot animation carries the visual interest — the
+     field's only job is to BE the logo's white. */
+  background: var(--white, #fdfdfd);
   color: #2a2018;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
   -webkit-app-region: drag;
@@ -39,9 +48,9 @@
 .app-splash-bg-glow {
   position: absolute;
   inset: -10%;
-  background:
-    radial-gradient(circle at 80% 80%, rgba(187, 67, 8, 0.10) 0%, rgba(187, 67, 8, 0) 46%),
-    radial-gradient(circle at 16% 14%, rgba(224, 129, 46, 0.09) 0%, rgba(224, 129, 46, 0) 42%);
+  /* The warm wash is gone: any tint pulls the field off the logo's
+     white, which is the one thing this background must match. */
+  background: none;
   animation: splash-glow-drift 9s ease-in-out infinite alternate;
   pointer-events: none;
 }

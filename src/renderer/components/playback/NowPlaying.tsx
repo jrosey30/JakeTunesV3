@@ -89,6 +89,23 @@ function MiniVisualizer({ active }: { active: boolean }) {
 
 type PillMode = 'playing' | 'rip' | 'sync' | 'import' | 'notice' | 'broadcast'
 
+/**
+ * The importer reports a FILE, not a song — e.g.
+ * "terry malts – Nobody Realizes This Is Nowhere – 03 Life's A Dream.m4a".
+ * Dumping that into the LCD read as a jammed path (Jake, 2026-08-08: "looks
+ * weird and forced"). Split it back into something a person would say.
+ * Falls through gracefully: an unparseable name just becomes the title.
+ */
+function prettyImportName(raw: string): { title: string; artist: string } {
+  const noExt = (raw || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim()
+  // Both en-dash and hyphen show up as separators, with or without spaces.
+  const parts = noExt.split(/\s+[–-]\s+/).map((x) => x.trim()).filter(Boolean)
+  const stripNo = (t: string): string => t.replace(/^\d{1,3}[\s._-]+/, '').trim()
+  if (parts.length >= 3) return { title: stripNo(parts[parts.length - 1]), artist: parts[0] }
+  if (parts.length === 2) return { title: stripNo(parts[1]), artist: parts[0] }
+  return { title: stripNo(noExt), artist: '' }
+}
+
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
   const total = Math.floor(s)
@@ -522,12 +539,27 @@ export default function NowPlaying() {
         </>
       ) : effectiveMode === 'rip' && rip ? (
         <>
-          <div className="now-playing-info now-playing-info--activity">
-            <span className="now-playing-title">Importing {rip.current} of {rip.total}</span>
-            {rip.trackTitle && <><span className="now-playing-sep"> — </span>
-            <span className="now-playing-artist">{rip.trackTitle}</span></>}
-            {rip.errors > 0 && <span className="now-playing-error"> ({rip.errors} skipped)</span>}
-          </div>
+          {(() => {
+            const p = prettyImportName(rip.trackTitle || '')
+            return (
+              <div className="now-playing-info now-playing-info--stacked">
+                <div className="now-playing-line-primary">
+                  <span className="now-playing-title">{p.title || 'Importing…'}</span>
+                </div>
+                {p.artist && (
+                  <div className="now-playing-line-secondary">
+                    <span className="now-playing-artist">{p.artist}</span>
+                  </div>
+                )}
+                <div className="now-playing-line-tertiary">
+                  <span className="now-playing-album">
+                    Importing {rip.current} of {rip.total}
+                    {rip.errors > 0 ? ` · ${rip.errors} skipped` : ''}
+                  </span>
+                </div>
+              </div>
+            )
+          })()}
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill" style={{ width: `${(rip.current / Math.max(1, rip.total)) * 100}%` }} />
@@ -536,12 +568,27 @@ export default function NowPlaying() {
         </>
       ) : effectiveMode === 'import' && imp ? (
         <>
-          <div className="now-playing-info now-playing-info--activity">
-            <span className="now-playing-title">Importing {imp.current} of {imp.total}</span>
-            {imp.trackTitle && <><span className="now-playing-sep"> — </span>
-            <span className="now-playing-artist">{imp.trackTitle}</span></>}
-            {imp.errors > 0 && <span className="now-playing-error"> ({imp.errors} failed)</span>}
-          </div>
+          {(() => {
+            const p = prettyImportName(imp.trackTitle || '')
+            return (
+              <div className="now-playing-info now-playing-info--stacked">
+                <div className="now-playing-line-primary">
+                  <span className="now-playing-title">{p.title || 'Importing…'}</span>
+                </div>
+                {p.artist && (
+                  <div className="now-playing-line-secondary">
+                    <span className="now-playing-artist">{p.artist}</span>
+                  </div>
+                )}
+                <div className="now-playing-line-tertiary">
+                  <span className="now-playing-album">
+                    Importing {imp.current} of {imp.total}
+                    {imp.errors > 0 ? ` · ${imp.errors} failed` : ''}
+                  </span>
+                </div>
+              </div>
+            )
+          })()}
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill" style={{ width: `${(imp.barFraction ?? imp.current / Math.max(1, imp.total)) * 100}%` }} />

@@ -630,13 +630,15 @@
   flex: 1;
   min-width: 0;
   height: 4px;
-  background: rgba(100, 80, 50, 0.18);
+  background: rgba(40, 37, 12, 0.26);
   border-radius: 2px;
   overflow: hidden;
 }
 .activity-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #b08030, #d0a050);
+  /* Olive, matching the scrubber inside the same LCD — the old bronze was
+     left over from the amber pill and read as a foreign part. */
+  background: linear-gradient(180deg, #6a6538 0%, #4e4926 55%, #3a3619 100%);
   border-radius: 2px;
   transition: width 0.25s ease;
 }
