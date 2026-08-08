@@ -1080,3 +1080,209 @@
 .home-release-card .home-release-play:hover { background: rgba(20, 16, 12, 0.82); }
 .home-release-card .home-release-play--none { opacity: 0.35; cursor: default; }
 .home-release-card:hover .home-release-play--none { opacity: 0.35; }
+
+/* ═══ 2026-08-08: INSTRUMENTED HOME (Jake picked "left" — the iTunes-10
+   bones with retro-future instrumentation; spec render at
+   brand/home-spec-2026.png). Display-only: no markup moved. ═══ */
+
+/* Listening Memory stats → a cluster of backlit olive LCD windows,
+   the same glass the toolbar pill wears. */
+.home-stats--memory {
+  background: none;
+  border: none;
+  box-shadow: none;
+  gap: 10px;
+  overflow: visible;
+}
+.home-stats--memory .home-stat {
+  position: relative;
+  border-left: none;
+  border: 1px solid var(--pill-border);
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
+  box-shadow:
+    inset 0 0 16px rgba(246, 244, 198, 0.5),
+    inset 0 1px 2px rgba(0,0,0,0.16),
+    0 1px 0 rgba(255,255,255,0.5);
+  overflow: hidden;
+}
+.home-stats--memory .home-stat::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(180deg, rgba(50, 46, 18, 0.05) 0px, rgba(50, 46, 18, 0.05) 1px, transparent 1px, transparent 3px);
+  pointer-events: none;
+}
+.home-stats--memory .home-stat-value {
+  color: #302d16;
+  text-shadow: 0 1px 0 rgba(246, 244, 205, 0.5);
+}
+.home-stats--memory .home-stat-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9.25px;
+  color: #5c573c;
+}
+.home-stats--memory .home-stat-sub { color: #6f6a4e; }
+
+/* Play Album → an orange hardware KEY with a live indicator dot. */
+.home-featured-btn--primary {
+  border-radius: 3px;
+  border: 1px solid #96380a;
+  background: linear-gradient(180deg, #d0570f 0%, var(--brand-orange, #bb4308) 55%, #a03a06 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.35),
+    inset 0 -2px 3px rgba(0,0,0,0.18),
+    0 1px 2px rgba(0,0,0,0.25);
+  position: relative;
+  padding-left: 22px;
+}
+.home-featured-btn--primary::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ffd28a;
+  box-shadow: 0 0 4px rgba(255, 210, 138, 0.9);
+}
+.home-featured-btn--primary:active {
+  transform: translateY(0.5px);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* Section rails: copper hairline with measurement ticks. */
+.home-section-header {
+  border-top: none;
+  position: relative;
+  padding-top: 20px;
+}
+.home-section-header::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  height: 5px;
+  background:
+    repeating-linear-gradient(90deg, rgba(184, 115, 51, 0.45) 0 1px, transparent 1px 14px) top left / 100% 3px no-repeat,
+    linear-gradient(rgba(184, 115, 51, 0.55), rgba(184, 115, 51, 0.55)) bottom left / 100% 1px no-repeat;
+}
+.home-section-title {
+  color: #4a453a;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+}
+
+/* Hero → brushed cream faceplate; the art reads as a mounted display. */
+.home-featured {
+  border: 1px solid rgba(140, 120, 90, 0.35);
+  border-radius: 5px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.6),
+    inset 0 -1px 0 rgba(0,0,0,0.05),
+    0 1px 3px rgba(0,0,0,0.08);
+}
+.home-featured-art {
+  border: 1px solid rgba(90, 75, 55, 0.4);
+  box-shadow: inset 0 0 6px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.12);
+  border-radius: 3px;
+}
+
+
+/* ═══ 2026-08-08 — HOME, operationally + aesthetically (Jake: "its a mess!!!")
+   The instrumented iTunes-10 direction he picked ("left"), now applied to the
+   whole page instead of just the stat cluster. Nothing moved; materials only. */
+
+/* The page itself: warmer, with tooth. */
+.home-view {
+  background:
+    repeating-linear-gradient(0deg, rgba(120, 96, 64, 0.012) 0 1px, transparent 1px 3px),
+    var(--white, #f9f8f5);
+}
+
+/* Every rail header wears the copper measurement rail (was only on some,
+   which is half of why the page read as inconsistent). */
+.home-section-header::before {
+  content: '';
+  position: absolute;
+  top: 8px; left: 0; right: 0;
+  height: 5px;
+  background:
+    repeating-linear-gradient(90deg, rgba(184, 115, 51, 0.40) 0 1px, transparent 1px 14px) top left / 100% 3px no-repeat,
+    linear-gradient(rgba(184, 115, 51, 0.50), rgba(184, 115, 51, 0.50)) bottom left / 100% 1px no-repeat;
+}
+.home-section-header { position: relative; padding-top: 20px; border-top: none; }
+.home-section-title {
+  color: #43403a;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+  letter-spacing: 0.01em;
+}
+.home-section-source {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: rgba(120, 100, 75, 0.75);
+}
+
+/* The headerless quick-stats strip gets the same LCD glass as Listening
+   Memory, so the two stat blocks read as one instrument family. */
+.home-stats:not(.home-stats--memory) {
+  background: linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
+  border: 1px solid var(--pill-border);
+  border-radius: 4px;
+  box-shadow:
+    inset 0 0 18px rgba(246, 244, 198, 0.45),
+    inset 0 1px 2px rgba(0,0,0,0.14),
+    0 1px 0 rgba(255,255,255,0.5);
+}
+.home-stats:not(.home-stats--memory) .home-stat { border-left-color: rgba(90, 84, 50, 0.18); }
+.home-stats:not(.home-stats--memory) .home-stat-value { color: #302d16; }
+.home-stats:not(.home-stats--memory) .home-stat-label {
+  text-transform: uppercase; letter-spacing: 0.08em; color: #5c573c;
+}
+
+/* Cards become objects: hairline + real edge, squared to the V6 geometry. */
+.home-card, .home-news-card, .home-release-card, .home-tour-card,
+.home-upcoming-card, .home-mix-card {
+  border-radius: 3px;
+  border: 1px solid rgba(130, 112, 84, 0.22);
+  box-shadow: 0 1px 2px rgba(60, 45, 25, 0.07);
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+.home-card:hover, .home-news-card:hover, .home-release-card:hover,
+.home-tour-card:hover, .home-upcoming-card:hover, .home-mix-card:hover {
+  box-shadow: 0 2px 6px rgba(60, 45, 25, 0.14);
+  transform: translateY(-1px);
+}
+
+/* Tour cards: the date block reads as a stamped ticket stub. */
+.home-tour-date {
+  background: linear-gradient(180deg, #f3ede0, #e6dcc8);
+  border-right: 1px dashed rgba(150, 120, 80, 0.45);
+}
+.home-tour-date-month {
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--brand-orange, #bb4308);
+}
+/* Multi-night residencies (grouped in HomeView) label their run. */
+.home-tour-nights {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: rgba(120, 100, 75, 0.85);
+  font-weight: 600;
+}
+
+/* Rediscover blurbs were clipping mid-sentence. Give them a clean clamp
+   and the shelf-talker treatment the Record Shop already uses. */
+.home-rediscover-why, .home-card-why {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+  background: #fdf9ee;
+  border: 1px solid rgba(140, 115, 80, 0.20);
+  border-radius: 2px;
+  padding: 4px 6px;
+}

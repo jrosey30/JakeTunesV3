@@ -132,6 +132,32 @@ export default function HomeView() {
   useScrollPersistence('home-row-tours', tourDatesRowRef)
   useScrollPersistence('home-row-upcoming', upcomingRowRef)
 
+  // 2026-08-08 — Bandsintown lists every NIGHT of a residency as its own
+  // event, so "Live Near You" was showing 20 cards for 6 actual shows
+  // (Olivia Rodrigo alone took 10 slots at Barclays). Collapse consecutive
+  // nights by artist+venue into ONE card that says how many nights it runs.
+  // Grouping key is artist+venue (identity), never the display string.
+  const tourRuns = useMemo(() => {
+    if (!tourDates) return []
+    const byPlace = new Map<string, TourDate[]>()
+    for (const ev of tourDates) {
+      const k = `${(ev.artist || '').toLowerCase().trim()}|${(ev.venue || '').toLowerCase().trim()}`
+      const arr = byPlace.get(k)
+      if (arr) arr.push(ev)
+      else byPlace.set(k, [ev])
+    }
+    const runs: Array<{ ev: TourDate; nights: number; lastDate: string | null }> = []
+    for (const evs of byPlace.values()) {
+      const sorted = [...evs].sort((a, b) => a.date.localeCompare(b.date))
+      runs.push({
+        ev: sorted[0],
+        nights: sorted.length,
+        lastDate: sorted.length > 1 ? sorted[sorted.length - 1].date : null,
+      })
+    }
+    return runs.sort((a, b) => a.ev.date.localeCompare(b.ev.date))
+  }, [tourDates])
+
   // ── one-paint gate ────────────────────────────────────────────────────────
   // Home fires six independent fetches (memory, rediscover, news+releases,
   // tour dates, upcoming, weather) and each card used to pop in whenever its
@@ -910,9 +936,8 @@ export default function HomeView() {
             <span className="home-section-source">via Bandsintown</span>
           </div>
           <div className="home-card-row" role="list" ref={tourDatesRowRef}>
-            {tourDates.slice(0, 20).map((ev, i) => {
+            {tourRuns.slice(0, 20).map(({ ev, nights, lastDate }, i) => {
               const d = new Date(ev.date)
-              const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
               const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : ''
               return (
                 <div
@@ -920,14 +945,21 @@ export default function HomeView() {
                   className="home-tour-card"
                   role="listitem"
                   onClick={() => ev.url && openLink(ev.url)}
-                  title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
+                  title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${nights > 1 && lastDate
+                    ? `${nights} nights: ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ${new Date(lastDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
+                    : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
                 >
                   <div className="home-tour-date">
                     <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
-                    <div className="home-tour-date-day">{d.getDate()}</div>
+                    <div className="home-tour-date-day">
+                      {d.getDate()}{nights > 1 && lastDate ? `–${new Date(lastDate).getDate()}` : ''}
+                    </div>
                   </div>
                   <div className="home-tour-info">
-                    <div className="home-tour-artist">{ev.artist}</div>
+                    <div className="home-tour-artist">
+                      {ev.artist}
+                      {nights > 1 && <span className="home-tour-nights"> · {nights} nights</span>}
+                    </div>
                     <div className="home-tour-venue">{ev.venue}</div>
                     <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
                   </div>
