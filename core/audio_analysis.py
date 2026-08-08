@@ -4,14 +4,13 @@ position. Used by JakeTunes 4.0 §2.4 to enrich the library with the
 metadata needed for DJ-grade transitions, harmonic playlists, and (4.5)
 tempo/energy facts in the embedding brain.
 
-Both BPM and key come from `librosa`. Originally the scope picked aubio
-for BPM, but aubio's pip release has not been updated since 2019 and
-fails to compile against modern numpy. librosa.beat.beat_track produces
-comparable BPM estimates with one fewer dependency and no C-extension.
-
-BPM via `librosa.beat.beat_track` (onset envelope → DP beat tracker).
-Key via `librosa.feature.chroma_cqt` mean → Krumhansl-Schmuckler.
-Camelot via deterministic lookup from (key, mode).
+BPM primary: Essentia RhythmExtractor2013 (multifeature), then an onset-
+strength octave arbiter that picks bpm vs half vs double by mean onset at
+the predicted beats (the machine version of tapping along — see 2026-08-05
+Ken Pomeroy "Stranger" 172.3→86.15). librosa.beat.beat_track is the
+fallback when Essentia is absent. Key primary: Essentia KeyExtractor vote
+across edma/bgate/temperley; librosa chroma_cqt + Krumhansl-Schmuckler as
+fallback. Camelot via deterministic lookup from (key, mode).
 
 4.5 SPEED (Jake: "bpm and key analysis is so slow"):
   1. ONE decode per track, shared by BPM + key — the old code loaded the
@@ -113,6 +112,86 @@ def _essentia():
     return _es
 
 
+# How much stronger an octave candidate must score before we abandon the
+# measured tempo. 1.15 ≈ the Ken Pomeroy gap (3.54 vs 2.75) without flipping
+# Quincy Jones "Soul Bossa Nova" (~156 real) when half only barely wins.
+_OCTAVE_MARGIN = 1.15
+_BPM_MIN = 40.0
+_BPM_MAX = 250.0
+
+
+def _score_tempo_onsets(onset, sr: float, bpm: float, hop_length: int = 512) -> float:
+    """Tap-along score for `bpm`: on-beat onset mean minus off-beat mean.
+
+    Mean-on-beat alone cannot catch half-time errors — a half-tempo grid still
+    lands only on real onsets, so it ties the true tempo. Subtracting the
+    midpoint (off-beat) mean breaks the tie: too-slow grids put real beats on
+    the "off" slots; too-fast grids dilute the on-beat mean with empty frames.
+    Phase is unknown a priori, so we try a handful of offsets and keep the best.
+
+    Numpy-only (no librosa) so the arbiter can be unit-tested without the
+    full analysis stack.
+    """
+    import numpy as np
+    if bpm <= 0 or onset is None or len(onset) < 8:
+        return 0.0
+    onset = np.asarray(onset, dtype=float)
+    fps = float(sr) / float(hop_length)
+    interval = 60.0 / float(bpm)
+    duration = len(onset) / fps
+    if interval <= 0 or duration < interval * 4:
+        return 0.0
+    best = -1e9
+    # 8 phases across one beat — enough to find the pocket without being a
+    # continuous optimization that would invent confidence.
+    for phase in np.linspace(0.0, interval, 8, endpoint=False):
+        times = np.arange(phase, duration, interval)
+        frames = np.round(times * fps).astype(int)
+        frames = frames[(frames >= 0) & (frames < len(onset))]
+        if frames.size < 4:
+            continue
+        mid_times = times + (interval * 0.5)
+        mid_frames = np.round(mid_times * fps).astype(int)
+        mid_frames = mid_frames[(mid_frames >= 0) & (mid_frames < len(onset))]
+        onbeat = float(onset[frames].mean())
+        offbeat = float(onset[mid_frames].mean()) if mid_frames.size else 0.0
+        score = onbeat - offbeat
+        if score > best:
+            best = score
+    return best if best > -1e8 else 0.0
+
+
+def _arbitrate_bpm_octave(onset, sr: float, bpm: float, margin: float = _OCTAVE_MARGIN) -> float:
+    """Choose bpm vs half vs double by tap-along onset score.
+
+    ⚠️ TWIN: the one-shot 2026-08-05 library sweep used this same arbiter
+    (mean onset at predicted beats; half won on Ken Pomeroy "Stranger").
+    It lives here now so every analysis — not just a data patch — gets it.
+    Genre-heuristic `scripts/fix-bpm-octaves.mjs` is a weaker offline cousin
+    and must NOT diverge into a third truth; prefer re-analysis through this.
+    """
+    if bpm <= 0:
+        return 0.0
+    cands: list[float] = []
+    for cand in (bpm, bpm / 2.0, bpm * 2.0):
+        if _BPM_MIN <= cand <= _BPM_MAX:
+            # Dedup near-identical floats (e.g. bpm already near a bound).
+            if not any(abs(cand - c) < 0.5 for c in cands):
+                cands.append(cand)
+    if len(cands) == 1:
+        return round(bpm, 1)
+
+    scored = [(cand, _score_tempo_onsets(onset, sr, cand)) for cand in cands]
+    # Prefer the measured tempo when scores are close — the extractor usually
+    # has the right metrical level, and blind "max score wins" over-corrected
+    # Quincy Jones. Only flip when an octave clearly taps better.
+    measured_score = next((s for c, s in scored if abs(c - bpm) < 0.5), 0.0)
+    best_cand, best_score = max(scored, key=lambda cs: cs[1])
+    if best_score >= measured_score * margin and abs(best_cand - bpm) >= 0.5:
+        return round(best_cand, 1)
+    return round(bpm, 1)
+
+
 def _bpm_from(y, sr) -> float:
     """Tempo via Essentia RhythmExtractor2013, librosa as fallback. 0.0 on failure.
 
@@ -138,35 +217,47 @@ def _bpm_from(y, sr) -> float:
     an octave, and came back exact. It is also the same engine that produced
     the reference numbers, so the library now agrees with the wider world.
 
-    NOTE the range is no longer forced. A returned value is used as measured;
-    [40, 250] is a sanity bound for obvious failures, not a folding window.
+    2026-08-08. Essentia still octave-doubles some sparse/fingerpicked tracks
+    (Ken Pomeroy "Stranger": 172.3 measured, ~86 by ear). After the extractor
+    returns, an onset-strength octave arbiter scores bpm vs half vs double and
+    only flips when the alternative clearly taps better (_OCTAVE_MARGIN).
+    [40, 250] remains a sanity bound for obvious failures, not a folding window.
     """
+    measured = 0.0
     es = _essentia()
     if es is not None:
         try:
             # RhythmExtractor2013 wants 44.1k mono; _load_slice hands us 22.05k.
             librosa, np = _lazy()
             y44 = librosa.resample(y, orig_sr=sr, target_sr=44100) if sr != 44100 else y
-            bpm, _b, conf, _e, _i = es.RhythmExtractor2013(method="multifeature")(
+            bpm, _b, _conf, _e, _i = es.RhythmExtractor2013(method="multifeature")(
                 np.ascontiguousarray(y44, dtype="float32"))
             bpm = float(bpm)
-            if 40.0 <= bpm <= 250.0:
-                return round(bpm, 1)
+            if _BPM_MIN <= bpm <= _BPM_MAX:
+                measured = bpm
         except Exception:
             pass    # fall through to librosa
 
     librosa, np = _lazy()
-    if y.size == 0:
-        return 0.0
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    bpm = float(np.asarray(tempo).flatten()[0])
-    if bpm <= 0:
-        return 0.0
-    # Fallback path only. Kept because SOME number beats none, but the clamp is
-    # gone — a folded value is worse than an honest out-of-range one.
-    if bpm < 40.0 or bpm > 250.0:
-        return 0.0
-    return round(bpm, 1)
+    if measured <= 0:
+        if y.size == 0:
+            return 0.0
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        bpm = float(np.asarray(tempo).flatten()[0])
+        if bpm <= 0:
+            return 0.0
+        # Fallback path only. Kept because SOME number beats none, but the clamp is
+        # gone — a folded value is worse than an honest out-of-range one.
+        if bpm < _BPM_MIN or bpm > _BPM_MAX:
+            return 0.0
+        measured = bpm
+
+    # Tap-along octave check — cheap relative to decode; runs on the same slice.
+    try:
+        onset = librosa.onset.onset_strength(y=y, sr=sr)
+        return _arbitrate_bpm_octave(onset, float(sr), measured)
+    except Exception:
+        return round(measured, 1)
 
 
 # Essentia key profiles voted against each other. edma and bgate are tuned on

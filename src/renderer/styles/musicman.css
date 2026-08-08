@@ -139,7 +139,8 @@
   margin-left: auto;
   flex: 1;
   justify-content: flex-end;
-  max-width: 62%;
+  flex-wrap: wrap;
+  max-width: 72%;
 }
 .musicman-analysis-status { white-space: nowrap; }
 .musicman-analysis-strip .musicman-org-action-btn {
