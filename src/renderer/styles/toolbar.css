@@ -137,6 +137,18 @@
   flex-direction: column;
   justify-content: center;
   overflow: hidden;
+  /* Backlight bloom rides brightness + glow so the fade is smooth —
+   * background gradients can't transition. */
+  transition: filter 650ms ease, box-shadow 650ms ease;
+}
+.now-playing-pill--backlit {
+  filter: brightness(1.11) saturate(1.06);
+  box-shadow:
+    inset 0 0 30px rgba(252, 254, 214, 0.85),
+    inset 0 1px 2px rgba(0,0,0,0.15),
+    inset 0 1px 0 rgba(255,255,255,0.4),
+    0 0 10px rgba(235, 240, 175, 0.55),
+    0 1px 0 rgba(255,255,255,0.5);
 }
 
 .now-playing-info {

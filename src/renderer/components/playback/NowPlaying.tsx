@@ -228,6 +228,21 @@ export default function NowPlaying() {
   const progress = state.duration > 0 ? (state.position / state.duration) * 100 : 0
   const track = state.nowPlaying
 
+  // Backlight behavior (2026-08-07, Jake: the iPod-mini experience) — the
+  // LCD rests dim and BLOOMS when the track changes or the pill is
+  // touched, fading back down after a few seconds. Display-only; the
+  // scrubber's drag logic below is untouched.
+  const [backlit, setBacklit] = useState(false)
+  const backlitTimer = useRef<number | null>(null)
+  const bloomBacklight = useCallback(() => {
+    setBacklit(true)
+    if (backlitTimer.current) window.clearTimeout(backlitTimer.current)
+    backlitTimer.current = window.setTimeout(() => setBacklit(false), 3200)
+  }, [])
+  useEffect(() => {
+    if (track?.id != null) bloomBacklight()
+  }, [track?.id, bloomBacklight])
+
   // Subscribe to the global activity store so this pill can surface
   // background work (CD rip / iPod sync / drag-drop import / transient
   // notice) in addition to the currently playing track — matches
@@ -383,7 +398,10 @@ export default function NowPlaying() {
   ) : null
 
   return (
-    <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''} ${effectiveMode === 'broadcast' ? 'now-playing-pill--broadcast' : ''} ${radioActive ? 'now-playing-pill--radio' : ''} ${radioHero ? 'now-playing-pill--radio-hero' : ''}`}>
+    <div
+      className={`now-playing-pill ${backlit ? 'now-playing-pill--backlit' : ''} ${isActivity ? 'now-playing-pill--activity' : ''} ${effectiveMode === 'broadcast' ? 'now-playing-pill--broadcast' : ''} ${radioActive ? 'now-playing-pill--radio' : ''} ${radioHero ? 'now-playing-pill--radio-hero' : ''}`}
+      onPointerDownCapture={bloomBacklight}
+    >
       {radioStrip}
       {radioHero}
       {showCycle && (
