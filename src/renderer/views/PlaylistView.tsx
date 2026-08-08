@@ -11,6 +11,7 @@ import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
 import { suggestForPlaylist, suggestFromVibeHits } from '../utils/playlistSuggest'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import { useCynthia } from '../context/CynthiaContext'
@@ -147,6 +148,14 @@ export default function PlaylistView() {
     }
   }, [editing])
 
+  // 2026-08-08 — suggestions must draw from the REGULAR library. A declared
+  // concert's constituent songs are hidden everywhere else, but the strip was
+  // reading raw state.tracks, so a Dead setlist cue turned up as a standalone
+  // suggestion (Jake: "this track is apart of a live set why is it a seperate
+  // thing"). The playlist's OWN tracks still resolve from the full map — a
+  // tape or playlist that legitimately holds a concert track keeps working.
+  const suggestPool = useRegularLibraryTracks(state.tracks)
+
   const trackMap = new Map(state.tracks.map(t => [t.id, t]))
   const allPlaylistTracks = playlist
     ? playlist.trackIds.map(id => trackMap.get(id)).filter((t): t is Track => t !== undefined)
@@ -208,11 +217,11 @@ export default function PlaylistView() {
     () => {
       suggestDiag.current = new Map()
       return vibeHits.length
-        ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate, vibeClusterSeeds,
+        ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
             (playlist ? tasteWeights[playlist.id] : undefined) ?? {}, suggestDiag.current)
-        : suggestForPlaylist(allPlaylistTracks, state.tracks, 5, suggestRotate)
+        : suggestForPlaylist(allPlaylistTracks, suggestPool, 5, suggestRotate)
     },
-    [allPlaylistTracks, state.tracks, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
+    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
 

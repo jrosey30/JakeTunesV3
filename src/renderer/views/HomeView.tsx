@@ -29,6 +29,7 @@ import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { requestDrillIn } from '../utils/drillIn'
 import { formatAppDate } from '../utils/formatDate'
 import ScrollTopButton from '../components/ScrollTopButton'
@@ -63,6 +64,12 @@ interface ArtistCard {
 
 export default function HomeView() {
   const { state: lib, dispatch } = useLibrary()
+
+  // 2026-08-08 — Home's rails must use the REGULAR library. A declared
+  // concert's 55 constituent songs were counted here, inflating artist
+  // play totals and letting a setlist album surface as 'Recently Added'.
+  // Same projection every other list already wraps its source in.
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
   const { playTrack } = useAudio()
 
   // 4.4.21 polish: persist scroll position across view switches (4.4.13 hook).
@@ -412,7 +419,7 @@ export default function HomeView() {
   // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
   const recentAlbums = useMemo((): AlbumCard[] => {
     const map = new Map<string, AlbumCard>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       const artist = t.albumArtist || t.artist || 'Unknown Artist'
       const album = t.album || 'Unknown Album'
       const artistFolded = artist.toLowerCase().trim()
@@ -536,7 +543,7 @@ export default function HomeView() {
   // ── Top Artists: aggregate by artist, sort by total play count ────────
   const topArtists = useMemo((): ArtistCard[] => {
     const map = new Map<string, ArtistCard>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       const artist = t.albumArtist || t.artist || 'Unknown Artist'
       const folded = artist.toLowerCase().trim()
       if (!folded || folded === 'unknown artist') continue
