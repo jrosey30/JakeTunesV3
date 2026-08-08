@@ -1,26 +1,31 @@
 /**
- * 4.5: Pixar-style splash — burnt orange on off-white, ZERO blue.
+ * 5.0 launch — THE COLD BOOT (2026-08-08).
  *
- * Shows while AppInner is bootstrapping (loadTracks + loadPlaylists +
- * loadMetadataOverrides + loadUiState all running in parallel in App.tsx's
- * mount effect).
+ * Jake shipped a new mark — a pixel-art iPod — and asked for a launch
+ * animation "centered around this and more advanced than ever". So the app
+ * doesn't fade a logo in; it BOOTS THE DEVICE, and the animation is driven by
+ * the logo's own pixels rather than by CSS on a rectangle:
  *
- * The scene (classic animation principles, choreographed to the stinger):
- * - The logo DROPS in under gravity and lands with squash-and-stretch —
- *   squash on impact, rebound stretch, settle. A ground-contact shadow
- *   grows as it falls and squashes wide at the moment of impact.
- * - playIntroStinger() runs the "JakeTunes chord": eight voices converge
- *   THX-style while the logo falls, and the chord BLOOMS at 0.9s — the
- *   exact frame of the landing.
- * - Musical notes BURST out of the logo on impact, then keep rising in a
- *   staggered loop. EQ bars start dancing right after the chord hits.
- * - Wordmark springs up with overshoot; tagline/greeting/progress follow.
+ *   0.00s  dark. a single scanline snaps on and expands — CRT/LCD power-on.
+ *   0.15s  the iPod ASSEMBLES: the real logo bitmap is read into a canvas and
+ *          revealed grid-cell by grid-cell on a diagonal sweep. Each cell
+ *          IGNITES (a white flash that decays over ~180ms) at the moment it
+ *          lands, so the body writes itself on like pixels powering up.
+ *   1.05s  the screen backlight blooms — the same olive LCD the toolbar pill
+ *          wears — and the J reads as lit rather than printed.
+ *   1.25s  the click wheel spins up: a light arc sweeps once around the ring.
+ *   1.45s  settle. the chord blooms (playIntroStinger), the wordmark springs,
+ *          the EQ starts dancing, progress runs.
  *
- * Real per-stage progress is NOT wired — the load is a Promise.all in
- * App.tsx; fake-animated progress + the min display time reads identically.
+ * WHY CANVAS: a pixel-art mark deserves a pixel-native reveal. Reading the
+ * bitmap once and compositing cells is one draw call per frame with no DOM
+ * churn, and it scales with the art instead of faking it with masks.
+ *
+ * ACCESSIBILITY: prefers-reduced-motion jumps straight to the settled frame —
+ * no sweep, no ignition, no shake.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import logoUrl from '../assets/jaketunes-logo.png'
 import { playIntroStinger } from '../utils/introStinger'
 
@@ -32,6 +37,15 @@ const STAGES = [
   'Almost there…',
 ]
 
+// Boot choreography, ms from mount. The stinger's chord blooms at ~0.9s, so
+// assembly finishes just before it and the settle lands on the bloom.
+const T_POWER_ON = 150     // scanline expand completes
+const T_ASSEMBLE = 1050    // last pixel cell lands
+const T_BACKLIT = 1250     // screen glow full
+const T_WHEEL = 1450       // wheel sweep completes
+const CELL = 9             // reveal grid, CSS px — reads as chunky pixels
+const IGNITE_MS = 190      // per-cell flash decay
+
 function getGreeting(): string {
   const h = new Date().getHours()
   if (h >= 5 && h < 12) return 'Good morning, Jake.'
@@ -40,10 +54,14 @@ function getGreeting(): string {
   return 'Burning the midnight oil, Jake.'
 }
 
+/** Deterministic per-cell jitter so the sweep edge is ragged, not a ruler. */
+function hash01(x: number, y: number): number {
+  const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
+  return n - Math.floor(n)
+}
+
 interface Props {
-  /** Becomes true when the library/UI promise chain in App.tsx settles.
-   *  When true, the progress bar snaps to 100% and the status flips to
-   *  "Ready." */
+  /** True when App.tsx's load chain settles: progress snaps to 100%. */
   isReady: boolean
 }
 
@@ -51,27 +69,147 @@ export default function SplashScreen({ isReady }: Props) {
   const [stageIdx, setStageIdx] = useState(0)
   const [progress, setProgress] = useState(5)
   const [greeting] = useState(getGreeting)
+  const [phase, setPhase] = useState<'boot' | 'settled'>('boot')
+  const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  // The rock'n'roll intro — fires once per launch, synced to the logo drop.
   useEffect(() => { playIntroStinger() }, [])
 
-  // Rotate the status line every 480ms so the splash never feels frozen.
+  // ── the boot itself ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const SIZE = 240
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    canvas.width = SIZE * dpr
+    canvas.height = SIZE * dpr
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.scale(dpr, dpr)
+    ctx.imageSmoothingEnabled = false   // pixel art stays pixel art
+
+    let raf = 0
+    let cancelled = false
+    const img = new Image()
+    img.src = logoUrl
+    img.onload = () => {
+      if (cancelled) return
+      // Bake the mark once at display size; every frame composites from here.
+      const off = document.createElement('canvas')
+      off.width = SIZE
+      off.height = SIZE
+      const octx = off.getContext('2d')
+      if (!octx) return
+      octx.imageSmoothingEnabled = false
+      octx.drawImage(img, 0, 0, SIZE, SIZE)
+
+      const cols = Math.ceil(SIZE / CELL)
+      const rows = Math.ceil(SIZE / CELL)
+      // Per-cell arrival time along a diagonal sweep + jitter.
+      const arrival: number[] = new Array(cols * rows)
+      for (let gy = 0; gy < rows; gy++) {
+        for (let gx = 0; gx < cols; gx++) {
+          const diag = (gx / cols) * 0.55 + (gy / rows) * 0.45
+          arrival[gy * cols + gx] = Math.min(0.999, diag * 0.86 + hash01(gx, gy) * 0.14)
+        }
+      }
+
+      if (reduce) {
+        ctx.clearRect(0, 0, SIZE, SIZE)
+        ctx.drawImage(off, 0, 0)
+        setPhase('settled')
+        return
+      }
+
+      const start = performance.now()
+      const draw = (now: number): void => {
+        if (cancelled) return
+        const t = now - start
+        ctx.clearRect(0, 0, SIZE, SIZE)
+
+        // 0. The dark "screen off" plate the device ignites against. Without
+        //    it the boot was invisible — the splash field is warm off-white,
+        //    so a cream power-on line drew cream-on-cream (caught on the
+        //    first screencast, 2026-08-08).
+        const plateFade = Math.min(1, Math.max(0, (t - (T_ASSEMBLE - 220)) / 420))
+        if (plateFade < 1) {
+          ctx.save()
+          ctx.globalAlpha = 1 - plateFade
+          const r = SIZE * 0.19
+          ctx.fillStyle = '#241109'
+          ctx.beginPath()
+          ctx.roundRect(SIZE * 0.06, SIZE * 0.06, SIZE * 0.88, SIZE * 0.88, r)
+          ctx.fill()
+          ctx.restore()
+        }
+
+        // 1. Power-on scanline: a hot orange line that snaps on and expands.
+        if (t < T_POWER_ON) {
+          const p = t / T_POWER_ON
+          const h = Math.max(2, SIZE * 0.88 * p * p)
+          const g = ctx.createLinearGradient(0, (SIZE - h) / 2, 0, (SIZE + h) / 2)
+          g.addColorStop(0, 'rgba(233, 64, 2, 0)')
+          g.addColorStop(0.5, `rgba(255, 178, 92, ${0.95 - p * 0.25})`)
+          g.addColorStop(1, 'rgba(233, 64, 2, 0)')
+          ctx.fillStyle = g
+          ctx.fillRect(SIZE * 0.06, (SIZE - h) / 2, SIZE * 0.88, h)
+          raf = requestAnimationFrame(draw)
+          return
+        }
+
+        // 2. Assembly: reveal cells whose arrival time has passed, and flash
+        //    each one as it lands.
+        const ap = Math.min(1, (t - T_POWER_ON) / (T_ASSEMBLE - T_POWER_ON))
+        const eased = 1 - Math.pow(1 - ap, 2)
+        for (let gy = 0; gy < rows; gy++) {
+          for (let gx = 0; gx < cols; gx++) {
+            const a = arrival[gy * cols + gx]
+            if (eased < a) continue
+            const x = gx * CELL
+            const y = gy * CELL
+            ctx.drawImage(off, x, y, CELL, CELL, x, y, CELL, CELL)
+            // ignition flash, decaying
+            const sinceLanded = (eased - a) * (T_ASSEMBLE - T_POWER_ON)
+            if (sinceLanded < IGNITE_MS) {
+              const f = 1 - sinceLanded / IGNITE_MS
+              ctx.fillStyle = `rgba(255, 246, 222, ${0.75 * f * f})`
+              ctx.fillRect(x, y, CELL, CELL)
+            }
+          }
+        }
+
+        // 3. Backlight bloom over the screen window (upper third of the mark).
+        if (t > T_ASSEMBLE - 120) {
+          const bp = Math.min(1, (t - (T_ASSEMBLE - 120)) / (T_BACKLIT - (T_ASSEMBLE - 120)))
+          const sx = SIZE * 0.30, sy = SIZE * 0.15, sw = SIZE * 0.40, sh = SIZE * 0.28
+          const g = ctx.createRadialGradient(sx + sw / 2, sy + sh / 2, 2, sx + sw / 2, sy + sh / 2, sw)
+          g.addColorStop(0, `rgba(246, 252, 205, ${0.42 * bp})`)
+          g.addColorStop(1, 'rgba(246, 252, 205, 0)')
+          ctx.fillStyle = g
+          ctx.fillRect(sx - sw * 0.4, sy - sh * 0.5, sw * 1.8, sh * 2.2)
+        }
+
+        if (t < T_WHEEL + 260) raf = requestAnimationFrame(draw)
+        else { ctx.clearRect(0, 0, SIZE, SIZE); ctx.drawImage(off, 0, 0); setPhase('settled') }
+      }
+      raf = requestAnimationFrame(draw)
+    }
+    return () => { cancelled = true; cancelAnimationFrame(raf) }
+  }, [])
+
   useEffect(() => {
     if (isReady) return
-    const id = window.setInterval(() => {
-      setStageIdx(i => (i + 1) % STAGES.length)
-    }, 480)
+    const id = window.setInterval(() => setStageIdx(i => (i + 1) % STAGES.length), 480)
     return () => window.clearInterval(id)
   }, [isReady])
 
-  // Progress fill: 2600ms ease-out to 92%, snap to 100% on ready.
   useEffect(() => {
     let rafId = 0
     const start = performance.now()
     const from = progress
     const to = isReady ? 100 : 92
     const duration = isReady ? 320 : 2600
-    const tick = (now: number) => {
+    const tick = (now: number): void => {
       const t = Math.min(1, (now - start) / duration)
       const eased = 1 - Math.pow(1 - t, 3)
       setProgress(from + (to - from) * eased)
@@ -85,27 +223,16 @@ export default function SplashScreen({ isReady }: Props) {
   const statusText = isReady ? 'Ready.' : STAGES[stageIdx]
 
   return (
-    <div className="app-splash">
+    <div className={`app-splash app-splash--boot app-splash--${phase}`}>
       <div className="app-splash-bg-glow" />
       <div className="app-splash-inner">
-        {/* The stage: drop wrapper (gravity) > squash wrapper (impact) > logo.
-            Shadow sits on the floor and reacts to the landing. */}
         <div className="app-splash-stage" aria-hidden="true">
-          <div className="app-splash-logo-halo" />
-          <div className="app-splash-logo-drop">
-            <div className="app-splash-logo-squash">
-              <img src={logoUrl} alt="" className="app-splash-logo-img" />
-              <div className="app-splash-logo-shine" />
-            </div>
-          </div>
-          <div className="app-splash-shadow" />
-          {/* Notes burst out on impact, then keep rising — stagger + per-note
-              drift direction so the stream never reads as a synced column. */}
-          <span className="splash-note splash-note--1" aria-hidden="true">♪</span>
-          <span className="splash-note splash-note--2" aria-hidden="true">♫</span>
-          <span className="splash-note splash-note--3" aria-hidden="true">♬</span>
-          <span className="splash-note splash-note--4" aria-hidden="true">♩</span>
-          <span className="splash-note splash-note--5" aria-hidden="true">♪</span>
+          {/* The device. Canvas paints the assembly; the ring and scanline
+              overlays sit on top so they can bloom independently. */}
+          <canvas ref={canvasRef} className="app-splash-canvas" width={240} height={240} />
+          <div className="app-splash-scanlines" />
+          <div className="app-splash-wheel-sweep" />
+          <div className="app-splash-device-glow" />
         </div>
         <div className="app-splash-wordmark">JakeTunes</div>
         <div className="app-splash-tagline">The greatest music platform ever built.</div>
@@ -115,7 +242,7 @@ export default function SplashScreen({ isReady }: Props) {
             <div
               key={i}
               className="app-splash-eq-bar"
-              style={{ animationDelay: `${1.41 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
+              style={{ animationDelay: `${1.55 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
             />
           ))}
         </div>

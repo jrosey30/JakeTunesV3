@@ -793,3 +793,89 @@
 .pg-list { display: flex; flex-direction: column; gap: 13px; max-width: 720px; }
 .pg-listrow { display: flex; align-items: center; gap: 12px; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
 .pg-dot { width: 26px; height: 26px; border-radius: 6px; flex: 0 0 auto; }
+
+/* ═══ 5.0 COLD BOOT splash (2026-08-08) — the device powers on ═══
+   Canvas paints the pixel assembly; these layers add the CRT/LCD dressing
+   that canvas shouldn't waste frames on. */
+.app-splash-canvas {
+  width: 240px;
+  height: 240px;
+  display: block;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 10px 22px rgba(120, 40, 8, 0.28));
+}
+.app-splash--boot .app-splash-stage {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  margin: 0 auto;
+}
+/* Fine scanlines over the whole device — CRT texture, not a filter over text. */
+.app-splash-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg,
+    rgba(60, 30, 10, 0.055) 0 1px, transparent 1px 3px);
+  opacity: 0;
+  animation: splash-scan-in 260ms ease-out 150ms forwards;
+}
+@keyframes splash-scan-in { to { opacity: 1; } }
+
+/* The click wheel spins up: a light arc sweeps once around the ring. */
+.app-splash-wheel-sweep {
+  position: absolute;
+  left: 50%;
+  top: 63%;
+  width: 104px;
+  height: 104px;
+  margin: -52px 0 0 -52px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(from 0deg,
+    rgba(255, 250, 225, 0) 0deg,
+    rgba(255, 250, 225, 0.55) 40deg,
+    rgba(255, 250, 225, 0) 90deg);
+  -webkit-mask: radial-gradient(circle, transparent 30px, #000 32px, #000 50px, transparent 52px);
+  mask: radial-gradient(circle, transparent 30px, #000 32px, #000 50px, transparent 52px);
+  opacity: 0;
+  animation: splash-wheel-spin 620ms cubic-bezier(0.3, 0, 0.2, 1) 1150ms forwards;
+}
+@keyframes splash-wheel-spin {
+  0%   { opacity: 0; transform: rotate(0deg); }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; transform: rotate(400deg); }
+}
+
+/* Whole-device bloom at the settle — one warm pulse, then gone. */
+.app-splash-device-glow {
+  position: absolute;
+  inset: -14%;
+  pointer-events: none;
+  border-radius: 28%;
+  background: radial-gradient(circle at 50% 45%, rgba(255, 170, 90, 0.30), rgba(255, 170, 90, 0) 62%);
+  opacity: 0;
+  animation: splash-device-bloom 700ms ease-out 1400ms forwards;
+}
+@keyframes splash-device-bloom {
+  0% { opacity: 0; transform: scale(0.9); }
+  40% { opacity: 1; transform: scale(1.03); }
+  100% { opacity: 0; transform: scale(1.06); }
+}
+
+/* The settled device breathes very slightly so the frame is never dead. */
+.app-splash--settled .app-splash-canvas {
+  animation: splash-device-breathe 3.2s ease-in-out 1.6s infinite;
+}
+@keyframes splash-device-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-2px) scale(1.008); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-splash-scanlines,
+  .app-splash-wheel-sweep,
+  .app-splash-device-glow { animation: none; opacity: 0; }
+  .app-splash--settled .app-splash-canvas { animation: none; }
+}
