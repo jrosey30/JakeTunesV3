@@ -237,7 +237,9 @@ export default function NowPlaying() {
   const bloomBacklight = useCallback(() => {
     setBacklit(true)
     if (backlitTimer.current) window.clearTimeout(backlitTimer.current)
-    backlitTimer.current = window.setTimeout(() => setBacklit(false), 3200)
+    // ~10s lit in total ('keep the backlight on for a teeny bit longer'):
+    // 9.3s held + the 650ms fade-down.
+    backlitTimer.current = window.setTimeout(() => setBacklit(false), 9300)
   }, [])
   useEffect(() => {
     if (track?.id != null) bloomBacklight()

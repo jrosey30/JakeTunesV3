@@ -113,9 +113,9 @@
    * tone holds through the upper third before falling off, so the face
    * reads "lit screen" instead of an even wash. */
   background: linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
-  /* B+C hybrid: near-square bezel ("more square") — the LCD is a screen,
-   * not a lozenge. */
-  border-radius: 4px;
+  /* B+C hybrid: near-square bezel ("more square"), corners eased a
+   * touch on Jake's follow-up ("slightly round... very slightly"). */
+  border-radius: 6px;
   border: 1px solid var(--pill-border);
   /* Backlight ON: a soft luminous wash from inside the glass, layered
    * under the original depth insets. */
