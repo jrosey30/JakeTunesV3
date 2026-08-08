@@ -878,6 +878,8 @@ const electronAPI = {
   // 4.4.32 — Tour dates per Bandsintown for the user's top library
   // artists. First call on a cold cache takes a few seconds; subsequent
   // calls within 24h return instantly from main-side cache.
+  getVenueShows: (): Promise<{ ok: boolean; shows: Array<{ artist: string; date: string; venue: string; venueKey: string; city: string; url: string; known?: boolean }> }> =>
+    ipcRenderer.invoke('get-venue-shows'),
   getTourDates: (): Promise<{ ok: boolean; dates: Array<{ artist: string; date: string; venue: string; city: string; url: string; imageUrl?: string }> }> =>
     ipcRenderer.invoke('get-tour-dates'),
 

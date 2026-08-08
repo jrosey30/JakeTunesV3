@@ -37,7 +37,7 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import MadeForYou from '../components/MadeForYou'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
-import type { Track, MusicNewsItem, TourDate, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
+import type { Track, MusicNewsItem, TourDate, VenueShow, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -122,14 +122,17 @@ export default function HomeView() {
     if (url) togglePreview(item.link, url, item.title, item.artist || '')
   }
   const [tourDates, setTourDates] = useState<TourDate[] | null>(null)
+  const [venueShows, setVenueShows] = useState<VenueShow[] | null>(null)
   const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(null)
   const newsRowRef = useRef<HTMLDivElement>(null)
   const releasesRowRef = useRef<HTMLDivElement>(null)
   const tourDatesRowRef = useRef<HTMLDivElement>(null)
+  const venueRowRef = useRef<HTMLDivElement>(null)
   const upcomingRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-news', newsRowRef)
   useScrollPersistence('home-row-releases', releasesRowRef)
   useScrollPersistence('home-row-tours', tourDatesRowRef)
+  useScrollPersistence('home-row-venues', venueRowRef)
   useScrollPersistence('home-row-upcoming', upcomingRowRef)
 
   // 2026-08-08 — Bandsintown lists every NIGHT of a residency as its own
@@ -241,6 +244,19 @@ export default function HomeView() {
         setTourDates([])
       } finally {
         if (!cancelled) settleHome('tour')
+      }
+    })()
+    // 2026-08-08: venue shows — independent of the artist query above, and
+    // deliberately not gated on it. Ten small unofficial venue scrapes; a
+    // rotted one yields [] and the lane just renders fewer rooms.
+    void (async () => {
+      try {
+        const v = await window.electronAPI.getVenueShows()
+        if (cancelled) return
+        setVenueShows(v.ok ? v.shows : [])
+      } catch {
+        if (cancelled) return
+        setVenueShows([])
       }
     })()
     // 4.4.34: upcoming releases also runs separately. MusicBrainz
@@ -960,6 +976,46 @@ export default function HomeView() {
                     <div className="home-tour-artist">{ev.artist}</div>
                     <div className="home-tour-venue">{ev.venue}</div>
                     <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── 2026-08-08: At Your Venues — the rooms Jake actually goes to,
+            regardless of whether the artist is in his library. Library
+            artists carry a mark so the "don't miss this" signal survives
+            inside the discovery lane. ──────────────────────────────────── */}
+      {venueShows !== null && venueShows.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">At Your Venues</h2>
+            <span className="home-section-source">Brooklyn rooms</span>
+          </div>
+          <div className="home-card-row" role="list" ref={venueRowRef}>
+            {venueShows.slice(0, 40).map((s, i) => {
+              const d = new Date(s.date)
+              return (
+                <div
+                  key={`${s.venueKey}-${s.date}-${i}`}
+                  className={`home-tour-card${s.known ? ' home-tour-card--known' : ''}`}
+                  role="listitem"
+                  onClick={() => s.url && openLink(s.url)}
+                  title={`${s.artist} — ${s.venue}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${s.known ? '\nIn your library' : ''}`}
+                >
+                  <div className="home-tour-date">
+                    <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
+                    <div className="home-tour-date-day">{d.getDate()}</div>
+                  </div>
+                  <div className="home-tour-info">
+                    <div className="home-tour-artist">
+                      {s.artist}
+                      {s.known && <span className="home-venue-known" title="In your library"> ★</span>}
+                    </div>
+                    <div className="home-tour-venue">{s.venue}</div>
+                    <div className="home-tour-city">{s.city}</div>
                   </div>
                 </div>
               )

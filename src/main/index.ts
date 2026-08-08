@@ -1,3 +1,4 @@
+import { getVenueShows, type VenueShow } from './venues.js'
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
@@ -2003,6 +2004,30 @@ ipcMain.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDat
   } catch (err) {
     console.warn('[get-tour-dates] failed:', err)
     return { ok: true, dates: [] }
+  }
+})
+
+// 2026-08-08 — "At Your Venues": what's coming to Jake's Brooklyn rooms
+// REGARDLESS of whether the artist is in his library. Bandsintown's free tier
+// can't answer that question (artist-scoped only), so venues.ts asks the rooms
+// directly. Shows whose artist IS in the library are flagged `known` so the
+// renderer can mark them; the rest is the discovery half Jake asked for.
+ipcMain.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueShow[] }> => {
+  try {
+    const shows = await getVenueShows()
+    const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
+    const lib = raw ? JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string }> } : { tracks: [] }
+    const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const owned = new Set<string>()
+    for (const t of lib.tracks || []) {
+      const a = norm(t.albumArtist || t.artist || '')
+      if (a) owned.add(a)
+    }
+    const marked = shows.map((s) => ({ ...s, known: owned.has(norm(s.artist)) }))
+    return { ok: true, shows: marked.slice(0, 120) }
+  } catch (err) {
+    console.warn('[get-venue-shows] failed:', err)
+    return { ok: true, shows: [] }
   }
 })
 

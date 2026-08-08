@@ -945,6 +945,7 @@ declare global {
       // 4.4.29 — Brooklyn weather for the Home view greeting.
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
       // 4.4.32 — Bandsintown tour dates for top library artists.
+      getVenueShows: () => Promise<{ ok: boolean; shows: VenueShow[] }>
       getTourDates: () => Promise<{ ok: boolean; dates: TourDate[] }>
       // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
       // library artists.
@@ -976,6 +977,19 @@ export interface MusicNewsItem {
 }
 
 // 4.4.32 — Tour date shape from Bandsintown.
+/** A show at one of Jake's rooms, sourced from the venue itself (2026-08-08).
+ *  `known` marks artists already in the library — everything else is the
+ *  discovery half: the Ceremony-at-Warsaw show he'd otherwise never see. */
+export interface VenueShow {
+  artist: string
+  date: string
+  venue: string
+  venueKey: string
+  city: string
+  url: string
+  known?: boolean
+}
+
 export interface TourDate {
   artist: string
   date: string         // ISO

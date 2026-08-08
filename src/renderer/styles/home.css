@@ -1297,3 +1297,8 @@
   border-radius: 2px;
   padding: 4px 6px;
 }
+
+/* At Your Venues — same ticket-stub card as Live Near You; a library artist
+   gets the orange star so the "don't miss" signal survives the discovery lane. */
+.home-venue-known { color: var(--brand-orange, #bb4308); font-size: 10px; }
+.home-tour-card--known .home-tour-date { background: linear-gradient(180deg, #f7ead6, #efdcbe); }
