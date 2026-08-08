@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -25,12 +26,19 @@ export default function GenresView() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
 
+  // 2026-08-08 (Jake's explicit OK to touch this file, as with the 2026-06-24
+  // casing fix): a declared concert's songs are hidden from the regular
+  // library everywhere else, but this view counted them — 24 Nassau '80
+  // tracks were inventing a whole "Rock, Pop" genre that has no regular
+  // songs in it, and inflating Indie Rock (+17) and French House (+14).
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
+
   const genres = useMemo(() => {
     // Case-insensitive grouping (2026-06-24 audit, with Jake's OK to touch this
     // file): "Alternative Indie" and "Alternative indie" are ONE genre, not two.
     // Bucket by lowercase, then label each bucket with its most common casing.
     const byLower = new Map<string, Map<string, number>>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       if (!t.genre) continue
       const lower = t.genre.toLowerCase()
       let casings = byLower.get(lower)
@@ -44,14 +52,14 @@ export default function GenresView() {
       labels.push(best)
     }
     return labels.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-  }, [lib.tracks])
+  }, [regularTracks])
 
   const filteredByGenre = useMemo(() => {
-    if (!selectedGenre) return lib.tracks
+    if (!selectedGenre) return regularTracks
     // Case-insensitive so a bucket matches every casing variant of the genre.
     const sel = selectedGenre.toLowerCase()
-    return lib.tracks.filter(t => (t.genre || '').toLowerCase() === sel)
-  }, [lib.tracks, selectedGenre])
+    return regularTracks.filter(t => (t.genre || '').toLowerCase() === sel)
+  }, [regularTracks, selectedGenre])
 
   const artists = useMemo(() => {
     const set = new Set<string>()
