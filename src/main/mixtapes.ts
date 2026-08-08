@@ -46,6 +46,26 @@ export interface Mixtape {
   title: string
   commentary: string
   dedication?: string
+  /**
+   * The tape, in play order. THE field as of 2026-08-08 — read it through
+   * tapeTracks(), never directly, so two-sided tapes recorded under the old
+   * rules keep working (Jake: "old mixtapes i made already should be
+   * grandfathered in"). Capped at MAX_TAPE_SONGS.
+   */
+  tracks?: number[]
+  /**
+   * The merged tape audio: every song joined into ONE gapless file, exactly
+   * the way live sets are built (live-set-merge.ts). Jake, 2026-08-08: "the
+   * mixtape merges the song file together … the tracks stay in my library as
+   * individual tracks … we just force the gapless audio as 'one file'."
+   * So this file is the tape's PLAYBACK asset only — unlike a live set it is
+   * never imported as a library track, and the songs remain individually
+   * present in the library exactly as before. Absent until the tape is built.
+   */
+  mergedPath?: string
+  /** Where each song starts inside mergedPath — drives the now-playing readout. */
+  mergedCues?: Array<{ trackId: number; startMs: number; durationMs: number }>
+  /** Legacy, two-sided era. Kept so old tapes still read; never written anew. */
   tapeLength: 60 | 90 | 120
   sideA: number[]
   sideB: number[]

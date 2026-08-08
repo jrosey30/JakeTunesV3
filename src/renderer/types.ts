@@ -108,6 +108,16 @@ export interface Mixtape {
   title: string
   commentary: string
   dedication?: string
+  // The tape in play order — THE field as of 2026-08-08 (no more sides,
+  // 25 songs max). Always read it via tapeTracks() from common/tape-physics
+  // so tapes recorded under the two-sided rules keep playing.
+  tracks?: number[]
+  // The tape as ONE gapless file (built the same way live sets are), plus
+  // where each song starts inside it. Playback asset only — the songs stay
+  // in the library as individual tracks.
+  mergedPath?: string
+  mergedCues?: Array<{ trackId: number; startMs: number; durationMs: number }>
+  // Legacy, two-sided era. Read for old tapes; never written anew.
   tapeLength: 60 | 90 | 120
   sideA: number[]
   sideB: number[]
