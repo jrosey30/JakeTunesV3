@@ -5,6 +5,26 @@
 
 .df-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
 .df-title { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.02em; color: var(--text-primary, #1a1a1a); }
+/* The shop sign: same crisp type, hung on a copper rail. */
+.df-title--sign {
+  padding-bottom: 3px;
+  border-bottom: 2px solid #b87333;
+}
+.df-step-inside {
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid #a06a2c;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #c98d4b 0%, #b87333 60%, #a56528 100%);
+  color: #fff7ec;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 1px rgba(0,0,0,0.15);
+}
+.df-step-inside:hover { filter: brightness(1.06); }
+.df-step-inside:active { box-shadow: inset 0 1px 2px rgba(0,0,0,0.25); }
 .df-updated { font-size: 11px; color: var(--text-secondary, #8a8275); }
 .df-refresh {
   margin-left: auto; border: 1px solid rgba(85, 78, 64, 0.18); background: #fdfcf9;
@@ -85,10 +105,30 @@
   font-size: 11.5px; color: var(--text-secondary, #777); margin-top: 1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Shelf-talker (2026-08-07): the why-blurb reads as the clerk's note
+ * taped under the record — cream card, hairline, a whisper of tilt. */
 .df-why {
-  font-size: 10.5px; font-style: italic; color: rgba(120, 100, 75, 0.85);
-  margin-top: 3px; line-height: 1.35;
+  font-size: 10.5px; font-style: italic; color: rgba(95, 78, 55, 0.92);
+  margin-top: 4px; line-height: 1.35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  background: #fdf9ee;
+  border: 1px solid rgba(140, 115, 80, 0.22);
+  border-radius: 2px;
+  padding: 3px 6px;
+  position: relative;
+  transform: rotate(-0.4deg);
+  box-shadow: 0 1px 1px rgba(0,0,0,0.05);
+}
+.df-card:nth-child(even) .df-why { transform: rotate(0.35deg); }
+.df-why::before {
+  content: '';
+  position: absolute;
+  top: -4px; left: 50%;
+  width: 26px; height: 7px;
+  transform: translateX(-50%) rotate(-1deg);
+  background: rgba(210, 195, 160, 0.5);
+  border-left: 1px solid rgba(160, 140, 100, 0.25);
+  border-right: 1px solid rgba(160, 140, 100, 0.25);
 }
 .df-add {
   margin-top: auto; width: 100%; padding: 5px 0; border-radius: 6px; cursor: pointer;

@@ -37,9 +37,11 @@
      luminous pale green with the light clearly ON ("turn on the backlight
      a little"), olive text, square-ish bezel. The amber iteration lives
      on in git history. */
-  --pill-top: #e3f0c9;
-  --pill-bottom: #c8daa6;
-  --pill-border: #93a276;
+  /* v2 (Jake: "more like a brown olive") — hue pulled off lime toward
+     khaki; the backlight stays on but the glass is olive-brown. */
+  --pill-top: #e0e0b2;
+  --pill-bottom: #c4c28e;
+  --pill-border: #8f8a62;
   --musicman-bg: #1e140a;
 
   /* 4.4.47 — Brand palette, sampled directly from the JakeTunes app

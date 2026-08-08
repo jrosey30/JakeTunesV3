@@ -17244,7 +17244,7 @@ app.whenReady().then(async () => {
   // code ships dormant and the sidebar entry is hidden, so it's
   // unreachable. Flip back to true (+ unhide the Sidebar entry) to resume
   // Phase-2 dev after this DMG goes out.
-  const RECORD_STORE_ENABLED = false
+  const RECORD_STORE_ENABLED = true   // 2026-08-07: Step Inside door on the Record Shop page
   if (RECORD_STORE_ENABLED) {
     // LLM adapter over claudeCall (§3.6 — no new SDK/keys). Returns the
     // assistant text; daily ceiling + cached fallback are handled inside

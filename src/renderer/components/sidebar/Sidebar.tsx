@@ -24,7 +24,13 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
     </svg>
   ),
   genres: <GenresIcon />,
-  discovery: <DiscoveryIcon />,
+  discovery: (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.5" fill="#b87333" />
+      <circle cx="8" cy="8" r="2.2" fill="#fff" />
+      <circle cx="8" cy="8" r="0.8" fill="#b87333" />
+    </svg>
+  ),
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
@@ -39,7 +45,9 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
   // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the
   // Music Man's #bb4308 below, which used to clash with New for You's orange.
-  { label: 'Discovery', view: 'discovery', highlight: '#1f7a8c' },
+  // 2026-08-07 rebrand: Discovery is now the Record Shop — copper vinyl,
+  // same view id ('discovery') so nav history + ui-state stay valid.
+  { label: 'Record Shop', view: 'discovery', highlight: '#b87333' },
   { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
 ]
 

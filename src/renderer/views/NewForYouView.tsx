@@ -92,7 +92,7 @@ export default function NewForYouView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owned])
   const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
-  const { state: lib } = useLibrary()
+  const { state: lib, dispatch } = useLibrary()
   const { playTrack } = useAudio()
   // "In Your Library" — music Jake OWNS but overlooks (the rediscovery
   // engine). One click PLAYS it: no list, no download — it's sitting
@@ -202,14 +202,31 @@ export default function NewForYouView() {
     })
   }
 
+  // The Record Shop (2026-08-07 rebrand): display-only lane renames +
+  // shop-flow order. Feed lane ids are a wire contract — never renamed.
+  const SHOP_NAMES: Record<string, string> = {
+    'brand-new': 'New Arrivals',
+    'scene': 'The Scene Rack',
+    'missing': 'House Picks',
+    'time-machine': 'The Used Bins',
+    'songs': 'The Listening Booth',
+  }
+  const SHOP_ORDER = ['brand-new', 'scene', 'songs', 'missing', 'time-machine']
+  const shopLanes = [...lanes].sort((a, b) => {
+    const ai = SHOP_ORDER.indexOf(a.id); const bi = SHOP_ORDER.indexOf(b.id)
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+  })
+
   return (
     <div className="df-view" ref={pageRef}>
       <div className="df-head">
-        <h1 className="df-title">Discover</h1>
+        <h1 className="df-title df-title--sign">The Record Shop</h1>
         {generatedAt && <span className="df-updated">{new Date(generatedAt).toLocaleDateString()}</span>}
-        <button type="button" className="df-refresh" onClick={() => void load(true)} disabled={loading} title="Refresh picks">
+        <button type="button" className="df-refresh" onClick={() => void load(true)} disabled={loading} title="Restock the racks">
           {loading ? '…' : '↻'}
         </button>
+        <button type="button" className="df-step-inside" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
+          title="Walk into the shop">Step Inside</button>
       </div>
 
       {loading && lanes.length === 0 && (
@@ -217,41 +234,9 @@ export default function NewForYouView() {
       )}
       {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
 
-      {owned.length > 0 && (
-        <section className="df-lane">
-          <div className="df-lane-head">In Your Library — Overlooked</div>
-          <div className="df-row">
-            {owned.map((pk) => {
-              return (
-                // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
-                // circles, artist name front and centered, album demoted to
-                // the tooltip alongside Music Man's pitch.
-                <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
-                  <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
-                    {/* An ARTIST card shows the ARTIST. Album art in a circle
-                        claims to be a photo of a person and isn't — that is
-                        what read as sloppy. Portrait when we have one, honest
-                        initials disc when we don't. Never a cover. */}
-                    {portraits.get(pk.artist)
-                      ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
-                      : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
-                    <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
-                  </button>
-                  <div className="df-badge-row df-badge-row--center">
-                    <span className="df-type df-type--owned">Artist</span>
-                    <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
-                  </div>
-                  <div className="df-name df-name--center" title={`${pk.artist}${pk.album ? ` — ${pk.album}` : ''}`}>{pk.artist}</div>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {lanes.map((lane) => (
+      {shopLanes.map((lane) => (
         <section key={lane.id} className="df-lane">
-          <div className="df-lane-head">{lane.title}</div>
+          <div className="df-lane-head">{SHOP_NAMES[lane.id] ?? lane.title}</div>
           <div className="df-row">
             {lane.cards.map((c) => {
               const id = cardId(c)
@@ -294,6 +279,39 @@ export default function NewForYouView() {
           </div>
         </section>
       ))}
+
+      {owned.length > 0 && (
+        <section className="df-lane">
+          <div className="df-lane-head">Behind the Counter</div>
+          <div className="df-row">
+            {owned.map((pk) => {
+              return (
+                // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
+                // circles, artist name front and centered, album demoted to
+                // the tooltip alongside Music Man's pitch.
+                <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
+                  <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
+                    {/* An ARTIST card shows the ARTIST. Album art in a circle
+                        claims to be a photo of a person and isn't — that is
+                        what read as sloppy. Portrait when we have one, honest
+                        initials disc when we don't. Never a cover. */}
+                    {portraits.get(pk.artist)
+                      ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
+                      : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
+                    <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
+                  </button>
+                  <div className="df-badge-row df-badge-row--center">
+                    <span className="df-type df-type--owned">Artist</span>
+                    <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="df-name df-name--center" title={`${pk.artist}${pk.album ? ` — ${pk.album}` : ''}`}>{pk.artist}</div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
     </div>
   )
 }
