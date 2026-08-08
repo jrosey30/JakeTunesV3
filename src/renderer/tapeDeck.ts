@@ -32,20 +32,13 @@ const howler = (): HowlerGlobal | undefined => (window as unknown as { Howler?: 
 
 let engaged = false
 let retryTimer: number | null = null
-let hissWatch: number | null = null
 
-// Live nodes (only while engaged).
+// Live nodes (only while engaged). Just the transparent pass-through now —
+// the hiss source, dropout timer and filter refs went with the tape voicing
+// on 2026-08-08 (see engage()).
 let input: GainNode | null = null
 let outNodes: AudioNode[] = []
-let hissSrc: AudioBufferSourceNode | null = null
-let hissGain: GainNode | null = null
 let noiseBuf: AudioBuffer | null = null
-// Mechanical-feel state (2026-07-19, Jake: "on every button touch, the
-// music should sound like its a tape").
-let lpRef: BiquadFilterNode | null = null
-let dropTimer: number | null = null
-let motorToken = 0
-let pauseInFlight = false
 
 function noiseBuffer(ctx: AudioContext): AudioBuffer {
   if (noiseBuf && noiseBuf.sampleRate === ctx.sampleRate) return noiseBuf
@@ -97,119 +90,29 @@ function engage(): void {
   if (!ctx || !master) return
   if (engaged) return
   try {
+    // 2026-08-08, Jake: "do not make them sound like a tape … fast forward
+    // and rewind … those sound effects can stay … but the actual music
+    // should sound normal."
+    //
+    // So the deck no longer COLORS the music at all. Everything that used
+    // to live on this bus is gone: wow/flutter/long-drift via a modulated
+    // delay line, tanh saturation, the -3 dB shelf at 9.5 kHz, the 15 kHz
+    // lowpass, the +2.5 dB bump at 85 Hz, the glue compressor, the oxide
+    // dropouts, and the hiss bed. A song played off a tape now measures
+    // and sounds exactly like the same song played anywhere else.
+    //
+    // What remains is a single UNITY-GAIN pass-through. It applies no
+    // processing — it exists only so tapeFlipRitual() has something to
+    // duck the music with at the Side A→B boundary, which is a transport
+    // gap, not a tape tone. Everything Jake kept — the FF/REW wind, key
+    // clunks, door, cassette-in-hand rustle, PLAY — are separate one-shot
+    // sources that never touched the music bus and are untouched here.
     input = ctx.createGain()
-
-    // Wow & flutter — a short delay line whose time drifts slowly (wow)
-    // with a faster shimmer on top (flutter). Depths sit just at the
-    // edge of perception on sustained notes.
-    const delay = ctx.createDelay(0.05)
-    delay.delayTime.value = 0.02
-    const wow = ctx.createOscillator()
-    wow.frequency.value = 0.5
-    const wowDepth = ctx.createGain()
-    wowDepth.gain.value = 0.0005
-    wow.connect(wowDepth).connect(delay.delayTime)
-    const flutter = ctx.createOscillator()
-    flutter.frequency.value = 6.1
-    const flutterDepth = ctx.createGain()
-    flutterDepth.gain.value = 0.0001
-    flutter.connect(flutterDepth).connect(delay.delayTime)
-    // Long-term speed drift — the third, slowest hand on the clock. Real
-    // transports never hold speed across a minute; this one wanders ±0.25ms
-    // over ~9 seconds, under the wow.
-    const drift = ctx.createOscillator()
-    drift.frequency.value = 0.11
-    const driftDepth = ctx.createGain()
-    driftDepth.gain.value = 0.00025
-    drift.connect(driftDepth).connect(delay.delayTime)
-    wow.start()
-    flutter.start()
-    drift.start()
-
-    // Cassette frequency shape: shave the digital sheen, soften the very
-    // bottom, keep the mids honest.
-    // Soft tape saturation — rounds transients, unmistakably "tape".
-    const sat = ctx.createWaveShaper()
-    {
-      const n = 1024
-      const curve = new Float32Array(n)
-      for (let i = 0; i < n; i++) {
-        const x = (i / (n - 1)) * 2 - 1
-        curve[i] = Math.tanh(1.3 * x) / Math.tanh(1.3)
-      }
-      sat.curve = curve
-      sat.oversample = '2x'
-    }
-
-    const shelfHi = ctx.createBiquadFilter()
-    shelfHi.type = 'highshelf'
-    shelfHi.frequency.value = 9500
-    shelfHi.gain.value = -3
-    const lp = ctx.createBiquadFilter()
-    lp.type = 'lowpass'
-    lp.frequency.value = 15000
-    lp.Q.value = 0.7
-    const shelfLo = ctx.createBiquadFilter()
-    shelfLo.type = 'peaking'
-    shelfLo.frequency.value = 85
-    shelfLo.Q.value = 0.8
-    shelfLo.gain.value = 2.5
-
-    // Tape glue — barely-there compression.
-    const comp = ctx.createDynamicsCompressor()
-    comp.threshold.value = -18
-    comp.ratio.value = 1.7
-    comp.knee.value = 30
-    comp.attack.value = 0.012
-    comp.release.value = 0.2
-
+    input.gain.value = 1
     master.disconnect()
     master.connect(input)
-    input.connect(delay)
-    delay.connect(sat)
-    sat.connect(shelfHi)
-    shelfHi.connect(lp)
-    lp.connect(shelfLo)
-    shelfLo.connect(comp)
-    comp.connect(ctx.destination)
-    outNodes = [delay, sat, shelfHi, lp, shelfLo, comp, wow, flutter, wowDepth, flutterDepth, drift, driftDepth]
-    lpRef = lp
-
-    // Dropouts — every so often the oxide gives a little: a 60-90ms dip
-    // in level and top end, then back like nothing happened. Rare and
-    // subtle; you FEEL it more than hear it.
-    const scheduleDropout = () => {
-      dropTimer = window.setTimeout(() => {
-        try {
-          if (engaged && input && lpRef) {
-            const t0 = ctx.currentTime
-            const len = 0.06 + Math.random() * 0.03
-            input.gain.setTargetAtTime(0.72, t0, 0.015)
-            lpRef.frequency.setTargetAtTime(5500, t0, 0.015)
-            input.gain.setTargetAtTime(1, t0 + len, 0.03)
-            lpRef.frequency.setTargetAtTime(15000, t0 + len, 0.05)
-          }
-        } catch { /* cosmetic */ }
-        if (engaged) scheduleDropout()
-      }, 18_000 + Math.random() * 32_000)
-    }
-    scheduleDropout()
-
-    // Hiss rides INTO the chain (it's on the tape, so it wows too).
-    hissGain = ctx.createGain()
-    hissGain.gain.value = 0
-    hissSrc = ctx.createBufferSource()
-    hissSrc.buffer = noiseBuffer(ctx)
-    hissSrc.loop = true
-    hissSrc.connect(hissGain).connect(input)
-    hissSrc.start()
-
-    // Hiss follows the motor: audible only while the reels actually turn
-    // (pause = motor stopped = silence, like a real deck).
-    hissWatch = window.setInterval(() => {
-      const rolling = !!howler()?._howls?.some((h) => h.playing())
-      hissGain?.gain.setTargetAtTime(rolling ? 0.0028 : 0, ctx.currentTime, 0.08)
-    }, 400)
+    input.connect(ctx.destination)
+    outNodes = []
 
     engaged = true
     clunk(ctx, false)
@@ -227,19 +130,11 @@ function disengage(): void {
   if (!engaged || !ctx || !master) return
   try {
     clunk(ctx, true)
-    if (hissWatch != null) { clearInterval(hissWatch); hissWatch = null }
-    if (dropTimer != null) { clearTimeout(dropTimer); dropTimer = null }
-    lpRef = null
-    try { hissSrc?.stop() } catch { /* already stopped */ }
-    hissSrc?.disconnect()
-    hissGain?.disconnect()
     master.disconnect()
     for (const n of outNodes) { try { n.disconnect() } catch { /* fine */ } }
     input?.disconnect()
     master.connect(ctx.destination)
   } finally {
-    hissSrc = null
-    hissGain = null
     input = null
     outNodes = []
     engaged = false
@@ -436,70 +331,28 @@ function caseRustle(ctx: AudioContext): void {
 }
 
 /** Every currently-playing howl (the music the deck is turning). */
-function playingHowls(): Array<{ playing: () => boolean; rate: (r?: number) => number }> {
-  return (howler()?._howls || []).filter((h) => { try { return h.playing() } catch { return false } })
-}
-
-/** Motor spin-up: the capstan takes ~a third of a second to reach speed.
- *  Pitch drawls up from 93% while the head settles (muffled → clear).
- *  Engaged sessions only — digital playback stays digital. */
+/** Play. The mechanical noise is made by the caller's key click; the music
+ *  itself starts at normal speed.
+ *
+ *  2026-08-08: this used to drawl the PITCH up from 93% over ~360ms and
+ *  sweep a lowpass from 2.4 kHz — a capstan reaching speed. That is the
+ *  music sounding like a tape, which Jake ruled out ("the actual music
+ *  should sound normal"), so the rate ramp and the filter sweep are gone.
+ *  Kept as a named no-op rather than deleted: it is called from several
+ *  transport paths, and a deck that wants a spin-up NOISE later belongs
+ *  here, next to the other mechanical sounds — not on the music bus. */
 export function tapeMotorStart(): void {
-  if (!engaged) return
-  const ctx = howler()?.ctx
-  if (!ctx) return
-  const token = ++motorToken
-  try {
-    if (lpRef) {
-      const t = ctx.currentTime
-      lpRef.frequency.cancelScheduledValues(t)
-      lpRef.frequency.setValueAtTime(2400, t)
-      lpRef.frequency.exponentialRampToValueAtTime(15000, t + 0.32)
-    }
-    const START = 0.93
-    const STEPS = 9
-    const howls = playingHowls()
-    howls.forEach((h) => { try { h.rate(START) } catch { /* fine */ } })
-    for (let s = 1; s <= STEPS; s++) {
-      window.setTimeout(() => {
-        if (motorToken !== token) return
-        const r = START + (1 - START) * (s / STEPS)
-        playingHowls().forEach((h) => { try { h.rate(Math.min(1, r)) } catch { /* fine */ } })
-      }, s * 40)
-    }
-  } catch { /* cosmetic */ }
+  /* music plays at speed — nothing to do */
 }
 
-/** Pause with pressure sag: the music droops for ~140ms as the pinch
- *  roller lets go, THEN the transport pauses. commit() always runs —
- *  un-engaged decks just click and pause instantly. */
+/** Pause. The key clunk still fires; the music stops cleanly.
+ *
+ *  2026-08-08: the ~140ms pitch sag (pinch roller letting go) applied to
+ *  the music itself, so it went with the rest of the tape voicing. commit()
+ *  now runs immediately instead of after the sag. */
 export function tapeMotorPause(commit: () => void): void {
   mechanicalSound('pause')
-  if (!engaged || pauseInFlight) {
-    if (!pauseInFlight) commit()
-    return
-  }
-  pauseInFlight = true
-  const token = ++motorToken
-  const SAG_MS = 140
-  const STEPS = 5
-  try {
-    for (let s = 1; s <= STEPS; s++) {
-      window.setTimeout(() => {
-        if (motorToken !== token) return
-        const r = 1 - 0.07 * (s / STEPS)
-        playingHowls().forEach((h) => { try { h.rate(r) } catch { /* fine */ } })
-      }, s * (SAG_MS / STEPS))
-    }
-  } catch { /* cosmetic */ }
-  window.setTimeout(() => {
-    try { commit() } finally {
-      // reset speed silently while paused so resume starts from the ramp
-      window.setTimeout(() => {
-        (howler()?._howls || []).forEach((h) => { try { h.rate(1) } catch { /* fine */ } })
-        pauseInFlight = false
-      }, 60)
-    }
-  }, SAG_MS + 10)
+  commit()
 }
 
 /** The A→B boundary: the whole flip, ears only — clunk, door, cassette

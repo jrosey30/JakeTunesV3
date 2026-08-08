@@ -71,7 +71,26 @@ export default function TapeMonitor() {
   useEffect(() => {
     if (!session || nowId == null) return
     // Ejected: playback left the tape entirely.
-    if (!session.tapeTrackIds.includes(nowId)) {
+    //
+    // Two independent tests, because "is this song on the tape?" is not the
+    // same question as "am I playing the tape?".
+    //
+    // 2026-08-08 — Jake made a tape out of a WHOLE album (all 8 Jigitz
+    // tracks of "all my exes live in brooklyn"), then went to the songs
+    // list to hear one of them on its own. Every song he could click was on
+    // the tape, so the id test below never fired: the session stayed alive
+    // and the deck kept running the cassette over ordinary playback. The
+    // pill scrubbed across all of Side B (13:04) instead of the 2:24 track,
+    // talkovers fired, and the no-skip law held him in. "booooooo."
+    //
+    // The queue is the honest signal. Starting a tape installs exactly the
+    // tape's tracks as the queue (MixtapeView.startQueueAt); playing from
+    // anywhere else installs that place's list. Compared as a SET, not in
+    // order, so shuffling the tape's own queue doesn't read as an eject.
+    const tapeIds = new Set(session.tapeTrackIds)
+    const queueIsTheTape = pb.queue.length === session.tapeTrackIds.length
+      && pb.queue.every((t) => tapeIds.has(t.id))
+    if (!queueIsTheTape || !session.tapeTrackIds.includes(nowId)) {
       setTapeSession(null)
       for (const a of overlayRef.current) a.pause()
       overlayRef.current = []
@@ -154,7 +173,7 @@ export default function TapeMonitor() {
         }, 1380)
       }
     }
-  }, [session, nowId, pb.position, pbDispatch, mixtapes, lib.tracks, seek])
+  }, [session, nowId, pb.position, pb.queue, pbDispatch, mixtapes, lib.tracks, seek])
 
   return null
 }
