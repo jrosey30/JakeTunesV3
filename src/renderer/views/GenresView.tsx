@@ -22,6 +22,13 @@ export default function GenresView() {
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null)
   const [selectedArtist, setSelectedArtist] = useState<string | null>(null)
   const [selectedAlbum, setSelectedAlbum] = useState<string | null>(null)
+  // 2026-08-08 — Genres rows had onDoubleClick + onContextMenu but NO onClick,
+  // so a single click did nothing and the list had no selection at all
+  // (Jake: "when i click a song in genre view....why doesnt it do what it does
+  // on every other page"). Same semantics as PlaylistView/SongsView: plain
+  // click selects, ⌘/ctrl toggles, shift extends from the last anchor.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const lastClickedIdx = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
@@ -105,8 +112,29 @@ export default function GenresView() {
     if (first) libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(first) })
   }, [filteredByArtist, libDispatch])
 
+  const handleClick = useCallback((track: Track, idx: number, e: React.MouseEvent) => {
+    if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < filteredTracks.length) {
+      const from = Math.min(lastClickedIdx.current, idx)
+      const to = Math.max(lastClickedIdx.current, idx)
+      setSelectedIds(new Set(filteredTracks.slice(from, to + 1).map(t => t.id)))
+    } else if (e.metaKey || e.ctrlKey) {
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(track.id)) next.delete(track.id)
+        else next.add(track.id)
+        return next
+      })
+      lastClickedIdx.current = idx
+    } else {
+      setSelectedIds(new Set([track.id]))
+      lastClickedIdx.current = idx
+    }
+  }, [filteredTracks])
+
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
     e.preventDefault()
+    // Right-clicking outside the selection re-targets it, like everywhere else.
+    setSelectedIds(prev => (prev.has(track.id) ? prev : new Set([track.id])))
     setCtxMenu({ x: e.clientX, y: e.clientY, track, idx })
   }, [])
 
@@ -139,18 +167,28 @@ export default function GenresView() {
         },
       },
     ] : []
+    // A multi-selection is what the action applies to; a single row is just a
+    // selection of one. Matches PlaylistView/SongsView.
+    const chosen = selectedIds.size > 1 && selectedIds.has(track.id)
+      ? filteredTracks.filter(t => selectedIds.has(t.id))
+      : [track]
+    const many = chosen.length > 1
     return [
-      { label: `Play "${track.title}"`, onClick: () => playTrack(track, filteredTracks, idx, undefined, true) },
+      { label: many ? `Play ${chosen.length} songs` : `Play "${track.title}"`,
+        onClick: () => (many
+          ? playTrack(chosen[0], chosen, 0, undefined, true)
+          : playTrack(track, filteredTracks, idx, undefined, true)) },
       { separator: true as const },
-      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: [track] }) },
-      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: [track] }) },
+      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: chosen }) },
+      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: chosen }) },
       { separator: true as const },
-      { label: 'Get Info', onClick: () => setGetInfoState({ tracks: [track], index: idx }) },
+      { label: 'Get Info', onClick: () => setGetInfoState({ tracks: chosen, index: 0 }) },
       ...artworkItems,
       { separator: true as const },
-      { label: 'Delete Song', onClick: () => setDeleteConfirm({ ids: [track.id], count: 1 }) },
+      { label: many ? `Delete ${chosen.length} Songs` : 'Delete Song',
+        onClick: () => setDeleteConfirm({ ids: chosen.map(t => t.id), count: chosen.length }) },
     ]
-  }, [ctxMenu, playTrack, filteredTracks, pbDispatch, libDispatch])
+  }, [ctxMenu, playTrack, filteredTracks, pbDispatch, libDispatch, selectedIds])
 
   const handleGetInfoSave = useCallback(
     async (updates: { id: number; field: string; value: string }[]) => {
@@ -308,12 +346,17 @@ export default function GenresView() {
             <div
               key={track.id}
               data-track-id={track.id}
-              className={`genres-track-row ${i % 2 ? 'genres-track-row--alt' : ''} ${isPlaying ? 'genres-track-row--playing' : ''}`}
+              className={`genres-track-row ${i % 2 ? 'genres-track-row--alt' : ''} ${isPlaying ? 'genres-track-row--playing' : ''} ${selectedIds.has(track.id) ? 'genres-track-row--selected' : ''}`}
+              onClick={(e) => handleClick(track, i, e)}
               onDoubleClick={() => playTrack(track, filteredTracks, i, undefined, true)}
               onContextMenu={(e) => handleContextMenu(e, track, i)}
               draggable
               onDragStart={(e) => {
-                e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify([track.id]))
+                // Drag the whole selection when this row is part of it.
+                const ids = selectedIds.has(track.id) && selectedIds.size > 1
+                  ? filteredTracks.filter(t => selectedIds.has(t.id)).map(t => t.id)
+                  : [track.id]
+                e.dataTransfer.setData('application/jaketunes-tracks', JSON.stringify(ids))
                 e.dataTransfer.effectAllowed = 'copy'
               }}
             >
