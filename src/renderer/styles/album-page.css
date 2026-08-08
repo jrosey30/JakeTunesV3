@@ -6,7 +6,7 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: linear-gradient(180deg, #ebe8e1 0%, #f5f3ef 280px, #f9f8f5 100%);
+  background: linear-gradient(180deg, #ebe8e1 0%, #f5f3ef 280px, #fdfdfd 100%);
   animation: view-mount-fade var(--motion-ui) var(--ease-settle) both;
 }
 

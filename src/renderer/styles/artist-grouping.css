@@ -91,7 +91,7 @@
   position: sticky; top: 0; z-index: 5;
   display: flex; justify-content: flex-end;
   padding: 8px 14px;
-  background: var(--white, #f9f8f5);
+  background: var(--white, #fdfdfd);
   border-bottom: 1px solid #ecebe5;
 }
 .artists-group-btn {

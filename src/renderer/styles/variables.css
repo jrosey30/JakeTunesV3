@@ -22,13 +22,13 @@
   --selection-top-rgb: 91, 134, 220;
   /* V5 facelift: alt-row tint consolidated to ONE app-wide zebra.
      History: 4.5 dialed #f9f4eb back to #f6f2e8 (too warm-yellow vs the
-     pill); then 4.5.0-111 cooled --white to #f9f8f5 and songs.css was
+     pill); then 4.5.0-111 cooled --white to #fdfdfd and songs.css was
      re-tuned to #eeede9 — but only songs.css, so three stripes drifted
      apart (#f6f2e8 token / #eeede9 songs / #f0f4fa genres, the last one
      a previously-REJECTED cool blue). The token now carries the most
      recent deliberate value, tuned against the current --white; songs,
      genres, and musicman all reference it. */
-  --row-alt: #eeede9;
+  --row-alt: #f2f2f2;   /* re-tuned to the brighter --white (same ~4% step) */
   /* 4.5: Now-playing LCD pill — another notch of orange. Iteration 3:
      prior pass (#f7e6c4 → #e1d0a5) read amber but still leaned cream;
      this nudges the hue ~5% toward the brand orange. Reads as soft
@@ -96,12 +96,16 @@
   /* 4.5: --white is no longer pure #fff — a whisper of warmth so every
      surface reads as a soft off-white, not clinical. 4.5.0-111: cooled
      from the old cream #fdf9f2 (R253/G249/B242, warm spread 11 — too
-     orange in the song list) to #f9f8f5 (R249/G248/B245, spread 4): a
+     orange in the song list) to #fdfdfd (R249/G248/B245, spread 4): a
      slight-slight-slight warm hint, no glow. Pure-white usage in
      components that should stay clinical (modals, dialogs) overrides
      locally. NOTE: this was tuned to match the mobile app's warm white;
      mobile may want the same cool-down to stay in sync. */
-  --white: #f9f8f5;
+  /* 2026-08-08 — the app's white now MATCHES THE LOGO'S white. Jake, on the
+     pixel-iPod mark: "the white of the logo is brighter on purpose. any white
+     in the app needs to match it." Sampled straight off the master:
+     rgb(253,253,253). The old #fdfdfd warm cream read dingy next to it. */
+  --white: #fdfdfd;
   --sidebar-width: 148px;
   --titlebar-height: 38px;
   --toolbar-height: 78px;
@@ -240,7 +244,7 @@
 
   /* — Semantic surface + intent layer (thin names over the physical
        hexes; no source hex changes). */
-  --surface-content: var(--white);        /* #f9f8f5 — the content sheet */
+  --surface-content: var(--white);        /* #fdfdfd — the content sheet */
   --surface-raised: #fcfbf8;              /* cards / tiles that sit above the sheet */
   --surface-canvas: #f0ebe1;              /* the warm page canvas behind cards */
   --border-warm: rgba(120, 90, 50, 0.14); /* hairline on cream surfaces */

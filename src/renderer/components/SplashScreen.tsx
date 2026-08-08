@@ -27,6 +27,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import logoUrl from '../assets/jaketunes-logo.png'
+import wordmarkUrl from '../assets/jaketunes-wordmark.png'
 import { playIntroStinger } from '../utils/introStinger'
 
 const STAGES = [
@@ -234,7 +235,11 @@ export default function SplashScreen({ isReady }: Props) {
           <div className="app-splash-wheel-sweep" />
           <div className="app-splash-device-glow" />
         </div>
-        <div className="app-splash-wordmark">JakeTunes</div>
+        {/* The wordmark IS the logo's wordmark — the same pixels lifted off
+            the device's screen (Jake: "the text below the ipod logo needs to
+            match the wordmark in the logo"), recolored to brand orange so it
+            reads on the light field. */}
+        <img src={wordmarkUrl} alt="jaketunes" className="app-splash-wordmark-img" />
         <div className="app-splash-tagline">The greatest music platform ever built.</div>
         <div className="app-splash-greeting">{greeting}</div>
         <div className="app-splash-eq" aria-hidden="true">

@@ -1200,7 +1200,7 @@
 .home-view {
   background:
     repeating-linear-gradient(0deg, rgba(120, 96, 64, 0.012) 0 1px, transparent 1px 3px),
-    var(--white, #f9f8f5);
+    var(--white, #fdfdfd);
 }
 
 /* Every rail header wears the copper measurement rail (was only on some,

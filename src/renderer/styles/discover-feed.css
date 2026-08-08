@@ -27,7 +27,7 @@
 .df-step-inside:active { box-shadow: inset 0 1px 2px rgba(0,0,0,0.25); }
 .df-updated { font-size: 11px; color: var(--text-secondary, #8a8275); }
 .df-refresh {
-  margin-left: auto; border: 1px solid rgba(85, 78, 64, 0.18); background: #fdfcf9;
+  margin-left: auto; border: 1px solid rgba(85, 78, 64, 0.18); background: var(--white);
   border-radius: 7px; width: 30px; height: 30px; cursor: pointer; font-size: 14px; color: #5a5244;
 }
 .df-refresh:hover:not(:disabled) { background: rgba(var(--brand-orange-rgb), 0.08); }
@@ -132,7 +132,7 @@
 }
 .df-add {
   margin-top: auto; width: 100%; padding: 5px 0; border-radius: 6px; cursor: pointer;
-  border: 1px solid rgba(85, 78, 64, 0.16); background: #fdfcf9;
+  border: 1px solid rgba(85, 78, 64, 0.16); background: var(--white);
   font-size: 11px; font-weight: 700; color: #5a5244; transition: background 130ms ease;
 }
 .df-add:hover:not(:disabled) { background: rgba(var(--brand-orange-rgb), 0.10); color: rgb(var(--brand-orange-rgb)); }
