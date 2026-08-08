@@ -36,20 +36,32 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, #f0f0f0, #c8c8c8);
-  border: 1px solid #999;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.6);
-  color: #333;
-  transition: background 0.1s;
+  /* 2026-08-07 "texture, life, tones of futuristic": machined silver —
+   * a specular cap, fine brushed grain, cool greys, crisper edge. */
+  background:
+    radial-gradient(circle at 50% 26%, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0) 46%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.10) 0 1px, rgba(120,124,130,0.06) 1px 2px),
+    linear-gradient(180deg, #f1f2f4 0%, #d6d8db 55%, #c6c9cd 100%);
+  border: 1px solid #9599a0;
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.18),
+    inset 0 0 0 1px rgba(255,255,255,0.35),
+    inset 0 -2px 3px rgba(0,0,0,0.05),
+    inset 0 1px 0 rgba(255,255,255,0.75);
+  color: #2f3237;
+  transition: filter 0.12s, box-shadow 0.12s, transform 0.12s;
 }
 
 .transport-btn:hover {
-  background: linear-gradient(180deg, #f8f8f8, #d0d0d0);
+  filter: brightness(1.05);
 }
 
 .transport-btn:active {
-  background: linear-gradient(180deg, #b0b0b0, #c0c0c0);
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.25);
+  transform: translateY(0.5px);
+  filter: brightness(0.95);
+  box-shadow:
+    0 1px 1px rgba(0,0,0,0.12),
+    inset 0 1px 3px rgba(0,0,0,0.22);
 }
 
 .transport-btn--play {
@@ -918,7 +930,8 @@
   color: #fff;
   border: none;
   border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.25);
+  background-image: radial-gradient(circle at 50% 28%, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 55%);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), inset 0 0 0 1px rgba(255,255,255,0.18), inset 0 1px 0 rgba(255,255,255,0.3);
   transition: background 0.15s, box-shadow 0.15s;
   position: relative;
 }
@@ -1128,6 +1141,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* "buttons more organized": the mic/radio/rec trio sits in one quiet
+   * inset well instead of floating loose against the chrome. */
+  padding: 5px 9px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.05), rgba(255,255,255,0.22));
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.09), 0 1px 0 rgba(255,255,255,0.45);
 }
 
 /* Spinning ring while loading */

@@ -4,8 +4,10 @@
      across every silver/metallic surface so the desktop palette is
      in sync with the mobile app. ~3% warm shift — eye reads it as
      "warmer silver" without consciously seeing the orange. */
-  --chrome-top: #d8d3cb;
-  --chrome-bottom: #c6c1b8;
+  /* 2026-08-07: "a hint more silver" — yellow cast eased, still warm
+     enough to live with the cream surfaces. */
+  --chrome-top: #d6d4d1;
+  --chrome-bottom: #c5c2bd;
   /* Sidebar stays cool blue-grey — distinct visual zone from the
      warm toolbar. */
   --sidebar-top: #c1cad7;
@@ -109,10 +111,12 @@
      every track table shares ONE row height instead of per-file literals. */
   --row-height: 18px;
   --font-family: -apple-system, "Lucida Grande", sans-serif;
-  --font-body: 11px;
-  --font-label: 10px;
-  --font-timestamp: 9px;
-  --font-title: 12px;
+  /* 2026-08-07: "+0.25px" legibility pass (Jake: "like from font size
+     12 to font size 12.25") — fractional px render fine on retina. */
+  --font-body: 11.25px;
+  --font-label: 10.25px;
+  --font-timestamp: 9.25px;
+  --font-title: 12.25px;
 
   /* Motion — short physical snaps, warm settle (iTunes 8 weight) */
   --motion-instant: 90ms;
