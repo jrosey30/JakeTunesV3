@@ -1267,13 +1267,24 @@
   text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--brand-orange, #bb4308);
 }
-/* Multi-night residencies (grouped in HomeView) label their run. */
-.home-tour-nights {
-  font-size: 9.5px;
+/* Multi-night residencies: the RANGE must never wrap (Jake: "dont like how
+   this looks at all" — "14–18" was breaking across two lines). The stub grows
+   for a range and the run label sits under the date, off the artist line. */
+.home-tour-date { flex: 0 0 auto; min-width: 64px; }
+.home-tour-date-day { white-space: nowrap; }
+.home-tour-date-day--range {
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  padding: 0 8px;
+}
+.home-tour-date-nights {
+  margin-top: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: rgba(120, 100, 75, 0.85);
-  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(120, 100, 75, 0.9);
+  white-space: nowrap;
 }
 
 /* Rediscover blurbs were clipping mid-sentence. Give them a clean clamp

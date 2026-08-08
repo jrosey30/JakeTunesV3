@@ -951,15 +951,13 @@ export default function HomeView() {
                 >
                   <div className="home-tour-date">
                     <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
-                    <div className="home-tour-date-day">
+                    <div className={`home-tour-date-day${nights > 1 ? ' home-tour-date-day--range' : ''}`}>
                       {d.getDate()}{nights > 1 && lastDate ? `–${new Date(lastDate).getDate()}` : ''}
                     </div>
+                    {nights > 1 && <div className="home-tour-date-nights">{nights} nights</div>}
                   </div>
                   <div className="home-tour-info">
-                    <div className="home-tour-artist">
-                      {ev.artist}
-                      {nights > 1 && <span className="home-tour-nights"> · {nights} nights</span>}
-                    </div>
+                    <div className="home-tour-artist">{ev.artist}</div>
                     <div className="home-tour-venue">{ev.venue}</div>
                     <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
                   </div>
