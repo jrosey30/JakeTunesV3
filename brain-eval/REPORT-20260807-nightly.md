@@ -78,11 +78,15 @@ index; the index users actually hit for that intent is roughly 2× better.
    alongside) `embeddings.bin`? That measures the index that serves the
    intent. It resets score comparability, so it's a deliberate decision,
    not a nightly tweak. (Precedent: the 07-12 ret-015 recalibration.)
-2. The suggested skip-signal taste experiment was **not re-run**: it was
-   already tested by `scripts/taste-experiments-v2.py` (skip-rate feature
-   AND skips-as-hard-negatives) and refuted — production `tasteScore.ts`
-   header records "skips don't help". Skip events have only grown
-   ~460→493 since; no reason to expect a flipped verdict.
+2. The suggested skip-signal taste experiment was **not re-run tonight**:
+   it was already tested by `scripts/taste-experiments-v2.py` (skip-rate
+   feature AND skips-as-hard-negatives) and refuted — production
+   `tasteScore.ts` header records "skips don't help". Correction worth
+   knowing: that refutation was measured at ~141 skip events and blamed
+   noise; the log now holds **493** (3.5×). A gated RE-test of
+   skips-as-hard-negatives is a legitimate candidate for a future night
+   — but it's a second experiment, and tonight's one exercise was
+   already spent on the ret-014 diagnosis.
 3. Verified benign, no action: "meaning catch-up: 150" appearing two
    nights running is the MEANING_CAP=150 draining a large backlog
    (6,617/8,899 done), with per-track persistence confirmed in code.
