@@ -747,7 +747,7 @@
   height: 100%;
   width: 40%;
   border-radius: 2px;
-  background: var(--brand-orange, #e0812e);
+  background: var(--brand-orange, #bb4308);
   animation: page-gate-slide 1.1s ease-in-out infinite;
 }
 @keyframes page-gate-slide {
@@ -770,7 +770,7 @@
 .pg-sub { display: flex; align-items: center; gap: 10px; }
 .page-gate-eq { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; }
 .page-gate-eq span {
-  width: 3px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #e0812e);
+  width: 3px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #bb4308);
   animation: pg-eq 900ms ease-in-out infinite; transform-origin: bottom;
 }
 .page-gate-eq span:nth-child(1) { animation-delay: 0ms;   height: 60%; }

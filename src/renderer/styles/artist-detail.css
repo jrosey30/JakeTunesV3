@@ -259,7 +259,7 @@
   top: 14px; bottom: 14px;
   left: 12px;
   width: 3px;
-  background: linear-gradient(180deg, var(--brand-orange, #bb4308), #d96820);
+  background: linear-gradient(180deg, var(--brand-orange, #bb4308), var(--brand-orange-light, #d6601f));
   border-radius: 2px;
 }
 .artist-detail-wiki-label {
@@ -569,7 +569,7 @@
 .artist-detail-disco-album-bar-fill {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--brand-orange, #bb4308), #d96820);
+  background: linear-gradient(90deg, var(--brand-orange, #bb4308), var(--brand-orange-light, #d6601f));
   border-radius: 2px;
   transition: width 0.25s ease;
 }

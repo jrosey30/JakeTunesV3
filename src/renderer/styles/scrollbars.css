@@ -90,7 +90,7 @@ html {
       transparent 6px,
       transparent 11px
     ),
-    linear-gradient(180deg, #e87228 0%, var(--brand-orange-light) 50%, var(--brand-orange) 100%);
+    linear-gradient(180deg, var(--brand-orange-glow, #e0812e) 0%, var(--brand-orange-light) 50%, var(--brand-orange) 100%);
 }
 
 ::-webkit-scrollbar-thumb:active {

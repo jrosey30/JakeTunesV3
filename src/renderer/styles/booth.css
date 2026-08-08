@@ -6,7 +6,7 @@
  * also makes the mode-switch unmistakable — you know at a glance that the keys
  * now do something different.
  *
- * Accent is the app orange (#e0812e) so it still reads as JakeTunes.
+ * Accent is the brand glow orange so meters still read as JakeTunes LCD.
  */
 
 .booth-view {
@@ -15,7 +15,7 @@
   --booth-edge: #2c2c30;
   --booth-text: #e8e8ea;
   --booth-dim: #8a8a90;
-  --booth-accent: #e0812e;
+  --booth-accent: var(--brand-orange-glow, #e0812e);
   --booth-cue: #4da3ff;
   --booth-kill: #d9483f;
 
