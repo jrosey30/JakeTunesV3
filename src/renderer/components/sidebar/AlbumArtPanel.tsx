@@ -21,7 +21,8 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
 
   useEffect(() => {
     const handler = (e: Event) => {
-      setDjModeActive((e as CustomEvent).detail.active)
+      const active = (e as CustomEvent<{ active?: boolean }>).detail?.active
+      if (typeof active === 'boolean') setDjModeActive(active)
     }
     window.addEventListener('dj-mode-state', handler)
     return () => window.removeEventListener('dj-mode-state', handler)
@@ -128,8 +129,12 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
     if (!artist || !album) return
 
     const files = Array.from(e.dataTransfer.files)
-    const imgFile = files.find(f => /\.(jpe?g|png|tiff?|bmp|gif|webp)$/i.test(f.name))
-    if (!imgFile) return
+    const imgFile = files.find(f => /\.(jpe?g|png|tiff?|bmp|gif|webp)$/i.test(f.name)) as
+      | (File & { path?: string })
+      | undefined
+    // Electron File.path is required for setCustomArtwork; browser-only
+    // drops (no path) can't be imported — bail instead of sending undefined.
+    if (!imgFile?.path) return
 
     const result = await window.electronAPI.setCustomArtwork(artist, album, imgFile.path)
     if (result.ok && result.key && result.hash) {

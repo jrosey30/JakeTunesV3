@@ -239,6 +239,23 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
   // Global fade for any Music Man speech (MusicManView, SmartPlaylistView, etc.)
   const isFadedRef = useRef(false)
+
+  // One teardown for every DJ stop/cancel path — cancel must reverse start
+  // (CLAUDE.md): stop in-flight fade, clear duck latch, detach broadcast
+  // clip, always restore volume. Older paths only restored volume when
+  // djAudioRef was set, which left volume stuck low after a duck-with-no-clip
+  // or a mid-fade cancel.
+  const teardownDjAudio = useCallback(() => {
+    clearFade()
+    isFadedRef.current = false
+    if (djAudioRef.current) {
+      detachClipFromBroadcast(djAudioRef.current)
+      djAudioRef.current.pause()
+      djAudioRef.current = null
+    }
+    setVolume(savedVolumeRef.current)
+  }, [setVolume, clearFade])
+
   useEffect(() => {
     const handleStart = async () => {
       if (isFadedRef.current) return
@@ -305,18 +322,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       // IPC response can't proceed after cancel.
       djModeGenerationRef.current += 1
       setAutoDjMode(false) // immediately clear module-level flag
-      if (djAudioRef.current) {
-        // 4.4.14: disconnect the broadcast source BEFORE nulling.
-        // pause() doesn't fire 'ended', so attachClipToBroadcast's
-        // cleanup never runs — the source node stays summed into
-        // preamp and accumulates over a session (4.4.6 rattle class).
-        detachClipFromBroadcast(djAudioRef.current)
-        djAudioRef.current.pause()
-        djAudioRef.current = null
-        clearFade() // stop any in-flight duck fade before restoring volume
-        isFadedRef.current = false // clear the latch so the next speech re-ducks
-        setVolume(savedVolumeRef.current)
-      }
+      teardownDjAudio()
       setAutoDj(false)
       setDjActive(false)
       setDjLoading(false)
@@ -326,7 +332,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     }
     window.addEventListener('musicman-dj-cancel', handler)
     return () => window.removeEventListener('musicman-dj-cancel', handler)
-  }, [setVolume, clearFade])
+  }, [teardownDjAudio])
 
   // Sync auto-DJ mode to audio module. Either DJ-Set's autoDj OR the
   // user-toggled Radio Mode triggers the between-track event the
@@ -978,13 +984,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     // If actively speaking or autoDj is lingering from a previous mic click, stop everything
     if (djActive || autoDj) {
       djCancelledRef.current = true
-      if (djAudioRef.current) {
-        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
-        detachClipFromBroadcast(djAudioRef.current)
-        djAudioRef.current.pause()
-        djAudioRef.current = null
-        setVolume(savedVolumeRef.current)
-      }
+      teardownDjAudio()
       setAutoDj(false)
       setDjActive(false)
       setDjLoading(false)
@@ -1111,7 +1111,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
-  }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
+  }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn, teardownDjAudio])
 
   // Auto-DJ / Radio Mode: listen for track transitions. Either flag
   // arms the listener; the body picks which prompt + cache to use.
@@ -1119,9 +1119,30 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     if (!autoDj && !radioMode) return
 
     const handler = async (e: Event) => {
-      // Acknowledge so useAudio knows we're handling this
+      // Validate detail BEFORE ack. Acking then throwing made useAudio
+      // believe the transition was handled while the queue stalled.
+      const detail = (e as CustomEvent).detail as {
+        prevTrack?: { id: number }
+        nextTrack?: { id: number }
+        nextIdx?: number
+        queue?: unknown[]
+      } | undefined
+      if (
+        !detail?.prevTrack ||
+        !detail?.nextTrack ||
+        !Array.isArray(detail.queue) ||
+        typeof detail.nextIdx !== 'number'
+      ) {
+        console.warn('[Radio] transition event missing detail — ignoring')
+        return
+      }
       window.dispatchEvent(new Event('musicman-dj-transition-ack'))
-      const { prevTrack, nextTrack, nextIdx, queue } = (e as CustomEvent).detail
+      const { prevTrack, nextTrack, nextIdx, queue } = detail as {
+        prevTrack: { id: number }
+        nextTrack: NonNullable<typeof pb.nowPlaying>
+        nextIdx: number
+        queue: NonNullable<typeof pb.nowPlaying>[]
+      }
 
       if (radioTransitionBusyRef.current) {
         console.warn('[Radio] transition already in flight — advancing track')
@@ -1612,13 +1633,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       setDjModeTheme('')
       setAutoDj(false)
       setAutoDjMode(false) // immediately clear module-level flag
-      if (djAudioRef.current) {
-        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
-        detachClipFromBroadcast(djAudioRef.current)
-        djAudioRef.current.pause()
-        djAudioRef.current = null
-      }
-      setVolume(savedVolumeRef.current)
+      teardownDjAudio()
       setDjActive(false)
       setDjLoading(false)
       setDjText('')
@@ -1629,7 +1644,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
     djCancelledRef.current = false
     setDjModeActive(true)
     startDjSet()
-  }, [djModeActive, startDjSet])
+  }, [djModeActive, startDjSet, teardownDjAudio])
 
   // Listen for DJ Mode toggle from sidebar button
   useEffect(() => {

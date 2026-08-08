@@ -1240,7 +1240,9 @@ function AppInner() {
   // Expose saveUiState for SongsView to piggyback column state
   useEffect(() => {
     const handler = (e: Event) => {
-      const { colWidthMap, hiddenCols, columnOrder, colsV } = (e as CustomEvent).detail
+      const detail = (e as CustomEvent).detail
+      if (!detail || typeof detail !== 'object') return
+      const { colWidthMap, hiddenCols, columnOrder, colsV } = detail
       // Merge column state into next save
       window.electronAPI.loadUiState().then(r => {
         const existing = (r.ok && r.state) ? r.state : {}
@@ -1892,7 +1894,7 @@ function AppInner() {
                 <div style={{
                   height: '100%',
                   width: `${applyOverridesProgress.total > 0 ? (applyOverridesProgress.done / applyOverridesProgress.total) * 100 : 0}%`,
-                  background: '#e0812e',
+                  background: 'var(--brand-orange-glow)',
                   transition: 'width 200ms ease-out',
                 }} />
               </div>
@@ -1978,7 +1980,7 @@ function AppInner() {
                 <div style={{
                   height: '100%',
                   width: `${refreshSizesProgress.total > 0 ? (refreshSizesProgress.scanned / refreshSizesProgress.total) * 100 : 0}%`,
-                  background: '#e0812e',
+                  background: 'var(--brand-orange-glow)',
                   transition: 'width 200ms ease-out',
                 }} />
               </div>
