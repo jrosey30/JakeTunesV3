@@ -23,11 +23,55 @@ import { fileURLToPath } from 'node:url'
 const args = {}
 const argv = process.argv.slice(2)
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i].startsWith('--')) args[argv[i].slice(2)] = argv[i + 1], i++
+  if (!argv[i].startsWith('--')) continue
+  // Bare switches (--restyle) take no value; only consume the next token
+  // when it isn't itself a flag.
+  const next = argv[i + 1]
+  if (next === undefined || next.startsWith('--')) { args[argv[i].slice(2)] = true }
+  else { args[argv[i].slice(2)] = next; i++ }
 }
 if (!args.prompt || !args.out) {
   console.error('usage: artgen.mjs --prompt "..." --out file.png [--size WxH] [--quality low|medium|high] [--model id]')
+  console.error('       artgen.mjs --restyle --in page.png --prompt "..." --out out.png   (APP PAGE renders)')
   process.exit(2)
+}
+
+// ── --restyle: the ONLY sanctioned mode for APP PAGE renders ───────────────
+// Jake, 2026-08-08: "it needs to be an enhanced upgraded version of what we
+// have already." Twice this drifted — once into a barely-visible finish pass,
+// once into full layout redesigns (newspaper / hi-fi den / mission control).
+// Neither is what he asked for. So the contract is enforced HERE, not in a
+// prompt someone remembers to type:
+//   1. --restyle REQUIRES --in, and --in must be a real screenshot of the
+//      running app. Editing a real screenshot keeps the layout by
+//      construction — a redesign is mechanically impossible.
+//   2. The preamble + prohibitions below are prepended to every restyle
+//      prompt. Callers describe MATERIALS; they cannot grant themselves
+//      permission to move, add, or remove anything.
+const RESTYLE_PREAMBLE = [
+  'Restyle this exact music app screenshot.',
+  'ABSOLUTE RULES: every element stays in its EXACT position and size —',
+  'same sidebar, same columns, same rows, same buttons, same text content',
+  'everywhere; nothing added, nothing removed, nothing moved, no text',
+  'rewritten. This is a MATERIAL and FINISH upgrade of the app that already',
+  'exists — an ENHANCED, UPGRADED version of THIS page, never a redesign and',
+  'never a different layout. The upgrade must be clearly VISIBLE at a glance,',
+  'not subtle.',
+].join(' ')
+const RESTYLE_PROHIBITIONS = [
+  'STRICTLY FORBIDDEN: moving, adding, resizing or removing ANY element;',
+  'altering any text; changing the page structure; pastels; glow-on-black;',
+  'TikTok-style aesthetics; generic streaming-app styling; replacing the app',
+  'with a different design language. Photorealistic UI screenshot quality,',
+  'pixel-crisp text.',
+].join(' ')
+if (args.restyle !== undefined) {
+  if (!args.in) {
+    console.error('artgen --restyle requires --in <real screenshot of the running page>.')
+    console.error('Capture it first (cdp-shot.mjs); never restyle from an imagined page.')
+    process.exit(2)
+  }
+  args.prompt = `${RESTYLE_PREAMBLE}\n\n${args.prompt}\n\n${RESTYLE_PROHIBITIONS}`
 }
 
 const envPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.env')
