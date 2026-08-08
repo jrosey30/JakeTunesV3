@@ -34,21 +34,39 @@ const envPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.env')
 const key = readFileSync(envPath, 'utf8').match(/^OPENAI_API_KEY=(.+)$/m)?.[1]?.trim()
 if (!key) { console.error('OPENAI_API_KEY missing from repo .env'); process.exit(1) }
 
-const body = {
-  model: args.model || 'gpt-image-2',
-  prompt: args.prompt,
-  size: args.size || '1024x1024',
-  quality: args.quality || 'medium',
-  n: 1,
+// --in file.png switches to the EDITS endpoint: restyle a real screenshot
+// in place (Jake, on the UI upgrade: "i dont want to change the location
+// of where anything is" — image-to-image keeps the layout by construction).
+let res
+if (args.in) {
+  const form = new FormData()
+  form.append('model', args.model || 'gpt-image-2')
+  form.append('prompt', args.prompt)
+  form.append('size', args.size || 'auto')
+  form.append('quality', args.quality || 'medium')
+  form.append('image[]', new Blob([readFileSync(args.in)], { type: 'image/png' }), 'input.png')
+  res = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  }).then(r => r.json())
+} else {
+  const body = {
+    model: args.model || 'gpt-image-2',
+    prompt: args.prompt,
+    size: args.size || '1024x1024',
+    quality: args.quality || 'medium',
+    n: 1,
+  }
+  res = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => r.json())
 }
-const res = await fetch('https://api.openai.com/v1/images/generations', {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-}).then(r => r.json())
 
 if (res.error) { console.error(`artgen: ${res.error.message}`); process.exit(1) }
 const b64 = res.data?.[0]?.b64_json
 if (!b64) { console.error('artgen: no image in response'); process.exit(1) }
 writeFileSync(args.out, Buffer.from(b64, 'base64'))
-console.log(`${args.out} (${body.model}, ${body.size}, ${body.quality})`)
+console.log(`${args.out} (${args.model || 'gpt-image-2'}, ${args.in ? 'edit' : args.size || '1024x1024'}, ${args.quality || 'medium'})`)

@@ -33,9 +33,13 @@
      peach-amber now — the pill is unambiguously the warm focal point
      of the chrome without crossing into "Halloween panel" territory.
      Gradient still subtle enough to read as iTunes-LCD. */
-  --pill-top: #f7e0b6;
-  --pill-bottom: #e0c690;
-  --pill-border: #b59c70;
+  /* B+C hybrid (2026-08-07): the pill is now a BACKLIT iPod-mini LCD —
+     luminous pale green with the light clearly ON ("turn on the backlight
+     a little"), olive text, square-ish bezel. The amber iteration lives
+     on in git history. */
+  --pill-top: #e3f0c9;
+  --pill-bottom: #c8daa6;
+  --pill-border: #93a276;
   --musicman-bg: #1e140a;
 
   /* 4.4.47 — Brand palette, sampled directly from the JakeTunes app

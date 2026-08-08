@@ -403,7 +403,8 @@ export default function NowPlaying() {
             </div>
             <div className="now-playing-line-secondary">
               {preview.artist && <span className="now-playing-artist">{preview.artist}</span>}
-              <span className="now-playing-sep"> — </span>
+            </div>
+            <div className="now-playing-line-tertiary">
               <span className="now-playing-album">Preview</span>
             </div>
           </div>
@@ -434,19 +435,16 @@ export default function NowPlaying() {
             </div>
             <div className="now-playing-line-secondary">
               {liveCue && liveEntry ? (
-                <>
-                  <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
-                  <span className="now-playing-sep"> — </span>
-                  <span className="now-playing-album">{track.album}</span>
-                </>
+                <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
               ) : (
-                <>
-                  <span className="now-playing-artist">{track.artist}</span>
-                  {track.album && <span className="now-playing-sep"> — </span>}
-                  {track.album && <span className="now-playing-album">{track.album}</span>}
-                </>
+                <span className="now-playing-artist">{track.artist}</span>
               )}
             </div>
+            {track.album && (
+              <div className="now-playing-line-tertiary">
+                <span className="now-playing-album">{track.album}</span>
+              </div>
+            )}
           </div>
           <div className="scrubber-row">
             {/* Brief 025: floor position + duration ONCE, then compute
