@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle} from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted} from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -165,5 +165,46 @@ describe('searchTitle — edition metadata is not the song’s name', () => {
     assert.equal(unwantedVersionOf('Radio Ga Ga', 'Radio Ga Ga'), null)
     assert.equal(unwantedVersionOf('Radio Ga Ga', 'Radio Ga Ga (Radio Edit)'), 'radio')
     assert.equal(unwantedVersionOf('Clean Up Woman', 'Clean Up Woman'), null)
+  })
+})
+
+describe('masked titles — Apple asterisks out profanity', () => {
+  it('matches a masked title against the real one', () => {
+    // Jake, still failing after the Amended fix: "N****s Bleed (2005 Remaster)"
+    // sat on Retry. Normalised it is "nsbleed" vs Qobuz's "niggasbleed".
+    assert.ok(maskedTitleMatches('N****s Bleed', 'Niggas Bleed'))
+    assert.ok(maskedTitleMatches('N****s Bleed', 'Niggas Bleed (2005 Remaster)'))
+    assert.ok(maskedTitleMatches('F!*@ You Tonight', 'Fuck You Tonight'))
+    assert.ok(!maskedTitleMatches('N****s Bleed', 'Somebody Else Bleed'))
+    assert.ok(!maskedTitleMatches('N****s Bleed', 'Hypnotize'))
+  })
+
+  it('drops masked tokens from the QUERY but keeps them for matching', () => {
+    assert.equal(searchQueryTitle('N****s Bleed (2005 Remaster)'), 'Bleed')
+    assert.equal(searchQueryTitle('F!*@ You Tonight (feat. R. Kelly) [Amended]'), 'You Tonight')
+    assert.equal(searchTitle('N****s Bleed (2005 Remaster)'), 'N****s Bleed')
+    // an unmasked title is unaffected
+    assert.equal(searchQueryTitle('I Got a Story to Tell (2005 Remaster)'), 'I Got a Story to Tell')
+  })
+
+  it('resolves the track that was stuck on Retry', () => {
+    const want = searchTitle('N****s Bleed (2005 Remaster)')
+    const results = [
+      { source: 'qobuz', mediaType: 'track', id: 'right', desc: 'Niggas Bleed by The Notorious B.I.G.' },
+      { source: 'qobuz', mediaType: 'track', id: 'wrong', desc: 'Bleed by Someone Else' },
+    ]
+    assert.equal(pickBestStreamripMatch(want, 'The Notorious B.I.G.', results)?.id, 'right')
+  })
+})
+
+describe('editionSubstituted — when the runtime stops being a fingerprint', () => {
+  it('is true for censored, masked and remastered rows', () => {
+    assert.ok(editionSubstituted('Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]'))
+    assert.ok(editionSubstituted('N****s Bleed (2005 Remaster)'))
+    assert.ok(editionSubstituted('Hypnotize (2014 Remaster)'))
+  })
+  it('is FALSE when only feature credits were stripped — same recording', () => {
+    assert.equal(editionSubstituted('Mo Money Mo Problems (feat. Puff Daddy & Mase)'), false)
+    assert.equal(editionSubstituted('Hypnotize'), false)
   })
 })

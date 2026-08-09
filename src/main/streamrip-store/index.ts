@@ -22,7 +22,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
+import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 
 export interface StreamripDeps {
@@ -396,13 +396,21 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
     const durationMs = !wantAlbum && typeof opts?.durationMs === 'number' && opts.durationMs > 1000 ? opts.durationMs : 0
-    const durTol = opts?.cleanedSource ? CLEANED_TOLERANCE_SEC : DURATION_TOLERANCE_SEC
+    // Widen the length guard whenever we deliberately searched for the SONG
+    // rather than the exact pressing the user clicked — a censored edit or a
+    // remaster is a different length by nature, and pinning to the clicked
+    // row's runtime is what rejected the correct file. Feature-credit
+    // stripping does not widen it: same recording, keep the tight guard.
+    const durTol = (opts?.cleanedSource || editionSubstituted(title)) ? CLEANED_TOLERANCE_SEC : DURATION_TOLERANCE_SEC
     // Search by the song's NAME, not by iTunes' edition metadata. iTunes hands
     // us things like "Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]"
     // and "Life After Death [Amended Version] (2014 Remaster)"; asking a
     // catalogue for those by name matches nothing, or matches the censored cut.
     const lookFor = searchTitle(title) || title
-    const query = [artist, lookFor].filter(Boolean).join(' ')
+    // The QUERY drops masked tokens ("N****s Bleed" -> "Bleed"); a catalogue
+    // cannot be searched for asterisks. Ranking still uses the full masked
+    // title, so the right row is recognised when it comes back.
+    const query = [artist, searchQueryTitle(title) || lookFor].filter(Boolean).join(' ')
     const mediaType = wantAlbum ? 'album' : 'track'
 
     // ── Qobuz first (lossless when it has the track) ──

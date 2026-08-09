@@ -44,6 +44,85 @@ const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecordin
 const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?|album version|single version|original version|bonus(?: track)?s?|deluxe|mono|stereo|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|feat\.?\s.*|featuring\s.*|ft\.?\s.*|with\s.+)$/i
 
 /**
+ * Apple MASKS profanity inside track names — "N****s Bleed", "F!*@ You
+ * Tonight". Jake, 2026-08-09, still failing after the Amended fix: those rows
+ * sat on Retry. Normalised, "N****s Bleed" is "nsbleed" and Qobuz's title is
+ * "niggasbleed", so every match test fails and the track can never resolve.
+ *
+ * A masked token is matched as a PATTERN rather than a literal: the visible
+ * characters must line up and the mask stands in for the hidden ones. Apple
+ * usually preserves length, but not always, so the run is allowed some slack.
+ */
+const MASK_CHARS = /[*!@#$%]/
+
+export function isMaskedToken(tok: string): boolean {
+  return MASK_CHARS.test(tok) && /[a-z0-9]/i.test(tok)
+}
+
+function maskedTokenPattern(tok: string): RegExp {
+  let out = ''
+  let run = 0
+  const flush = (): void => {
+    if (run) { out += `.{0,${run + 3}}`; run = 0 }
+  }
+  for (const ch of tok) {
+    if (MASK_CHARS.test(ch)) { run++; continue }
+    flush()
+    out += ch.toLowerCase().replace(/[^a-z0-9]/g, '')
+  }
+  flush()
+  return new RegExp(`^${out}$`, 'i')
+}
+
+/** Does a masked want-title match a real candidate title, token for token? */
+export function maskedTitleMatches(want: string, got: string): boolean {
+  const w = want.toLowerCase().split(/\s+/).filter(Boolean)
+  const g = got.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!w.length || g.length < w.length) return false
+  // Slide the want tokens over the candidate: the candidate may carry extra
+  // trailing decoration ("(Remaster)") that the want does not.
+  outer: for (let off = 0; off + w.length <= g.length; off++) {
+    for (let i = 0; i < w.length; i++) {
+      const wt = w[i]
+      const gt = g[off + i].replace(/[^a-z0-9]/gi, '')
+      if (isMaskedToken(wt)) {
+        if (!maskedTokenPattern(wt).test(gt)) continue outer
+      } else if (wt.replace(/[^a-z0-9]/gi, '') !== gt) {
+        continue outer
+      }
+    }
+    return true
+  }
+  return false
+}
+
+/**
+ * Did we knowingly ask for a DIFFERENT EDITION than the row the user clicked?
+ *
+ * True when the title carried a censorship stamp, a remaster stamp, or masked
+ * profanity — all cases where we deliberately search for the song rather than
+ * that exact pressing, so its runtime is no longer a fingerprint. Feature
+ * credits do NOT count: stripping "(feat. X)" still points at the same
+ * recording, and the tight duration guard should keep protecting those.
+ */
+export function editionSubstituted(raw: string): boolean {
+  const t = String(raw || '')
+  if (t.split(/\s+/).some(isMaskedToken)) return true
+  return /\b(amended|explicit|clean(?:ed)?|censored|edited|remaster(?:ed)?)\b/i.test(t)
+}
+
+/**
+ * The query string to SEND a catalogue. Same as searchTitle, minus any masked
+ * token — a catalogue cannot be searched for "N****s", and the remaining words
+ * plus the artist are enough to surface the track. Matching still uses the
+ * full masked title, so the right row is recognised when it comes back.
+ */
+export function searchQueryTitle(raw: string): string {
+  const kept = searchTitle(raw).split(/\s+/).filter((t) => t && !isMaskedToken(t))
+  return kept.join(' ').trim() || searchTitle(raw)
+}
+
+/**
  * The title to SEARCH a catalogue with — the song's name, without edition
  * metadata. Version markers are deliberately preserved: "(Live)" and "(Remix)"
  * name a different recording and the whole wrong-version guard depends on them
@@ -115,7 +194,7 @@ export function rankStreamripCandidates(
     const r = results[i]
     if (r.mediaType !== wantMediaType) continue
     const { title, artist } = parseStreamripDesc(r.desc)
-    if (!recoTitleMatches(wantTitle, title)) continue
+    if (!recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title)) continue
     if (unwantedVersionOf(wantTitle, title)) { rejectedVersions.push(title); continue }
     let score = 2
     if (wantArtist && artist) {
