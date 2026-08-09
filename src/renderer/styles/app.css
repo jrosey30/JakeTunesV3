@@ -907,3 +907,57 @@
 @media (prefers-reduced-motion: reduce) {
   .app-splash-wordmark-img { animation: none; opacity: 1; }
 }
+
+/* ── PageGate v4 (2026-08-09) ──────────────────────────────────────────
+   Replaces the v2/v3 wireframe skeletons. Jake called those "unacceptable";
+   a screen of grey blobs reads as a broken page, and the ghost never quite
+   matched the content that arrived. This states only what's true while
+   waiting: where you are, and that something is happening. */
+.page-gate--v4 {
+  display: flex;
+  align-items: flex-start;
+  padding: 44px 28px;
+  height: 100%;
+  box-sizing: border-box;
+}
+.pg4-inner { max-width: 420px; }
+.pg4-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin-bottom: 5px;
+}
+.pg4-note {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+/* Indeterminate hairline. A travelling segment rather than a percentage,
+   because we genuinely don't know how far along we are — a fake percentage
+   is the same lie the fake cards were. */
+.pg4-bar {
+  position: relative;
+  height: 2px;
+  width: 190px;
+  border-radius: 2px;
+  background: var(--border-subtle, #e2ded6);
+  overflow: hidden;
+}
+.pg4-bar span {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 38%;
+  border-radius: 2px;
+  background: var(--accent, #b3542a);
+  animation: pg4-travel 1.15s ease-in-out infinite;
+}
+@keyframes pg4-travel {
+  0%   { left: -38%; }
+  100% { left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pg4-bar span { animation: none; left: 0; width: 100%; opacity: 0.5; }
+}

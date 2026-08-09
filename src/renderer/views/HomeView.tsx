@@ -29,6 +29,7 @@ import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { getCached, setCached, isWarm } from '../homeCache'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { requestDrillIn } from '../utils/drillIn'
 import { formatAppDate } from '../utils/formatDate'
@@ -107,8 +108,8 @@ export default function HomeView() {
   // 4.4.28: Music News + Notable Releases. Both back-ends share a 1-hour
   // cache in main, so the parallel fetch here is cheap. Null means
   // "still loading"; [] means "loaded but empty".
-  const [news, setNews] = useState<MusicNewsItem[] | null>(null)
-  const [releases, setReleases] = useState<MusicNewsItem[] | null>(null)
+  const [news, setNews] = useState<MusicNewsItem[] | null>(() => getCached('news') ?? null)
+  const [releases, setReleases] = useState<MusicNewsItem[] | null>(() => getCached('releases') ?? null)
   // 30s iTunes preview per New This Week album, fetched on first ▶ press
   // (Jake, 2026-08-07: "a way to preview a song from each of those new
   // albums without leaving that screen"). link → url; null = looked up,
@@ -128,9 +129,9 @@ export default function HomeView() {
     setReleasePreviews((m) => new Map(m).set(item.link, url))
     if (url) togglePreview(item.link, url, item.title, item.artist || '')
   }
-  const [tourDates, setTourDates] = useState<TourDate[] | null>(null)
-  const [venueShows, setVenueShows] = useState<VenueShow[] | null>(null)
-  const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(null)
+  const [tourDates, setTourDates] = useState<TourDate[] | null>(() => getCached('tour') ?? null)
+  const [venueShows, setVenueShows] = useState<VenueShow[] | null>(() => getCached('venues') ?? null)
+  const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(() => getCached('upcoming') ?? null)
   const newsRowRef = useRef<HTMLDivElement>(null)
   const releasesRowRef = useRef<HTMLDivElement>(null)
   const tourDatesRowRef = useRef<HTMLDivElement>(null)
@@ -168,6 +169,19 @@ export default function HomeView() {
     return runs.sort((a, b) => a.ev.date.localeCompare(b.ev.date))
   }, [tourDates])
 
+  // Cache-writing setters: the fetch bodies below are unchanged, they just
+  // now persist what they got so the next visit doesn't have to ask
+  // (2026-08-09, "they appear too often"). See homeCache.ts.
+  const cacheThen = useCallback(<T,>(key: string, set: (v: T) => void) => (v: T) => {
+    setCached(key, v)
+    set(v)
+  }, [])
+
+  // Every lane Home waits on. Named once so `isWarm` and the settle map can't
+  // drift apart — a lane added to one and not the other would either gate
+  // forever or paint half-empty.
+  const HOME_LANES = ['memory', 'rediscovery', 'news', 'releases', 'tour', 'venues', 'upcoming', 'weather'] as const
+
   // ── one-paint gate ────────────────────────────────────────────────────────
   // Home fires six independent fetches (memory, rediscover, news+releases,
   // tour dates, upcoming, weather) and each card used to pop in whenever its
@@ -186,15 +200,21 @@ export default function HomeView() {
     const cap = setTimeout(() => setHomeCapHit(true), 2500)
     return () => clearTimeout(cap)
   }, [])
-  const pageReady = homeCapHit || Object.values(homeSettled).every(Boolean)
+  // A RETURN VISIT PAINTS IMMEDIATELY. `warm` is computed once, before the
+  // first render, so a revisit has real content on frame one and the gate is
+  // never mounted at all — the whole point of the cache (2026-08-09: "they
+  // appear too often"). Cold visits behave exactly as before: hold one
+  // skeleton until the lanes settle, capped at 2.5s.
+  const [warm] = useState(() => isWarm(HOME_LANES))
+  const pageReady = warm || homeCapHit || Object.values(homeSettled).every(Boolean)
 
   // Brain #1 — Listening Memory. One fetch per mount; main computes streaks/
   // habits from the local play log (no network). Null → card hidden.
-  const [memory, setMemory] = useState<ListeningMemoryData | null>(null)
+  const [memory, setMemory] = useState<ListeningMemoryData | null>(() => getCached('memory') ?? null)
   useEffect(() => {
     let cancelled = false
     window.electronAPI.getListeningMemory?.().then((r) => {
-      if (!cancelled && r?.ok && r.insights) setMemory(r as ListeningMemoryData)
+      if (!cancelled) { const v = (r?.ok && r.insights) ? (r as ListeningMemoryData) : null; setCached('memory', v); if (v) setMemory(v) }
     }).catch(() => { /* card just doesn't render */ })
       .finally(() => { if (!cancelled) settleHome('memory') })
     return () => { cancelled = true }
@@ -203,11 +223,11 @@ export default function HomeView() {
   // Brain — Rediscover: owned-but-overlooked artists with Music Man's pitch.
   const rediscoverRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-rediscover', rediscoverRowRef)
-  const [rediscovery, setRediscovery] = useState<RediscoveryPick[] | null>(null)
+  const [rediscovery, setRediscovery] = useState<RediscoveryPick[] | null>(() => getCached('rediscovery') ?? null)
   useEffect(() => {
     let cancelled = false
     window.electronAPI.getRediscovery?.().then((r) => {
-      if (!cancelled && r?.ok && r.picks) setRediscovery(r.picks)
+      if (!cancelled) { const v = (r?.ok && r.picks) ? r.picks : null; setCached('rediscovery', v); if (v) setRediscovery(v) }
     }).catch(() => { /* section just doesn't render */ })
       .finally(() => { if (!cancelled) settleHome('rediscovery') })
     return () => { cancelled = true }
@@ -228,12 +248,11 @@ export default function HomeView() {
           window.electronAPI.getNotableReleases(),
         ])
         if (cancelled) return
-        setNews(n.ok ? n.items : [])
-        setReleases(r.ok ? r.items : [])
+        { const nv = n.ok ? n.items : []; const rv = r.ok ? r.items : []
+          setCached('news', nv); setCached('releases', rv); setNews(nv); setReleases(rv) }
       } catch {
         if (cancelled) return
-        setNews([])
-        setReleases([])
+        { setCached('news', []); setCached('releases', []); setNews([]); setReleases([]) }
       } finally {
         if (!cancelled) settleHome('newsRel')
       }
@@ -245,10 +264,10 @@ export default function HomeView() {
       try {
         const t = await window.electronAPI.getTourDates()
         if (cancelled) return
-        setTourDates(t.ok ? t.dates : [])
+        { const v = t.ok ? t.dates : []; setCached('tour', v); setTourDates(v) }
       } catch {
         if (cancelled) return
-        setTourDates([])
+        { setCached('tour', []); setTourDates([]) }
       } finally {
         if (!cancelled) settleHome('tour')
       }
@@ -260,10 +279,10 @@ export default function HomeView() {
       try {
         const v = await window.electronAPI.getVenueShows()
         if (cancelled) return
-        setVenueShows(v.ok ? v.shows : [])
+        { const vv = v.ok ? v.shows : []; setCached('venues', vv); setVenueShows(vv) }
       } catch {
         if (cancelled) return
-        setVenueShows([])
+        { setCached('venues', []); setVenueShows([]) }
       }
     })()
     // 4.4.34: upcoming releases also runs separately. MusicBrainz
@@ -272,10 +291,10 @@ export default function HomeView() {
       try {
         const u = await window.electronAPI.getUpcomingReleasesPersonal()
         if (cancelled) return
-        setUpcoming(u.ok ? u.items : [])
+        { const uv = u.ok ? u.items : []; setCached('upcoming', uv); setUpcoming(uv) }
       } catch {
         if (cancelled) return
-        setUpcoming([])
+        { setCached('upcoming', []); setUpcoming([]) }
       } finally {
         if (!cancelled) settleHome('upcoming')
       }
@@ -377,11 +396,11 @@ export default function HomeView() {
   // Brooklyn weather (when the API key's configured), and a friendly
   // library-stats line. The greeting cycles by hour to feel less
   // robotic across a long listening day.
-  const [weather, setWeather] = useState<{ tempF: number; condition: string; description: string } | null>(null)
+  const [weather, setWeather] = useState<{ tempF: number; condition: string; description: string } | null>(() => getCached('weather') ?? null)
   useEffect(() => {
     let cancelled = false
     void window.electronAPI.getBrooklynWeather().then(r => {
-      if (!cancelled && r.ok) setWeather(r.weather)
+      if (!cancelled) { const wv = r.ok ? r.weather : null; setCached('weather', wv); if (wv) setWeather(wv) }
     }).catch(() => { /* fall through to date-only header */ })
       .finally(() => { if (!cancelled) settleHome('weather') })
     return () => { cancelled = true }

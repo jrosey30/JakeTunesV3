@@ -1,31 +1,44 @@
 /**
- * PageGate v3 — the loading treatment for whole pages.
+ * PageGate v4 — what you see while a page is still fetching.
  *
- * v2 lesson (Jake, 2026-08-07: "THIS JUST looks so awkward"): a CENTERED
- * title block floating above LEFT-aligned skeleton blobs reads as two
- * layouts fighting. The gate must be a ghost of the INCOMING page — the
- * real title sitting exactly where the page will put it (left, in the
- * hero, beside the photo/cover placeholder), every block on the page's
- * own grid — so the content replaces it in place instead of the whole
- * screen rearranging.
+ * Jake, 2026-08-09: the loading pages "are unacceptable right now. they
+ * appear too often too."
  *
- * Renders NOTHING for the first 280ms: warm loads never show a loading
- * page at all ("only when absolutely necessary").
+ * Both halves are fixed, in different places. TOO OFTEN was structural and
+ * lives in homeCache.ts — Home threw away six fetch results every time you
+ * navigated away, so it re-gated on every visit. With the cache, a return
+ * visit never mounts this component at all.
  *
- * Layouts: 'grid' (artist — round photo + album card row), 'hero'
- * (album — square cover + tracklist rows), 'list' (list pages).
+ * UNACCEPTABLE was this file. v2 and v3 drew a wireframe of the incoming
+ * page: grey rounded blobs for a photo, five card placeholders, six list
+ * rows, all shimmering. The theory was that a ghost of the layout makes
+ * content "replace it in place". In practice a screen of grey rectangles
+ * reads as a BROKEN page, not a loading one — and it lies, because the
+ * ghost's shape rarely matches what actually arrives (five cards when three
+ * come back, a round photo where there's no photo).
+ *
+ * v4 shows only what is TRUE while waiting: where you are, that something is
+ * happening, and nothing else. The real title in its real position, a line of
+ * status, and a hairline indeterminate bar. No fake cards, no fake artwork,
+ * no shimmer. It can't mismatch the incoming page because it isn't pretending
+ * to be it.
+ *
+ * Nothing at all renders for the first 450ms (was 280ms) — anything quicker
+ * than that is better as a beat of stillness than as a flash of chrome.
  */
 import { useEffect, useState } from 'react'
 
 interface PageGateProps {
   title?: string
   note?: string
+  /** Kept for call-site compatibility; v4 renders the same either way. */
   layout?: 'grid' | 'hero' | 'list'
 }
 
-const GATE_DELAY_MS = 280
+/** Below this, a load is better felt than shown. */
+const GATE_DELAY_MS = 450
 
-export default function PageGate({ title, note, layout = 'grid' }: PageGateProps) {
+export default function PageGate({ title, note }: PageGateProps) {
   const [visible, setVisible] = useState(false)
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), GATE_DELAY_MS)
@@ -33,51 +46,12 @@ export default function PageGate({ title, note, layout = 'grid' }: PageGateProps
   }, [])
   if (!visible) return null
   return (
-    <div className={`page-gate page-gate--v3 page-gate--${layout}`} role="status" aria-label="Loading">
-      {layout !== 'list' && (
-        <div className="pg-hero">
-          <div className={`pg-photo pg-shimmer${layout === 'grid' ? ' pg-photo--round' : ''}`} />
-          <div className="pg-hero-text">
-            {title && <div className="page-gate-name">{title}</div>}
-            <div className="pg-sub">
-              <span className="page-gate-eq" aria-hidden="true"><span /><span /><span /><span /><span /></span>
-              {note && <span className="page-gate-note">{note}</span>}
-            </div>
-            <div className="pg-line pg-line--thin pg-shimmer" style={{ width: 180 }} />
-          </div>
-        </div>
-      )}
-      {layout === 'list' && (
-        <div className="pg-list-head">
-          {title && <div className="page-gate-name">{title}</div>}
-          <div className="pg-sub">
-            <span className="page-gate-eq" aria-hidden="true"><span /><span /><span /><span /><span /></span>
-            {note && <span className="page-gate-note">{note}</span>}
-          </div>
-        </div>
-      )}
-      <div className="pg-section pg-shimmer" aria-hidden="true" />
-      {layout === 'grid' && (
-        <div className="pg-row" aria-hidden="true">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="pg-card" style={{ animationDelay: `${i * 80}ms` }}>
-              <div className="pg-card-art pg-shimmer" />
-              <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '78%' }} />
-              <div className="pg-line pg-line--thin pg-shimmer" style={{ width: '46%' }} />
-            </div>
-          ))}
-        </div>
-      )}
-      {layout !== 'grid' && (
-        <div className="pg-list" aria-hidden="true">
-          {Array.from({ length: layout === 'list' ? 6 : 5 }, (_, i) => (
-            <div key={i} className="pg-listrow" style={{ animationDelay: `${i * 60}ms` }}>
-              <div className="pg-dot pg-shimmer" />
-              <div className="pg-line pg-shimmer" style={{ width: `${72 - i * 6}%` }} />
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="page-gate page-gate--v4" role="status" aria-label="Loading">
+      <div className="pg4-inner">
+        {title && <div className="pg4-title">{title}</div>}
+        {note && <div className="pg4-note">{note}</div>}
+        <div className="pg4-bar" aria-hidden="true"><span /></div>
+      </div>
     </div>
   )
 }
