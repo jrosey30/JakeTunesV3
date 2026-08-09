@@ -1066,7 +1066,15 @@ export default function PlaylistView() {
           cap itself: anything past the limit shows greyed on the deck rather
           than vanishing silently. */}
       {mixtapeFrom && mixtapeFrom.length > 0 && (
-        <MixtapeSheet tracks={mixtapeFrom} onClose={() => setMixtapeFrom(null)} />
+        // keepOrder: the running order came from a playlist Jake sequenced
+        // himself, so it goes on the tape exactly as laid out — Music Man
+        // doesn't get to touch it (2026-08-09).
+        <MixtapeSheet
+          tracks={mixtapeFrom}
+          keepOrder
+          initialTitle={playlist.name}
+          onClose={() => setMixtapeFrom(null)}
+        />
       )}
     </div>
   )

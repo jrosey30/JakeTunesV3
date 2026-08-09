@@ -30,6 +30,22 @@ interface Props {
   onClose: () => void
   /** Remix mode: open a saved tape straight on the deck; Save tapes over it. */
   existing?: Mixtape
+  /**
+   * The incoming order is DELIBERATE — don't let Music Man resequence it.
+   *
+   * Jake, 2026-08-09: "the music man should not be switching the order of the
+   * tape. if i turn a playlist into one. i designed that playlist track order
+   * on purpose. he needs to just make it a playlist as the tracks are laid
+   * out."
+   *
+   * Set when a tape is made FROM a playlist (whole or selection). The sheet
+   * then opens straight on the deck with these tracks in this order, and the
+   * sequencing call — the entire reason build() exists — is skipped. He can
+   * still nudge and drop rows by hand; nothing rearranges them for him.
+   */
+  keepOrder?: boolean
+  /** Pre-fills the label — the playlist's name, when that's where this came from. */
+  initialTitle?: string
 }
 
 type Stage = 'setup' | 'building' | 'deck'
@@ -40,20 +56,27 @@ function fmt(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
+export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, initialTitle }: Props) {
   const { state: lib, dispatch } = useLibrary()
-  const [stage, setStage] = useState<Stage>(existing ? 'deck' : 'setup')
+  // keepOrder skips 'setup' too: there's nothing to ask when the running
+  // order is already decided and the songs are already chosen.
+  const [stage, setStage] = useState<Stage>(existing || keepOrder ? 'deck' : 'setup')
   const [dedication, setDedication] = useState(existing?.dedication ?? '')
   const [note, setNote] = useState('')
   const [introPath, setIntroPath] = useState<string | null>(existing?.introPath ?? null)
   const [error, setError] = useState('')
-  const [title, setTitle] = useState(existing?.title ?? '')
+  const [title, setTitle] = useState(existing?.title ?? initialTitle ?? '')
   const [commentary, setCommentary] = useState(existing?.commentary ?? '')
   const [linerNotes, setLinerNotes] = useState<Array<{ id: number; note: string }>>(existing?.linerNotes ?? [])
   // The deck: the tape's running order. ONE list since 2026-08-08 — the
   // A/B split and the minutes budget are gone; the only limit is the song
   // count, applied at the edges so the deck can never exceed it.
-  const [deck, setDeck] = useState<number[]>(() => (existing ? tapeTracks(existing) : []))
+  const [deck, setDeck] = useState<number[]>(() => (
+    existing ? tapeTracks(existing)
+      // AS LAID OUT. Not sorted, not scored, not sequenced.
+      : keepOrder ? tracks.map((t) => t.id)
+        : []
+  ))
 
   const libById = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
   const dur = effectiveDurationFn((id: number) => libById.get(id)?.duration || undefined, existing?.startOffsets)
@@ -257,7 +280,10 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
             {error && <div className="mixsheet-error">{error}</div>}
             <div className="activity-sheet-actions">
               <button type="button" className="activity-btn activity-btn--ghost" onClick={onClose}>Cancel</button>
-              {!existing && (
+              {/* No Re-deal when the order came from a playlist — that
+                  button's whole job is to resequence, which is exactly what
+                  Jake asked it not to do (2026-08-09). */}
+              {!existing && !keepOrder && (
                 <button type="button" className="activity-btn activity-btn--ghost" onClick={() => { void build() }}>Re-deal</button>
               )}
               <button type="button" className="activity-btn activity-btn--go" onClick={() => { void save() }}>
