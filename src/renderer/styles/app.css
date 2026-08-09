@@ -831,39 +831,19 @@
 }
 @keyframes splash-scan-in { to { opacity: 1; } }
 
-/* The click wheel spins up: a light arc sweeps once around the ring. */
-.app-splash-wheel-sweep {
-  position: absolute;
-  left: 50%;
-  top: 63%;
-  width: 104px;
-  height: 104px;
-  margin: -52px 0 0 -52px;
-  border-radius: 50%;
-  pointer-events: none;
-  background: conic-gradient(from 0deg,
-    rgba(255, 250, 225, 0) 0deg,
-    rgba(255, 250, 225, 0.55) 40deg,
-    rgba(255, 250, 225, 0) 90deg);
-  -webkit-mask: radial-gradient(circle, transparent 30px, #000 32px, #000 50px, transparent 52px);
-  mask: radial-gradient(circle, transparent 30px, #000 32px, #000 50px, transparent 52px);
-  opacity: 0;
-  animation: splash-wheel-spin 620ms cubic-bezier(0.3, 0, 0.2, 1) 1150ms forwards;
-}
-@keyframes splash-wheel-spin {
-  0%   { opacity: 0; transform: rotate(0deg); }
-  15%  { opacity: 1; }
-  85%  { opacity: 1; }
-  100% { opacity: 0; transform: rotate(400deg); }
-}
+/* (A .app-splash-wheel-sweep lived here: a light arc that swept the old iPod
+   mark's CLICK WHEEL, pinned to top:63% where that wheel sat. The 2.0 mark is
+   a music note with no wheel, so the arc was sweeping nothing — removed with
+   its keyframes rather than left spinning over the glyph. The note's own light
+   is painted on the canvas now; see SplashScreen.tsx.) */
 
-/* Whole-device bloom at the settle — one warm pulse, then gone. */
+/* Whole-mark bloom at the settle — one warm pulse, then gone. */
 .app-splash-device-glow {
   position: absolute;
   inset: -14%;
   pointer-events: none;
   border-radius: 28%;
-  background: radial-gradient(circle at 50% 45%, rgba(255, 170, 90, 0.30), rgba(255, 170, 90, 0) 62%);
+  background: radial-gradient(circle at 50% 45%, rgba(249, 138, 78, 0.32), rgba(249, 138, 78, 0) 62%);
   opacity: 0;
   animation: splash-device-bloom 700ms ease-out 1400ms forwards;
 }
@@ -884,7 +864,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .app-splash-scanlines,
-  .app-splash-wheel-sweep,
   .app-splash-device-glow { animation: none; opacity: 0; }
   .app-splash--settled .app-splash-canvas { animation: none; }
 }

@@ -1,21 +1,27 @@
 /**
- * 5.0 launch — THE COLD BOOT (2026-08-08).
+ * THE COLD BOOT — retargeted to the 2.0 mark (2026-08-09).
  *
- * Jake shipped a new mark — a pixel-art iPod — and asked for a launch
- * animation "centered around this and more advanced than ever". So the app
- * doesn't fade a logo in; it BOOTS THE DEVICE, and the animation is driven by
- * the logo's own pixels rather than by CSS on a rectangle:
+ * The app doesn't fade a logo in; it powers the mark on, and the animation is
+ * driven by the logo's own pixels rather than by CSS on a rectangle:
  *
  *   0.00s  dark. a single scanline snaps on and expands — CRT/LCD power-on.
- *   0.15s  the iPod ASSEMBLES: the real logo bitmap is read into a canvas and
+ *   0.15s  the mark ASSEMBLES: the real logo bitmap is read into a canvas and
  *          revealed grid-cell by grid-cell on a diagonal sweep. Each cell
  *          IGNITES (a white flash that decays over ~180ms) at the moment it
- *          lands, so the body writes itself on like pixels powering up.
- *   1.05s  the screen backlight blooms — the same olive LCD the toolbar pill
- *          wears — and the J reads as lit rather than printed.
- *   1.25s  the click wheel spins up: a light arc sweeps once around the ring.
+ *          lands, so the tile writes itself on like pixels powering up.
+ *   1.05s  the NOTE lights: a bloom rises off the glyph itself, so the note
+ *          reads as struck-and-ringing rather than printed.
  *   1.45s  settle. the chord blooms (playIntroStinger), the wordmark springs,
  *          the EQ starts dancing, progress runs.
+ *
+ * ⚠️ WHY THE GLYPH IS MEASURED, NOT HARDCODED. The 5.0 version of this file
+ * was written around the OLD mark (a pixel iPod) and carried its anatomy as
+ * magic numbers: a bloom pinned to the rect where that device's SCREEN sat,
+ * and a light arc sweeping its CLICK WHEEL. When the mark became a music note
+ * both aimed at nothing — a cream smudge and a spinning ring floating over
+ * solid orange. So the bloom now finds the glyph at load time by flooding the
+ * outer paper from the border (see markGlyph) and lighting whatever bright
+ * shape is left. Change the logo again and this follows it.
  *
  * WHY CANVAS: a pixel-art mark deserves a pixel-native reveal. Reading the
  * bitmap once and compositing cells is one draw call per frame with no DOM
@@ -42,10 +48,17 @@ const STAGES = [
 // assembly finishes just before it and the settle lands on the bloom.
 const T_POWER_ON = 150     // scanline expand completes
 const T_ASSEMBLE = 1050    // last pixel cell lands
-const T_BACKLIT = 1250     // screen glow full
-const T_WHEEL = 1450       // wheel sweep completes
+const T_LIT = 1250         // the note's bloom reaches full
+const T_SETTLE = 1450      // boot complete, hand off to the settled frame
 const CELL = 9             // reveal grid, CSS px — reads as chunky pixels
 const IGNITE_MS = 190      // per-cell flash decay
+
+/** The dark "screen off" field the mark ignites against, and the tile's own
+ *  corner radius — both measured off the 2.0 art (rounded square, ~1.3% of
+ *  the canvas as outer paper, corner radius ≈ 0.17 of the side). */
+const PLATE_INK = '#261208'
+const PLATE_INSET = 0.013
+const PLATE_RADIUS = 0.17
 
 function getGreeting(): string {
   const h = new Date().getHours()
@@ -59,6 +72,60 @@ function getGreeting(): string {
 function hash01(x: number, y: number): number {
   const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
   return n - Math.floor(n)
+}
+
+interface Glyph { cx: number; cy: number; w: number; h: number }
+
+/**
+ * Where the light part of the mark actually IS, measured off the baked bitmap.
+ *
+ * The logo is a bright glyph on a coloured tile, sitting on white paper. Both
+ * the glyph and the paper are bright, so a plain brightness threshold finds
+ * both. The paper is the part that TOUCHES THE BORDER, though — so flooding
+ * bright pixels inward from every edge marks the paper, and whatever bright
+ * pixels are left over are the glyph. That distinction is topological rather
+ * than positional, which is the whole point: it holds for any mark, at any
+ * size, without knowing what the mark depicts.
+ *
+ * Runs once on load over a 240² buffer, so the flood is trivial.
+ * Returns null when nothing enclosed is bright (a mark with no light glyph),
+ * and the caller simply skips the bloom rather than lighting a guess.
+ */
+function markGlyph(px: Uint8ClampedArray, size: number): Glyph | null {
+  const bright = new Uint8Array(size * size)
+  for (let i = 0; i < size * size; i++) {
+    const o = i * 4
+    const min = Math.min(px[o], px[o + 1], px[o + 2])
+    bright[i] = min > 170 && px[o + 3] > 128 ? 1 : 0
+  }
+  // Flood the outer paper in from the border.
+  const paper = new Uint8Array(size * size)
+  const stack: number[] = []
+  const push = (i: number): void => { if (bright[i] && !paper[i]) { paper[i] = 1; stack.push(i) } }
+  for (let x = 0; x < size; x++) { push(x); push((size - 1) * size + x) }
+  for (let y = 0; y < size; y++) { push(y * size); push(y * size + size - 1) }
+  while (stack.length) {
+    const i = stack.pop() as number
+    const x = i % size, y = (i / size) | 0
+    if (x > 0) push(i - 1)
+    if (x < size - 1) push(i + 1)
+    if (y > 0) push(i - size)
+    if (y < size - 1) push(i + size)
+  }
+  let minX = size, minY = size, maxX = -1, maxY = -1, sx = 0, sy = 0, n = 0
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x
+      if (!bright[i] || paper[i]) continue
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+      sx += x; sy += y; n++
+    }
+  }
+  if (n < size * 2) return null   // no meaningful enclosed glyph
+  return { cx: sx / n, cy: sy / n, w: maxX - minX + 1, h: maxY - minY + 1 }
 }
 
 interface Props {
@@ -104,6 +171,13 @@ export default function SplashScreen({ isReady }: Props) {
       octx.imageSmoothingEnabled = false
       octx.drawImage(img, 0, 0, SIZE, SIZE)
 
+      // Find the glyph now, off the same buffer every frame composites from,
+      // so the bloom can never drift from the art it is lighting.
+      let glyph: Glyph | null = null
+      try {
+        glyph = markGlyph(octx.getImageData(0, 0, SIZE, SIZE).data, SIZE)
+      } catch { glyph = null }   // tainted canvas: skip the bloom, keep the boot
+
       const cols = Math.ceil(SIZE / CELL)
       const rows = Math.ceil(SIZE / CELL)
       // Per-cell arrival time along a diagonal sweep + jitter.
@@ -136,10 +210,10 @@ export default function SplashScreen({ isReady }: Props) {
         if (plateFade < 1) {
           ctx.save()
           ctx.globalAlpha = 1 - plateFade
-          const r = SIZE * 0.19
-          ctx.fillStyle = '#241109'
+          const inset = SIZE * PLATE_INSET
+          ctx.fillStyle = PLATE_INK
           ctx.beginPath()
-          ctx.roundRect(SIZE * 0.06, SIZE * 0.06, SIZE * 0.88, SIZE * 0.88, r)
+          ctx.roundRect(inset, inset, SIZE - inset * 2, SIZE - inset * 2, SIZE * PLATE_RADIUS)
           ctx.fill()
           ctx.restore()
         }
@@ -149,11 +223,11 @@ export default function SplashScreen({ isReady }: Props) {
           const p = t / T_POWER_ON
           const h = Math.max(2, SIZE * 0.88 * p * p)
           const g = ctx.createLinearGradient(0, (SIZE - h) / 2, 0, (SIZE + h) / 2)
-          g.addColorStop(0, 'rgba(233, 64, 2, 0)')
-          g.addColorStop(0.5, `rgba(255, 178, 92, ${0.95 - p * 0.25})`)
-          g.addColorStop(1, 'rgba(233, 64, 2, 0)')
+          g.addColorStop(0, 'rgba(254, 90, 1, 0)')
+          g.addColorStop(0.5, `rgba(255, 149, 92, ${0.95 - p * 0.25})`)
+          g.addColorStop(1, 'rgba(254, 90, 1, 0)')
           ctx.fillStyle = g
-          ctx.fillRect(SIZE * 0.06, (SIZE - h) / 2, SIZE * 0.88, h)
+          ctx.fillRect(SIZE * PLATE_INSET, (SIZE - h) / 2, SIZE * (1 - PLATE_INSET * 2), h)
           raf = requestAnimationFrame(draw)
           return
         }
@@ -179,18 +253,34 @@ export default function SplashScreen({ isReady }: Props) {
           }
         }
 
-        // 3. Backlight bloom over the screen window (upper third of the mark).
-        if (t > T_ASSEMBLE - 120) {
-          const bp = Math.min(1, (t - (T_ASSEMBLE - 120)) / (T_BACKLIT - (T_ASSEMBLE - 120)))
-          const sx = SIZE * 0.30, sy = SIZE * 0.15, sw = SIZE * 0.40, sh = SIZE * 0.28
-          const g = ctx.createRadialGradient(sx + sw / 2, sy + sh / 2, 2, sx + sw / 2, sy + sh / 2, sw)
-          g.addColorStop(0, `rgba(246, 252, 205, ${0.42 * bp})`)
-          g.addColorStop(1, 'rgba(246, 252, 205, 0)')
+        // 3. The note lights. Centred on the glyph the loader measured, and
+        //    reaching a little past it, so the light reads as coming OFF the
+        //    note rather than sitting on top of it. Composited with 'lighter'
+        //    so it brightens the mark instead of washing a pale film over it —
+        //    on a hot orange field a normal-blend cream fill reads as haze.
+        if (glyph && t > T_ASSEMBLE - 120) {
+          const rise = Math.min(1, (t - (T_ASSEMBLE - 120)) / (T_LIT - (T_ASSEMBLE - 120)))
+          // …and ease back out before the handoff. The settled frame is the
+          // bare artwork, so a bloom still at full strength on the last drawn
+          // frame would vanish between one frame and the next — a visible
+          // blink right as the app appears.
+          const fall = 1 - Math.min(1, Math.max(0, (t - T_SETTLE) / 260))
+          const bp = rise * fall
+          const reach = Math.max(glyph.w, glyph.h) * 0.85
+          const g = ctx.createRadialGradient(glyph.cx, glyph.cy, 1, glyph.cx, glyph.cy, reach)
+          g.addColorStop(0, `rgba(255, 244, 214, ${0.5 * bp})`)
+          g.addColorStop(0.45, `rgba(255, 196, 132, ${0.22 * bp})`)
+          g.addColorStop(1, 'rgba(255, 196, 132, 0)')
+          ctx.save()
+          ctx.globalCompositeOperation = 'lighter'
           ctx.fillStyle = g
-          ctx.fillRect(sx - sw * 0.4, sy - sh * 0.5, sw * 1.8, sh * 2.2)
+          ctx.beginPath()
+          ctx.arc(glyph.cx, glyph.cy, reach, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.restore()
         }
 
-        if (t < T_WHEEL + 260) raf = requestAnimationFrame(draw)
+        if (t < T_SETTLE + 260) raf = requestAnimationFrame(draw)
         else { ctx.clearRect(0, 0, SIZE, SIZE); ctx.drawImage(off, 0, 0); setPhase('settled') }
       }
       raf = requestAnimationFrame(draw)
@@ -228,11 +318,13 @@ export default function SplashScreen({ isReady }: Props) {
       <div className="app-splash-bg-glow" />
       <div className="app-splash-inner">
         <div className="app-splash-stage" aria-hidden="true">
-          {/* The device. Canvas paints the assembly; the ring and scanline
-              overlays sit on top so they can bloom independently. */}
+          {/* Canvas paints the assembly and the note's own light; the scanline
+              and halo overlays sit on top so they can bloom independently.
+              (A click-wheel sweep used to live here too — it belonged to the
+              old iPod mark and had nothing to sweep once the mark became a
+              note.) */}
           <canvas ref={canvasRef} className="app-splash-canvas" width={240} height={240} />
           <div className="app-splash-scanlines" />
-          <div className="app-splash-wheel-sweep" />
           <div className="app-splash-device-glow" />
         </div>
         {/* The wordmark IS the logo's wordmark — the same pixels lifted off
