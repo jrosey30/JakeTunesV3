@@ -95,12 +95,20 @@ CARD_LEN = BEAT * 3
 # The payoff word belongs in the BIG type. First pass buried "IPOD" in the
 # subhead under a headline that said "AND IT SYNCS" — the setup was loud and
 # the punchline was quiet.
+# Card 1 is Jake's actual reason, in his words: "it really is because, 'My 2025
+# spotify wrapped was wrong'". That is the hook — it is a thing thousands of
+# people have felt and nobody has done anything about.
 CARDS = [
-    ('I WAS RENTING', 'EVERY SONG I THOUGHT I OWNED.'),
+    ('MY SPOTIFY WRAPPED', 'WAS WRONG. NOT EVEN CLOSE.'),
     ('SO I BUILT MY OWN', 'A WHOLE MUSIC APP. BY MYSELF.'),
-    ('IT MAKES TAPES', 'YOU CANNOT SKIP. FROM THE TOP.'),
+    ('IT MAKES MIXTAPES', 'YOU CANNOT SKIP. FROM THE TOP.'),
     ('AND MY IPOD', 'STILL SYNCS. IN 2026.'),
 ]
+
+# The last line anyone reads. Jake: "JakeTunes: Music For Me, Not For Thee".
+# It also retires "OUT NOW", which this film had no business claiming — and
+# which this line directly contradicts.
+SIGNOFF = 'MUSIC FOR ME, NOT FOR THEE'
 
 rng = np.random.default_rng(20260809)
 
@@ -281,6 +289,62 @@ def add_grain(arr, amount):
     return arr + GRAIN * amount
 
 
+def mark_streak(size, spread, steps=6):
+    """
+    Zoom blur on the mark — several scaled copies stacked with falling weight.
+
+    A slam that is only a scale keyframe reads as a UI transition, not as
+    force; the eye expects the shape to smear along the axis it travelled.
+    spread is the fraction of extra scale at the widest copy.
+    """
+    base = mark_at(size)
+    if spread <= 0.002:
+        return base
+    out = Image.new('RGBA', base.size, (0, 0, 0, 0))
+    for k in range(steps):
+        f = k / (steps - 1)
+        sc = 1.0 + spread * f
+        w = max(2, int(size * sc))
+        c = mark_at(w) if w != size else base
+        a = c.getchannel('A').point(lambda v, f=f: int(v * (1.0 - f) / (steps * 0.5)))
+        c = c.copy()
+        c.putalpha(a)
+        out.alpha_composite(c, ((size - w) // 2, (size - w) // 2))
+    out.alpha_composite(base)
+    return out
+
+
+_LEAKGRID = {}
+
+
+def light_leak(arr, t, strength):
+    """A soft diagonal band drifting across the frame — analog warmth, and it
+    keeps the flat colour fields from reading as dead pixels."""
+    if strength <= 0.001:
+        return arr
+    h, w = arr.shape[:2]
+    key = (w, h)
+    if key not in _LEAKGRID:
+        yy, xx = np.mgrid[0:h, 0:w]
+        _LEAKGRID[key] = (xx * 0.55 + yy * 0.85) / max(w, h)
+    u = _LEAKGRID[key]
+    phase = (t * 0.16) % 1.9 - 0.45
+    band = np.exp(-((u - phase) ** 2) / (2 * 0.13 ** 2))
+    return arr + band[:, :, None] * np.array([255, 196, 132], dtype=np.float64) * strength
+
+
+def gate_weave(arr, t, amp=1.0):
+    """A 1px lateral wander, like film through a gate. Small enough to be felt
+    rather than seen; anything more makes type look unstable."""
+    dx = int(round(np.sin(t * 5.1) * amp + np.sin(t * 11.7) * amp * 0.4))
+    dy = int(round(np.sin(t * 3.7 + 1.1) * amp * 0.6))
+    if dx:
+        arr = np.roll(arr, dx, axis=1)
+    if dy:
+        arr = np.roll(arr, dy, axis=0)
+    return arr
+
+
 def vignette_mask(w, h, strength=0.30):
     yy, xx = np.mgrid[0:h, 0:w]
     d = np.sqrt(((xx - w / 2) / (w / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2)
@@ -301,14 +365,19 @@ def render(t, W, H):
     shake = (0, 0)
     flash = 0.0
     split = 0
+    leak = 0.0
 
     # ── A. the void ────────────────────────────────────────────────────────
     if t < 0.60:
         k = t / 0.60
         pulse = 0.5 + 0.5 * np.sin(t * 20)
         r = S * 0.008 * (1 + 0.35 * pulse)
-        paste_c(img, soft_disc(S * (0.06 + 0.30 * k), ORANGE, 0.30 + 0.22 * pulse, 2.6), cx, cy)
-        d.rectangle([cx - r, cy - r, cx + r, cy + r], fill=(255, 240, 220, 255))
+        # Micro-shake on the sub-bass so the void has scale and tension rather
+        # than sitting perfectly still.
+        jx, jy = np.sin(t * 27) * S * 0.0016, np.cos(t * 21) * S * 0.0016
+        paste_c(img, soft_disc(S * (0.09 + 0.34 * k), ORANGE, 0.16 + 0.20 * pulse, 3.0), cx + jx, cy + jy)
+        paste_c(img, soft_disc(S * (0.035 + 0.05 * pulse), (255, 226, 190), 0.55, 1.6), cx + jx, cy + jy)
+        d.rectangle([cx + jx - r, cy + jy - r, cx + jx + r, cy + jy + r], fill=(255, 244, 228, 255))
 
     # ── B. assembly ────────────────────────────────────────────────────────
     elif t < IMPACT_T:
@@ -341,9 +410,14 @@ def render(t, W, H):
         flash = burst * 0.30
         split = int(max(0, (1 - e / 0.20)) * 12)
         if burst > 0.01:
-            paste_c(img, soft_disc(size * (0.7 + 1.5 * (1 - burst)), (255, 246, 226), burst * 0.85, 1.7),
+            # Two layers: a wide soft bloom and a tight hot core. One layer
+            # alone reads flat — the core is what makes it look like light
+            # rather than a grey circle.
+            paste_c(img, soft_disc(size * (0.9 + 1.7 * (1 - burst)), (255, 246, 226), burst * 0.55, 2.1),
                     cx + shake[0], cy + shake[1])
-        paste_c(img, mark_at(size), cx + shake[0], cy + shake[1])
+            paste_c(img, soft_disc(size * (0.34 + 0.5 * (1 - burst)), (255, 252, 244), burst * 0.9, 1.4),
+                    cx + shake[0], cy + shake[1])
+        paste_c(img, mark_streak(size, max(0.0, (1 - e / 0.13)) * 0.16), cx + shake[0], cy + shake[1])
         if e > 0.28:
             wk = clamp01((e - 0.28) / 0.5)
             wm = pixel_text('JAKETUNES', int(S * 0.115), scale=9, color=PAPER, tracking=1)
@@ -360,13 +434,32 @@ def render(t, W, H):
         e = t - CARD_T[i]
         head, sub = CARDS[i]
         warm = i % 2 == 1
-        if warm:
-            img = Image.new('RGBA', (W, H), ORANGE + (255,))
-            d = ImageDraw.Draw(img)
+        this_bg = ORANGE if warm else INK
+        # Card 1 wipes INK over INK, so without the leading bar its transition
+        # is invisible and the first 0.1s reads as a dropped frame.
+        prev_bg = (ORANGE if (i - 1) % 2 == 1 else INK) if i > 0 else INK
+        # A hard cut on the beat is punchy but reads as a slide change. A FAST
+        # wipe still lands on the beat — it starts on it — and gives the change
+        # a direction. Alternating direction stops it becoming a tic.
+        WIPE = 0.13
+        img = Image.new('RGBA', (W, H), prev_bg + (255,))
+        d = ImageDraw.Draw(img)
+        wp = ease_out(clamp01(e / WIPE), 2.2)
+        if wp >= 1.0:
+            d.rectangle([0, 0, W, H], fill=this_bg + (255,))
+        elif wp > 0:
+            x = W * wp
+            lead = S * 0.022                      # the bar riding the wipe edge
+            if i % 2 == 0:
+                d.rectangle([0, 0, x, H], fill=this_bg + (255,))
+                d.rectangle([x - lead, 0, x, H], fill=(ORANGE if not warm else PAPER) + (255,))
+            else:
+                d.rectangle([W - x, 0, W, H], fill=this_bg + (255,))
+                d.rectangle([W - x, 0, W - x + lead, H], fill=(ORANGE if not warm else PAPER) + (255,))
         fg = INK if warm else PAPER
         accent = PAPER if warm else ORANGE
-        # a rule wipes across before the words land
-        rw = ease_out(clamp01(e / 0.30), 2.4)
+        # the rule draws only once the wipe has cleared, or it rides the seam
+        rw = ease_out(clamp01((e - WIPE) / 0.26), 2.4)
         d.rectangle([cx - S * 0.40, cy - S * 0.20, cx - S * 0.40 + S * 0.80 * rw, cy - S * 0.20 + 6],
                     fill=accent + (255,))
         hk = clamp01((e - 0.10) / 0.34)
@@ -384,7 +477,7 @@ def render(t, W, H):
         # ticking counter of the card index, small, bottom
         cnt = smooth_text(f'{i + 1} / 4', int(S * 0.026), accent, AVENIR_HEAVY, tracking=S * 0.004)
         paste_c(img, cnt, cx, H * 0.86, 0.85)
-        flash = max(0.0, 1 - e / 0.07) ** 2 * (0.5 if e < 0.07 else 0)
+        leak = 0.055
 
     # ── F. the hush ────────────────────────────────────────────────────────
     elif t < ARRIVE_T:
@@ -417,20 +510,20 @@ def render(t, W, H):
         if burst > 0.01:
             paste_c(img, soft_disc(size * (0.8 + 1.3 * (1 - burst)), ORANGE_LIGHT, burst * 0.75, 1.8),
                     cx + shake[0], cy + shake[1])
-        paste_c(img, mark_at(size), cx + shake[0], cy + shake[1])
+        paste_c(img, mark_streak(size, max(0.0, (1 - e / 0.15)) * 0.18), cx + shake[0], cy + shake[1])
+        # Slow counter-parallax on the type. A five-second hold that is
+        # perfectly still stops reading as a held shot and starts reading as a
+        # frozen render.
+        drift = min(1.0, max(0.0, (e - 0.3) / 5.0))
         wk = clamp01((e - 0.30) / 0.55)
         if wk > 0:
             wm = pixel_text('JAKETUNES', int(S * 0.128), scale=10, color=INK, tracking=1)
-            paste_c(img, wm, cx, cy + size * 0.70 + (1 - ease_out(wk)) * 46, ease_out(wk))
+            paste_c(img, wm, cx, cy + size * 0.70 + (1 - ease_out(wk)) * 46 - drift * S * 0.010, ease_out(wk))
         tk = clamp01((e - 0.75) / 0.6)
         if tk > 0:
-            tag = smooth_text('THE GREATEST MUSIC PLATFORM EVER BUILT',
-                              int(S * 0.031), (120, 112, 102), AVENIR_HEAVY, tracking=S * 0.0046)
-            paste_c(img, tag, cx, cy + size * 0.70 + S * 0.105, ease_out(tk))
-        hk = clamp01((e - 1.5) / 0.7)
-        if hk > 0:
-            hd = smooth_text('OUT NOW', int(S * 0.044), ORANGE, AVENIR_HEAVY, tracking=S * 0.012)
-            paste_c(img, hd, cx, H * 0.845, ease_out(hk) * (0.75 + 0.25 * np.sin(e * 3)))
+            tag = smooth_text(SIGNOFF, int(S * 0.034), (120, 112, 102), AVENIR_HEAVY, tracking=S * 0.0046)
+            paste_c(img, fit_width(tag, int(W * 0.88)), cx,
+                    cy + size * 0.70 + S * 0.105 + drift * S * 0.012, ease_out(tk))
         if e > 5.0:                                    # tail to paper
             pass
 
@@ -441,8 +534,10 @@ def render(t, W, H):
     if flash > 0:
         tgt = np.array(PAPER if on_paper else (255, 250, 240), dtype=np.float64)
         arr = arr * (1 - flash) + tgt * flash
-    arr *= vignette_mask(W, H, 0.34 if not on_paper else 0.12)
+    arr = light_leak(arr, t, leak)
+    arr *= vignette_mask(W, H, 0.34 if not on_paper else 0.16)
     arr = add_grain(arr, 3.2 if not on_paper else 2.0)
+    arr = gate_weave(arr, t, 1.0)
     # last 1.0s: fade out, matching the score's tail
     if t > DUR - 1.0:
         k = (t - (DUR - 1.0)) / 1.0

@@ -36,10 +36,22 @@ back OUT of the encoded mp4 rather than trusting the renderer.
 
 ### Copy — a story, not statistics
 
-    I WAS RENTING      EVERY SONG I THOUGHT I OWNED.
-    SO I BUILT MY OWN  A WHOLE MUSIC APP. BY MYSELF.
-    IT MAKES TAPES     YOU CANNOT SKIP. FROM THE TOP.
-    AND MY IPOD        STILL SYNCS. IN 2026.
+    MY SPOTIFY WRAPPED  WAS WRONG. NOT EVEN CLOSE.
+    SO I BUILT MY OWN   A WHOLE MUSIC APP. BY MYSELF.
+    IT MAKES MIXTAPES   YOU CANNOT SKIP. FROM THE TOP.
+    AND MY IPOD         STILL SYNCS. IN 2026.
+
+and it signs off:
+
+    JAKETUNES
+    MUSIC FOR ME, NOT FOR THEE
+
+Card 1 is Jake's real reason, in his words: "it really is because, 'My 2025
+spotify wrapped was wrong'". That is the hook — thousands of people have felt
+exactly that and nobody has done anything about it.
+
+The sign-off also retired "OUT NOW", which this film had no business claiming
+and which "not for thee" directly contradicts.
 
 Jake: "i would not mention 9205 songs or the amount of songs because it changes
 so fast. it should basically be a high level overview of why i built it. i want
@@ -54,6 +66,37 @@ subhead — setup loud, joke quiet).
 
 Every claim is true of the app as built. Change them in `CARDS` at the top of
 `make-film.py` and re-run — one edit, two minutes.
+
+### The cinematic pass — and where the notes came from
+
+Jake: "use grok api or chat gpt api to make that video more cinematic."
+
+The xAI key has been dead since 2026-05-25, and the OpenAI key on this machine
+reaches no video model — so neither API can RENDER anything here. What one can
+do is DIRECT. A contact sheet of twelve frames plus the structure went to
+gpt-4.1 with a brief asking for the six highest-leverage changes, restricted to
+things expressible as per-frame drawing (no footage, no 3D, no stock). All six
+came back concrete and all six are implemented:
+
+1. **Zoom blur on the slams** (`mark_streak`) — several scaled copies stacked
+   with falling weight, 16-18% spread decaying over ~0.14s. A slam that is only
+   a scale keyframe reads as a UI transition, not as force.
+2. **Two-layer burst** — a wide soft bloom plus a tight hot core. One layer
+   alone reads as a grey circle rather than light.
+3. **Directional wipes between cards**, 0.13s, alternating direction, with a
+   bright bar riding the wipe edge. The bar is not decoration: card 1 wipes INK
+   over INK, so without it that transition is invisible and the first 0.1s reads
+   as a dropped frame.
+4. **Gate weave** — a 1px lateral wander across the whole film. Small enough to
+   be felt rather than seen; more than that makes type look unstable.
+5. **Bloom and micro-shake on the void pixel**, synced to the sub-bass, so the
+   opening has scale and tension instead of sitting perfectly still.
+6. **Counter-parallax on the final type** — the wordmark drifts up, the sign-off
+   drifts down, ~10px over five seconds. A perfectly still five-second hold
+   stops reading as a held shot and starts reading as a frozen render.
+
+Plus a drifting light leak under the statement cards, which keeps the flat
+colour fields from reading as dead pixels.
 
 ### Why this one is DRAWN, not captured
 
