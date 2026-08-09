@@ -1,11 +1,15 @@
 /**
  * MixtapeView — the cassette itself. Shell + rotating spools + the
  * handwritten label, then the unfolded J-card: dedication, Music Man's
- * blurb, Side A / Side B tracklists with liner-note scribbles.
+ * blurb, ONE tracklist with liner-note scribbles.
  *
- * Play Tape: Jake's 1979 intro first (if recorded), then Side A → Side B
- * strictly in order through the normal playback queue. The side indicator
- * and spool animation follow the live playback state.
+ * 2026-08-08: no more Side A / Side B. A tape is one sequence of at most 25
+ * songs, merged into one gapless file that plays start to finish. Tapes Jake
+ * recorded under the two-sided rules are grandfathered — read through
+ * tapeTracks(), played song-by-song, and still dubbed as two sides, because
+ * that is physically what they are.
+ *
+ * Play Tape: Jake's 1979 intro first (if recorded), then the tape.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
@@ -17,6 +21,7 @@ import MixtapeSheet from '../components/MixtapeSheet'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
 import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import { effectiveDurationFn, tapeTracks } from '../../common/tape-physics'
+import { cueIndexAt } from '../liveSets'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -92,7 +97,6 @@ export default function MixtapeView() {
   // renderer and the rename would just quietly not happen.
   const [renaming, setRenaming] = useState<string | null>(null)
   const [remixing, setRemixing] = useState(false)
-  const [pickedSide, setPickedSide] = useState<'A' | 'B'>('A')
   const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([])
   useEffect(() => {
     window.electronAPI.listMixtapeVoices?.().then((r) => { if (r?.ok) setVoices(r.voices) }).catch(() => {})
@@ -132,7 +136,7 @@ export default function MixtapeView() {
   // (playback pauses), the spools accelerate 8x→32x, the deck squeals,
   // and the counter races. Release and playback drops in wherever the
   // ribbon landed — mid-song, next song, wherever. One ribbon.
-  const [winding, setWinding] = useState<null | { dir: 1 | -1; side: 'A' | 'B'; usedMs: number }>(null)
+  const [winding, setWinding] = useState<null | { dir: 1 | -1; usedMs: number }>(null)
   const windTimer = useRef<number | null>(null)
   const windMeta = useRef<{ wasPlaying: boolean; startedAt: number }>({ wasPlaying: false, startedAt: 0 })
   // Leaving the view mid-wind: kill the motor (mirrors start, house rule).
@@ -272,12 +276,15 @@ export default function MixtapeView() {
         talkovers: (tape.talkovers || []).filter((tv) => tv.side === label).map((tv) => ({ atMs: tv.atMs, path: tv.path })),
         introPath: label === 'A' ? tape.introPath : undefined,
       })
+      // A tape made under the 2026-08-08 rules is one continuous run, so it
+      // dubs as ONE file. A grandfathered two-sided tape still dubs as two,
+      // because that's physically what it is.
+      const twoSided = !Array.isArray(tape.tracks) && (tape.sideA.length > 0 || tape.sideB.length > 0)
       const r = await window.electronAPI.dubMixtape?.({
         title: tape.title,
-        sides: [
-          mkSide('A', sideATracks, tape.sideACutMs),
-          mkSide('B', sideBTracks, tape.sideBCutMs),
-        ],
+        sides: twoSided
+          ? [mkSide('A', sideATracks, tape.sideACutMs), mkSide('B', sideBTracks, tape.sideBCutMs)]
+          : [mkSide('A', allTracks, undefined)],
       })
       setDubNotice(r?.ok
         ? `Dubbed to Desktop → JakeTunes Dubs → ${tape.title}. Play a side out the headphone jack, hold REC on the real deck.`
@@ -309,35 +316,49 @@ export default function MixtapeView() {
 
   const ink = tape.inkColor || pickInk(tape.id)
   const currentId = pb.nowPlaying?.id
-  const onSideA = currentId != null && tape.sideA.includes(currentId)
-  const onSideB = currentId != null && tape.sideB.includes(currentId)
-  const tapeActive = introPlaying || ((onSideA || onSideB) && pb.isPlaying)
-  const side: 'A' | 'B' | null = introPlaying ? 'A' : onSideA ? 'A' : onSideB ? 'B' : null
+  // A merged tape plays as ONE synthetic track, so "is this tape playing?"
+  // is answered by that id; an old or not-yet-merged tape still plays song
+  // by song, so both shapes are checked (2026-08-08).
+  const mergedNowId = tape.mergedPath ? -Math.abs(hashTapeId(tape.id)) : null
+  const onThisTape = currentId != null
+    && (currentId === mergedNowId || tapeTracks(tape).includes(currentId))
+  const tapeActive = introPlaying || (onThisTape && pb.isPlaying)
+  // The spools spin; there is no side to letter any more.
+  const side: 'A' | 'B' | null = tapeActive ? 'A' : null
+  // Which SONG is under the head — from the merged tape's cues when it is
+  // playing as one file, otherwise just the playing track.
+  const nowSongId = (() => {
+    if (currentId !== mergedNowId) return currentId
+    const cues = tape.mergedCues
+    if (!cues?.length) return null
+    // cueIndexAt, not a second copy of it — see the note on that function.
+    const i = cueIndexAt(cues, pb.position * 1000)
+    return i < 0 ? null : cues[i].trackId
+  })()
   const effDur = effectiveDurationFn((id) => byId.get(id)?.duration || undefined, tape.startOffsets)
-  const durA = sideATracks.reduce((s, t) => s + effDur(t.id), 0)
-  const durB = sideBTracks.reduce((s, t) => s + effDur(t.id), 0)
-  const sideBudget = (tape.tapeLength / 2) * 60_000
+  const tapeDur = allTracks.reduce((s, t) => s + effDur(t.id), 0)
 
-  const renderSide = (label: 'A' | 'B', tracks: Track[], startIdx: number, dur: number, cutMs?: number) => (
+  // ONE tracklist — the J-card no longer splits at a flip (2026-08-08).
+  // The merged-tape song, if one is playing, is resolved from cues rather
+  // than from nowPlaying (which is the tape itself).
+  const renderTracklist = () => (
     <div className="jcard-side">
       <div className="jcard-side-head">
-        <span className="jcard-side-label" style={{ color: ink }}>SIDE {label}</span>
-        <span className="jcard-side-time">{cutMs ? `full — ${fmt(sideBudget)}` : `${fmt(dur)} of ${fmt(sideBudget)}`}</span>
+        <span className="jcard-side-label" style={{ color: ink }}>THE TAPE</span>
+        <span className="jcard-side-time">{allTracks.length} song{allTracks.length === 1 ? '' : 's'} · {fmt(tapeDur)}</span>
       </div>
-      {tracks.map((t, i) => {
-        const isNow = currentId === t.id
-        const isCut = !!cutMs && i === tracks.length - 1
+      {allTracks.map((t, i) => {
+        const isNow = nowSongId === t.id
         return (
           <div key={t.id} className={`jcard-row${isNow ? ' jcard-row--now' : ''}`}>
             <span className="jcard-row-num">{i + 1}.</span>
             <span className="jcard-row-title">{t.title}</span>
             <span className="jcard-row-artist">{t.artist}</span>
-            <span className="jcard-row-time">{isCut ? fmt(cutMs!) : fmt(effDur(t.id))}</span>
+            <span className="jcard-row-time">{fmt(effDur(t.id))}</span>
             {(tape.startOffsets?.[String(t.id)] || 0) > 0 && (
               <span className="jcard-row-note" style={{ color: ink }}>picked up mid-song — from {fmt(tape.startOffsets![String(t.id)])}</span>
             )}
             {notes.has(t.id) && <span className="jcard-row-note" style={{ color: ink }}>{notes.get(t.id)}</span>}
-            {isCut && <span className="jcard-row-note jcard-row-cut" style={{ color: ink }}>— tape runs out at {fmt(cutMs!)}. too bad.</span>}
           </div>
         )
       })}
@@ -358,7 +379,7 @@ export default function MixtapeView() {
   return (
     <div className="mixtape-view" ref={mixPageRef}>
       <div className="mixtape-hero">
-        <CassetteSvg title={tape.title} ink={ink} lengthLabel={`C${tape.tapeLength}`} spinning={tapeActive} side={side} wind={winding?.dir} />
+        <CassetteSvg title={tape.title} ink={ink} lengthLabel={`${allTracks.length} songs`} spinning={tapeActive} side={side} wind={winding?.dir} />
         <div className="mixtape-hero-info">
           {renaming !== null ? (
             <input
@@ -386,24 +407,19 @@ export default function MixtapeView() {
             const loaded = deckState?.mixtapeId === tape.id
             const armed = loaded && !!deckState?.recArmed
             const micOn = loaded && !!deckState?.micOn
-            const resumeSide: 'A' | 'B' = tape.sideACutMs !== undefined ? 'B' : 'A'
             const load = (over: { recArmed?: boolean; micOn?: boolean; micVoiceId?: string }) => {
               const cur = getDeckState()
               if (cur?.mixtapeId === tape.id) setDeckState({ ...cur, ...over })
-              else setDeckState({ mixtapeId: tape.id, side: resumeSide, recArmed: false, micOn: false, ...over })
+              else setDeckState({ mixtapeId: tape.id, recArmed: false, micOn: false, ...over })
             }
-            const currentOnTape = currentId != null && (tape.sideA.includes(currentId) || tape.sideB.includes(currentId))
+            // "On the tape" covers both playback shapes: the merged tape
+            // (nowPlaying IS the tape) and a per-song queue (old/unmerged).
+            const currentOnTape = currentId != null
+              && (currentId === mergedNowId || tapeTracks(tape).includes(currentId))
             const pressPlay = () => {
               if (armed) { if (!pb.isPlaying && pb.nowPlaying) togglePlayPause(); return }
-              // resume only if the current song is on the PICKED side
-              const pickedIds = pickedSide === 'A' ? tape.sideA : tape.sideB
-              if (currentOnTape && currentId != null && pickedIds.includes(currentId)) {
-                if (!pb.isPlaying) togglePlayPause()
-                return
-              }
-              if (pickedSide === 'A') { playTape(); return }
-              // flip to Side B: skip the intro, start at B's first slot
-              startQueueAt(sideATracks.length)
+              if (currentOnTape) { if (!pb.isPlaying) togglePlayPause(); return }
+              playTape()
             }
             // SPOOL WIND — hold FF/REW and the tape WINDS (Jake: "like an
             // actual tape... thats how old mixtapes merge with each other").
@@ -413,23 +429,22 @@ export default function MixtapeView() {
             const WIND_TICK = 90
             const startWind = (dir: 1 | -1) => {
               if (armed || winding) return
-              const side = counter.side
-              const ids = side === 'A' ? tape.sideA : tape.sideB
-              const sideTotal = ids.reduce((s, id) => s + effDur(id), 0)
-              if (sideTotal <= 0) return
+              // Winds the WHOLE tape now — one ribbon, no sides (2026-08-08).
+              const tapeTotal = allTracks.reduce((sum, t) => sum + effDur(t.id), 0)
+              if (tapeTotal <= 0) return
               windMeta.current = { wasPlaying: pb.isPlaying, startedAt: Date.now() }
               if (pb.isPlaying) togglePlayPause()
               startWindSound()
-              setWinding({ dir, side, usedMs: counter.usedMs })
-              setWindDisplay({ side, posMs: counter.usedMs })
+              setWinding({ dir, usedMs: counter.elapsedMs })
+              setWindDisplay({ posMs: counter.elapsedMs })
               windTimer.current = window.setInterval(() => {
                 setWinding((w) => {
                   if (!w) return w
                   const held = (Date.now() - windMeta.current.startedAt) / 1000
                   const speed = Math.min(32, 8 * Math.pow(2, held))
                   const next = w.usedMs + w.dir * speed * WIND_TICK
-                  const clamped = Math.max(0, Math.min(sideTotal - 1500, next))
-                  setWindDisplay({ side: w.side, posMs: clamped })
+                  const clamped = Math.max(0, Math.min(tapeTotal - 1500, next))
+                  setWindDisplay({ posMs: clamped })
                   return { ...w, usedMs: clamped }
                 })
               }, WIND_TICK)
@@ -439,10 +454,10 @@ export default function MixtapeView() {
               if (windTimer.current != null) { clearInterval(windTimer.current); windTimer.current = null }
               stopWindSound()
               setWindDisplay(null)
-              const { side, usedMs } = winding
+              const { usedMs } = winding
               setWinding(null)
               const durOfId = (id: number) => byId.get(id)?.duration || undefined
-              const tgt = spoolTarget(tape, side, usedMs, 0, durOfId)
+              const tgt = spoolTarget(tape, usedMs, 0, durOfId)
               if (!tgt) return
               if (currentId === tgt.trackId) {
                 const durMs = byId.get(tgt.trackId)?.duration || 0
@@ -451,8 +466,7 @@ export default function MixtapeView() {
                 return
               }
               // landed past a splice: drop in mid-song on that slot
-              const all = [...sideATracks, ...sideBTracks]
-              const idx = all.findIndex((t) => t.id === tgt.trackId)
+              const idx = allTracks.findIndex((t) => t.id === tgt.trackId)
               if (idx < 0) return
               setPendingTapeSeek({ trackId: tgt.trackId, seekMs: tgt.fileSeekMs })
               startQueueAt(idx)
@@ -461,43 +475,31 @@ export default function MixtapeView() {
             // The counter window — how much tape is left on this side,
             // rolling live while the tail song records or plays.
             const counter = liveTapeCounter(
-              tape,
-              loaded && armed ? deckState!.side : pickedSide,
-              currentId, pb.position, pb.isPlaying,
-              (id) => byId.get(id)?.duration || undefined,
+              tape, currentId, pb.position, pb.isPlaying,
+              (id: number) => byId.get(id)?.duration || undefined,
             )
-            // Playback shows MUSIC left; recording shows TAPE left.
-            const displayLeft = armed ? counter.leftMs : Math.max(0, counter.contentMs - counter.usedMs)
+            const displayLeft = Math.max(0, counter.totalMs - counter.elapsedMs)
             return (
               <>
                 <div className="faceplate">
-                  <div className="fp-sides">
-                    {(['A', 'B'] as const).map((sd) => (
-                      <button key={sd} type="button"
-                        className={`fp-side-tab${(counter.side === sd) ? ' is-on' : ''}`}
-                        onClick={() => setPickedSide(sd)}
-                        title={`Flip the tape to Side ${sd} — PLAY plays this side`}
-                      >{sd}</button>
-                    ))}
-                  </div>
+                  {/* The A/B tabs are gone — a tape is one sequence now, so
+                      there is nothing to flip to (2026-08-08). */}
                   <div className={`fp-counter${rolling || winding ? ' fp-counter--rolling' : ''}`}
-                    title="Tape left on this side — rolls while you record">
-                    <span className="fp-counter-side">SIDE {winding ? winding.side : counter.side}</span>
+                    title="How much tape is on this reel — rolls while you record">
+                    <span className="fp-counter-side">{counter.songs}/{counter.maxSongs}</span>
                     <span className="fp-counter-digits">
                       {winding
-                        ? fmt(Math.max(0, sideBudget - winding.usedMs))
-                        : armed
-                          ? (counter.leftMs <= 0 ? 'FULL' : fmt(counter.leftMs))
-                          : pb.isPlaying && currentOnTape
-                            ? fmt(displayLeft)
-                            : fmt(counter.contentMs)}
+                        ? fmt(winding.usedMs)
+                        : pb.isPlaying && currentOnTape
+                          ? fmt(displayLeft)
+                          : fmt(counter.totalMs)}
                     </span>
                     <span className="fp-counter-sub">
                       {winding
                         ? (winding.dir > 0 ? '›› winding' : '‹‹ winding')
-                        : armed
-                          ? (counter.leftMs <= 0 ? 'tape over it' : 'tape left')
-                          : pb.isPlaying && currentOnTape ? 'left' : 'of music'}
+                        : counter.songsLeft === 0
+                          ? 'tape full'
+                          : pb.isPlaying && currentOnTape ? 'left' : `${counter.songsLeft} more fit`}
                     </span>
                   </div>
                   <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => { mechanicalSound('rec'); load({ recArmed: !armed }) }}
@@ -564,7 +566,7 @@ export default function MixtapeView() {
               {merging ? (mergeNotice || 'Merging…') : tape.mergedPath ? 'Re-merge the tape' : 'Merge into one gapless file'}
             </button>
             <span>·</span>
-            <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Making the files…' : 'Make Side A + B files for a REAL cassette deck'}</button>
+            <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Making the file…' : 'Make a file for a REAL cassette deck'}</button>
             <span>·</span>
             <button className="mixtape-link" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
@@ -574,8 +576,7 @@ export default function MixtapeView() {
       </div>
 
       <div className="jcard">
-        {renderSide('A', sideATracks, 0, durA, tape.sideACutMs)}
-        {renderSide('B', sideBTracks, sideATracks.length, durB, tape.sideBCutMs)}
+        {renderTracklist()}
       </div>
 
       {remixing && (

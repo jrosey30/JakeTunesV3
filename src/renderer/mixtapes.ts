@@ -64,7 +64,9 @@ export function getTapeSession(): TapeSession | null {
 // That's how mixtapes are made.
 export interface DeckState {
   mixtapeId: string
-  side: 'A' | 'B'
+  /** Legacy (two-sided era). A tape is one sequence now; nothing branches
+   *  on this any more, it is kept so old persisted deck state still parses. */
+  side?: 'A' | 'B'
   recArmed: boolean
   /** MIC switch: on = mic is live/ready; it only records onto the tape
    *  while REC is also down (Jake's rule). */
@@ -91,112 +93,80 @@ export function getDeckState(): DeckState | null {
  * flips A→B, stops when the tape is full. Persists once. Returns a
  * human sentence for the notice.
  */
-import { fitSide, effectiveDurationFn } from '../common/tape-physics'
+import { fitSide, effectiveDurationFn, tapeTracks, MAX_TAPE_SONGS } from '../common/tape-physics'
 
 export async function layOnDeck(
   trackIds: number[],
-  durOf: (id: number) => number | undefined,
+  _durOf: (id: number) => number | undefined,
 ): Promise<string> {
   const deck = deckState
   if (!deck) return 'No tape in the deck.'
   const tape = cache.find((m) => m.id === deck.mixtapeId)
   if (!tape) return 'No tape in the deck.'
-  const budget = (tape.tapeLength / 2) * 60_000
-  const effDur = effectiveDurationFn(durOf, tape.startOffsets)
-  let sideA = [...tape.sideA]
-  let sideB = [...tape.sideB]
-  let cutA = tape.sideACutMs
-  let cutB = tape.sideBCutMs
-  let side: 'A' | 'B' = deck.side
+  // 2026-08-08: songs append to ONE sequence and the tape is full at
+  // MAX_TAPE_SONGS. The old version threaded a minutes budget across two
+  // sides, pulled songs forward from B while A rolled, and cut the boundary
+  // song — all of that belonged to the cassette-time model Jake retired.
+  const current = tapeTracks(tape)
+  const have = new Set(current)
+  const next: number[] = [...current]
   let laid = 0
   for (const id of trackIds) {
-    // Linear tape: recorded territory skips; a song merely PLANNED for
-    // side B while A is still rolling gets pulled forward to the head.
-    if (side === 'A') {
-      if (sideA.includes(id)) continue
-      if (sideB.includes(id)) {
-        sideB = sideB.filter((x) => x !== id)
-        const refitB = fitSide(sideB, effDur, budget)
-        sideB = refitB.ids; cutB = refitB.cutMs
-      }
-    } else if (sideA.includes(id) || sideB.includes(id)) continue
-    const tryside = (which: 'A' | 'B'): boolean => {
-      const cur = which === 'A' ? sideA : sideB
-      const cut = which === 'A' ? cutA : cutB
-      if (cut !== undefined) return false
-      const fit = fitSide([...cur, id], effDur, budget)
-      if (!fit.ids.includes(id)) return false
-      if (which === 'A') { sideA = fit.ids; cutA = fit.cutMs } else { sideB = fit.ids; cutB = fit.cutMs }
-      return true
-    }
-    let ok = tryside(side)
-    if (!ok && side === 'A') { ok = tryside('B'); if (ok) side = 'B' }
-    if (!ok) break
+    if (have.has(id)) continue
+    if (next.length >= MAX_TAPE_SONGS) break
+    next.push(id)
+    have.add(id)
     laid++
-    if ((side === 'A' ? cutA : cutB) !== undefined && side === 'A') side = 'B'
   }
-  if (laid === 0) return 'Tape full — nothing landed.'
-  const next = { ...tape, sideA, sideB, sideACutMs: cutA, sideBCutMs: cutB }
-  await window.electronAPI.saveMixtape?.(next)
+  if (laid === 0) {
+    return next.length >= MAX_TAPE_SONGS
+      ? `Tape full — ${MAX_TAPE_SONGS} songs is the whole tape.`
+      : 'Already on the tape.'
+  }
+  await window.electronAPI.saveMixtape?.({ ...tape, tracks: next } as Mixtape)
   await refreshMixtapes()
-  setDeckState({ ...deck, side })
   const skipped = trackIds.length - laid
-  return `${laid} song${laid === 1 ? '' : 's'} laid on the tape${skipped > 0 ? ` — tape ran out, ${skipped} didn't fit` : ''}.`
+  return `${laid} song${laid === 1 ? '' : 's'} laid on the tape`
+    + (skipped > 0 ? ` — ${skipped} didn't fit (${MAX_TAPE_SONGS} max).` : '.')
 }
 
 /**
  * The tape counter — ONE calculation for every display (faceplate window,
- * deck strip). Committed songs count whole (effective, offset-aware); the
- * side's TAIL song rolls live with the playhead, so time-left ticks down
- * second by second while recording (or while playing the tape's tail).
+ * deck strip).
+ *
+ * 2026-08-08: a tape's limit is a SONG COUNT now, not minutes, so the
+ * counter reports songs used / left out of MAX_TAPE_SONGS alongside the
+ * running time. There is no side, no budget to run out of mid-song, and no
+ * boundary cut. Runtime still ticks live with the playhead — the reels
+ * turning is the point ("THAT CLOCK NEEDS TO COUNTDOWN!!!") — it just isn't
+ * counting against a deadline any more.
  */
 export function liveTapeCounter(
   tape: Mixtape,
-  activeSide: 'A' | 'B',
   nowId: number | null | undefined,
   positionSec: number,
   isPlaying: boolean,
   durOf: (id: number) => number | undefined,
-): { side: 'A' | 'B'; leftMs: number; usedMs: number; budgetMs: number; contentMs: number; cutCountdown: boolean } {
-  const budgetMs = (tape.tapeLength / 2) * 60_000
+): { songs: number; songsLeft: number; maxSongs: number; totalMs: number; elapsedMs: number } {
   const effDur = effectiveDurationFn(durOf, tape.startOffsets)
-  // contentMs = how much MUSIC is on the side. Playback displays count
-  // against this (Jake: last track can't have "a lot of time left");
-  // recording counts against budgetMs — the blank tape is real there.
-  const contentFor = (side: 'A' | 'B') => {
-    const ids = side === 'A' ? tape.sideA : tape.sideB
-    const cut = side === 'A' ? tape.sideACutMs : tape.sideBCutMs
-    return cut !== undefined ? budgetMs : fitSide(ids, effDur, budgetMs).usedMs
+  const ids = tapeTracks(tape)
+  const totalMs = ids.reduce((sum, id) => sum + effDur(id), 0)
+  const base = {
+    songs: ids.length,
+    songsLeft: Math.max(0, MAX_TAPE_SONGS - ids.length),
+    maxSongs: MAX_TAPE_SONGS,
+    totalMs,
   }
-  const staticFor = (side: 'A' | 'B') => {
-    const used = contentFor(side)
-    return { side, leftMs: Math.max(0, budgetMs - used), usedMs: used, budgetMs, contentMs: contentFor(side), cutCountdown: false }
-  }
-  if (isPlaying && nowId != null) {
-    for (const cfg of [
-      { side: 'A' as const, ids: tape.sideA, cut: tape.sideACutMs },
-      { side: 'B' as const, ids: tape.sideB, cut: tape.sideBCutMs },
-    ]) {
-      const idx = cfg.ids.indexOf(nowId)
-      // ANY slot on a side rolls the reels — playback mid-tape counts
-      // down through the recorded region exactly like the real counter
-      // (Jake: "THAT CLOCK NEEDS TO COUNTDOWN!!!"). Recording is just
-      // the special case where the playing slot is the tail.
-      if (idx < 0) continue
-      let before = 0
-      for (let i = 0; i < idx; i++) before += effDur(cfg.ids[i])
-      const off = tape.startOffsets?.[String(nowId)] || 0
-      const live = before + Math.max(0, positionSec * 1000 - off)
-      if (live < budgetMs) {
-        return {
-          side: cfg.side, leftMs: budgetMs - live, usedMs: live, budgetMs,
-          contentMs: contentFor(cfg.side),
-          cutCountdown: cfg.cut !== undefined && idx === cfg.ids.length - 1,
-        }
-      }
-    }
-  }
-  return staticFor(activeSide)
+  if (!isPlaying || nowId == null) return { ...base, elapsedMs: 0 }
+  // Merged tape: nowId is the tape's own synthetic track, so the playhead
+  // IS the tape position. Per-song playback (old tapes, or a tape not merged
+  // yet): sum the slots before the playing one and add the position.
+  const idx = ids.indexOf(nowId)
+  if (idx < 0) return { ...base, elapsedMs: Math.min(totalMs, positionSec * 1000) }
+  let before = 0
+  for (let i = 0; i < idx; i++) before += effDur(ids[i])
+  const off = tape.startOffsets?.[String(nowId)] || 0
+  return { ...base, elapsedMs: before + Math.max(0, positionSec * 1000 - off) }
 }
 
 // ── Spooling: FF/REW move the TAPE, not track boundaries. A spool that
@@ -204,7 +174,7 @@ export function liveTapeCounter(
 // the moment that track starts, landing mid-song like a real deck.
 // Live wind position (FF/REW held) — mirrored here so EVERY display
 // (faceplate counter, pill scrubber) follows the reels together.
-export interface WindDisplay { side: 'A' | 'B'; posMs: number }
+export interface WindDisplay { posMs: number }
 let windDisplay: WindDisplay | null = null
 export function setWindDisplay(w: WindDisplay | null): void {
   windDisplay = w
@@ -225,18 +195,18 @@ export function getPendingTapeSeek(): PendingTapeSeek | null {
 
 /**
  * Where does the tape land if we spool deltaMs from the current spot?
- * Walks the side's slots in effective time; clamps to [0, side end].
- * Returns the slot to play and how far INTO THE FILE to seek (offset-aware).
+ * Walks the WHOLE tape in effective time (no sides since 2026-08-08);
+ * clamps to [0, end]. Returns the slot to play and how far INTO THE FILE
+ * to seek (offset-aware).
  */
 export function spoolTarget(
   tape: Mixtape,
-  side: 'A' | 'B',
   currentElapsedMs: number,
   deltaMs: number,
   durOf: (id: number) => number | undefined,
 ): { trackId: number; fileSeekMs: number } | null {
   const effDur = effectiveDurationFn(durOf, tape.startOffsets)
-  const ids = side === 'A' ? tape.sideA : tape.sideB
+  const ids = tapeTracks(tape)
   if (ids.length === 0) return null
   const total = ids.reduce((sum, id) => sum + effDur(id), 0)
   const target = Math.max(0, Math.min(total - 1500, currentElapsedMs + deltaMs))

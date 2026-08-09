@@ -23,7 +23,7 @@ import {
   getDeckState, setDeckState, getMixtapes, getTapeSession, getMixtapeId,
   subscribeMixtapes, refreshMixtapes, liveTapeCounter,
 } from '../mixtapes'
-import { fitSide, effectiveDurationFn } from '../../common/tape-physics'
+import { effectiveDurationFn, tapeTracks, MAX_TAPE_SONGS } from '../../common/tape-physics'
 import { mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import type { Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -46,7 +46,7 @@ export default function DeckBar() {
   const micRecRef = useRef<MediaRecorder | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
   const micChunksRef = useRef<Blob[]>([])
-  const micPinRef = useRef<{ side: 'A' | 'B'; atMs: number } | null>(null)
+  const micPinRef = useRef<{ atMs: number } | null>(null)
 
   const tape: Mixtape | undefined = deck ? mixtapes.find((m) => m.id === deck.mixtapeId) : undefined
   const durOf = useCallback((id: number) => lib.tracks.find((t) => t.id === id)?.duration || undefined, [lib.tracks])
@@ -67,65 +67,35 @@ export default function DeckBar() {
   // 0) and "REC pressed mid-song" (offset = playhead). ──
   const landTrack = useCallback((id: number, startMs: number) => {
     const d = getDeckState()
-    let t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
+    const t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
     if (!d || !t) return
     // THE TAPE IS LINEAR (Jake: "preestablishing songs on side A and B is
-    // dumb... side A of the tape is still recording!!"). A song already
-    // on the recorded portion (the active side, or anything once we're on
-    // B) is physically on tape — skip. But a song only PLANNED for later
-    // (sitting in Side B's plan while A is still rolling) yields to
-    // reality: pull it out of the plan and record it right here.
-    if (d.side === 'A') {
-      if (t.sideA.includes(id)) return // already recorded on A
-      if (t.sideB.includes(id)) {
-        const remaining = t.sideB.filter((x) => x !== id)
-        const refit = fitSide(remaining, effectiveDurationFn(durOf, t.startOffsets), (t.tapeLength / 2) * 60_000)
-        t = { ...t, sideB: refit.ids, sideBCutMs: refit.cutMs }
-      }
-    } else {
-      if (t.sideA.includes(id) || t.sideB.includes(id)) return // all recorded territory on side B
-    }
-    const budget = (t.tapeLength / 2) * 60_000
-    const offsets = { ...(t.startOffsets || {}) }
-    if (startMs > 1500) offsets[String(id)] = Math.round(startMs)
-    const effDur = effectiveDurationFn(durOf, offsets)
-
-    const tryLand = (side: 'A' | 'B'): Mixtape | null => {
-      const ids = side === 'A' ? t.sideA : t.sideB
-      const cut = side === 'A' ? t.sideACutMs : t.sideBCutMs
-      if (cut !== undefined) return null
-      const fit = fitSide([...ids, id], effDur, budget)
-      if (!fit.ids.includes(id)) return null
-      const next: Mixtape = { ...t, startOffsets: offsets }
-      if (side === 'A') { next.sideA = fit.ids; next.sideACutMs = fit.cutMs }
-      else { next.sideB = fit.ids; next.sideBCutMs = fit.cutMs }
-      return next
-    }
-
-    let sideUsed: 'A' | 'B' = d.side
-    let landed = tryLand(d.side)
-    if (!landed && d.side === 'A') { landed = tryLand('B'); sideUsed = 'B' }
-    if (!landed) {
+    // dumb... side A of the tape is still recording!!") — and as of
+    // 2026-08-08 it is also ONE sequence with a 25-song limit. So a song
+    // either isn't on the tape yet and gets appended, or it already is and
+    // this is a no-op. The old A//B juggling — pulling a song out of Side
+    // B's plan while A rolled, fitting against a minutes budget, cutting
+    // the boundary song, auto-flipping — all belonged to the two-sided
+    // cassette and is gone with it.
+    const current = tapeTracks(t)
+    if (current.includes(id)) return          // already on tape
+    if (current.length >= MAX_TAPE_SONGS) {
       setDeckState({ ...d, recArmed: false })
-      flash('Tape full — REC popped out.')
+      flash(`Tape full — ${MAX_TAPE_SONGS} songs. REC popped out.`)
       return
     }
+    const offsets = { ...(t.startOffsets || {}) }
+    if (startMs > 1500) offsets[String(id)] = Math.round(startMs)
+    const next: Mixtape = { ...t, tracks: [...current, id], startOffsets: offsets }
     lastLandedRef.current = id
-    const cutHere = sideUsed === 'A' ? landed.sideACutMs : landed.sideBCutMs
-    const title = lib.tracks.find((x) => x.id === id)?.title || 'song'
-    if (cutHere !== undefined) {
-      if (sideUsed === 'A') {
-        setDeckState({ ...d, side: 'B', recArmed: true })
-        flash(`Side A runs out ${fmt(cutHere)} into “${title}” — flipping to B.`)
-      } else {
-        setDeckState({ ...d, side: 'B' })
-        flash(`Side B runs out ${fmt(cutHere)} into “${title}” — that's the tape.`)
-      }
-    } else if (sideUsed !== d.side) {
-      setDeckState({ ...d, side: sideUsed })
+    const left = MAX_TAPE_SONGS - next.tracks!.length
+    if (left === 0) {
+      setDeckState({ ...d, recArmed: false })
+      const title = lib.tracks.find((x) => x.id === id)?.title || 'song'
+      flash(`“${title}” fills the tape — that's all ${MAX_TAPE_SONGS}.`)
     }
-    void persist(landed)
-  }, [durOf, lib.tracks, persist])
+    void persist(next)
+  }, [lib.tracks, persist])
 
   // song starts while REC is down → lands whole (offset 0)
   useEffect(() => {
@@ -155,9 +125,10 @@ export default function DeckBar() {
     const t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
     if (!d || !t) return 0
     const effDur = effectiveDurationFn(durOf, t.startOffsets)
-    const ids = d.side === 'A' ? t.sideA : t.sideB
+    const ids = tapeTracks(t)
     const idx = nowId != null ? ids.indexOf(nowId) : -1
-    if (idx < 0) return fitSide(ids, effDur, (t.tapeLength / 2) * 60_000).usedMs
+    // Not on the tape yet = the pen sits at the end of what IS recorded.
+    if (idx < 0) return ids.reduce((sum, id) => sum + effDur(id), 0)
     let before = 0
     for (let i = 0; i < idx; i++) before += effDur(ids[i])
     const off = t.startOffsets?.[String(nowId)] || 0
@@ -183,7 +154,7 @@ export default function DeckBar() {
           micStreamRef.current = stream
           micChunksRef.current = []
           const d = getDeckState()
-          micPinRef.current = { side: d?.side || 'A', atMs: penMs() }
+          micPinRef.current = { atMs: penMs() }
           const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' })
           micRecRef.current = rec
           rec.ondataavailable = (e) => { if (e.data.size > 0) micChunksRef.current.push(e.data) }
@@ -202,14 +173,14 @@ export default function DeckBar() {
               if (r?.ok && r.path && pin && d2) {
                 const fresh = getMixtapes().find((m) => m.id === d2.mixtapeId)
                 if (fresh) {
-                  // Spoken onto the head of a blank Side A → the tape's
+                  // Spoken onto the head of a blank tape → the tape's
                   // opening, not an overlay. Anything else → talkover.
-                  if (pin.side === 'A' && fresh.sideA.length === 0 && pin.atMs <= 500) {
+                  if (tapeTracks(fresh).length === 0 && pin.atMs <= 500) {
                     await persist({ ...fresh, introPath: r.path })
                     flash('Your voice opens the tape — it plays before track 1, always.')
                   } else {
-                    await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: pin.side, atMs: pin.atMs, path: r.path }] })
-                    flash(`Voice on tape at ${fmt(pin.atMs)}, Side ${pin.side}.`)
+                    await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: 'A', atMs: pin.atMs, path: r.path }] })
+                    flash(`Voice on tape at ${fmt(pin.atMs)}.`)
                   }
                 }
               }
@@ -249,12 +220,14 @@ export default function DeckBar() {
           if (r?.ok && r.path && d2) {
             const fresh = getMixtapes().find((m) => m.id === d2.mixtapeId)
             if (fresh) {
-              if (pin.side === 'A' && fresh.sideA.length === 0 && pin.atMs <= 500) {
+              if (tapeTracks(fresh).length === 0 && pin.atMs <= 500) {
                 await persist({ ...fresh, introPath: r.path })
                 flash('Taped the DJ off the air — opens the tape.')
               } else {
-                await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: pin.side, atMs: pin.atMs, path: r.path }] })
-                flash(`Taped the DJ off the air at ${fmt(pin.atMs)}, Side ${pin.side}.`)
+                // Talkovers pin to a spot on the ONE tape now; 'A' is written
+                // only to satisfy the legacy field shape.
+                await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: 'A', atMs: pin.atMs, path: r.path }] })
+                flash(`Taped the DJ off the air at ${fmt(pin.atMs)}.`)
               }
             }
           }
@@ -275,11 +248,10 @@ export default function DeckBar() {
   if (lib.currentView === 'mixtape-detail' && activeMixtapeId === deck.mixtapeId) return null
 
   const rolling = deck.recArmed && pb.isPlaying
-  const counter = liveTapeCounter(tape, deck.side, nowId, pb.position, pb.isPlaying, durOf)
-  const dispSide = counter.side
-  // Recording counts the physical tape; playback counts the music.
-  const dispLeft = deck.recArmed ? counter.leftMs : Math.max(0, counter.contentMs - counter.usedMs)
-  const cutCountdown = counter.cutCountdown
+  // The tape's limit is a SONG COUNT now, so the strip reports songs left
+  // and total runtime rather than minutes remaining on a side (2026-08-08).
+  const counter = liveTapeCounter(tape, nowId, pb.position, pb.isPlaying, durOf)
+  const dispLeft = Math.max(0, counter.totalMs - counter.elapsedMs)
 
   const pressRec = () => {
     mechanicalSound('rec')
@@ -306,11 +278,14 @@ export default function DeckBar() {
         <span className="deckbar-status">
           {rolling ? '● RECORDING' : deck.recArmed ? 'REC DOWN — press play' : 'not recording'}
         </span>
-        <span className="deckbar-side">SIDE {dispSide} · {dispLeft <= 0 ? 'full' : `${fmt(dispLeft)} left`}</span>
+        <span className="deckbar-side">
+          {counter.songs}/{counter.maxSongs} songs
+          {counter.songsLeft === 0 ? ' · tape full' : ` · ${fmt(counter.totalMs)} long`}
+        </span>
         {rolling && pb.nowPlaying && (
           <span className="deckbar-nowrec">
             {String(pb.nowPlaying.title || '').slice(0, 34)} → tape
-            {cutCountdown ? ` — ends when the tape does (${fmt(dispLeft)})` : ''}
+            {counter.songsLeft === 0 ? ' — that fills it' : ` — ${counter.songsLeft} left`}
             {micCapturing ? ' · MIC LIVE' : ''}
           </span>
         )}

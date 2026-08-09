@@ -7,7 +7,7 @@ import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../preview
 // map the playhead to the current setlist song while a merged live set
 // plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt, cueIndexAt } from '../../liveSets'
-import { subscribeMixtapes, getTapeSession, getDeckState, getMixtapes, liveTapeCounter, spoolTarget, setPendingTapeSeek, getWindDisplay } from '../../mixtapes'
+import { subscribeMixtapes, getTapeSession, getMixtapes } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
 
@@ -142,30 +142,25 @@ export default function NowPlaying() {
   const liveEntry = state.nowPlaying ? (mergedTrackIndex().get(state.nowPlaying.id) ?? null) : null
   const liveCue = liveEntry ? cueAt(liveEntry, state.position * 1000) : null
 
-  // Mixtape side-scrubber (Jake: "the pill should show the track it's
-  // playing, but the scrubber should be all for Side A"). Engaged when
-  // the playing track sits on a tape that's in the session (playback)
-  // or in the recording deck. Renders a PARALLEL bar (preview-player
-  // pattern) — the protected per-song drag seam below stays untouched.
+  // MIXTAPES in the pill (2026-08-08).
+  //
+  // The side-scrubber that used to live here is GONE. It rendered a parallel
+  // bar sweeping Side A or Side B, because a tape was two timed halves and
+  // the per-song scrubber couldn't express that. A tape is now ONE merged
+  // gapless file, so the ordinary scrubber below already spans exactly the
+  // whole tape — the parallel bar would be a second, less accurate copy of
+  // it, and its side/budget/cut inputs no longer exist. Removing it also
+  // hands the per-song drag seam back its place as the only scrubber, which
+  // is what the do-not-touch note was protecting in the first place.
+  //
+  // What a tape still needs from the pill is the NAME of the song playing:
+  // nowPlaying is the tape itself, so without this the pill would read the
+  // tape's title for its whole run. The songs are still individually in the
+  // library, so resolve the current one from the tape's cues — deliberately
+  // via the same cueIndexAt() a live set uses, not a second copy of it.
   useSyncExternalStore(subscribeMixtapes, getTapeSession)
-  const windNow = useSyncExternalStore(subscribeMixtapes, getWindDisplay)
   const { state: libState } = useLibrary()
   const tapeSession = getTapeSession()
-  const tapeDeck = getDeckState()
-  const engagedTapeId = tapeSession?.mixtapeId ?? (tapeDeck?.recArmed ? tapeDeck.mixtapeId : null)
-  const engagedTape = engagedTapeId ? getMixtapes().find((m) => m.id === engagedTapeId) ?? null : null
-  const nowIdForTape = state.nowPlaying?.id
-  const onEngagedTape = !!engagedTape && nowIdForTape != null
-    && (engagedTape.sideA.includes(nowIdForTape) || engagedTape.sideB.includes(nowIdForTape))
-  const tapeDurOf = (id: number) => libState.tracks.find((t) => t.id === id)?.duration || undefined
-  const tapeCounter = onEngagedTape && engagedTape
-    ? liveTapeCounter(engagedTape, tapeDeck?.side || 'A', nowIdForTape, state.position, state.isPlaying, tapeDurOf)
-    : null
-  // A MERGED tape (2026-08-08) is one file, so state.nowPlaying is the tape
-  // itself and its title would read as the tape's name for 40 minutes. The
-  // songs are still individually in the library, so resolve the one playing
-  // from the tape's cues and show THAT — same idea as a live set above, and
-  // deliberately the same cue-lookup (cueIndexAt) rather than a second copy.
   const mergedTape = tapeSession
     ? getMixtapes().find((m) => m.id === tapeSession.mixtapeId && m.mergedPath) ?? null
     : null
@@ -178,31 +173,6 @@ export default function NowPlaying() {
     if (!song) return null
     return { title: song.title, artist: song.artist, album: song.album }
   })()
-  const tapeArmed = !!tapeDeck?.recArmed
-  const handleTapeScrub = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!engagedTape || !tapeCounter || tapeArmed) return // no scrubbing while REC is latched
-    const el = e.currentTarget
-    const rect = el.getBoundingClientRect()
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    const totalMs = tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs
-    const targetMs = pct * totalMs
-    const tgt = spoolTarget(engagedTape, tapeCounter.side, tapeCounter.usedMs, targetMs - tapeCounter.usedMs, tapeDurOf)
-    if (!tgt) return
-    if (tgt.trackId === nowIdForTape) {
-      const durMs = tapeDurOf(tgt.trackId) || 0
-      if (durMs > 0) seek(Math.min(0.99, tgt.fileSeekMs / durMs))
-      return
-    }
-    const sess = getTapeSession()
-    if (!sess) return
-    const queue = sess.tapeTrackIds
-      .map((id) => libState.tracks.find((t) => t.id === id))
-      .filter((t): t is NonNullable<typeof t> => !!t)
-    const idx = queue.findIndex((t) => t.id === tgt.trackId)
-    if (idx < 0) return
-    setPendingTapeSeek({ trackId: tgt.trackId, seekMs: tgt.fileSeekMs })
-    playTrack(queue[idx], queue, idx, undefined, true)
-  }, [engagedTape, tapeCounter, tapeArmed, nowIdForTape, libState.tracks, seek, playTrack])
 
   // Pause the user's music while a preview plays; resume it when the
   // preview ends/stops (the "pause music, resume after" behavior). Acts
@@ -516,22 +486,7 @@ export default function NowPlaying() {
                 track end. Strictly read-only; the scrubber drag-logic
                 seam (handleMouseDown, barRef) on the next line is
                 untouched per the do-not-touch list. */}
-            {tapeCounter ? (
-              <>
-                {/* Side-wide tape scrubber — the needle sweeps SIDE {A|B},
-                    not the song. Click = spool there (locked during REC). */}
-                {/* Playback runs against the MUSIC on the side; recording
-                    against the physical tape (blank included). While the
-                    reels WIND, the needle follows the wind position. */}
-                <span className="scrubber-time">{formatTime(Math.floor((windNow?.posMs ?? tapeCounter.usedMs) / 1000))}</span>
-                <div className={`scrubber-track scrubber-track--tape${tapeArmed ? ' scrubber-track--locked' : ''}`} onMouseDown={handleTapeScrub}
-                  title={tapeArmed ? `Recording Side ${tapeCounter.side} — the tape doesn't scrub while REC is down` : `Side ${tapeCounter.side} of the tape — click to spool`}>
-                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, ((windNow?.posMs ?? tapeCounter.usedMs) / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
-                  <div className="scrubber-knob" style={{ left: `${Math.min(100, ((windNow?.posMs ?? tapeCounter.usedMs) / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
-                </div>
-                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(((tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs) - (windNow?.posMs ?? tapeCounter.usedMs)) / 1000)))}</span>
-              </>
-            ) : (
+            {(
               <>
                 <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
                 <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
