@@ -12,6 +12,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { setTapeSession } from '../mixtapes'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { canonicalArtist } from '../utils/artistAlias'
@@ -66,11 +67,15 @@ export default function MixDetailView() {
     }
   }, [tracks, dispatch])
 
-  const handleDoubleClick = useCallback((idx: number) => {
+  // Double-clicking a row starts THE MIX, from the top — you can't drop into
+  // the middle of a tape ("you cant start from anywhere either. has to be
+  // from the beginning").
+  const handleDoubleClick = useCallback((_idx: number) => {
     window.getSelection()?.removeAllRanges()
-    const track = tracks[idx]
-    if (track) playTrack(track, tracks, idx, undefined, true)
-  }, [tracks, playTrack])
+    if (!tracks.length) return
+    setTapeSession({ mixtapeId: `mix:${mix?.id ?? 'unknown'}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+    playTrack(tracks[0], tracks, 0, undefined, true)
+  }, [tracks, playTrack, mix])
 
   // Right-click → the same track context menu the rest of the app uses.
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
@@ -88,7 +93,10 @@ export default function MixDetailView() {
     const count = selectedTracks.length
     const label = count > 1 ? `${count} Songs` : track.title
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
+      { label: 'Play the mix from the top', onClick: () => {
+        setTapeSession({ mixtapeId: `mix:${mix?.id ?? 'unknown'}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+        playTrack(tracks[0], tracks, 0, undefined, true)
+      } },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
@@ -103,7 +111,7 @@ export default function MixDetailView() {
       { separator: true as const },
       { label: 'Cynthia!!', onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} tracks` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }) },
     ]
-  }, [ctxMenu, lib.selectedTrackIds, tracks, playTrack, pbDispatch, dispatch, openCynthia])
+  }, [ctxMenu, lib.selectedTrackIds, tracks, playTrack, pbDispatch, dispatch, openCynthia, mix])
 
   // Get Info save / artwork handlers — mirror AlbumDetailView (which mirrors SongsView).
   const handleGetInfoSave = useCallback(async (updates: { id: number; field: string; value: string }[]) => {
@@ -163,8 +171,23 @@ export default function MixDetailView() {
     )
   }
 
-  const playAll = (): void => { if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true) }
-  const shuffle = (): void => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }
+  /**
+   * A daily mix IS a mixtape (Jake, 2026-08-08: "turn daily mixes into
+   * mixtapes replace the current process", then: "the daily mixes still
+   * arent mixtapes, i can pick any song out of its 25 songs").
+   *
+   * So playing one opens a TAPE SESSION, exactly like pressing PLAY on a
+   * tape: the pill switches to the whole-mix clock, prev/next/shuffle go
+   * dead, and it runs start to finish. The session id is namespaced 'mix:'
+   * — these have no Mixtape record on the shelf, and TapeMonitor simply
+   * finds no tape for it, which is right: there are no cuts, no talkovers
+   * and no intro to fire, just the running order and the rules.
+   */
+  const playMix = (): void => {
+    if (!tracks.length) return
+    setTapeSession({ mixtapeId: `mix:${mix.id}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+    playTrack(tracks[0], tracks, 0, undefined, true)
+  }
 
   return (
     <div className="album-page">
@@ -180,8 +203,8 @@ export default function MixDetailView() {
           <h1 className="album-page-title">{mix.title}</h1>
           <div className="album-page-facts">{tracks.length} song{tracks.length === 1 ? '' : 's'}</div>
           <div className="album-page-actions">
-            <button type="button" className="album-page-play" onClick={playAll}>▶ Play</button>
-            <button type="button" className="album-page-shuffle" onClick={shuffle}>⤮ Shuffle</button>
+            <button type="button" className="album-page-play" onClick={playMix}>▶ Play</button>
+            {/* No shuffle on a mix — it plays in its running order. */}
           </div>
           {mix.subtitle && <div className="album-page-creditline">{mix.subtitle}</div>}
         </div>

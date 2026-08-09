@@ -14,6 +14,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
+import { setTapeSession } from '../mixtapes'
 import MixArtwork from './MixArtwork'
 import { openMix, type VibeMix as Mix } from '../utils/activeMix'
 import type { Track } from '../types'
@@ -61,8 +62,13 @@ export default function MadeForYou() {
     void loadMixes()
   }, [lib.tracks.length, loadMixes])
 
+  // A mix plays as a TAPE from here too — same rules as its detail page:
+  // whole-mix clock in the pill, no skipping, always from the top. Without
+  // this, the home-page card was a second door into the old behaviour.
   const playMix = useCallback((m: Mix) => {
-    if (m.tracks.length) playTrack(m.tracks[0], m.tracks, 0, undefined, true)
+    if (!m.tracks.length) return
+    setTapeSession({ mixtapeId: `mix:${m.id}`, tapeTrackIds: m.tracks.map((t) => t.id), cuts: [] })
+    playTrack(m.tracks[0], m.tracks, 0, undefined, true)
   }, [playTrack])
 
   const pickVibe = useCallback(async (vibe: string) => {
