@@ -1045,3 +1045,24 @@
   background: rgba(var(--brand-orange-rgb), 0.18);
   border: 1px solid rgba(var(--brand-orange-rgb), 0.42);
 }
+
+/* ── the CLEAN tag lives on the ARTWORK, not in the facts row ──────────────
+   Jake, 2026-08-09, screenshot of the Snoop Dogg shelf: "ALBUM 2005 CLEAN 19
+   tra" running straight into the next card's "ALBUM". A release card is
+   ~136px; badge + year + CLEAN + "21 tracks" does not fit on one line, and
+   nothing in that row wrapped or clipped, so it overflowed into its
+   neighbour. Putting the warning on the cover keeps the facts row at its
+   original width AND makes it more visible, which is what a warning wants. */
+.dl-rel-clean {
+  position: absolute; top: 5px; left: 5px;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.08em;
+  padding: 2px 5px; border-radius: 3px;
+  color: #fff;
+  background: rgba(var(--brand-orange-rgb), 0.92);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+/* Belt and braces: a card can never paint outside itself again, and if the
+   facts row ever does outgrow the card it wraps instead of escaping. */
+.dl-rel { overflow: hidden; }
+.dl-rel-facts { flex-wrap: wrap; row-gap: 3px; }
+.dl-rel-title, .dl-rel-sub { max-width: 100%; }

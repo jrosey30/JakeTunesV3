@@ -14414,6 +14414,72 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
     if (raw === null) raw = await fetchDeezerSuggestions(q)
     if (raw === null) return { ok: false, results: [] }
 
+    // ── the artist's OWN catalogue ────────────────────────────────────────
+    // Jake, 2026-08-09, searching "Jay z": every result was a Beyoncé or
+    // Rihanna track that FEATURES him, and not one of his own records. That is
+    // Apple's ranking, not a bug we introduced — a song search sorts by
+    // popularity, and a superstar's guest verses out-rank his own catalogue.
+    //
+    // Resolving the ARTIST first fixes it, and fixes the spelling at the same
+    // time: "jay z" resolves to JAŸ-Z (U+0178) and "husker du" to Hüsker Dü,
+    // which is the canonical name Apple files their records under.
+    //
+    // Only fires when the query really does look like an artist NAME — the
+    // resolved artist must fold to the query itself. So "husker du" and
+    // "snoop dogg" trigger it and "when you die mgmt" does not, which matters
+    // because that phrase resolves to MGMT and would otherwise bury the song
+    // the user actually typed under MGMT's back catalogue.
+    const foldedQ = foldAccents(q).replace(/[^a-z0-9]/g, '')
+    if (foldedQ.length >= 3) {
+      try {
+        const aRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=3`,
+          { signal: AbortSignal.timeout(3500) })
+        if (aRes.ok) {
+          const aData = await aRes.json() as { results?: Array<{ artistId?: number; artistName?: string }> }
+          const hit = (aData.results || []).find((a) =>
+            foldAccents(a.artistName || '').replace(/[^a-z0-9]/g, '') === foldedQ)
+          if (hit?.artistId) {
+            const lRes = await fetch(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=40`,
+              { signal: AbortSignal.timeout(4500) })
+            if (lRes.ok) {
+              const lData = await lRes.json() as { results?: Array<Record<string, unknown>> }
+              const canonical = foldAccents(hit.artistName || '').replace(/[^a-z0-9]/g, '')
+              const own = (lData.results || [])
+                .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
+                // PRIMARY artist only. The lookup also returns the guest spots
+                // the plain search already gave us; keeping them would just
+                // deepen the pile we are trying to get out from under.
+                .filter((r) => foldAccents(String(r.artistName)).replace(/[^a-z0-9]/g, '').startsWith(canonical))
+                .map((r) => ({
+                  song: String(r.trackName ?? ''),
+                  artist: String(r.artistName ?? ''),
+                  album: r.collectionName ? String(r.collectionName) : undefined,
+                  artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+                  previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+                  appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+                  collectionId: r.collectionId ? Number(r.collectionId) : undefined,
+                  durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
+                  releaseYear: itunesYear(r.releaseDate),
+                  trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
+                  genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
+                  explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
+                }))
+                .filter((s2) => !ITUNES_JUNK_ARTIST.test(s2.artist))
+              // Dedupe on song+artist WITHOUT the album: an artist's catalogue
+              // carries the same track on the album, the greatest-hits and the
+              // single, and adding all three put "Empire State Of Mind" in the
+              // list twice before this line existed.
+              const seen = new Set(raw.map((r) => `${foldAccents(r.song)}|${foldAccents(r.artist)}`))
+              for (const o of own) {
+                const k = `${foldAccents(o.song)}|${foldAccents(o.artist)}`
+                if (!seen.has(k)) { seen.add(k); raw.push(o) }
+              }
+            }
+          }
+        }
+      } catch { /* the plain search already stands on its own */ }
+    }
+
     // Re-rank toward the recognizable version. iTunes gives no popularity
     // score, so use a free proxy: a famous artist shows up MULTIPLE times
     // for one song (studio + live + comps), while a one-off cover appears

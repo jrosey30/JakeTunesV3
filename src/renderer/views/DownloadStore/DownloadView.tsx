@@ -669,6 +669,7 @@ export default function DownloadView() {
                 <span className="dl-rel-open">{isOpen ? 'Hide tracks' : 'See tracks'}</span>
               </span>
             )}
+            {clean && <span className="dl-rel-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
             {a.owned && <span className="dl-rel-owned" title="In your library">✓</span>}
           </span>
           <span className="dl-rel-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
