@@ -512,13 +512,15 @@
   display: inline-flex;
   gap: 0;
   align-items: stretch;
-  background: var(--white, #fdfdfd);
-  border: 1px solid var(--border, #d7d3ca);
-  border-radius: 8px;
-  padding: 4px 6px;
+  background: linear-gradient(180deg, #ffffff, #f4f1ea);
+  border: 1px solid #cfcabe;
+  border-radius: 9px;
+  padding: 5px 8px;
   width: fit-content;
   margin: 0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .fp-key {
   display: flex;
@@ -526,8 +528,8 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  width: 54px;
-  height: 42px;
+  width: 56px;
+  height: 44px;
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
@@ -535,28 +537,71 @@
   cursor: pointer;
   transition: background 90ms ease, color 90ms ease;
 }
-.fp-key:hover:not(:disabled) { background: rgba(0, 0, 0, 0.045); color: #3f3b30; }
+.fp-key:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #ded9cd;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+  color: #3f3b30;
+}
+/* Unavailable, not broken: dim the whole key evenly rather than leaving a
+   pale icon next to full-strength text. */
+.fp-key:disabled { opacity: 0.32; }
 .fp-key:active:not(:disabled) { background: rgba(0, 0, 0, 0.09); }
 .fp-key:disabled { opacity: 0.45; cursor: default; }
 .fp-label { font-size: 8.5px; font-weight: 700; letter-spacing: 0.9px; opacity: 0.8; }
-.fp-shape { display: flex; align-items: center; justify-content: center; height: 16px; }
-/* shapes, color coordinated */
-.fp-shape--circle { width: 14px; height: 14px; border-radius: 50%; background: #d0321e; }
+/* ── Transport icons (2026-08-09 rebuild) ─────────────────────────────
+   These were coloured for the DARK plastic faceplate this strip used to be:
+   #ddd icons that read fine on grey moulding and washed out to nothing once
+   the strip went white. They were also all different sizes — circle 14,
+   triangle 16, eject 9, stop 13 — which is why the row never lined up.
+   One optical box, one ink, and colour reserved for the two keys where it
+   MEANS something: REC is red, PLAY is green. Everything else is ink. */
+.fp-shape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 15px;
+  color: #6d6858;
+}
+.fp-shape--circle { width: 12px; height: 12px; border-radius: 50%; background: #cc3a22; }
 .fp-shape--tri {
   width: 0; height: 0;
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  border-left: 13px solid #3fae5a;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 12px solid #2f9c4c;
+  margin-left: 2px;              /* optical centring — a triangle's mass sits left */
 }
-.fp-shape--bars { width: 12px; height: 14px; border-left: 4px solid #e8b23a; border-right: 4px solid #e8b23a; }
+.fp-shape--bars { width: 11px; height: 13px; border-left: 4px solid currentColor; border-right: 4px solid currentColor; }
 .fp-shape--eject {
-  width: 0; height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 9px solid #bbb;
   position: relative;
+  width: 13px; height: 13px;
 }
-.fp-shape--mic { color: #ddd; }
+.fp-shape--eject::before {
+  content: ''; position: absolute; left: 0; top: 1px;
+  width: 0; height: 0;
+  border-left: 6.5px solid transparent;
+  border-right: 6.5px solid transparent;
+  border-bottom: 7px solid currentColor;
+}
+.fp-shape--eject::after {
+  content: ''; position: absolute; left: 0; bottom: 0;
+  width: 13px; height: 2px; background: currentColor;
+}
+.fp-shape--mic { color: inherit; }
+.fp-shape--rew, .fp-shape--ff { display: flex; gap: 1px; align-items: center; }
+.fp-shape--rew::before, .fp-shape--rew::after {
+  content: ''; width: 0; height: 0;
+  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+  border-right: 8px solid currentColor;
+}
+.fp-shape--ff::before, .fp-shape--ff::after {
+  content: ''; width: 0; height: 0;
+  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+  border-left: 8px solid currentColor;
+}
+.fp-shape--stop { width: 12px; height: 12px; background: currentColor; border-radius: 1px; }
+
 /* pressed-in states */
 .fp-key--rec.is-down {
   background: linear-gradient(#c23a24, #8f1d10);
@@ -609,18 +654,6 @@
 .mixtape-link--danger:hover { color: #a3301b; }
 .mixtape-link:disabled { opacity: 0.5; cursor: default; }
 /* REW / FF / STOP shapes */
-.fp-shape--rew, .fp-shape--ff { display: flex; gap: 1px; }
-.fp-shape--rew::before, .fp-shape--rew::after {
-  content: ''; width: 0; height: 0;
-  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
-  border-right: 10px solid #ddd;
-}
-.fp-shape--ff::before, .fp-shape--ff::after {
-  content: ''; width: 0; height: 0;
-  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
-  border-left: 10px solid #ddd;
-}
-.fp-shape--stop { width: 13px; height: 13px; background: #ddd; }
 
 /* the counter window — mechanical odometer vibes */
 .fp-counter {
@@ -633,16 +666,17 @@
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
-  min-width: 78px;
+  min-width: 84px;
   height: 44px;
-  margin-right: 10px;
-  padding-right: 12px;
+  margin-right: 12px;
+  padding: 0 14px 0 4px;
   border-right: 1px solid var(--border, #d7d3ca);
   background: none;
 }
-.fp-counter-side { font-size: 8.5px; font-weight: 700; letter-spacing: 1.1px; color: #9a927e; }
+.fp-counter-side { font-size: 9px; font-weight: 700; letter-spacing: 0.09em; color: #9a927e; }
 .fp-counter-digits {
-  font-size: 17px;
+  font-size: 18px;
+  margin: 1px 0;
   font-weight: 600;
   color: #3f3b30;
   line-height: 1;
