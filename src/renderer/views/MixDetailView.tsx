@@ -51,6 +51,8 @@ export default function MixDetailView() {
   const tracks = mix?.tracks ?? []
   const lastClickedIdx = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportNote, setExportNote] = useState('')
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
 
   // Click-to-select, exactly like SongsView / AlbumDetailView: plain click selects
@@ -183,6 +185,38 @@ export default function MixDetailView() {
    * finds no tape for it, which is right: there are no cuts, no talkovers
    * and no intro to fire, just the running order and the rules.
    */
+  /**
+   * Export the mix as one continuous file — the same thing the tape page
+   * does. Jake, 2026-08-08: "no way i can export the daily mixes? why not?"
+   * No reason at all; I built it on MixtapeView and never carried it across,
+   * even after making mixes BE tapes. A daily mix has no intro, talkovers or
+   * start offsets, so it's one plain side.
+   */
+  const exportMix = async (): Promise<void> => {
+    if (!tracks.length || exporting) return
+    setExporting(true)
+    setExportNote('Exporting… rendering the mix.')
+    try {
+      const mount = await window.electronAPI?.getMusicLibraryPath?.() ?? ''
+      const r = await window.electronAPI.dubMixtape?.({
+        title: mix?.title || 'Mix',
+        sides: [{
+          label: 'A',
+          songs: tracks.map((t) => ({ absPath: mount + String(t.path || '').replace(/:/g, '/') })),
+          talkovers: [],
+        }],
+      })
+      setExportNote(r?.ok
+        ? `Exported to Desktop → JakeTunes Dubs → ${mix?.title || 'Mix'}.`
+        : (r?.error || 'Export failed.'))
+    } catch (err) {
+      setExportNote(err instanceof Error ? err.message : 'Export failed.')
+    } finally {
+      setExporting(false)
+      setTimeout(() => setExportNote(''), 12_000)
+    }
+  }
+
   const playMix = (): void => {
     if (!tracks.length) return
     setTapeSession({ mixtapeId: `mix:${mix.id}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
@@ -204,8 +238,13 @@ export default function MixDetailView() {
           <div className="album-page-facts">{tracks.length} song{tracks.length === 1 ? '' : 's'}</div>
           <div className="album-page-actions">
             <button type="button" className="album-page-play" onClick={playMix}>▶ Play</button>
+            <button type="button" className="album-page-shuffle" disabled={exporting}
+              onClick={() => { void exportMix() }}>
+              {exporting ? 'Exporting…' : 'Export as one file'}
+            </button>
             {/* No shuffle on a mix — it plays in its running order. */}
           </div>
+          {exportNote && <div className="album-page-creditline">{exportNote}</div>}
           {mix.subtitle && <div className="album-page-creditline">{mix.subtitle}</div>}
         </div>
       </div>

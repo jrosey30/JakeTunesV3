@@ -29,54 +29,45 @@ function fmt(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export function CassetteSvg({ title, ink, lengthLabel, spinning, side, wind }: {
-  title: string
+/**
+ * The cassette mark — a QUIET nod, not a prop.
+ *
+ * 2026-08-09, Jake: the tape pages were "corny, tacky and gross. need a
+ * complete redo", and he chose to keep a tape FEEL done tastefully. This
+ * used to be a 320x200 moulded plastic shell: two-tone body, four screws, a
+ * ruled paper label, a black window, hub teeth, a brown ribbon and the
+ * bottom capstan holes. Photorealism at that size reads as clip art.
+ *
+ * What's left is the SILHOUETTE: the outline, two reels and the ribbon
+ * between them, drawn in the page's own ink at the tape's accent colour.
+ * The reels still turn while the tape rolls and race while it winds —
+ * motion was never the tacky part.
+ */
+export function CassetteSvg({ ink, spinning, wind }: {
   ink: string
-  lengthLabel: string
   spinning: boolean
-  side: 'A' | 'B' | null
   /** Winding: 1 = FF (fast), -1 = REW (fast, reversed), undefined = normal. */
   wind?: 1 | -1
 }) {
   const spoolCls = spinning || wind
     ? `spool spool--spin${wind ? ' spool--fast' : ''}${wind === -1 ? ' spool--rev' : ''}`
     : 'spool'
-  return (
-    <svg className="cassette" viewBox="0 0 320 200" width="320" height="200">
-      {/* shell */}
-      <rect x="4" y="4" width="312" height="192" rx="14" fill="#2b2b2b" stroke="#111" strokeWidth="2" />
-      <rect x="10" y="10" width="300" height="180" rx="10" fill="#3a3a3a" />
-      {/* screws */}
-      {[[18, 18], [302, 18], [18, 182], [302, 182]].map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r="4" fill="#1c1c1c" stroke="#555" strokeWidth="1" />
+  const hub = (cx: number) => (
+    <g className={spoolCls} style={{ transformOrigin: `${cx}px 34px` }}>
+      <circle cx={cx} cy="34" r="11" fill="none" stroke={ink} strokeWidth="1.5" opacity="0.9" />
+      {[0, 60, 120].map((a) => (
+        <line key={a} x1={cx} y1="25" x2={cx} y2="43" stroke={ink} strokeWidth="1.5"
+          opacity="0.5" transform={`rotate(${a} ${cx} 34)`} />
       ))}
-      {/* label */}
-      <rect x="26" y="22" width="268" height="86" rx="4" fill="#f4eeda" stroke="#c9bfa2" />
-      <line x1="38" y1="52" x2="282" y2="52" stroke="#c9bfa2" strokeWidth="1" />
-      <line x1="38" y1="72" x2="282" y2="72" stroke="#d8d0b8" strokeWidth="1" />
-      <text x="160" y="46" textAnchor="middle" className="cassette-title" fill={ink}>{title}</text>
-      <text x="40" y="68" className="cassette-side-mark" fill={ink}>{side ? `SIDE ${side} ▸` : ''}</text>
-      <text x="282" y="103" textAnchor="end" className="cassette-len" fill="#6b6045">{lengthLabel}</text>
-      {/* window + spools */}
-      <rect x="70" y="112" width="180" height="52" rx="26" fill="#181818" stroke="#0c0c0c" />
-      <g className={spoolCls} style={{ transformOrigin: '110px 138px' }}>
-        <circle cx="110" cy="138" r="20" fill="#0e0e0e" stroke="#4a4a4a" strokeWidth="2" />
-        {[0, 60, 120, 180, 240, 300].map((a) => (
-          <rect key={a} x="108.5" y="122" width="3" height="8" fill="#8a8a8a" transform={`rotate(${a} 110 138)`} />
-        ))}
-      </g>
-      <g className={spoolCls} style={{ transformOrigin: '210px 138px' }}>
-        <circle cx="210" cy="138" r="20" fill="#0e0e0e" stroke="#4a4a4a" strokeWidth="2" />
-        {[0, 60, 120, 180, 240, 300].map((a) => (
-          <rect key={a} x="208.5" y="122" width="3" height="8" fill="#8a8a8a" transform={`rotate(${a} 210 138)`} />
-        ))}
-      </g>
-      {/* tape between spools */}
-      <rect x="128" y="134" width="64" height="8" rx="3" fill="#5c4a32" />
-      {/* bottom holes */}
-      <rect x="120" y="172" width="80" height="14" rx="4" fill="#242424" stroke="#141414" />
-      <circle cx="134" cy="179" r="3.5" fill="#0c0c0c" />
-      <circle cx="186" cy="179" r="3.5" fill="#0c0c0c" />
+    </g>
+  )
+  return (
+    <svg className="cassette" viewBox="0 0 120 68" width="120" height="68" aria-hidden>
+      <rect x="1.5" y="1.5" width="117" height="65" rx="7"
+        fill="none" stroke={ink} strokeWidth="1.5" opacity="0.55" />
+      {hub(42)}
+      {hub(78)}
+      <line x1="53" y1="34" x2="67" y2="34" stroke={ink} strokeWidth="2.5" opacity="0.35" />
     </svg>
   )
 }
@@ -290,7 +281,7 @@ export default function MixtapeView() {
   return (
     <div className="mixtape-view" ref={mixPageRef}>
       <div className="mixtape-hero">
-        <CassetteSvg title={tape.title} ink={ink} lengthLabel={`${allTracks.length} songs`} spinning={tapeActive} side={side} wind={winding?.dir} />
+        <CassetteSvg ink={ink} spinning={tapeActive} wind={winding?.dir} />
         <div className="mixtape-hero-info">
           {renaming !== null ? (
             <input
@@ -429,14 +420,6 @@ export default function MixtapeView() {
                     onMouseDown={() => startWind(1)} onMouseUp={finishWind} onMouseLeave={finishWind}
                     title="FAST-FORWARD — hold it down and the tape winds ahead, straight through the middle of songs. Let go to drop back in. Locked while REC is down.">
                     <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
-                  </button>
-                  <button className="fp-key" onClick={() => { mechanicalSound('stop'); stopPlayback(); if (loaded) load({ recArmed: false, micOn: false }) }}
-                    title="STOP — everything stops and the REC latch pops out, like a real deck">
-                    <span className="fp-shape fp-shape--stop" /><span className="fp-label">STOP</span>
-                  </button>
-                  <button className="fp-key fp-key--pause" onClick={() => { if (pb.isPlaying) tapeMotorPause(togglePlayPause) }}
-                    title="PAUSE — the music stops where it is. Recording waits.">
-                    <span className="fp-shape fp-shape--bars" /><span className="fp-label">PAUSE</span>
                   </button>
                   <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => { mechanicalSound('mic'); load({ micOn: !micOn }) }}
                     title="MIC — mic on means mic ready. Your voice records onto the tape only while REC is down.">
