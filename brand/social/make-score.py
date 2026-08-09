@@ -305,7 +305,20 @@ R[-f:] *= np.linspace(1, 0, f) ** 1.5
 peak = max(np.abs(L).max(), np.abs(R).max())
 L, R = L / peak * 1.06, R / peak * 1.06
 L, R = np.tanh(L), np.tanh(R)
-L, R = L * 0.97, R * 0.97
+
+# HEADROOM — for the MONO SUM, which is the part that actually bites.
+#
+# A phone speaker plays a Reel in mono, and summing this mix to mono is not
+# free: the same file measures 0.651 peak in stereo and 0.916 in mono, because
+# the wide-panned voices reinforce rather than cancel. Mastered at 0.97 the
+# stereo peak was a comfortable 0.762 while the MONO sum decoded at 1.072 —
+# clipping on the single most common way this will ever be heard, and
+# Instagram re-encodes on top of that.
+#
+# (An earlier note here blamed codec overshoot. Measuring the same file through
+# both decode paths disproved that: stereo comes back at the wav's own peak.)
+CEILING = 0.83
+L, R = L * CEILING, R * CEILING
 
 stereo = np.empty(N * 2, dtype=np.float64)
 stereo[0::2], stereo[1::2] = L, R

@@ -146,6 +146,13 @@ the second time over C#m7, where its five notes become the 3rd, 5th, 7th and
 root — the cheapest way to make a repeat sound like development. Verified by
 FFT per bar in the finished render.
 
+**Level.** Mastered for the MONO SUM, not the stereo peak — a phone speaker
+plays a Reel in mono, and the wide-panned voices reinforce rather than cancel:
+the same file measures 0.651 stereo and 0.916 mono. At the original level the
+stereo peak was a safe 0.762 while the mono sum decoded at 1.072, clipping on
+the most common playback path there is. Ceiling now 0.83, which puts mono at
+-0.76 dBFS.
+
 **The click.** Jake: "i hear like a weird annoying click." Found by measuring,
 not guessing: isolated high-frequency transients at 8.218s and 10.362s, ~7x the
 local HF floor, both landing exactly on arpeggio onsets. Cause was the
