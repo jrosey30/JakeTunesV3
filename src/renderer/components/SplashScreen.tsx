@@ -53,12 +53,14 @@ const T_SETTLE = 1450      // boot complete, hand off to the settled frame
 const CELL = 9             // reveal grid, CSS px — reads as chunky pixels
 const IGNITE_MS = 190      // per-cell flash decay
 
-/** The dark "screen off" field the mark ignites against, and the tile's own
- *  corner radius — both measured off the 2.0 art (rounded square, ~1.3% of
- *  the canvas as outer paper, corner radius ≈ 0.17 of the side). */
+/** The dark "screen off" field the mark ignites against. Matches the shape of
+ *  the art exactly: since brand/make-icons.py the in-app mark is a full-canvas
+ *  tile with only its corners cut away, on the same squircle proportion Apple
+ *  uses (0.225 of the side). Any mismatch here shows as a dark fringe peeking
+ *  out from behind the tile during assembly. */
 const PLATE_INK = '#261208'
-const PLATE_INSET = 0.013
-const PLATE_RADIUS = 0.17
+const PLATE_INSET = 0
+const PLATE_RADIUS = 0.225
 
 function getGreeting(): string {
   const h = new Date().getHours()
