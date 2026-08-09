@@ -1,7 +1,25 @@
 /** Pure iTunes reco matching — shared by suggest-verify and unit tests. */
+import { foldAccents } from '../common/fold-text.ts'
 
+/**
+ * ⚠️ IDENTITY, NOT MATCHING. recoNorm feeds recoMatchKey, and those keys are
+ * PERSISTED — dedupe, tombstones, "already recommended" state. Folding
+ * diacritics here would change the key for every accented artist, orphaning
+ * their tombstones and resurrecting recommendations Jake had deleted. It stays
+ * exactly as it is. Use recoFold for comparisons.
+ */
 export function recoNorm(s: string): string {
   return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/**
+ * The same shape, but accent-folded — for COMPARING two names, never for
+ * storing one. iTunes writes JAŸ-Z and Qobuz writes Jay-Z; recoNorm turns
+ * those into "jaz" and "jayz" and they never meet.
+ * See src/common/fold-text.ts for why NFD alone is not enough.
+ */
+export function recoFold(s: string): string {
+  return foldAccents(s).replace(/[^a-z0-9]/g, '')
 }
 
 // ── Recommendation identity (sync protocol v2, Brief 126) ──────────────────
@@ -116,8 +134,8 @@ function recoEditDistance(a: string, b: string, max = 3): number {
 
 /** Fuzzy title match — catches Bonafide/Bonafied-style drift. */
 export function recoTitleMatches(want: string, got: string): boolean {
-  const w = recoNorm(want)
-  const g = recoNorm(got)
+  const w = recoFold(want)
+  const g = recoFold(got)
   if (!w || !g) return false
   if (w === g) return true
   if (Math.min(w.length, g.length) >= 8 && (w.includes(g) || g.includes(w))) return true
@@ -133,8 +151,8 @@ export function recoTitleMatches(want: string, got: string): boolean {
 // ⚠️ TWIN: src/renderer/listen-to-the-list/store.ts artistLooselyMatches —
 // renderer-side copy of this rule (no cross-bundle import); keep in sync.
 export function recoArtistMatches(want: string, got: string): boolean {
-  const w = recoNorm(want)
-  const g = recoNorm(got)
+  const w = recoFold(want)
+  const g = recoFold(got)
   if (!w || !g) return false
   if (w === g) return true
   if (w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))) return true

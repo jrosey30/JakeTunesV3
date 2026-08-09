@@ -5,6 +5,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
+import { foldAccents } from '../../../common/fold-text'
 
 /**
  * Download v3 (2026-07-16) — "browse fast, resolve slow".
@@ -23,12 +24,20 @@ import type { ItunesSuggestion } from '../../types'
  *             the rip process (streamrip:cancel-active).
  */
 
-const norm = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+// ⚠️ Accent-folded BEFORE the [a-z0-9] strip, or the accented letter is gone
+// by the time we look. iTunes spells him JAŸ-Z (U+0178): unfolded this returns
+// "jaz", so an accented artist never matches the library and never reads as
+// "In your library". See src/common/fold-text.ts.
+const norm = (s: string): string => foldAccents(s).replace(/[^a-z0-9]/g, '')
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
 
 // Relevance scorer — a TWIN of the universal-search ranker in
 // utils/searchIndex.ts (exact > prefix > token-start > substring > all-tokens).
-const normQ = (s: string): string => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+// ⚠️ TWIN: src/renderer/utils/searchIndex.ts (normalize). The comment below
+// has always claimed these are twins; they had DRIFTED — searchIndex folded
+// diacritics and this did not, which is why universal search found Beyoncé and
+// Download rendered "Nothing matched that." for JAY-Z.
+export const normQ = (s: string): string => foldAccents(s).replace(/[^a-z0-9]+/g, ' ').trim()
 function scoreField(field: string, query: string, qTokens: string[]): number {
   if (!field || !query) return 0
   if (field === query) return 100 + Math.min(20, query.length)
@@ -39,7 +48,7 @@ function scoreField(field: string, query: string, qTokens: string[]): number {
   return 0
 }
 const stripThe = (s: string): string => s.replace(/^the /, '')
-function scoreResult(q: string, qTokens: string[], title: string, artist: string): number {
+export function scoreResult(q: string, qTokens: string[], title: string, artist: string): number {
   const t = scoreField(normQ(title), q, qTokens)
   const aRaw = normQ(artist)
   const a = Math.max(scoreField(aRaw, q, qTokens), scoreField(stripThe(aRaw), q, qTokens))

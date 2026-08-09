@@ -1,5 +1,6 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
 import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
+import { foldAccents } from '../common/fold-text.ts'
 
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
 
@@ -147,7 +148,7 @@ export function searchTitle(raw: string): string {
 }
 
 const titleTokens = (s: string): string[] =>
-  s.toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter(Boolean)
+  foldAccents(s).split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter(Boolean)
 
 /** If `gotTitle` carries a version marker the request didn't ask for, return
  *  that marker; null = clean. COUNT-based token diff, so a song legitimately

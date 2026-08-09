@@ -74,6 +74,7 @@ import {
   sanitizeAlbumCredits,
   tagYearStr,
 } from '../common/albumReleaseDate'
+import { foldAccents } from '../common/fold-text.ts'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
 import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
@@ -12523,7 +12524,9 @@ async function ragLibraryArtistSet(): Promise<Set<string>> {
     const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string }> }
     for (const t of lib.tracks || []) {
       for (const a of [t.artist, t.albumArtist]) {
-        const norm = (a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+        // ⚠️ Must fold identically to pickRetrievalIndex's qNorm below, or an
+        //    accented artist is in this set under a name the query can't form.
+        const norm = foldAccents(a || '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
         if (norm.length >= 4 && !GENRE_WORD_ARTISTS.has(norm)) set.add(norm)
       }
     }
@@ -12534,7 +12537,7 @@ async function ragLibraryArtistSet(): Promise<Set<string>> {
 
 async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'> {
   if (DECADE_QUERY_RE.test(query)) return 'main'
-  const qNorm = ` ${query.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `
+  const qNorm = ` ${foldAccents(query).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `
   const artists = await ragLibraryArtistSet()
   for (const a of artists) {
     if (qNorm.includes(` ${a} `)) return 'main'
@@ -14421,7 +14424,9 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
       const k = s.artist.toLowerCase()
       artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
     }
-    const qNorm = q.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    // Fold accents BEFORE stripping, or an accented artist scores against a
+    // mangled string — "JAŸ-Z" becomes "ja z" and never matches "jay z".
+    const qNorm = foldAccents(q).replace(/[^a-z0-9]+/g, ' ').trim()
     const scoreOf = (s: ItunesSuggestion): number => {
       let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 10
       const album = (s.album || '').toLowerCase()
@@ -14429,7 +14434,7 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
       // The song the user actually TYPED wins: if the track title appears
       // verbatim inside the query, nothing popularity-ranked beats it
       // ("when you die mgmt" must put When You Die above Little Dark Age).
-      const songNorm = song.replace(/[^a-z0-9]+/g, ' ').trim()
+      const songNorm = foldAccents(song).replace(/[^a-z0-9]+/g, ' ').trim()
       if (songNorm.length > 3 && qNorm.includes(songNorm)) score += 25
       const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
       const isRemix = /remix|rework|edit\)/.test(song) || /remix/.test(album)

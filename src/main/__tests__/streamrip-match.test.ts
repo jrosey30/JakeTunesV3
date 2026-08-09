@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { foldAccents } from '../../common/fold-text.ts'
+import { recoArtistMatches, recoTitleMatches } from '../reco-match.ts'
 import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches} from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
@@ -244,5 +246,33 @@ describe('subtitle variants — catalogues disagree about parentheticals', () =>
       { source: 'qobuz', mediaType: 'track', id: 'full', desc: 'Lady (Hear Me Tonight) by Modjo' },
     ]
     assert.equal(rankStreamripCandidates('Lady (Hear Me Tonight)', 'Modjo', results).ranked[0]?.id, 'full')
+  })
+})
+
+describe('accent folding — catalogues spell names with letters we were deleting', () => {
+  it('folds the names that were being destroyed', () => {
+    assert.equal(foldAccents('JAŸ-Z'), 'jaÿ-z'.normalize('NFD').replace(/[̀-ͯ]/g, ''))
+    assert.equal(foldAccents('JAŸ-Z').replace(/[^a-z0-9]/g, ''), 'jayz')
+    assert.equal(foldAccents('Beyoncé').replace(/[^a-z0-9]/g, ''), 'beyonce')
+    assert.equal(foldAccents('Sigur Rós').replace(/[^a-z0-9]/g, ''), 'sigurros')
+    assert.equal(foldAccents('Motörhead').replace(/[^a-z0-9]/g, ''), 'motorhead')
+    assert.equal(foldAccents('Björk').replace(/[^a-z0-9]/g, ''), 'bjork')
+  })
+
+  it('handles letters that have NO decomposition — the half people forget', () => {
+    assert.equal(foldAccents('MØ').replace(/[^a-z0-9]/g, ''), 'mo')
+    assert.equal(foldAccents('Sigur Rós & Mø').replace(/[^a-z0-9]/g, ''), 'sigurrosmo')
+    assert.equal(foldAccents('Blœdhound').replace(/[^a-z0-9]/g, ''), 'bloedhound')
+  })
+
+  it('matches JAY-Z as the user types it against JAŸ-Z as iTunes writes it', () => {
+    assert.ok(recoArtistMatches('JAY-Z', 'JAŸ-Z'))
+    assert.ok(recoArtistMatches('JAŸ-Z', 'Jay-Z'))
+    assert.ok(recoTitleMatches('Crazy in Love (feat. JAY-Z)', 'Crazy in Love (feat. JAŸ-Z)'))
+  })
+
+  it('still refuses genuinely different artists', () => {
+    assert.equal(recoArtistMatches('JAY-Z', 'Jay Chou'), false)
+    assert.equal(recoArtistMatches('Beyoncé', 'Beyond'), false)
   })
 })
