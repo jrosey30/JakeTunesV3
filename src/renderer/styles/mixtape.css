@@ -222,7 +222,7 @@
 }
 .jcard-row:hover { background: rgba(0, 0, 0, 0.025); }
 .jcard-row--now { background: rgba(179, 84, 42, 0.07); }
-.jcard-row--now .jcard-row-title { font-weight: 700; color: var(--accent, #b3542a); }
+.jcard-row--now .jcard-row-title { font-weight: 700; color: var(--accent, #FD5901); }
 .jcard-row-num {
   color: var(--text-secondary);
   font-size: 11.5px;
@@ -639,7 +639,7 @@
 .mixtape-link {
   border: none;
   background: none;
-  color: var(--accent, #b3542a);
+  color: var(--accent, #FD5901);
   font-size: 11.5px;
   font-weight: 600;
   text-decoration: none;
@@ -684,7 +684,7 @@
   letter-spacing: -0.01em;
 }
 .fp-counter-sub { font-size: 8px; letter-spacing: 0.9px; color: #9a927e; text-transform: uppercase; }
-.fp-counter--rolling .fp-counter-digits { color: var(--accent, #b3542a); }
+.fp-counter--rolling .fp-counter-digits { color: var(--accent, #FD5901); }
 
 /* mic voice selector */
 .fp-voicerow { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }

@@ -1,7 +1,7 @@
 /* 4.5: "Your Mixes" home section — matched to the iOS MixesSection design.
    Spotify-style cover-art cards in a horizontal row + a "Make me a vibe" sheet.
    Sits BELOW the Featured hero. 28px horizontal padding matches every other
-   home section. Orange is the only accent (#e0812e via --brand-orange-rgb). */
+   home section. Orange is the only accent (#F9894D via --brand-orange-rgb). */
 
 .home-mixes {
   margin: 8px 0 8px;

@@ -59,7 +59,7 @@ img { display: block; }
 }
 .empty-state-title strong {
   font-weight: 700;
-  color: var(--brand-orange, #bb4308);
+  color: var(--brand-orange, #FD5901);
 }
 .empty-state-sub {
   font-size: 12px;

@@ -76,7 +76,7 @@
 }
 .store-library-header__navbtn:hover:not(:disabled) {
   background: linear-gradient(180deg, #fff, #f6efd6);
-  color: var(--brand-orange, #bb4308);
+  color: var(--brand-orange, #FD5901);
 }
 .store-library-header__navbtn:active:not(:disabled) {
   transform: translateY(1px);

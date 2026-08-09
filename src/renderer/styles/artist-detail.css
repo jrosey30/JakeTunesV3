@@ -234,8 +234,8 @@
 }
 .artist-detail-wiki-spinner {
   width: 12px; height: 12px;
-  border: 2px solid rgba(187,67,8,0.2);
-  border-top-color: var(--brand-orange, #bb4308);
+  border: 2px solid rgba(253,89,1,0.2);
+  border-top-color: var(--brand-orange, #FD5901);
   border-radius: 50%;
   animation: artist-detail-spin 0.8s linear infinite;
   display: inline-block;
@@ -259,7 +259,7 @@
   top: 14px; bottom: 14px;
   left: 12px;
   width: 3px;
-  background: linear-gradient(180deg, var(--brand-orange, #bb4308), #d96820);
+  background: linear-gradient(180deg, var(--brand-orange, #FD5901), #d96820);
   border-radius: 2px;
 }
 .artist-detail-wiki-label {
@@ -326,7 +326,7 @@
   color: #5a5540;
 }
 .artist-detail-wiki-btn--ghost:hover {
-  background: rgba(187, 67, 8, 0.06);
+  background: rgba(253, 89, 1, 0.06);
   color: #2a2510;
 }
 .artist-detail-wiki-empty {
@@ -364,7 +364,7 @@
   gap: 14px;
   padding-bottom: 14px;
   margin-bottom: 6px;
-  border-bottom: 2px solid rgba(187, 67, 8, 0.18);
+  border-bottom: 2px solid rgba(253, 89, 1, 0.18);
 }
 .artist-detail-chapter-title {
   font-size: 22px;
@@ -569,7 +569,7 @@
 .artist-detail-disco-album-bar-fill {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--brand-orange, #bb4308), #d96820);
+  background: linear-gradient(90deg, var(--brand-orange, #FD5901), #d96820);
   border-radius: 2px;
   transition: width 0.25s ease;
 }
@@ -597,7 +597,7 @@
   color: #2a2510;
 }
 .artist-detail-disco-track--owned:hover {
-  background: rgba(187, 67, 8, 0.08);
+  background: rgba(253, 89, 1, 0.08);
   border-radius: 4px;
 }
 .artist-detail-disco-track--missing {

@@ -47,18 +47,29 @@
   --musicman-bg: #1e140a;
 
   /* 4.4.47 — Brand palette, sampled directly from the JakeTunes app
-     logo (newjaketunes.png): the icon's orange is #bb4308, the note's
-     off-white is #faeddc. ONE canonical orange; the gradient shades +
-     button border are derived from it so every glossy iTunes-8 button
-     reads as the same hue the logo uses. Anything orange in the app
-     routes through these — never a one-off literal. */
-  --brand-orange:        #bb4308;       /* canonical: solid fills, accent text, icons */
-  --brand-orange-rgb:    187, 67, 8;    /* same value, for rgba() glows / shadows / tints */
-  --brand-orange-light:  #d6601f;       /* gradient tops + hover */
-  --brand-orange-dark:   #982f05;       /* gradient bottoms */
-  --brand-orange-border: #7f2803;       /* button borders (darkest) */
-  --brand-cream:         #faeddc;       /* the logo note's off-white */
-  --brand-cream-rgb:     250, 237, 220;
+     2026-08-09 — RE-DERIVED FROM THE NEW LOGO ("JAKETUNES 2.0"): a pixel
+     eighth-note in white on a hot orange tile. Jake: "ENTIRE APP'S COLOR
+     SCHEME NEEDS TO FEED OFF OF THIS NEW LOGO."
+
+     The canonical orange is #FD5901 — not eyeballed, but the MEDIAN of the
+     1,040,005 orange pixels in the logo file, so it is exactly the hue the
+     tile is. The previous #FD5901 came from the old mark and reads muddy
+     beside it. Every shade below is derived from #FD5901 in HLS (H 21deg,
+     S 99%, L 50%) rather than picked, so the whole app stays one hue:
+       light  L+10%   grad tops / hover
+       dark   L-10%   grad bottoms
+       border L-19%   button borders
+       glow   L+14% S-6%   LCD / progress / now-playing
+     ONE canonical orange. Anything orange in the app routes through these —
+     never a one-off literal. */
+  --brand-orange:        #FD5901;       /* canonical: solid fills, accent text, icons */
+  --brand-orange-rgb:    253, 89, 1;    /* same value, for rgba() glows / shadows / tints */
+  --brand-orange-light:  #FE7A33;       /* gradient tops + hover */
+  --brand-orange-dark:   #CA4701;       /* gradient bottoms */
+  --brand-orange-border: #9C3701;       /* button borders (darkest) */
+  --brand-cream:         #FEFDFC;       /* the logo note's white */
+  --brand-cream-rgb:     254, 253, 252;
+  --brand-ink:           #0B0B0A;       /* the note's outline black */
 
   /* The Music Man view's accent is the brand orange (was a separate
      #c87828). Kept as its own name so the dark-themed Music Man UI
@@ -252,6 +263,6 @@
   --color-danger: #c0392b;
   --color-success: #2c6b4f;
   --accent: var(--brand-orange);          /* fixes the accidental blue See-All */
-  --brand-orange-glow: #e0812e;           /* the brighter LCD/progress/now-playing warm orange */
+  --brand-orange-glow: #F9894D;           /* the brighter LCD/progress/now-playing warm orange */
   --ring-focus: 0 0 0 2px rgba(var(--selection-top-rgb), 0.55);
 }
