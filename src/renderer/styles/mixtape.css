@@ -48,15 +48,41 @@
   align-items: center;
   padding: 5px 7px;
   border-radius: 6px;
-  background: rgba(20, 18, 14, 0.62);
-  backdrop-filter: blur(3px);
+  background: rgba(253, 253, 253, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
   line-height: 0;
   pointer-events: none;
 }
 .mixtape-cover-badge .cassette { width: 40px; height: 23px; }
 /* The text column owns the remaining width and sets ONE left edge for
    everything under it. */
-.mixtape-hero-info { min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: flex-start; }
+.mixtape-hero-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  /* Push the transport + actions to the BOTTOM of the cover's height so the
+     hero reads as one block instead of text floating beside a tall square
+     with dead space under it. */
+  min-height: 220px;
+}
+.mixtape-hero-spacer { flex: 1; }
+/* Primary action — every other page in the app leads with one, and this page
+   was making PLAY a small key inside a floating pill instead. */
+.mixtape-play {
+  padding: 8px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(180deg, #c1622f, #a2481f);
+  border: 1px solid #8d3d18;
+  border-radius: 5px;
+  cursor: pointer;
+  margin: 0 0 10px;
+}
+.mixtape-play:hover { filter: brightness(1.06); }
 
 /* No drop shadow — the mark is line art on the page, not an object
    sitting on it (2026-08-09). */
@@ -150,7 +176,11 @@
    right edge with a lake of nothing between. It's a normal table now, on the
    app's own grid, capped so the columns stay related to each other. */
 .jcard {
-  max-width: 1080px;
+  padding-right: 8px;
+  /* Full width like every other tracklist in the app. The 1080px cap I put
+     here made the columns huddle in the left half of a wide window while the
+     rest of the page sat empty — which is most of what read as unfinished
+     (2026-08-09, seen on a real screenshot rather than guessed at). */
   border-top: 1px solid var(--border-subtle, #e2ded6);
 }
 .jcard-side { min-width: 0; }
@@ -158,7 +188,7 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 12px 4px 8px;
+  padding: 14px 10px 8px;
   border-bottom: 1px solid var(--border-subtle, #e2ded6);
 }
 .jcard-side-label {
@@ -172,11 +202,14 @@
 }
 .jcard-side-time { font-size: 11.5px; color: var(--text-secondary); }
 .jcard-row {
+  /* Name takes 2 parts, Artist 1, Time fixed — the proportional split the
+     app's other lists use. The previous fixed 15rem artist column pinned
+     itself to the right edge and left a lake between it and the title. */
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 15rem) 52px;
+  grid-template-columns: 34px minmax(0, 2fr) minmax(0, 1fr) 56px;
   align-items: center;
-  gap: 12px;
-  padding: 7px 4px;
+  gap: 16px;
+  padding: 7px 10px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   font-size: 13px;
 }
@@ -193,7 +226,7 @@
 .jcard-row-artist {
   color: var(--text-secondary);
   font-size: 12.5px;
-  text-align: right;
+  text-align: left;          /* beside the title, where the eye expects it */
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .jcard-row-time {
@@ -469,15 +502,16 @@
      highlight, drop shadow) holding eight toy keys. Now a quiet strip that
      belongs to the page: the controls read as controls, not as an imitation
      of a machine. Jake kept a tape FEEL, not a tape PROP. */
-  display: flex;
-  gap: 2px;
+  display: inline-flex;
+  gap: 0;
   align-items: stretch;
-  background: transparent;
+  background: var(--white, #fdfdfd);
   border: 1px solid var(--border, #d7d3ca);
-  border-radius: 7px;
-  padding: 3px;
+  border-radius: 8px;
+  padding: 4px 6px;
   width: fit-content;
-  margin-bottom: 10px;
+  margin: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .fp-key {
   display: flex;
@@ -485,8 +519,8 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  width: 58px;
-  height: 44px;
+  width: 54px;
+  height: 42px;
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
@@ -536,17 +570,17 @@
   font-weight: 500;
   letter-spacing: 0;
   color: var(--text-secondary);
-  margin: 10px 0 0;
+  margin: 9px 0 0;
 }
 .fp-status--armed { color: #b07818; }
 .fp-status--recording { color: #c23a24; animation: mic-blink 1.2s steps(2, start) infinite; }
 .mixtape-smallrow {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
   font-size: 11.5px;
   color: var(--text-secondary);
-  margin: 14px 0 0;
+  margin: 10px 0 0;
 }
 /* Actions, not underlined web links in a row — underlines everywhere is
    most of why this block looked unfinished. */
@@ -561,6 +595,11 @@
   padding: 0;
 }
 .mixtape-link:hover { text-decoration: underline; }
+/* Destructive action sits BELOW the useful ones in weight. Three identical
+   orange links gave "Delete Tape" the same pull as "Export" (2026-08-09,
+   from the gpt-image target render). */
+.mixtape-link--danger { color: var(--text-secondary); font-weight: 500; }
+.mixtape-link--danger:hover { color: #a3301b; }
 .mixtape-link:disabled { opacity: 0.5; cursor: default; }
 /* REW / FF / STOP shapes */
 .fp-shape--rew, .fp-shape--ff { display: flex; gap: 1px; }

@@ -299,7 +299,7 @@ export default function MixtapeView() {
         <div className="mixtape-cover">
           <MixArtwork tracks={allTracks} alt={tape.title} priority />
           <span className="mixtape-cover-badge" title="Mixtape">
-            <CassetteSvg ink="#fff" spinning={tapeActive} wind={winding?.dir} />
+            <CassetteSvg ink="#6d6858" spinning={tapeActive} wind={winding?.dir} />
           </span>
         </div>
         <div className="mixtape-hero-info">
@@ -402,6 +402,9 @@ export default function MixtapeView() {
             const displayLeft = Math.max(0, counter.totalMs - counter.elapsedMs)
             return (
               <>
+                <button className="mixtape-play" onClick={() => { mechanicalSound('play'); pressPlay() }}>
+                  ▶ Play Tape
+                </button>
                 <div className="faceplate">
                   {/* The A/B tabs are gone — a tape is one sequence now, so
                       there is nothing to flip to (2026-08-08). */}
@@ -478,7 +481,7 @@ export default function MixtapeView() {
           <div className="mixtape-smallrow">
             <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
             <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Exporting…' : 'Export as one file'}</button>
-            <button className="mixtape-link" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
+            <button className="mixtape-link mixtape-link--danger" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
           {dubNotice && <div className="mixtape-dub-notice">{dubNotice}</div>}
         </div>
