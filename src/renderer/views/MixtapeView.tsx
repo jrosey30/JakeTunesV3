@@ -18,6 +18,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
+import MixArtwork from '../components/MixArtwork'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
 import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import { effectiveDurationFn, tapeTracks } from '../../common/tape-physics'
@@ -285,7 +286,22 @@ export default function MixtapeView() {
   return (
     <div className="mixtape-view" ref={mixPageRef}>
       <div className="mixtape-hero">
-        <CassetteSvg ink={ink} spinning={tapeActive} wind={winding?.dir} />
+        {/* 2026-08-09 rebuild. Jake: "all the mixtape pages are TRASH. SLOPPY
+            UNALIGNED". He was right — the previous pass removed the tacky
+            without composing anything to replace it: a 120px outline floating
+            beside a 34px title, three different left edges, a blue heading in
+            a cream box.
+            The tape now wears the SAME hero every other page wears — a real
+            220px cover built from its own songs (MixArtwork, the 2x2 the
+            playlist and mix pages use), title, one meta line, actions. The
+            cassette survives as a small badge on the corner of the cover,
+            which is where a tape feel belongs: a detail, not the furniture. */}
+        <div className="mixtape-cover">
+          <MixArtwork tracks={allTracks} alt={tape.title} priority />
+          <span className="mixtape-cover-badge" title="Mixtape">
+            <CassetteSvg ink="#fff" spinning={tapeActive} wind={winding?.dir} />
+          </span>
+        </div>
         <div className="mixtape-hero-info">
           {renaming !== null ? (
             <input
@@ -434,7 +450,10 @@ export default function MixtapeView() {
                     <span className="fp-shape fp-shape--eject" /><span className="fp-label">EJECT</span>
                   </button>
                 </div>
-                <div className="fp-voicerow">
+                {/* Only while the MIC is on. A voice picker sitting there
+                    permanently was one more control competing for attention
+                    on a page Jake already called cluttered (2026-08-09). */}
+                {micOn && <div className="fp-voicerow">
                   <span className="fp-voicerow-label">MIC VOICE</span>
                   <select
                     className="fp-voice-select"
@@ -446,7 +465,7 @@ export default function MixtapeView() {
                       <option key={v.id} value={v.id}>{v.name}</option>
                     ))}
                   </select>
-                </div>
+                </div>}
                 <div className={`fp-status${rolling ? ' fp-status--recording' : armed ? ' fp-status--armed' : ''}`}>
                   {rolling ? `● RECORDING — ${String(pb.nowPlaying?.title || '').slice(0, 30)} → tape${micOn ? ' · MIC LIVE' : ''}`
                     : armed ? 'REC DOWN — press PLAY'
@@ -458,9 +477,7 @@ export default function MixtapeView() {
           })()}
           <div className="mixtape-smallrow">
             <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
-            <span>·</span>
             <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Exporting…' : 'Export as one file'}</button>
-            <span>·</span>
             <button className="mixtape-link" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
           {dubNotice && <div className="mixtape-dub-notice">{dubNotice}</div>}
