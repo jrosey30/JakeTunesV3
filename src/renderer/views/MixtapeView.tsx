@@ -19,6 +19,10 @@ import { useAudio } from '../hooks/useAudio'
 import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
 import MixArtwork from '../components/MixArtwork'
+import {
+  subscribePlaylistCovers, getPlaylistCovers, ensurePlaylistCoversLoaded,
+  playlistCoverSrc, pickPlaylistCover, clearPlaylistCover, refreshPlaylistCovers,
+} from '../playlistCovers'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
 import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import { effectiveDurationFn, tapeTracks } from '../../common/tape-physics'
@@ -102,6 +106,8 @@ export default function MixtapeView() {
   const introRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => { void refreshMixtapes() }, [])
+  useSyncExternalStore(subscribePlaylistCovers, getPlaylistCovers)
+  useEffect(() => { ensurePlaylistCoversLoaded() }, [])
   // Cancel mirrors start: leaving the view kills a playing intro.
   useEffect(() => () => {
     if (introRef.current) { introRef.current.pause(); introRef.current = null }
@@ -237,6 +243,7 @@ export default function MixtapeView() {
   }
 
   const ink = tape.inkColor || pickInk(tape.id)
+  const tapeCover = playlistCoverSrc(tape.id)
   const currentId = pb.nowPlaying?.id
   const onThisTape = currentId != null && tapeTracks(tape).includes(currentId)
   const tapeActive = introPlaying || (onThisTape && pb.isPlaying)
@@ -296,12 +303,23 @@ export default function MixtapeView() {
             playlist and mix pages use), title, one meta line, actions. The
             cassette survives as a small badge on the corner of the cover,
             which is where a tape feel belongs: a detail, not the furniture. */}
-        <div className="mixtape-cover">
-          <MixArtwork tracks={allTracks} alt={tape.title} priority />
+        <button
+          type="button"
+          className="mixtape-cover"
+          title={tapeCover ? 'Click to replace this cover · right-click for the album mosaic' : 'Click to choose a cover'}
+          onClick={() => { void pickPlaylistCover(tape.id).then(() => refreshPlaylistCovers()) }}
+          onContextMenu={(e) => { e.preventDefault(); if (tapeCover) void clearPlaylistCover(tape.id) }}
+        >
+          {/* A tape wears the same cover system playlists do — its own
+              picture if it has one (inherited from the playlist it came
+              from, or chosen here), otherwise the 2x2 of its songs. */}
+          {tapeCover
+            ? <img src={tapeCover} alt="" className="mixtape-cover-img" />
+            : <MixArtwork tracks={allTracks} alt={tape.title} priority />}
           <span className="mixtape-cover-badge" title="Mixtape">
             <CassetteSvg ink="#6d6858" spinning={tapeActive} wind={winding?.dir} />
           </span>
-        </div>
+        </button>
         <div className="mixtape-hero-info">
           {renaming !== null ? (
             <input

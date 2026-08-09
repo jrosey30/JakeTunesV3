@@ -177,6 +177,37 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
     }
   })
 
+  /**
+   * Inherit a cover — a tape made FROM a playlist keeps that playlist's
+   * picture. Jake, 2026-08-09: "shouldnt my custom cover be the custom cover
+   * for this mixtape since it came from a playlist?" Yes: the tape inherits
+   * the playlist's name and running order already, so the cover was simply an
+   * oversight.
+   *
+   * COPIES rather than aliases. If the tape pointed at the playlist's file,
+   * changing the playlist's cover later would silently change the tape's too,
+   * and deleting the playlist would leave the tape blank. They're separate
+   * objects from the moment the tape exists.
+   *
+   * Playlist ids (pl-…) and tape ids (mix-…) share this directory without
+   * colliding — different prefixes, and both are validated by safeId().
+   */
+  ipcMain.handle('playlist-cover-copy', async (_e, fromId: string, toId: string) => {
+    const a = safeId(String(fromId || ''))
+    const b = safeId(String(toId || ''))
+    if (!a || !b) return { ok: false, error: 'bad id' }
+    try {
+      const src = join(COVERS_DIR(), `${a}.jpg`)
+      const st = await stat(src).catch(() => null)
+      if (!st || !st.isFile()) return { ok: true, copied: false }   // nothing to inherit
+      await mkdir(COVERS_DIR(), { recursive: true })
+      await copyFile(src, join(COVERS_DIR(), `${b}.jpg`))
+      return { ok: true, copied: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'copy failed' }
+    }
+  })
+
   /** Back to the 4-up mosaic. Identity-gated: only ever our own directory. */
   ipcMain.handle('playlist-cover-clear', async (_e, playlistId: string) => {
     const id = safeId(String(playlistId || ''))

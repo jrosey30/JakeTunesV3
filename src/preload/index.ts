@@ -574,6 +574,8 @@ const electronAPI = {
     ipcRenderer.invoke('playlist-covers-map'),
   pickPlaylistCover: (playlistId: string): Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }> =>
     ipcRenderer.invoke('playlist-cover-pick', playlistId),
+  copyPlaylistCover: (fromId: string, toId: string): Promise<{ ok: boolean; copied?: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-cover-copy', fromId, toId),
   clearPlaylistCover: (playlistId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('playlist-cover-clear', playlistId),
   gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null> =>

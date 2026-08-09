@@ -18,6 +18,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { inheritCover } from '../playlistCovers'
 import MixtapeMic from './MixtapeMic'
 import { refreshMixtapes, setMixtapeId, pickInk } from '../mixtapes'
 import { effectiveDurationFn, tapeTracks, fitTape, MAX_TAPE_SONGS } from '../../common/tape-physics'
@@ -46,6 +47,12 @@ interface Props {
   keepOrder?: boolean
   /** Pre-fills the label — the playlist's name, when that's where this came from. */
   initialTitle?: string
+  /**
+   * The playlist this tape is being made from. Its custom cover comes with it
+   * (2026-08-09) — the tape already inherits the name and the running order,
+   * so the picture belonged in that set too.
+   */
+  coverFromPlaylistId?: string
 }
 
 type Stage = 'setup' | 'building' | 'deck'
@@ -56,7 +63,7 @@ function fmt(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, initialTitle }: Props) {
+export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, initialTitle, coverFromPlaylistId }: Props) {
   const { state: lib, dispatch } = useLibrary()
   // keepOrder skips 'setup' too: there's nothing to ask when the running
   // order is already decided and the songs are already chosen.
@@ -140,6 +147,9 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       inkColor: existing?.inkColor ?? pickInk(id),
     }
+    // Inherit the source playlist's cover before saving lands us on the tape
+    // page, so it's already wearing it when it opens.
+    if (coverFromPlaylistId) await inheritCover(coverFromPlaylistId, id)
     const r = await window.electronAPI.saveMixtape?.(tape)
     if (!r?.ok) {
       setError(r?.error || 'Could not save the tape.')

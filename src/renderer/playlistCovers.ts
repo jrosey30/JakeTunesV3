@@ -60,6 +60,13 @@ export async function pickPlaylistCover(playlistId: string): Promise<string | nu
   return null
 }
 
+/** A tape made from a playlist inherits its cover. Copy, not alias — see the
+ *  main handler for why. */
+export async function inheritCover(fromId: string, toId: string): Promise<void> {
+  await window.electronAPI.copyPlaylistCover?.(fromId, toId)
+  await refreshPlaylistCovers()
+}
+
 export async function clearPlaylistCover(playlistId: string): Promise<void> {
   await window.electronAPI.clearPlaylistCover?.(playlistId)
   await refreshPlaylistCovers()

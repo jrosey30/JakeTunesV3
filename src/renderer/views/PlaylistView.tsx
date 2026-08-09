@@ -1073,6 +1073,7 @@ export default function PlaylistView() {
           tracks={mixtapeFrom}
           keepOrder
           initialTitle={playlist.name}
+          coverFromPlaylistId={playlist.id}
           onClose={() => setMixtapeFrom(null)}
         />
       )}
