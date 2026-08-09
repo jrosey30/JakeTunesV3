@@ -85,6 +85,41 @@ async function resolveRip(): Promise<{ bin: string; version: string } | null> {
   return null
 }
 
+/**
+ * Why `rip` didn't resolve — INSTALLED-BUT-BROKEN is a different problem
+ * from NOT-INSTALLED, and telling Jake to install something he already has
+ * sends him in a circle.
+ *
+ * 2026-08-08, live: streamrip 2.1.0 was installed and on disk, but Pillow's
+ * compiled _imaging linked against /opt/homebrew/opt/openjpeg/lib/
+ * libopenjp2.7.dylib, which a Homebrew change had removed. `rip --version`
+ * died with an ImportError, exited non-zero, and the store reported "not
+ * installed" — so the suggested fix (`pipx install streamrip`) would have
+ * answered "already installed" and left him stuck. The real fix was one
+ * `brew install openjpeg`. The traceback said so; nothing surfaced it.
+ */
+async function ripDiagnosis(): Promise<string> {
+  const r = await run(ripBinary(), ['--version'], 10000)
+  if (r.enoent) {
+    const p = await run('rip', ['--version'], 10000)
+    if (p.enoent) return 'streamrip isn’t installed. Run: pipx install streamrip'
+  }
+  const out = `${r.stderr || ''}\n${r.stdout || ''}`
+  const dylib = out.match(/Library not loaded: (\S+)/)
+  if (dylib) {
+    // Homebrew names the formula after the lib in the overwhelming majority
+    // of cases (…/opt/<formula>/lib/…), so name it rather than make him read
+    // a traceback.
+    const formula = dylib[1].match(/\/opt\/([^/]+)\//)?.[1]
+    return `streamrip is installed but can’t start: a library it needs is missing (${dylib[1]}).`
+      + (formula ? ` Fix it with: brew install ${formula}` : '')
+  }
+  const last = out.split('\n').map((l) => l.trim()).filter(Boolean).slice(-1)[0]
+  return last
+    ? `streamrip is installed but failed to start: ${last.slice(0, 200)}`
+    : 'streamrip isn’t installed. Run: pipx install streamrip'
+}
+
 /** Last 1-3 non-empty lines of streamrip's output — its own "needs login" /
  *  bad-link / geo-block message, surfaced verbatim to the user. */
 function tailMessage(res: RunResult): string {
@@ -145,7 +180,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   interface StagedRip { staging: string; files: string[] }
   async function stageRip(ripSubcmd: string[]): Promise<{ ok: true; staged: StagedRip } | { ok: false; error: string }> {
     const rip = await resolveRip()
-    if (!rip) return { ok: false, error: 'streamrip isn’t installed. Run: pipx install streamrip' }
+    if (!rip) return { ok: false, error: await ripDiagnosis() }
     let staging = ''
     try {
       staging = await mkdtemp(join(tmpdir(), 'jaketunes-rip-'))
@@ -283,7 +318,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   ipcMain.handle('streamrip:status', async () => {
     const rip = await resolveRip()
-    return rip ? { ok: true, installed: true, version: rip.version } : { ok: true, installed: false }
+    // When it isn't usable, say WHY — "not installed" and "installed but
+    // its Homebrew dependency vanished" need different fixes (2026-08-08).
+    return rip
+      ? { ok: true, installed: true, version: rip.version }
+      : { ok: true, installed: false, reason: await ripDiagnosis() }
   })
 
   async function searchCatalog(opts: {
@@ -298,7 +337,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const mediaType = opts.mediaType || 'track'
     const n = Math.min(Math.max(Math.round(opts.numResults || 25), 1), 50)
     const rip = await resolveRip()
-    if (!rip) return { ok: false, error: 'streamrip isn’t installed. Run: pipx install streamrip' }
+    if (!rip) return { ok: false, error: await ripDiagnosis() }
     let dir = ''
     try {
       dir = await mkdtemp(join(tmpdir(), 'jaketunes-ripsearch-'))

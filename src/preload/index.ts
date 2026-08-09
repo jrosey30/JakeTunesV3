@@ -754,7 +754,7 @@ const electronAPI = {
   bandcampGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-back'),
   bandcampGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-forward'),
   // ── streamrip download store (paste-a-link → rip CLI → import) ──
-  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string }> =>
+  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }> =>
     ipcRenderer.invoke('streamrip:status'),
   streamripDownload: (url: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download', url),

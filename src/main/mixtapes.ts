@@ -191,8 +191,29 @@ function enforceTape(
   return { sideA: a.ids, sideB: b.ids, sideACutMs: a.cutMs, sideBCutMs: b.cutMs }
 }
 
+/**
+ * The tape's rules, applied to whatever came back — known ids only, no
+ * duplicates, order preserved, capped at MAX_TAPE_SONGS. Same discipline
+ * enforceTape() applied to the two-sided era: the model proposes, code
+ * decides. (2026-08-08)
+ */
+function cleanSequence(raw: unknown, byId: Map<number, MixtapeInputTrack>): number[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const v of raw) {
+    const id = Number(v)
+    if (!byId.has(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+    if (out.length >= MAX_TAPE_SONGS) break
+  }
+  return out
+}
+
 /** Deterministic fallback when the model reply is unusable: keep the
- *  given order, fill Side A then Side B — same true-limit physics. */
+ *  given order, fill Side A then Side B — same true-limit physics.
+ *  LEGACY (two-sided era) — kept for tapes recorded under the old rules. */
 function fallbackTape(
   tracks: MixtapeInputTrack[],
   sideBudgetMs: number,
@@ -207,39 +228,42 @@ function fallbackTape(
   )
 }
 
+/**
+ * Build a tape proposal (review-gate: nothing persists until mixtape-save).
+ *
+ * 2026-08-08 rules — Jake: "all mixtapes are no longer doing side a side b.
+ * 25 songs max." So this sequences ONE run of songs with a COUNT limit, and
+ * the minutes budget, the A/B split and the boundary cut are all gone. The
+ * old two-sided path stays only in enforceTape()/fitSide(), which now exist
+ * purely to read tapes recorded before this.
+ */
 async function buildMixtapeProposal(
   host: MixtapesHost,
   tracks: MixtapeInputTrack[],
-  tapeLength: 60 | 90 | 120,
   dedication?: string,
   note?: string,
 ): Promise<{
   ok: true
   title: string
   commentary: string
-  sideA: number[]
-  sideB: number[]
-  sideACutMs?: number
-  sideBCutMs?: number
+  tracks: number[]
   linerNotes: MixtapeLinerNote[]
   leftovers: number[]
-  sideBudgetMs: number
 } | { ok: false; error: string }> {
   if (!Array.isArray(tracks) || tracks.length < 2) {
     return { ok: false, error: 'Pick at least 2 songs for a mixtape.' }
   }
   if (tracks.length > MAX_INPUT_SONGS) {
-    return { ok: false, error: `That's ${tracks.length} songs — a tape can't hold that. Narrow it down (${MAX_INPUT_SONGS} max).` }
+    return { ok: false, error: `That's ${tracks.length} songs — narrow it down (${MAX_INPUT_SONGS} max).` }
   }
   const byId = new Map(tracks.map((t) => [Number(t.id), t]))
-  const sideBudgetMs = (tapeLength / 2) * 60_000
 
   const list = tracks.map((t) =>
     `${t.id} | ${t.title || '?'} | ${t.artist || '?'} | ${t.album || ''} | ${t.genre || ''} | ${t.bpm || ''} | ${fmtDur(Number(t.duration) || 0)}`
   ).join('\n')
 
   const user = [
-    `Make a REAL cassette mixtape from these songs. This is a C${tapeLength}: two sides, EXACTLY ${tapeLength / 2}:00 each. TRUE tape physics: when a side runs out, it runs out — if the last song runs past the end it gets CUT OFF mid-song, just like 1985. You may use that deliberately (a song swallowed by the leader is its own kind of ending) or land the side clean. No slack, no mercy.`,
+    `Make a mixtape from these songs. ONE continuous run — no sides, no flip. HARD LIMIT: ${MAX_TAPE_SONGS} songs. Fewer is fine and often better; never more.`,
     '',
     `Songs (id | title | artist | album | genre | bpm | length):`,
     list,
@@ -247,16 +271,16 @@ async function buildMixtapeProposal(
     dedication ? `The tape is dedicated: "${dedication}" — let that shape the mood and the title.` : '',
     note ? `Maker's note: ${note}` : '',
     '',
-    'Sequence for FLOW like someone who has made a hundred tapes: Side A opens with a grabber and closes on a high; Side B can dig deeper and the last song is the goodbye. Energy and key changes should feel intentional. If not everything fits, leave songs off — the best TAPE wins, not the most songs.',
+    'Sequence for FLOW like someone who has made a hundred tapes: open with a grabber, let the middle dig deeper, and make the last song the goodbye. Energy and key changes should feel intentional. It plays start to finish with no skipping, so every transition has to earn itself.',
     'Use ONLY the ids above.',
     '',
     'Return ONLY JSON:',
-    '{"title":"the tape\'s name, like it was written on the label","commentary":"2-3 sentences in your voice for the inside of the J-card","sideA":[ids in play order],"sideB":[ids in play order],"linerNotes":[{"id":123,"note":"aside for that song, max 12 words, like a scribble next to the tracklist"}]}',
+    '{"title":"the tape\'s name, like it was written on the label","commentary":"2-3 sentences in your voice for the inside of the J-card","tracks":[ids in play order],"linerNotes":[{"id":123,"note":"aside for that song, max 12 words, like a scribble next to the tracklist"}]}',
   ].filter(Boolean).join('\n')
 
   let title = ''
   let commentary = ''
-  let sides: TapeSides | null = null
+  let seq: number[] | null = null
   let linerNotes: MixtapeLinerNote[] = []
   try {
     const reply = await host.claudeCall('mixtape-build', {
@@ -271,7 +295,9 @@ async function buildMixtapeProposal(
     if (parsed) {
       title = String(parsed.title || '').trim()
       commentary = String(parsed.commentary || '').trim()
-      sides = enforceTape(parsed.sideA, parsed.sideB, byId, sideBudgetMs)
+      // Enforce the rules in CODE, never on trust: known ids only, no
+      // duplicates, order preserved, hard-capped at MAX_TAPE_SONGS.
+      seq = cleanSequence(parsed.tracks, byId)
       if (Array.isArray(parsed.linerNotes)) {
         linerNotes = (parsed.linerNotes as Array<Record<string, unknown>>)
           .map((n) => ({ id: Number(n?.id), note: String(n?.note || '').trim() }))
@@ -282,17 +308,16 @@ async function buildMixtapeProposal(
     console.warn('[mixtapes] build call failed, using fallback sequencing:', err)
   }
 
-  if (!sides || (sides.sideA.length + sides.sideB.length) < 2) {
-    sides = fallbackTape(tracks, sideBudgetMs)
-  }
+  // Fallback: keep the given order, take the first MAX_TAPE_SONGS.
+  if (!seq || seq.length < 2) seq = cleanSequence(tracks.map((t) => t.id), byId)
   if (!title) title = `Mixtape · ${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })}`
   if (!commentary) commentary = 'Dubbed with love. Play loud, rewind with a pencil.'
 
-  const onTape = new Set([...sides.sideA, ...sides.sideB])
+  const onTape = new Set(seq)
   const leftovers = tracks.map((t) => Number(t.id)).filter((id) => !onTape.has(id))
   linerNotes = linerNotes.filter((n) => onTape.has(n.id))
 
-  return { ok: true, title, commentary, ...sides, linerNotes, leftovers, sideBudgetMs }
+  return { ok: true, title, commentary, tracks: seq, linerNotes, leftovers }
 }
 
 /**
@@ -412,7 +437,7 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   const monthName = prevStart.toLocaleString('en-US', { month: 'long' })
   const yy = String(prevStart.getFullYear()).slice(2)
   const r = await buildMixtapeProposal(
-    host, ranked, 90,
+    host, ranked,
     `${monthName} ${prevStart.getFullYear()} — the month that actually happened`,
     `This is the HONEST tape of ${monthName} ${prevStart.getFullYear()} — the songs Jake actually lived in, ranked by his real plays this month. Title it "${monthName} '${yy}" or riff very close. Sequence for MEMORY — how the month felt — not for a gym.`,
   )
@@ -422,11 +447,12 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
     id,
     title: r.title,
     commentary: r.commentary,
+    tracks: r.tracks,
+    // Legacy fields the type still carries for old tapes; a tape made now
+    // is one sequence, so the sides stay empty and nothing reads them.
     tapeLength: 90,
-    sideA: r.sideA,
-    sideB: r.sideB,
-    sideACutMs: r.sideACutMs,
-    sideBCutMs: r.sideBCutMs,
+    sideA: [],
+    sideB: [],
     linerNotes: r.linerNotes,
     createdAt: new Date().toISOString(),
     inkColor: INKS_SEASON[prevStart.getMonth() % INKS_SEASON.length],
@@ -436,7 +462,7 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   if (cur.some((m) => m.seasonal === key)) return // raced another writer
   cur.unshift(tape)
   await saveMixtapes(cur)
-  console.log(`[mixtapes] season tape dubbed: "${r.title}" (${key}) — ${r.sideA.length}+${r.sideB.length} songs`)
+  console.log(`[mixtapes] season tape dubbed: "${r.title}" (${key}) — ${r.tracks.length} songs`)
 }
 
 export function registerMixtapesIpc(host: MixtapesHost): void {
@@ -466,8 +492,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
     note?: string,
   ) => {
     try {
-      const len: 60 | 90 | 120 = tapeLength === 60 || tapeLength === 120 ? tapeLength : 90
-      return await buildMixtapeProposal(host, tracks, len, dedication, note)
+      return await buildMixtapeProposal(host, tracks, dedication, note)
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'mixtape build failed' }
     }
@@ -477,8 +502,16 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
   // build proposal, or an edit like attaching an intro).
   ipcMain.handle('mixtape-save', async (_e, tape: Mixtape) => {
     try {
-      if (!tape?.id || !Array.isArray(tape.sideA) || !Array.isArray(tape.sideB)) {
+      // A tape is valid if it has EITHER shape: `tracks` (2026-08-08 rules)
+      // or the two side arrays (everything Jake recorded before that).
+      // Requiring both would have rejected every new tape outright.
+      const hasNew = Array.isArray(tape?.tracks)
+      const hasOld = Array.isArray(tape?.sideA) && Array.isArray(tape?.sideB)
+      if (!tape?.id || (!hasNew && !hasOld)) {
         return { ok: false, error: 'Malformed mixtape.' }
+      }
+      if (hasNew && (tape.tracks as number[]).length > MAX_TAPE_SONGS) {
+        return { ok: false, error: `A tape holds ${MAX_TAPE_SONGS} songs.` }
       }
       const all = await loadMixtapes()
       const idx = all.findIndex((m) => m.id === tape.id)

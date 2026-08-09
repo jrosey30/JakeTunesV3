@@ -54,7 +54,7 @@ function scoreResult(q: string, qTokens: string[], title: string, artist: string
   return Math.max(t * 1.0 + a * 1.15, combo * 1.2)
 }
 
-interface RipStatus { installed: boolean; version?: string }
+interface RipStatus { installed: boolean; version?: string; reason?: string }
 
 interface SongRow {
   kind: 'song'
@@ -744,8 +744,11 @@ export default function DownloadView() {
 
         {status && !status.installed && (
           <div className="download-warn">
-            streamrip (the <code>rip</code> command) wasn’t found. Install it with{' '}
-            <code>pipx install streamrip</code>, then reopen this view.
+            {/* The reason comes from main, which tells "not installed" apart
+                from "installed but can't start" — those need different fixes,
+                and the old blanket message sent Jake to `pipx install
+                streamrip` for a broken Homebrew dependency (2026-08-08). */}
+            {status.reason || <>streamrip (the <code>rip</code> command) wasn’t found. Install it with <code>pipx install streamrip</code>, then reopen this view.</>}
           </div>
         )}
       </div>
