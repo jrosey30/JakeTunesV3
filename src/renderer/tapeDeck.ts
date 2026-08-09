@@ -1,13 +1,14 @@
 /**
- * Cassette voicing for tape playback — the files are never touched; this
- * is a live insert on Howler's master bus, engaged ONLY while a tape
- * session is live (mixtapes.ts setTapeSession / cleared by TapeMonitor).
+ * The deck's MECHANICAL SOUNDS. It is not an audio processor and it is not
+ * in the signal path — the music is never touched, routed or rewired.
  *
- * The recipe stays deliberately subtle — "you know it's a tape" without
- * wrecking the music: gentle top-end rolloff, a whisper of hiss that wows
- * with the program, slow wow + fast flutter + long drift via a modulated
- * delay line, light tape-glue compression, rare oxide dropouts, and a
- * mechanical clunk on play/stop.
+ * It used to be a live insert on Howler's master bus (wow/flutter, hiss,
+ * saturation, rolloff, dropouts). Jake killed the voicing on 2026-08-08
+ * ("the actual music should sound normal"), and the vestigial pass-through
+ * that survived it was worse than useless: engage() called
+ * master.disconnect(), which drops EVERY consumer of that bus including
+ * eq.ts's analyser tap. Songs sounded muffled inside a mix and fine on
+ * their own. Both are gone. See engage().
  *
  * 2026-07-19 ("on every button touch, the music should sound like its a
  * tape"): the deck is also a MACHINE — mechanicalSound() key noises for
@@ -31,13 +32,11 @@ type HowlerGlobal = {
 const howler = (): HowlerGlobal | undefined => (window as unknown as { Howler?: HowlerGlobal }).Howler
 
 let engaged = false
+let inited = false
 let retryTimer: number | null = null
 
-// Live nodes (only while engaged). Just the transparent pass-through now —
-// the hiss source, dropout timer and filter refs went with the tape voicing
-// on 2026-08-08 (see engage()).
-let input: GainNode | null = null
-let outNodes: AudioNode[] = []
+// The deck owns NO nodes in the music path (see engage()). Only the noise
+// buffer the mechanical sounds are built from.
 let noiseBuf: AudioBuffer | null = null
 
 function noiseBuffer(ctx: AudioContext): AudioBuffer {
@@ -86,59 +85,45 @@ function clunk(ctx: AudioContext, stop: boolean): void {
 function engage(): void {
   const H = howler()
   const ctx = H?.ctx
-  const master = H?.masterGain
-  if (!ctx || !master) return
+  if (!ctx) return
   if (engaged) return
-  try {
-    // 2026-08-08, Jake: "do not make them sound like a tape … fast forward
-    // and rewind … those sound effects can stay … but the actual music
-    // should sound normal."
-    //
-    // So the deck no longer COLORS the music at all. Everything that used
-    // to live on this bus is gone: wow/flutter/long-drift via a modulated
-    // delay line, tanh saturation, the -3 dB shelf at 9.5 kHz, the 15 kHz
-    // lowpass, the +2.5 dB bump at 85 Hz, the glue compressor, the oxide
-    // dropouts, and the hiss bed. A song played off a tape now measures
-    // and sounds exactly like the same song played anywhere else.
-    //
-    // What remains is a single UNITY-GAIN pass-through. It applies no
-    // processing — it exists only so tapeFlipRitual() has something to
-    // duck the music with at the Side A→B boundary, which is a transport
-    // gap, not a tape tone. Everything Jake kept — the FF/REW wind, key
-    // clunks, door, cassette-in-hand rustle, PLAY — are separate one-shot
-    // sources that never touched the music bus and are untouched here.
-    input = ctx.createGain()
-    input.gain.value = 1
-    master.disconnect()
-    master.connect(input)
-    input.connect(ctx.destination)
-    outNodes = []
-
-    engaged = true
-    clunk(ctx, false)
-  } catch {
-    // If anything went sideways, put the bus back the way we found it.
-    try { master.disconnect(); master.connect(ctx.destination) } catch { /* already sane */ }
-    engaged = false
-  }
+  // ⚠️ THE DECK DOES NOT TOUCH THE AUDIO PATH. AT ALL.
+  //
+  // 2026-08-08, Jake: "the song quality of daily mix 1 is horrifying... i
+  // care by turnstile sounded muffling and like absolute dog crap... if i
+  // play the track individually it sounds fine. only in the mix does it
+  // sound like dog shit."
+  //
+  // Cause: this function used to rewire Howler's master bus —
+  //   master.disconnect(); master.connect(input); input.connect(destination)
+  // `master.disconnect()` drops EVERY connection from masterGain, not just
+  // the one to destination. eq.ts's tapHowlerMaster() hangs the analyser off
+  // masterGain, and anything else downstream goes with it. The bus came back
+  // as a bare gain node with the rest of the chain severed. It only happened
+  // during a tape session, which is why a song was fine on its own and wrong
+  // inside a mix — and it got far more visible the moment daily mixes
+  // started opening tape sessions.
+  //
+  // The pass-through only ever existed so tapeFlipRitual could duck to dead
+  // air at the Side A→B boundary. There are no sides any more, so there is
+  // nothing to duck and no reason to be in the signal path. The deck is
+  // mechanical sound ONLY: key clunks, FF/REW wind, door, PLAY. Those are
+  // independent one-shot sources that never touched the music.
+  //
+  // If a future change genuinely needs to duck the music, insert a node
+  // between masterGain and its EXISTING outputs and put it back on
+  // disengage — never blanket-disconnect a bus other code has tapped.
+  engaged = true
+  clunk(ctx, false)
 }
 
 function disengage(): void {
   const H = howler()
   const ctx = H?.ctx
-  const master = H?.masterGain
-  if (!engaged || !ctx || !master) return
-  try {
-    clunk(ctx, true)
-    master.disconnect()
-    for (const n of outNodes) { try { n.disconnect() } catch { /* fine */ } }
-    input?.disconnect()
-    master.connect(ctx.destination)
-  } finally {
-    input = null
-    outNodes = []
-    engaged = false
-  }
+  if (!engaged || !ctx) return
+  // Nothing to unwire — engage() no longer touches the bus. Just the eject
+  // clunk. (Kept as a function so the session lifecycle reads the same.)
+  try { clunk(ctx, true) } finally { engaged = false }
 }
 
 function sync(): void {
@@ -360,38 +345,27 @@ export function tapeMotorPause(commit: () => void): void {
  *  moving (next track starts immediately); the DECK ducks it to silence
  *  and brings it back with the spin-up, so the music emerges exactly the
  *  way Side B always did. */
+/** The A→B flip — sound only.
+ *
+ *  2026-08-08: there are no sides any more, so this fires only for a
+ *  grandfathered two-sided tape that still carries a Side A cut. It used to
+ *  duck the music to dead air through the deck's bus node; that node is gone
+ *  (see engage()), so the ritual is now purely the noises: clunk, door,
+ *  cassette turned in hand, door, PLAY. The transport underneath keeps
+ *  running, which is what it did during the duck anyway. */
 export function tapeFlipRitual(): void {
-  if (!engaged || !input) return
+  if (!engaged) return
   const ctx = howler()?.ctx
   if (!ctx) return
   try {
-    const g = input.gain
-    const t = ctx.currentTime
-    g.cancelScheduledValues(t)
-    g.setTargetAtTime(0.0001, t, 0.03)               // tape runs out — dead air
-    clunk(ctx, true)                                  // PLAY pops out
-    window.setTimeout(() => { const c = howler()?.ctx; if (c) doorPop(c) }, 220)
-    window.setTimeout(() => { const c = howler()?.ctx; if (c) caseRustle(c) }, 480)
-    window.setTimeout(() => { const c = howler()?.ctx; if (c) caseRustle(c) }, 760)
-    window.setTimeout(() => { const c = howler()?.ctx; if (c) doorPop(c, true) }, 1150)
-    window.setTimeout(() => { const c = howler()?.ctx; if (c) clunk(c, false) }, 1340)
-    window.setTimeout(() => {
-      try {
-        const c = howler()?.ctx
-        if (c && input) {
-          input.gain.cancelScheduledValues(c.currentTime)
-          input.gain.setTargetAtTime(1, c.currentTime, 0.05)
-        }
-        tapeMotorStart()
-      } catch { /* cosmetic */ }
-    }, 1400)
-  } catch {
-    try { if (input && ctx) input.gain.setTargetAtTime(1, ctx.currentTime, 0.05) } catch { /* fine */ }
-  }
+    clunk(ctx, true)
+    window.setTimeout(() => { try { doorPop(ctx) } catch { /* cosmetic */ } }, 180)
+    window.setTimeout(() => { try { caseRustle(ctx) } catch { /* cosmetic */ } }, 430)
+    window.setTimeout(() => { try { doorPop(ctx, true) } catch { /* cosmetic */ } }, 800)
+    window.setTimeout(() => { try { clunk(ctx, false) } catch { /* cosmetic */ } }, 1050)
+  } catch { /* cosmetic */ }
 }
 
-let inited = false
-/** Idempotent — called from the always-mounted TapeMonitor. */
 export function initTapeDeck(): void {
   if (inited) return
   inited = true
