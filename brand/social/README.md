@@ -131,8 +131,37 @@ inside Electron hung reliably, so the film's audio shouldn't depend on it.
 What is KEPT is the tune: E major(add9), and the three notes that assemble
 under the logo are E3 / G#3 / B3 at the app's own offsets. Anyone who has
 opened JakeTunes recognises the opening. Then it does what the app never does —
-adds a floor (sub), a pulse (112 BPM arpeggio + kick), and a HOOK
-(E5 G#5 B5 C#6 B5) stated three times so it is singable.
+adds a floor (sub) and a HOOK (E5 G#5 B5 C#6 B5) stated three times so it is
+singable.
+
+**The passage (4.2-10.6s) is harmony, not percussion.** Jake: "music after the
+intro jingle should be a little more elegant." It was a kick on every beat, a
+2.6 kHz rim tick, and six seconds of ONE chord. The kick and tick are gone —
+nothing in this section needs hitting — and the static harmony was the real
+problem: elegance is movement, and a pad that never changes reads as a held
+note however pretty the arpeggio over it is. It now walks **I - vi - IV - V**
+in E (E → C#m7 → A maj9 → B sus) and arrives home on E at 12.2, which is what
+makes the ARRIVAL a resolution rather than just a louder chord. The hook lands
+the second time over C#m7, where its five notes become the 3rd, 5th, 7th and
+root — the cheapest way to make a repeat sound like development. Verified by
+FFT per bar in the finished render.
+
+**The click.** Jake: "i hear like a weird annoying click." Found by measuring,
+not guessing: isolated high-frequency transients at 8.218s and 10.362s, ~7x the
+local HF floor, both landing exactly on arpeggio onsets. Cause was the
+Karplus-Strong excitation — raw FULL-BANDWIDTH white noise, so every buffer is
+a dice roll and occasionally one lands with enough energy near Nyquist that the
+attack reads as a click rather than a pluck. A real string is not excited by
+white noise. 4 kHz lowpass on the burst plus a 4 ms attack: 2 transients → 0,
+same detector, measured on the decoded mp4.
+
+A first attempt blamed the reversed risers at IMPACT-0.02 and ARRIVE-0.03. They
+did produce the two largest waveform steps in the file — but measuring the
+energy 3 ms either side showed only a 1.2x rise, i.e. no onset from silence, so
+they were not audible as clicks. Broadband noise has large sample-to-sample
+steps by nature; a click is a jump in the ENVELOPE. They are placed forwards
+now anyway, so the swell peaks ON the hit instead of decaying from before it,
+which is what was wanted in the first place.
 
 Measured RMS, decoded back out of the finished mp4:
 

@@ -91,19 +91,47 @@ def voice(freq, dur, peak, detune=0.0, bright=0.35):
     return sig * peak
 
 
+def onepole_sweep(x, f_start, f_end, curve=1.0):
+    """Time-varying one-pole lowpass — the riser's whole character."""
+    n = len(x)
+    f = f_start + (f_end - f_start) * (np.linspace(0, 1, n) ** curve)
+    a = 1 - np.exp(-2 * np.pi * f / SR)
+    y = np.empty(n)
+    z = 0.0
+    for i in range(n):
+        z += a[i] * (x[i] - z)
+        y[i] = z
+    return y
+
+
 def pluck(freq, dur, peak):
-    """Karplus-Strong. The arpeggio and the hook want a string, not a pad."""
+    """
+    Karplus-Strong. The arpeggio and the hook want a string, not a pad.
+
+    ⚠️ The excitation is BAND-LIMITED, and that is not cosmetic. Exciting the
+    delay line with raw full-bandwidth white noise means every buffer is a
+    fresh dice roll, and every so often one lands with enough energy near
+    Nyquist that its attack reads as a CLICK rather than a pluck. Measured in
+    the first score: isolated high-frequency transients at 8.218s and 10.362s,
+    ~7x the local HF floor, both landing exactly on arpeggio onsets. A real
+    string is not excited by white noise. 4 kHz lowpass on the burst, and a
+    4 ms attack instead of 1 ms.
+    """
     n = int(dur * SR)
     ln = max(2, int(SR / freq))
     buf = rng.uniform(-1, 1, ln)
     buf -= buf.mean()
+    buf = onepole_sweep(buf, 4000.0, 4000.0)
+    peak_abs = np.abs(buf).max()
+    if peak_abs > 1e-9:
+        buf = buf / peak_abs
     out = np.empty(n)
     damp = 0.9965
     for i in range(n):
         out[i] = buf[i % ln]
         nxt = (i + 1) % ln
         buf[i % ln] = damp * 0.5 * (buf[i % ln] + buf[nxt])
-    out *= env(n, 0.001, 0.10, 0, dur * 0.8, sus=0.5)
+    out *= env(n, 0.004, 0.10, 0, dur * 0.8, sus=0.5)
     return out * peak
 
 
@@ -132,24 +160,24 @@ def kick(dur, peak):
     return sub(120, 44, dur, peak)
 
 
-def onepole_sweep(x, f_start, f_end, curve=1.0):
-    """Time-varying one-pole lowpass — the riser's whole character."""
-    n = len(x)
-    f = f_start + (f_end - f_start) * (np.linspace(0, 1, n) ** curve)
-    a = 1 - np.exp(-2 * np.pi * f / SR)
-    y = np.empty(n)
-    z = 0.0
-    for i in range(n):
-        z += a[i] * (x[i] - z)
-        y[i] = z
-    return y
+def riser(dur, peak, tail_ms=16.0):
+    """
+    Noise swelling upward into a hit.
 
-
-def riser(dur, peak):
+    The tail matters. This envelope ramps UP to full, so a riser that simply
+    stops leaves broadband noise at full amplitude cut to silence in one
+    sample — an audible click. Measured in the first render: a 0.44
+    instantaneous step at 2.581s and 12.171s, which is exactly where two of
+    these were placed REVERSED (a reversed riser starts at full amplitude,
+    which is the same defect at the other end). Both are now placed forwards,
+    so the swell peaks ON the hit, and the last few ms fade out.
+    """
     n = int(dur * SR)
     noise = rng.normal(0, 1, n)
     swept = onepole_sweep(noise, 180, 7000, curve=2.4)
     swept *= np.linspace(0, 1, n) ** 2.0
+    k = max(1, int(SR * tail_ms / 1000))
+    swept[-k:] *= np.linspace(1, 0, k) ** 0.7
     return swept * peak
 
 
@@ -186,34 +214,55 @@ for f, pk, pan in ((E2, 0.20, 0.0), (B2, 0.15, -0.20), (E3, 0.17, 0.10),
 for f, pk, d in ((E5, 0.075, 0.02), (B5, 0.055, 0.06), (E6, 0.035, 0.10)):
     add(L, R, bell(f, 2.8, pk), IMPACT + d, 0.0)
 add(L, R, sub(150, 38, 2.4, 0.42), IMPACT, 0.0)
-add(L, R, riser(0.28, 0.22)[::-1], IMPACT - 0.02, 0.0)   # reversed = a slam, not a swell
+add(L, R, riser(0.34, 0.24), IMPACT - 0.34, 0.0)         # swells INTO the hit
 
-# ── 4.2–10.6  the pulse ────────────────────────────────────────────────────
-# 112 BPM. Sixteenth arpeggio, kick on the beat, and the hook twice.
+# ── 4.2–10.6  the passage ──────────────────────────────────────────────────
+# Jake: "music after the intro jingle should be a little more elegant."
+#
+# It was a kick on every beat, a 2.6 kHz rim tick, and six seconds of ONE
+# chord. The kick and the tick are gone — nothing here needs hitting — and the
+# static harmony is the real culprit: elegance is movement, and a pad that
+# never changes reads as a held note however pretty the arpeggio over it is.
+#
+# So the passage now walks I - vi - IV - V in E and arrives home on E at 12.2,
+# which is what makes the ARRIVAL feel like a resolution rather than just a
+# louder chord. Pulse comes from a warm root under each change, felt rather
+# than struck.
 BPM = 112.0
 beat = 60.0 / BPM
-arp = [E4, GS4, B4, CS5, B4, GS4, E4, GS4]
-t = 4.20
-step = beat / 2
-i = 0
-while t < 10.55:
-    add(L, R, pluck(arp[i % len(arp)], 0.55, 0.085), t, 0.42 * np.sin(i * 0.7))
-    if i % 4 == 0:
-        add(L, R, kick(0.34, 0.30), t, 0.0)
-    if i % 8 == 4:
-        add(L, R, bell(2600, 0.05, 0.018), t, 0.0)       # rim tick
-    t += step
-    i += 1
-# Pad underneath so the pulse has somewhere to sit.
-for f, pk, pan in ((E2, 0.13, 0.0), (B3, 0.07, -0.3), (E4, 0.07, 0.3)):
-    add(L, R, voice(f, 6.6, pk), 4.20, pan)
+CS3, A2b, A3, F3S = 138.59, 110.00, 220.00, 185.00
 
-# THE HOOK — stated at 5.0 and again at 7.7, an octave apart the second time.
+#        start   end     bass   arpeggio (one bar of eighths)                     pad
+PASSAGE = [
+    (4.200,  6.343, E2,  [E4, B4, GS4, B4, E5, B4, GS4, B4],          [E3, B3, GS4]),
+    (6.343,  8.486, CS3, [CS4, GS4, E4, GS4, B4, GS4, E4, GS4],       [CS4, E4, GS4]),
+    (8.486,  9.557, A2b, [A3, E4, CS5, E4],                           [A3, CS4, E4]),
+    (9.557, 10.600, B2,  [B3, FS4, E4, FS4],                          [B3, E4, FS4]),
+]
+for start, end, bass, arp, pad in PASSAGE:
+    span = end - start
+    add(L, R, voice(bass, span + 1.1, 0.155), start, 0.0)
+    for f, pk in zip(pad, (0.055, 0.045, 0.040)):
+        add(L, R, voice(f, span + 0.9, pk), start, 0.30 * np.sin(f))
+    t = start
+    i = 0
+    step = beat / 2
+    while t < end - 0.01:
+        f = arp[i % len(arp)]
+        # Long ring so the notes overlap into each other — a harp, not a
+        # sequencer. Alternating pan keeps it moving without a drum to do it.
+        add(L, R, pluck(f, 1.05, 0.070), t, 0.34 * np.sin(i * 0.9))
+        t += step
+        i += 1
+
+# THE HOOK — over E, then over C#m7, where its notes become the 3rd, 5th, 7th
+# and root. Same five notes, a different chord underneath: the cheapest way to
+# make a repeat sound like development rather than repetition.
 HOOK = [(E5, 0.0), (GS5, 0.30), (B5, 0.60), (CS6, 0.90), (B5, 1.35)]
-for base, when, gain in ((1.0, 5.00, 0.115), (1.0, 7.70, 0.125)):
+for when, gain in ((5.00, 0.105), (7.70, 0.115)):
     for f, off in HOOK:
-        add(L, R, pluck(f * base, 1.1, gain), when + off, 0.18)
-        add(L, R, pluck(f * base, 0.9, gain * 0.32), when + off + 0.28, -0.42)   # delay
+        add(L, R, pluck(f, 1.5, gain), when + off, 0.16)
+        add(L, R, pluck(f, 1.1, gain * 0.30), when + off + 0.30, -0.40)   # delay
 
 # ── 10.6–12.2  the hush ────────────────────────────────────────────────────
 # Everything stops. One note holds. The oldest trick there is, and it works.
@@ -227,7 +276,7 @@ for f, pk, pan in ((E2, 0.24, 0.0), (B2, 0.17, -0.18), (E3, 0.20, 0.12),
 for f, pk, d in ((E5, 0.085, 0.02), (B5, 0.065, 0.06), (CS6, 0.05, 0.10), (E6, 0.045, 0.14)):
     add(L, R, bell(f, 4.4, pk), ARRIVE + d, 0.0)
 add(L, R, sub(160, 36, 4.2, 0.48), ARRIVE, 0.0)
-add(L, R, riser(0.34, 0.26)[::-1], ARRIVE - 0.03, 0.0)
+add(L, R, riser(0.40, 0.28), ARRIVE - 0.40, 0.0)
 # The hook one last time, high and unhurried, over the arrival.
 for f, off in HOOK:
     add(L, R, pluck(f, 1.6, 0.10), ARRIVE + 0.45 + off * 1.15, 0.12)
