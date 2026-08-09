@@ -138,12 +138,44 @@ export function clearDecodeCache(): void {
  * Safe to call on either html5:false or html5:true Howls; Howler's
  * fade abstracts the underlying gain primitive.
  */
+/**
+ * Duck the outgoing track just before its end — SHORT, not the whole run-up.
+ *
+ * 2026-08-08. This used to fade over the entire msUntilEnd, which the rAF
+ * trigger makes as much as 250 ms. That guaranteed the ramp reached zero
+ * exactly at EOF, but the price was a quarter-second fade on the end of
+ * every track. Jake heard it on an album meant to run continuously: "theres
+ * a slight gap in between tracks... it might only be from track 1 to 2."
+ * Track 1 there is 48 seconds and ends cold, so a 250 ms fade is naked;
+ * tracks that decay naturally were hiding it.
+ *
+ * A long fade was never what the pop needed. The pop came from the buffer
+ * ending at non-zero amplitude, and ~10-30 ms of ramp is plenty to avoid
+ * that — AAC files also end in the encoder's own padding silence, so the
+ * ramp is mostly landing on silence anyway.
+ *
+ * The outgoing is an html5 (streaming) Howl, whose fade Howler steps in JS
+ * rather than on Web Audio's clock, so there is no sample-accurate ramp to
+ * schedule here. Instead the short fade is fired at (EOF - duration): even
+ * with setTimeout's 4-15 ms jitter the ramp still lands within a few ms of
+ * EOF, and it now costs ~30 ms of tail instead of 250 ms.
+ */
+const OUTGOING_DUCK_MS = 30
+
 export function scheduleAbsoluteFadeOut(howl: Howl, msUntilEnd: number): void {
   if (!howl) return
-  const ms = Math.max(1, Math.floor(msUntilEnd))
+  const total = Math.max(1, Math.floor(msUntilEnd))
+  const dur = Math.min(OUTGOING_DUCK_MS, total)
+  const delay = Math.max(0, total - dur)
   try {
     const cur = (howl.volume() as number)
-    howl.fade(cur, 0, ms)
+    if (delay <= 0) { howl.fade(cur, 0, dur); return }
+    setTimeout(() => {
+      try {
+        const v = (howl.volume() as number)
+        howl.fade(v, 0, dur)
+      } catch { /* the seam still works; worst case is the old pop */ }
+    }, delay)
   } catch {
     /* ignore — caller falls back to no fade, which sounds the same
      * as today's failure mode */

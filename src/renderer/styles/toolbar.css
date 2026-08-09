@@ -1372,3 +1372,23 @@
 .now-playing-pill .scrubber-fill {
   background: linear-gradient(180deg, #6a6538 0%, #4e4926 55%, #3a3619 100%);
 }
+
+
+/* Tape counter in the pill's corner (2026-08-08).
+   Jake didn't want the slot number wedged into the song/artist/album stack,
+   so it sits in the top-right of the LCD instead — the place a real deck
+   puts its counter window. Same olive ink as the rest of the display, a
+   shade lighter so it reads as chrome rather than as part of the song.
+   pointer-events:none so it can never eat a click meant for the pill. */
+.now-playing-tape-counter {
+  position: absolute;
+  top: 3px;
+  right: 7px;
+  font-size: 9.25px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: #5f5b3d;
+  opacity: 0.75;
+  pointer-events: none;
+  user-select: none;
+}

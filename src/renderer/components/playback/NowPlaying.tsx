@@ -466,9 +466,7 @@ export default function NowPlaying() {
               <span className="now-playing-title">{liveCue ? liveCue.cue.title : track.title}</span>
             </div>
             <div className="now-playing-line-secondary">
-              {tapeOnAir ? (
-                <span className="now-playing-artist">{track.artist} · {tapeOnAir.slot}/{tapeOnAir.of}</span>
-              ) : liveCue && liveEntry ? (
+              {liveCue && liveEntry ? (
                 <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
               ) : (
                 <span className="now-playing-artist">{track.artist}</span>
@@ -480,6 +478,15 @@ export default function NowPlaying() {
               </div>
             )}
           </div>
+          {/* Tape counter — the slot you're on, etched in the corner of the
+              LCD like a deck's counter window. Jake, 2026-08-08: "can we put
+              the track number/track total in another place on the pill? i
+              dont like that its in the song artist album sandwich." So it
+              lives OUTSIDE the title/artist/album stack, absolutely
+              positioned, and only exists while a tape is running. */}
+          {tapeOnAir && (
+            <span className="now-playing-tape-counter">{tapeOnAir.slot}/{tapeOnAir.of}</span>
+          )}
           <div className="scrubber-row">
             {/* Brief 025: floor position + duration ONCE, then compute
                 remaining as their integer difference, so the count-up and
