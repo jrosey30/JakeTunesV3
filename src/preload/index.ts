@@ -562,6 +562,20 @@ const electronAPI = {
     ipcRenderer.invoke('mixtape-delete', id),
   dubMixtape: (payload: unknown): Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }> =>
     ipcRenderer.invoke('dub-mixtape', payload),
+  // Merge a tape into ONE gapless file (2026-08-08). Returns where it landed
+  // plus each song's offset inside it. The merged file is a playback asset —
+  // it never enters the library; the songs stay individual there.
+  mergeMixtape: (
+    tapeId: string,
+    tracks: Array<{ id: number; title: string; artist: string; absPath: string; durationMs: number }>,
+    label: { title: string; artist: string },
+  ): Promise<{ ok: boolean; mergedPath?: string; cues?: Array<{ trackId: number; startMs: number; durationMs: number }>; totalDurationMs?: number; error?: string }> =>
+    ipcRenderer.invoke('mixtape-merge', tapeId, tracks, label),
+  onMixtapeMergeProgress: (cb: (p: { stage: string; current: number; total: number; label: string }) => void): (() => void) => {
+    const h = (_e: unknown, p: { stage: string; current: number; total: number; label: string }): void => cb(p)
+    ipcRenderer.on('mixtape-merge-progress', h)
+    return () => { ipcRenderer.removeListener('mixtape-merge-progress', h) }
+  },
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('save-mixtape-intro', data, voiceId),
   listMixtapeVoices: (): Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }> =>

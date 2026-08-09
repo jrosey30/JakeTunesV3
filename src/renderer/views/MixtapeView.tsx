@@ -16,7 +16,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import MixtapeSheet from '../components/MixtapeSheet'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
 import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
-import { effectiveDurationFn } from '../../common/tape-physics'
+import { effectiveDurationFn, tapeTracks } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -99,6 +99,8 @@ export default function MixtapeView() {
   }, [])
   const [dubbing, setDubbing] = useState(false)
   const [dubNotice, setDubNotice] = useState('')
+  const [merging, setMerging] = useState(false)
+  const [mergeNotice, setMergeNotice] = useState('')
   const mountRef = useRef<string>('')
   useEffect(() => {
     window.electronAPI?.getMusicLibraryPath?.().then((p: string) => { mountRef.current = p }).catch(() => {})
@@ -117,7 +119,13 @@ export default function MixtapeView() {
   const byId = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
   const sideATracks = useMemo(() => (tape?.sideA || []).map((id) => byId.get(id)).filter((t): t is Track => !!t), [tape, byId])
   const sideBTracks = useMemo(() => (tape?.sideB || []).map((id) => byId.get(id)).filter((t): t is Track => !!t), [tape, byId])
-  const allTracks = useMemo(() => [...sideATracks, ...sideBTracks], [sideATracks, sideBTracks])
+  // The tape in play order. tapeTracks() reads `tracks` on tapes made under
+  // the 2026-08-08 rules and falls back to A-then-B for the ones Jake
+  // recorded before that, which is the order they always played in.
+  const allTracks = useMemo(
+    () => (tape ? tapeTracks(tape).map((id) => byId.get(id)).filter((t): t is Track => !!t) : []),
+    [tape, byId],
+  )
   const notes = useMemo(() => new Map((tape?.linerNotes || []).map((n) => [n.id, n.note])), [tape])
 
   // SPOOL WIND — holding FF/REW winds the tape for real: the head lifts
@@ -132,13 +140,56 @@ export default function MixtapeView() {
     if (windTimer.current != null) { clearInterval(windTimer.current); windTimer.current = null; stopWindSound() }
   }, [])
 
+  /** Stable positive int from a tape id — negated for the synthetic track. */
+  const hashTapeId = (id: string): number => {
+    let h = 0
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+    return (h % 2_000_000_000) + 1
+  }
+
   const stopIntro = useCallback(() => {
     if (introRef.current) { introRef.current.pause(); introRef.current = null }
     setIntroPlaying(false)
   }, [])
 
+  /**
+   * A merged tape is ONE file, so it plays as one synthetic track rather
+   * than a queue of songs (Jake, 2026-08-08: "we just force the gapless
+   * audio as 'one file'"). Nothing about this track is in the library —
+   * the songs stay there individually, untouched; this is a play-time
+   * wrapper around the merged audio and nothing else.
+   *
+   * The negative id is deliberate: library ids are positive, so a tape can
+   * never be confused for a song by anything keyed on id (play counts, the
+   * taste ledger, stars). The pill resolves the CURRENT song from the
+   * tape's cues instead.
+   */
+  const tapeAsTrack = useCallback((t: Mixtape): Track | null => {
+    if (!t.mergedPath) return null
+    const total = (t.mergedCues || []).reduce((sum, c) => Math.max(sum, c.startMs + c.durationMs), 0)
+    return {
+      id: -Math.abs(hashTapeId(t.id)),
+      title: t.title,
+      artist: 'Mixtape',
+      album: t.title,
+      path: t.mergedPath,
+      duration: total,
+    } as Track
+  }, [])
+
   const startQueueAt = useCallback((idx: number) => {
     stopIntro()
+    // Merged tape: one file, plays straight through. Ignores the slot index
+    // by design — you don't drop a needle on a cassette, and the no-skip
+    // rule is a property of the format here rather than a rule we enforce.
+    if (tape?.mergedPath) {
+      const one = tapeAsTrack(tape)
+      if (one) {
+        setTapeSession({ mixtapeId: tape.id, tapeTrackIds: [one.id], cuts: [] })
+        playTrack(one, [one], 0, undefined, true)
+        return
+      }
+    }
     const t = allTracks[idx]
     if (!t || !tape) return
     // TRUE tape physics: arm the cut points before the reels move. The
@@ -157,7 +208,50 @@ export default function MixtapeView() {
     }
     setTapeSession({ mixtapeId: tape.id, tapeTrackIds: allTracks.map((x) => x.id), cuts })
     playTrack(t, allTracks, idx, undefined, true)
-  }, [allTracks, playTrack, stopIntro, tape])
+  }, [allTracks, playTrack, stopIntro, tape, tapeAsTrack])
+
+  /**
+   * Merge the tape into one gapless file (Jake, 2026-08-08). The songs are
+   * NOT moved or altered — they stay in the library as individual tracks,
+   * exactly where they were. This only produces the tape's own audio and
+   * records where each song sits inside it.
+   */
+  const mergeTape = async (): Promise<void> => {
+    if (!tape || merging) return
+    if (allTracks.length === 0) { setMergeNotice('Nothing on this tape yet.'); return }
+    setMerging(true)
+    setMergeNotice('Merging…')
+    const off = window.electronAPI.onMixtapeMergeProgress?.((p) => {
+      setMergeNotice(p.label || `${p.stage} ${p.current}/${p.total}`)
+    })
+    try {
+      const abs = (t: Track) => mountRef.current + String(t.path || '').replace(/:/g, '/')
+      const res = await window.electronAPI.mergeMixtape?.(
+        tape.id,
+        allTracks.map((t) => ({
+          id: t.id,
+          title: t.title || '',
+          artist: t.artist || '',
+          absPath: abs(t),
+          durationMs: t.duration || 0,
+        })),
+        { title: tape.title, artist: 'Mixtape' },
+      )
+      if (!res?.ok) { setMergeNotice(res?.error || 'Merge failed.'); return }
+      await window.electronAPI.saveMixtape?.({
+        ...tape,
+        mergedPath: res.mergedPath,
+        mergedCues: res.cues,
+      } as Mixtape)
+      await refreshMixtapes()
+      setMergeNotice('Merged — the tape plays as one gapless file now.')
+    } catch (err) {
+      setMergeNotice(err instanceof Error ? err.message : 'Merge failed.')
+    } finally {
+      off?.()
+      setMerging(false)
+    }
+  }
 
   // Dub to a REAL cassette: render each side as one continuous file
   // (cuts honored, intro at the head of A, talkovers mixed at their
@@ -466,11 +560,16 @@ export default function MixtapeView() {
           <div className="mixtape-smallrow">
             <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
             <span>·</span>
+            <button className="mixtape-link" disabled={merging} onClick={() => { void mergeTape() }}>
+              {merging ? (mergeNotice || 'Merging…') : tape.mergedPath ? 'Re-merge the tape' : 'Merge into one gapless file'}
+            </button>
+            <span>·</span>
             <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Making the files…' : 'Make Side A + B files for a REAL cassette deck'}</button>
             <span>·</span>
             <button className="mixtape-link" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
           </div>
           {dubNotice && <div className="mixtape-dub-notice">{dubNotice}</div>}
+          {!merging && mergeNotice && <div className="mixtape-dub-notice">{mergeNotice}</div>}
         </div>
       </div>
 

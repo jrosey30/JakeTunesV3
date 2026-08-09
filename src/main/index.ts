@@ -11976,6 +11976,7 @@ registerMixtapesIpc({
   },
   loadPlayEvents: async () =>
     parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
+  musicLibraryRoot: () => MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
 })
 
 // Music Man metadata scanner

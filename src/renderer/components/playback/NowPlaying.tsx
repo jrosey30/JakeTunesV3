@@ -6,7 +6,7 @@ import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../preview
 // V5 Live Concert Mode — approved surgical addition (Jake, 2026-07-02):
 // map the playhead to the current setlist song while a merged live set
 // plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt } from '../../liveSets'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt, cueIndexAt } from '../../liveSets'
 import { subscribeMixtapes, getTapeSession, getDeckState, getMixtapes, liveTapeCounter, spoolTarget, setPendingTapeSeek, getWindDisplay } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
@@ -161,6 +161,23 @@ export default function NowPlaying() {
   const tapeCounter = onEngagedTape && engagedTape
     ? liveTapeCounter(engagedTape, tapeDeck?.side || 'A', nowIdForTape, state.position, state.isPlaying, tapeDurOf)
     : null
+  // A MERGED tape (2026-08-08) is one file, so state.nowPlaying is the tape
+  // itself and its title would read as the tape's name for 40 minutes. The
+  // songs are still individually in the library, so resolve the one playing
+  // from the tape's cues and show THAT — same idea as a live set above, and
+  // deliberately the same cue-lookup (cueIndexAt) rather than a second copy.
+  const mergedTape = tapeSession
+    ? getMixtapes().find((m) => m.id === tapeSession.mixtapeId && m.mergedPath) ?? null
+    : null
+  const tapeCue = (() => {
+    const cues = mergedTape?.mergedCues
+    if (!cues?.length || !state.nowPlaying) return null
+    const i = cueIndexAt(cues, state.position * 1000)
+    if (i < 0) return null
+    const song = libState.tracks.find((t) => t.id === cues[i].trackId)
+    if (!song) return null
+    return { title: song.title, artist: song.artist, album: song.album }
+  })()
   const tapeArmed = !!tapeDeck?.recArmed
   const handleTapeScrub = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!engagedTape || !tapeCounter || tapeArmed) return // no scrubbing while REC is latched
@@ -468,18 +485,20 @@ export default function NowPlaying() {
                 the CURRENT setlist song and the secondary carries the set
                 position — otherwise exactly the pre-V5 rendering. */}
             <div className="now-playing-line-primary">
-              <span className="now-playing-title">{liveCue ? liveCue.cue.title : track.title}</span>
+              <span className="now-playing-title">{tapeCue?.title ?? (liveCue ? liveCue.cue.title : track.title)}</span>
             </div>
             <div className="now-playing-line-secondary">
-              {liveCue && liveEntry ? (
+              {tapeCue ? (
+                <span className="now-playing-artist">{tapeCue.artist}</span>
+              ) : liveCue && liveEntry ? (
                 <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
               ) : (
                 <span className="now-playing-artist">{track.artist}</span>
               )}
             </div>
-            {track.album && (
+            {(tapeCue ? tapeCue.album : track.album) && (
               <div className="now-playing-line-tertiary">
-                <span className="now-playing-album">{track.album}</span>
+                <span className="now-playing-album">{tapeCue ? tapeCue.album : track.album}</span>
               </div>
             )}
           </div>
