@@ -4,12 +4,43 @@ Made 2026-08-09 for the JakeTunes Instagram account.
 
 | file | use |
 |---|---|
-| `jaketunes-launch-square.mp4` | 1080x1080, feed post |
-| `jaketunes-launch-vertical.mp4` | 1080x1920, Reels / Stories |
-| `jaketunes-launch-new.wav` | the launch sound on its own, 48k stereo |
+| **`jaketunes-launch-reel.mp4`** | **1080x1920, 21s — the launch post (Reels/Stories)** |
+| **`jaketunes-launch-post.mp4`** | **1080x1080, 21s — the launch post (feed)** |
+| `jaketunes-launch-score.wav` | the 21s score on its own |
+| `jaketunes-launch-square.mp4` | 1080x1080, 7s — logo only, the simpler cut |
+| `jaketunes-launch-vertical.mp4` | 1080x1920, 7s — logo only |
+| `jaketunes-launch-new.wav` | the app's launch chime on its own |
 
-Both are 7s: the real animation (~3.05s) then the settled logo held under the
-chord's tail.
+## The 21s launch films
+
+Jake: "it is the first post so get the people excited!!!"
+
+Structure, cut to the score:
+
+    0.0 - 3.2    the boot — dark plate, the logo assembling, the wordmark
+    3.2 - 12.9   the PRODUCT: the album wall, the song list, Home, artists,
+                 a mixtape — each a real scroll captured from the running app
+    12.9 - 15.4  the hush. The window fades to paper and the score drops away
+                 to near-silence. The oldest trick there is.
+    15.4 - 21.2  the logo assembles a SECOND time, landing exactly on the
+                 score's arrival at 16.6s, then holds through the tail
+
+The score is the app's own launch chime arranged out to 21s: the chime intact
+at the head, its chord slowed and looped into a bed under the montage, then
+the bloom again, louder, as the arrival. Measured RMS confirms the shape —
+bloom 0.10, bed 0.03-0.08, hush 0.00, arrival 0.10.
+
+### Constraint worth knowing for next time
+
+The renderer caps `Page.captureScreenshot` at CSS resolution (1390x831); no
+`deviceScaleFactor` or `clip.scale` override changes it, and `fromSurface:true`
+needs an unoccluded window. So there are no retina app pixels to crop INTO for
+a 9:16 frame — a vertical slice would be a 2.3x upscale and mush. The films
+therefore SHOW the window whole, downscaled (crisp), and compose the rest of
+the frame deliberately: wordmark above, caption below, on the app's own paper.
+That's a design decision forced by a real limit, not a shortcut.
+
+The 7s cuts below are the earlier, simpler version — logo only, no product.
 
 ## How they were made — so this is repeatable, not a one-off
 
