@@ -260,7 +260,7 @@
 
 /* "Downloaded for offline" indicator — a SOLID circle with a knocked-out
  * download arrow (Spotify-style), shown on pinned tracks just left of the
- * inline star. 13×13 icon in a 15px slot. Filled brand orange (#FD5901) with
+ * inline star. 13×13 icon in a 15px slot. Filled brand orange (#FC5501) with
  * a white arrow on a normal row; flips to a white circle with an orange
  * arrow on a selected row so it pops against the selection highlight. */
 .title-row-dl {

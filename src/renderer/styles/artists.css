@@ -455,11 +455,11 @@
   line-height: 12.5px;
   font-size: 9.5px;
   font-weight: 700;
-  color: var(--brand-orange, #FD5901);
+  color: var(--brand-orange, #FC5501);
   cursor: pointer;
   border-radius: 3px;
 }
-.artists-az-letter:hover:not(:disabled) { background: rgba(253, 89, 1, 0.14); }
+.artists-az-letter:hover:not(:disabled) { background: rgba(252, 85, 1, 0.14); }
 .artists-az-letter:disabled { color: #cdc8bf; cursor: default; }
 
 /* ── In-view list filter (Artists + Albums) — fast find without the toolbar
@@ -483,8 +483,8 @@
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 .list-filter:focus-within {
-  border-color: var(--brand-orange, #FD5901);
-  box-shadow: 0 0 0 2px rgba(253, 89, 1, 0.12);
+  border-color: var(--brand-orange, #FC5501);
+  box-shadow: 0 0 0 2px rgba(252, 85, 1, 0.12);
 }
 .list-filter-icon { color: #9a958c; font-size: 14px; line-height: 1; }
 .list-filter-input {
@@ -506,4 +506,4 @@
   line-height: 1;
   padding: 0 2px;
 }
-.list-filter-clear:hover { color: var(--brand-orange, #FD5901); }
+.list-filter-clear:hover { color: var(--brand-orange, #FC5501); }

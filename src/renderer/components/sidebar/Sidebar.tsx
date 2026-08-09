@@ -44,11 +44,11 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Genres', view: 'genres' },
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
   // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the
-  // Music Man's #FD5901 below, which used to clash with New for You's orange.
+  // Music Man's #FC5501 below, which used to clash with New for You's orange.
   // 2026-08-07 rebrand: Discovery is now the Record Shop — copper vinyl,
   // same view id ('discovery') so nav history + ui-state stay valid.
   { label: 'Record Shop', view: 'discovery', highlight: '#b87333' },
-  { label: 'The Music Man', view: 'musicman', highlight: '#FD5901' },
+  { label: 'The Music Man', view: 'musicman', highlight: '#FC5501' },
 ]
 
 // 4.4.0: split into two sections so the WJLR Picks panel stands out as
@@ -81,10 +81,10 @@ const ICON_BLUE   = '#4a7fbf'   // Songs / Albums (Music)
 const ICON_PURPLE = '#a557a6'   // Artists (person silhouette)
 const ICON_GREEN  = '#5b9b54'   // Genres (category grid)
 const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
-// 4.4.47: the brand orange, sampled from the app logo (#FD5901). Used
+// 4.4.47: the brand orange, sampled from the app logo (#FC5501). Used
 // for the Home icon and the Music Man sidebar entry's icon + highlight.
-const ICON_HOME_ORANGE = '#FD5901'  // Home — warm color, distinct from the cooler library icons.
-// Backlog 2026-06-06: Discovery's cool teal — deliberately unlike Music Man's #FD5901.
+const ICON_HOME_ORANGE = '#FC5501'  // Home — warm color, distinct from the cooler library icons.
+// Backlog 2026-06-06: Discovery's cool teal — deliberately unlike Music Man's #FC5501.
 const ICON_DISCOVERY_TEAL = '#1f7a8c'
 
 function HomeIcon() {
@@ -185,11 +185,11 @@ function MusicManPicksIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       {/* Vinyl record */}
-      <circle cx="6" cy="6" r="5" stroke="#FD5901" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#FD5901" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#FD5901" />
+      <circle cx="6" cy="6" r="5" stroke="#FC5501" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#FC5501" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#FC5501" />
       {/* Sparkle */}
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#FD5901" />
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#FC5501" />
     </svg>
   )
 }
@@ -484,7 +484,7 @@ export default function Sidebar() {
               <SidebarItem
               label="DJ"
               icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#F9894D" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#F9864C" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="4.6" cy="5.4" r="2.9" />
               <circle cx="11.4" cy="5.4" r="2.9" />
               <path d="M2 12.4h12" />

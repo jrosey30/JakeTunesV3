@@ -1,5 +1,5 @@
 /* ── Splash screen (4.5 Pixar pass) ──
- * Burnt orange on off-white — matches the app's cream + #FD5901 story.
+ * Burnt orange on off-white — matches the app's cream + #FC5501 story.
  * NO blue anywhere (Jake: "i shouldnt see blue").
  *
  * Choreography (synced to utils/introStinger.ts — the bloom lands at 0.90s):
@@ -80,7 +80,7 @@
 .app-splash-logo-halo {
   position: absolute;
   inset: -46px -46px -28px;
-  background: radial-gradient(circle at 50% 42%, rgba(224, 129, 46, 0.28) 0%, rgba(253, 89, 1, 0.10) 42%, rgba(253, 89, 1, 0) 68%);
+  background: radial-gradient(circle at 50% 42%, rgba(224, 129, 46, 0.28) 0%, rgba(252, 85, 1, 0.10) 42%, rgba(252, 85, 1, 0) 68%);
   opacity: 0;
   animation: splash-halo-breathe 3.2s ease-in-out 1.40s infinite;
   pointer-events: none;
@@ -191,16 +191,16 @@
   bottom: 52px;
   left: 50%;
   font-size: 21px;
-  color: #FD5901;
+  color: #FC5501;
   opacity: 0;
   pointer-events: none;
   animation: splash-note-rise 2.8s ease-out infinite;
 }
-.splash-note--1 { --drift: -52px; animation-delay: 1.19s; font-size: 23px; color: #FD5901; }
-.splash-note--2 { --drift: 44px;  animation-delay: 1.25s; font-size: 19px; color: #F9894D; }
+.splash-note--1 { --drift: -52px; animation-delay: 1.19s; font-size: 23px; color: #FC5501; }
+.splash-note--2 { --drift: 44px;  animation-delay: 1.25s; font-size: 19px; color: #F9864C; }
 .splash-note--3 { --drift: -30px; animation-delay: 1.85s; font-size: 21px; color: #d2641c; }
-.splash-note--4 { --drift: 58px;  animation-delay: 2.45s; font-size: 18px; color: #FD5901; }
-.splash-note--5 { --drift: 12px;  animation-delay: 3.00s; font-size: 20px; color: #F9894D; }
+.splash-note--4 { --drift: 58px;  animation-delay: 2.45s; font-size: 18px; color: #FC5501; }
+.splash-note--5 { --drift: 12px;  animation-delay: 3.00s; font-size: 20px; color: #F9864C; }
 
 @keyframes splash-note-rise {
   0%   { transform: translate(-50%, 0) scale(0.3) rotate(0deg);                 opacity: 0; }
@@ -215,7 +215,7 @@
   font-size: 46px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  background: linear-gradient(120deg, #FD5901 20%, #F9894D 60%, #FD5901 95%);
+  background: linear-gradient(120deg, #FC5501 20%, #F9864C 60%, #FC5501 95%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -239,7 +239,7 @@
   margin-top: 3px;
   font-size: 14.5px;
   font-weight: 700;
-  color: #FD5901;
+  color: #FC5501;
   animation: splash-fade-up 0.5s ease-out 1.63s both;
 }
 
@@ -262,7 +262,7 @@
   width: 6px;
   height: 100%;
   border-radius: 3px;
-  background: linear-gradient(180deg, #F9894D 0%, #FD5901 100%);
+  background: linear-gradient(180deg, #F9864C 0%, #FC5501 100%);
   transform-origin: 50% 100%;
   transform: scaleY(0.2);
   animation-name: splash-eq-dance;
@@ -282,7 +282,7 @@
   height: 5px;
   margin-top: 22px;
   border-radius: 3px;
-  background: rgba(253, 89, 1, 0.14);
+  background: rgba(252, 85, 1, 0.14);
   overflow: hidden;
   animation: splash-fade-up 0.4s ease-out 1.73s both;
 }
@@ -290,7 +290,7 @@
 .app-splash-progress-fill {
   height: 100%;
   border-radius: 3px;
-  background: linear-gradient(90deg, #FD5901 0%, #F9894D 50%, #FD5901 100%);
+  background: linear-gradient(90deg, #FC5501 0%, #F9864C 50%, #FC5501 100%);
   background-size: 200% 100%;
   animation: splash-progress-sheen 1.4s linear infinite;
   transition: width 80ms linear;
@@ -339,8 +339,8 @@
 .app-drop-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(253, 89, 1, 0.15);
-  border: 3px dashed rgba(253, 89, 1, 0.6);
+  background: rgba(252, 85, 1, 0.15);
+  border: 3px dashed rgba(252, 85, 1, 0.6);
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -559,7 +559,7 @@
 }
 .view-search-input:focus {
   border-color: #4a90d9;
-  box-shadow: 0 0 0 2px rgba(253, 89, 1, 0.25);
+  box-shadow: 0 0 0 2px rgba(252, 85, 1, 0.25);
 }
 .view-search-count {
   font-size: 11px;
@@ -613,7 +613,7 @@
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--brand-orange, #FD5901);
+  color: var(--brand-orange, #FC5501);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -640,9 +640,9 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid rgba(253, 89, 1, 0.28);
+  border: 1px solid rgba(252, 85, 1, 0.28);
   background: rgba(252, 251, 247, 0.94);
-  color: var(--brand-orange, #FD5901);
+  color: var(--brand-orange, #FC5501);
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
@@ -671,7 +671,7 @@
   gap: 6px;
   padding: 7px 10px;
   background: rgba(252, 251, 247, 0.97);
-  border: 1px solid rgba(253, 89, 1, 0.3);
+  border: 1px solid rgba(252, 85, 1, 0.3);
   border-radius: 10px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16);
   animation: scroll-top-in 140ms ease-out;
@@ -697,7 +697,7 @@
   border: none;
   background: none;
   cursor: pointer;
-  color: var(--brand-orange, #FD5901);
+  color: var(--brand-orange, #FC5501);
   font-size: 15px;
   line-height: 1;
   padding: 0 3px;
@@ -708,13 +708,13 @@
 /* The active find match — flashed on artist rows / album cards, persistent
    on the current song row while find is open. */
 .find-hit {
-  outline: 2px solid var(--brand-orange, #FD5901);
+  outline: 2px solid var(--brand-orange, #FC5501);
   outline-offset: -2px;
   border-radius: 6px;
 }
 .songs-row--find {
-  background: rgba(253, 89, 1, 0.16) !important;
-  outline: 1px solid rgba(253, 89, 1, 0.5);
+  background: rgba(252, 85, 1, 0.16) !important;
+  outline: 1px solid rgba(252, 85, 1, 0.5);
   outline-offset: -1px;
 }
 
@@ -747,7 +747,7 @@
   height: 100%;
   width: 40%;
   border-radius: 2px;
-  background: var(--brand-orange, #F9894D);
+  background: var(--brand-orange, #F9864C);
   animation: page-gate-slide 1.1s ease-in-out infinite;
 }
 @keyframes page-gate-slide {
@@ -770,7 +770,7 @@
 .pg-sub { display: flex; align-items: center; gap: 10px; }
 .page-gate-eq { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; }
 .page-gate-eq span {
-  width: 3px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #F9894D);
+  width: 3px; border-radius: 2px 2px 0 0; background: var(--brand-orange, #F9864C);
   animation: pg-eq 900ms ease-in-out infinite; transform-origin: bottom;
 }
 .page-gate-eq span:nth-child(1) { animation-delay: 0ms;   height: 60%; }
@@ -930,7 +930,7 @@
   height: 100%;
   width: 38%;
   border-radius: 2px;
-  background: var(--accent, #FD5901);
+  background: var(--accent, #FC5501);
   animation: pg4-travel 1.15s ease-in-out infinite;
 }
 @keyframes pg4-travel {

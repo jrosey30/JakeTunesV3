@@ -917,7 +917,7 @@ function DeckPanel(props: {
     }
     // Played portion
     const played = d.duration ? (props.position / d.duration) * w : 0
-    ctx.fillStyle = '#F9894D'
+    ctx.fillStyle = '#F9864C'
     for (let x = 0; x < played; x++) {
       const v = peaks[Math.floor((x / w) * peaks.length)] || 0
       const bar = Math.max(1, v * h * 0.9)

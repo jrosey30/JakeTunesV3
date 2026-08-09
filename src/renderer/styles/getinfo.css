@@ -401,4 +401,4 @@
   border-radius: 5px;
   box-shadow: none;
 }
-.getinfo-lyrics::-webkit-scrollbar-thumb:vertical:hover { background: var(--brand-orange, #F9894D); }
+.getinfo-lyrics::-webkit-scrollbar-thumb:vertical:hover { background: var(--brand-orange, #F9864C); }

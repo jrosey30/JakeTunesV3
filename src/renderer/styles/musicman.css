@@ -989,11 +989,11 @@
 .playlist-view-tape {
   padding: 5px 14px;
   background: transparent;
-  color: var(--accent, #FD5901);
+  color: var(--accent, #FC5501);
   font-weight: 600;
   font-size: var(--font-label);
   border-radius: 4px;
-  border: 1px solid var(--accent, #FD5901);
+  border: 1px solid var(--accent, #FC5501);
 }
 .playlist-view-tape:hover { background: rgba(179, 84, 42, 0.08); }
 
@@ -1981,7 +1981,7 @@
 .pl-suggest {
   padding: 10px 20px 12px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  background: rgba(253, 89, 1, 0.035);
+  background: rgba(252, 85, 1, 0.035);
 }
 .pl-suggest-head {
   display: flex;
@@ -2000,13 +2000,13 @@
   border: none;
   background: none;
   cursor: pointer;
-  color: var(--brand-orange, #FD5901);
+  color: var(--brand-orange, #FC5501);
   font-size: 14px;
   line-height: 1;
   padding: 1px 4px;
   border-radius: 4px;
 }
-.pl-suggest-refresh:hover { background: rgba(253, 89, 1, 0.12); }
+.pl-suggest-refresh:hover { background: rgba(252, 85, 1, 0.12); }
 .pl-suggest-row {
   display: flex;
   gap: 8px;
@@ -2059,9 +2059,9 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(253, 89, 1, 0.35);
-  background: rgba(253, 89, 1, 0.08);
-  color: var(--brand-orange, #FD5901);
+  border: 1px solid rgba(252, 85, 1, 0.35);
+  background: rgba(252, 85, 1, 0.08);
+  color: var(--brand-orange, #FC5501);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
@@ -2069,7 +2069,7 @@
   align-items: center;
   justify-content: center;
 }
-.pl-suggest-add:hover { background: var(--brand-orange, #FD5901); color: #fff; }
+.pl-suggest-add:hover { background: var(--brand-orange, #FC5501); color: #fff; }
 
 /* ── THE BRAIN — the Music Man's back wall (what he's actually learned) ── */
 .mm-wall {
@@ -2119,7 +2119,7 @@
   font-style: italic;
   color: var(--text-primary);
   background: var(--white, #fdfdfd);
-  border: 1px solid var(--accent, #FD5901);
+  border: 1px solid var(--accent, #FC5501);
   border-radius: 5px;
   resize: vertical;
 }

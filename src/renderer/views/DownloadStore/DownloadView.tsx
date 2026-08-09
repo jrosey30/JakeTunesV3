@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
@@ -85,6 +85,7 @@ interface AlbumRow {
    *  tell an EP from an LP. */
   releaseYear?: number
   trackCount?: number
+  genre?: string
 }
 const albumKey = (a: AlbumRow): string => `${norm(a.artist)}|${norm(a.album)}`
 
@@ -169,7 +170,11 @@ export default function DownloadView() {
   // "there has to be an easier way to see all tracks on this album"). Raw
   // tracks are cached per album key; owned/preview are computed at render.
   const [expandedAlbums, setExpandedAlbums] = useState<Set<string>>(() => new Set())
-  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number }>>({})
+  /** Setup drawer: paste-a-link, the Qobuz account and the streamrip check.
+   *  Closed by default — these are things you do once, and they used to sit
+   *  permanently under the results on the page you use every day. */
+  const [setupOpen, setSetupOpen] = useState(false)
+  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string }>>({})
 
   const toggleAlbum = (a: AlbumRow) => {
     const key = albumKey(a)
@@ -184,7 +189,7 @@ export default function DownloadView() {
           .then((r) => setAlbumTracks((m) => ({
             ...m,
             [key]: r?.ok && r.tracks?.length
-              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount }
+              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre }
               : { loading: false, error: 'Couldn’t load the tracklist.' },
           })))
           .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
@@ -251,6 +256,7 @@ export default function DownloadView() {
         if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl
         if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
         if (!cur.trackCount && s.trackCount) cur.trackCount = s.trackCount
+        if (!cur.genre && s.genre) cur.genre = s.genre
         // LATEST wins. Tracks on one collection carry their OWN release dates,
         // not the album's — Turnstile's GLOW ON returns 2021-05-26, 2021-07-30
         // and 2021-08-27 for three of its tracks, because the first two were
@@ -265,7 +271,7 @@ export default function DownloadView() {
         kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
         owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
         score: albScore, songs: 1, collectionId: s.collectionId,
-        releaseYear: s.releaseYear, trackCount: s.trackCount,
+        releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre,
       })
     }
     const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, 8)
@@ -514,42 +520,53 @@ export default function DownloadView() {
     return <button className="download-result-btn" onClick={() => enqueue(qres)}>Get</button>
   }
 
-  const renderSong = (s: SongRow, hero = false, i = 0) => {
+  /** Cover art for a queue item, found in the results we already have. Not
+   *  invented — if nothing on screen matches, the strip simply has no art. */
+  const artForQueue = (it: QItem): string | undefined => {
+    const a = norm(it.result.artist || ''), t = norm(it.result.title || it.result.album || '')
+    const hit = results.find((r) => norm(r.artist) === a && (norm(r.song) === t || norm(r.album || '') === t))
+    return hit?.artworkUrl
+  }
+
+  const artOr = (url: string | undefined, cls: string) => url
+    ? <img className={cls} src={url} alt="" loading="lazy" />
+    : <span className={`${cls} download-result-art--ph`} aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+      </span>
+
+  const previewBtn = (pid: string, url: string, title: string, artist: string, cls = 'download-preview') => {
+    const on = preview.playingId === pid
+    return (
+      <button
+        type="button"
+        className={`${cls}${on ? ' is-on' : ''}`}
+        onClick={(e) => { e.stopPropagation(); togglePreview(pid, url, title, artist) }}
+        title={on ? 'Stop preview' : '30s preview'}
+      >{on ? '❚❚' : '▶'}</button>
+    )
+  }
+
+  /** A song, as a dense aligned row. */
+  const renderSong = (s: SongRow, i = 0) => {
     const qres = songQ(s)
     const item = itemFor(qres)
     const pid = `dl|${qres.id}`
-    const isPlaying = preview.playingId === pid
     return (
-      <li key={qres.id} className={`download-result-row${hero ? ' download-result-row--hero' : ''}${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
-        <span className="download-result-artwrap">
-          {s.artworkUrl
-            ? <img className="download-result-art" src={s.artworkUrl} alt="" loading="lazy" />
-            : <span className="download-result-art download-result-art--ph" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-              </span>}
-          {s.previewUrl && (
-            <button
-              type="button"
-              className={`download-preview${isPlaying ? ' download-preview--on' : ''}`}
-              onClick={() => togglePreview(pid, s.previewUrl!, s.title, s.artist)}
-              title={isPlaying ? 'Stop preview' : '30s preview'}
-            >{isPlaying ? '❚❚' : '▶'}</button>
-          )}
+      <li key={qres.id} className={`dl-song${item ? ` is-${item.status}` : ''}`} style={{ '--i': i } as CSSProperties}>
+        <span className="dl-song-lead">
+          <span className="dl-song-idx">{i + 1}</span>
+          {s.previewUrl && previewBtn(pid, s.previewUrl, s.title, s.artist, 'dl-song-play')}
         </span>
-        <div className="download-result-body">
-          <span className="download-result-title" title={s.title}>{s.title}</span>
-          <span className="download-result-meta">
-            <span className="download-result-artist">{s.artist}</span>
-            {s.album && <span className="download-result-album">{displayAlbumTitle(s.album)}</span>}
-            {/* Same year, on songs too. iTunes returns several rows for one
-                song — original, remaster, live, comp — and they were
-                distinguishable only by album name. The year is the fastest
-                way to see which one you're about to pull. */}
-            {s.releaseYear ? <span className="download-result-year">{s.releaseYear}</span> : null}
-            {s.owned && <span className="download-owned">In your library</span>}
-          </span>
-        </div>
-        {renderAction(qres, item)}
+        {artOr(s.artworkUrl, 'dl-song-art')}
+        <span className="dl-song-title" title={s.title}>{s.title}</span>
+        <span className="dl-song-artist" title={s.artist}>{s.artist}</span>
+        <span className="dl-song-album" title={s.album || ''}>{s.album ? displayAlbumTitle(s.album) : ''}</span>
+        {/* Year on songs too: iTunes returns original, remaster, live and comp
+            as separate rows, and this is the fastest way to see which one
+            you're about to pull. */}
+        <span className="dl-song-year">{s.releaseYear || ''}</span>
+        <span className="dl-song-dur">{s.durationSecs ? mmss(s.durationSecs) : ''}</span>
+        <span className="dl-song-act">{s.owned && !item ? <span className="dl-inlib">In library</span> : renderAction(qres, item)}</span>
       </li>
     )
   }
@@ -557,7 +574,7 @@ export default function DownloadView() {
   const asSongRow = (t: ItunesSuggestion): SongRow => ({
     kind: 'song', artist: t.artist, title: t.song, album: t.album,
     artworkUrl: t.artworkUrl, previewUrl: t.previewUrl,
-    durationSecs: t.durationSecs,
+    durationSecs: t.durationSecs, releaseYear: t.releaseYear,
     owned: libIndex.tracks.has(norm(t.song) + '|' + norm(t.artist)), score: 0,
   })
 
@@ -575,247 +592,347 @@ export default function DownloadView() {
     const qres = songQ(s)
     const item = itemFor(qres)
     const pid = `dl|${qres.id}`
-    const isPlaying = preview.playingId === pid
     return (
-      <li key={qres.id} className={`download-track-row${item ? ` is-${item.status}` : ''}`}>
-        <span className="download-track-num">
-          {t.previewUrl ? (
-            <button
-              type="button"
-              className={`download-track-play${isPlaying ? ' is-on' : ''}`}
-              onClick={() => togglePreview(pid, t.previewUrl!, t.song, t.artist)}
-              title={isPlaying ? 'Stop preview' : '30s preview'}
-            >{isPlaying ? '❚❚' : '▶'}</button>
-          ) : (t.trackNumber ?? i + 1)}
+      <li key={qres.id} className={`dl-track${item ? ` is-${item.status}` : ''}`}>
+        <span className="dl-track-lead">
+          <span className="dl-track-num">{t.trackNumber ?? i + 1}</span>
+          {t.previewUrl && previewBtn(pid, t.previewUrl, t.song, t.artist, 'dl-track-play')}
         </span>
-        <span className="download-track-title" title={t.song}>{t.song}</span>
-        {t.durationSecs ? <span className="download-track-dur">{mmss(t.durationSecs)}</span> : null}
-        {s.owned && <span className="download-owned download-owned--sm">In library</span>}
-        {renderAction(qres, item)}
+        <span className="dl-track-title" title={t.song}>{t.song}</span>
+        <span className="dl-track-dur">{t.durationSecs ? mmss(t.durationSecs) : ''}</span>
+        <span className="dl-track-act">{s.owned && !item ? <span className="dl-inlib">In library</span> : renderAction(qres, item)}</span>
       </li>
     )
   }
 
-  const renderAlbum = (a: AlbumRow, hero = false, i = 0) => {
+  /** The facts a release stands on: kind, year, size, genre — whichever of
+   *  them iTunes actually stated. */
+  const releaseFacts = (a: AlbumRow) => {
+    const cache = albumTracks[albumKey(a)]
+    const year = cache?.releaseYear ?? a.releaseYear
+    const count = cache?.trackCount ?? a.trackCount
+    const genre = cache?.genre ?? a.genre
+    return { year, count, genre, kind: releaseKind(a.album, count) }
+  }
+
+  /** A release, as a cover card. Art-forward because this is where the year
+   *  and the ALBUM/EP distinction live. */
+  const renderRelease = (a: AlbumRow, i = 0) => {
     const qres = albumQ(a)
     const item = itemFor(qres)
     const key = albumKey(a)
     const isOpen = expandedAlbums.has(key)
     const cache = albumTracks[key]
-    // Once the tracklist has been fetched, the COLLECTION record supersedes
-    // what was inferred from the search hits — it is the album stating its own
-    // year and size rather than us reading them off whichever tracks matched.
-    const year = cache?.releaseYear ?? a.releaseYear
-    const count = cache?.trackCount ?? a.trackCount
-    const kind = releaseKind(a.album, count)
+    const { year, count, genre, kind } = releaseFacts(a)
     return (
-      <li key={qres.id} className={`download-album${hero ? ' download-album--hero' : ''}${item ? ` is-${item.status}` : ''}${isOpen ? ' is-open' : ''}`} style={{ '--i': i } as CSSProperties}>
-        <div className="download-result-row download-album-header" onClick={() => toggleAlbum(a)} role="button" tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAlbum(a) } }}>
-          <svg className="download-album-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
-          <span className="download-result-artwrap">
-            {a.artworkUrl
-              ? <img className="download-result-art" src={a.artworkUrl} alt="" loading="lazy" />
-              : <span className="download-result-art download-result-art--ph" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-                </span>}
-          </span>
-          <div className="download-result-body">
-            <span className="download-result-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
-            <span className="download-result-meta">
-              <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
-              {year ? <span className="download-result-year">{year}</span> : null}
-              <span className="download-result-artist">{a.artist}</span>
-              {count ? <span className="download-result-tracks">{count} track{count === 1 ? '' : 's'}</span> : null}
-              {a.owned && <span className="download-owned">In your library</span>}
+      <Fragment key={qres.id}>
+        <div
+          className={`dl-rel${item ? ` is-${item.status}` : ''}${isOpen ? ' is-open' : ''}`}
+          style={{ '--i': i } as CSSProperties}
+          onClick={() => toggleAlbum(a)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAlbum(a) } }}
+        >
+          <span className="dl-rel-frame">
+            {artOr(a.artworkUrl, 'dl-rel-art')}
+            <span className="dl-rel-hover">
+              <span className="dl-rel-get" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+              <span className="dl-rel-open">{isOpen ? 'Hide tracks' : 'See tracks'}</span>
             </span>
-          </div>
-          <span className="download-album-action" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+            {a.owned && <span className="dl-rel-owned" title="In your library">✓</span>}
+          </span>
+          <span className="dl-rel-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
+          <span className="dl-rel-facts">
+            <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
+            {year ? <span className="download-result-year">{year}</span> : null}
+            {count ? <span className="dl-rel-count">{count} track{count === 1 ? '' : 's'}</span> : null}
+          </span>
+          <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
         </div>
+
         {isOpen && (
-          <div className="download-album-tracks">
-            {cache?.loading && <div className="download-album-tracks-note"><span className="dl-spinner" aria-hidden="true" /> Loading tracklist…</div>}
-            {cache?.error && <div className="download-album-tracks-note download-album-tracks-note--err">{cache.error}</div>}
+          <div className="dl-rel-panel">
+            <div className="dl-rel-panel-head">
+              <span className="dl-rel-panel-title">{displayAlbumTitle(a.album)}</span>
+              <span className="dl-rel-panel-meta">
+                {kind}{year ? ` · ${year}` : ''}{genre ? ` · ${genre}` : ''}
+                {cache?.tracks ? ` · ${cache.tracks.length} tracks` : ''}
+              </span>
+              <span className="dl-rel-panel-spacer" />
+              {cache?.tracks && cache.tracks.length > 0 && (
+                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(albumQ(a)) }}>Get all</button>
+              )}
+              <button type="button" className="dl-rel-panel-close" onClick={() => toggleAlbum(a)} title="Close">✕</button>
+            </div>
+            {cache?.loading && <div className="dl-rel-panel-note"><span className="dl-spinner" aria-hidden="true" /> Loading tracklist…</div>}
+            {cache?.error && <div className="dl-rel-panel-note dl-rel-panel-note--err">{cache.error}</div>}
             {cache?.tracks && cache.tracks.length > 0 && (
-              <>
-                <div className="download-album-tracks-head">
-                  <span className="download-album-tracks-count">{cache.tracks.length} tracks</span>
-                  <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(albumQ(a)) }}>Get all</button>
-                </div>
-                <ul className="download-album-tracks-list" role="list">
-                  {cache.tracks.map((t, ti) => renderAlbumTrack(t, ti))}
-                </ul>
-              </>
+              <ul className="dl-track-list" role="list">{cache.tracks.map((t, ti) => renderAlbumTrack(t, ti))}</ul>
             )}
           </div>
         )}
-      </li>
+      </Fragment>
     )
   }
 
+  /** Top match — the one result that matched hardest, given room to say so. */
+  const renderHero = (h: SongRow | AlbumRow) => {
+    if (h.kind === 'album') {
+      const { year, count, genre, kind } = releaseFacts(h)
+      const qres = albumQ(h)
+      const item = itemFor(qres)
+      return (
+        <div className="dl-hero" onClick={() => toggleAlbum(h)} role="button" tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAlbum(h) } }}>
+          {artOr(h.artworkUrl, 'dl-hero-art')}
+          <div className="dl-hero-body">
+            <span className="dl-hero-title" title={h.album}>{displayAlbumTitle(h.album)}</span>
+            <span className="dl-hero-artist">{h.artist}</span>
+            <span className="dl-hero-facts">
+              <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
+              {year ? <span className="download-result-year">{year}</span> : null}
+              {count ? <span className="dl-rel-count">{count} tracks</span> : null}
+              {genre ? <span className="dl-rel-count">{genre}</span> : null}
+              {h.owned && <span className="download-owned">In your library</span>}
+            </span>
+          </div>
+          <span className="dl-hero-act" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+        </div>
+      )
+    }
+    const qres = songQ(h)
+    const item = itemFor(qres)
+    const pid = `dl|${qres.id}`
+    return (
+      <div className="dl-hero">
+        <span className="dl-hero-artwrap">
+          {artOr(h.artworkUrl, 'dl-hero-art')}
+          {h.previewUrl && previewBtn(pid, h.previewUrl, h.title, h.artist, 'dl-hero-play')}
+        </span>
+        <div className="dl-hero-body">
+          <span className="dl-hero-title" title={h.title}>{h.title}</span>
+          <span className="dl-hero-artist">{h.artist}</span>
+          <span className="dl-hero-facts">
+            {h.album && <span className="dl-rel-count">{displayAlbumTitle(h.album)}</span>}
+            {h.releaseYear ? <span className="download-result-year">{h.releaseYear}</span> : null}
+            {h.durationSecs ? <span className="dl-rel-count">{mmss(h.durationSecs)}</span> : null}
+            {h.owned && <span className="download-owned">In your library</span>}
+          </span>
+        </div>
+        <span className="dl-hero-act">{renderAction(qres, item)}</span>
+      </div>
+    )
+  }
+
+  const active = getQueue().find((q) => q.status === 'downloading')
+  const hasResults = !!(ranked.hero || ranked.songs.length || ranked.albums.length)
+
   return (
     <div className="download-view" ref={downloadPageRef}>
-      <div className="download-card">
-        <div className="download-head">
-          <span className="download-eyebrow">Get music</span>
-          <h1 className="download-title">Download</h1>
-          <p className="download-sub">
-            Type anything — results are instant, with previews. Get resolves it on Qobuz in hi-fi.
-          </p>
-        </div>
-
-        <div className="download-search">
-          <div className="download-search-field">
-            <svg className="download-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-            <input
-              className="download-input download-input--search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search a song, album, or artist…"
-              spellCheck={false}
-              autoFocus
-            />
-            {searching && <span className="dl-spinner download-search-spinner" aria-hidden="true" />}
+      {/* ── command bar. Pinned, because the search field IS the page and it
+             used to scroll away the moment results arrived. ── */}
+      <div className="dl-bar">
+        <div className="dl-bar-top">
+          <div className="dl-bar-id">
+            <span className="dl-eyebrow">Get music</span>
+            <h1 className="dl-h1">Download</h1>
           </div>
-        </div>
-
-        {searchErr && !searching && <div className="download-result download-result--err">{searchErr}</div>}
-
-        {(summary.active + summary.queued + summary.done + summary.failed) > 0 && (
-          <div className="download-queue-strip">
-            <span className="download-queue-summary">
-              {summary.active > 0 && <span className="dq-part dq-active"><span className="dl-spinner" aria-hidden="true" />{summary.active} downloading</span>}
-              {summary.queued > 0 && <span className="dq-part">{summary.queued} queued</span>}
-              {summary.done > 0 && <span className="dq-part dq-done">{summary.done} in your library</span>}
-              {summary.failed > 0 && <span className="dq-part dq-failed">{summary.failed} failed</span>}
+          <span className="dl-bar-spacer" />
+          <span className={`dl-chip${qobuz?.configured ? ' is-on' : ''}`} title={qobuz?.email || 'No Qobuz account connected'}>
+            <i aria-hidden="true" />Qobuz
+          </span>
+          {status && (
+            <span className={`dl-chip${status.installed ? ' is-on' : ' is-bad'}`} title={status.installed ? `streamrip ${status.version || ''}` : (status.reason || 'streamrip not found')}>
+              <i aria-hidden="true" />streamrip
             </span>
-            {summary.active === 0 && summary.queued === 0 && (summary.done + summary.failed) > 0 && (
-              <button className="download-link-btn" onClick={() => clearFinished()}>Clear finished</button>
-            )}
-          </div>
-        )}
-
-        {(ranked.hero || ranked.songs.length > 0 || ranked.albums.length > 0) && (
-          <div className="download-results">
-            {ranked.hero && (
-              <section className="download-group download-group--top">
-                <div className="download-group-head"><span className="download-group-label download-group-label--top">Top match</span></div>
-                <ul className="download-group-list" role="list">
-                  {ranked.hero.kind === 'song' ? renderSong(ranked.hero, true, 0) : renderAlbum(ranked.hero, true, 0)}
-                </ul>
-              </section>
-            )}
-            {ranked.songs.length > 0 && (
-              <section className="download-group">
-                <div className="download-group-head">
-                  <span className="download-group-label">Songs</span>
-                  <span className="download-group-count">{ranked.songs.length}</span>
-                </div>
-                <ul className="download-group-list" role="list">{ranked.songs.map((s, i) => renderSong(s, false, i + 1))}</ul>
-              </section>
-            )}
-            {ranked.albums.length > 0 && (
-              <section className="download-group">
-                <div className="download-group-head">
-                  <span className="download-group-label">Albums</span>
-                  <span className="download-group-count">{ranked.albums.length}</span>
-                </div>
-                <ul className="download-group-list" role="list">{ranked.albums.map((a, i) => renderAlbum(a, false, i + 1))}</ul>
-              </section>
-            )}
-          </div>
-        )}
-
-        {notice && (
-          <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>
-            {notice.msg}
-          </div>
-        )}
-
-        {failures.length > 0 && (
-          <div className="download-failures">
-            <div className="download-failures-head">
-              {failures.length} track{failures.length === 1 ? '' : 's'} couldn’t be imported:
-            </div>
-            <ul className="download-failures-list">
-              {failures.map((f, i) => (
-                <li key={`${f.filename}-${i}`}>
-                  <span className="download-failures-name">{f.filename}</span>
-                  <span className="download-failures-reason">{f.error}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* ── Direct link ── */}
-        <div className="download-divider"><span>or paste a link</span></div>
-        <div className="download-row">
-          <input
-            className="download-input"
-            value={pasteUrl}
-            onChange={(e) => setPasteUrl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void downloadPaste() }}
-            placeholder="https://…"
-            disabled={pasteBusy}
-            spellCheck={false}
-          />
-          <button className="download-btn" onClick={() => void downloadPaste()} disabled={pasteBusy || !pasteUrl.trim()}>
-            {pasteBusy ? 'Downloading…' : 'Download'}
+          )}
+          <button
+            type="button"
+            className={`dl-setup-btn${setupOpen ? ' is-open' : ''}`}
+            onClick={() => setSetupOpen((o) => !o)}
+            aria-expanded={setupOpen}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg>
+            Setup
           </button>
         </div>
-
-        <div className="download-hint">
-          YouTube needs no login. For lossless Qobuz, connect your account below.
+        <div className="dl-field">
+          <svg className="dl-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+          <input
+            className="dl-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search a song, album, or artist…"
+            spellCheck={false}
+            autoFocus
+          />
+          {searching && <span className="dl-spinner dl-field-spin" aria-hidden="true" />}
+          {!searching && query && <button type="button" className="dl-field-clear" onClick={() => setQuery('')} title="Clear">✕</button>}
         </div>
+      </div>
 
-        {/* ── Qobuz account — password hashed locally, written to streamrip's config ── */}
-        <div className="download-accounts">
-          <div className="download-accounts-head">Qobuz account</div>
-          {qobuz?.configured && !qEditing ? (
-            <div className="download-account-row">
-              <span className="download-account-status">Connected{qobuz.email ? ` · ${qobuz.email}` : ''}</span>
-              <button className="download-link-btn" onClick={() => { setQEditing(true); setQMsg(null) }}>Change</button>
-            </div>
-          ) : qMode === 'token' ? (
+      {/* ── the queue, as something you can actually read ── */}
+      {(summary.active + summary.queued + summary.done + summary.failed) > 0 && (
+        <div className="dl-queue">
+          {active ? (
             <>
-              <div className="download-account-form">
-                <input className="download-input download-input--narrow" placeholder="Qobuz user ID" value={qUserId} onChange={(e) => setQUserId(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
-                <input className="download-input" type="password" placeholder="Qobuz auth token" value={qToken} onChange={(e) => setQToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuzToken() }} disabled={qSaving} autoComplete="off" />
-                <button className="download-btn" onClick={() => void saveQobuzToken()} disabled={qSaving || !qUserId.trim() || !qToken.trim()}>{qSaving ? 'Saving…' : 'Connect'}</button>
-              </div>
-              <details className="download-steps">
-                <summary>How to get your user ID + token (Google sign-in)</summary>
-                <ol>
-                  <li>Open <strong>play.qobuz.com</strong> in your browser and log out.</li>
-                  <li>Open dev tools (<strong>⌥⌘I</strong>) → <strong>Network</strong> tab; type <code>login</code> in the filter box.</li>
-                  <li>Log back in with Google. A request named <code>login</code> appears — click it → the <strong>Response</strong> tab.</li>
-                  <li>Copy <code>user_auth_token</code> → paste as <strong>auth token</strong>. Find <code>"user":&#123; "id": NUMBER</code> → paste that NUMBER as <strong>user ID</strong>.</li>
-                </ol>
-              </details>
-              <button className="download-link-btn download-toggle" onClick={() => { setQMode('password'); setQMsg(null) }}>Have a Qobuz password instead?</button>
+              {artOr(artForQueue(active), 'dl-queue-art')}
+              <span className="dl-queue-name" title={active.result.desc}>{active.result.desc}</span>
+              <span className="dl-queue-bar" aria-hidden="true"><i /></span>
+              <span className="dl-queue-meta">{mmss(active.startedAt ? Math.floor((Date.now() - active.startedAt) / 1000) : 0)}</span>
             </>
           ) : (
-            <>
-              <div className="download-account-form">
-                <input className="download-input" placeholder="Qobuz email" value={qEmail} onChange={(e) => setQEmail(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
-                <input className="download-input" type="password" placeholder="Qobuz password" value={qPass} onChange={(e) => setQPass(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuz() }} disabled={qSaving} autoComplete="off" />
-                <button className="download-btn" onClick={() => void saveQobuz()} disabled={qSaving || !qEmail.trim() || !qPass}>{qSaving ? 'Saving…' : 'Connect'}</button>
-              </div>
-              <button className="download-link-btn download-toggle" onClick={() => { setQMode('token'); setQMsg(null) }}>Sign in with Google? Use a token instead →</button>
-            </>
+            <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
           )}
-          {qMsg && <div className={`download-result ${qMsg.ok ? 'download-result--ok' : 'download-result--err'}`}>{qMsg.msg}</div>}
-          <div className="download-hint download-hint--sub">Saved to streamrip’s config on this Mac — your credentials never leave your machine or go through chat.</div>
+          <span className="dl-queue-counts">
+            {summary.queued > 0 && <span className="dq-part">{summary.queued} queued</span>}
+            {summary.done > 0 && <span className="dq-part dq-done">{summary.done} in your library</span>}
+            {summary.failed > 0 && <span className="dq-part dq-failed">{summary.failed} failed</span>}
+          </span>
+          {active && <button className="download-cancel" onClick={() => void cancel(active.key)}>Cancel</button>}
+          {summary.active === 0 && summary.queued === 0 && (summary.done + summary.failed) > 0 && (
+            <button className="download-link-btn" onClick={() => clearFinished()}>Clear</button>
+          )}
         </div>
+      )}
 
-        {status && !status.installed && (
-          <div className="download-warn">
-            {/* The reason comes from main, which tells "not installed" apart
-                from "installed but can't start" — those need different fixes,
-                and the old blanket message sent Jake to `pipx install
-                streamrip` for a broken Homebrew dependency (2026-08-08). */}
-            {status.reason || <>streamrip (the <code>rip</code> command) wasn’t found. Install it with <code>pipx install streamrip</code>, then reopen this view.</>}
+      {setupOpen && (
+        <div className="dl-setup-panel">
+          <div className="dl-setup-grid">
+            {/* ── Direct link ── */}
+            <section className="dl-setup-card">
+              <div className="dl-setup-card-head">Paste a link</div>
+              <div className="download-row">
+                <input
+                  className="download-input"
+                  value={pasteUrl}
+                  onChange={(e) => setPasteUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void downloadPaste() }}
+                  placeholder="https://…"
+                  disabled={pasteBusy}
+                  spellCheck={false}
+                />
+                <button className="download-btn" onClick={() => void downloadPaste()} disabled={pasteBusy || !pasteUrl.trim()}>
+                  {pasteBusy ? 'Downloading…' : 'Download'}
+                </button>
+              </div>
+              <div className="download-hint">YouTube needs no login. For lossless Qobuz, connect your account.</div>
+              {notice && (
+                <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>{notice.msg}</div>
+              )}
+            </section>
+
+            {/* ── Qobuz account — password hashed locally, written to streamrip's config ── */}
+            <section className="dl-setup-card">
+              <div className="dl-setup-card-head">Qobuz account</div>
+              {qobuz?.configured && !qEditing ? (
+                <div className="download-account-row">
+                  <span className="download-account-status">Connected{qobuz.email ? ` · ${qobuz.email}` : ''}</span>
+                  <button className="download-link-btn" onClick={() => { setQEditing(true); setQMsg(null) }}>Change</button>
+                </div>
+              ) : qMode === 'token' ? (
+                <>
+                  <div className="download-account-form">
+                    <input className="download-input download-input--narrow" placeholder="Qobuz user ID" value={qUserId} onChange={(e) => setQUserId(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
+                    <input className="download-input" type="password" placeholder="Qobuz auth token" value={qToken} onChange={(e) => setQToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuzToken() }} disabled={qSaving} autoComplete="off" />
+                    <button className="download-btn" onClick={() => void saveQobuzToken()} disabled={qSaving || !qUserId.trim() || !qToken.trim()}>{qSaving ? 'Saving…' : 'Connect'}</button>
+                  </div>
+                  <details className="download-steps">
+                    <summary>How to get your user ID + token (Google sign-in)</summary>
+                    <ol>
+                      <li>Open <strong>play.qobuz.com</strong> in your browser and log out.</li>
+                      <li>Open dev tools (<strong>⌥⌘I</strong>) → <strong>Network</strong> tab; type <code>login</code> in the filter box.</li>
+                      <li>Log back in with Google. A request named <code>login</code> appears — click it → the <strong>Response</strong> tab.</li>
+                      <li>Copy <code>user_auth_token</code> → paste as <strong>auth token</strong>. Find <code>"user":&#123; "id": NUMBER</code> → paste that NUMBER as <strong>user ID</strong>.</li>
+                    </ol>
+                  </details>
+                  <button className="download-link-btn download-toggle" onClick={() => { setQMode('password'); setQMsg(null) }}>Have a Qobuz password instead?</button>
+                </>
+              ) : (
+                <>
+                  <div className="download-account-form">
+                    <input className="download-input" placeholder="Qobuz email" value={qEmail} onChange={(e) => setQEmail(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
+                    <input className="download-input" type="password" placeholder="Qobuz password" value={qPass} onChange={(e) => setQPass(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuz() }} disabled={qSaving} autoComplete="off" />
+                    <button className="download-btn" onClick={() => void saveQobuz()} disabled={qSaving || !qEmail.trim() || !qPass}>{qSaving ? 'Saving…' : 'Connect'}</button>
+                  </div>
+                  <button className="download-link-btn download-toggle" onClick={() => { setQMode('token'); setQMsg(null) }}>Sign in with Google? Use a token instead →</button>
+                </>
+              )}
+              {qMsg && <div className={`download-result ${qMsg.ok ? 'download-result--ok' : 'download-result--err'}`}>{qMsg.msg}</div>}
+              <div className="download-hint download-hint--sub">Saved to streamrip’s config on this Mac — your credentials never leave your machine or go through chat.</div>
+            </section>
+          </div>
+
+          {status && !status.installed && (
+            <div className="download-warn">
+              {/* The reason comes from main, which tells "not installed" apart
+                  from "installed but can't start" — those need different fixes,
+                  and the old blanket message sent Jake to `pipx install
+                  streamrip` for a broken Homebrew dependency (2026-08-08). */}
+              {status.reason || <>streamrip (the <code>rip</code> command) wasn’t found. Install it with <code>pipx install streamrip</code>, then reopen this view.</>}
+            </div>
+          )}
+
+          {failures.length > 0 && (
+            <div className="download-failures">
+              <div className="download-failures-head">
+                {failures.length} track{failures.length === 1 ? '' : 's'} couldn’t be imported:
+              </div>
+              <ul className="download-failures-list">
+                {failures.map((f, i) => (
+                  <li key={`${f.filename}-${i}`}>
+                    <span className="download-failures-name">{f.filename}</span>
+                    <span className="download-failures-reason">{f.error}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {searchErr && !searching && <div className="download-result download-result--err dl-inline-err">{searchErr}</div>}
+
+      <div className="dl-body">
+        {ranked.hero && (
+          <section className="dl-sec dl-sec--hero">
+            <div className="dl-sec-head"><span className="dl-sec-title dl-sec-title--top">Top match</span><span className="dl-rule" /></div>
+            {renderHero(ranked.hero)}
+          </section>
+        )}
+
+        {ranked.albums.length > 0 && (
+          <section className="dl-sec">
+            <div className="dl-sec-head">
+              <span className="dl-sec-title">Releases</span>
+              <span className="dl-sec-count">{ranked.albums.length}</span>
+              <span className="dl-rule" />
+            </div>
+            <div className="dl-shelf">{ranked.albums.map((a, i) => renderRelease(a, i))}</div>
+          </section>
+        )}
+
+        {ranked.songs.length > 0 && (
+          <section className="dl-sec">
+            <div className="dl-sec-head">
+              <span className="dl-sec-title">Songs</span>
+              <span className="dl-sec-count">{ranked.songs.length}</span>
+              <span className="dl-rule" />
+            </div>
+            <ul className="dl-song-list" role="list">{ranked.songs.map((s, i) => renderSong(s, i))}</ul>
+          </section>
+        )}
+
+        {!hasResults && !searching && (
+          <div className="dl-empty">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
+            <span className="dl-empty-title">{query ? 'Nothing matched that.' : 'Search anything.'}</span>
+            <span className="dl-empty-sub">
+              {query
+                ? 'Try the artist and the song together — "when you die mgmt".'
+                : 'Results are instant, with 30-second previews. Get resolves it on Qobuz in hi-fi.'}
+            </span>
           </div>
         )}
       </div>

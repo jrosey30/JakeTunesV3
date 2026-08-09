@@ -1892,7 +1892,7 @@ function AppInner() {
                 <div style={{
                   height: '100%',
                   width: `${applyOverridesProgress.total > 0 ? (applyOverridesProgress.done / applyOverridesProgress.total) * 100 : 0}%`,
-                  background: '#F9894D',
+                  background: '#F9864C',
                   transition: 'width 200ms ease-out',
                 }} />
               </div>
@@ -1978,7 +1978,7 @@ function AppInner() {
                 <div style={{
                   height: '100%',
                   width: `${refreshSizesProgress.total > 0 ? (refreshSizesProgress.scanned / refreshSizesProgress.total) * 100 : 0}%`,
-                  background: '#F9894D',
+                  background: '#F9864C',
                   transition: 'width 200ms ease-out',
                 }} />
               </div>

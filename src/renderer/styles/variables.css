@@ -51,10 +51,10 @@
      eighth-note in white on a hot orange tile. Jake: "ENTIRE APP'S COLOR
      SCHEME NEEDS TO FEED OFF OF THIS NEW LOGO."
 
-     The canonical orange is #FD5901 — not eyeballed, but the MEDIAN of the
+     The canonical orange is #FC5501 — not eyeballed, but the MEDIAN of the
      1,040,005 orange pixels in the logo file, so it is exactly the hue the
-     tile is. The previous #FD5901 came from the old mark and reads muddy
-     beside it. Every shade below is derived from #FD5901 in HLS (H 21deg,
+     tile is. The previous #FC5501 came from the old mark and reads muddy
+     beside it. Every shade below is derived from #FC5501 in HLS (H 21deg,
      S 99%, L 50%) rather than picked, so the whole app stays one hue:
        light  L+10%   grad tops / hover
        dark   L-10%   grad bottoms
@@ -62,11 +62,11 @@
        glow   L+14% S-6%   LCD / progress / now-playing
      ONE canonical orange. Anything orange in the app routes through these —
      never a one-off literal. */
-  --brand-orange:        #FD5901;       /* canonical: solid fills, accent text, icons */
-  --brand-orange-rgb:    253, 89, 1;    /* same value, for rgba() glows / shadows / tints */
-  --brand-orange-light:  #FE7A33;       /* gradient tops + hover */
-  --brand-orange-dark:   #CA4701;       /* gradient bottoms */
-  --brand-orange-border: #9C3701;       /* button borders (darkest) */
+  --brand-orange:        #FC5501;       /* canonical: solid fills, accent text, icons */
+  --brand-orange-rgb:    252, 85, 1;    /* same value, for rgba() glows / shadows / tints */
+  --brand-orange-light:  #FE7632;       /* gradient tops + hover */
+  --brand-orange-dark:   #C94401;       /* gradient bottoms */
+  --brand-orange-border: #9B3401;       /* button borders (darkest) */
   --brand-cream:         #FEFDFC;       /* the logo note's white */
   --brand-cream-rgb:     254, 253, 252;
   --brand-ink:           #0B0B0A;       /* the note's outline black */
@@ -263,6 +263,6 @@
   --color-danger: #c0392b;
   --color-success: #2c6b4f;
   --accent: var(--brand-orange);          /* fixes the accidental blue See-All */
-  --brand-orange-glow: #F9894D;           /* the brighter LCD/progress/now-playing warm orange */
+  --brand-orange-glow: #F9864C;           /* the brighter LCD/progress/now-playing warm orange */
   --ring-focus: 0 0 0 2px rgba(var(--selection-top-rgb), 0.55);
 }

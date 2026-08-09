@@ -39,12 +39,14 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 REPO = Path(__file__).resolve().parent.parent
-MASTER = REPO / 'brand' / 'jaketunes-logo-2026-master.png'
+# Version-less on purpose: the mark has been revised twice now, and a
+# filename with a version in it means editing this script every time.
+MASTER = REPO / 'brand' / 'jaketunes-logo-master.png'
 MOBILE_ICONSET = Path.home() / 'JakeTunesMobile' / 'ios' / 'JakeTunesMobile' / 'Assets.xcassets' / 'AppIcon.appiconset'
 
 # The brand orange, median-sampled from the master. Kept in sync with
 # --brand-orange in src/renderer/styles/variables.css.
-TILE = (253, 89, 1)
+TILE = (252, 85, 1)
 
 # Apple's macOS icon grid: body 824 of 1024, continuous-curvature corner.
 MAC_BODY = 824
