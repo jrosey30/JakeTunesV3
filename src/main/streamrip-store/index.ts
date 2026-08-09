@@ -401,7 +401,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // remaster is a different length by nature, and pinning to the clicked
     // row's runtime is what rejected the correct file. Feature-credit
     // stripping does not widen it: same recording, keep the tight guard.
-    const durTol = (opts?.cleanedSource || editionSubstituted(title)) ? CLEANED_TOLERANCE_SEC : DURATION_TOLERANCE_SEC
+    // The ALBUM counts too, not just the title. "Lady (Hear Me Tonight)" is a
+    // plain title, but the iTunes row sits on "Modjo (Remastered)" — a
+    // remaster whose runtime can drift from whatever pressing the catalogue
+    // serves. Reading only the title would have applied the tight guard and
+    // rejected the correct file for the second time in one bug.
+    const durTol = (opts?.cleanedSource || editionSubstituted(title) || editionSubstituted(opts?.album || ''))
+      ? CLEANED_TOLERANCE_SEC : DURATION_TOLERANCE_SEC
     // Search by the song's NAME, not by iTunes' edition metadata. iTunes hands
     // us things like "Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]"
     // and "Life After Death [Amended Version] (2014 Remaster)"; asking a

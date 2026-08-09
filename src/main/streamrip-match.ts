@@ -165,6 +165,40 @@ export function unwantedVersionOf(wantTitle: string, gotTitle: string): string |
   return null
 }
 
+/**
+ * A parenthetical SUBTITLE that one catalogue carries and another drops.
+ *
+ * Jake, 2026-08-09: "i cannot download the real version of lady hear me
+ * tonight by modjo!!! only the remix which i dont like."
+ *
+ * iTunes calls it "Lady (Hear Me Tonight)". Qobuz calls it, simply, "Lady".
+ * Normalised that is ladyhearmetonight vs lady — four characters — which
+ * fails every arm of recoTitleMatches: containment needs 8, edit distance
+ * needs 10, the prefix test needs 6. So the ONE correct row on Qobuz was
+ * invisible, the only thing that could match was "Lady (Hear Me Tonight) -
+ * Remix", and the download had nowhere to land.
+ *
+ * Deliberately narrow: it matches only when one side carries a bracketed
+ * subtitle and the other is exactly the bare title. Two DECORATED titles are
+ * not compared this way — "Lady (Radio Edit)" vs "Lady (Live)" both reduce to
+ * "lady", and that is where wrong matches live. Everything else still applies
+ * on top: the artist must match, unwantedVersionOf still throws out remixes
+ * and live cuts, and the duration guard still pins the exact recording.
+ */
+function bareTitle(s: string): string {
+  return s.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
+}
+
+export function subtitleVariantMatches(want: string, got: string): boolean {
+  const w = recoNorm(want), g = recoNorm(got)
+  if (!w || !g || w === g) return false
+  const wb = recoNorm(bareTitle(want)), gb = recoNorm(bareTitle(got))
+  // Exactly one side decorated, and dropping its subtitle makes them equal.
+  if (wb && wb !== w && wb === g) return true
+  if (gb && gb !== g && gb === w) return true
+  return false
+}
+
 /** Rank every eligible Qobuz hit for a reco title + artist, best first.
  *  `wantMediaType` gates which result rows are eligible — 'track' for a song
  *  query, 'album' for an album query. This MUST match what the caller searched
@@ -194,9 +228,14 @@ export function rankStreamripCandidates(
     const r = results[i]
     if (r.mediaType !== wantMediaType) continue
     const { title, artist } = parseStreamripDesc(r.desc)
-    if (!recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title)) continue
+    const subtitleOnly = !recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title)
+      && subtitleVariantMatches(wantTitle, title)
+    if (!recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title) && !subtitleOnly) continue
     if (unwantedVersionOf(wantTitle, title)) { rejectedVersions.push(title); continue }
     let score = 2
+    // A subtitle-dropped match is real but weaker evidence than a title that
+    // actually reads the same, so it never outranks one that does.
+    if (subtitleOnly) score -= 3
     if (wantArtist && artist) {
       if (!recoArtistMatches(wantArtist, artist)) continue
       score += 5

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted} from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches} from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -206,5 +206,43 @@ describe('editionSubstituted — when the runtime stops being a fingerprint', ()
   it('is FALSE when only feature credits were stripped — same recording', () => {
     assert.equal(editionSubstituted('Mo Money Mo Problems (feat. Puff Daddy & Mase)'), false)
     assert.equal(editionSubstituted('Hypnotize'), false)
+  })
+})
+
+describe('subtitle variants — catalogues disagree about parentheticals', () => {
+  it('bridges "Lady (Hear Me Tonight)" to Qobuz\'s "Lady"', () => {
+    assert.ok(subtitleVariantMatches('Lady (Hear Me Tonight)', 'Lady'))
+    assert.ok(subtitleVariantMatches('Lady', 'Lady (Hear Me Tonight)'))
+  })
+
+  it('refuses to compare two DECORATED titles — that is where wrong matches live', () => {
+    assert.equal(subtitleVariantMatches('Lady (Hear Me Tonight)', 'Lady (Radio Edit)'), false)
+    assert.equal(subtitleVariantMatches('Lady (Live)', 'Lady (Remix)'), false)
+  })
+
+  it('does not match a different song sharing a first word', () => {
+    assert.equal(subtitleVariantMatches('Lady (Hear Me Tonight)', 'Lady Marmalade'), false)
+    assert.equal(subtitleVariantMatches('Lady (Hear Me Tonight)', 'Ladies Night'), false)
+  })
+
+  it('picks Modjo\'s original over the remix, from the real Qobuz listing', () => {
+    const results = [
+      { source: 'qobuz', mediaType: 'track', id: 'real',  desc: 'Lady by Modjo' },
+      { source: 'qobuz', mediaType: 'track', id: 'remix', desc: 'Lady (Hear Me Tonight) - Remix by Modjo' },
+      { source: 'qobuz', mediaType: 'track', id: 'cover', desc: 'Lady (Hear Me Tonight) by Black Caviar' },
+    ]
+    const { ranked, rejectedVersions } = rankStreamripCandidates('Lady (Hear Me Tonight)', 'Modjo', results)
+    assert.equal(ranked[0]?.id, 'real')
+    assert.ok(!ranked.some((r) => r.id === 'remix'))
+    assert.ok(!ranked.some((r) => r.id === 'cover'))
+    assert.equal(rejectedVersions.length, 1)
+  })
+
+  it('still prefers the fully-titled row when the catalogue has both', () => {
+    const results = [
+      { source: 'qobuz', mediaType: 'track', id: 'bare', desc: 'Lady by Modjo' },
+      { source: 'qobuz', mediaType: 'track', id: 'full', desc: 'Lady (Hear Me Tonight) by Modjo' },
+    ]
+    assert.equal(rankStreamripCandidates('Lady (Hear Me Tonight)', 'Modjo', results).ranked[0]?.id, 'full')
   })
 })
