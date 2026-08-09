@@ -256,7 +256,10 @@ async function buildMixtapeProposal(
     'Use ONLY the ids above.',
     '',
     'Return ONLY JSON:',
-    '{"title":"the tape\'s name, like it was written on the label","commentary":"2-3 sentences in your voice for the inside of the J-card","tracks":[ids in play order],"linerNotes":[{"id":123,"note":"aside for that song, max 12 words, like a scribble next to the tracklist"}]}',
+    // No linerNotes: nothing renders them since 2026-08-09 ("i highly dislike
+    // the comments under the songs"), so asking for 25 of them per tape was
+    // paying for output that went straight in the bin.
+    '{"title":"the tape\'s name, like it was written on the label","commentary":"2-3 sentences in your voice for the inside of the J-card","tracks":[ids in play order]}',
   ].filter(Boolean).join('\n')
 
   let title = ''

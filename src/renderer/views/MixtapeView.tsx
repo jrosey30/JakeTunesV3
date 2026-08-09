@@ -118,7 +118,12 @@ export default function MixtapeView() {
     () => (tape ? tapeTracks(tape).map((id) => byId.get(id)).filter((t): t is Track => !!t) : []),
     [tape, byId],
   )
-  const notes = useMemo(() => new Map((tape?.linerNotes || []).map((n) => [n.id, n.note])), [tape])
+  // Liner notes are no longer shown. Jake, 2026-08-09: "i highly dislike the
+  // comments under the songs. unecessary" — a one-line aside under all 25
+  // titles doubled the height of the tracklist and buried the songs. The
+  // field stays on the record so older tapes keep theirs; nothing renders it.
+  // (The "picked up mid-song" line below is kept — that's a FACT about the
+  // recording, not commentary.)
 
   // SPOOL WIND — holding FF/REW winds the tape for real: the head lifts
   // (playback pauses), the spools accelerate 8x→32x, the deck squeals,
@@ -260,7 +265,6 @@ export default function MixtapeView() {
             {(tape.startOffsets?.[String(t.id)] || 0) > 0 && (
               <span className="jcard-row-note" style={{ color: ink }}>picked up mid-song — from {fmt(tape.startOffsets![String(t.id)])}</span>
             )}
-            {notes.has(t.id) && <span className="jcard-row-note" style={{ color: ink }}>{notes.get(t.id)}</span>}
           </div>
         )
       })}
