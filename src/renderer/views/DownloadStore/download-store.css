@@ -883,9 +883,30 @@
 .dl-rel-hover {
   position: absolute; inset: 0; border-radius: var(--radius-md);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
-  background: linear-gradient(180deg, rgba(20,14,10,0.12), rgba(20,14,10,0.62));
+  /* Darker than it was: album art is a PHOTOGRAPH as often as not, and white
+     type over a light cover at 0.12 scrim was unreadable. */
+  background: linear-gradient(180deg, rgba(18,12,8,0.30), rgba(18,12,8,0.76));
   opacity: 0; transition: opacity var(--motion-fast) var(--ease-out);
 }
+
+/* The busy strip — always visible, along the bottom edge, out of the art's way. */
+.dl-rel-busy {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: linear-gradient(180deg, rgba(18,12,8,0), rgba(18,12,8,0.88) 45%);
+}
+.dl-rel-busy .dl-actions { display: flex; align-items: center; gap: var(--space-3); }
+.dl-rel-busy .dl-state { font-size: var(--font-10); color: rgba(255,255,255,0.94); }
+.dl-rel-busy .download-cancel,
+.dl-rel-busy .download-retry {
+  font-size: var(--font-10); font-weight: var(--fw-bold);
+  color: #fff; background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.34); border-radius: var(--radius-pill);
+  padding: 1px var(--space-3);
+}
+.dl-rel-busy .download-cancel:hover, .dl-rel-busy .download-retry:hover { background: rgba(255,255,255,0.30); }
 .dl-rel:hover .dl-rel-hover, .dl-rel:focus-visible .dl-rel-hover { opacity: 1; }
 .dl-rel-open { font-size: var(--font-10); font-weight: var(--fw-bold); letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255,255,255,0.9); line-height: 1; }
 .dl-rel-owned {
@@ -927,15 +948,33 @@
 .dl-rel-panel-note { padding: var(--space-4); font-size: var(--font-12); color: var(--text-dim); display: flex; align-items: center; gap: var(--space-3); }
 .dl-rel-panel-note--err { color: var(--color-danger, #b23b2e); }
 
-.dl-track-list { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 0; }
+.dl-track-list {
+  list-style: none; margin: 0; padding: 0;
+  /* NOT `columns: 2`. Multi-column let an over-wide cell spill across the gap,
+     and the gap was 0 — so a track's "In your library" state printed on top of
+     the next column's title. Explicit rows + column flow keeps the same
+     down-then-across reading order and clips instead. */
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  column-gap: var(--space-7);
+}
 .dl-track {
-  display: grid; grid-template-columns: 26px 1fr 40px 74px;
+  display: grid; grid-template-columns: 26px minmax(0, 1fr) 42px 116px;
   align-items: center; gap: var(--space-3);
+  min-width: 0; overflow: hidden;
   height: 30px; padding: 0 var(--space-4);
   font-size: var(--font-12);
-  break-inside: avoid;
   border-bottom: 1px solid rgba(0,0,0,0.04);
 }
+/* Whatever state lands in a track row has to fit a 116px cell on one line. */
+.dl-track-act > * { max-width: 100%; }
+.dl-track .dl-state, .dl-track .download-result-btn, .dl-track .download-retry,
+.dl-track .download-cancel, .dl-track .dl-inlib {
+  font-size: var(--font-10);
+  white-space: nowrap;
+}
+.dl-track .dl-state svg { width: 10px; height: 10px; }
 .dl-track:hover { background: rgba(var(--brand-orange-rgb), 0.055); }
 .dl-track-lead { position: relative; width: 26px; height: 20px; }
 .dl-track-num { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--font-10); color: var(--text-dim); font-variant-numeric: tabular-nums; }

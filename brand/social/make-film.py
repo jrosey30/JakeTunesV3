@@ -80,12 +80,26 @@ BEAT = 60.0 / 112.0
 CARD_T = [4.20 + k * BEAT * 3 for k in range(4)]
 CARD_LEN = BEAT * 3
 
-# Real numbers, off the app's own status bar. Nothing here is invented.
+# Jake: "i would not mention 9205 songs or the amount of songs because it
+# changes so fast. it should basically be a high level overview of why i built
+# it. i want to make people go like....'wait what?'"
+#
+# So: no statistics — a number is stale the day after it is posted, and a count
+# is not a reason. Four cards that are a story instead: the itch, the turn, and
+# two things that are genuinely strange to hear in 2026. The turn is the whole
+# post; the iPod line is the one people repeat.
+#
+# Every claim is true of the app as built — the mixtapes really do merge into
+# one clock you cannot skip or scrub, and it really does sync to a physical
+# iPod.
+# The payoff word belongs in the BIG type. First pass buried "IPOD" in the
+# subhead under a headline that said "AND IT SYNCS" — the setup was loud and
+# the punchline was quiet.
 CARDS = [
-    ('9,205 SONGS.', 'EVERY ONE PUT THERE ON PURPOSE.'),
-    ('LOSSLESS.', 'GAPLESS. THE WAY IT WAS MASTERED.'),
-    ('MIXTAPES.', '25 SONGS. NO SKIPPING. FROM THE TOP.'),
-    ('A BRAIN.', 'NOT A FEED. IT LEARNS WHAT YOU LOVE.'),
+    ('I WAS RENTING', 'EVERY SONG I THOUGHT I OWNED.'),
+    ('SO I BUILT MY OWN', 'A WHOLE MUSIC APP. BY MYSELF.'),
+    ('IT MAKES TAPES', 'YOU CANNOT SKIP. FROM THE TOP.'),
+    ('AND MY IPOD', 'STILL SYNCS. IN 2026.'),
 ]
 
 rng = np.random.default_rng(20260809)

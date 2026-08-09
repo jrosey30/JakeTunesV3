@@ -34,16 +34,26 @@ The four cards land on the score's 112 BPM — one every three beats (1.607s) �
 so the picture changes ON the music, not near it. Verified by pulling frames
 back OUT of the encoded mp4 rather than trusting the renderer.
 
-### Copy — all of it true
+### Copy — a story, not statistics
 
-    9,205 SONGS.   EVERY ONE PUT THERE ON PURPOSE.
-    LOSSLESS.      GAPLESS. THE WAY IT WAS MASTERED.
-    MIXTAPES.      25 SONGS. NO SKIPPING. FROM THE TOP.
-    A BRAIN.       NOT A FEED. IT LEARNS WHAT YOU LOVE.
+    I WAS RENTING      EVERY SONG I THOUGHT I OWNED.
+    SO I BUILT MY OWN  A WHOLE MUSIC APP. BY MYSELF.
+    IT MAKES TAPES     YOU CANNOT SKIP. FROM THE TOP.
+    AND MY IPOD        STILL SYNCS. IN 2026.
 
-The song count is the real number off the app's own status bar. Change it in
-`CARDS` at the top of `make-film.py` and re-run — it is one edit and two
-minutes.
+Jake: "i would not mention 9205 songs or the amount of songs because it changes
+so fast. it should basically be a high level overview of why i built it. i want
+to make people go like....'wait what?'"
+
+So: no numbers. A count is stale the day after it is posted and is not a reason
+for anything. Four cards that are a story instead — the itch, the turn, and two
+things that are strange to hear in 2026. The turn is the post; the iPod line is
+what gets repeated. The payoff word is always in the BIG type, which the first
+pass got wrong (headline "AND IT SYNCS", punchline "TO MY IPOD." buried in the
+subhead — setup loud, joke quiet).
+
+Every claim is true of the app as built. Change them in `CARDS` at the top of
+`make-film.py` and re-run — one edit, two minutes.
 
 ### Why this one is DRAWN, not captured
 

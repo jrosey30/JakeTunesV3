@@ -624,6 +624,9 @@ export default function DownloadView() {
     const isOpen = expandedAlbums.has(key)
     const cache = albumTracks[key]
     const { year, count, genre, kind } = releaseFacts(a)
+    // 'done' is already said by the green check; everything else needs a
+    // control (cancel / retry) that must stay reachable without hovering.
+    const busy = !!item && item.status !== 'done'
     return (
       <Fragment key={qres.id}>
         <div
@@ -636,10 +639,19 @@ export default function DownloadView() {
         >
           <span className="dl-rel-frame">
             {artOr(a.artworkUrl, 'dl-rel-art')}
-            <span className="dl-rel-hover">
-              <span className="dl-rel-get" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
-              <span className="dl-rel-open">{isOpen ? 'Hide tracks' : 'See tracks'}</span>
-            </span>
+            {/* A release that is DOING something says so on a strip along the
+                bottom, always visible. It used to reuse the hover stack, which
+                put a full-size timer and Cancel pill in the middle of the
+                artwork with "HIDE TRACKS" underneath — unreadable over a photo
+                and, on a busy card, three competing things at once. */}
+            {busy ? (
+              <span className="dl-rel-busy" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+            ) : (
+              <span className="dl-rel-hover">
+                <span className="dl-rel-get" onClick={(e) => e.stopPropagation()}>{renderAction(qres, item)}</span>
+                <span className="dl-rel-open">{isOpen ? 'Hide tracks' : 'See tracks'}</span>
+              </span>
+            )}
             {a.owned && <span className="dl-rel-owned" title="In your library">✓</span>}
           </span>
           <span className="dl-rel-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
@@ -667,8 +679,17 @@ export default function DownloadView() {
             </div>
             {cache?.loading && <div className="dl-rel-panel-note"><span className="dl-spinner" aria-hidden="true" /> Loading tracklist…</div>}
             {cache?.error && <div className="dl-rel-panel-note dl-rel-panel-note--err">{cache.error}</div>}
+            {/* Explicit rows + column flow keeps 1-5 / 6-10 reading DOWN each
+                column (what CSS `columns` gave) without CSS columns' fatal
+                flaw here: an overflowing cell bleeds across the gap. "✓ In
+                your library" is far wider than the action cell, so it was
+                landing on top of the next column's track titles. */}
             {cache?.tracks && cache.tracks.length > 0 && (
-              <ul className="dl-track-list" role="list">{cache.tracks.map((t, ti) => renderAlbumTrack(t, ti))}</ul>
+              <ul
+                className="dl-track-list"
+                role="list"
+                style={{ gridTemplateRows: `repeat(${Math.ceil(cache.tracks.length / 2)}, auto)` }}
+              >{cache.tracks.map((t, ti) => renderAlbumTrack(t, ti))}</ul>
             )}
           </div>
         )}
