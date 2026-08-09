@@ -22,7 +22,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
+import { rankStreamripCandidates, searchTitle, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 
 export interface StreamripDeps {
@@ -381,21 +381,34 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // is undetectable before download — the file's own clock is the only
   // trustworthy witness.
   const DURATION_TOLERANCE_SEC = 5
+  /** When the length we were given belongs to a CENSORED edition, it is not a
+   *  fingerprint for the explicit master. Measured on Life After Death: Mo
+   *  Money Mo Problems 258s amended vs 251s explicit, Hypnotize 230 vs 243,
+   *  Sky's the Limit 277 vs 254. At ±5s the guard rejected the correct file
+   *  every time. Wide enough to accept a different edition of the same song,
+   *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
+  const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
     const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
     const durationMs = !wantAlbum && typeof opts?.durationMs === 'number' && opts.durationMs > 1000 ? opts.durationMs : 0
-    const query = [artist, title].filter(Boolean).join(' ')
+    const durTol = opts?.cleanedSource ? CLEANED_TOLERANCE_SEC : DURATION_TOLERANCE_SEC
+    // Search by the song's NAME, not by iTunes' edition metadata. iTunes hands
+    // us things like "Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]"
+    // and "Life After Death [Amended Version] (2014 Remaster)"; asking a
+    // catalogue for those by name matches nothing, or matches the censored cut.
+    const lookFor = searchTitle(title) || title
+    const query = [artist, lookFor].filter(Boolean).join(' ')
     const mediaType = wantAlbum ? 'album' : 'track'
 
     // ── Qobuz first (lossless when it has the track) ──
     const qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
     const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
-      ? rankStreamripCandidates(title || query, artist, qsearch.results, mediaType)
+      ? rankStreamripCandidates(lookFor || query, artist, qsearch.results, mediaType)
       : { ranked: [], rejectedVersions: [] }
     let qobuzMisses: string[] | null = null
     if (ranked.length && durationMs) {
@@ -420,7 +433,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         //    the requested title + album hint) — catches live-album cuts
         //    whose track title is clean and whose length matches the studio
         //    take (the As/Is 249.75s-vs-249.6s case).
-        const durBad = probe?.durSec != null && Math.abs(probe.durSec - wantSec) > DURATION_TOLERANCE_SEC
+        const durBad = probe?.durSec != null && Math.abs(probe.durSec - wantSec) > durTol
         const titleMarker = probe?.title ? unwantedVersionOf(title, probe.title) : null
         const albumMarker = probe?.album ? unwantedVersionOf(`${title} ${albumHint}`, probe.album) : null
         if (probe == null || (!durBad && !titleMarker && !albumMarker)) {
@@ -475,7 +488,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         let acceptable = true
         if (!wantAlbum && durationMs && st.staged.files.length === 1) {
           const probe = await probeStagedFile(st.staged.files[0])
-          const durBad = probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > DURATION_TOLERANCE_SEC
+          const durBad = probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > durTol
           const marker = probe.title ? unwantedVersionOf(title, probe.title) : null
           if (durBad || marker) acceptable = false
         }

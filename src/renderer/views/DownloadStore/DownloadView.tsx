@@ -67,6 +67,7 @@ interface SongRow {
    *  so the downloaded file can be verified against it (wrong-version guard). */
   durationSecs?: number
   releaseYear?: number
+  explicitness?: string
   owned: boolean
   score: number
 }
@@ -86,6 +87,7 @@ interface AlbumRow {
   releaseYear?: number
   trackCount?: number
   genre?: string
+  explicitness?: string
 }
 const albumKey = (a: AlbumRow): string => `${norm(a.artist)}|${norm(a.album)}`
 
@@ -135,6 +137,7 @@ const songQ = (r: SongRow): QResult => ({
   desc: `${r.title} — ${r.artist}`,
   artist: r.artist, title: r.title, album: r.album,
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
+  cleanedSource: r.explicitness === 'cleaned',
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
@@ -174,7 +177,7 @@ export default function DownloadView() {
    *  Closed by default — these are things you do once, and they used to sit
    *  permanently under the results on the page you use every day. */
   const [setupOpen, setSetupOpen] = useState(false)
-  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string }>>({})
+  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>>({})
 
   const toggleAlbum = (a: AlbumRow) => {
     const key = albumKey(a)
@@ -189,7 +192,7 @@ export default function DownloadView() {
           .then((r) => setAlbumTracks((m) => ({
             ...m,
             [key]: r?.ok && r.tracks?.length
-              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre }
+              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre, explicitness: r.explicitness }
               : { loading: false, error: 'Couldn’t load the tracklist.' },
           })))
           .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
@@ -236,7 +239,7 @@ export default function DownloadView() {
         kind: 'song' as const,
         artist: s.artist, title: s.song, album: s.album,
         artworkUrl: s.artworkUrl, previewUrl: s.previewUrl,
-        durationSecs: s.durationSecs, releaseYear: s.releaseYear,
+        durationSecs: s.durationSecs, releaseYear: s.releaseYear, explicitness: s.explicitness,
         owned, score: base > 0 && titleHit ? base + 0.5 : base,
       }
     }).filter((s) => !q || s.score > 0)
@@ -257,6 +260,7 @@ export default function DownloadView() {
         if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
         if (!cur.trackCount && s.trackCount) cur.trackCount = s.trackCount
         if (!cur.genre && s.genre) cur.genre = s.genre
+        if (!cur.explicitness && s.explicitness) cur.explicitness = s.explicitness
         // LATEST wins. Tracks on one collection carry their OWN release dates,
         // not the album's — Turnstile's GLOW ON returns 2021-05-26, 2021-07-30
         // and 2021-08-27 for three of its tracks, because the first two were
@@ -271,7 +275,7 @@ export default function DownloadView() {
         kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
         owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
         score: albScore, songs: 1, collectionId: s.collectionId,
-        releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre,
+        releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre, explicitness: s.explicitness,
       })
     }
     const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, 8)
@@ -612,7 +616,11 @@ export default function DownloadView() {
     const year = cache?.releaseYear ?? a.releaseYear
     const count = cache?.trackCount ?? a.trackCount
     const genre = cache?.genre ?? a.genre
-    return { year, count, genre, kind: releaseKind(a.album, count) }
+    // A CENSORED edition has to announce itself. iTunes only carries some
+    // albums as "[Amended Version]", and downloading one of those silently is
+    // how Jake ended up with a radio edit of Mo Money Mo Problems.
+    const clean = (cache?.explicitness ?? a.explicitness) === 'cleaned'
+    return { year, count, genre, clean, kind: releaseKind(a.album, count) }
   }
 
   /** A release, as a cover card. Art-forward because this is where the year
@@ -623,7 +631,7 @@ export default function DownloadView() {
     const key = albumKey(a)
     const isOpen = expandedAlbums.has(key)
     const cache = albumTracks[key]
-    const { year, count, genre, kind } = releaseFacts(a)
+    const { year, count, genre, clean, kind } = releaseFacts(a)
     // 'done' is already said by the green check; everything else needs a
     // control (cancel / retry) that must stay reachable without hovering.
     const busy = !!item && item.status !== 'done'
@@ -658,6 +666,7 @@ export default function DownloadView() {
           <span className="dl-rel-facts">
             <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
             {year ? <span className="download-result-year">{year}</span> : null}
+            {clean && <span className="dl-clean" title="Censored edition — iTunes has no explicit version of this release">CLEAN</span>}
             {count ? <span className="dl-rel-count">{count} track{count === 1 ? '' : 's'}</span> : null}
           </span>
           <span className="dl-rel-sub" title={a.artist}>{a.artist}{genre ? ` · ${genre}` : ''}</span>
@@ -700,7 +709,7 @@ export default function DownloadView() {
   /** Top match — the one result that matched hardest, given room to say so. */
   const renderHero = (h: SongRow | AlbumRow) => {
     if (h.kind === 'album') {
-      const { year, count, genre, kind } = releaseFacts(h)
+      const { year, count, genre, clean, kind } = releaseFacts(h)
       const qres = albumQ(h)
       const item = itemFor(qres)
       return (
@@ -713,6 +722,7 @@ export default function DownloadView() {
             <span className="dl-hero-facts">
               <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
               {year ? <span className="download-result-year">{year}</span> : null}
+              {clean && <span className="dl-clean">CLEAN</span>}
               {count ? <span className="dl-rel-count">{count} tracks</span> : null}
               {genre ? <span className="dl-rel-count">{genre}</span> : null}
               {h.owned && <span className="download-owned">In your library</span>}

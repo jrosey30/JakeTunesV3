@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf } from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle} from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -114,5 +114,56 @@ describe('pickBestSoundcloudMatch (Qobuz-gap fallback)', () => {
   it('returns null when the title is nowhere in the results', () => {
     const results = [schit('9', 'Villanova - Different Song by Indie House Records')]
     assert.equal(pickBestSoundcloudMatch('Mr Vibe', 'Villanova', results), null)
+  })
+})
+
+describe('searchTitle — edition metadata is not the song’s name', () => {
+  it('strips censorship stamps and feature credits (the Life After Death failure)', () => {
+    // Jake, 2026-08-09: five tracks refused and Mo Money fetched a radio edit.
+    // iTunes only carries that album as the Amended edition.
+    assert.equal(searchTitle('Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]'), 'Mo Money Mo Problems')
+    assert.equal(searchTitle('Notorious Thugs [Amended]'), 'Notorious Thugs')
+    assert.equal(searchTitle("Another (feat. Lil' Kim) [Amendedd]"), 'Another')       // Apple's own typo
+    assert.equal(searchTitle('Sky’s the Limit (feat. 112) [Amended]'), 'Sky’s the Limit')
+    assert.equal(searchTitle('Life After Death [Amended Version] (2014 Remaster)'), 'Life After Death')
+  })
+
+  it('leaves version markers alone — they name a different recording', () => {
+    assert.equal(searchTitle('Time After Time (Live at Wembley)'), 'Time After Time (Live at Wembley)')
+    assert.equal(searchTitle('Blue Monday (Remix)'), 'Blue Monday (Remix)')
+    assert.equal(searchTitle('Layla (Acoustic)'), 'Layla (Acoustic)')
+  })
+
+  it('leaves ordinary titles untouched', () => {
+    assert.equal(searchTitle('Hypnotize'), 'Hypnotize')
+    assert.equal(searchTitle('Nothing Compares 2 U'), 'Nothing Compares 2 U')
+    assert.equal(searchTitle('(Don’t Fear) The Reaper'), '(Don’t Fear) The Reaper')
+  })
+
+  it('now MATCHES what Qobuz actually calls the track', () => {
+    const want = searchTitle('Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]')
+    const results = [{ source: 'qobuz', mediaType: 'track', id: 'q1',
+                       desc: 'Mo Money Mo Problems (feat. Puff Daddy & Mase) by The Notorious B.I.G.' }]
+    assert.equal(pickBestStreamripMatch(want, 'The Notorious B.I.G.', results)?.id, 'q1')
+    // …and the un-sanitised title is exactly what used to fail:
+    assert.equal(pickBestStreamripMatch('Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]',
+                                        'The Notorious B.I.G.', results), null)
+  })
+
+  it('refuses a clean edit when the explicit cut was asked for', () => {
+    const results = [
+      { source: 'qobuz', mediaType: 'track', id: 'clean', desc: 'Hypnotize (Clean) by The Notorious B.I.G.' },
+      { source: 'qobuz', mediaType: 'track', id: 'real', desc: 'Hypnotize by The Notorious B.I.G.' },
+    ]
+    const { ranked, rejectedVersions } = rankStreamripCandidates('Hypnotize', 'The Notorious B.I.G.', results)
+    assert.equal(ranked[0]?.id, 'real')
+    assert.ok(!ranked.some((r) => r.id === 'clean'))
+    assert.equal(rejectedVersions.length, 1)
+  })
+
+  it('does not self-reject a song legitimately named with one of those words', () => {
+    assert.equal(unwantedVersionOf('Radio Ga Ga', 'Radio Ga Ga'), null)
+    assert.equal(unwantedVersionOf('Radio Ga Ga', 'Radio Ga Ga (Radio Edit)'), 'radio')
+    assert.equal(unwantedVersionOf('Clean Up Woman', 'Clean Up Woman'), null)
   })
 })

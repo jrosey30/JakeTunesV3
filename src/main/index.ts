@@ -14326,6 +14326,11 @@ interface ItunesSuggestion {
   /** iTunes' primaryGenreName. Real metadata, not a guess — it gives a release
    *  card a third fact to stand on beside year and size. */
   genre?: string
+  /** 'explicit' | 'cleaned' | 'notExplicit'. Jake, 2026-08-09, on Life After
+   *  Death: it "kept downloading a separate radio clean version". iTunes only
+   *  carries that album as the Amended edition and nothing in the UI said so,
+   *  so the clean cut was invisible until it was already in the library. */
+  explicitness?: string
 }
 /**
  * Year out of an iTunes releaseDate ("1994-09-13T07:00:00Z").
@@ -14398,6 +14403,7 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
             releaseYear: itunesYear(r.releaseDate),
             trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
             genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
+            explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
           }))
           .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
@@ -14449,7 +14455,7 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
 // returns the handful of songs that matched, so an album's real contents were
 // invisible. lookup?entity=song returns the collection record first, then every
 // track in order.
-ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string }> => {
+ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }> => {
   const id = Number(collectionId)
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
   try {
@@ -14473,6 +14479,7 @@ ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Prom
         durationSecs: r.trackTimeMillis ? Math.round(Number(r.trackTimeMillis) / 1000) : undefined,
         releaseYear: itunesYear(r.releaseDate),
         genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
+        explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
       }))
       .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
     return {
@@ -14487,6 +14494,7 @@ ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Prom
       releaseYear: itunesYear(collection?.releaseDate),
       trackCount: typeof collection?.trackCount === 'number' ? collection.trackCount : undefined,
       genre: typeof collection?.primaryGenreName === 'string' ? collection.primaryGenreName : undefined,
+      explicitness: typeof collection?.collectionExplicitness === 'string' ? collection.collectionExplicitness : undefined,
     }
   } catch {
     return { ok: false, tracks: [] }

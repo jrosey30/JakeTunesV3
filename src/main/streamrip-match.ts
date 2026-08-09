@@ -17,7 +17,55 @@ export function parseStreamripDesc(desc: string): { title: string; artist: strin
  *  Hold on Me (Rerecorded)" was result #0; the 1962 take sat at #2, and the
  *  old first-tie-wins picker shipped Jake the re-record). Note "remaster" is
  *  deliberately absent: a remaster IS the original recording. */
-const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecords|demo|karaoke|tribute|instrumental|remix|remixed|medley|sped|slowed|reverb|soundalike|cover|covers|bootleg|session|sessions)$/
+const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecords|demo|karaoke|tribute|instrumental|remix|remixed|medley|sped|slowed|reverb|soundalike|cover|covers|bootleg|session|sessions|amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/
+
+/**
+ * Decoration inside brackets that is EDITION metadata, not part of the song's
+ * name: censorship labels, remaster stamps, and featured-artist credits.
+ *
+ * Jake, 2026-08-09: five tracks off Life After Death refused to download and
+ * "Mo Money Mo Problems" kept fetching a radio clean version. Neither was a
+ * Qobuz problem. iTunes only carries that album as "Life After Death [Amended
+ * Version]" — the censored edit — so the app was asking Qobuz, by name, for
+ *
+ *     Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]
+ *
+ * against a catalogue that calls it "Mo Money Mo Problems (feat. Puff Daddy &
+ * Mase)". Normalised, that is …featmaepuffdaddyamended vs …featpuffdaddymase:
+ * it fails equality, containment, edit distance AND the prefix test, so the
+ * track was rejected outright. Where Qobuz did happen to carry a clean cut
+ * under a matching name, it matched — and shipped the radio edit.
+ *
+ * Feature credits are stripped because catalogues order and spell them
+ * differently ("Ma$e & Puff Daddy" vs "Puff Daddy & Mase") and they are not
+ * the song's title. The artist is matched separately and the duration guard
+ * still runs, so dropping them widens the search without weakening any check.
+ */
+const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?|album version|single version|original version|bonus(?: track)?s?|deluxe|mono|stereo|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|feat\.?\s.*|featuring\s.*|ft\.?\s.*|with\s.+)$/i
+
+/**
+ * The title to SEARCH a catalogue with — the song's name, without edition
+ * metadata. Version markers are deliberately preserved: "(Live)" and "(Remix)"
+ * name a different recording and the whole wrong-version guard depends on them
+ * surviving.
+ */
+export function searchTitle(raw: string): string {
+  let out = String(raw || '')
+  // Bracketed groups, innermost-safe: only drop a group that is PURELY edition
+  // metadata and carries no version marker.
+  for (let pass = 0; pass < 3; pass++) {
+    out = out.replace(/\s*[([{]([^()[\]{}]*)[)\]}]/g, (whole, inner: string) => {
+      const body = inner.trim()
+      if (!body) return ''
+      if (titleTokens(body).some((w) => VERSION_MARKER.test(w) && !/^(amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/.test(w))) return whole
+      return EDITION_GROUP.test(body) ? '' : whole
+    })
+  }
+  // Trailing " - Amended" / " - 2014 Remaster" style stamps.
+  out = out.replace(/\s+[-–—]\s*(?:amended\w*|explicit|clean(?:ed)?|censored|edited|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?)\s*$/i, '')
+  out = out.replace(/\s{2,}/g, ' ').trim()
+  return out || String(raw || '').trim()
+}
 
 const titleTokens = (s: string): string[] =>
   s.toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter(Boolean)
