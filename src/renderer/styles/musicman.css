@@ -856,8 +856,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 16px 20px;
+  gap: 22px;
+  padding: 22px 24px;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
@@ -867,17 +867,27 @@
    count sit to its right, so the header grew a gap and the text block takes
    the remaining width. */
 .playlist-view-cover {
+  /* 220px, not 72px. Jake, 2026-08-09: "do i need to use a magnifying glass
+     to see the playlist cover??? jesus" — fair. The album and mix pages give
+     their cover 248px, and a playlist is the same kind of page; at 72px the
+     mosaic's four tiles were ~35px each, which is thumbnail territory, not a
+     cover. Slightly under the album page so the header still clears the
+     suggestions strip underneath. */
   position: relative;
   flex-shrink: 0;
-  width: 72px;
-  height: 72px;
+  width: 220px;
+  height: 220px;
   padding: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border: none;
+  border-radius: 10px;
   overflow: hidden;
-  background: var(--row-alt, #f2f2f2);
+  background: #e3e1db;
   cursor: pointer;
   line-height: 0;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 10px 28px rgba(0, 0, 0, 0.24),
+    0 2px 8px rgba(0, 0, 0, 0.14);
 }
 .playlist-view-cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* The hint only shows on hover — an always-on label over every playlist
@@ -885,8 +895,8 @@
 .playlist-view-cover-hint {
   position: absolute;
   left: 0; right: 0; bottom: 0;
-  padding: 3px 0 4px;
-  font-size: 9px;
+  padding: 7px 0 8px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -900,8 +910,13 @@
 .playlist-view-header > div:not(.playlist-view-actions) { min-width: 0; flex: 1; }
 
 .playlist-view-name {
-  font-size: 16px;
+  /* Scaled with the cover (2026-08-09). A 16px title beside a 220px cover
+     read as a caption; the album page gives its title this weight, and a
+     playlist page is the same kind of page. */
+  font-size: 27px;
   font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
   color: var(--text-primary);
   margin: 0;
 }
@@ -922,7 +937,7 @@
 .playlist-view-meta {
   font-size: var(--font-label);
   color: var(--text-secondary);
-  margin-top: 2px;
+  margin-top: 6px;
 }
 
 .playlist-view-actions {
