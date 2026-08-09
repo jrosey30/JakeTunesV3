@@ -66,6 +66,7 @@ interface SongRow {
   /** Length of this exact iTunes version — rides along to the Qobuz resolve
    *  so the downloaded file can be verified against it (wrong-version guard). */
   durationSecs?: number
+  releaseYear?: number
   owned: boolean
   score: number
 }
@@ -78,8 +79,47 @@ interface AlbumRow {
   score: number
   songs: number
   collectionId?: number
+  /** From iTunes. Jake, 2026-08-09: "albums and EP's need the release year
+   *  next to them." trackCount is the COLLECTION's size, not `songs` — songs
+   *  is only how many of this album matched the query, so it can't be used to
+   *  tell an EP from an LP. */
+  releaseYear?: number
+  trackCount?: number
 }
 const albumKey = (a: AlbumRow): string => `${norm(a.artist)}|${norm(a.album)}`
+
+/**
+ * What kind of release this is, and the title with Apple's suffix removed.
+ *
+ * Every row used to render a hardcoded "ALBUM" badge, so a 3-track EP and a
+ * 14-track LP were indistinguishable. Apple states the kind two ways and they
+ * disagree often enough to need an order of precedence:
+ *
+ *   1. the NAME suffix ("Sundowning - EP", "Bags - Single"). Apple's own
+ *      labelling, so it wins — a 7-track "EP" is still an EP if that is what
+ *      the artist released it as.
+ *   2. trackCount, only when the name says nothing. Deliberately conservative:
+ *      1 track is a single, 2-6 is an EP, and anything else stays ALBUM rather
+ *      than guessing at the boundary.
+ *
+ * The suffix is also stripped from the DISPLAY title, so the row reads
+ * "Sundowning · EP · 2019" instead of "Sundowning - EP · ALBUM". Display only —
+ * albumKey and the Qobuz query keep the raw name, because that is what the
+ * matcher and the download path have always resolved against.
+ */
+type ReleaseKind = 'ALBUM' | 'EP' | 'SINGLE'
+export function releaseKind(name: string, trackCount?: number): ReleaseKind {
+  if (/\s[-–—]\s*EP$/i.test(name)) return 'EP'
+  if (/\s[-–—]\s*Single$/i.test(name)) return 'SINGLE'
+  if (typeof trackCount === 'number' && trackCount > 0) {
+    if (trackCount === 1) return 'SINGLE'
+    if (trackCount <= 6) return 'EP'
+  }
+  return 'ALBUM'
+}
+export function displayAlbumTitle(name: string): string {
+  return name.replace(/\s[-–—]\s*(EP|Single)$/i, '').trim() || name
+}
 
 // Page memory — the view unmounts on navigate-away; restore search state on return.
 interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
@@ -129,7 +169,7 @@ export default function DownloadView() {
   // "there has to be an easier way to see all tracks on this album"). Raw
   // tracks are cached per album key; owned/preview are computed at render.
   const [expandedAlbums, setExpandedAlbums] = useState<Set<string>>(() => new Set())
-  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string }>>({})
+  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number }>>({})
 
   const toggleAlbum = (a: AlbumRow) => {
     const key = albumKey(a)
@@ -143,7 +183,9 @@ export default function DownloadView() {
         window.electronAPI.itunesAlbumTracks?.(a.collectionId)
           .then((r) => setAlbumTracks((m) => ({
             ...m,
-            [key]: r?.ok && r.tracks?.length ? { loading: false, tracks: r.tracks } : { loading: false, error: 'Couldn’t load the tracklist.' },
+            [key]: r?.ok && r.tracks?.length
+              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount }
+              : { loading: false, error: 'Couldn’t load the tracklist.' },
           })))
           .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
       } else if (!a.collectionId && !albumTracks[key]) {
@@ -189,7 +231,7 @@ export default function DownloadView() {
         kind: 'song' as const,
         artist: s.artist, title: s.song, album: s.album,
         artworkUrl: s.artworkUrl, previewUrl: s.previewUrl,
-        durationSecs: s.durationSecs,
+        durationSecs: s.durationSecs, releaseYear: s.releaseYear,
         owned, score: base > 0 && titleHit ? base + 0.5 : base,
       }
     }).filter((s) => !q || s.score > 0)
@@ -208,10 +250,22 @@ export default function DownloadView() {
         cur.songs += 1; cur.score = Math.max(cur.score, albScore)
         if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl
         if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
+        if (!cur.trackCount && s.trackCount) cur.trackCount = s.trackCount
+        // LATEST wins. Tracks on one collection carry their OWN release dates,
+        // not the album's — Turnstile's GLOW ON returns 2021-05-26, 2021-07-30
+        // and 2021-08-27 for three of its tracks, because the first two were
+        // put out as singles ahead of the record. The album's date is the last
+        // of them. Taking the earliest would date an album released in January
+        // to the previous year, off the singles that trailed it.
+        // Only an inference: the search returns whichever tracks matched, so a
+        // hit on a pre-release single alone still reads early. Expanding the
+        // album replaces this with the collection's own date (see `year`).
+        if (s.releaseYear && (!cur.releaseYear || s.releaseYear > cur.releaseYear)) cur.releaseYear = s.releaseYear
       } else albumMap.set(key, {
         kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
         owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
         score: albScore, songs: 1, collectionId: s.collectionId,
+        releaseYear: s.releaseYear, trackCount: s.trackCount,
       })
     }
     const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, 8)
@@ -486,7 +540,12 @@ export default function DownloadView() {
           <span className="download-result-title" title={s.title}>{s.title}</span>
           <span className="download-result-meta">
             <span className="download-result-artist">{s.artist}</span>
-            {s.album && <span className="download-result-album">{s.album}</span>}
+            {s.album && <span className="download-result-album">{displayAlbumTitle(s.album)}</span>}
+            {/* Same year, on songs too. iTunes returns several rows for one
+                song — original, remaster, live, comp — and they were
+                distinguishable only by album name. The year is the fastest
+                way to see which one you're about to pull. */}
+            {s.releaseYear ? <span className="download-result-year">{s.releaseYear}</span> : null}
             {s.owned && <span className="download-owned">In your library</span>}
           </span>
         </div>
@@ -543,6 +602,12 @@ export default function DownloadView() {
     const key = albumKey(a)
     const isOpen = expandedAlbums.has(key)
     const cache = albumTracks[key]
+    // Once the tracklist has been fetched, the COLLECTION record supersedes
+    // what was inferred from the search hits — it is the album stating its own
+    // year and size rather than us reading them off whichever tracks matched.
+    const year = cache?.releaseYear ?? a.releaseYear
+    const count = cache?.trackCount ?? a.trackCount
+    const kind = releaseKind(a.album, count)
     return (
       <li key={qres.id} className={`download-album${hero ? ' download-album--hero' : ''}${item ? ` is-${item.status}` : ''}${isOpen ? ' is-open' : ''}`} style={{ '--i': i } as CSSProperties}>
         <div className="download-result-row download-album-header" onClick={() => toggleAlbum(a)} role="button" tabIndex={0}
@@ -556,10 +621,12 @@ export default function DownloadView() {
                 </span>}
           </span>
           <div className="download-result-body">
-            <span className="download-result-title" title={a.album}>{a.album}</span>
+            <span className="download-result-title" title={a.album}>{displayAlbumTitle(a.album)}</span>
             <span className="download-result-meta">
-              <span className="download-result-badge">ALBUM</span>
+              <span className={`download-result-badge download-result-badge--${kind.toLowerCase()}`}>{kind}</span>
+              {year ? <span className="download-result-year">{year}</span> : null}
               <span className="download-result-artist">{a.artist}</span>
+              {count ? <span className="download-result-tracks">{count} track{count === 1 ? '' : 's'}</span> : null}
               {a.owned && <span className="download-owned">In your library</span>}
             </span>
           </div>

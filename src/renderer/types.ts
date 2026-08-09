@@ -237,6 +237,8 @@ export interface RecoSyncMeta {
 
 // Brief 122 Phase 2 — an iTunes Search autocomplete suggestion for the
 // "Listen to the List" add form.
+/** ⚠️ TWIN: src/main/index.ts (ItunesSuggestion). Crosses IPC — a field added
+ *  on one side only is silently dropped, never caught. Change both together. */
 export interface ItunesSuggestion {
   song: string
   artist: string
@@ -244,6 +246,12 @@ export interface ItunesSuggestion {
   artworkUrl?: string
   previewUrl?: string
   appleMusicUrl?: string
+  /** Release year, and the collection's real track count — what lets the
+   *  Download list say "EP · 2019" instead of a hardcoded "ALBUM" with no
+   *  date (Jake, 2026-08-09). Absent when the source can't state it (the
+   *  Deezer failover has no release date), and a blank beats a guess. */
+  releaseYear?: number
+  trackCount?: number
   /** iTunes album (collection) id — lets the Download view expand an album
    *  into its FULL tracklist via itunesAlbumTracks (2026-07-23). */
   collectionId?: number
@@ -633,7 +641,7 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
-      itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string }>
+      itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number }>
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
       lookupRecoArtwork: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>

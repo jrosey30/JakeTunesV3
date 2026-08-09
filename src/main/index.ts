@@ -14304,6 +14304,9 @@ ipcMain.handle('get-album-take', async (_e, artist: string, album: string, year?
   }
 })
 
+/** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
+ *  boundary, so a field added on one side and not the other is silently
+ *  dropped rather than caught — change both together. */
 interface ItunesSuggestion {
   song: string
   artist: string
@@ -14311,7 +14314,34 @@ interface ItunesSuggestion {
   artworkUrl?: string
   previewUrl?: string
   appleMusicUrl?: string
+  /** Release year, and the collection's REAL track count.
+   *  Jake, 2026-08-09: "albums and EP's need the release year next to them."
+   *  The Download list had neither, so every release rendered as a hardcoded
+   *  "ALBUM" badge with no date — a 3-track EP and a 1994 LP looked identical,
+   *  and there was no way to tell an original from a reissue. trackCount rides
+   *  along because it is what makes the badge honest; the row's own song count
+   *  is only how many of that album happened to appear in the search results. */
+  releaseYear?: number
+  trackCount?: number
 }
+/**
+ * Year out of an iTunes releaseDate ("1994-09-13T07:00:00Z").
+ *
+ * Parsed off the string rather than through Date: releaseDate is UTC, and a
+ * release dated Jan 1 lands on Dec 31 of the PREVIOUS year once a Date is read
+ * back in a western timezone. An album's year is not a timestamp, so it should
+ * not survive a timezone conversion. Anything that isn't a plain 4-digit year
+ * in a sane range returns undefined and the UI shows nothing — a blank is
+ * honest, a wrong year is not.
+ */
+function itunesYear(raw: unknown): number | undefined {
+  if (typeof raw !== 'string') return undefined
+  const m = /^(\d{4})/.exec(raw)
+  if (!m) return undefined
+  const y = Number(m[1])
+  return y >= 1900 && y <= 2100 ? y : undefined
+}
+
 // Obvious non-original acts — karaoke, tribute/cover factories, lullaby
 // renditions, kids covers. iTunes Search has NO popularity score, so it
 // dumps these in with the real thing. Filter them out entirely.
@@ -14362,6 +14392,8 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
             // Length of the EXACT version this row represents — the download
             // path verifies the Qobuz file against it (wrong-version guard).
             durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
+            releaseYear: itunesYear(r.releaseDate),
+            trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
           }))
           .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
@@ -14413,7 +14445,7 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
 // returns the handful of songs that matched, so an album's real contents were
 // invisible. lookup?entity=song returns the collection record first, then every
 // track in order.
-ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string }> => {
+ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number }> => {
   const id = Number(collectionId)
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
   try {
@@ -14435,6 +14467,7 @@ ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Prom
         collectionId: id,
         trackNumber: r.trackNumber ? Number(r.trackNumber) : undefined,
         durationSecs: r.trackTimeMillis ? Math.round(Number(r.trackTimeMillis) / 1000) : undefined,
+        releaseYear: itunesYear(r.releaseDate),
       }))
       .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
     return {
@@ -14443,6 +14476,11 @@ ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Prom
       album: collection?.collectionName ? String(collection.collectionName) : undefined,
       artist: collection?.artistName ? String(collection.artistName) : undefined,
       artworkUrl: collection?.artworkUrl100 ? String(collection.artworkUrl100).replace('100x100', '400x400') : undefined,
+      // The COLLECTION record is authoritative for both. The search-results
+      // path has to infer an album's year and size from whichever of its
+      // tracks happened to match the query; this is the album itself saying so.
+      releaseYear: itunesYear(collection?.releaseDate),
+      trackCount: typeof collection?.trackCount === 'number' ? collection.trackCount : undefined,
     }
   } catch {
     return { ok: false, tracks: [] }
