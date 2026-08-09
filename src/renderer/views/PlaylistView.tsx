@@ -6,6 +6,11 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { getDeckState, layOnDeck } from '../mixtapes'
+import MixArtwork from '../components/MixArtwork'
+import {
+  subscribePlaylistCovers, getPlaylistCovers, ensurePlaylistCoversLoaded,
+  playlistCoverSrc, pickPlaylistCover, clearPlaylistCover,
+} from '../playlistCovers'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
@@ -99,6 +104,27 @@ export default function PlaylistView() {
   }, [])
 
   const playlist = state.playlists.find(p => p.id === state.activePlaylistId)
+
+  // Custom playlist cover (2026-08-09). State lives in playlistCovers.ts —
+  // a module store, because LibraryContext is do-not-touch.
+  useSyncExternalStore(subscribePlaylistCovers, getPlaylistCovers)
+  useEffect(() => { ensurePlaylistCoversLoaded() }, [])
+  const [coverBusy, setCoverBusy] = useState(false)
+  const [coverNote, setCoverNote] = useState('')
+  const customCover = playlistCoverSrc(playlist?.id ?? '')
+  const chooseCover = async (): Promise<void> => {
+    if (!playlist || coverBusy) return
+    setCoverBusy(true)
+    const err = await pickPlaylistCover(playlist.id)
+    setCoverBusy(false)
+    if (err) { setCoverNote(err); setTimeout(() => setCoverNote(''), 8000) }
+  }
+  const dropCover = async (): Promise<void> => {
+    if (!playlist || coverBusy) return
+    setCoverBusy(true)
+    await clearPlaylistCover(playlist.id)
+    setCoverBusy(false)
+  }
 
   // Local sort state — restored from module-level map so it survives navigation
   const [sortCol, setSortCol] = useState<string | null>(() => {
@@ -602,6 +628,25 @@ export default function PlaylistView() {
   return (
     <div className="playlist-view">
       <div className="playlist-view-header">
+        {/* Cover — Jake, 2026-08-09: "playlists on desktop need covers....like
+            it is on mobile (first 4 songs' album covers or i can upload a
+            custom cover)". The default is MixArtwork, which already builds
+            the 2x2 of the first four unique album covers using the same rule
+            iOS uses, so parity is structural rather than re-implemented.
+            Click to choose your own; right-click a custom one to drop back
+            to the mosaic. */}
+        <button
+          type="button"
+          className="playlist-view-cover"
+          title={customCover ? 'Click to replace this cover · right-click to go back to the album mosaic' : 'Click to choose a cover'}
+          onClick={() => { void chooseCover() }}
+          onContextMenu={(e) => { e.preventDefault(); if (customCover) void dropCover() }}
+        >
+          {customCover
+            ? <img src={customCover} alt="" className="playlist-view-cover-img" />
+            : <MixArtwork tracks={sortedTracks} alt={playlist.name} priority />}
+          <span className="playlist-view-cover-hint">{coverBusy ? '…' : 'Cover'}</span>
+        </button>
         <div>
           {editing ? (
             <input
@@ -625,6 +670,7 @@ export default function PlaylistView() {
             </h2>
           )}
           <div className="playlist-view-meta">{sortedTracks.length} {sortedTracks.length === 1 ? 'song' : 'songs'}, {timeStr}</div>
+          {coverNote && <div className="playlist-view-meta">{coverNote}</div>}
         </div>
         <div className="playlist-view-actions">
           <button

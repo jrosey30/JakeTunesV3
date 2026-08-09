@@ -564,6 +564,14 @@ const electronAPI = {
     ipcRenderer.invoke('dub-mixtape', payload),
   // Encoder priming for a file (iTunSMPB) so the seam scheduler can skip
   // it instead of playing ~48ms of silence at every track change.
+  // Custom playlist cover: pick a file (jpg/png/heic/webp…), normalized to
+  // JPEG and copied into userData so moving the original can't break it.
+  playlistCoversMap: (): Promise<{ ok: boolean; covers: Record<string, number>; dir: string }> =>
+    ipcRenderer.invoke('playlist-covers-map'),
+  pickPlaylistCover: (playlistId: string): Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-cover-pick', playlistId),
+  clearPlaylistCover: (playlistId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-cover-clear', playlistId),
   gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null> =>
     ipcRenderer.invoke('gapless-trim', absPath),
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>

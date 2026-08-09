@@ -104,6 +104,7 @@ import { partitionLanded, type IntendedTrack } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
+import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
 import { registerScotusArchive } from './scotus-archive'
 import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
@@ -8063,7 +8064,9 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'ipod-audio', privileges: { stream: true, bypassCSP: true, supportFetchAPI: true } },
   { scheme: 'album-art', privileges: { bypassCSP: true, supportFetchAPI: true } },
   // 4.4.40 — Bandsintown artist photos for the Artists view.
-  { scheme: 'artist-image', privileges: { bypassCSP: true, supportFetchAPI: true } }
+  { scheme: 'artist-image', privileges: { bypassCSP: true, supportFetchAPI: true } },
+  // 2026-08-09 — custom playlist covers (see main/playlist-covers.ts).
+  { scheme: 'playlist-cover', privileges: { bypassCSP: true, supportFetchAPI: true } }
 ])
 
 // ElevenLabs TTS
@@ -11968,6 +11971,7 @@ registerWorkoutSyncIpc({
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc()
+registerPlaylistCoverIpc(() => mainWindow)
 registerMixtapesIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
@@ -16343,6 +16347,7 @@ app.whenReady().then(async () => {
 
   // Serve album artwork images — register before createWindow so the
   // renderer's first paint can resolve album-art:// URLs.
+  registerPlaylistCoverProtocol()
   protocol.handle('album-art', async (request) => {
     const url = request.url.replace('album-art://', '')
     const [pathPart, queryPart] = url.split('?')

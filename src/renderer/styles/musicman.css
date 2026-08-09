@@ -856,10 +856,48 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 14px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
+/* Playlist cover (2026-08-09) — the 4-up album mosaic by default, or a
+   picture Jake chose. It's a button because it IS the control: click to
+   choose, right-click a custom one to go back to the mosaic. The name and
+   count sit to its right, so the header grew a gap and the text block takes
+   the remaining width. */
+.playlist-view-cover {
+  position: relative;
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--row-alt, #f2f2f2);
+  cursor: pointer;
+  line-height: 0;
+}
+.playlist-view-cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The hint only shows on hover — an always-on label over every playlist
+   cover would be noise, and the covers are the point. */
+.playlist-view-cover-hint {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 3px 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 110ms ease;
+  line-height: 1;
+}
+.playlist-view-cover:hover .playlist-view-cover-hint { opacity: 1; }
+.playlist-view-header > div:not(.playlist-view-actions) { min-width: 0; flex: 1; }
 
 .playlist-view-name {
   font-size: 16px;

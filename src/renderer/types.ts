@@ -826,6 +826,9 @@ declare global {
       saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
       deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
       dubMixtape?: (payload: { title: string; sides: Array<{ label: 'A' | 'B'; songs: Array<{ absPath: string; cutMs?: number }>; talkovers: Array<{ atMs: number; path: string }>; introPath?: string }> }) => Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }>
+      playlistCoversMap?: () => Promise<{ ok: boolean; covers: Record<string, number>; dir: string }>
+      pickPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }>
+      clearPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; error?: string }>
       gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null>
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
