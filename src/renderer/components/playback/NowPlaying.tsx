@@ -7,7 +7,7 @@ import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../preview
 // map the playhead to the current setlist song while a merged live set
 // plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt, cueIndexAt } from '../../liveSets'
-import { subscribeMixtapes, getTapeSession, getMixtapes } from '../../mixtapes'
+import { subscribeMixtapes, getTapeSession } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
 
@@ -142,36 +142,44 @@ export default function NowPlaying() {
   const liveEntry = state.nowPlaying ? (mergedTrackIndex().get(state.nowPlaying.id) ?? null) : null
   const liveCue = liveEntry ? cueAt(liveEntry, state.position * 1000) : null
 
-  // MIXTAPES in the pill (2026-08-08).
+  // MIXTAPES in the pill — THE MERGED TIMELINE (2026-08-08).
   //
-  // The side-scrubber that used to live here is GONE. It rendered a parallel
-  // bar sweeping Side A or Side B, because a tape was two timed halves and
-  // the per-song scrubber couldn't express that. A tape is now ONE merged
-  // gapless file, so the ordinary scrubber below already spans exactly the
-  // whole tape — the parallel bar would be a second, less accurate copy of
-  // it, and its side/budget/cut inputs no longer exist. Removing it also
-  // hands the per-song drag seam back its place as the only scrubber, which
-  // is what the do-not-touch note was protecting in the first place.
+  // Jake: "a mix merges the LENGTHS of all the songs in that mix...and you
+  // cant skip... you cant start from anywhere either. has to be from the
+  // beginning."
   //
-  // What a tape still needs from the pill is the NAME of the song playing:
-  // nowPlaying is the tape itself, so without this the pill would read the
-  // tape's title for its whole run. The songs are still individually in the
-  // library, so resolve the current one from the tape's cues — deliberately
-  // via the same cueIndexAt() a live set uses, not a second copy of it.
+  // So a tape is NOT one audio file — the songs stay separate and play as an
+  // ordinary queue. What's merged is the CLOCK. While a tape is running the
+  // pill stops showing "2:14 of this song" and shows the position and length
+  // of the whole tape, so eighteen minutes of music reads as one continuous
+  // side rather than eight little ones.
+  //
+  // (I built this the other way first — actually concatenating the tape into
+  // one ALAC and playing that. Wrong: the merged file is an optional EXPORT,
+  // not the playback path.)
+  //
+  // Read-only on purpose. The bar reports where the tape is; it does not
+  // accept clicks, because dropping the needle at an arbitrary point is
+  // exactly what "has to be from the beginning" rules out. Winding lives on
+  // the tape's own page, where FF/REW belong.
   useSyncExternalStore(subscribeMixtapes, getTapeSession)
   const { state: libState } = useLibrary()
   const tapeSession = getTapeSession()
-  const mergedTape = tapeSession
-    ? getMixtapes().find((m) => m.id === tapeSession.mixtapeId && m.mergedPath) ?? null
-    : null
-  const tapeCue = (() => {
-    const cues = mergedTape?.mergedCues
-    if (!cues?.length || !state.nowPlaying) return null
-    const i = cueIndexAt(cues, state.position * 1000)
-    if (i < 0) return null
-    const song = libState.tracks.find((t) => t.id === cues[i].trackId)
-    if (!song) return null
-    return { title: song.title, artist: song.artist, album: song.album }
+  const tapeOnAir = (() => {
+    if (!tapeSession || !state.nowPlaying) return null
+    const ids = tapeSession.tapeTrackIds
+    const idx = ids.indexOf(state.nowPlaying.id)
+    if (idx < 0) return null
+    const durOf = (id: number) => libState.tracks.find((t) => t.id === id)?.duration || 0
+    let before = 0
+    for (let i = 0; i < idx; i++) before += durOf(ids[i])
+    const totalMs = ids.reduce((sum, id) => sum + durOf(id), 0)
+    return {
+      elapsedMs: before + state.position * 1000,
+      totalMs,
+      slot: idx + 1,
+      of: ids.length,
+    }
   })()
 
   // Pause the user's music while a preview plays; resume it when the
@@ -455,20 +463,20 @@ export default function NowPlaying() {
                 the CURRENT setlist song and the secondary carries the set
                 position — otherwise exactly the pre-V5 rendering. */}
             <div className="now-playing-line-primary">
-              <span className="now-playing-title">{tapeCue?.title ?? (liveCue ? liveCue.cue.title : track.title)}</span>
+              <span className="now-playing-title">{liveCue ? liveCue.cue.title : track.title}</span>
             </div>
             <div className="now-playing-line-secondary">
-              {tapeCue ? (
-                <span className="now-playing-artist">{tapeCue.artist}</span>
+              {tapeOnAir ? (
+                <span className="now-playing-artist">{track.artist} · {tapeOnAir.slot}/{tapeOnAir.of}</span>
               ) : liveCue && liveEntry ? (
                 <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
               ) : (
                 <span className="now-playing-artist">{track.artist}</span>
               )}
             </div>
-            {(tapeCue ? tapeCue.album : track.album) && (
+            {track.album && (
               <div className="now-playing-line-tertiary">
-                <span className="now-playing-album">{tapeCue ? tapeCue.album : track.album}</span>
+                <span className="now-playing-album">{track.album}</span>
               </div>
             )}
           </div>
@@ -486,7 +494,18 @@ export default function NowPlaying() {
                 track end. Strictly read-only; the scrubber drag-logic
                 seam (handleMouseDown, barRef) on the next line is
                 untouched per the do-not-touch list. */}
-            {(
+            {tapeOnAir ? (
+              <>
+                {/* The tape's clock: whole-tape elapsed and remaining, and a
+                    bar that reports rather than accepts clicks. */}
+                <span className="scrubber-time">{formatTime(Math.floor(tapeOnAir.elapsedMs / 1000))}</span>
+                <div className="scrubber-track scrubber-track--tape" title="The whole tape — it plays start to finish">
+                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
+                  <div className="scrubber-knob" style={{ left: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
+                </div>
+                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor((tapeOnAir.totalMs - tapeOnAir.elapsedMs) / 1000)))}</span>
+              </>
+            ) : (
               <>
                 <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
                 <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>

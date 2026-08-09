@@ -16,7 +16,7 @@
  */
 
 import { ipcMain, app, shell } from 'electron'
-import { readFile, writeFile, mkdir, unlink, stat, rename, copyFile, rm } from 'fs/promises'
+import { readFile, writeFile, mkdir, unlink, stat } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import { execFile } from 'child_process'
@@ -37,8 +37,6 @@ export interface MixtapesHost {
   /** Season tapes: real listening data, supplied by index.ts. */
   loadLibraryTracks?: () => Promise<Array<Record<string, unknown>>>
   loadPlayEvents?: () => Promise<Array<{ id: number; ts: number }>>
-  /** Library ROOT (the dir holding iPod_Control/), for merged tape audio. */
-  musicLibraryRoot?: () => string
 }
 
 export interface MixtapeLinerNote { id: number; note: string }
@@ -55,18 +53,6 @@ export interface Mixtape {
    * grandfathered in"). Capped at MAX_TAPE_SONGS.
    */
   tracks?: number[]
-  /**
-   * The merged tape audio: every song joined into ONE gapless file, exactly
-   * the way live sets are built (live-set-merge.ts). Jake, 2026-08-08: "the
-   * mixtape merges the song file together … the tracks stay in my library as
-   * individual tracks … we just force the gapless audio as 'one file'."
-   * So this file is the tape's PLAYBACK asset only — unlike a live set it is
-   * never imported as a library track, and the songs remain individually
-   * present in the library exactly as before. Absent until the tape is built.
-   */
-  mergedPath?: string
-  /** Where each song starts inside mergedPath — drives the now-playing readout. */
-  mergedCues?: Array<{ trackId: number; startMs: number; durationMs: number }>
   /** Legacy, two-sided era. Kept so old tapes still read; never written anew. */
   tapeLength: 60 | 90 | 120
   sideA: number[]
@@ -104,11 +90,6 @@ interface MixtapeInputTrack {
 
 const MIXTAPES_FILE = () => join(app.getPath('userData'), 'mixtapes.json')
 const INTROS_DIR = () => join(app.getPath('userData'), 'mixtape-intros')
-/** Merged tape audio lives at <libraryRoot>/.mixtape-audio/<tapeId>.m4a —
- *  one gapless file per tape. Hidden on purpose: excluded from NAS sync as a
- *  root-level dot-dir, outside iPod_Control/ so no scan finds it. Playback
- *  asset only; these never enter the library (see the 'mixtape-merge' IPC). */
-const TAPE_AUDIO_DIRNAME = '.mixtape-audio'
 const MAX_INPUT_SONGS = 150
 // TRUE tape limits (Jake: "absolutely true time limits... if i run out of
 // space, too bad"). The physics live in src/common/tape-physics.ts — the
@@ -538,98 +519,9 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       // tape leaves a few hundred MB of ALAC behind forever. Identity-gated
       // on the tape's own id inside OUR directory, so this can never aim at
       // library audio.
-      const root = host.musicLibraryRoot?.()
-      if (gone && root) await unlink(join(root, TAPE_AUDIO_DIRNAME, `${gone.id}.m4a`)).catch(() => {})
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'delete failed' }
-    }
-  })
-
-  // ── Merge the tape into ONE gapless file ────────────────────────────
-  //
-  // Jake, 2026-08-08: "the mixtape merges the song file together....the
-  // tracks stay in my library as individual tracks....we just force the
-  // gapless audio as 'one file'."
-  //
-  // This is the live-set pipeline (live-set-merge.ts) pointed at a tape —
-  // decode every song to uniform PCM, concatenate byte-exactly so there is
-  // no gap and no re-encode seam, then encode once to ALAC. Same engine,
-  // ONE deliberate difference:
-  //
-  //   A live set IMPORTS its merged file as a library track. A mixtape must
-  //   NOT. The songs stay individually in the library exactly as they were;
-  //   this file is only the tape's playback asset. That is the whole point
-  //   of Jake's sentence above, and it is why the output lands in
-  //   userData/mixtape-audio/ rather than going through the import queue.
-  //
-  // Sources are read-only inputs — the originals are never touched. The
-  // caller passes absolute paths (same convention as dub-mixtape) so the
-  // mount/colon-path logic stays in one place in the renderer.
-  ipcMain.handle('mixtape-merge', async (
-    event,
-    tapeId: string,
-    tracks: Array<{ id: number; title: string; artist: string; absPath: string; durationMs: number }>,
-    label: { title: string; artist: string },
-  ) => {
-    try {
-      if (!tapeId) return { ok: false, error: 'no tape id' }
-      if (!Array.isArray(tracks) || tracks.length === 0) return { ok: false, error: 'tape has no songs' }
-      if (tracks.length > MAX_TAPE_SONGS) {
-        return { ok: false, error: `a tape holds ${MAX_TAPE_SONGS} songs; this one has ${tracks.length}` }
-      }
-      const { mergeLiveSet } = await import('./live-set-merge')
-      const scratch = join(app.getPath('userData'), 'mixtape-merge-scratch')
-      const result = await mergeLiveSet(
-        tracks.map((t) => ({
-          id: t.id,
-          title: t.title,
-          artist: t.artist,
-          durationMs: t.durationMs,
-          absPath: t.absPath,
-        })),
-        { name: label.title, artist: label.artist },
-        scratch,
-        (p) => { event.sender.send('mixtape-merge-progress', p) },
-      )
-      // Move it out of scratch — mergeLiveSet WIPES that directory at the
-      // start of every run, so a tape left there would lose its audio the
-      // next time any tape was built.
-      //
-      // Destination is a HIDDEN dir under the library ROOT, not userData,
-      // for one concrete reason: the renderer resolves audio by prefixing
-      // the library mount onto a colon-path (ipodPathToAudioURL in
-      // useAudio.ts, which is do-not-touch). A userData path can't be
-      // expressed that way, so the tape would be unplayable without editing
-      // a protected file. Under the root it plays with zero changes, and
-      // the leading dot keeps it out of everything that matters: the NAS
-      // sync excludes root-level dot-dirs as a class (2026-08-08), and it
-      // is not in iPod_Control/ so no library scan reaches it. The tape
-      // audio is NOT a library track and must never become one.
-      const root = host.musicLibraryRoot?.()
-      if (!root) return { ok: false, error: 'library root unavailable' }
-      const outDir = join(root, TAPE_AUDIO_DIRNAME)
-      await mkdir(outDir, { recursive: true })
-      const dest = join(outDir, `${tapeId}.m4a`)
-      await rename(result.mergedPath, dest).catch(async () => {
-        // rename fails across volumes; fall back to copy.
-        await copyFile(result.mergedPath, dest)
-      })
-      await rm(scratch, { recursive: true, force: true }).catch(() => {})
-      return {
-        ok: true,
-        // Colon-path, relative to the library root — the shape the renderer
-        // already knows how to play.
-        mergedPath: `:${TAPE_AUDIO_DIRNAME}:${tapeId}.m4a`,
-        cues: result.cues.map((c) => ({
-          trackId: c.trackId,
-          startMs: c.startMs,
-          durationMs: c.durationMs,
-        })),
-        totalDurationMs: result.totalDurationMs,
-      }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'merge failed' }
     }
   })
 

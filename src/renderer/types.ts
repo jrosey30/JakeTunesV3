@@ -112,11 +112,6 @@ export interface Mixtape {
   // 25 songs max). Always read it via tapeTracks() from common/tape-physics
   // so tapes recorded under the two-sided rules keep playing.
   tracks?: number[]
-  // The tape as ONE gapless file (built the same way live sets are), plus
-  // where each song starts inside it. Playback asset only — the songs stay
-  // in the library as individual tracks.
-  mergedPath?: string
-  mergedCues?: Array<{ trackId: number; startMs: number; durationMs: number }>
   // Legacy, two-sided era. Read for old tapes; never written anew.
   tapeLength: 60 | 90 | 120
   sideA: number[]
@@ -831,8 +826,6 @@ declare global {
       saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
       deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
       dubMixtape?: (payload: { title: string; sides: Array<{ label: 'A' | 'B'; songs: Array<{ absPath: string; cutMs?: number }>; talkovers: Array<{ atMs: number; path: string }>; introPath?: string }> }) => Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }>
-      mergeMixtape?: (tapeId: string, tracks: Array<{ id: number; title: string; artist: string; absPath: string; durationMs: number }>, label: { title: string; artist: string }) => Promise<{ ok: boolean; mergedPath?: string; cues?: Array<{ trackId: number; startMs: number; durationMs: number }>; totalDurationMs?: number; error?: string }>
-      onMixtapeMergeProgress?: (cb: (p: { stage: string; current: number; total: number; label: string }) => void) => () => void
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
