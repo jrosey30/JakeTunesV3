@@ -1,5 +1,11 @@
 /**
- * playlist-covers — a custom cover image for a playlist.
+ * playlist-covers — the things a playlist has that the library record can't
+ * hold: a cover image, and a description Jake wrote himself.
+ *
+ * Both live here for the same reason. LibraryContext is do-not-touch, so
+ * adding fields to Playlist would mean new reducer actions inside a protected
+ * file. Keeping them beside the library instead costs one side-file and keeps
+ * the protected reducer untouched.
  *
  * Jake, 2026-08-09: "playlists on desktop need covers....like it is on mobile
  * (first 4 songs' album covers or i can upload a custom cover that i want in
@@ -20,13 +26,15 @@
 import { ipcMain, dialog, BrowserWindow, app, protocol, net } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { mkdir, unlink, copyFile, stat, readdir } from 'fs/promises'
+import { mkdir, unlink, copyFile, stat, readdir, readFile, writeFile, rename } from 'fs/promises'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 
 const execP = promisify(execFile)
 
 const COVERS_DIR = (): string => join(app.getPath('userData'), 'playlist-covers')
+/** Descriptions Jake typed: { [playlistId]: text }. One small JSON file. */
+const NOTES_FILE = (): string => join(app.getPath('userData'), 'playlist-notes.json')
 
 /** Only what a person would actually hand us as a cover. */
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'tiff', 'gif', 'bmp']
@@ -62,7 +70,48 @@ export function registerPlaylistCoverProtocol(): void {
   })
 }
 
+async function loadNotes(): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(NOTES_FILE(), 'utf-8')
+    const o = JSON.parse(raw)
+    return o && typeof o === 'object' && !Array.isArray(o) ? o as Record<string, string> : {}
+  } catch {
+    return {}   // missing file = no descriptions yet
+  }
+}
+
 export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | null): void {
+  /**
+   * Playlist descriptions (2026-08-09). Jake: "id like abolity to write a
+   * description for each playlist if i want."
+   *
+   * Playlist.commentary already exists and renders, but nothing can WRITE it
+   * — there's no reducer action for it, and adding one means editing the
+   * do-not-touch LibraryContext. So a description Jake types lives here and
+   * takes precedence over any commentary a generated playlist arrived with;
+   * clearing it falls back to that.
+   */
+  ipcMain.handle('playlist-notes-get', async () => ({ ok: true, notes: await loadNotes() }))
+
+  ipcMain.handle('playlist-note-set', async (_e, playlistId: string, text: string) => {
+    const id = safeId(String(playlistId || ''))
+    if (!id) return { ok: false, error: 'bad playlist id' }
+    try {
+      const notes = await loadNotes()
+      const clean = String(text ?? '').slice(0, 2000).trim()
+      if (clean) notes[id] = clean
+      else delete notes[id]
+      // tmp + rename: a killed write can't leave a torn file that loses every
+      // OTHER playlist's description too.
+      const tmp = NOTES_FILE() + '.tmp'
+      await writeFile(tmp, JSON.stringify(notes, null, 2))
+      await rename(tmp, NOTES_FILE())
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'could not save' }
+    }
+  })
+
   /**
    * Which playlists have a custom cover, and how fresh each one is.
    *

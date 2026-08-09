@@ -6,10 +6,13 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { getDeckState, layOnDeck } from '../mixtapes'
+import { MAX_TAPE_SONGS } from '../../common/tape-physics'
 import MixArtwork from '../components/MixArtwork'
+import MixtapeSheet from '../components/MixtapeSheet'
 import {
   subscribePlaylistCovers, getPlaylistCovers, ensurePlaylistCoversLoaded,
   playlistCoverSrc, pickPlaylistCover, clearPlaylistCover,
+  ensurePlaylistNotesLoaded, getPlaylistNote, setPlaylistNote,
 } from '../playlistCovers'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
@@ -109,6 +112,21 @@ export default function PlaylistView() {
   // a module store, because LibraryContext is do-not-touch.
   useSyncExternalStore(subscribePlaylistCovers, getPlaylistCovers)
   useEffect(() => { ensurePlaylistCoversLoaded() }, [])
+  // Description Jake typed (2026-08-09). Falls back to any commentary a
+  // generated playlist arrived with; his text always wins.
+  useEffect(() => { ensurePlaylistNotesLoaded() }, [])
+  const [descEditing, setDescEditing] = useState(false)
+  const [descDraft, setDescDraft] = useState('')
+  const savedNote = getPlaylistNote(playlist?.id ?? '')
+  const shownDesc = savedNote || playlist?.commentary || ''
+  const commitDesc = async (): Promise<void> => {
+    if (!playlist) return
+    setDescEditing(false)
+    if (descDraft.trim() !== savedNote) await setPlaylistNote(playlist.id, descDraft)
+  }
+
+  // Tracks handed to the mixtape sheet — null when it's closed.
+  const [mixtapeFrom, setMixtapeFrom] = useState<Track[] | null>(null)
   const [coverBusy, setCoverBusy] = useState(false)
   const [coverNote, setCoverNote] = useState('')
   const customCover = playlistCoverSrc(playlist?.id ?? '')
@@ -608,6 +626,18 @@ export default function PlaylistView() {
       },
       { separator: true as const },
       {
+        // Jake, 2026-08-09: "dont i have the option of turning into a
+        // mixtape if i right click? or maybe there should be a button on
+        // top that turns into a mixtape". Both — this is the selection
+        // path, the header button below takes the whole playlist. The
+        // entrance existed once and got collapsed when "New Mixtape…"
+        // became the single front door, which is exactly backwards from
+        // the playlist you're already looking at.
+        label: count > 1 ? `Make a Mixtape from ${count} songs` : 'Make a Mixtape from this song',
+        onClick: () => setMixtapeFrom(selected),
+      },
+      { separator: true as const },
+      {
         label: count > 1 ? `Remove ${count} from Playlist` : `Remove from Playlist`,
         onClick: () => {
           setConfirmAction({ type: 'remove-tracks', trackIds: selected.map(t => t.id) })
@@ -682,6 +712,15 @@ export default function PlaylistView() {
             Play All
           </button>
           <button
+            className="playlist-view-tape"
+            onClick={() => setMixtapeFrom(sortedTracks)}
+            title={sortedTracks.length > MAX_TAPE_SONGS
+              ? `A tape holds ${MAX_TAPE_SONGS} songs — you'll trim it on the deck`
+              : 'Turn this playlist into a mixtape'}
+          >
+            Make a Mixtape
+          </button>
+          <button
             className="playlist-view-delete"
             onClick={() => setConfirmAction({ type: 'delete-playlist' })}
           >
@@ -738,8 +777,31 @@ export default function PlaylistView() {
           </div>
         </div>
       )}
-      {playlist.commentary && (
-        <div className="playlist-view-commentary">{playlist.commentary}</div>
+      {/* Click to write or edit. Always present (as a prompt when empty) so
+          the ability is discoverable — a description you can only find by
+          guessing isn't one. Enter saves, Escape cancels, blur saves. */}
+      {descEditing ? (
+        <textarea
+          className="playlist-view-desc-input"
+          autoFocus
+          value={descDraft}
+          rows={2}
+          placeholder="What is this playlist for?"
+          onChange={(e) => setDescDraft(e.target.value)}
+          onBlur={() => { void commitDesc() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitDesc() }
+            if (e.key === 'Escape') { setDescDraft(savedNote); setDescEditing(false) }
+          }}
+        />
+      ) : (
+        <div
+          className={`playlist-view-commentary${shownDesc ? '' : ' playlist-view-commentary--empty'}`}
+          title="Click to write a description"
+          onClick={() => { setDescDraft(savedNote); setDescEditing(true) }}
+        >
+          {shownDesc || 'Add a description…'}
+        </div>
       )}
       {/* V5 facelift: Grid / Cover Flow modes swap only the table below
           the playlist header. */}
@@ -997,6 +1059,14 @@ export default function PlaylistView() {
           onFetchArt={handleFetchArt}
           onSetCustomArt={handleSetCustomArt}
         />
+      )}
+
+      {/* The mixtape sheet, opened from either entrance (header button = the
+          whole playlist, right-click = the selection). It handles the 25-song
+          cap itself: anything past the limit shows greyed on the deck rather
+          than vanishing silently. */}
+      {mixtapeFrom && mixtapeFrom.length > 0 && (
+        <MixtapeSheet tracks={mixtapeFrom} onClose={() => setMixtapeFrom(null)} />
       )}
     </div>
   )

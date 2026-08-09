@@ -982,8 +982,24 @@
 
 .playlist-view-delete:hover { background: linear-gradient(180deg, #f8f8f8, #d8d8d8); }
 
+/* "Make a Mixtape" (2026-08-09). Its own class rather than borrowing the
+   Delete button's — a create action shouldn't wear the destructive one's
+   clothes just because they're the same size. Reads as a secondary action:
+   the accent as an outline, not a fill, so Play All stays the loud one. */
+.playlist-view-tape {
+  padding: 5px 14px;
+  background: transparent;
+  color: var(--accent, #b3542a);
+  font-weight: 600;
+  font-size: var(--font-label);
+  border-radius: 4px;
+  border: 1px solid var(--accent, #b3542a);
+}
+.playlist-view-tape:hover { background: rgba(179, 84, 42, 0.08); }
+
 .playlist-view-commentary {
-  padding: 12px 20px;
+  padding: 12px 24px;
+  cursor: text;
   font-size: var(--font-body);
   font-style: italic;
   color: var(--text-secondary);
@@ -2086,3 +2102,25 @@
    lists and paragraphs; flattening them made a 50-song reply an
    unreadable wall. */
 .musicman-chat-msg p { white-space: pre-wrap; }
+
+
+/* Playlist description (2026-08-09) — click the line to edit it. The empty
+   state is deliberately visible rather than hidden: an affordance you can
+   only find by guessing isn't one. */
+.playlist-view-commentary--empty { color: var(--text-secondary); opacity: 0.6; }
+.playlist-view-commentary:hover { background: rgba(0, 0, 0, 0.025); }
+.playlist-view-desc-input {
+  display: block;
+  width: calc(100% - 48px);
+  margin: 10px 24px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: var(--font-body);
+  font-style: italic;
+  color: var(--text-primary);
+  background: var(--white, #fdfdfd);
+  border: 1px solid var(--accent, #b3542a);
+  border-radius: 5px;
+  resize: vertical;
+}
+.playlist-view-desc-input:focus { outline: none; }

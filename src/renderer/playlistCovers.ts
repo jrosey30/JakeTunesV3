@@ -64,3 +64,39 @@ export async function clearPlaylistCover(playlistId: string): Promise<void> {
   await window.electronAPI.clearPlaylistCover?.(playlistId)
   await refreshPlaylistCovers()
 }
+
+
+// ── Descriptions Jake wrote (2026-08-09) ────────────────────────────────
+// "id like abolity to write a description for each playlist if i want."
+//
+// Playlist.commentary already exists and renders, but nothing can write it —
+// no reducer action, and LibraryContext is do-not-touch. So a typed
+// description lives beside the library and takes precedence over whatever
+// commentary a generated playlist arrived with; clearing it falls back.
+let notes: Record<string, string> = {}
+let notesLoaded = false
+
+export function getPlaylistNote(playlistId: string): string {
+  return notes[playlistId] ?? ''
+}
+
+export async function refreshPlaylistNotes(): Promise<void> {
+  try {
+    const r = await window.electronAPI.playlistNotesGet?.()
+    if (r?.ok) { notes = r.notes || {}; notesLoaded = true; notify() }
+  } catch { /* no descriptions is a fine answer */ }
+}
+
+export function ensurePlaylistNotesLoaded(): void {
+  if (!notesLoaded) void refreshPlaylistNotes()
+}
+
+export async function setPlaylistNote(playlistId: string, text: string): Promise<void> {
+  const clean = text.trim()
+  // Optimistic: the field is what he just typed, so showing anything else
+  // while the write lands would read as the edit being rejected.
+  if (clean) notes[playlistId] = clean
+  else delete notes[playlistId]
+  notify()
+  await window.electronAPI.playlistNoteSet?.(playlistId, clean)
+}

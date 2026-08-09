@@ -566,6 +566,10 @@ const electronAPI = {
   // it instead of playing ~48ms of silence at every track change.
   // Custom playlist cover: pick a file (jpg/png/heic/webp…), normalized to
   // JPEG and copied into userData so moving the original can't break it.
+  playlistNotesGet: (): Promise<{ ok: boolean; notes: Record<string, string> }> =>
+    ipcRenderer.invoke('playlist-notes-get'),
+  playlistNoteSet: (playlistId: string, text: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-note-set', playlistId, text),
   playlistCoversMap: (): Promise<{ ok: boolean; covers: Record<string, number>; dir: string }> =>
     ipcRenderer.invoke('playlist-covers-map'),
   pickPlaylistCover: (playlistId: string): Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }> =>
