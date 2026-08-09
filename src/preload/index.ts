@@ -562,6 +562,10 @@ const electronAPI = {
     ipcRenderer.invoke('mixtape-delete', id),
   dubMixtape: (payload: unknown): Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }> =>
     ipcRenderer.invoke('dub-mixtape', payload),
+  // Encoder priming for a file (iTunSMPB) so the seam scheduler can skip
+  // it instead of playing ~48ms of silence at every track change.
+  gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null> =>
+    ipcRenderer.invoke('gapless-trim', absPath),
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('save-mixtape-intro', data, voiceId),
   listMixtapeVoices: (): Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }> =>

@@ -103,6 +103,7 @@ import {
 import { partitionLanded, type IntendedTrack } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
+import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerScotusArchive } from './scotus-archive'
 import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
@@ -11966,6 +11967,7 @@ registerWorkoutSyncIpc({
 })
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
+registerGaplessTrimIpc()
 registerMixtapesIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
