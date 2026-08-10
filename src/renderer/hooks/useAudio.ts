@@ -353,7 +353,12 @@ export function prefetchTrackForPlay(track: Track) {
     prefetchHowl = new Howl({
       src: [url],
       format: [format],
-      html5: false,
+      // Same reason as the main path: Web Audio XHRs the file, and on an XHR
+      // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
+      // destroying the queued play(). This Howl gets PROMOTED into the main
+      // slot on track change, so leaving it in Web Audio kept auto-advance
+      // broken ("the next song never plays") after the main path was fixed.
+      html5: true,
       preload: true,
       autoplay: false,
       volume: 0,
@@ -383,7 +388,12 @@ export function prefetchTrackImmediate(track: Track) {
   prefetchHowl = new Howl({
     src: [url],
     format: [format],
-    html5: false,
+    // Same reason as the main path: Web Audio XHRs the file, and on an XHR
+    // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
+    // destroying the queued play(). This Howl gets PROMOTED into the main
+    // slot on track change, so leaving it in Web Audio kept auto-advance
+    // broken ("the next song never plays") after the main path was fixed.
+    html5: true,
     preload: true,
     autoplay: false,
     volume: 0,
@@ -771,7 +781,12 @@ export function useAudio(opts?: { primary?: boolean }) {
                 const preload = new Howl({
                   src: [nextUrl],
                   format: [nextFormat],
-                  html5: false,    // Web Audio: decoded buffer, sample-accurate play()
+                  // Same reason as the main path: Web Audio XHRs the file, and on an XHR
+                  // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
+                  // destroying the queued play(). This Howl gets PROMOTED into the main
+                  // slot on track change, so leaving it in Web Audio kept auto-advance
+                  // broken ("the next song never plays") after the main path was fixed.
+                  html5: true,
                   loop: false,
                   volume: 0,
                   preload: true,
