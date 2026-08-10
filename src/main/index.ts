@@ -4172,10 +4172,11 @@ async function fetchAudioFromHomemini(
 ): Promise<Response | null> {
   try {
     const reqHeaders: Record<string, string> = {}
-    // A transcode is produced live, so its length isn't known up front and
-    // homemini answers 200 with Accept-Ranges: none. Sending a Range there
-    // just invites a mismatch — ask for the whole stream.
-    if (rangeHeader && !wantFlac) reqHeaders['Range'] = rangeHeader
+    // homemini transcodes to a CACHED file and serves it through its normal
+    // range-capable path, so seeking works on FLAC exactly like anything else.
+    // (The first cut of this piped ffmpeg live, which could not answer ranges;
+    // Chromium then never got a duration and the player sat in 'loading'.)
+    if (rangeHeader) reqHeaders['Range'] = rangeHeader
     const qs = wantFlac ? '?fmt=flac' : ''
     const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${qs}`, {
       headers: reqHeaders,
@@ -4184,7 +4185,7 @@ async function fetchAudioFromHomemini(
     if (!res.ok && res.status !== 206) return null
     if (!res.body) return null
     const out: Record<string, string> = {
-      'Accept-Ranges': wantFlac ? 'none' : 'bytes',
+      'Accept-Ranges': 'bytes',
       'X-JT-Audio-Source': wantFlac ? 'homemini-flac' : 'homemini',
     }
     const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
