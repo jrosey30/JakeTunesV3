@@ -2385,6 +2385,22 @@ function readActiveHostSync(): 'mm' | 'megan' {
 // Megan when she's the chosen host, so the bubble must follow.
 ipcMain.handle('get-active-host', () => readActiveHostSync())
 
+// ── Persistent audio log ──────────────────────────────────────────────
+// Every diagnosis of the "it just sits at 0:00" failure needed a debugger
+// attached, and attaching one means relaunching, which resets the very state
+// that produces the bug. Jake spotted that before I did: "you restart the app
+// every time it works, then after that it doesn't."
+//
+// So the app records it instead. Append-only, capped, on the LOCAL disk. When
+// it next fails, the answer is in a file — no restart, no debugger, no asking
+// Jake to describe what he sees.
+const AUDIO_LOG_PATH = () => join(app.getPath('userData'), 'audio-events.log')
+ipcMain.on('audio-log', (_e, line: string) => {
+  try {
+    void appendFile(AUDIO_LOG_PATH(), line + '\n', 'utf-8').catch(() => {})
+  } catch { /* logging must never break playback */ }
+})
+
 // Suppliers, not values: activeHost changes when Jake switches host, and the
 // taste profile changes as he listens. Reading them at call time keeps both live.
 initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTasteProfile() })

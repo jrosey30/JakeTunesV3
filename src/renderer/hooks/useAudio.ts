@@ -92,6 +92,13 @@ interface AudioLogEntry { t: number; ev: string; detail?: unknown }
 const audioLogBuffer: AudioLogEntry[] = []
 export function logAudioEvent(ev: string, detail?: unknown) {
   audioLogBuffer.push({ t: Date.now(), ev, detail })
+  // Mirror to disk so a failure can be read AFTER the fact, without a
+  // debugger and without a relaunch. See the audio-log handler in main.
+  try {
+    window.electronAPI?.audioLog?.(
+      new Date().toISOString() + ' ' + ev + ' ' + JSON.stringify(detail ?? '').slice(0, 300),
+    )
+  } catch { /* never let logging break playback */ }
   if (audioLogBuffer.length > 50) audioLogBuffer.shift()
   // Skip the very chatty position-tick events from console output but
   // keep the structural ones. Everything still lands in the buffer.
