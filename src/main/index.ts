@@ -1,6 +1,11 @@
 import { getVenueShows, type VenueShow } from './venues.js'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import { MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE, CYNTHIA_CORE } from './personas.ts'
+import {
+  initPersonaMemory,
+  loadMusicManMemory, noteMusicManUtterance, recentUtterancesBlock,
+  loadCynthiaMemory, noteCynthiaUtterance, recentCynthiaBlock,
+} from './persona-memory.ts'
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
@@ -9496,31 +9501,8 @@ async function generateObservation() {
 // doesn't contradict them.
 
 
-interface MusicManUtterance { mode: string; text: string; at: number }
-let recentMusicManUtterances: MusicManUtterance[] = []
-// 4.5.0-92 — Music Man's recent-utterances memory moves to STATE_DIR
-// so the anti-repeat behavior is consistent across devices.
-const MM_MEMORY_PATH = join(STATE_DIR, 'musicman-memory.json')
-const MM_MEMORY_MAX = 12
-
-async function loadMusicManMemory() {
-  // 4.5.0-106: cache-backed read.
-  const parsed = await musicmanMemoryCache.get()
-  if (Array.isArray(parsed)) recentMusicManUtterances = parsed.slice(-MM_MEMORY_MAX) as typeof recentMusicManUtterances
-}
-function saveMusicManMemory() {
-  // 4.5.0-106: routed through cache, background NAS flush.
-  musicmanMemoryCache.set(recentMusicManUtterances as unknown[])
-}
-function noteMusicManUtterance(mode: string, text: string) {
-  const trimmed = (text || '').trim()
-  if (!trimmed) return
-  recentMusicManUtterances.push({ mode, text: trimmed, at: Date.now() })
-  if (recentMusicManUtterances.length > MM_MEMORY_MAX) {
-    recentMusicManUtterances = recentMusicManUtterances.slice(-MM_MEMORY_MAX)
-  }
-  saveMusicManMemory()
-}
+// The rolling utterance log itself lives in ./persona-memory.ts — Music Man's
+// 12 entries in STATE_DIR (shared across devices) and Cynthia's 8 locally.
 
 // 4.5: append-only HIVE MIND log. Every mic press / DJ comment / radio
 // segment lands here with full context (track, persona, response, facts
@@ -9566,12 +9548,6 @@ function logHiveMindInteraction(entry: HiveMindEntry): void {
     console.warn('[hive-mind] log serialize failed:', err)
   }
 }
-function recentUtterancesBlock(): string {
-  if (recentMusicManUtterances.length === 0) return ''
-  const lines = recentMusicManUtterances.map(u => `  [${u.mode}] ${u.text}`)
-  return `Recently you said — this is YOUR memory, kept here ONLY so you stay CONSISTENT (don't contradict any of it):\n${lines.join('\n')}\n\nThis log is NOT a cue to comment on repetition. If the user wants a take on a track you've already covered, find a genuinely FRESH angle — a different detail, a new comparison, another mood, a contrary read. NEVER tell the user you "already talked about this," that it's "still the same track," "we just did this," or otherwise give them attitude for asking again. They pressed the button because they want a NEW thought, not a complaint about pressing it.`
-}
-
 // ── Megan: the co-host persona (alternate to Music Man) ──
 //
 // 4.2.5 lets the user pick between Music Man and Megan as the default
@@ -9615,38 +9591,6 @@ function recentUtterancesBlock(): string {
 //      in MusicBrainz only. We don't want her chasing trends or scraping
 //      random sites to look helpful.
 
-
-interface CynthiaUtterance { text: string; at: number }
-let recentCynthiaUtterances: CynthiaUtterance[] = []
-const CYNTHIA_MEMORY_PATH = join(app.getPath('userData'), 'cynthia-memory.json')
-const CYNTHIA_MEMORY_MAX = 8
-
-async function loadCynthiaMemory() {
-  try {
-    const raw = await readFile(CYNTHIA_MEMORY_PATH, 'utf-8')
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) recentCynthiaUtterances = parsed.slice(-CYNTHIA_MEMORY_MAX)
-  } catch { /* first run */ }
-}
-async function saveCynthiaMemory() {
-  try {
-    await writeFile(CYNTHIA_MEMORY_PATH, JSON.stringify(recentCynthiaUtterances), 'utf-8')
-  } catch { /* non-fatal */ }
-}
-function noteCynthiaUtterance(text: string) {
-  const trimmed = (text || '').trim()
-  if (!trimmed) return
-  recentCynthiaUtterances.push({ text: trimmed, at: Date.now() })
-  if (recentCynthiaUtterances.length > CYNTHIA_MEMORY_MAX) {
-    recentCynthiaUtterances = recentCynthiaUtterances.slice(-CYNTHIA_MEMORY_MAX)
-  }
-  saveCynthiaMemory()
-}
-function recentCynthiaBlock(): string {
-  if (recentCynthiaUtterances.length === 0) return ''
-  const lines = recentCynthiaUtterances.map(u => `  - ${u.text}`)
-  return `Recent jobs you've finished:\n${lines.join('\n')}`
-}
 
 // Best-effort repair for malformed JSON from Cynthia. Two common failure
 // modes:
@@ -16469,6 +16413,8 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.warn('[artwork] startup load failed:', err)
     }
+    // Hand the persona memory its cache before the first read.
+    initPersonaMemory(musicmanMemoryCache)
     await loadMusicManMemory().catch(() => {})
     await loadCynthiaMemory().catch(() => {})
     fetchDiscogsCollection()
