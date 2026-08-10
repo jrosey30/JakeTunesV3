@@ -149,6 +149,29 @@ export function getAutoDjMode() { return autoDjMode }
 // deferral, PLAY_TRACK fires immediately at trigger time — which
 // resets position/duration to 0 and freezes the bar at "remaining N
 // seconds" until the new Howl finishes loading.
+// ── Stalled-load watchdog ─────────────────────────────────────────
+// Jake, 2026-08-10, workmini: "songs take a while to play or dont play...
+// the next song usually never plays."
+//
+// Howler only fires onloaderror on an actual error EVENT. A load that simply
+// hangs — a slow network read, a stalled mount — fires nothing at all, ever.
+// The Howl sits in state 'loading', sharedHowl points at it, and if the track
+// change was a crossfade then outgoingHowl is still marked playing. Observed
+// live on workmini: a Howl from two tracks earlier reporting playing=true with
+// its clock advancing, while the requested track never left 'loading'. Nothing
+// recovers that on its own, and every later track queues up behind it.
+//
+// 25s is deliberately generous. Measured worst case on the slow link was ~6s
+// to first byte, so this only fires on a genuine hang, never on a slow load.
+const LOAD_WATCHDOG_MS = 25_000
+let loadWatchdog: number | null = null
+function clearLoadWatchdog() {
+  if (loadWatchdog !== null) {
+    window.clearTimeout(loadWatchdog)
+    loadWatchdog = null
+  }
+}
+
 let crossfadeSettings = { enabled: false, seconds: 6 }
 let outgoingHowl: Howl | null = null
 let crossfading = false
@@ -159,7 +182,42 @@ let crossfadePendingIdx = -1
 export function setCrossfadeSettings(s: { enabled: boolean; seconds: number }) {
   crossfadeSettings = { enabled: !!s.enabled, seconds: Math.max(1, Math.min(12, s.seconds || 6)) }
 }
+/**
+ * A track that will never start must not take the player down with it.
+ *
+ * Unwinds everything loadAndPlay set up — the stalled Howl, any outgoing
+ * crossfade partner still flagged as playing, the position rAF — and then
+ * advances, so a single bad track costs one song rather than the rest of the
+ * session. Called from onloaderror (Howler said it failed) and from the
+ * watchdog (Howler said nothing at all, which is the more common case).
+ */
+function failStalledLoad(
+  howl: Howl,
+  track: Track,
+  queueIndex: number,
+  reason: 'loaderror' | 'stalled',
+  advance?: (t: Track, h: Howl, holder: { v: boolean }, idx: number) => void,
+): void {
+  clearLoadWatchdog()
+  if (sharedHowl === howl) sharedHowl = null
+  try { howl.stop() } catch { /* never loaded */ }
+  try { detachHowlFromEq(howl) } catch { /* never attached */ }
+  try { howl.unload() } catch { /* already gone */ }
+  // The zombie: a crossfade's outgoing Howl reports playing=true with its
+  // clock still advancing. cleanupCrossfadeAudio stops and unloads it and
+  // resets the pending-track state the deferred PLAY_TRACK dispatch reads.
+  cleanupCrossfadeAudio()
+  cancelAnimationFrame(sharedRaf)
+  logAudioEvent('howl.failstalled', { title: track.title, reason })
+  // Keep the queue moving — "the next song never plays" is the symptom this
+  // whole path exists to prevent.
+  try {
+    advance?.(track, howl, { v: false }, queueIndex)
+  } catch { /* nothing left to advance to */ }
+}
+
 function cleanupCrossfadeAudio() {
+  clearLoadWatchdog()
   if (outgoingHowl) {
     try { outgoingHowl.stop() } catch { /* ignore */ }
     detachHowlFromEq(outgoingHowl)
@@ -1158,10 +1216,26 @@ export function useAudio(opts?: { primary?: boolean }) {
       onloaderror: (_id: number, err: unknown) => {
         logAudioEvent('howl.onloaderror', { err: String(err), url: url.slice(0, 80) })
         console.error('Audio load error:', err, url)
+        // This used to ONLY log, which left the whole engine wedged: the dead
+        // Howl stayed in sharedHowl, and if the track change was a crossfade
+        // its outgoing Howl stayed marked playing forever. Every later track
+        // then queued behind a song that was never going to start. Reverse
+        // the start path's side effects, then keep the queue moving.
+        failStalledLoad(howl, track, queueIndex, 'loaderror', runNaturalEndRef.current ?? undefined)
       }
     })
 
     sharedHowl = howl
+    // Arm the stalled-load watchdog. Howler fires nothing at all when a load
+    // simply hangs, so without this the app waits forever with no signal.
+    clearLoadWatchdog()
+    loadWatchdog = window.setTimeout(() => {
+      loadWatchdog = null
+      if (sharedHowl !== howl) return          // superseded — not our problem
+      if (howl.state() === 'loaded') return    // loaded fine, just slow to play
+      logAudioEvent('howl.loadstalled', { title: track.title, url: url.slice(0, 80) })
+      failStalledLoad(howl, track, queueIndex, 'stalled', runNaturalEndRef.current ?? undefined)
+    }, LOAD_WATCHDOG_MS)
     howl.play()
   }, [updatePosition])
 
