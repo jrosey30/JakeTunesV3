@@ -1,3 +1,20 @@
+// ── libuv threadpool ──────────────────────────────────────────────────
+// MUST be set before anything touches fs/dns: libuv reads it when the pool is
+// first used, and the default is FOUR threads.
+//
+// Jake, 2026-08-10: "you restart the app every time it works, then after
+// that, doesn't work. that's the issue." That is this. Background work —
+// artwork, art-thumbs, the Cynthia sweep, discovery — walks the music tree,
+// and on a streaming host those paths are symlinks into an SMB mount that
+// wedges. A hung readdir occupies a pool thread and never returns. Four of
+// them and EVERY later async fs call queues forever, including serving audio.
+// Playback then dies and stays dead until relaunch, which is exactly the
+// pattern: fine right after a restart, dead a while later.
+//
+// The homemini engine hit the same wall and was fixed the same way.
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
+
+
 import { getVenueShows, type VenueShow } from './venues.js'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
