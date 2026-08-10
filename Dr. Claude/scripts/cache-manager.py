@@ -53,6 +53,34 @@ for t in rk:
     if t["path"] in hot: continue
     s=t.get("fileSize") or 0
     if tot+s<=CAP: hot.add(t["path"]); tot+=s
+
+# ── Throttled NAS copy ──────────────────────────────────────────────
+# Jake, 2026-08-10: "music doesnt play on workmini... happens too much
+# after a new song update." Measured: a NAS-streamed track starts in 3
+# SECONDS when the link is idle, and 160 seconds while this script is
+# bulk-copying. The link is ~1 MB/s; streaming 256kbps AAC needs ~32 KB/s,
+# so there is plenty of room — but an unthrottled `cp` takes all of it and
+# playback starves. Nothing was wrong with streaming. The cache filler was
+# standing on it.
+#
+# So the fill is rate-limited and always leaves headroom. Slower to warm
+# the cache, but it can no longer take the music down while it runs. Same
+# rule the media pipeline already learned: a batch job yields to playback.
+BW=int(os.environ.get("CACHE_BW_KBPS","300"))*1024   # bytes/sec for the fill
+def copy_throttled(src,dst):
+    import time
+    chunk=64*1024
+    with open(src,"rb") as i, open(dst+".part","wb") as o:
+        while True:
+            t0=time.time()
+            b=i.read(chunk)
+            if not b: break
+            o.write(b)
+            want=len(b)/BW
+            spent=time.time()-t0
+            if want>spent: time.sleep(want-spent)
+    os.replace(dst+".part",dst)
+
 cl=cn=lk=ev=ms=0
 for t in tr:
     rp=rel(t["path"]); lp=f"{DST}/{rp}"; nas=f"{NAS}/{rp}"; old=f"{OLD}/{rp}"
@@ -67,8 +95,10 @@ for t in tr:
             try: subprocess.run(["cp","-c",old,lp],check=True,capture_output=True); cl+=1; continue
             except Exception: pass
         if os.path.exists(nas):
-            try: subprocess.run(["cp",nas,lp],check=True,capture_output=True); cn+=1; continue
-            except Exception: pass
+            try: copy_throttled(nas,lp); cn+=1; continue
+            except Exception:
+                try: os.remove(lp+".part")
+                except Exception: pass
         try: os.symlink(nas,lp); lk+=1
         except Exception: ms+=1
     else:
