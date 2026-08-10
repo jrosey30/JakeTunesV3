@@ -2368,6 +2368,22 @@ function readActiveHostSync(): 'mm' | 'megan' {
 // Megan when she's the chosen host, so the bubble must follow.
 ipcMain.handle('get-active-host', () => readActiveHostSync())
 
+// Does this machine's audio come over the network rather than off its disk?
+// The renderer needs this to pick a Howler mode: Web Audio decodes the WHOLE
+// file before playing, which is right for a local library (no buffer underruns,
+// the 4.5 pop fix) and ruinous when the bytes arrive over a link — measured on
+// workmini, a 7.7MB track took 7.9s to download before a note played, and a
+// transcoded lossless one far longer. Streaming hosts want html5 instead.
+ipcMain.handle('is-streaming-host', async () => {
+  try {
+    const s = await readAppSettingsAsync()
+    const lib = (s?.library ?? null) as { streamRoot?: string; streamSource?: string } | null
+    return !!(lib?.streamRoot || lib?.streamSource)
+  } catch {
+    return false
+  }
+})
+
 // Suppliers, not values: activeHost changes when Jake switches host, and the
 // taste profile changes as he listens. Reading them at call time keeps both live.
 initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTasteProfile() })

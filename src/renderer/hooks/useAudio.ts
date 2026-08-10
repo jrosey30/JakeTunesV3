@@ -163,6 +163,27 @@ export function getAutoDjMode() { return autoDjMode }
 //
 // 25s is deliberately generous. Measured worst case on the slow link was ~6s
 // to first byte, so this only fires on a genuine hang, never on a slow load.
+// ── Local library, or streaming client? ───────────────────────────
+// Web Audio (html5:false) decodes the WHOLE file before play() — the 4.5 pop
+// fix, and right when the bytes are on this disk. When they arrive over a link
+// it means downloading the entire track first. Measured on workmini: 7.9s to
+// pull a 7.7MB song before a note played, far worse for a lossless one. That is
+// the "takes two minutes to play" report, and no server-side speed fixes it,
+// because the player will not start until the last byte lands. The tradeoff
+// note on html5:false below estimates "200-500ms for decode" — true of a local
+// disk, and the assumption that breaks on a streaming host.
+//
+// html5 mode streams: the element plays from the front while the rest arrives.
+// Same URL, same handler — measured canplaythrough at 10ms.
+//
+// So the mode follows the LIBRARY, not a global preference. Local machines keep
+// Web Audio and its pop immunity; streaming hosts stream. Resolved once at
+// startup; it cannot change without a restart.
+let audioIsStreamed = false
+void window.electronAPI?.isStreamingHost?.()
+  .then((v) => { audioIsStreamed = !!v })
+  .catch(() => { /* older main process — assume local */ })
+
 const LOAD_WATCHDOG_MS = 25_000
 let loadWatchdog: number | null = null
 function clearLoadWatchdog() {
@@ -1151,7 +1172,10 @@ export function useAudio(opts?: { primary?: boolean }) {
       //     works with html5:true). EQ is off by default per the
       //     existing comments; if someone needs it later we wire
       //     AudioBufferSource → EQ chain instead.
-      html5: false,
+      // Per audioIsStreamed above: a local library keeps Web Audio (no
+      // underruns, no pops); a streaming host must not wait for a whole
+      // file to arrive before the first note.
+      html5: audioIsStreamed,
       loop: false,
       volume: startVolume,
       onplay: () => {
