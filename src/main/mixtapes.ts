@@ -16,7 +16,7 @@
  */
 
 import { ipcMain, app, shell } from 'electron'
-import { readFile, writeFile, mkdir, unlink, stat } from 'fs/promises'
+import { readFile, writeFile, mkdir, unlink, stat, rename } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import { execFile } from 'child_process'
@@ -379,6 +379,49 @@ async function speechToSpeech(rawWebmPath: string, voiceId: string): Promise<str
  */
 const INKS_SEASON = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 
+/**
+ * Which months have EVER been dubbed — a tombstone, kept apart from the tapes.
+ *
+ * Jake, 2026-08-09: "i dont know why this mixtape keeps appearing i have
+ * deleted it a million times. why does it keep showing up???"
+ *
+ * Because deletion left no trace. The old guard was
+ *
+ *     if (all.some((m) => m.seasonal === key)) return
+ *
+ * which uses EXISTENCE as memory: delete the tape and the check can no longer
+ * tell "never dubbed" from "dubbed and thrown away", so the next run dubs it
+ * again. And the next run is 90 seconds after every app launch — so every
+ * restart handed it back. The comment above it promised "never dubs the same
+ * month twice"; that promise was only ever kept by the tape surviving.
+ *
+ * A season key written here is permanent. Deleting the tape is now final,
+ * which is what deleting has always looked like it meant.
+ *
+ * Its own file because mixtapes.json is a bare ARRAY and loadMixtapes refuses
+ * to touch it if it isn't.
+ */
+const SEASONS_FILE = () => join(app.getPath('userData'), 'mixtape-seasons.json')
+
+async function loadDubbedSeasons(): Promise<Set<string>> {
+  try {
+    const raw = await readFile(SEASONS_FILE(), 'utf-8')
+    const o = JSON.parse(raw) as { dubbed?: string[] }
+    return new Set(Array.isArray(o?.dubbed) ? o.dubbed : [])
+  } catch {
+    return new Set()   // no file yet = nothing dubbed
+  }
+}
+
+async function rememberDubbedSeason(key: string): Promise<void> {
+  const set = await loadDubbedSeasons()
+  if (set.has(key)) return
+  set.add(key)
+  const tmp = SEASONS_FILE() + '.tmp'
+  await writeFile(tmp, JSON.stringify({ dubbed: [...set] }, null, 2))
+  await rename(tmp, SEASONS_FILE())
+}
+
 async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   if (!host.loadLibraryTracks || !host.loadPlayEvents) return
   const now = new Date()
@@ -387,7 +430,16 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   const key = `${prevStart.getFullYear()}-${String(prevStart.getMonth() + 1).padStart(2, '0')}`
   let all: Mixtape[]
   try { all = await loadMixtapes() } catch { return } // torn store — never write
-  if (all.some((m) => m.seasonal === key)) return
+
+  // A month is dubbed ONCE, ever — whether or not its tape is still on the
+  // shelf. Existing seasonal tapes seed the tombstone on first run, so a tape
+  // made before this existed is never re-dubbed after it is deleted either.
+  const dubbed = await loadDubbedSeasons()
+  for (const m of all) {
+    if (m.seasonal && !dubbed.has(m.seasonal)) await rememberDubbedSeason(m.seasonal)
+  }
+  if (dubbed.has(key)) return
+  if (all.some((m) => m.seasonal === key)) { await rememberDubbedSeason(key); return }
 
   const events = await host.loadPlayEvents()
   const counts = new Map<number, number>()
@@ -446,6 +498,9 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   if (cur.some((m) => m.seasonal === key)) return // raced another writer
   cur.unshift(tape)
   await saveMixtapes(cur)
+  // Written AFTER the tape lands: a crash between the two costs a re-dub,
+  // which is recoverable. The other order would lose the month silently.
+  await rememberDubbedSeason(key)
   console.log(`[mixtapes] season tape dubbed: "${r.title}" (${key}) — ${r.tracks.length} songs`)
 }
 
