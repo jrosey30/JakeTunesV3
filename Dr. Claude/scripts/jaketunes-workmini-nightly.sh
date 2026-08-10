@@ -4,7 +4,7 @@
 # automated workmini deploy.
 #
 # Brief 029. Called by ~/Library/LaunchAgents/com.jaketunes.workmini-
-# nightly.plist at 3:00 AM daily.
+# nightly.plist at 11:30 AM local time, weekdays (Mon-Fri).
 #
 # Why a wrapper exists:
 #   launchd's environment is minimal — no PATH, no shell defaults.
@@ -20,6 +20,13 @@
 #   tomorrow's run tries again. No retry logic here by design —
 #   we want consistent daily attempts, not adaptive backoff that
 #   could mask a real workmini outage.
+#
+#   --build (added 2026-08-10): compile a fresh DMG from source before
+#   deploying. Without it this job shipped "the newest DMG in release/",
+#   which drifted 3 days / 103 commits behind while the version string
+#   stayed 5.1.0 — so nothing about the app LOOKED stale. A failed
+#   typecheck, failed test, or a build that produces no new artifact
+#   now aborts the run loudly instead of installing yesterday's app.
 # ──────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -40,7 +47,7 @@ echo "=============================================================="
 echo "Run started: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "=============================================================="
 
-"$HOME/bin/jaketunes-workmini-deploy.sh" jacobrosenbaum --with-env
+"$HOME/bin/jaketunes-workmini-deploy.sh" jacobrosenbaum --with-env --build
 RC=$?
 
 echo ""
