@@ -466,6 +466,13 @@ fi
 # track still resolves and streams even if this hiccups.
 if $STREAMING; then
   say "[6] Refreshing workmini local cache (hot rotation + new-music links)"
+  # Ship the cache manager itself. It used to live ONLY on workmini — no
+  # version control, no review — which is how a ranking bug that stopped every
+  # newly-imported song from playing sat in it unnoticed (2026-08-10). The repo
+  # copy is the source of truth now; this overwrites whatever is on the host.
+  scp -q $SSH_OPTS "$REPO/Dr. Claude/scripts/cache-manager.py" \
+    "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/cache-manager.py" \
+    && echo "  ✓ cache-manager.py updated" || echo "  ⚠ cache-manager.py push failed — host copy left as-is"
   ssh $SSH_OPTS "$REMOTE" '/usr/bin/python3 "$HOME/Library/Application Support/JakeTunes/cache-manager.py"' \
     && echo "  ✓ cache refreshed" || echo "  ⚠ cache refresh hiccuped — music still streams from NAS"
 fi
