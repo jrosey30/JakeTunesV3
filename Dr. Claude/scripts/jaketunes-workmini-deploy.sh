@@ -473,8 +473,15 @@ if $STREAMING; then
   scp -q $SSH_OPTS "$REPO/Dr. Claude/scripts/cache-manager.py" \
     "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/cache-manager.py" \
     && echo "  ✓ cache-manager.py updated" || echo "  ⚠ cache-manager.py push failed — host copy left as-is"
-  ssh $SSH_OPTS "$REMOTE" '/usr/bin/python3 "$HOME/Library/Application Support/JakeTunes/cache-manager.py"' \
-    && echo "  ✓ cache refreshed" || echo "  ⚠ cache refresh hiccuped — music still streams from NAS"
+  # BACKGROUND, deliberately. This used to be awaited, and once the cache
+  # started prioritising ALAC (which can be tens of GB over a slow link) the
+  # deploy sat here for hours — with JakeTunes still QUIT, because the
+  # relaunch comes after. A best-effort cache warm must never hold the app
+  # closed. It is explicitly non-fatal; every track streams regardless.
+  ssh $SSH_OPTS "$REMOTE" \
+    'nohup /usr/bin/python3 "$HOME/Library/Application Support/JakeTunes/cache-manager.py" >/tmp/cache-manager.log 2>&1 &' \
+    && echo "  ✓ cache warm started in background (see /tmp/cache-manager.log on workmini)" \
+    || echo "  ⚠ could not start cache warm — music still streams from NAS"
 fi
 
 # ── Relaunch so it picks up the freshly-synced library ──────────────
