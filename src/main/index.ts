@@ -16122,6 +16122,140 @@ app.whenReady().then(async () => {
     return p
   }
 
+  /**
+   * Is the FLAC transcode already on disk? Stat only — never starts one.
+   *
+   * aacCachePath() AWAITS a full ffmpeg run on a miss, which is right for a
+   * local file (~1s at 100x realtime) and catastrophic for a NAS one: it
+   * reads the entire lossless file across the link before emitting a byte.
+   * Callers that can stream instead need to know "cached?" without paying
+   * for "cache it".
+   */
+  /**
+   * Does this audio live across the network rather than on this disk?
+   *
+   * True when the path resolves under library.streamRoot, or when the entry
+   * under musicRoot is a symlink (how a streaming host marks "not cached
+   * locally"). Only these need the progressive path — a local file transcodes
+   * far faster than the seek support it would cost.
+   */
+  async function isRemoteAudioSource(absPath: string): Promise<boolean> {
+    try {
+      const sr = await readStreamRoot()
+      if (sr && isPathInside(absPath, sr)) return true
+    } catch { /* no streamRoot configured */ }
+    try {
+      return (await lstat(absPath)).isSymbolicLink()
+    } catch {
+      return false
+    }
+  }
+
+  async function flacCacheHit(src: string, srcMtime: number, srcSize: number): Promise<string | null> {
+    try {
+      const { file: cached } = cacheNameFor(src, srcSize, srcMtime)
+      const cStat = await stat(cached)
+      return cStat.size > 0 ? cached : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Transcode ALAC → FLAC straight down the wire, while filling the cache.
+   *
+   * Jake, 2026-08-10, on workmini: "takes like 2 mins to play one track...
+   * then the next song usually never plays." Chromium can't decode ALAC, so
+   * every ALAC play needs a transcode first — and the transcode read the WHOLE
+   * file off the NAS before playback could begin. 40% of the library is ALAC,
+   * so the next track was usually ALAC too, and the wait simply repeated.
+   *
+   * ffmpeg emits FLAC frames as it reads, so there is no reason to wait for
+   * the end of the file to start the beginning of the song. This pipes those
+   * frames to the player immediately and tees them into the normal cache, so
+   * the first play starts in seconds and every later play is an ordinary
+   * seekable local file.
+   *
+   * Two deliberate limits:
+   *  - No Content-Length and no Range support on this response. The encoded
+   *    size isn't known until the encode finishes, so scrubbing is disabled
+   *    for the first play only; once the cache lands, seeking works normally.
+   *  - The tee writes to `.partial.flac` and renames only on a clean exit,
+   *    the same discipline aacCachePath uses. A skipped track or a killed
+   *    ffmpeg must not leave a truncated file whose name claims it is whole.
+   */
+  async function progressiveFlacResponse(src: string, srcMtime: number, srcSize: number): Promise<Response | null> {
+    const { spawn } = await import('child_process')
+    const { Readable } = await import('stream')
+    const { createWriteStream } = await import('fs')
+
+    const { pathHash, file: cached } = cacheNameFor(src, srcSize, srcMtime)
+    const tmp = cached + '.partial.flac'
+
+    let ff
+    try {
+      ff = spawn('ffmpeg', [
+        '-loglevel', 'error',
+        '-i', src, '-vn',
+        '-c:a', 'flac', '-compression_level', '0',
+        '-map_metadata', '0',
+        '-f', 'flac', 'pipe:1',
+      ])
+    } catch {
+      return null   // no ffmpeg — caller falls back to the blocking path
+    }
+
+    const sink = createWriteStream(tmp)
+    let teeOk = true
+    sink.on('error', () => { teeOk = false })
+
+    // Tee: every chunk goes to the player AND to the cache file.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        ff.stdout.on('data', (chunk: Buffer) => {
+          controller.enqueue(new Uint8Array(chunk))
+          if (teeOk) sink.write(chunk)
+        })
+        ff.stdout.on('end', () => {
+          controller.close()
+          sink.end()
+        })
+        ff.stdout.on('error', () => {
+          try { controller.close() } catch { /* already closed */ }
+          sink.end()
+        })
+        ff.on('close', async (code) => {
+          sink.end()
+          if (code === 0 && teeOk) {
+            try {
+              const { rename: renameFS } = await import('fs/promises')
+              await renameFS(tmp, cached)
+              await evictOtherCacheEntries(pathHash, cached)
+              void enforceCacheCap(cached)
+              return
+            } catch { /* fall through to cleanup */ }
+          }
+          try { await unlink(tmp) } catch { /* already gone */ }
+        })
+      },
+      cancel() {
+        // Player moved on — stop paying for bytes nobody will hear. The
+        // close handler above discards the partial file.
+        try { ff.kill('SIGKILL') } catch { /* already dead */ }
+      },
+    })
+
+    return new Response(body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/flac',
+        // Explicitly NOT advertising byte ranges: this body is produced live.
+        'Accept-Ranges': 'none',
+        'Cache-Control': 'no-store',
+      },
+    })
+  }
+
   // Expose a module-visible pre-warm trigger so rip-cd-tracks (and the
   // library-load path later, if we want) can kick off transcodes for
   // newly-imported ALAC files before the user clicks play. Best-effort;
@@ -16557,10 +16691,35 @@ app.whenReady().then(async () => {
           if (hint === 'alac') {
             const srcStat = await stat(resolvedPath).catch(() => null)
             if (srcStat) {
-              const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
-              if (cached) {
-                filePath = cached
-                ext = cached.slice(cached.lastIndexOf('.')).toLowerCase()
+              // Already transcoded? Serve the local file — seekable, instant.
+              const hit = await flacCacheHit(resolvedPath, srcStat.mtimeMs, srcStat.size)
+              if (hit) {
+                filePath = hit
+                ext = hit.slice(hit.lastIndexOf('.')).toLowerCase()
+              } else if (await isRemoteAudioSource(resolvedPath)) {
+                // Cache miss on a track that lives across the network. The
+                // blocking path would read the whole lossless file before
+                // emitting anything — 30-90s on workmini's link, which is the
+                // "2 minutes to start, then the next song never plays" report.
+                // Stream the transcode instead and fill the cache behind it.
+                const streamed = await progressiveFlacResponse(
+                  resolvedPath, srcStat.mtimeMs, srcStat.size,
+                ).catch(() => null)
+                if (streamed) return streamed
+                // ffmpeg unavailable — fall through to the blocking path.
+                const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
+                if (cached) {
+                  filePath = cached
+                  ext = cached.slice(cached.lastIndexOf('.')).toLowerCase()
+                }
+              } else {
+                // Local source: transcoding is ~100x realtime, so waiting is
+                // cheaper than giving up seek support on the first play.
+                const cached = await aacCachePath(resolvedPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
+                if (cached) {
+                  filePath = cached
+                  ext = cached.slice(cached.lastIndexOf('.')).toLowerCase()
+                }
               }
             }
           }
