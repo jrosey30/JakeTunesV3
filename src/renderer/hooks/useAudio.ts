@@ -1182,17 +1182,26 @@ export function useAudio(opts?: { primary?: boolean }) {
     // again. Guarded on sharedHowl identity so a track the user has already
     // moved past is never resurrected, and capped so a genuinely dead track
     // fails instead of looping.
-    let playRetries = 0
+    let waitTicks = 0        // ticks spent waiting for a (re)load to finish
+    let playAttempts = 0     // play() calls we have actually re-issued
     const retryIfStuck = () => {
       if (sharedHowl !== howl) return          // superseded — leave it alone
-      if (howl.state() !== 'loaded') return    // still loading; not our case
       if (howl.playing()) return               // started fine
-      if (playRetries >= 3) {
-        logAudioEvent('howl.play.gaveup', { title: track.title, tries: playRetries })
+      if (howl.state() !== 'loaded') {
+        // Still loading — and this is exactly the state Howler leaves the Howl
+        // in when it falls back. On an XHR error it sets _html5, EMPTIES
+        // _sounds (destroying the sound our play() was queued on) and calls
+        // load() again. Returning here without rescheduling is why the first
+        // version of this retry never fired at all. Keep waiting.
+        if (waitTicks < 8) { waitTicks++; window.setTimeout(retryIfStuck, 400) }
         return
       }
-      playRetries++
-      logAudioEvent('howl.play.retry', { title: track.title, attempt: playRetries })
+      if (playAttempts >= 3) {
+        logAudioEvent('howl.play.gaveup', { title: track.title, tries: playAttempts })
+        return
+      }
+      playAttempts++
+      logAudioEvent('howl.play.retry', { title: track.title, attempt: playAttempts })
       try { howl.play() } catch { /* nothing more to try */ }
       window.setTimeout(retryIfStuck, 400)
     }
