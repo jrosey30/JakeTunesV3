@@ -48,7 +48,28 @@ for t in sorted((x for x in tr if x.get("dateAdded")),key=lambda x:x["dateAdded"
     if t["path"] not in hot:
         hot.add(t["path"]); tot+=(t.get("fileSize") or 0)
 newly_reserved=len(hot)-len(pins & set(bypath))
-rk=sorted(tr,key=lambda t:((t.get("playCount") or 0),(t.get("dateAdded") or ""),(t.get("rating") or 0),(t.get("path") or "")),reverse=True)
+# ── ALAC first, because ALAC is the only thing that CANNOT stream ──────
+# Jake, 2026-08-10: "takes like 2 mins to play one track... then the next
+# song usually never plays."
+#
+# Chromium cannot decode ALAC, so the app reads the WHOLE lossless file and
+# transcodes it to AAC before a single byte of audio comes out. Locally that
+# is invisible. Over the NAS link it is 30-90 seconds of nothing, and since
+# 40% of the library is ALAC the following track is usually ALAC too — which
+# is what "the next song never plays" actually is. index.ts says as much in
+# the protocol handler: "ALAC stays local/pinned."
+#
+# But this ranked purely by playCount, which knows nothing about codecs, so
+# it spent the cache on AAC — the format that streams perfectly well over
+# range requests — and left 2,780 ALAC tracks stranded on the NAS.
+#
+# Same disk, same bandwidth, right tracks: cache what cannot stream, stream
+# what can. Within ALAC, most-played first, so the tracks Jake actually
+# reaches for land soonest.
+alac=lambda t:(t.get("codec") or "").lower()=="alac"
+_key=lambda t:((t.get("playCount") or 0),(t.get("dateAdded") or ""),(t.get("rating") or 0),(t.get("path") or ""))
+rk=sorted([t for t in tr if alac(t)],key=_key,reverse=True)+sorted([t for t in tr if not alac(t)],key=_key,reverse=True)
+
 for t in rk:
     if t["path"] in hot: continue
     s=t.get("fileSize") or 0
