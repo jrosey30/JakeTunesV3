@@ -1363,14 +1363,60 @@ ipcMain.handle('discovery-learned', async () => {
   }
 })
 
-ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
+/**
+ * "Not for me" — and what that actually means.
+ *
+ * It used to mean ONE thing: ban the artist from Discovery permanently, no
+ * undo, nothing visible. Reading Jake's data, 13 artists were suppressed that
+ * way — including The Beatles (398 tracks, 386 plays), Daft Punk (135/312) and
+ * Guided By Voices (28/30). He was clicking X on a CARD, meaning "not this,
+ * I've got it"; the system heard "never this artist again".
+ *
+ * That is the worst possible misreading, because filterFeed already hides
+ * ARTIST cards for anyone you own — so an artist ban only ever killed the
+ * album and song cards, i.e. "a new record by someone you love", which is the
+ * single most valuable thing this feed can produce.
+ *
+ * So the verdict now depends on whether the artist is already yours:
+ *   · you own them  -> rest THIS CARD (the `served` rotation that already
+ *     exists). "Not this one" is what the click meant.
+ *   · you don't     -> the old behaviour, a real artist-level no.
+ *
+ * The renderer passes the card key so the rest can be precise; without one it
+ * falls back to resting nothing rather than banning an artist you own.
+ */
+ipcMain.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
+
+  let owned = false
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string }> }
+    for (const t of lib?.tracks || []) {
+      if (normArtistKey(String(t.artist || '')) === key || normArtistKey(String(t.albumArtist || '')) === key) { owned = true; break }
+    }
+  } catch { /* can't read the library: fall through to the old behaviour */ }
+
   await discoveryFeedbackCache.update((cur) => {
-    cur.notForMe[key] = { artist: String(artist), at: Date.now() }
+    if (owned) {
+      // Rest this card hard rather than blacklisting a artist Jake plays.
+      if (cardKey) cur.served[String(cardKey)] = { first: Date.now(), last: Date.now(), views: 99 }
+    } else {
+      cur.notForMe[key] = { artist: String(artist), at: Date.now() }
+    }
     return cur
   })
-  if (radarCache) radarCache.candidates = radarCache.candidates.filter((c: { artist: string }) => normArtistKey(c.artist) !== key)
+  if (!owned && radarCache) {
+    radarCache.candidates = radarCache.candidates.filter((c: { artist: string }) => normArtistKey(c.artist) !== key)
+  }
+  return { ok: true, scope: owned ? 'card' : 'artist' }
+})
+
+/** Un-suppress an artist — the undo that never existed. */
+ipcMain.handle('discovery-allow-again', async (_e, artist: string) => {
+  const key = normArtistKey(artist)
+  if (!key) return { ok: false }
+  await discoveryFeedbackCache.update((cur) => { delete cur.notForMe[key]; return cur })
   return { ok: true }
 })
 

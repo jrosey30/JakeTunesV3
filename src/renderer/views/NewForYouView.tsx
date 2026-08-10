@@ -176,7 +176,7 @@ export default function NewForYouView() {
   }, [])
 
   const notForMe = (c: FeedCard) => {
-    void window.electronAPI.discoveryNotForMe?.(c.artist)
+    void window.electronAPI.discoveryNotForMe?.(c.artist, cardId(c))
     window.setTimeout(loadLearned, 300)   // the number must visibly move
     void window.electronAPI.tasteLedgerAppend?.([{
       surface: 'discover', verdict: 'reject',
