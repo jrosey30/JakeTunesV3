@@ -1,6 +1,9 @@
 import { getVenueShows, type VenueShow } from './venues.js'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
-import { MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE, CYNTHIA_CORE } from './personas.ts'
+import {
+  MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE, CYNTHIA_CORE,
+  initPersonaPrompts, withLibraryDigest, buildMusicManPrompt, buildCynthiaPrompt,
+} from './personas.ts'
 import {
   initPersonaMemory,
   loadMusicManMemory, noteMusicManUtterance, recentUtterancesBlock,
@@ -2359,6 +2362,10 @@ function readActiveHostSync(): 'mm' | 'megan' {
 // mic button routes through buildMusicManPrompt(), which swaps to
 // Megan when she's the chosen host, so the bubble must follow.
 ipcMain.handle('get-active-host', () => readActiveHostSync())
+
+// Suppliers, not values: activeHost changes when Jake switches host, and the
+// taste profile changes as he listens. Reading them at call time keeps both live.
+initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTasteProfile() })
 
 // Update the Claude daily ceiling immediately (mirrors what's saved in
 // app-settings.json). The wrapper at top of file reads claudeStats so
@@ -9459,15 +9466,6 @@ function repairCynthiaJson(raw: string): string {
   return out.join('')
 }
 
-function buildCynthiaPrompt(modeSpecific = ''): string {
-  const parts = [CYNTHIA_CORE]
-  if (modeSpecific) parts.push('\n' + modeSpecific)
-  const libCtx = getLibraryContext()
-  if (libCtx) parts.push(`\nThe user's full library context:\n${libCtx}`)
-  const recents = recentCynthiaBlock()
-  if (recents) parts.push('\n' + recents)
-  return parts.join('\n')
-}
 
 // MusicBrainz album lookup with full track listings (the killer tool for
 // "find my missing tracks"). Returns a JSON object Cynthia can read.
@@ -10136,52 +10134,7 @@ ipcMain.handle('cynthia-sweep-status', async () => {
  *  tokens for Sonnet), the cache_control marker is silently ignored by
  *  the API — no benefit, but no error either.
  */
-// 4.5: helper for Stephen Hands paths (DJ Mode + DJ Set + Picks)
-// which assemble their system prompt by concatenating DJ_HANDS_CORE
-// with mode-specific instructions instead of going through
-// buildMusicManPrompt. Wraps the persona with the library digest so
-// Stephen also speaks as someone who knows the whole collection.
-function withLibraryDigest(corePrefix: string): string {
-  const d = getLibraryDigest()
-  return d ? `${corePrefix}\n\n${d}` : corePrefix
-}
 
-function buildMusicManPrompt(modeSpecific = ''): Anthropic.Messages.TextBlockParam[] {
-  // 4.2.5: read the active host persona from app settings. Default 'mm'
-  // for backward compatibility. Reads syncronously from the cached
-  // settings — async path would require every caller to be async-aware
-  // which is a wider refactor.
-  const activeHost = readActiveHostSync()
-  const personaCore = activeHost === 'megan' ? MEGAN_CORE : MUSIC_MAN_CORE
-  const stableParts = [personaCore]
-  const libCtx = getLibraryContext()
-  if (libCtx) stableParts.push(`The user's music library contains:\n${libCtx}`)
-  // 4.5: structural library digest — lives in the STABLE prompt prefix
-  // because it doesn't change call-to-call (only when the user
-  // imports/deletes tracks, at which point load-tracks/save-library
-  // refresh it). Goes inside the ephemeral cache block alongside the
-  // persona core so it benefits from Anthropic prompt caching — every
-  // character call after the first one in a session reuses the cached
-  // digest with zero extra cost.
-  const libDigest = getLibraryDigest()
-  if (libDigest) stableParts.push(libDigest)
-  const stableText = stableParts.join('\n\n')
-
-  const dynamicParts: string[] = []
-  if (modeSpecific) dynamicParts.push(modeSpecific)
-  const tp = buildTasteProfile()
-  if (tp) dynamicParts.push(`What you know about this listener's history:\n${tp}`)
-  const recents = recentUtterancesBlock()
-  if (recents) dynamicParts.push(recents)
-
-  const blocks: Anthropic.Messages.TextBlockParam[] = [
-    { type: 'text', text: stableText, cache_control: { type: 'ephemeral' } },
-  ]
-  if (dynamicParts.length > 0) {
-    blocks.push({ type: 'text', text: dynamicParts.join('\n\n') })
-  }
-  return blocks
-}
 
 // Music Man chat
 ipcMain.handle('set-library-context', (_event, ctx: string) => {

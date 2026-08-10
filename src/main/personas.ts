@@ -1,3 +1,7 @@
+import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages'
+import { getLibraryContext, getLibraryDigest } from './library-digest.ts'
+import { recentUtterancesBlock, recentCynthiaBlock } from './persona-memory.ts'
+
 /**
  * The four voices, in one place.
  *
@@ -301,3 +305,91 @@ JSON HYGIENE — your response is parsed by a strict JSON parser and bad strings
 - No trailing commas, no JS-style comments.
 
 Empty arrays are fine. Do NOT invent fixes to look helpful — the user trusts you only as long as your fixes are real.`
+
+// ── Assembling a prompt ──
+//
+// The cores above are constants; a real prompt is a core plus everything the
+// personas need to know RIGHT NOW. Most of that already lives in modules this
+// one can import — the library digest, the library context, what each voice
+// recently said. Two things do not:
+//
+//   activeHost   — which host Jake picked, held in index.ts's settings cache
+//   tasteProfile — the 128-line listener-profile summary, still in index.ts
+//
+// Both arrive as FUNCTIONS, not values. That distinction is the whole reason
+// an earlier attempt at this extraction had to be reverted: capturing mutable
+// state at registration time freezes it, and a frozen activeHost means Jake
+// switches to Megan and keeps getting Music Man. A supplier is read at call
+// time, so it can't go stale.
+
+type PersonaPromptDeps = {
+  activeHost: () => 'mm' | 'megan'
+  tasteProfile: () => string
+}
+
+let deps: PersonaPromptDeps | null = null
+
+/** Wire up the two things that still live in index.ts. Called once at startup. */
+export function initPersonaPrompts(d: PersonaPromptDeps): void {
+  deps = d
+}
+
+const readActiveHostSync = (): 'mm' | 'megan' => deps?.activeHost() ?? 'mm'
+const buildTasteProfile = (): string => deps?.tasteProfile() ?? ''
+
+// 4.5: helper for Stephen Hands paths (DJ Mode + DJ Set + Picks)
+// which assemble their system prompt by concatenating DJ_HANDS_CORE
+// with mode-specific instructions instead of going through
+// buildMusicManPrompt. Wraps the persona with the library digest so
+// Stephen also speaks as someone who knows the whole collection.
+export function withLibraryDigest(corePrefix: string): string {
+  const d = getLibraryDigest()
+  return d ? `${corePrefix}\n\n${d}` : corePrefix
+}
+
+export function buildMusicManPrompt(modeSpecific = ''): TextBlockParam[] {
+  // 4.2.5: read the active host persona from app settings. Default 'mm'
+  // for backward compatibility. Reads syncronously from the cached
+  // settings — async path would require every caller to be async-aware
+  // which is a wider refactor.
+  const activeHost = readActiveHostSync()
+  const personaCore = activeHost === 'megan' ? MEGAN_CORE : MUSIC_MAN_CORE
+  const stableParts = [personaCore]
+  const libCtx = getLibraryContext()
+  if (libCtx) stableParts.push(`The user's music library contains:\n${libCtx}`)
+  // 4.5: structural library digest — lives in the STABLE prompt prefix
+  // because it doesn't change call-to-call (only when the user
+  // imports/deletes tracks, at which point load-tracks/save-library
+  // refresh it). Goes inside the ephemeral cache block alongside the
+  // persona core so it benefits from Anthropic prompt caching — every
+  // character call after the first one in a session reuses the cached
+  // digest with zero extra cost.
+  const libDigest = getLibraryDigest()
+  if (libDigest) stableParts.push(libDigest)
+  const stableText = stableParts.join('\n\n')
+
+  const dynamicParts: string[] = []
+  if (modeSpecific) dynamicParts.push(modeSpecific)
+  const tp = buildTasteProfile()
+  if (tp) dynamicParts.push(`What you know about this listener's history:\n${tp}`)
+  const recents = recentUtterancesBlock()
+  if (recents) dynamicParts.push(recents)
+
+  const blocks: TextBlockParam[] = [
+    { type: 'text', text: stableText, cache_control: { type: 'ephemeral' } },
+  ]
+  if (dynamicParts.length > 0) {
+    blocks.push({ type: 'text', text: dynamicParts.join('\n\n') })
+  }
+  return blocks
+}
+
+export function buildCynthiaPrompt(modeSpecific = ''): string {
+  const parts = [CYNTHIA_CORE]
+  if (modeSpecific) parts.push('\n' + modeSpecific)
+  const libCtx = getLibraryContext()
+  if (libCtx) parts.push(`\nThe user's full library context:\n${libCtx}`)
+  const recents = recentCynthiaBlock()
+  if (recents) parts.push('\n' + recents)
+  return parts.join('\n')
+}
