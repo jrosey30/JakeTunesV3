@@ -16413,8 +16413,8 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.warn('[artwork] startup load failed:', err)
     }
-    // Hand the persona memory its cache before the first read.
-    initPersonaMemory(musicmanMemoryCache)
+    // Hand the persona memory its dependencies before the first read.
+    initPersonaMemory({ cache: musicmanMemoryCache, userDataDir: app.getPath('userData') })
     await loadMusicManMemory().catch(() => {})
     await loadCynthiaMemory().catch(() => {})
     fetchDiscogsCollection()

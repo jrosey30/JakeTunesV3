@@ -32,7 +32,6 @@
 
 import { readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { app } from 'electron'
 
 /** The slice of JsonFileCache this module needs. Structural on purpose — the
  *  cache is index.ts infrastructure and shouldn't be imported back here. */
@@ -42,10 +41,19 @@ interface MemoryCache {
 }
 
 let musicmanMemoryCache: MemoryCache | null = null
+let userDataDir = ''
 
-/** Hand over the Music Man cache. Called once at startup, before load. */
-export function initPersonaMemory(cache: MemoryCache): void {
-  musicmanMemoryCache = cache
+/**
+ * Hand over both dependencies. Called once at startup, before the first load.
+ *
+ * The userData directory arrives here rather than being read from Electron's
+ * `app` because that is the module's ONLY reason to import electron, and an
+ * electron import makes it untestable under `node --test`. Passing it keeps
+ * both dependencies arriving the same way, through one door.
+ */
+export function initPersonaMemory(deps: { cache: MemoryCache; userDataDir: string }): void {
+  musicmanMemoryCache = deps.cache
+  userDataDir = deps.userDataDir
 }
 
 // ── Music Man ──
@@ -87,12 +95,12 @@ export function recentUtterancesBlock(): string {
 
 interface CynthiaUtterance { text: string; at: number }
 let recentCynthiaUtterances: CynthiaUtterance[] = []
-/** Lazy: app.getPath is only valid once Electron has resolved its paths, and
- *  this module is imported at the very top of main. */
-const cynthiaMemoryPath = () => join(app.getPath('userData'), 'cynthia-memory.json')
+/** Lazy: userDataDir isn't known until init runs. */
+const cynthiaMemoryPath = () => join(userDataDir, 'cynthia-memory.json')
 const CYNTHIA_MEMORY_MAX = 8
 
 export async function loadCynthiaMemory(): Promise<void> {
+  if (!userDataDir) return
   try {
     const raw = await readFile(cynthiaMemoryPath(), 'utf-8')
     const parsed = JSON.parse(raw)
@@ -101,6 +109,8 @@ export async function loadCynthiaMemory(): Promise<void> {
 }
 
 async function saveCynthiaMemory(): Promise<void> {
+  // Without init, join('') would drop the file in the cwd. Rather drop it.
+  if (!userDataDir) return
   try {
     await writeFile(cynthiaMemoryPath(), JSON.stringify(recentCynthiaUtterances), 'utf-8')
   } catch { /* non-fatal */ }
