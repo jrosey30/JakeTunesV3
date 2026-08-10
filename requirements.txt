@@ -18,6 +18,9 @@ mutagen
 # librosa-only is the simpler architecture regardless.)
 librosa
 
-# NAS music engine (scripts/music_engine.py) — inbox watcher. Optional;
-# without it the engine falls back to a 5s poll loop.
+# NAS music engine (scripts/music_engine.py / custom_audio_engine.py) —
+# inbox watcher. Optional; without it the engine falls back to a 5s poll loop.
 watchdog
+
+# HTTP client for custom_audio_engine.py (AudD upload + Deezer/MB/Discogs).
+requests
