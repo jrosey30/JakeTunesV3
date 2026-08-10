@@ -16475,6 +16475,39 @@ app.whenReady().then(async () => {
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
 
+    // ── homemini FIRST, before any filesystem call ────────────────────────
+    // Jake, 2026-08-10: "it doesnt play... NON FUCKING STOP", on a machine
+    // where the same track plays one minute and hangs the next.
+    //
+    // Everything below this point touches the disk before deciding anything:
+    // resolveContainedPath calls realpath(), the streamRoot fallback calls
+    // existsSync(), the streamed-track test calls lstat(). On workmini those
+    // paths are SYMLINKS into an SMB mount to the house, and that mount wedges
+    // — measured, repeatedly: a directory listing took 203 seconds while the
+    // app sat in uninterruptible state. Those calls then block in the kernel
+    // and the request never returns. It did not matter that the bytes were
+    // going to come from homemini anyway; we never got far enough to ask.
+    //
+    // That is the whole random-looking failure: whether a song plays depends
+    // on whether the mount happens to be wedged in that instant, not on the
+    // song. It is also why the phone never had this problem — it only ever
+    // talks to homemini over HTTP and touches no mount.
+    //
+    // So on a streaming client, resolve the track from the path STRING and go
+    // straight to homemini. trackIdForAbsPath only stats library.json, which
+    // lives on the LOCAL disk. Nothing here can touch the NAS. If homemini
+    // misses, we fall through to the original disk path unchanged.
+    if ((await readStreamSourceCached()) === 'homemini') {
+      const streamId = await trackIdForAbsPath(rawPath)
+      if (streamId != null) {
+        const wantsFlac = codecByAbsPath.get(rawPath) === 'alac'
+        const early = await fetchAudioFromHomemini(
+          streamId, request.headers.get('range'), wantsFlac,
+        )
+        if (early) return early
+      }
+    }
+
     // CONTAINMENT (2026-08-03, from the Cursor "fortify internal piping" audit).
     // This handler used to hand `rawPath` straight to stat/read: an absolute
     // path taken out of a URL and served verbatim. Anything able to issue an
