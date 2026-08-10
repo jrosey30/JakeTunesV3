@@ -232,3 +232,13 @@
 .df-learned-stopped {
   margin-top: var(--space-4); font-size: var(--font-11); color: var(--text-dim);
 }
+
+/* A lane-derived reason is TRUE but weaker evidence than a validated bridge
+   to an artist Jake plays, so it reads quieter — the eye should still find
+   "Because you play Daft Punk" first. Both beat silence, which is what made
+   two out of five cards look arbitrary. */
+.df-because--lane {
+  font-style: normal;
+  color: var(--text-dim);
+  font-weight: var(--fw-normal);
+}

@@ -217,6 +217,36 @@ export default function NewForYouView() {
   }, [])
   useEffect(() => { loadLearned() }, [loadLearned])
 
+  /**
+   * Every card states why it is there.
+   *
+   * Jake: Discovery is "inconsistent... hard to know if you are actually
+   * learning my tastes". Measured on his live feed: 27 cards, 16 with a
+   * reason. Two out of five said nothing, and a card with no stated reason
+   * reads as random — which makes the whole page read as random.
+   *
+   * `because` is the strong form: a VALIDATED bridge to an artist he really
+   * plays. It stays the headline when present, and is never invented — the
+   * feed's own rule is that a fabricated "because you like…" is worse than
+   * none, and that rule is right.
+   *
+   * The fallback is not a weaker guess, it is a DIFFERENT KIND of true: the
+   * lane is itself a reason, structurally, by how the card was selected. A
+   * brand-new card IS a recent release; a time-machine card IS from an era in
+   * his library. Stating that is honest, and it beats silence — silence is
+   * what made the page feel arbitrary.
+   */
+  const laneReason = (c: FeedCard): string | null => {
+    switch (c.lane) {
+      case 'brand-new': return c.year ? `New in ${c.year}` : 'Out now'
+      case 'time-machine': return c.year ? `From ${c.year} — an era you play` : 'From an era you play'
+      case 'scene': return 'From the scene around your library'
+      case 'missing': return 'A gap in a genre you play'
+      case 'songs': return 'One song to try, not a whole record'
+      default: return null
+    }
+  }
+
   // The Record Shop (2026-08-07 rebrand): display-only lane renames +
   // shop-flow order. Feed lane ids are a wire contract — never renamed.
   const SHOP_NAMES: Record<string, string> = {
@@ -318,6 +348,8 @@ export default function NewForYouView() {
                   {c.type !== 'artist' && <div className="df-artist" title={c.artist}>{c.artist}</div>}
                   {c.because
                     ? <div className="df-because">Because you play <b>{c.because}</b></div>
+                    : laneReason(c)
+                    ? <div className="df-because df-because--lane">{laneReason(c)}</div>
                     : null}
                   {c.why && <div className="df-why">{c.why}</div>}
                   <button type="button" className={`df-add${isAdded ? ' df-add--done' : ''}`}
