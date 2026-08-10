@@ -52,8 +52,6 @@ const electronAPI = {
   // colour itself correctly.
   getActiveHost: (): Promise<'mm' | 'megan'> =>
     ipcRenderer.invoke('get-active-host'),
-  isStreamingHost: (): Promise<boolean> =>
-    ipcRenderer.invoke('is-streaming-host'),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
