@@ -1163,6 +1163,40 @@ export function useAudio(opts?: { primary?: boolean }) {
 
     sharedHowl = howl
     howl.play()
+
+    // ── play() retry ──────────────────────────────────────────────────
+    // Jake, 2026-08-10, all day: tracks that sit at 0:00, silent, at random,
+    // on any song. Traced live on workmini with the player instrumented:
+    //
+    //   working track:  play() -> load -> play() -> EMIT play
+    //   stuck track:    play() -> load -> play() -> (nothing)
+    //
+    // Both get the same double play() — one from here before the file has
+    // loaded (Howler queues it), one when the queue drains on load. On the
+    // stuck ones the second call returns normally, emits nothing, creates no
+    // audio source, and reports no error. The Howl is 'loaded', _paused stays
+    // true, and it sits there forever. Calling play() ONE more time by hand
+    // started it immediately every time.
+    //
+    // So: if the sound is loaded and still not playing shortly after, ask
+    // again. Guarded on sharedHowl identity so a track the user has already
+    // moved past is never resurrected, and capped so a genuinely dead track
+    // fails instead of looping.
+    let playRetries = 0
+    const retryIfStuck = () => {
+      if (sharedHowl !== howl) return          // superseded — leave it alone
+      if (howl.state() !== 'loaded') return    // still loading; not our case
+      if (howl.playing()) return               // started fine
+      if (playRetries >= 3) {
+        logAudioEvent('howl.play.gaveup', { title: track.title, tries: playRetries })
+        return
+      }
+      playRetries++
+      logAudioEvent('howl.play.retry', { title: track.title, attempt: playRetries })
+      try { howl.play() } catch { /* nothing more to try */ }
+      window.setTimeout(retryIfStuck, 400)
+    }
+    window.setTimeout(retryIfStuck, 350)
   }, [updatePosition])
 
   // Bind the natural-end handler to a ref so both this loadAndPlay's
