@@ -4160,17 +4160,33 @@ async function trackIdForAbsPath(absPath: string): Promise<string | number | nul
   } catch { return null }
   return streamTrackIdByColonPath.get(colon) ?? null
 }
-async function fetchAudioFromHomemini(id: string | number, rangeHeader: string | null): Promise<Response | null> {
+async function fetchAudioFromHomemini(
+  id: string | number,
+  rangeHeader: string | null,
+  // ALAC only. Chromium has no ALAC decoder, so homemini transcodes to FLAC
+  // on the fly (its copy of the file is on local disk, so this is nearly
+  // free). Without it the Mac had to read the ALAC itself over SMB from the
+  // NAS — 0.09s vs two minutes on a remote machine. iOS never sends this:
+  // AVPlayer decodes ALAC natively and keeps the untouched raw path.
+  wantFlac = false,
+): Promise<Response | null> {
   try {
     const reqHeaders: Record<string, string> = {}
-    if (rangeHeader) reqHeaders['Range'] = rangeHeader
-    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, {
+    // A transcode is produced live, so its length isn't known up front and
+    // homemini answers 200 with Accept-Ranges: none. Sending a Range there
+    // just invites a mismatch — ask for the whole stream.
+    if (rangeHeader && !wantFlac) reqHeaders['Range'] = rangeHeader
+    const qs = wantFlac ? '?fmt=flac' : ''
+    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${qs}`, {
       headers: reqHeaders,
       signal: AbortSignal.timeout(8000),
     })
     if (!res.ok && res.status !== 206) return null
     if (!res.body) return null
-    const out: Record<string, string> = { 'Accept-Ranges': 'bytes', 'X-JT-Audio-Source': 'homemini' }
+    const out: Record<string, string> = {
+      'Accept-Ranges': wantFlac ? 'none' : 'bytes',
+      'X-JT-Audio-Source': wantFlac ? 'homemini-flac' : 'homemini',
+    }
     const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
     const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
     const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
@@ -16658,7 +16674,11 @@ app.whenReady().then(async () => {
     // read below — a streamed track with no local bytes then 404s cleanly
     // (surfaced as unavailable) rather than hanging the player.
     const isAlac = codecByAbsPath.get(rawPath) === 'alac' || ext === '.alac'
-    if (!isAlac) {
+    // ALAC used to be excluded here because homemini served it raw and
+    // Chromium cannot decode it. homemini transcodes to FLAC on request now,
+    // so every codec takes the same fast path the phone has always used —
+    // which is the whole point: 9,273 tracks, no exceptions.
+    {
       let streamed = process.env.JT_STREAM_TEST === '1'
       // Route a SYMLINKED track to homemini ONLY when THIS machine is a homemini
       // streaming client (app-settings library.streamSource === 'homemini').
@@ -16672,7 +16692,7 @@ app.whenReady().then(async () => {
       if (streamed) {
         const id = await trackIdForAbsPath(rawPath)
         if (id != null) {
-          const remote = await fetchAudioFromHomemini(id, request.headers.get('range'))
+          const remote = await fetchAudioFromHomemini(id, request.headers.get('range'), isAlac)
           if (remote) return remote
         }
       }
