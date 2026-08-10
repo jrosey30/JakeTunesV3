@@ -1093,7 +1093,23 @@ export function useAudio(opts?: { primary?: boolean }) {
       //     works with html5:true). EQ is off by default per the
       //     existing comments; if someone needs it later we wire
       //     AudioBufferSource → EQ chain instead.
-      html5: false,
+      // html5, NOT Web Audio — and this reverses the 4.5 decision on purpose.
+      //
+      // Web Audio mode XHRs the whole file and decodes it. When that XHR
+      // errors, howler.js:2430 silently switches the Howl to HTML5, EMPTIES
+      // _sounds (destroying the sound our play() was queued on) and reloads.
+      // The track then reports state 'loaded' with _paused true, no
+      // bufferSource, no error and no playerror, and never makes a sound.
+      // Measured on workmini all day: any track, at random, stuck at 0:00.
+      //
+      // html5 mode never XHRs, so that path cannot be entered. It also
+      // streams instead of waiting for the whole file, which matters when the
+      // bytes come over a link. A plain audio element on these exact URLs
+      // reaches canplaythrough in ~10ms.
+      //
+      // The pop this replaced was a buffer underrun on a LOCAL disk read.
+      // A pop is recoverable; silence is not.
+      html5: true,
       loop: false,
       volume: startVolume,
       onplay: () => {
