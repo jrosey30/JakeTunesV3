@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { foldAccents } from '../../common/fold-text.ts'
+import { foldAccents, withinEditDistance, typoBudget } from '../../common/fold-text.ts'
 import { recoArtistMatches, recoTitleMatches } from '../reco-match.ts'
 import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches} from '../streamrip-match.ts'
 
@@ -274,5 +274,18 @@ describe('accent folding — catalogues spell names with letters we were deletin
   it('still refuses genuinely different artists', () => {
     assert.equal(recoArtistMatches('JAY-Z', 'Jay Chou'), false)
     assert.equal(recoArtistMatches('Beyoncé', 'Beyond'), false)
+  })
+})
+
+describe('typo tolerance — Apple corrects the spelling, we must not discard it', () => {
+  it('accepts a plausible typo', () => {
+    assert.ok(withinEditDistance('radiohed', 'radiohead', typoBudget('radiohed'.length)))
+    assert.ok(withinEditDistance('turnstyle', 'turnstile', typoBudget('turnstyle'.length)))
+    assert.ok(withinEditDistance('zepplin', 'zeppelin', typoBudget('zepplin'.length)))
+  })
+  it('refuses genuinely different words', () => {
+    assert.equal(withinEditDistance('radiohead', 'radiator', typoBudget(9)), false)
+    assert.equal(withinEditDistance('jay', 'kay', typoBudget(3)), false)   // 3 chars: no budget
+    assert.equal(withinEditDistance('drake', 'blake', typoBudget(5)), false)
   })
 })

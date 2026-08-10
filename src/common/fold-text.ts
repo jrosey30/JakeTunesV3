@@ -49,3 +49,43 @@ export function foldAccents(s: string | null | undefined): string {
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
 }
+
+/**
+ * Is `a` within `max` edits of `b`? Bounded Levenshtein with an early exit.
+ *
+ * Needed because iTunes ALREADY corrects a typo — "radiohed" returns Radiohead,
+ * "beyonce" returns Beyoncé — and then our own scorer threw the right answer
+ * away, because "radiohed" is not a substring of "radiohead" and nothing else
+ * matched. Apple did the hard part and we deleted the result.
+ */
+export function withinEditDistance(a: string, b: string, max: number): boolean {
+  if (a === b) return true
+  if (Math.abs(a.length - b.length) > max) return false
+  const m = a.length, n = b.length
+  let prev = new Array<number>(n + 1)
+  let cur = new Array<number>(n + 1)
+  for (let j = 0; j <= n; j++) prev[j] = j
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i
+    let best = cur[0]
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      )
+      if (cur[j] < best) best = cur[j]
+    }
+    if (best > max) return false          // whole row already too far
+    const t = prev; prev = cur; cur = t
+  }
+  return prev[n] <= max
+}
+
+/** Edits allowed for a word of this length — 1 for short, 2 from 7 chars up.
+ *  Anything looser starts matching genuinely different words. */
+export function typoBudget(len: number): number {
+  if (len <= 3) return 0
+  if (len <= 6) return 1
+  return 2
+}

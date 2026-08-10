@@ -14386,8 +14386,18 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
     // signal to float the recognizable artist up and bury one-off covers.
     let raw: ItunesSuggestion[] | null = null
     try {
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=25`
-      const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      // Apple THROTTLES bursts, and this search fires on every typing pause.
+      // Measured: three back-to-back queries return empty, the same three
+      // with a 2s gap all return 200 with results. A throttled response used
+      // to fall straight through to the failover and render a thin page — the
+      // search looked broken when it had simply been asked too fast. One
+      // short retry costs 400ms and recovers most of them.
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=60`
+      let res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      if (!res.ok || res.status === 403) {
+        await new Promise((r) => setTimeout(r, 400))
+        res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      }
       if (res.ok) {
         const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
         raw = (data.results || [])
@@ -14439,8 +14449,8 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
           const hit = (aData.results || []).find((a) =>
             foldAccents(a.artistName || '').replace(/[^a-z0-9]/g, '') === foldedQ)
           if (hit?.artistId) {
-            const lRes = await fetch(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=40`,
-              { signal: AbortSignal.timeout(4500) })
+            const lRes = await fetch(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=120`,
+              { signal: AbortSignal.timeout(6000) })
             if (lRes.ok) {
               const lData = await lRes.json() as { results?: Array<Record<string, unknown>> }
               const canonical = foldAccents(hit.artistName || '').replace(/[^a-z0-9]/g, '')

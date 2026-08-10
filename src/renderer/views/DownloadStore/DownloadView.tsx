@@ -5,7 +5,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
-import { foldAccents } from '../../../common/fold-text'
+import { foldAccents, withinEditDistance, typoBudget } from '../../../common/fold-text'
 
 /**
  * Download v3 (2026-07-16) — "browse fast, resolve slow".
@@ -45,6 +45,15 @@ function scoreField(field: string, query: string, qTokens: string[]): number {
   if ((' ' + field).includes(' ' + query)) return 50
   if (field.includes(query)) return 30
   if (qTokens.length > 1 && qTokens.every((qt) => field.includes(qt))) return 20
+  // TYPO TIER — last, so it never outranks a real match. iTunes already
+  // corrects the spelling ("radiohed" -> Radiohead); this stops us discarding
+  // the correction because it isn't a substring of what was typed.
+  const fTokens = field.split(' ').filter(Boolean)
+  if (qTokens.length && fTokens.length) {
+    const near = qTokens.every((qt) =>
+      fTokens.some((ft) => withinEditDistance(qt, ft, typoBudget(qt.length))))
+    if (near) return 14
+  }
   return 0
 }
 const stripThe = (s: string): string => s.replace(/^the /, '')
@@ -62,6 +71,13 @@ export function scoreResult(q: string, qTokens: string[], title: string, artist:
   )
   return Math.max(t * 1.0 + a * 1.15, combo * 1.2)
 }
+
+// Jake, 2026-08-09: "it only shows me a very limited number of things if i
+// search via artist (i think only 7 albums and 9 songs max)." It was 8 albums
+// minus the hero, and 12 songs. An artist search now returns their catalogue,
+// so the shelf has something to show.
+const MAX_ALBUMS = 30
+const MAX_SONGS = 60
 
 interface RipStatus { installed: boolean; version?: string; reason?: string }
 
@@ -287,7 +303,7 @@ export default function DownloadView() {
         releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre, explicitness: s.explicitness,
       })
     }
-    const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, 8)
+    const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, MAX_ALBUMS)
 
     const topSong = songs[0] ?? null
     const topAlbum = albums[0] ?? null
@@ -296,7 +312,7 @@ export default function DownloadView() {
       topSong && topAlbum ? (topAlbum.score > topSong.score ? topAlbum : topSong) : (topSong || topAlbum)
     return {
       hero,
-      songs: songs.filter((s) => s !== hero).slice(0, 12),
+      songs: songs.filter((s) => s !== hero).slice(0, MAX_SONGS),
       albums: albums.filter((a) => a !== hero),
     }
   }, [results, query, libIndex])
