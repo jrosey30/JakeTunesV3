@@ -75,6 +75,7 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { foldAccents } from '../common/fold-text.ts'
+import { summariseLearning, type LedgerRow } from './discovery-learned.ts'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
 import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
@@ -1331,6 +1332,37 @@ ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok:
 
 // Jake's thumbs-down: suppress this artist from Discovery permanently and
 // drop them from the current cache so the card vanishes on next read.
+/**
+ * What the brain has actually learned — read from the ledger it already keeps,
+ * so the panel can never disagree with the data. Jake: "hard to know if you
+ * are actually learning my tastes or not based on what is recommended."
+ * Answering that honestly needs the volume, not just the conclusions.
+ */
+ipcMain.handle('discovery-learned', async () => {
+  try {
+    let rows: LedgerRow[] = []
+    try {
+      const raw = await readFile(TASTE_LEDGER_PATH(), 'utf-8')
+      rows = raw.split('\n').filter(Boolean).map((l) => {
+        try { return JSON.parse(l) as LedgerRow } catch { return null }
+      }).filter((r): r is LedgerRow => !!r)
+    } catch { /* no ledger yet = nothing learned, which the summary says */ }
+
+    let notForMe: Record<string, { artist?: string; at?: number }> = {}
+    try { notForMe = (await discoveryFeedbackCache.get())?.notForMe ?? {} } catch { /* none */ }
+
+    let weightsAt: string | undefined
+    try {
+      const w = JSON.parse(await readFile(join(app.getPath('userData'), 'taste-weights.json'), 'utf-8')) as { updatedAt?: string }
+      weightsAt = w?.updatedAt
+    } catch { /* learner hasn't run */ }
+
+    return { ok: true, summary: summariseLearning(rows, notForMe, weightsAt, Date.now()) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'could not read the ledger' }
+  }
+})
+
 ipcMain.handle('discovery-not-for-me', async (_e, artist: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }

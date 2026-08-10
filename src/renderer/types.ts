@@ -239,6 +239,21 @@ export interface RecoSyncMeta {
 // "Listen to the List" add form.
 /** ⚠️ TWIN: src/main/index.ts (ItunesSuggestion). Crosses IPC — a field added
  *  on one side only is silently dropped, never caught. Change both together. */
+/** What the brain has learned, as reported by main/discovery-learned.ts. */
+export interface DiscoveryLearned {
+  discoverSignals: number
+  accepts: number
+  rejects: number
+  totalSignals: number
+  stripSignals: number
+  lanes: Array<{ lane: string; accepts: number; rejects: number }>
+  stoppedShowing: Array<{ artist: string; at: number }>
+  confidence: 'none' | 'thin' | 'growing' | 'solid'
+  headline: string
+  learnedAt?: string
+  daysCovered: number
+}
+
 export interface ItunesSuggestion {
   song: string
   artist: string
@@ -670,6 +685,7 @@ declare global {
       // fingerprintSummary feed the "Seeded from" chips + "because you play X" reasoning.
       getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; brainPct?: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
       discoveryNotForMe: (artist: string) => Promise<{ ok: boolean }>
+      discoveryLearned?: () => Promise<{ ok: boolean; summary?: DiscoveryLearned; error?: string }>
       getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }>
       tasteLedgerAppend?: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => Promise<{ ok: boolean; appended?: number }>
       getTasteWeights?: () => Promise<{ ok: boolean; weights: Record<string, unknown> }>

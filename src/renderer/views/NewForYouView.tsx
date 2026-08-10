@@ -15,7 +15,8 @@
  * they got here; "You're Missing" comes straight from MusicBrainz
  * discographies minus what the library owns.
  */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from 'react'
+import type { DiscoveryLearned } from '../types'
 import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
@@ -176,6 +177,7 @@ export default function NewForYouView() {
 
   const notForMe = (c: FeedCard) => {
     void window.electronAPI.discoveryNotForMe?.(c.artist)
+    window.setTimeout(loadLearned, 300)   // the number must visibly move
     void window.electronAPI.tasteLedgerAppend?.([{
       surface: 'discover', verdict: 'reject',
       key: { artist: c.artist, title: c.title },
@@ -201,6 +203,19 @@ export default function NewForYouView() {
       source: 'radar',
     })
   }
+
+  // ── What I've learned ────────────────────────────────────────────────
+  // Jake: "hard to know if you are actually learning my tastes or not based
+  // on what is recommended." So the page says so, out loud, using the ledger
+  // it already keeps. Refetched whenever a verdict is given, because the
+  // whole point is that an action visibly moves the number.
+  const [learned, setLearned] = useState<DiscoveryLearned | null>(null)
+  const loadLearned = useCallback(() => {
+    window.electronAPI.discoveryLearned?.()
+      .then((r) => { if (r?.ok && r.summary) setLearned(r.summary) })
+      .catch(() => { /* the panel simply doesn't render */ })
+  }, [])
+  useEffect(() => { loadLearned() }, [loadLearned])
 
   // The Record Shop (2026-08-07 rebrand): display-only lane renames +
   // shop-flow order. Feed lane ids are a wire contract — never renamed.
@@ -228,6 +243,42 @@ export default function NewForYouView() {
         <button type="button" className="df-step-inside" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
           title="Walk into the shop">Step Inside</button>
       </div>
+
+      {learned && (
+        <section className={`df-learned df-learned--${learned.confidence}`}>
+          <div className="df-learned-head">
+            <span className="df-learned-eyebrow">What I've learned</span>
+            <span className="df-learned-headline">{learned.headline}</span>
+          </div>
+          <div className="df-learned-stats">
+            <span><b>{learned.accepts}</b> kept</span>
+            <span><b>{learned.rejects}</b> turned down</span>
+            {learned.stripSignals > 0 && (
+              <span className="df-learned-dim">{learned.stripSignals.toLocaleString()} more from your playlists</span>
+            )}
+            {learned.learnedAt && (
+              <span className="df-learned-dim">last studied {new Date(learned.learnedAt).toLocaleDateString()}</span>
+            )}
+          </div>
+          {learned.lanes.length > 0 && (
+            <div className="df-learned-lanes">
+              {learned.lanes.map((l: DiscoveryLearned['lanes'][number]) => (
+                <span key={l.lane} className="df-learned-lane">
+                  {SHOP_NAMES[l.lane] ?? l.lane}
+                  <b className="df-learned-yes">+{l.accepts}</b>
+                  {l.rejects > 0 && <b className="df-learned-no">−{l.rejects}</b>}
+                </span>
+              ))}
+            </div>
+          )}
+          {learned.stoppedShowing.length > 0 && (
+            <div className="df-learned-stopped">
+              Stopped showing you: {learned.stoppedShowing.slice(0, 6).map((s2: DiscoveryLearned['stoppedShowing'][number]) => s2.artist).join(', ')}
+              {learned.stoppedShowing.length > 6 ? ` +${learned.stoppedShowing.length - 6} more` : ''}
+            </div>
+          )}
+        </section>
+      )}
 
       {loading && lanes.length === 0 && (
         <PageGate note="Reading your taste…" layout="grid" />

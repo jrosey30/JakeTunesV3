@@ -182,3 +182,53 @@
   font-weight: 700;
   color: rgb(var(--brand-orange-rgb));
 }
+
+/* ── "What I've learned" ───────────────────────────────────────────────────
+   Jake: "hard to know if you are actually learning my tastes or not based on
+   what is recommended." The page answers that out loud now, from the ledger
+   it already keeps. Styled as a NOTE rather than a hero — it reports on the
+   racks, it isn't one of them — and it gets quieter as confidence rises,
+   because a system that knows you should stop explaining itself. */
+.df-learned {
+  margin: 0 0 var(--space-7);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-warm);
+  border-left: 3px solid var(--text-dim);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.55);
+}
+/* Thin evidence reads as a warning; a solid read fades into the page. */
+.df-learned--none,
+.df-learned--thin    { border-left-color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.055); }
+.df-learned--growing { border-left-color: #b08a3a; }
+.df-learned--solid   { border-left-color: var(--color-success); opacity: 0.85; }
+
+.df-learned-head { display: flex; flex-direction: column; gap: 3px; }
+.df-learned-eyebrow {
+  font-size: var(--font-10); font-weight: var(--fw-heavy);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase; color: var(--text-dim);
+}
+.df-learned-headline { font-size: var(--font-14); font-weight: var(--fw-bold); color: var(--text-primary); }
+
+.df-learned-stats {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-5);
+  margin-top: var(--space-4); font-size: var(--font-12); color: var(--text-secondary);
+}
+.df-learned-stats b { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.df-learned-dim { color: var(--text-dim); }
+
+.df-learned-lanes { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.df-learned-lane {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  font-size: var(--font-11); color: var(--text-secondary);
+  padding: 2px var(--space-3);
+  border: 1px solid var(--border-warm); border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.6);
+}
+.df-learned-lane b { font-variant-numeric: tabular-nums; }
+.df-learned-yes { color: var(--color-success); }
+.df-learned-no  { color: var(--brand-orange-dark); }
+
+.df-learned-stopped {
+  margin-top: var(--space-4); font-size: var(--font-11); color: var(--text-dim);
+}
