@@ -20,6 +20,18 @@ import {
   loadCynthiaMemory, noteCynthiaUtterance, recentCynthiaBlock,
 } from '../persona-memory.ts'
 
+/** noteCynthiaUtterance fires the write and returns; a fixed sleep here is a
+ *  race that loses under load. Poll to a deadline instead. */
+async function readWhenWritten(path: string, timeoutMs = 2000): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try { return await readFile(path, 'utf-8') } catch (err) {
+      if (Date.now() > deadline) throw err
+      await new Promise(r => setTimeout(r, 10))
+    }
+  }
+}
+
 /** Stand-in for JsonFileCache. */
 function fakeCache() {
   let stored: unknown[] = []
@@ -92,9 +104,15 @@ describe('persona memory', () => {
   test('Cynthia persists to disk and reads back', async () => {
     noteCynthiaUtterance('fixed 3 covers')
     noteCynthiaUtterance('renamed 1 album')
-    await new Promise(r => setTimeout(r, 150))
 
-    const onDisk = JSON.parse(await readFile(join(dir, 'cynthia-memory.json'), 'utf-8'))
+    // Poll until BOTH landed — the first write may win the race alone.
+    let onDisk: { text: string }[] = []
+    const deadline = Date.now() + 2000
+    do {
+      onDisk = JSON.parse(await readWhenWritten(join(dir, 'cynthia-memory.json')))
+      if (onDisk.length === 2) break
+      await new Promise(r => setTimeout(r, 10))
+    } while (Date.now() < deadline)
     assert.equal(onDisk.length, 2)
     assert.equal(onDisk[1].text, 'renamed 1 album')
 

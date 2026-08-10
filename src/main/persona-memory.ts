@@ -30,8 +30,9 @@
  * goes through these functions, so nothing can capture a stale binding.
  */
 
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { join } from 'path'
+import { writeJsonAtomic } from './atomic-write.ts'
 
 /** The slice of JsonFileCache this module needs. Structural on purpose — the
  *  cache is index.ts infrastructure and shouldn't be imported back here. */
@@ -112,7 +113,14 @@ async function saveCynthiaMemory(): Promise<void> {
   // Without init, join('') would drop the file in the cwd. Rather drop it.
   if (!userDataDir) return
   try {
-    await writeFile(cynthiaMemoryPath(), JSON.stringify(recentCynthiaUtterances), 'utf-8')
+    // Atomic, and not for tidiness. This used to be a bare writeFile, and two
+    // noteCynthiaUtterance calls in quick succession — which is exactly how she
+    // reports a batch of finished jobs — put two overlapping writes on the same
+    // path. A read landing in the gap gets a truncated file and throws
+    // "Unexpected end of JSON input". Caught by a flaky test on 2026-08-09;
+    // rename() is atomic, so a reader now sees the old file or the new one.
+    // pretty=false keeps the on-disk format exactly as it was.
+    await writeJsonAtomic(cynthiaMemoryPath(), recentCynthiaUtterances, false)
   } catch { /* non-fatal */ }
 }
 
