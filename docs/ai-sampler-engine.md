@@ -74,6 +74,36 @@ The FFmpeg macro sequencer builds `adelay` + `amix` (with optional `areverse`,
 `asetrate` pitch, and chained `atempo` stretch) and writes a FLAC loop under
 `$AI_SAMPLER_VAULT/renders/`.
 
+## MPC swing (GrooveSequencer)
+
+Odd 16th-note steps get a micro-delay; even (downbeat) steps stay on the grid:
+
+```
+step = 60 / bpm / 4
+offset = step * (swing_percent - 50) / 100
+even → step_index * step
+odd  → step_index * step + offset
+```
+
+| swing_percent | Feel |
+|---|---|
+| 50 | Straight / robotic |
+| 54–58 | Head-nod boom-bap / house pocket (default **58**) |
+| 75 | Heavy shuffle (clamped max) |
+
+```bash
+# Ordered chops on a swung 16th grid:
+python3 scripts/ai_sampler_engine.py swing-loop c0.flac c1.flac c2.flac c3.flac \
+  --bpm 90 --swing 58 --out remix_loop.flac
+
+# Same entrypoint via custom_audio_engine:
+python3 scripts/custom_audio_engine.py --swing-loop c0.flac c1.flac c2.flac \
+  --bpm 90 --swing 58 --swing-out remix_loop.flac
+
+# Pipeline / default boom-bap plan apply swing automatically:
+python3 scripts/ai_sampler_engine.py pipeline track.flac --bpm 90 --swing 58
+```
+
 ## Nightly inbox
 
 Drop job JSON files into `$JT_STATE_DIR/sampling-inbox/`:

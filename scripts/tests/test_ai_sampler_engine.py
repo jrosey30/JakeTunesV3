@@ -104,6 +104,74 @@ def test_atempo_chain() -> None:
     check("atempo splits <0.5", "atempo=0.5" in chain2, str(chain2))
 
 
+def test_mpc_swing_math() -> None:
+    bpm = 120.0
+    step = ase.sixteenth_duration(bpm)
+    check("16th at 120bpm is 0.125s", abs(step - 0.125) < 1e-9, str(step))
+
+    # 50% = straight grid
+    check("50% even step on grid", abs(ase.mpc_step_delay_seconds(0, bpm, 50) - 0.0) < 1e-9)
+    check("50% odd step on grid", abs(ase.mpc_step_delay_seconds(1, bpm, 50) - step) < 1e-9)
+    check("50% offset is zero", abs(ase.swing_offset_seconds(bpm, 50)) < 1e-12)
+
+    # 58% head-nod: odd steps delayed by 0.08 * sixteenth
+    offset = ase.swing_offset_seconds(bpm, 58)
+    check("58% offset = 0.08 * 16th", abs(offset - step * 0.08) < 1e-9, str(offset))
+    even = ase.mpc_step_delay_seconds(2, bpm, 58)
+    odd = ase.mpc_step_delay_seconds(3, bpm, 58)
+    check("58% even stays on grid", abs(even - 2 * step) < 1e-9, str(even))
+    check("58% odd gets offset", abs(odd - (3 * step + offset)) < 1e-9, str(odd))
+
+    # Clamp
+    check("clamp below 50 → 50", ase.clamp_swing_percent(40) == 50.0)
+    check("clamp above 75 → 75", ase.clamp_swing_percent(90) == 75.0)
+
+    # apply_mpc_swing_to_plan leaves downbeats, shifts off-beat 16ths
+    plan = ase.SequencePlan(
+        events=[
+            ase.SequenceEvent(sample_index=0, at_seconds=0.0),
+            ase.SequenceEvent(sample_index=1, at_seconds=step),
+            ase.SequenceEvent(sample_index=0, at_seconds=2 * step),
+        ],
+        target_bpm=bpm,
+        swing_percent=50.0,
+    )
+    swung = ase.apply_mpc_swing_to_plan(plan, 58.0)
+    check("plan swing stamped", abs(swung.swing_percent - 58.0) < 1e-9)
+    check("downbeat unmoved", abs(swung.events[0].at_seconds - 0.0) < 1e-9)
+    check(
+        "offbeat delayed",
+        abs(swung.events[1].at_seconds - (step + offset)) < 1e-6,
+        str(swung.events[1].at_seconds),
+    )
+
+
+def test_groove_sequencer_render() -> None:
+    """Bounce a tiny swung loop with FFmpeg (no librosa required)."""
+    with tempfile.TemporaryDirectory(prefix="groove_swing_") as tmp:
+        tmp_path = Path(tmp)
+        click = tmp_path / "hit.flac"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "sine=frequency=200:sample_rate=44100",
+                "-t", "0.03", "-c:a", "flac", str(click),
+            ],
+            check=True,
+        )
+        chops = [click, click, click, click]
+        seq = ase.GrooveSequencer(tmp_path)
+        out = seq.compile_swing_loop(
+            chops, target_bpm=120.0, swing_percent=58.0, output_filename="swung.flac"
+        )
+        check("swing loop rendered", out is not None and Path(out).is_file(), str(out))
+        # Straight vs swung should differ in filter timing — just ensure 50% also works
+        out50 = seq.compile_swing_loop(
+            chops, target_bpm=120.0, swing_percent=50.0, output_filename="straight.flac"
+        )
+        check("straight loop rendered", out50 is not None and Path(out50).is_file())
+
+
 def test_chop_and_sequence() -> None:
     if ase.librosa is None:
         print("  skip chop/sequence — librosa not installed")
@@ -144,6 +212,11 @@ def test_chop_and_sequence() -> None:
 
         plan = engine.build_default_boom_bap_plan(manifest, bars=1, target_bpm=90.0)
         check("default plan events", len(plan.events) >= 4, str(len(plan.events)))
+        check(
+            "default plan has head-nod swing",
+            abs(plan.swing_percent - ase.DEFAULT_SWING_PERCENT) < 1e-9,
+            str(plan.swing_percent),
+        )
 
         out = vault / "renders" / "test_remix.flac"
         rendered = engine.sequence_from_manifest_plan(manifest, plan, out)
@@ -182,6 +255,8 @@ def main() -> int:
     os.environ.setdefault("AI_SAMPLER_SEPARATOR", "none")
     test_parse_event_phrase()
     test_atempo_chain()
+    test_mpc_swing_math()
+    test_groove_sequencer_render()
     test_chop_and_sequence()
     test_pipeline_no_default()
     print(f"\n{CHECKS[0]} checks, {len(FAILURES)} failures")

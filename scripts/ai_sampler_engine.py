@@ -183,6 +183,7 @@ class SequencePlan:
     loop_bars: Optional[int] = None
     total_duration: Optional[float] = None
     sampling_request: Optional[str] = None
+    swing_percent: float = 50.0  # 50 = straight; 54–58 = head-nod; ≤75 heavy
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -190,6 +191,7 @@ class SequencePlan:
             "target_bpm": self.target_bpm,
             "loop_bars": self.loop_bars,
             "total_duration": self.total_duration,
+            "swing_percent": self.swing_percent,
             "events": [asdict(e) for e in self.events],
         }
 
@@ -228,6 +230,7 @@ class SequencePlan:
                 else None
             ),
             sampling_request=data.get("sampling_request"),
+            swing_percent=float(data.get("swing_percent") or 50.0),
         )
 
 
@@ -251,6 +254,189 @@ def _parse_event_phrase(phrase: str) -> Optional[SequenceEvent]:
         stretch=float(m.group("stretch") or 1.0),
         pitch_semitones=float(m.group("pitch") or 0.0),
     )
+
+
+# =====================================================================
+# MPC SWING MATH
+# =====================================================================
+#
+# step_duration = 60 / bpm / 4   (one 16th note)
+# Even steps (0, 2, 4…): on grid
+# Odd steps  (1, 3, 5…): delayed by step_duration * (swing% − 50) / 100
+#
+# 50% = robotic straight; 54–58% = head-nod boom-bap; 75% = heavy shuffle.
+
+DEFAULT_SWING_PERCENT = 58.0
+
+
+def clamp_swing_percent(swing_percent: float) -> float:
+    return max(50.0, min(75.0, float(swing_percent)))
+
+
+def sixteenth_duration(target_bpm: float) -> float:
+    return 60.0 / float(target_bpm) / 4.0
+
+
+def swing_offset_seconds(target_bpm: float, swing_percent: float) -> float:
+    """Micro-delay applied only to odd 16th-note steps."""
+    swing = clamp_swing_percent(swing_percent)
+    swing_factor = (swing - 50.0) / 100.0
+    return sixteenth_duration(target_bpm) * swing_factor
+
+
+def mpc_step_delay_seconds(
+    step_index: int,
+    target_bpm: float,
+    swing_percent: float = DEFAULT_SWING_PERCENT,
+) -> float:
+    """
+    Absolute start time for a 16th-note grid step with MPC-style swing.
+    Even steps stay on the grid; odd (off-beat) steps get the swing offset.
+    """
+    step = sixteenth_duration(target_bpm)
+    base = int(step_index) * step
+    if int(step_index) % 2 != 0:
+        return base + swing_offset_seconds(target_bpm, swing_percent)
+    return base
+
+
+def apply_mpc_swing_to_plan(
+    plan: SequencePlan,
+    swing_percent: float = DEFAULT_SWING_PERCENT,
+    *,
+    target_bpm: Optional[float] = None,
+) -> SequencePlan:
+    """
+    Re-time plan events onto a swung 16th grid.
+
+    Each event snaps to the nearest 16th step; odd steps receive the MPC
+    off-beat micro-delay. Downbeats (even steps) stay exactly on the grid.
+    """
+    bpm = float(target_bpm or plan.target_bpm or 90.0)
+    swing = clamp_swing_percent(swing_percent)
+    if abs(swing - 50.0) < 1e-9:
+        plan.swing_percent = 50.0
+        return plan
+
+    step = sixteenth_duration(bpm)
+    swung: list[SequenceEvent] = []
+    for ev in plan.events:
+        step_index = int(round(ev.at_seconds / step)) if step > 0 else 0
+        swung.append(
+            SequenceEvent(
+                sample_index=ev.sample_index,
+                at_seconds=round(
+                    mpc_step_delay_seconds(step_index, bpm, swing), 6
+                ),
+                gain_db=ev.gain_db,
+                pitch_semitones=ev.pitch_semitones,
+                stretch=ev.stretch,
+                reverse=ev.reverse,
+            )
+        )
+    plan.events = swung
+    plan.swing_percent = swing
+    plan.target_bpm = bpm
+    return plan
+
+
+# =====================================================================
+# ALGORITHMIC GROOVE SEQUENCER WITH SWING
+# ⚠️ TWIN: scripts/custom_audio_engine.py (GrooveSequencer re-export / CLI)
+# =====================================================================
+
+class GrooveSequencer:
+    """
+    Stitch chops onto a 16th-note grid with configurable MPC swing, then
+    bounce via FFmpeg adelay + amix — no destructive edits to source files.
+    """
+
+    def __init__(self, output_dir: Path | str | None = None) -> None:
+        self.output_dir = Path(output_dir or DEFAULT_VAULT / "renders")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def compile_swing_loop(
+        self,
+        chop_paths: list[str | Path],
+        target_bpm: float,
+        swing_percent: float = DEFAULT_SWING_PERCENT,
+        output_filename: str = "remix_loop.flac",
+    ) -> Optional[Path]:
+        """
+        Place chops sequentially on a 16th grid with MPC swing math.
+
+        swing_percent: 50 (straight) … 75 (heavy shuffle).
+        Sweet spot for boom-bap / house pocket: 54–58.
+        """
+        if not chop_paths:
+            return None
+        if target_bpm <= 0:
+            log.error("target_bpm must be > 0")
+            return None
+
+        swing = clamp_swing_percent(swing_percent)
+        paths = [Path(p) for p in chop_paths]
+        for p in paths:
+            if not p.is_file():
+                log.error("missing chop: %s", p)
+                return None
+
+        input_args: list[str] = []
+        filter_parts: list[str] = []
+        mix_labels: list[str] = []
+
+        for idx, path in enumerate(paths):
+            input_args.extend(["-i", str(path)])
+            delay_s = mpc_step_delay_seconds(idx, target_bpm, swing)
+            delay_ms = max(0, int(round(delay_s * 1000)))
+            filter_parts.append(
+                f"[{idx}:a]adelay={delay_ms}|{delay_ms}[a{idx}]"
+            )
+            mix_labels.append(f"[a{idx}]")
+
+        n = len(paths)
+        filter_parts.append(
+            f"{''.join(mix_labels)}amix=inputs={n}:duration=longest:"
+            f"dropout_transition=0:normalize=0[aout]"
+        )
+        # Pad to cover the final swung step + one 16th of tail room.
+        last_t = mpc_step_delay_seconds(n - 1, target_bpm, swing)
+        total = last_t + sixteenth_duration(target_bpm) * 2
+        filter_parts.append(f"[aout]apad=whole_dur={total:.6f}[apadded]")
+        filter_complex = ";".join(filter_parts)
+
+        output_path = self.output_dir / output_filename
+        cmd = (
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+            + input_args
+            + [
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "[apadded]",
+                "-c:a",
+                "flac",
+                str(output_path),
+            ]
+        )
+        try:
+            log.info(
+                "Compiling remix loop with %.1f%% MPC swing @ %.1f BPM → %s",
+                swing,
+                target_bpm,
+                output_path,
+            )
+            subprocess.run(
+                cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            return output_path
+        except FileNotFoundError:
+            log.error("ffmpeg not found on PATH")
+            return None
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or b"").decode("utf-8", errors="replace")
+            log.error("FFmpeg groove sequencing crashed: %s", err[-800:])
+            return None
 
 
 # =====================================================================
@@ -723,10 +909,12 @@ class AISamplerEngine:
         *,
         bars: int = 4,
         target_bpm: Optional[float] = None,
+        swing_percent: float = DEFAULT_SWING_PERCENT,
     ) -> SequencePlan:
         """
         Deterministic fallback when no LLM is available: map chops onto a
-        classic boom-bap grid (kick on 1/3, snare on 2/4, hats on 8ths).
+        classic boom-bap grid (kick on 1/3, snare on 2/4, hats on 8ths),
+        then apply MPC swing so odd 16ths sit in the pocket.
         """
         bpm = float(target_bpm or manifest.target_bpm or manifest.source_track_bpm or 90)
         beat = 60.0 / bpm
@@ -761,12 +949,32 @@ class AISamplerEngine:
                         gain_db=-4.0,
                     )
                 )
-        return SequencePlan(
+        plan = SequencePlan(
             events=events,
             target_bpm=bpm,
             loop_bars=bars,
             total_duration=bars * 4 * beat,
-            sampling_request=f"deterministic {bars}-bar boom-bap @ {bpm:.1f} BPM",
+            sampling_request=(
+                f"deterministic {bars}-bar boom-bap @ {bpm:.1f} BPM "
+                f"swing={clamp_swing_percent(swing_percent):.0f}%"
+            ),
+            swing_percent=50.0,
+        )
+        return apply_mpc_swing_to_plan(plan, swing_percent, target_bpm=bpm)
+
+    def compile_swing_loop(
+        self,
+        chop_paths: list[str | Path],
+        target_bpm: float,
+        swing_percent: float = DEFAULT_SWING_PERCENT,
+        output_filename: str = "remix_loop.flac",
+    ) -> Optional[Path]:
+        """Delegate to GrooveSequencer; writes into this engine's renders/."""
+        return GrooveSequencer(self.renders_dir).compile_swing_loop(
+            chop_paths,
+            target_bpm,
+            swing_percent=swing_percent,
+            output_filename=output_filename,
         )
 
     def pipeline(
@@ -780,9 +988,10 @@ class AISamplerEngine:
         plan_path: Optional[Path] = None,
         output_path: Optional[Path] = None,
         use_default_plan: bool = True,
+        swing_percent: float = DEFAULT_SWING_PERCENT,
     ) -> dict[str, Any]:
         """
-        Full isolate → chop → (optional LLM plan) → sequence pass.
+        Full isolate → chop → (optional LLM plan) → swung sequence pass.
         Returns a result dict with paths and the LLM context payload.
         """
         result: dict[str, Any] = {"ok": False}
@@ -815,7 +1024,12 @@ class AISamplerEngine:
             plan = SequencePlan.from_dict(json.loads(plan_path.read_text(encoding="utf-8")))
 
         if plan is None and use_default_plan:
-            plan = self.build_default_boom_bap_plan(manifest, target_bpm=target_bpm)
+            plan = self.build_default_boom_bap_plan(
+                manifest, target_bpm=target_bpm, swing_percent=swing_percent
+            )
+        elif plan is not None and abs(clamp_swing_percent(swing_percent) - 50.0) > 1e-9:
+            # LLM / file plans arrive on a straight grid — humanize on render.
+            plan = apply_mpc_swing_to_plan(plan, swing_percent, target_bpm=target_bpm)
 
         if plan is None:
             result["ok"] = True
@@ -832,6 +1046,7 @@ class AISamplerEngine:
         result["ok"] = True
         result["render_path"] = str(rendered)
         result["plan"] = plan.to_dict()
+        result["swing_percent"] = plan.swing_percent
         return result
 
     def _ffmpeg_transcode(self, src: Path, dest: Path) -> bool:
@@ -1023,6 +1238,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Chop manifest JSON (with paths) OR directory of chop files",
     )
     p_seq.add_argument("--out", type=Path, required=True)
+    p_seq.add_argument(
+        "--swing",
+        type=float,
+        default=None,
+        help="MPC swing %% (50=straight, 58=head-nod). Applied before render.",
+    )
 
     p_ctx = sub.add_parser("llm-context", help="Emit LLM sampling context JSON")
     p_ctx.add_argument("chops_json", type=Path)
@@ -1044,6 +1265,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_pipe.add_argument("--plan", type=Path, default=None)
     p_pipe.add_argument("--out", type=Path, default=None)
     p_pipe.add_argument(
+        "--swing",
+        type=float,
+        default=DEFAULT_SWING_PERCENT,
+        help=f"MPC swing %% (default {DEFAULT_SWING_PERCENT:.0f})",
+    )
+    p_pipe.add_argument(
         "--no-default-plan",
         action="store_true",
         help="Stop after chops/LLM context; do not render a fallback boom-bap",
@@ -1056,7 +1283,32 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_plan.add_argument("chops_json", type=Path)
     p_plan.add_argument("--bpm", type=float, default=90.0)
     p_plan.add_argument("--bars", type=int, default=4)
+    p_plan.add_argument(
+        "--swing",
+        type=float,
+        default=DEFAULT_SWING_PERCENT,
+        help=f"MPC swing %% (default {DEFAULT_SWING_PERCENT:.0f})",
+    )
     p_plan.add_argument("-o", "--out", type=Path, default=None)
+
+    p_swing = sub.add_parser(
+        "swing-loop",
+        help="GrooveSequencer: stitch ordered chops onto a swung 16th grid",
+    )
+    p_swing.add_argument(
+        "chops",
+        nargs="+",
+        type=Path,
+        help="Ordered chop audio files (step 0, 1, 2…)",
+    )
+    p_swing.add_argument("--bpm", type=float, required=True)
+    p_swing.add_argument(
+        "--swing",
+        type=float,
+        default=DEFAULT_SWING_PERCENT,
+        help=f"MPC swing %% (default {DEFAULT_SWING_PERCENT:.0f})",
+    )
+    p_swing.add_argument("--out", type=Path, default=Path("remix_loop.flac"))
 
     p_night = sub.add_parser(
         "nightly-pass",
@@ -1100,6 +1352,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.cmd == "sequence":
         plan = SequencePlan.from_dict(_load_json(args.plan))
+        if args.swing is not None:
+            plan = apply_mpc_swing_to_plan(plan, args.swing)
         chops_arg = args.chops
         chop_paths: dict[int, Path] = {}
         if chops_arg.is_dir():
@@ -1121,7 +1375,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         rendered = engine.sequence_from_plan(plan, chop_paths, args.out)
         if rendered is None:
             return 1
-        print(json.dumps({"ok": True, "render_path": str(rendered)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "render_path": str(rendered),
+                    "swing_percent": plan.swing_percent,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     if args.cmd == "llm-context":
@@ -1141,7 +1404,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         data = _load_json(args.chops_json)
         manifest = ChopManifest.from_dict(data)
         plan = engine.build_default_boom_bap_plan(
-            manifest, bars=args.bars, target_bpm=args.bpm
+            manifest,
+            bars=args.bars,
+            target_bpm=args.bpm,
+            swing_percent=args.swing,
         )
         payload = plan.to_dict()
         if args.out:
@@ -1149,6 +1415,33 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(str(args.out))
         else:
             print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.cmd == "swing-loop":
+        out_name = args.out.name if args.out else "remix_loop.flac"
+        if args.out and args.out.is_absolute():
+            seq = GrooveSequencer(args.out.parent)
+        else:
+            seq = GrooveSequencer(engine.renders_dir)
+        rendered = seq.compile_swing_loop(
+            list(args.chops),
+            target_bpm=args.bpm,
+            swing_percent=args.swing,
+            output_filename=out_name,
+        )
+        if rendered is None:
+            return 1
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "render_path": str(rendered),
+                    "swing_percent": clamp_swing_percent(args.swing),
+                    "bpm": args.bpm,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     if args.cmd == "pipeline":
@@ -1160,6 +1453,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             plan_path=args.plan,
             output_path=args.out,
             use_default_plan=not args.no_default_plan,
+            swing_percent=args.swing,
         )
         print(json.dumps(result, indent=2))
         return 0 if result.get("ok") else 1
@@ -1204,6 +1498,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 plan=plan,
                 output_path=Path(job["out"]) if job.get("out") else None,
                 use_default_plan=bool(job.get("use_default_plan", True)),
+                swing_percent=float(
+                    job.get("swing_percent") or job.get("swing") or DEFAULT_SWING_PERCENT
+                ),
             )
             result["job"] = str(job_path)
             results.append(result)
