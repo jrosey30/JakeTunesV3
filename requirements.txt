@@ -24,3 +24,12 @@ watchdog
 
 # HTTP client for custom_audio_engine.py (AudD upload + Deezer/MB/Discogs).
 requests
+
+# AI sampler engine (scripts/ai_sampler_engine.py) — optional DSP stack.
+# librosa (above) already covers transient / onset chopping.
+# soundfile speeds stem I/O; demucs is the preferred local stem separator
+# (spleeter works as a fallback if installed). Without demucs/spleeter the
+# engine can still chop+sequence a full mix via AI_SAMPLER_SEPARATOR=none.
+soundfile
+# demucs   # pip install demucs  (torch; large — install on the NAS/homemini host)
+# spleeter # legacy alternative; prefer demucs
