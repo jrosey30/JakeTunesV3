@@ -1200,6 +1200,106 @@ def llm_orchestrator(
     return result
 
 
+# ── music_engine SQLite bridge ────────────────────────────────────────────────
+
+def _load_music_engine_db():
+    """Optional bridge to scripts/music_engine.MusicEngineDatabase."""
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from music_engine import MusicEngineDatabase  # type: ignore
+
+        db_path = Path(os.environ.get("MUSIC_ENGINE_DB") or (STATE_DIR / "music_server.db"))
+        return MusicEngineDatabase(db_path)
+    except Exception as e:  # noqa: BLE001
+        log(f"music_engine DB unavailable: {e}")
+        return None
+
+
+def sync_signals_to_engine_db(
+    db: Any,
+    positives: list[TrackSignal],
+    negatives: list[TrackSignal],
+    lib: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Mirror contrastive signals into SQLite listening_logs for the NAS engine."""
+    for sig in positives:
+        meta = lib.get(sig.key()) or {}
+        total = float(meta.get("duration") or 0) or (sig.elapsed_sec or DEFAULT_TRACK_SEC)
+        if total > 10_000:
+            total = total / 1000.0
+        play = float(sig.elapsed_sec if sig.elapsed_sec is not None else total)
+        db.log_playback(
+            track_id=str(meta.get("id") or f"{sig.artist}|{sig.title}"),
+            isrc=sig.isrc or "",
+            artist=sig.artist,
+            title=sig.title,
+            play_time=play,
+            total_time=total,
+        )
+    for sig in negatives:
+        meta = lib.get(sig.key()) or {}
+        total = float(meta.get("duration") or 0) or DEFAULT_TRACK_SEC
+        if total > 10_000:
+            total = total / 1000.0
+        play = float(sig.elapsed_sec if sig.elapsed_sec is not None else min(SKIP_SEC_THRESHOLD - 0.1, total))
+        db.log_playback(
+            track_id=str(meta.get("id") or f"{sig.artist}|{sig.title}"),
+            isrc=sig.isrc or "",
+            artist=sig.artist,
+            title=sig.title,
+            play_time=play,
+            total_time=max(total, 31.0),  # ensure early-skip rule can fire
+        )
+
+
+def merge_engine_db_signals(
+    db: Any,
+    positives: list[TrackSignal],
+    negatives: list[TrackSignal],
+    now: datetime,
+) -> tuple[list[TrackSignal], list[TrackSignal]]:
+    """Fold SQLite listening_logs (e.g. from inbox ingest clients) into contrastive sets."""
+    since = (now - timedelta(days=1)).isoformat()
+    try:
+        bags = db.get_contrastive_signals(since)
+    except Exception as e:  # noqa: BLE001
+        log(f"engine contrastive read failed: {e}")
+        return positives, negatives
+    seen_p = {p.key() for p in positives}
+    seen_n = {n.key() for n in negatives}
+    for row in bags.get("positive_signals") or []:
+        k = (norm(row.get("artist")), norm(row.get("title")))
+        if not (k[0] or k[1]) or k in seen_p:
+            continue
+        positives.append(
+            TrackSignal(
+                artist=row.get("artist") or "",
+                title=row.get("title") or "",
+                source="engine_db",
+                isrc=row.get("isrc") or "",
+                elapsed_sec=row.get("play_duration_seconds"),
+            )
+        )
+        seen_p.add(k)
+    for row in bags.get("negative_signals") or []:
+        k = (norm(row.get("artist")), norm(row.get("title")))
+        if not (k[0] or k[1]) or k in seen_n or k in seen_p:
+            continue
+        negatives.append(
+            TrackSignal(
+                artist=row.get("artist") or "",
+                title=row.get("title") or "",
+                source="engine_db_skip",
+                isrc=row.get("isrc") or "",
+                elapsed_sec=row.get("play_duration_seconds"),
+            )
+        )
+        seen_n.add(k)
+    return positives, negatives
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def write_status(payload: dict[str, Any]) -> None:
@@ -1216,11 +1316,15 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
+        engine_db = _load_music_engine_db()
         lib = load_library_index()
         events = load_day_events(now)
         log(f"listening events (24h): {len(events)}; library index: {len(lib)}")
 
         positives, negatives = classify_contrastive(events, lib)
+        if engine_db is not None:
+            positives, negatives = merge_engine_db_signals(engine_db, positives, negatives, now)
+
         audd_new = load_audd_candidates()
         # Fold newly recognized AudD tracks into positives (discovery fuel).
         seen = {p.key() for p in positives}
@@ -1242,6 +1346,39 @@ def main() -> int:
             f"({precision['successful_discoveries']}/{precision['total_recommendations']}) "
             f"via {precision['source']}"
         )
+
+        if engine_db is not None:
+            try:
+                engine_db.record_precision(
+                    date=str(precision.get("day") or now.strftime("%Y-%m-%d")),
+                    total_recommended=int(precision.get("total_recommendations") or 0),
+                    successful_discoveries=int(precision.get("successful_discoveries") or 0),
+                    precision_score=float(precision.get("precision_score") or 0),
+                )
+                sync_signals_to_engine_db(engine_db, positives, negatives, lib)
+                for sig in positives:
+                    if sig.isrc or sig.discogs_label or sig.producers:
+                        engine_db.upsert_enrichment(
+                            sig.artist,
+                            sig.title,
+                            sig.album or "",
+                            {
+                                "isrc": sig.isrc,
+                                "mbid": sig.recording_mbid,
+                                "producers_engineers": [
+                                    {"role": "producer", "name": p} for p in sig.producers
+                                ]
+                                + [{"role": "engineer", "name": e} for e in sig.engineers],
+                                "discogs": {
+                                    "record_label": sig.discogs_label,
+                                    "catalog_number": sig.discogs_catno,
+                                    "country": sig.discogs_country,
+                                },
+                            },
+                        )
+                log(f"synced contrastive + precision → {engine_db.db_path}")
+            except Exception as e:  # noqa: BLE001
+                log(f"engine DB sync failed (non-fatal): {e}")
 
         ltm, stm = load_memory_tiers(now)
         ltm, stm = update_memory_tiers(ltm, stm, positives, negatives, precision, now)
@@ -1273,6 +1410,7 @@ def main() -> int:
                 "ltm_path": str(LTM_PATH),
                 "stm_path": str(STM_PATH),
                 "vector_store": detect_vector_store(),
+                "music_engine_db": str(getattr(engine_db, "db_path", None) or ""),
             },
             "prompt_path": str(prompt_path),
             "llm_response": orchestrated.get("llm_response"),

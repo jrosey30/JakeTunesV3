@@ -17,3 +17,7 @@ mutagen
 # 2019 and fails to compile against modern numpy on Python 3.14+.
 # librosa-only is the simpler architecture regardless.)
 librosa
+
+# NAS music engine (scripts/music_engine.py) — inbox watcher. Optional;
+# without it the engine falls back to a 5s poll loop.
+watchdog
