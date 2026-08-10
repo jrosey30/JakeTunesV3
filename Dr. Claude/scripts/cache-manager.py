@@ -1,27 +1,4 @@
 #!/usr/bin/env python3
-# cache-manager — decides which tracks live LOCALLY on a streaming host.
-#
-# workmini streams from the NAS: every track gets an entry under musicRoot
-# (~/JakeTunesLib/JakeTunesLibrary) that is either a REAL local copy (plays
-# instantly) or a SYMLINK to the NAS (plays only as fast as the mount). The
-# hot set is whatever fits in CAP_GB.
-#
-# ⚠️ Jake, 2026-08-10: "music doesnt play on workmini, this happens too much
-# after a new song update." The ranking below sorts by playCount FIRST,
-# descending — so a track imported five minutes ago has playCount 0 and sorts
-# BELOW all 9,000 others. It never made the hot set, so every newly-added song
-# became a symlink to the NAS. And the NAS was slow enough that listing one
-# directory took 43 seconds, so those songs simply did not start.
-#
-# The ranking wasn't wrong about popularity, it was wrong about intent: a song
-# Jake just added is the MOST likely thing he is about to play, and the least
-# likely to have a play count. So recent imports are now reserved into the hot
-# set up front, the same way pinned downloads are, before the popularity fill
-# gets the remaining space.
-#
-# Source of truth is this repo copy — it used to exist ONLY on workmini, with
-# no version control and no review path, which is why a load-bearing ranking
-# bug sat here unseen. The deploy pushes it.
 import json, os, subprocess
 HOME=os.path.expanduser("~")
 LIB=f"{HOME}/Library/Application Support/JakeTunes/library.json"
@@ -40,68 +17,11 @@ hot=set(); tot=0
 for p in pins:
     if p in bypath and p not in hot:
         hot.add(p); tot+=(bypath[p].get("fileSize") or 0)
-# Recently-added tracks: reserved BEFORE the popularity fill, like pins.
-# Without this, playCount==0 sends every new import to the bottom of rk and
-# it lands as a NAS symlink — the exact "new songs don't play" failure.
-NEW_N=int(os.environ.get("NEW_N","500"))
-for t in sorted((x for x in tr if x.get("dateAdded")),key=lambda x:x["dateAdded"],reverse=True)[:NEW_N]:
-    if t["path"] not in hot:
-        hot.add(t["path"]); tot+=(t.get("fileSize") or 0)
-newly_reserved=len(hot)-len(pins & set(bypath))
-# ── ALAC first, because ALAC is the only thing that CANNOT stream ──────
-# Jake, 2026-08-10: "takes like 2 mins to play one track... then the next
-# song usually never plays."
-#
-# Chromium cannot decode ALAC, so the app reads the WHOLE lossless file and
-# transcodes it to AAC before a single byte of audio comes out. Locally that
-# is invisible. Over the NAS link it is 30-90 seconds of nothing, and since
-# 40% of the library is ALAC the following track is usually ALAC too — which
-# is what "the next song never plays" actually is. index.ts says as much in
-# the protocol handler: "ALAC stays local/pinned."
-#
-# But this ranked purely by playCount, which knows nothing about codecs, so
-# it spent the cache on AAC — the format that streams perfectly well over
-# range requests — and left 2,780 ALAC tracks stranded on the NAS.
-#
-# Same disk, same bandwidth, right tracks: cache what cannot stream, stream
-# what can. Within ALAC, most-played first, so the tracks Jake actually
-# reaches for land soonest.
-alac=lambda t:(t.get("codec") or "").lower()=="alac"
-_key=lambda t:((t.get("playCount") or 0),(t.get("dateAdded") or ""),(t.get("rating") or 0),(t.get("path") or ""))
-rk=sorted([t for t in tr if alac(t)],key=_key,reverse=True)+sorted([t for t in tr if not alac(t)],key=_key,reverse=True)
-
+rk=sorted(tr,key=lambda t:((t.get("playCount") or 0),(t.get("dateAdded") or ""),(t.get("rating") or 0),(t.get("path") or "")),reverse=True)
 for t in rk:
     if t["path"] in hot: continue
     s=t.get("fileSize") or 0
     if tot+s<=CAP: hot.add(t["path"]); tot+=s
-
-# ── Throttled NAS copy ──────────────────────────────────────────────
-# Jake, 2026-08-10: "music doesnt play on workmini... happens too much
-# after a new song update." Measured: a NAS-streamed track starts in 3
-# SECONDS when the link is idle, and 160 seconds while this script is
-# bulk-copying. The link is ~1 MB/s; streaming 256kbps AAC needs ~32 KB/s,
-# so there is plenty of room — but an unthrottled `cp` takes all of it and
-# playback starves. Nothing was wrong with streaming. The cache filler was
-# standing on it.
-#
-# So the fill is rate-limited and always leaves headroom. Slower to warm
-# the cache, but it can no longer take the music down while it runs. Same
-# rule the media pipeline already learned: a batch job yields to playback.
-BW=int(os.environ.get("CACHE_BW_KBPS","300"))*1024   # bytes/sec for the fill
-def copy_throttled(src,dst):
-    import time
-    chunk=64*1024
-    with open(src,"rb") as i, open(dst+".part","wb") as o:
-        while True:
-            t0=time.time()
-            b=i.read(chunk)
-            if not b: break
-            o.write(b)
-            want=len(b)/BW
-            spent=time.time()-t0
-            if want>spent: time.sleep(want-spent)
-    os.replace(dst+".part",dst)
-
 cl=cn=lk=ev=ms=0
 for t in tr:
     rp=rel(t["path"]); lp=f"{DST}/{rp}"; nas=f"{NAS}/{rp}"; old=f"{OLD}/{rp}"
@@ -116,10 +36,8 @@ for t in tr:
             try: subprocess.run(["cp","-c",old,lp],check=True,capture_output=True); cl+=1; continue
             except Exception: pass
         if os.path.exists(nas):
-            try: copy_throttled(nas,lp); cn+=1; continue
-            except Exception:
-                try: os.remove(lp+".part")
-                except Exception: pass
+            try: subprocess.run(["cp",nas,lp],check=True,capture_output=True); cn+=1; continue
+            except Exception: pass
         try: os.symlink(nas,lp); lk+=1
         except Exception: ms+=1
     else:
@@ -129,4 +47,4 @@ for t in tr:
             except Exception: pass
         try: os.symlink(nas,lp); lk+=1
         except Exception: ms+=1
-print(f"HOT={len(hot)} (pins={len(pins)}, newest={min(NEW_N,len(tr))}) ~{tot//1024**3}GB | cloned_local={cl} copied_nas={cn} symlinks={lk} evicted={ev} missing={ms}")
+print(f"HOT={len(hot)} (pins={len(pins)}) ~{tot//1024**3}GB | cloned_local={cl} copied_nas={cn} symlinks={lk} evicted={ev} missing={ms}")
