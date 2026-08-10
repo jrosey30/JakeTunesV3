@@ -25,6 +25,7 @@
  */
 
 import type { CynthiaFinding, CynthiaScanTrack } from './cynthia-scan'
+import { foldAccents } from '../common/fold-text.ts'
 
 function collapse(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
@@ -32,7 +33,7 @@ function collapse(s: string): string {
 
 /** Letters-only cluster key: case-, space- and punctuation-insensitive. */
 function clusterKey(s: string): string {
-  return collapse(s).toLowerCase().replace(/[^a-z0-9]+/gi, '')
+  return foldAccents(collapse(s)).replace(/[^a-z0-9]+/gi, '')
 }
 
 const FEAT_VARIANT_RE = /\b(featuring|ft\.)\s+/gi

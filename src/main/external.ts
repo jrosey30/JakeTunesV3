@@ -1,3 +1,4 @@
+import { foldAccents } from '../common/fold-text.ts'
 // 4.3.0: external API integrations that enrich the WJLR show + Picks
 // without bloating index.ts. Six sources, all with TTL caching so we
 // don't hammer free-tier limits. Every function is fail-soft — a
@@ -952,7 +953,8 @@ function escapeLuceneValue(s: string): string {
 // MusicBrainz's special-purpose "Various Artists" artist.
 const VARIOUS_ARTISTS_MBID = '89ad4ac3-39f7-470e-963a-56509c546377'
 function normArtist(s: string): string {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  // MusicBrainz writes Sigur Rós; folding first is what makes it meet ours.
+  return foldAccents(s).replace(/[^a-z0-9]/g, '')
 }
 
 async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease[]> {

@@ -1,3 +1,4 @@
+import { foldAccents } from '../common/fold-text.ts'
 /**
  * 4.5.0-118 — Taste Model (Phase 1 of the Discovery Brain).
  *
@@ -52,7 +53,9 @@ export interface TasteAnchor {
   score: number
 }
 
-export const norm = (s: string): string => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '')
+// COMPARISON ONLY — the fingerprint is recomputed from tracks every time and
+// never persisted, so folding here cannot orphan a stored key.
+export const norm = (s: string): string => foldAccents(String(s ?? '')).replace(/[^a-z0-9]/g, '')
 
 // Genre → family. First match wins; order matters (rock before pop so "pop punk"
 // lands in rock). Tuned to Jake's library spines.

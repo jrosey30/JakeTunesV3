@@ -2098,7 +2098,7 @@ ipcMain.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueS
     const shows = await getVenueShows()
     const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
     const lib = raw ? JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string }> } : { tracks: [] }
-    const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const norm = (s: string): string => foldAccents(s).replace(/[^a-z0-9]/g, '')
     const owned = new Set<string>()
     for (const t of lib.tracks || []) {
       const a = norm(t.albumArtist || t.artist || '')
@@ -3117,7 +3117,7 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
     // can't catch them. Track which song titles we've already kept (oldest-
     // first); if a later album is mostly the same songs, it's a repackaging.
     const seenTitles = new Set<string>()
-    const normTrackTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const normTrackTitle = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
     // 3. For each release group, fetch one release with recordings (the
     // tracklist). Sequential because of the rate limit.
     for (const rg of rgs) {
@@ -13018,7 +13018,7 @@ function dedupeRecommendationsByIdentity(list: RecommendationRecord[]): Recommen
 const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
 
 function recoMatchKey(input: { song?: string; artist?: string; note?: string }): string {
-  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')   // ⚠️ NOT folded: feeds recoMatchKey, a PERSISTED identity key.
   return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.note || '')}`
 }
 
@@ -14056,7 +14056,7 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
   try {
     const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; title?: string; genre?: string; playCount?: number }> }
     const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
-    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const norm = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
     const playsByArtist = new Map<string, number>()
     const playsByGenre = new Map<string, number>()
     const ownedArtists = new Set<string>() // normalized — every artist in the library
@@ -14248,7 +14248,7 @@ async function fetchItunesAlbum(artist: string, album: string): Promise<{ releas
     const res = await fetch(url)
     if (!res.ok) return null
     const data = await res.json() as { results?: Array<{ collectionName?: string; releaseDate?: string; copyright?: string }> }
-    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const norm = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
     const want = norm(album)
     const results = data.results || []
     const best = results.find((r) => norm(r.collectionName || '') === want) || results[0]

@@ -69,7 +69,7 @@ function maskedTokenPattern(tok: string): RegExp {
   for (const ch of tok) {
     if (MASK_CHARS.test(ch)) { run++; continue }
     flush()
-    out += ch.toLowerCase().replace(/[^a-z0-9]/g, '')
+    out += foldAccents(ch).replace(/[^a-z0-9]/g, '')
   }
   flush()
   return new RegExp(`^${out}$`, 'i')
