@@ -5,6 +5,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
+import { explicitWins } from '../../../common/explicit'
 import { foldAccents, withinEditDistance, typoBudget } from '../../../common/fold-text'
 
 /**
@@ -268,6 +269,23 @@ export default function DownloadView() {
         owned, score: base > 0 && titleHit ? base + 0.5 : base,
       }
     }).filter((s) => !q || s.score > 0)
+    // Collapse the censored/uncensored pair Apple returns for the same song,
+    // keeping the explicit one. Without this the list either showed the clean
+    // edition (whenever Apple ordered it first) or showed both, which reads as
+    // a duplicate with nothing to tell them apart.
+    const songBest = new Map<string, SongRow>()
+    for (const s of songs) {
+      const k = norm(s.title) + '|' + norm(s.artist)
+      const prev = songBest.get(k)
+      if (!prev) { songBest.set(k, s); continue }
+      if (explicitWins(prev.explicitness, s.explicitness)) {
+        songBest.set(k, { ...s, score: Math.max(prev.score, s.score) })
+      } else {
+        prev.score = Math.max(prev.score, s.score)
+      }
+    }
+    songs.length = 0
+    songs.push(...songBest.values())
     songs.sort((a, b) => b.score - a.score)
 
     const albumMap = new Map<string, AlbumRow>()
@@ -281,11 +299,32 @@ export default function DownloadView() {
       const cur = albumMap.get(key)
       if (cur) {
         cur.songs += 1; cur.score = Math.max(cur.score, albScore)
+        // ── The explicit edition wins the row ────────────────────────────
+        // Jake, 2026-08-10, searching Migos: "why am i only seeing the clean
+        // version?????"
+        //
+        // Apple lists the censored and uncensored editions of a record under
+        // the SAME name, so both collapse onto this artist|album key. First
+        // one seen used to keep the row — including its collectionId — and
+        // when that was the clean edition, expanding the album fetched the
+        // CLEAN tracklist and every download off it was censored. The badge
+        // was telling the truth; the row was simply bound to the wrong record.
+        //
+        // So identity follows the explicit edition when one exists. Only
+        // 'cleaned' loses: 'notExplicit' means a record with nothing to
+        // censor, which must not be overwritten by anything.
+        if (explicitWins(cur.explicitness, s.explicitness)) {
+          cur.explicitness = s.explicitness
+          if (s.collectionId) cur.collectionId = s.collectionId
+          if (s.artworkUrl) cur.artworkUrl = s.artworkUrl
+          if (s.trackCount) cur.trackCount = s.trackCount
+        } else if (!cur.explicitness && s.explicitness) {
+          cur.explicitness = s.explicitness
+        }
         if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl
         if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
         if (!cur.trackCount && s.trackCount) cur.trackCount = s.trackCount
         if (!cur.genre && s.genre) cur.genre = s.genre
-        if (!cur.explicitness && s.explicitness) cur.explicitness = s.explicitness
         // LATEST wins. Tracks on one collection carry their OWN release dates,
         // not the album's — Turnstile's GLOW ON returns 2021-05-26, 2021-07-30
         // and 2021-08-27 for three of its tracks, because the first two were
