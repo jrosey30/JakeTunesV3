@@ -105,13 +105,6 @@ export default function StoreView() {
   // 4.5.0-47: track in-Bandcamp nav state so the back arrow correctly
   // dims when there's no history to walk. Polls on every URL change.
   const [navState, setNavState] = useState<{ canGoBack: boolean; canGoForward: boolean }>({ canGoBack: false, canGoForward: false })
-  const [destinations, setDestinations] = useState<Array<{ id: string; label: string; url: string }>>([])
-  const [dest, setDest] = useState('bandcamp')
-  useEffect(() => {
-    void window.electronAPI.bandcampDestinations?.()
-      .then((r) => { if (r?.ok) setDestinations(r.destinations) })
-      .catch(() => { /* older main process — switcher stays hidden */ })
-  }, [])
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
@@ -214,23 +207,6 @@ export default function StoreView() {
             title="Forward"
             aria-label="Forward"
           >›</button>
-          {/* Store switcher. The embedded view is just a browser whose
-              downloads land in the library, so it can point at any store on
-              the main-process allow-list. Labels come from the main process —
-              never hardcode a store here, or the list and the allow-list drift. */}
-          <span className="store-library-header__dests">
-            {destinations.map((d) => (
-              <button
-                key={d.id}
-                className={`store-library-header__dest${dest === d.id ? ' is-active' : ''}`}
-                onClick={() => {
-                  setDest(d.id)
-                  void window.electronAPI.bandcampNavigate?.(d.id)
-                }}
-                title={`Browse ${d.label}`}
-              >{d.label}</button>
-            ))}
-          </span>
         </div>
         {match && match.artistTrackCount > 0 ? (
           <button className="store-library-header__match" onClick={goToArtist} title="Jump to artist in your library">

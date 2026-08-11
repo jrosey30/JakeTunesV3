@@ -32,29 +32,6 @@ export interface BandcampDeps {
 
 const BANDCAMP_HOME = 'https://bandcamp.com'
 
-// ── Store destinations ────────────────────────────────────────────────
-// Where the embedded browser pane is allowed to go. Deliberately a URL list
-// and not a scraper: Jake drives each site's own UI exactly as he would in a
-// browser, and the app supplies the window and files whatever he downloads
-// through the normal import pipeline. Sessions are per-partition, so switching
-// destination never disturbs a signed-in session on the other.
-//
-// ⚠️ Read the site before adding it here. squid.wtf shipped in this list on
-// 2026-08-10 on the strength of an HTTP 200 and nothing else. It answers, but
-// it is no longer the Qobuz/Tidal front-end it was before June — the domain
-// now hosts a set of utilities (Debrid, KHInsider, JioSaavn at AAC 320, a
-// spectrum analyser, CD-rip log tools) and offers no lossless source better
-// than what Jake already has. "The host is up" is not "the store sells music."
-//
-// Qobuz replaces it because Jake already pays for Qobuz, its store sells
-// 24-bit purchases outright, and the credentials are already on this machine
-// for streamrip. x-frame-options: deny on qobuz.com is irrelevant here — a
-// WebContentsView is a real top-level browser view, not an iframe.
-export const STORE_DESTINATIONS: Array<{ id: string; label: string; url: string }> = [
-  { id: 'bandcamp', label: 'Bandcamp', url: BANDCAMP_HOME },
-  { id: 'qobuz', label: 'Qobuz', url: 'https://www.qobuz.com/us-en/shop' },
-]
-
 // Electron's default UA includes "Electron/X.X JakeTunes/X.X" tokens that
 // Fastly's bot-detection layer (which fronts bandcamp.com) flags as
 // automated traffic — the user hits a CAPTCHA wall instead of the normal
@@ -243,20 +220,6 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
     if (view.webContents.canGoBack()) view.webContents.goBack()
     return { ok: true as const }
   })
-
-  // Point the embedded view at one of STORE_DESTINATIONS. Rejects anything
-  // not on that list, so the renderer cannot ask the store to load arbitrary
-  // URLs — same containment reasoning as the audio protocol handler.
-  ipcMain.handle('bandcamp:navigate', (_e, destId: string) => {
-    const dest = STORE_DESTINATIONS.find((d) => d.id === destId)
-    if (!dest) return { ok: false as const, error: 'unknown destination' }
-    const v = view
-    if (!v || v.webContents.isDestroyed()) return { ok: false as const, error: 'store not mounted' }
-    void v.webContents.loadURL(dest.url)
-    return { ok: true as const, url: dest.url }
-  })
-
-  ipcMain.handle('bandcamp:destinations', () => ({ ok: true as const, destinations: STORE_DESTINATIONS }))
 
   ipcMain.handle('bandcamp:go-forward', () => {
     if (!view || view.webContents.isDestroyed()) return { ok: false as const }
