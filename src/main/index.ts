@@ -43,6 +43,7 @@ import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-pla
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { refuseIfNotMainWindow } from './ipc-guard'
+import { isAllowedCaptureUrl, allowWithinRateLimit, isPrivateOrLocalHostname } from './url-safety'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -1127,6 +1128,8 @@ ipcMain.handle('create-backup', async () => {
   return info ? { ok: true, backup: info } : { ok: false, error: 'Nothing to back up (library empty or unreadable).' }
 })
 ipcMain.handle('restore-backup', async (_e, file: string) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'restore-backup', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   const res = await restoreBackup(file)
   // On success, library.json was rewritten — tell the renderer to reload.
   if (res.ok) mainWindow?.webContents.send('library-external-change')
@@ -1314,13 +1317,15 @@ ipcMain.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] 
   }
 })
 
-// Resolve a pasted link (Spotify / YouTube / TikTok / anything with OG tags)
-// into a best-guess song + artist. GROUNDED: this only extracts what the
-// page itself says — the renderer always verifies against iTunes Search and
-// the USER picks the candidate; nothing is auto-added from a guess.
+// Resolve a pasted link (Spotify / YouTube / TikTok) into a best-guess
+// song + artist. GROUNDED: this only extracts what the page itself says —
+// the renderer always verifies against iTunes Search and the USER picks
+// the candidate; nothing is auto-added from a guess.
+// Host allowlist + private-IP deny: a compromised renderer must not turn
+// this into LAN SSRF (homemini, routers, metadata services).
 ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => {
   const u = String(rawUrl || '').trim()
-  if (!/^https?:\/\//i.test(u)) return { ok: false }
+  if (!isAllowedCaptureUrl(u)) return { ok: false }
   const get = async (url: string): Promise<string | null> => {
     try {
       const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh) JakeTunes/1.0' }, signal: AbortSignal.timeout(8000) })
@@ -1358,11 +1363,9 @@ ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok:
       // as raw context; the user types/edits what they hear.
       return { ok: true, kind: 'tiktok', raw: j.title || undefined }
     }
-    // Generic: og:title (entity-decoded — raw HTML attributes are escaped)
-    const html = await get(u)
-    const og = html?.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]
-      || html?.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
-    return { ok: true, kind: 'link', raw: og ? decodeHtmlEntities(og) : undefined }
+    // Unknown host that somehow passed the allowlist — refuse rather than
+    // fetch arbitrary OG tags (that was the SSRF footgun).
+    return { ok: false }
   } catch {
     return { ok: false }
   }
@@ -1992,43 +1995,73 @@ ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
 ipcMain.handle('load-app-settings', async () => {
   try {
     const data = await readFile(appSettingsPath(), 'utf-8')
-    return { ok: true, settings: JSON.parse(data) }
+    const settings = JSON.parse(data) as Record<string, unknown>
+    // Never round-trip the Exa secret into the renderer. Report configured
+    // status only; a new key can still be typed in Preferences and saved.
+    const ai = (settings.ai && typeof settings.ai === 'object' && !Array.isArray(settings.ai))
+      ? { ...(settings.ai as Record<string, unknown>) }
+      : {}
+    const fromSettings = typeof ai.exaApiKey === 'string' && ai.exaApiKey.trim().length > 0
+    const fromEnv = !!(process.env.EXA_API_KEY && process.env.EXA_API_KEY.trim())
+    delete ai.exaApiKey
+    ai.exaConfigured = fromSettings || fromEnv
+    settings.ai = ai
+    return { ok: true, settings }
   } catch {
     return { ok: true, settings: null }   // missing file is fine — renderer applies defaults
   }
 })
 
 ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'save-app-settings', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   try {
     await mkdir(app.getPath('userData'), { recursive: true })
-    await writeFile(appSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
     // Refresh the cached host preference so subsequent prompt builds
     // pick up the new value without an app restart.
-    const ai = (settings.ai as { aiHost?: 'mm' | 'megan'; exaApiKey?: string } | undefined)
-    cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
+    const aiIn = (settings.ai as { aiHost?: 'mm' | 'megan'; exaApiKey?: string; clearExaKey?: boolean } | undefined)
+    cachedActiveHost = aiIn?.aiHost === 'megan' ? 'megan' : 'mm'
     // 4.5: live-apply EXA_API_KEY into process.env so the next searchWeb
     // call picks it up without an app restart. Same value also written
     // to userData/.env so it survives restarts via the existing
     // env-load fallback at the top of this file.
-    if (typeof ai?.exaApiKey === 'string') {
-      const key = ai.exaApiKey.trim()
-      if (key) {
-        process.env.EXA_API_KEY = key
-      } else {
-        delete process.env.EXA_API_KEY
-      }
-      // Mirror to userData/.env (idempotent rewrite of the EXA_API_KEY line)
+    // Only update when the renderer sent a non-empty key (or explicit clear).
+    // An empty string after redacted load must NOT wipe a configured key.
+    if (typeof aiIn?.exaApiKey === 'string' && aiIn.exaApiKey.trim()) {
+      const key = aiIn.exaApiKey.trim()
+      process.env.EXA_API_KEY = key
       try {
         const envPath = join(app.getPath('userData'), '.env')
         let existing = ''
         try { existing = await readFile(envPath, 'utf-8') } catch { /* fresh file */ }
         const lines = existing.split('\n').filter(l => !l.startsWith('EXA_API_KEY='))
-        if (key) lines.push(`EXA_API_KEY=${key}`)
+        lines.push(`EXA_API_KEY=${key}`)
         await writeFile(envPath, lines.filter(l => l.trim()).join('\n') + '\n', 'utf-8')
       } catch (err) {
         console.warn('[save-app-settings] EXA_API_KEY .env write failed:', err)
       }
+    } else if (aiIn?.clearExaKey === true) {
+      delete process.env.EXA_API_KEY
+      try {
+        const envPath = join(app.getPath('userData'), '.env')
+        let existing = ''
+        try { existing = await readFile(envPath, 'utf-8') } catch { /* none */ }
+        const lines = existing.split('\n').filter(l => !l.startsWith('EXA_API_KEY='))
+        await writeFile(envPath, lines.filter(l => l.trim()).join('\n') + (lines.some(l => l.trim()) ? '\n' : ''), 'utf-8')
+      } catch (err) {
+        console.warn('[save-app-settings] EXA_API_KEY .env clear failed:', err)
+      }
     }
+    // Persist settings WITHOUT the secret — .env is the source of truth.
+    const toWrite: Record<string, unknown> = { ...settings }
+    if (toWrite.ai && typeof toWrite.ai === 'object' && !Array.isArray(toWrite.ai)) {
+      const aiOut = { ...(toWrite.ai as Record<string, unknown>) }
+      delete aiOut.exaApiKey
+      delete aiOut.exaConfigured
+      delete aiOut.clearExaKey
+      toWrite.ai = aiOut
+    }
+    await writeFile(appSettingsPath(), JSON.stringify(toWrite, null, 2), 'utf-8')
     // 4.4.13: reconfigure the inbox watcher on every save. Idempotent
     // when nothing changed; instant pickup of toggle/path edits without
     // an app restart. Errors are non-fatal — the save itself succeeded,
@@ -2057,6 +2090,8 @@ ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>
 // The watcher module path-gates the delete to its own watched directory
 // — even a corrupted/spoofed renderer can't ask main to rm an arbitrary file.
 ipcMain.handle('delete-inbox-source', async (_e, filePath: string) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'delete-inbox-source', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   return deleteInboxSource(filePath)
 })
 
@@ -2338,10 +2373,19 @@ ipcMain.handle('open-external-url', async (_e, url: string): Promise<{ ok: boole
   if (typeof url !== 'string') return { ok: false, error: 'invalid url' }
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'only http(s) urls allowed' }
   try {
+    const parsed = new URL(url)
+    // Soft SSRF guard: don't open LAN / loopback from the privileged process.
+    if (isPrivateOrLocalHostname(parsed.hostname)) {
+      return { ok: false, error: 'local network urls are not allowed' }
+    }
+  } catch {
+    return { ok: false, error: 'invalid url' }
+  }
+  try {
     await shell.openExternal(url)
     return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  } catch {
+    return { ok: false, error: 'failed to open url' }
   }
 })
 
@@ -2410,8 +2454,12 @@ initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTa
 // app-settings.json). The wrapper at top of file reads claudeStats so
 // we update that in-memory and on disk.
 ipcMain.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'set-claude-daily-ceiling', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   await loadClaudeStats()
-  const safe = Math.max(1, Math.min(10000, Number(ceiling) || 200))
+  // Hard max 2000 without a rebuild — the old 10000 ceiling was raisable
+  // by any frame that could invoke IPC and burned real API budget.
+  const safe = Math.max(1, Math.min(2000, Number(ceiling) || 200))
   claudeStats.dailyCeiling = safe
   await saveClaudeStats()
   return { ok: true, dailyCeiling: safe }
@@ -2439,8 +2487,14 @@ async function createWindow(): Promise<void> {
     backgroundColor: '#f4f0e4',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      // Explicit Electron secure defaults. webSecurity was historically
+      // false (custom-protocol CORS workaround); privileged schemes now
+      // cover ipod-audio / album-art / etc., so SOP stays on.
+      nodeIntegration: false,
+      contextIsolation: true,
       sandbox: false,
-      webSecurity: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       // Don't throttle the renderer when JakeTunes loses focus or the
       // window is hidden. Without this, Chromium's tab-throttling caps
       // JS execution at ~once/second when backgrounded, which crawls
@@ -2451,6 +2505,20 @@ async function createWindow(): Promise<void> {
   })
 
   if (saved?.isMaximized) mainWindow.maximize()
+
+  // Privileged window: never navigate to remote content or spawn child
+  // windows with the preload API. Dev Vite URL is the only non-file allow.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devUrl = isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+    const allowed =
+      (devUrl && url.startsWith(devUrl)) ||
+      url.startsWith('file://')
+    if (!allowed) event.preventDefault()
+  })
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(false)
+  })
 
   // Save window state on move/resize (debounced)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -3527,7 +3595,9 @@ ipcMain.handle('check-ipod-mounted', async () => {
   }
 })
 
-ipcMain.handle('eject-ipod', async () => {
+ipcMain.handle('eject-ipod', async (_e) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'eject-ipod', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   try {
     // Probe disk if module-level state is stale. Other handlers
     // (readIpodDatabase, check-ipod-mounted) already do this. Without
@@ -3542,8 +3612,8 @@ ipcMain.handle('eject-ipod', async () => {
     detectedIpodMount = null
     detectedIpodVolume = null
     return { ok: true }
-  } catch (err) {
-    return { ok: false, error: String(err) }
+  } catch {
+    return { ok: false, error: 'Eject failed' }
   }
 })
 
@@ -7300,6 +7370,8 @@ async function importOneFile(
 // resolved before enqueuing in the renderer so this only ever sees
 // individual audio files.
 ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'import-track', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   // 4.0 Settings: when caller doesn't specify a format, fall back to the
   // user's preferred default from app-settings.json (Library tab).
@@ -7477,6 +7549,8 @@ ipcMain.handle('import-resolve-paths', async (_e, paths: string[]) => {
 })
 
 ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
+  const refused = refuseIfNotMainWindow(_e, mainWindow, 'import-tracks', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   // Resolve folders into individual audio files
   const resolvedPaths = await resolveAudioPaths(filePaths)
   const imported: Array<Record<string, unknown>> = []
@@ -8284,7 +8358,17 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 // ElevenLabs TTS
+const ttsRateBucket = new Map<string, number[]>()
 ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
+  const refused = refuseIfNotMainWindow(_event, mainWindow, 'musicman-speak', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
+  // Cap spend: 60 TTS calls / rolling minute is enough for DJ Mode +
+  // one-shots; a runaway or XSS'd renderer cannot empty the ElevenLabs wallet.
+  if (!allowWithinRateLimit(ttsRateBucket, 'musicman-speak', 60, 60_000)) {
+    return { ok: false, error: 'TTS rate limit — try again in a moment.' }
+  }
+  const spoken = typeof text === 'string' ? text.slice(0, 4000) : ''
+  if (!spoken.trim()) return { ok: true, audio: '' }
   try {
     // 4.0 Settings gate: Music Man voice can be turned off entirely from
     // Preferences → AI. Caller still gets ok=true so flow continues; the
@@ -8383,7 +8467,7 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text,
+            text: spoken,
             model_id: model,
             voice_settings: voiceSettings,
           })
@@ -11553,6 +11637,8 @@ ipcMain.handle('restore-xml-scan', async (_event, xmlPath: string) => {
 })
 
 ipcMain.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds: number[]) => {
+  const refused = refuseIfNotMainWindow(_event, mainWindow, 'restore-xml-apply', { ok: false, error: 'refused-sender' } as const)
+  if (refused) return refused
   if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
   const mount = `/Volumes/${detectedIpodVolume}`
   const payload = JSON.stringify({ approvedIds })
@@ -16452,7 +16538,9 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('purge-library-orphans', async () => {
+  ipcMain.handle('purge-library-orphans', async (_e) => {
+    const refused = refuseIfNotMainWindow(_e, mainWindow, 'purge-library-orphans', { ok: false, error: 'refused-sender' } as const)
+    if (refused) return refused
     try {
       const { deleted, bytesFreed } = await purgeLibraryOrphans()
       return { ok: true, deleted, bytesFreed }
@@ -16492,7 +16580,9 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('remove-dead-tracks', async () => {
+  ipcMain.handle('remove-dead-tracks', async (_e) => {
+    const refused = refuseIfNotMainWindow(_e, mainWindow, 'remove-dead-tracks', { ok: false, error: 'refused-sender' } as const)
+    if (refused) return refused
     try {
       const lib: { tracks?: Array<Record<string, unknown>>; playlists?: unknown[] } =
         JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
@@ -16897,8 +16987,11 @@ app.whenReady().then(async () => {
 
       if (rangeHeader) {
         const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-        const start = match ? parseInt(match[1]) : 0
-        const end = match && match[2] ? parseInt(match[2]) : total - 1
+        const start = match ? parseInt(match[1], 10) : 0
+        const end = match && match[2] ? parseInt(match[2], 10) : total - 1
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= total || end >= total || start > end) {
+          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+        }
         const chunkSize = end - start + 1
         const nodeStream = createReadStream(filePath, { start, end })
         const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
