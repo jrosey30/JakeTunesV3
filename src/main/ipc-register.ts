@@ -53,7 +53,9 @@ export function assertIpcRegisterOptions(
   options?: RegisterHandleOptions<unknown>,
 ): { public: boolean } {
   const isPublic = options?.public === true
-  if (!isPublic && options?.refuse === undefined) {
+  // Allow `{ refuse: undefined }` for void-returning handlers — the key
+  // must be present; only a missing refuse opts-in is rejected.
+  if (!isPublic && !(options && Object.prototype.hasOwnProperty.call(options, 'refuse'))) {
     throw new Error(
       `ipc-register: channel "${channel}" must pass { refuse } or { public: true }`,
     )

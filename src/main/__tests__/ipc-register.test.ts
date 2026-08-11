@@ -28,6 +28,13 @@ test('refuse value satisfies the default-deny rule', () => {
   )
 })
 
+test('refuse: undefined is valid for void handlers', () => {
+  assert.deepEqual(
+    assertIpcRegisterOptions('set-library-context', { refuse: undefined }),
+    { public: false },
+  )
+})
+
 test('public: true opts out of the sender guard', () => {
   assert.deepEqual(
     assertIpcRegisterOptions('get-app-version', { public: true }),

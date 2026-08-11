@@ -23,7 +23,9 @@
  * via `sips`, which is already how set-custom-artwork handles album art, so
  * HEIC off an iPhone works alongside jpg/png/webp.
  */
-import { ipcMain, dialog, BrowserWindow, app, protocol, net } from 'electron'
+import { dialog, BrowserWindow, app, protocol, net } from 'electron'
+import type { IpcRegistrar } from './ipc-register.ts'
+import { REFUSED_SENDER } from './ipc-register.ts'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { mkdir, unlink, copyFile, stat, readdir, readFile, writeFile, rename } from 'fs/promises'
@@ -80,7 +82,10 @@ async function loadNotes(): Promise<Record<string, string>> {
   }
 }
 
-export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | null): void {
+export function registerPlaylistCoverIpc(
+  ipc: IpcRegistrar,
+  getMainWindow: () => BrowserWindow | null,
+): void {
   /**
    * Playlist descriptions (2026-08-09). Jake: "id like abolity to write a
    * description for each playlist if i want."
@@ -91,9 +96,9 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
    * takes precedence over any commentary a generated playlist arrived with;
    * clearing it falls back to that.
    */
-  ipcMain.handle('playlist-notes-get', async () => ({ ok: true, notes: await loadNotes() }))
+  ipc.handle('playlist-notes-get', async () => ({ ok: true, notes: await loadNotes() }), { public: true })
 
-  ipcMain.handle('playlist-note-set', async (_e, playlistId: string, text: string) => {
+  ipc.handle('playlist-note-set', async (_e, playlistId: string, text: string) => {
     const id = safeId(String(playlistId || ''))
     if (!id) return { ok: false, error: 'bad playlist id' }
     try {
@@ -110,7 +115,7 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'could not save' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   /**
    * Which playlists have a custom cover, and how fresh each one is.
@@ -122,7 +127,7 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
    * never disagree with itself — there's one source of truth and it's the
    * file. mtime rides along as a cache-buster for replaced covers.
    */
-  ipcMain.handle('playlist-covers-map', async () => {
+  ipc.handle('playlist-covers-map', async () => {
     try {
       const names = await readdir(COVERS_DIR()).catch(() => [] as string[])
       const out: Record<string, number> = {}
@@ -135,10 +140,10 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
     } catch {
       return { ok: true, covers: {}, dir: COVERS_DIR() }
     }
-  })
+  }, { public: true })
 
   /** Open a picker, normalize the pick to JPEG, return the stored path. */
-  ipcMain.handle('playlist-cover-pick', async (_e, playlistId: string) => {
+  ipc.handle('playlist-cover-pick', async (_e, playlistId: string) => {
     const id = safeId(String(playlistId || ''))
     if (!id) return { ok: false, error: 'bad playlist id' }
     const win = getMainWindow()
@@ -175,7 +180,7 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'could not save that cover' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   /**
    * Inherit a cover — a tape made FROM a playlist keeps that playlist's
@@ -192,7 +197,7 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
    * Playlist ids (pl-…) and tape ids (mix-…) share this directory without
    * colliding — different prefixes, and both are validated by safeId().
    */
-  ipcMain.handle('playlist-cover-copy', async (_e, fromId: string, toId: string) => {
+  ipc.handle('playlist-cover-copy', async (_e, fromId: string, toId: string) => {
     const a = safeId(String(fromId || ''))
     const b = safeId(String(toId || ''))
     if (!a || !b) return { ok: false, error: 'bad id' }
@@ -206,13 +211,13 @@ export function registerPlaylistCoverIpc(getMainWindow: () => BrowserWindow | nu
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'copy failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   /** Back to the 4-up mosaic. Identity-gated: only ever our own directory. */
-  ipcMain.handle('playlist-cover-clear', async (_e, playlistId: string) => {
+  ipc.handle('playlist-cover-clear', async (_e, playlistId: string) => {
     const id = safeId(String(playlistId || ''))
     if (!id) return { ok: false, error: 'bad playlist id' }
     await unlink(join(COVERS_DIR(), `${id}.jpg`)).catch(() => {})
     return { ok: true }
-  })
+  }, { refuse: REFUSED_SENDER })
 }
