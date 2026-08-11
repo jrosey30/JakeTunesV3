@@ -15698,6 +15698,10 @@ app.whenReady().then(async () => {
           )
           if (rawTry) return rawTry
         }
+        console.warn(
+          `[ipod-audio] homemini miss for id=${streamId} — if this is a brand-new import, ` +
+          `homemini's backend may not have reloaded library.json yet (index-sync kickstarts it)`,
+        )
       }
 
       // Homemini missed. Serve ONLY a real local (non-symlink) file.
