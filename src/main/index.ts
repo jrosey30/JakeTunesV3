@@ -142,9 +142,6 @@ import {
 } from './platform'
 import {
   partitionLanded,
-  estimateIpodBytes,
-  looksLossless,
-  packTracksToCapacity,
   type IntendedTrack,
 } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
@@ -5602,66 +5599,6 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // file's EMBEDDED TAGS (title + artist) actually agree with the
   // library entry's metadata. If tags disagree or are missing, we
   // fall back to copying the real file.
-  // ── CAPACITY PREFLIGHT (2026-08-11) ──
-  // Activity sync used to say "Syncing 500…" then leave ~100 on a Mini: either
-  // the set was ALAC and the card filled mid-copy, or (worse) verify recopied
-  // ALACs over successful AAC mirrors and filled it. Refuse BEFORE wipe/copy
-  // when the set cannot fit at the convert setting — 500 means 500, or we say
-  // no. Wipe-first free space = free now + every music file about to be deleted.
-  {
-    const requested = tracks.length
-    let freeBytes = 0
-    try {
-      const { statfs } = await import('fs/promises')
-      const s = await statfs(IPOD_MOUNT)
-      freeBytes = Number(s.bavail) * Number(s.bsize)
-    } catch { /* capacity unknown — skip the gate rather than block sync */ }
-    if (freeBytes > 0) {
-      let reclaimable = 0
-      if (syncOpts?.wipeFirst) {
-        try {
-          const { readdir: rdw } = await import('fs/promises')
-          const musicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
-          for (let i = 0; i < 50; i++) {
-            const sub = join(musicRoot, `F${String(i).padStart(2, '0')}`)
-            const entries = await rdw(sub).catch(() => [] as string[])
-            for (const fn of entries) {
-              try { reclaimable += (await stat(join(sub, fn))).size } catch { /* skip */ }
-            }
-          }
-        } catch { /* best-effort */ }
-      }
-      const freeAfter = freeBytes + reclaimable
-      const sized = tracks.map((t) => {
-        const path = String(t.path || '')
-        const ext = path.includes('.') ? path.slice(path.lastIndexOf('.')) : ''
-        const codec = String(t.codec || '')
-        const bytes = estimateIpodBytes({
-          fileSize: typeof t.fileSize === 'number' ? t.fileSize : null,
-          durationMs: typeof t.duration === 'number' ? t.duration : null,
-          convertEnabled: !!convertOptions?.enabled,
-          targetKbps: convertOptions?.targetKbps,
-          isLossless: looksLossless(codec, ext || path),
-        })
-        return { t, bytes }
-      })
-      const needed = sized.reduce((n, x) => n + x.bytes, 0)
-      const RESERVE = 64 * 1024 * 1024
-      if (needed > freeAfter - RESERVE) {
-        const fit = packTracksToCapacity(sized, freeAfter, RESERVE)
-        const fitCount = fit.packed.length
-        const gb = (n: number) => `${(n / (1024 ** 3)).toFixed(1)} GB`
-        const convertHint = convertOptions?.enabled
-          ? `Even as ${convertOptions.targetKbps}k AAC this set needs ~${gb(needed)} and the iPod only has ~${gb(Math.max(0, freeAfter - RESERVE))} free.`
-          : `With Convert higher bit rate OFF these songs stay full-size (~${gb(needed)}) and the iPod only has ~${gb(Math.max(0, freeAfter - RESERVE))} free. Turn Convert on, or pick a smaller set.`
-        const msg = `Sync refused — ${requested} songs will not fit on this iPod. ${convertHint} About ${fitCount.toLocaleString()} would fit right now.`
-        console.error(`sync-to-ipod: CAPACITY — ${msg}`)
-        return { ok: false, copied: 0, error: msg, target: requested, landed: 0, shortfall: requested }
-      }
-      console.log(`sync-to-ipod: capacity OK — ~${(needed / (1024 ** 2)).toFixed(0)} MB needed, ~${((freeAfter - RESERVE) / (1024 ** 2)).toFixed(0)} MB free after${syncOpts?.wipeFirst ? ' wipe' : ''}`)
-    }
-  }
-
   // ── WIPE-FIRST (2026-07-24, Jake: "just wipe the songs from the iPod each
   // time i do activity sync, then rebuild to whatever number i pick"). Deletes
   // every audio file under iPod_Control/Music/F00–F49 so the set is rebuilt from
@@ -6234,6 +6171,36 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       tracks = tracks.filter((t) => landedIds.has(t.id as number))
       verifiedLanded = tracks.length
       console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
+    }
+  }
+
+  // Belt-and-suspenders (2026-08-11): even when remount-verify couldn't run
+  // (or on non-Mac), never write an iTunesDB entry for a file that isn't
+  // actually on the card. Activity sync is ALAC on a 120GB Mini — capacity
+  // is fine; the lie is claiming 500 songs while the firmware only sees the
+  // files that physically committed. Stat each destination; keep only those
+  // present with a positive size. Prefer writtenById's expected size when we
+  // have one.
+  {
+    const present: typeof tracks = []
+    for (const t of tracks) {
+      const id = t.id as number
+      const remembered = writtenById.get(id)
+      const colonPath = String(t.path || '')
+      if (!colonPath && !remembered) continue
+      const dst = remembered?.dstPath
+        || join(IPOD_MOUNT, colonPath.replace(/:/g, pathSep))
+      try {
+        const sz = (await stat(dst)).size
+        if (sz <= 0) continue
+        if (remembered && remembered.expectedSize > 0 && sz !== remembered.expectedSize) continue
+        present.push(t)
+      } catch { /* missing on card */ }
+    }
+    if (present.length !== tracks.length) {
+      console.warn(`sync-to-ipod: on-disk gate — keeping ${present.length}/${tracks.length} with real files on the card before DB write`)
+      tracks = present
+      verifiedLanded = tracks.length
     }
   }
 
