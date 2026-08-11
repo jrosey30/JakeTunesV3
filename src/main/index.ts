@@ -113,6 +113,12 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { foldAccents } from '../common/fold-text.ts'
+import {
+  pickArtistAlbums,
+  albumCollectionByName,
+  albumNameKey,
+  type ItunesAlbumHit,
+} from '../common/itunes-artist-albums.ts'
 import { summariseLearning, type LedgerRow } from './discovery-learned.ts'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
@@ -13742,11 +13748,16 @@ async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestion[] | n
   } catch { return null }
 }
 
-ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
+ipcMain.handle('search-itunes', async (_event, query: string): Promise<{
+  ok: boolean
+  results: ItunesSuggestion[]
+  albums?: ItunesAlbumHit[]
+  artistMatch?: { name: string; id: number }
+}> => {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
   try {
-    // Pull a WIDER pool (25) than we show, so the re-rank below has enough
+    // Pull a WIDER pool than we show, so the re-rank below has enough
     // signal to float the recognizable artist up and bury one-off covers.
     let raw: ItunesSuggestion[] | null = null
     try {
@@ -13788,21 +13799,14 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
     if (raw === null) raw = await fetchDeezerSuggestions(q)
     if (raw === null) return { ok: false, results: [] }
 
-    // ── the artist's OWN catalogue ────────────────────────────────────────
-    // Jake, 2026-08-09, searching "Jay z": every result was a Beyoncé or
-    // Rihanna track that FEATURES him, and not one of his own records. That is
-    // Apple's ranking, not a bug we introduced — a song search sorts by
-    // popularity, and a superstar's guest verses out-rank his own catalogue.
-    //
-    // Resolving the ARTIST first fixes it, and fixes the spelling at the same
-    // time: "jay z" resolves to JAŸ-Z (U+0178) and "husker du" to Hüsker Dü,
-    // which is the canonical name Apple files their records under.
-    //
-    // Only fires when the query really does look like an artist NAME — the
-    // resolved artist must fold to the query itself. So "husker du" and
-    // "snoop dogg" trigger it and "when you die mgmt" does not, which matters
-    // because that phrase resolves to MGMT and would otherwise bury the song
-    // the user actually typed under MGMT's back catalogue.
+    // ── Artist-name query → real album catalogue ─────────────────────────
+    // Jake: "I only get 2 albums??" when searching Migos. Song search + a
+    // hard .slice(0, 10) meant the album shelf was inferred from a popularity
+    // snack pack. When the query IS the artist, return Apple's artist→album
+    // lookup as first-class albums (explicit preferred), and keep a wider
+    // song list. Song queries ("when you die mgmt") skip this path.
+    let catalogAlbums: ItunesAlbumHit[] = []
+    let artistMatch: { name: string; id: number } | undefined
     const foldedQ = foldAccents(q).replace(/[^a-z0-9]/g, '')
     if (foldedQ.length >= 3) {
       try {
@@ -13812,106 +13816,55 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
           const aData = await aRes.json() as { results?: Array<{ artistId?: number; artistName?: string }> }
           const hit = (aData.results || []).find((a) =>
             foldAccents(a.artistName || '').replace(/[^a-z0-9]/g, '') === foldedQ)
-          if (hit?.artistId) {
-            const lRes = await fetch(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=120`,
+          if (hit?.artistId && hit.artistName) {
+            artistMatch = { name: hit.artistName, id: hit.artistId }
+            const canonical = foldAccents(hit.artistName).replace(/[^a-z0-9]/g, '')
+
+            // Album shelf FIRST — this is what "search Migos" is for.
+            let albumByName = new Map<string, { id: number; explicitness?: string }>()
+            try {
+              const abRes = await fetch(
+                `https://itunes.apple.com/lookup?id=${hit.artistId}&entity=album&limit=200`,
+                { signal: AbortSignal.timeout(6000) })
+              if (abRes.ok) {
+                const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
+                catalogAlbums = pickArtistAlbums(abData.results || [])
+                  .filter((a) => !ITUNES_JUNK_ARTIST.test(a.artist))
+                albumByName = albumCollectionByName(catalogAlbums)
+              }
+            } catch { /* song merge still helps without the shelf */ }
+
+            const lRes = await fetch(`https://itunes.apple.com/lookup?id=${hit.artistId}&entity=song&limit=200`,
               { signal: AbortSignal.timeout(6000) })
             if (lRes.ok) {
               const lData = await lRes.json() as { results?: Array<Record<string, unknown>> }
-              const canonical = foldAccents(hit.artistName || '').replace(/[^a-z0-9]/g, '')
-
-              // ── Find the UNCENSORED edition of each album ──────────────
-              // Jake, 2026-08-10, searching Migos and getting CLEAN copies of
-              // Culture and Culture II: "this is a disaster."
-              //
-              // Apple's two endpoints disagree, and the one we were using is
-              // the worse of the pair. Measured on the live API:
-              //
-              //   lookup?id=<artist>&entity=album  ->  Culture II explicit
-              //                                        1440907256 AND cleaned
-              //                                        1440914594
-              //   search?term=Migos Culture II     ->  cleaned 1440914594 ONLY
-              //
-              // Album rows here are derived from a SONG search, and those
-              // results carry the collectionId of whatever the search endpoint
-              // returned - the censored one. So the row pointed at the clean
-              // album, expanding it fetched the clean tracklist, and every
-              // download taken from it was censored. Preferring 'explicit'
-              // among the results could never help: no explicit result was
-              // ever in the set to prefer.
-              //
-              // So ask the endpoint that has both, and rewrite each track's
-              // collection to the uncensored edition of the same album.
-              const explicitByAlbum = new Map<string, { id: number }>()
-              try {
-                const abRes = await fetch(
-                  `https://itunes.apple.com/lookup?id=${hit.artistId}&entity=album&limit=100`,
-                  { signal: AbortSignal.timeout(6000) })
-                if (abRes.ok) {
-                  const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
-                  for (const c of abData.results || []) {
-                    if (c.wrapperType !== 'collection') continue
-                    if (c.collectionExplicitness !== 'explicit') continue
-                    const name = foldAccents(String(c.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
-                    if (!name || !c.collectionId) continue
-                    // First explicit wins: Apple lists deluxe/extended variants
-                    // under their own names, so a same-name hit is the album.
-                    if (!explicitByAlbum.has(name)) explicitByAlbum.set(name, { id: Number(c.collectionId) })
-                  }
-                }
-              } catch { /* no album lookup - fall through with what we have */ }
               const own = (lData.results || [])
                 .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
-                // PRIMARY artist only. The lookup also returns the guest spots
-                // the plain search already gave us; keeping them would just
-                // deepen the pile we are trying to get out from under.
+                // PRIMARY artist only — guest spots already come from song search.
                 .filter((r) => foldAccents(String(r.artistName)).replace(/[^a-z0-9]/g, '').startsWith(canonical))
-                .map((r) => ({
-                  song: String(r.trackName ?? ''),
-                  artist: String(r.artistName ?? ''),
-                  album: r.collectionName ? String(r.collectionName) : undefined,
-                  artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
-                  previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
-                  appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
-                  collectionId: (() => {
-                    const nm = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
-                    const ex = nm ? explicitByAlbum.get(nm) : undefined
-                    return ex ? ex.id : (r.collectionId ? Number(r.collectionId) : undefined)
-                  })(),
-                  durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
-                  releaseYear: itunesYear(r.releaseDate),
-                  trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
-                  genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
-                  explicitness: (() => {
-                    const nm = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
-                    // If an uncensored edition of this album exists, the row now
-                    // points at it, so the badge must say so too.
-                    if (nm && explicitByAlbum.has(nm)) return 'explicit'
-                    return typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined
-                  })(),
-                }))
+                .map((r) => {
+                  const nm = albumNameKey(String(r.collectionName ?? ''))
+                  const catalog = nm ? albumByName.get(nm) : undefined
+                  return {
+                    song: String(r.trackName ?? ''),
+                    artist: String(r.artistName ?? ''),
+                    album: r.collectionName ? String(r.collectionName) : undefined,
+                    artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+                    previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+                    appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+                    collectionId: catalog?.id ?? (r.collectionId ? Number(r.collectionId) : undefined),
+                    durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
+                    releaseYear: itunesYear(r.releaseDate),
+                    trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
+                    genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
+                    explicitness: catalog?.explicitness === 'explicit'
+                      ? 'explicit'
+                      : (typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined),
+                  }
+                })
                 .filter((s2) => !ITUNES_JUNK_ARTIST.test(s2.artist))
-              // Dedupe on song+artist WITHOUT the album: an artist's catalogue
-              // carries the same track on the album, the greatest-hits and the
-              // single, and adding all three put "Empire State Of Mind" in the
-              // list twice before this line existed.
-              // ⚠️ The plain search and the artist lookup do NOT return the same
-              // editions. Measured on the live API, 2026-08-10:
-              //
-              //   search?term=Migos Culture II  ->  cleaned  1440914594 only
-              //   lookup?id=<artist>&entity=song ->  explicit 1440907256
-              //
-              // `raw` is the search (censored), `own` is the lookup (real). This
-              // loop used to append only songs the search had NOT returned, so
-              // every uncensored version of a song the search already had was
-              // thrown away — and the censored one kept the row, and with it the
-              // collectionId the album expands by. That is why Jake searched
-              // Migos and got CLEAN copies of Culture and Culture II, and why
-              // downloads off those rows were censored.
-              //
-              // So a lookup result now UPGRADES a censored one in place instead
-              // of being discarded. Still deduped on song+artist without the
-              // album, which is what stops the same track appearing three times
-              // off the album, the compilation and the single.
+              // Upgrade censored song-search rows in place; never discard the
+              // explicit twin because the clean one arrived first.
               const byKey = new Map<string, number>()
               raw.forEach((r, i) => {
                 const k = `${foldAccents(r.song)}|${foldAccents(r.artist)}`
@@ -13959,12 +13912,20 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
       if (/ - single$/.test(album) && album.startsWith(song)) score -= 6 // one-off cover single
       return score
     }
+    // Artist catalogue searches used to slice to 10 songs — then the UI
+    // derived "albums" from that snack pack (Migos → 2 records). Keep a real
+    // song list; the album shelf comes from `albums` when present.
+    const songCap = catalogAlbums.length > 0 ? 60 : 40
     const ranked = raw
       .map((s, i) => ({ s, i, score: scoreOf(s) }))
       .sort((a, b) => (b.score - a.score) || (a.i - b.i))   // score desc, iTunes order as stable tiebreak
-      .slice(0, 10)
+      .slice(0, songCap)
       .map((x) => x.s)
-    return { ok: true, results: ranked }
+    return {
+      ok: true,
+      results: ranked,
+      ...(catalogAlbums.length > 0 ? { albums: catalogAlbums, artistMatch } : {}),
+    }
   } catch {
     return { ok: false, results: [] }
   }

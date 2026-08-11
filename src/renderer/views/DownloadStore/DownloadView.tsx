@@ -4,7 +4,7 @@ import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
-import type { ItunesSuggestion } from '../../types'
+import type { ItunesSuggestion, ItunesAlbumHit } from '../../types'
 import { explicitWins } from '../../../common/explicit'
 import { foldAccents, withinEditDistance, typoBudget } from '../../../common/fold-text'
 
@@ -73,11 +73,10 @@ export function scoreResult(q: string, qTokens: string[], title: string, artist:
   return Math.max(t * 1.0 + a * 1.15, combo * 1.2)
 }
 
-// Jake, 2026-08-09: "it only shows me a very limited number of things if i
-// search via artist (i think only 7 albums and 9 songs max)." It was 8 albums
-// minus the hero, and 12 songs. An artist search now returns their catalogue,
-// so the shelf has something to show.
-const MAX_ALBUMS = 30
+// Jake, 2026-08-09/11: artist searches used to show ~7 albums derived from a
+// 10-song snack pack. Catalogue albums now come from Apple's artist→album
+// lookup (up to ~50 on the shelf); song lists stay generous too.
+const MAX_ALBUMS = 50
 const MAX_SONGS = 60
 
 interface RipStatus { installed: boolean; version?: string; reason?: string }
@@ -151,8 +150,14 @@ export function displayAlbumTitle(name: string): string {
 }
 
 // Page memory — the view unmounts on navigate-away; restore search state on return.
-interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
-let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
+interface DownloadCache {
+  query: string
+  results: ItunesSuggestion[]
+  albums: ItunesAlbumHit[]
+  artistMatch: { name: string; id: number } | null
+  pasteUrl: string
+}
+let pageCache: DownloadCache = { query: '', results: [], albums: [], artistMatch: null, pasteUrl: '' }
 
 // Queue entries resolve on Qobuz AT DOWNLOAD TIME by artist+title/album.
 // durationMs pins the EXACT version the user clicked — main verifies the
@@ -179,6 +184,8 @@ export default function DownloadView() {
   const [query, setQuery] = useState(pageCache.query)
   const [searching, setSearching] = useState(false)
   const [results, setResults] = useState<ItunesSuggestion[]>(pageCache.results)
+  const [catalogAlbums, setCatalogAlbums] = useState<ItunesAlbumHit[]>(pageCache.albums)
+  const [artistMatch, setArtistMatch] = useState<{ name: string; id: number } | null>(pageCache.artistMatch)
   const [searchErr, setSearchErr] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null)
   const [failures, setFailures] = useState<Array<{ filename: string; error: string }>>([])
@@ -253,22 +260,38 @@ export default function DownloadView() {
   }, [lib.tracks])
   const summary = queueSummary()
 
-  // Rank songs + derive albums from the SAME instant result set.
+  // Rank songs; albums come from the artist catalogue when the query is an
+  // artist name — never again from a 10-song snack pack (Migos → 2 CLEAN).
   const ranked = useMemo(() => {
     const q = normQ(query)
     const qTokens = q ? q.split(' ') : []
+    // Artist catalogue: every song from that artist scores even if the title
+    // doesn't contain "migos". Song queries still require a real score hit.
+    const artistCatalogue = catalogAlbums.length > 0
+    const artistFold = artistMatch ? norm(artistMatch.name) : ''
     const songs: SongRow[] = results.map((s) => {
       const owned = libIndex.tracks.has(norm(s.song) + '|' + norm(s.artist))
       const base = q ? scoreResult(q, qTokens, s.song, s.artist) : 0
       const titleHit = q ? scoreField(normQ(s.song), q, qTokens) > 0 : false
+      const score = artistCatalogue
+        ? Math.max(base, 40)
+        : (base > 0 && titleHit ? base + 0.5 : base)
       return {
         kind: 'song' as const,
         artist: s.artist, title: s.song, album: s.album,
         artworkUrl: s.artworkUrl, previewUrl: s.previewUrl,
         durationSecs: s.durationSecs, releaseYear: s.releaseYear, explicitness: s.explicitness,
-        owned, score: base > 0 && titleHit ? base + 0.5 : base,
+        owned, score,
       }
-    }).filter((s) => !q || s.score > 0)
+    }).filter((s) => {
+      if (artistCatalogue && artistFold) {
+        const a = norm(s.artist)
+        // Primary-artist songs only — guest verses from the popularity search
+        // used to bury the catalogue (Jay-Z → Beyoncé features).
+        return a === artistFold || a.startsWith(artistFold) || artistFold.startsWith(a)
+      }
+      return !q || s.score > 0
+    })
     // Collapse the censored/uncensored pair Apple returns for the same song,
     // keeping the explicit one. Without this the list either showed the clean
     // edition (whenever Apple ordered it first) or showed both, which reads as
@@ -288,73 +311,70 @@ export default function DownloadView() {
     songs.push(...songBest.values())
     songs.sort((a, b) => b.score - a.score)
 
-    const albumMap = new Map<string, AlbumRow>()
-    for (const s of results) {
-      if (!s.album) continue
-      const key = `${norm(s.artist)}|${norm(s.album)}`
-      const albScore = q ? Math.max(
-        scoreResult(q, qTokens, s.album, s.artist),
-        scoreResult(q, qTokens, s.song, s.artist) * 0.85,
-      ) : 0
-      const cur = albumMap.get(key)
-      if (cur) {
-        cur.songs += 1; cur.score = Math.max(cur.score, albScore)
-        // ── The explicit edition wins the row ────────────────────────────
-        // Jake, 2026-08-10, searching Migos: "why am i only seeing the clean
-        // version?????"
-        //
-        // Apple lists the censored and uncensored editions of a record under
-        // the SAME name, so both collapse onto this artist|album key. First
-        // one seen used to keep the row — including its collectionId — and
-        // when that was the clean edition, expanding the album fetched the
-        // CLEAN tracklist and every download off it was censored. The badge
-        // was telling the truth; the row was simply bound to the wrong record.
-        //
-        // So identity follows the explicit edition when one exists. Only
-        // 'cleaned' loses: 'notExplicit' means a record with nothing to
-        // censor, which must not be overwritten by anything.
-        if (explicitWins(cur.explicitness, s.explicitness)) {
-          cur.explicitness = s.explicitness
-          if (s.collectionId) cur.collectionId = s.collectionId
-          if (s.artworkUrl) cur.artworkUrl = s.artworkUrl
-          if (s.trackCount) cur.trackCount = s.trackCount
-        } else if (!cur.explicitness && s.explicitness) {
-          cur.explicitness = s.explicitness
-        }
-        if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl
-        if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
-        if (!cur.trackCount && s.trackCount) cur.trackCount = s.trackCount
-        if (!cur.genre && s.genre) cur.genre = s.genre
-        // LATEST wins. Tracks on one collection carry their OWN release dates,
-        // not the album's — Turnstile's GLOW ON returns 2021-05-26, 2021-07-30
-        // and 2021-08-27 for three of its tracks, because the first two were
-        // put out as singles ahead of the record. The album's date is the last
-        // of them. Taking the earliest would date an album released in January
-        // to the previous year, off the singles that trailed it.
-        // Only an inference: the search returns whichever tracks matched, so a
-        // hit on a pre-release single alone still reads early. Expanding the
-        // album replaces this with the collection's own date (see `year`).
-        if (s.releaseYear && (!cur.releaseYear || s.releaseYear > cur.releaseYear)) cur.releaseYear = s.releaseYear
-      } else albumMap.set(key, {
-        kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
-        owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
-        score: albScore, songs: 1, collectionId: s.collectionId,
-        releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre, explicitness: s.explicitness,
-      })
+    let albums: AlbumRow[]
+    if (catalogAlbums.length > 0) {
+      albums = catalogAlbums.map((a) => ({
+        kind: 'album' as const,
+        artist: a.artist,
+        album: a.album,
+        artworkUrl: a.artworkUrl,
+        owned: libIndex.albums.has(norm(a.album) + '|' + norm(a.artist)),
+        score: 120,
+        songs: a.trackCount || 0,
+        collectionId: a.collectionId,
+        releaseYear: a.releaseYear,
+        trackCount: a.trackCount,
+        genre: a.genre,
+        explicitness: a.explicitness,
+      })).slice(0, MAX_ALBUMS)
+    } else {
+      const albumMap = new Map<string, AlbumRow>()
+      for (const s of results) {
+        if (!s.album) continue
+        const key = `${norm(s.artist)}|${norm(s.album)}`
+        const albScore = q ? Math.max(
+          scoreResult(q, qTokens, s.album, s.artist),
+          scoreResult(q, qTokens, s.song, s.artist) * 0.85,
+        ) : 0
+        const cur = albumMap.get(key)
+        if (cur) {
+          cur.songs += 1; cur.score = Math.max(cur.score, albScore)
+          // Explicit edition wins the row (collectionId + badge).
+          if (explicitWins(cur.explicitness, s.explicitness)) {
+            cur.explicitness = s.explicitness
+            if (s.collectionId) cur.collectionId = s.collectionId
+            if (s.artworkUrl) cur.artworkUrl = s.artworkUrl
+            if (s.trackCount) cur.trackCount = s.trackCount
+          } else if (!cur.explicitness && s.explicitness) {
+            cur.explicitness = s.explicitness
+          }
+          if (!cur.artworkUrl) cur.artworkUrl = s.artworkUrl
+          if (!cur.collectionId && s.collectionId) cur.collectionId = s.collectionId
+          if (!cur.trackCount && s.trackCount) cur.trackCount = s.trackCount
+          if (!cur.genre && s.genre) cur.genre = s.genre
+          if (s.releaseYear && (!cur.releaseYear || s.releaseYear > cur.releaseYear)) cur.releaseYear = s.releaseYear
+        } else albumMap.set(key, {
+          kind: 'album', artist: s.artist, album: s.album, artworkUrl: s.artworkUrl,
+          owned: libIndex.albums.has(norm(s.album) + '|' + norm(s.artist)),
+          score: albScore, songs: 1, collectionId: s.collectionId,
+          releaseYear: s.releaseYear, trackCount: s.trackCount, genre: s.genre, explicitness: s.explicitness,
+        })
+      }
+      albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, MAX_ALBUMS)
     }
-    const albums = [...albumMap.values()].filter((a) => !q || a.score > 0).sort((a, b) => b.score - a.score).slice(0, MAX_ALBUMS)
 
     const topSong = songs[0] ?? null
     const topAlbum = albums[0] ?? null
-    // The hero is whichever type matched harder.
-    const hero: SongRow | AlbumRow | null =
-      topSong && topAlbum ? (topAlbum.score > topSong.score ? topAlbum : topSong) : (topSong || topAlbum)
+    // Artist catalogue: lead with the newest album, not a random hit single.
+    const hero: SongRow | AlbumRow | null = artistCatalogue
+      ? (topAlbum || topSong)
+      : (topSong && topAlbum ? (topAlbum.score > topSong.score ? topAlbum : topSong) : (topSong || topAlbum))
     return {
       hero,
       songs: songs.filter((s) => s !== hero).slice(0, MAX_SONGS),
       albums: albums.filter((a) => a !== hero),
     }
-  }, [results, query, libIndex])
+  }, [results, catalogAlbums, artistMatch, query, libIndex])
 
   useEffect(() => {
     let cancelled = false
@@ -394,6 +414,8 @@ export default function DownloadView() {
       if (!q) return
       setQuery(q)
       setResults([])
+      setCatalogAlbums([])
+      setArtistMatch(null)
       setSearchErr(null)
       setNotice(null)
       pendingExpandRef.current = d?.kind === 'album' && d.artist && d.title
@@ -408,8 +430,8 @@ export default function DownloadView() {
   }, [])
 
   useEffect(() => {
-    pageCache = { query, results, pasteUrl }
-  }, [query, results, pasteUrl])
+    pageCache = { query, results, albums: catalogAlbums, artistMatch, pasteUrl }
+  }, [query, results, catalogAlbums, artistMatch, pasteUrl])
 
   useEffect(() => { runSearchRef.current = runSearch })
 
@@ -439,13 +461,22 @@ export default function DownloadView() {
   const runSearch = async (raw: string) => {
     const q = raw.trim()
     const token = ++searchTokenRef.current
-    if (!q) { setResults([]); setSearchErr(null); setSearching(false); return }
+    if (!q) {
+      setResults([])
+      setCatalogAlbums([])
+      setArtistMatch(null)
+      setSearchErr(null)
+      setSearching(false)
+      return
+    }
     setSearching(true)
     setSearchErr(null)
     try {
       const r = await window.electronAPI.searchItunes?.(q)
       if (token !== searchTokenRef.current) return
       let list = r?.ok ? r.results : []
+      let albums = r?.ok && r.albums ? r.albums : []
+      let matched = r?.ok && r.artistMatch ? r.artistMatch : null
       if (!r?.ok) {
         // iTunes can rate-limit (403). Fall back to the slower Qobuz catalog
         // search so Jake is never staring at nothing — results just lack
@@ -461,9 +492,13 @@ export default function DownloadView() {
             } as ItunesSuggestion
           })
         }
+        albums = []
+        matched = null
       }
       setResults(list)
-      setSearchErr(list.length === 0 ? `No matches for “${q}”.` : null)
+      setCatalogAlbums(albums)
+      setArtistMatch(matched)
+      setSearchErr(list.length === 0 && albums.length === 0 ? `No matches for “${q}”.` : null)
     } catch (e) {
       if (token === searchTokenRef.current) setSearchErr(e instanceof Error ? e.message : 'Search failed.')
     } finally {
@@ -473,7 +508,14 @@ export default function DownloadView() {
 
   useEffect(() => {
     const q = query.trim()
-    if (q.length < 2) { setResults([]); setSearchErr(null); setSearching(false); return }
+    if (q.length < 2) {
+      setResults([])
+      setCatalogAlbums([])
+      setArtistMatch(null)
+      setSearchErr(null)
+      setSearching(false)
+      return
+    }
     const h = window.setTimeout(() => { void runSearch(q) }, 300)
     return () => window.clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1001,8 +1043,10 @@ export default function DownloadView() {
         {ranked.albums.length > 0 && (
           <section className="dl-sec">
             <div className="dl-sec-head">
-              <span className="dl-sec-title">Releases</span>
-              <span className="dl-sec-count">{ranked.albums.length}</span>
+              <span className="dl-sec-title">
+                {artistMatch ? `${artistMatch.name} · albums` : 'Releases'}
+              </span>
+              <span className="dl-sec-count">{ranked.albums.length + (ranked.hero && (ranked.hero as AlbumRow).kind === 'album' ? 1 : 0)}</span>
               <span className="dl-rule" />
             </div>
             <div className="dl-shelf">{ranked.albums.map((a, i) => renderRelease(a, i))}</div>
