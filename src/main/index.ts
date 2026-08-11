@@ -39,7 +39,7 @@ import {
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
-import { isHomeminiPlaybackClient } from './stream-playback'
+import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { refuseIfNotMainWindow } from './ipc-guard'
@@ -4244,6 +4244,34 @@ async function fetchAudioFromHomemini(
     return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
   } catch {
     return null
+  }
+}
+
+/**
+ * Boot / deploy canary for streaming clients. Non-blocking: logs loudly if
+ * homemini is unreachable so "won't play" is diagnosable from the main log
+ * instead of looking like a random Howler hang. Never throws.
+ */
+async function probeHomeminiReachability(): Promise<void> {
+  if (!(await isHomeminiPlaybackClientCached())) return
+  const base = (process.env.JAKETUNES_MOBILE_BACKEND || 'http://homemini:3000').replace(/\/$/, '')
+  const url = `${base}/healthz`
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
+    if (res.ok) {
+      console.log(`[stream] homemini reachable at ${url} — streaming playback path OK`)
+    } else {
+      console.warn(
+        `[stream] homemini healthz returned ${res.status} from ${url}. ` +
+        `This machine is a streaming client (streamRoot/streamSource); tracks will 404 until homemini is healthy.`,
+      )
+    }
+  } catch (err) {
+    console.warn(
+      `[stream] homemini UNREACHABLE at ${url} (${err instanceof Error ? err.message : err}). ` +
+      `This machine will not play symlinked/cache-farm tracks until homemini:3000 answers. ` +
+      `Do NOT "fix" by reading the NAS SMB mount on the hot path — that is the hang.`,
+    )
   }
 }
 
@@ -15742,6 +15770,9 @@ app.whenReady().then(async () => {
   // if nothing matches — it never throws.
   MUSIC_DIR = await resolveMusicDir()
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
+  // Streaming/cache-farm machines (workmini): fail loud at boot if homemini
+  // is down, instead of discovering it as "stuck at 0:00" with no error.
+  void probeHomeminiReachability()
   // 4.5.0-114 — local SSD is canonical; NAS is async backup mirror only.
   const nasUp = await nasAvailable()
   console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-primary'} — dir=${STATE_DIR}${nasUp ? ` (NAS backup mirror at ${NAS_STATE_DIR_PATH})` : ` (NAS backup unavailable — ${NAS_STATE_DIR_PATH} not mounted)`}`)
@@ -16648,7 +16679,7 @@ app.whenReady().then(async () => {
       }
       try {
         const st = await lstat(rawPath)
-        if (st.isSymbolicLink()) {
+        if (!mayFollowPlaybackSymlink({ isHomeminiClient: true, isSymlink: st.isSymbolicLink() })) {
           // Symlink would follow into the NAS. Homemini already missed —
           // fail closed with 404 instead of hanging the player on SMB.
           console.warn('[ipod-audio] homemini miss + symlink — refusing SMB follow:', rawPath.slice(0, 120))

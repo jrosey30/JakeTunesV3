@@ -213,6 +213,25 @@ says to and explains why:
 
 ---
 
+## Streaming / workmini playback (CRITICAL)
+
+See `docs/postmortems/2026-08-11-workmini-playback-smb.md`.
+
+On any machine with `library.streamRoot` set (workmini's cache-farm) or
+`library.streamSource=homemini`:
+
+- **Playback goes through homemini HTTP first** — same path as the phone.
+- **Never** put SMB / `streamRoot` / symlink-follow / `realpath` of those
+  links on the `ipod-audio://` hot path. When the mount wedges, the player
+  hangs in the kernel with no useful error.
+- If homemini is down, **fail closed** (404 + boot warning). Do not "fix"
+  by reading the NAS.
+- Policy lives in `src/main/stream-playback.ts`. Source-shape locks live in
+  `src/main/__tests__/stream-playback-path.test.ts`. If those tests fail,
+  the path changed on purpose or by accident — decide before updating them.
+
+---
+
 ## Architecture Notes
 
 **State communication between Toolbar and AlbumArtPanel:**
