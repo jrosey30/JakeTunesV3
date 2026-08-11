@@ -325,6 +325,11 @@ export default function ListenToTheListView() {
             {note && <span className="ltl-tri-note">{note}</span>}
             <span className="ltl-tri-date">{formatAppDate(r.createdAt)}</span>
           </div>
+          {dl.state === 'error' && (
+            <div className="ltl-tri-error" title={dl.error || 'Download failed'}>
+              {dl.error || 'Download failed.'}
+            </div>
+          )}
         </div>
         <div className="ltl-tri-actions" onClick={(e) => e.stopPropagation()}>
           {dl.state === 'queued' || dl.state === 'downloading' ? (
@@ -336,7 +341,9 @@ export default function ListenToTheListView() {
             <>
               {/* Failure was previously rendered NOWHERE — an errored row fell
                   back into the list looking exactly like one never tried, so a
-                  failed import was indistinguishable from an ignored one. */}
+                  failed import was indistinguishable from an ignored one.
+                  Error text now also shows under the title (Jake couldn't see
+                  tooltips for why Slide / Oliver Heldens Edit failed). */}
               <span className="ltl-tri-failed" title={dl.error || 'Download failed'}>FAILED</span>
               <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title={dl.error || 'Try again'}>Retry</button>
             </>
