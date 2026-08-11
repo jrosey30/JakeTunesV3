@@ -13773,6 +13773,47 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
             if (lRes.ok) {
               const lData = await lRes.json() as { results?: Array<Record<string, unknown>> }
               const canonical = foldAccents(hit.artistName || '').replace(/[^a-z0-9]/g, '')
+
+              // ── Find the UNCENSORED edition of each album ──────────────
+              // Jake, 2026-08-10, searching Migos and getting CLEAN copies of
+              // Culture and Culture II: "this is a disaster."
+              //
+              // Apple's two endpoints disagree, and the one we were using is
+              // the worse of the pair. Measured on the live API:
+              //
+              //   lookup?id=<artist>&entity=album  ->  Culture II explicit
+              //                                        1440907256 AND cleaned
+              //                                        1440914594
+              //   search?term=Migos Culture II     ->  cleaned 1440914594 ONLY
+              //
+              // Album rows here are derived from a SONG search, and those
+              // results carry the collectionId of whatever the search endpoint
+              // returned - the censored one. So the row pointed at the clean
+              // album, expanding it fetched the clean tracklist, and every
+              // download taken from it was censored. Preferring 'explicit'
+              // among the results could never help: no explicit result was
+              // ever in the set to prefer.
+              //
+              // So ask the endpoint that has both, and rewrite each track's
+              // collection to the uncensored edition of the same album.
+              const explicitByAlbum = new Map<string, { id: number }>()
+              try {
+                const abRes = await fetch(
+                  `https://itunes.apple.com/lookup?id=${hit.artistId}&entity=album&limit=100`,
+                  { signal: AbortSignal.timeout(6000) })
+                if (abRes.ok) {
+                  const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
+                  for (const c of abData.results || []) {
+                    if (c.wrapperType !== 'collection') continue
+                    if (c.collectionExplicitness !== 'explicit') continue
+                    const name = foldAccents(String(c.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+                    if (!name || !c.collectionId) continue
+                    // First explicit wins: Apple lists deluxe/extended variants
+                    // under their own names, so a same-name hit is the album.
+                    if (!explicitByAlbum.has(name)) explicitByAlbum.set(name, { id: Number(c.collectionId) })
+                  }
+                }
+              } catch { /* no album lookup - fall through with what we have */ }
               const own = (lData.results || [])
                 .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
                 // PRIMARY artist only. The lookup also returns the guest spots
@@ -13786,22 +13827,56 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
                   artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
                   previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
                   appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
-                  collectionId: r.collectionId ? Number(r.collectionId) : undefined,
+                  collectionId: (() => {
+                    const nm = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+                    const ex = nm ? explicitByAlbum.get(nm) : undefined
+                    return ex ? ex.id : (r.collectionId ? Number(r.collectionId) : undefined)
+                  })(),
                   durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
                   releaseYear: itunesYear(r.releaseDate),
                   trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
                   genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
-                  explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
+                  explicitness: (() => {
+                    const nm = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+                    // If an uncensored edition of this album exists, the row now
+                    // points at it, so the badge must say so too.
+                    if (nm && explicitByAlbum.has(nm)) return 'explicit'
+                    return typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined
+                  })(),
                 }))
                 .filter((s2) => !ITUNES_JUNK_ARTIST.test(s2.artist))
               // Dedupe on song+artist WITHOUT the album: an artist's catalogue
               // carries the same track on the album, the greatest-hits and the
               // single, and adding all three put "Empire State Of Mind" in the
               // list twice before this line existed.
-              const seen = new Set(raw.map((r) => `${foldAccents(r.song)}|${foldAccents(r.artist)}`))
+              // ⚠️ The plain search and the artist lookup do NOT return the same
+              // editions. Measured on the live API, 2026-08-10:
+              //
+              //   search?term=Migos Culture II  ->  cleaned  1440914594 only
+              //   lookup?id=<artist>&entity=song ->  explicit 1440907256
+              //
+              // `raw` is the search (censored), `own` is the lookup (real). This
+              // loop used to append only songs the search had NOT returned, so
+              // every uncensored version of a song the search already had was
+              // thrown away — and the censored one kept the row, and with it the
+              // collectionId the album expands by. That is why Jake searched
+              // Migos and got CLEAN copies of Culture and Culture II, and why
+              // downloads off those rows were censored.
+              //
+              // So a lookup result now UPGRADES a censored one in place instead
+              // of being discarded. Still deduped on song+artist without the
+              // album, which is what stops the same track appearing three times
+              // off the album, the compilation and the single.
+              const byKey = new Map<string, number>()
+              raw.forEach((r, i) => {
+                const k = `${foldAccents(r.song)}|${foldAccents(r.artist)}`
+                if (!byKey.has(k)) byKey.set(k, i)
+              })
               for (const o of own) {
                 const k = `${foldAccents(o.song)}|${foldAccents(o.artist)}`
-                if (!seen.has(k)) { seen.add(k); raw.push(o) }
+                const at = byKey.get(k)
+                if (at === undefined) { byKey.set(k, raw.length); raw.push(o); continue }
+                if (raw[at].explicitness === 'cleaned' && o.explicitness === 'explicit') raw[at] = o
               }
             }
           }
