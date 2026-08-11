@@ -6568,13 +6568,17 @@ async function candidateMusicMounts(): Promise<string[]> {
     const settings = await readAppSettingsAsync()
     const lib = (settings?.library ?? null) as { musicRoot?: string; streamRoot?: string } | null
     if (lib?.musicRoot && typeof lib.musicRoot === 'string') roots.push(lib.musicRoot)
-    // streamRoot is a real mount holding real audio. Leaving it out meant a
-    // track whose only copy lives on the NAS resolved nowhere, so the verifier
-    // stamped audioMissing on it and the UI put a warning badge next to a file
-    // that is perfectly fine — and, worse, the dead-track chain counts that
-    // same signal. Keeping audio off the local disk is the intended setup here,
-    // so "not local" must never read as "gone".
-    if (lib?.streamRoot && typeof lib.streamRoot === 'string') roots.push(lib.streamRoot)
+    // NEVER put streamRoot (JakeShareNAS / SMB) into verify/dead-track mounts
+    // on a cache-farm machine. existsSync + readdir on that tree is the
+    // workmini pinwheel (203s listings). Local musicRoot holds symlinks for
+    // every track; lstat treats those as present. Homemini serves the bytes.
+    if (
+      lib?.streamRoot &&
+      typeof lib.streamRoot === 'string' &&
+      !(await isHomeminiPlaybackClientCached())
+    ) {
+      roots.push(lib.streamRoot)
+    }
   } catch { /* settings unreadable — auto-detect roots still apply */ }
   if (detectedIpodMount) roots.push(detectedIpodMount)
   const seen = new Set<string>()
@@ -6582,10 +6586,14 @@ async function candidateMusicMounts(): Promise<string[]> {
   for (const r of roots) {
     if (!r || seen.has(r)) continue
     seen.add(r)
-    // Only keep roots that actually hold an iPod_Control/Music tree — an
-    // unmounted drive or wrong path contributes nothing and must not count as
-    // a "checked" mount in the safety guard below.
-    if (existsSync(join(r, 'iPod_Control', 'Music'))) out.push(r)
+    // Async probe — never existsSync. A wedged mount must not beachball the
+    // main process; treat timeout/failure as "not a usable mount".
+    const musicTree = join(r, 'iPod_Control', 'Music')
+    const ok = await Promise.race([
+      lstat(musicTree).then(() => true, () => false),
+      new Promise<boolean>((res) => setTimeout(() => res(false), 1500)),
+    ])
+    if (ok) out.push(r)
   }
   return out
 }
@@ -6636,13 +6644,11 @@ async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
     const raw = await readFile(LIBRARY_PATH, 'utf-8')
     const libData = JSON.parse(raw) as { tracks?: Array<Record<string, unknown>> }
     const sep = IS_WINDOWS ? '\\' : '/'
-    // Audio does not have to be local — library.streamRoot points at the NAS,
-    // and on this setup most files live only there. Checking the local root
-    // alone would call thousands of perfectly good tracks "missing" and let
-    // them all be re-imported as duplicates.
-    const roots = [MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')]
-    const streamRoot = await readStreamRoot()
-    if (streamRoot) roots.push(streamRoot)
+    // LOCAL music root only. Never existsSync into streamRoot — that follows
+    // farm symlinks into SMB on the MAIN THREAD and beachballs workmini for
+    // every import (thousands of sync probes). A local real file OR symlink
+    // counts as present; homemini serves symlink bytes at play time.
+    const localRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
     for (const t of libData.tracks || []) {
       // An entry with NO PLAYABLE FILE must not block its own replacement.
       //
@@ -6654,13 +6660,17 @@ async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
       // refused even though the entry's file was actually The Motion. The
       // library said "you already have this" while being unable to play it.
       //
-      // Skipping fileless rows costs one stat per track at import time and
-      // makes the broken case self-healing: if we cannot play it, we do not
-      // get to veto acquiring it.
+      // Skipping fileless rows makes the broken case self-healing: if we
+      // cannot play it, we do not get to veto acquiring it.
       const rel = String(t.path || '')
       if (rel) {
-        const sub = rel.replace(/:/g, sep)
-        if (!roots.some((r) => existsSync(join(r, sub)))) continue
+        const abs = join(localRoot, rel.replace(/:/g, sep))
+        let present = false
+        try {
+          const st = await lstat(abs)
+          present = st.isFile() || st.isSymbolicLink()
+        } catch { present = false }
+        if (!present) continue
       }
       const fp = fingerprintTrack({ title: t.title, artist: t.artist, duration: t.duration })
       if (fp) set.add(fp)
@@ -6722,15 +6732,13 @@ async function resolveTrackAbsPath(colonPath: string, mounts: string[]): Promise
   for (const mount of mounts) {
     if (!mount) continue
     const abs = join(mount, rel)
+    // lstat FIRST — never stat()-follow a farm symlink into SMB. On workmini
+    // that was thousands of hung pool threads during verify/sync and the
+    // classic pinwheel. Symlink = present (streamed); real file = present.
     try {
-      const s = await stat(abs)
-      if (s.isFile()) return abs
-    } catch {
-      // stat() failed — but a STREAMED track is a symlink whose homemini
-      // target isn't on this disk. lstat (no-follow) still sees the link;
-      // treat it as present so the dead-track chain never deletes it.
-      try { if ((await lstat(abs)).isSymbolicLink()) return abs } catch { /* not on this mount */ }
-    }
+      const st = await lstat(abs)
+      if (st.isSymbolicLink() || st.isFile()) return abs
+    } catch { /* not on this mount */ }
   }
   return null
 }
@@ -15781,31 +15789,23 @@ app.whenReady().then(async () => {
     //
     // The renderer only ever builds LOCAL paths — musicRoot + the track's
     // colon path. That is fine while every file has a local copy, and wrong
-    // the moment one doesn't. The policy here is deliberately that audio
-    // lives on the NAS and not on this disk, so "no local copy" is a normal
-    // state, not an error — but this handler stat()ed the local path, got
-    // ENOENT, and returned 404. The track then looks broken in exactly the
-    // way a corrupt file looks broken: it's in the library, it has artwork
-    // and a duration, and pressing play does nothing. Which is what happened
-    // to "NY Lipps (Dries Van Noten 2020 Rework)" — a clean 14-minute
-    // lossless file sitting on the NAS, unplayable, and re-downloading it
-    // could never have helped because the bytes were never the problem.
+    // the moment one doesn't. Homemini/streamRoot clients never reach this
+    // block — they return above. This path is for fully-local installs that
+    // also have a NAS mirror configured for some tracks.
     //
-    // streamRoot was already trusted by the containment check above; it just
-    // was not consulted when resolving. Local still wins when present, so
-    // this costs one failed stat on a path that is about to fail anyway.
-    //
-    // NOTE: homemini/streamRoot clients never reach this block — they return
-    // above. This path is for fully-local installs that also have a NAS
-    // mirror configured for some tracks.
+    // Never existsSync here — sync SMB probes beachball the main process.
     let resolvedPath = rawPath
-    if (isPathInside(rawPath, localMountRoot) && !existsSync(rawPath)) {
+    let localMissing = false
+    try { await lstat(rawPath) } catch { localMissing = true }
+    if (isPathInside(rawPath, localMountRoot) && localMissing) {
       const alt = await readStreamRoot()
       if (alt) {
         const candidate = join(alt, relative(localMountRoot, rawPath))
-        if (existsSync(candidate)) {
-          resolvedPath = candidate
-        }
+        const altOk = await Promise.race([
+          lstat(candidate).then(() => true, () => false),
+          new Promise<boolean>((r) => setTimeout(() => r(false), 1500)),
+        ])
+        if (altOk) resolvedPath = candidate
       }
     }
 

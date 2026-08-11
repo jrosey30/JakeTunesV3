@@ -182,3 +182,56 @@ describe('homemini fetch must not AbortSignal.timeout the body', () => {
       'AbortSignal.timeout is back on the fetch signal — it will cut mid-stream bodies again')
   })
 })
+
+describe('workmini must not sync-probe SMB on the main thread', () => {
+  test('loadDupeFingerprintsFromLibrary uses lstat, never existsSync', () => {
+    const start = index.indexOf('async function loadDupeFingerprintsFromLibrary')
+    assert.notEqual(start, -1)
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    assert.match(body, /lstat\s*\(/, 'dupe scan must lstat local farm entries')
+    assert.doesNotMatch(body, /existsSync\s*\(/,
+      'existsSync is back in the dupe scan — that follows farm symlinks into SMB on the main thread and beachballs workmini')
+  })
+
+  test('resolveTrackAbsPath lstats before any follow', () => {
+    const start = index.indexOf('async function resolveTrackAbsPath')
+    assert.notEqual(start, -1)
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    const lstatIdx = body.search(/await lstat\s*\(/)
+    const statIdx = body.search(/await stat\s*\(/)
+    assert.notEqual(lstatIdx, -1, 'resolveTrackAbsPath must lstat')
+    assert.ok(statIdx === -1 || lstatIdx < statIdx,
+      'resolveTrackAbsPath must not stat()-follow before lstat — that hangs on farm symlinks')
+  })
+
+  test('candidateMusicMounts does not existsSync and skips streamRoot on streaming clients', () => {
+    const start = index.indexOf('async function candidateMusicMounts')
+    assert.notEqual(start, -1)
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    assert.doesNotMatch(body, /existsSync\s*\(/,
+      'existsSync is back in candidateMusicMounts — sync SMB probe beachballs the UI')
+    assert.match(body, /isHomeminiPlaybackClientCached/,
+      'candidateMusicMounts must gate streamRoot out on streaming/cache-farm machines')
+  })
+})
