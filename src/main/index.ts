@@ -39,6 +39,7 @@ import {
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
+import { isHomeminiPlaybackClient } from './stream-playback'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { refuseIfNotMainWindow } from './ipc-guard'
@@ -4153,6 +4154,22 @@ async function readStreamRoot(): Promise<string | null> {
     const r = s?.library?.streamRoot
     return typeof r === 'string' && r.length > 0 ? r : null
   } catch { return null }
+}
+// Cached for the playback hot path — same TTL rationale as streamSource.
+let _streamRootCache: { v: string | null; t: number } | null = null
+async function readStreamRootCached(): Promise<string | null> {
+  const now = Date.now()
+  if (_streamRootCache && now - _streamRootCache.t < 5000) return _streamRootCache.v
+  const v = await readStreamRoot()
+  _streamRootCache = { v, t: now }
+  return v
+}
+/** Homemini HTTP before any fs call — streamSource OR streamRoot (workmini). */
+async function isHomeminiPlaybackClientCached(): Promise<boolean> {
+  return isHomeminiPlaybackClient({
+    streamSource: await readStreamSourceCached(),
+    streamRoot: await readStreamRootCached(),
+  })
 }
 function downloadsStatePath(): string {
   return join(app.getPath('userData'), 'downloads-state.json')
@@ -16582,30 +16599,33 @@ app.whenReady().then(async () => {
 
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
+    const playCacheDir = join(app.getPath('userData'), 'play-cache')
+    const localMountRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    const homeminiClient = await isHomeminiPlaybackClientCached()
 
     // ── homemini FIRST, before any filesystem call ────────────────────────
     // Jake, 2026-08-10: "it doesnt play... NON FUCKING STOP", on a machine
     // where the same track plays one minute and hangs the next.
     //
-    // Everything below this point touches the disk before deciding anything:
-    // resolveContainedPath calls realpath(), the streamRoot fallback calls
-    // existsSync(), the streamed-track test calls lstat(). On workmini those
-    // paths are SYMLINKS into an SMB mount to the house, and that mount wedges
-    // — measured, repeatedly: a directory listing took 203 seconds while the
-    // app sat in uninterruptible state. Those calls then block in the kernel
-    // and the request never returns. It did not matter that the bytes were
-    // going to come from homemini anyway; we never got far enough to ask.
+    // Everything that follows can touch the disk: resolveContainedPath calls
+    // realpath(), the streamRoot fallback calls existsSync(), the streamed-
+    // track test calls lstat(). On workmini those paths are SYMLINKS into an
+    // SMB mount to the house, and that mount wedges — measured, repeatedly:
+    // a directory listing took 203 seconds while the app sat in
+    // uninterruptible state. Those calls then block in the kernel and the
+    // request never returns. It did not matter that the bytes were going to
+    // come from homemini anyway; we never got far enough to ask.
     //
     // That is the whole random-looking failure: whether a song plays depends
     // on whether the mount happens to be wedged in that instant, not on the
     // song. It is also why the phone never had this problem — it only ever
     // talks to homemini over HTTP and touches no mount.
     //
-    // So on a streaming client, resolve the track from the path STRING and go
-    // straight to homemini. trackIdForAbsPath only stats library.json, which
-    // lives on the LOCAL disk. Nothing here can touch the NAS. If homemini
-    // misses, we fall through to the original disk path unchanged.
-    if ((await readStreamSourceCached()) === 'homemini') {
+    // Engaged when streamSource=homemini OR streamRoot is set (workmini
+    // cache-farm). The July 2026 gate that kept streamRoot machines on NAS
+    // playback was the hang. trackIdForAbsPath only stats library.json on
+    // the LOCAL disk. Nothing here can touch the NAS.
+    if (homeminiClient) {
       const streamId = await trackIdForAbsPath(rawPath)
       if (streamId != null) {
         const wantsFlac = codecByAbsPath.get(rawPath) === 'alac'
@@ -16614,8 +16634,95 @@ app.whenReady().then(async () => {
         )
         if (early) return early
       }
+
+      // Homemini missed. Serve ONLY a real local (non-symlink) file.
+      // Never realpath / existsSync into streamRoot — those hang on SMB.
+      // Lexical containment only; lstat does not follow the link.
+      if (
+        !isPathInside(rawPath, localMountRoot) &&
+        !isPathInside(rawPath, playCacheDir) &&
+        !(detectedIpodMount && isPathInside(rawPath, detectedIpodMount))
+      ) {
+        console.warn('[ipod-audio] refused out-of-root path (streaming client):', rawPath.slice(0, 120))
+        return new Response('Forbidden', { status: 403 })
+      }
+      try {
+        const st = await lstat(rawPath)
+        if (st.isSymbolicLink()) {
+          // Symlink would follow into the NAS. Homemini already missed —
+          // fail closed with 404 instead of hanging the player on SMB.
+          console.warn('[ipod-audio] homemini miss + symlink — refusing SMB follow:', rawPath.slice(0, 120))
+          return new Response('Unavailable', { status: 404 })
+        }
+      } catch {
+        return new Response('Not Found', { status: 404 })
+      }
+      // Real local cache hit — fall through to the local serve path below
+      // with resolvedPath = rawPath (no streamRoot rewrite, no realpath).
+      let filePath = rawPath
+      let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+      try {
+        if (ext === '.m4a' || ext === '.alac' || ext === '.mp4') {
+          const hint = codecByAbsPath.get(rawPath)
+          if (hint === 'alac') {
+            const srcStat = await stat(rawPath).catch(() => null)
+            if (srcStat) {
+              const cached = await aacCachePath(rawPath, srcStat.mtimeMs, srcStat.size).catch(() => null)
+              if (cached) {
+                filePath = cached
+                ext = cached.slice(cached.lastIndexOf('.')).toLowerCase()
+              }
+            }
+          }
+        }
+      } catch { /* fall through */ }
+      const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
+      try {
+        const fileStat = await stat(filePath)
+        const total = fileStat.size
+        const rangeHeader = request.headers.get('range')
+        if (rangeHeader) {
+          const m = /bytes=(\d+)-(\d*)/.exec(rangeHeader)
+          if (m) {
+            const start = parseInt(m[1], 10)
+            const end = m[2] ? parseInt(m[2], 10) : total - 1
+            if (start >= total || end >= total || start > end) {
+              return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+            }
+            const { createReadStream } = await import('fs')
+            const { Readable } = await import('stream')
+            const nodeStream = createReadStream(filePath, { start, end })
+            return new Response(Readable.toWeb(nodeStream) as ReadableStream, {
+              status: 206,
+              headers: {
+                'Content-Type': mimeType,
+                'Content-Length': String(end - start + 1),
+                'Content-Range': `bytes ${start}-${end}/${total}`,
+                'Accept-Ranges': 'bytes',
+                'X-JT-Audio-Source': 'local-cache',
+              },
+            })
+          }
+        }
+        const { createReadStream } = await import('fs')
+        const { Readable } = await import('stream')
+        const nodeStream = createReadStream(filePath)
+        return new Response(Readable.toWeb(nodeStream) as ReadableStream, {
+          status: 200,
+          headers: {
+            'Content-Type': mimeType,
+            'Content-Length': String(total),
+            'Accept-Ranges': 'bytes',
+            'X-JT-Audio-Source': 'local-cache',
+          },
+        })
+      } catch (err) {
+        console.warn('[ipod-audio] local cache serve failed:', err instanceof Error ? err.message : err)
+        return new Response('Not Found', { status: 404 })
+      }
     }
 
+    // ── Fully-local machines (MacBook) — original disk path ───────────────
     // CONTAINMENT (2026-08-03, from the Cursor "fortify internal piping" audit).
     // This handler used to hand `rawPath` straight to stat/read: an absolute
     // path taken out of a URL and served verbatim. Anything able to issue an
@@ -16629,7 +16736,7 @@ app.whenReady().then(async () => {
     // machine that streams (workmini sets it). See path-safety.ts.
     const contained = await resolveContainedPath(rawPath, [
       MUSIC_DIR,
-      join(app.getPath('userData'), 'play-cache'),
+      playCacheDir,
       detectedIpodMount,
       await readStreamRoot(),
     ])
@@ -16655,8 +16762,11 @@ app.whenReady().then(async () => {
     // streamRoot was already trusted by the containment check above; it just
     // was not consulted when resolving. Local still wins when present, so
     // this costs one failed stat on a path that is about to fail anyway.
+    //
+    // NOTE: homemini/streamRoot clients never reach this block — they return
+    // above. This path is for fully-local installs that also have a NAS
+    // mirror configured for some tracks.
     let resolvedPath = rawPath
-    const localMountRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
     if (isPathInside(rawPath, localMountRoot) && !existsSync(rawPath)) {
       const alt = await readStreamRoot()
       if (alt) {
@@ -16676,11 +16786,9 @@ app.whenReady().then(async () => {
     // trigger) OR the JT_STREAM_TEST flag is set (the Stage-1 proof, no files
     // touched). Pulls from homemini (the phone-proven path, served from its own
     // local disk) so flaky SMB never sits on the playback hot path — the exact
-    // 2026-07-08 freeze cause. ALAC is excluded: Chromium can't decode raw
-    // ALAC and homemini doesn't transcode, so ALAC stays local/pinned. Any
-    // homemini failure (timeout/unreachable/miss) falls THROUGH to the local
-    // read below — a streamed track with no local bytes then 404s cleanly
-    // (surfaced as unavailable) rather than hanging the player.
+    // 2026-07-08 freeze cause. Any homemini failure (timeout/unreachable/miss)
+    // falls THROUGH to the local read below — a streamed track with no local
+    // bytes then 404s cleanly (surfaced as unavailable) rather than hanging.
     const isAlac = codecByAbsPath.get(rawPath) === 'alac' || ext === '.alac'
     // ALAC used to be excluded here because homemini served it raw and
     // Chromium cannot decode it. homemini transcodes to FLAC on request now,
@@ -16688,12 +16796,8 @@ app.whenReady().then(async () => {
     // which is the whole point: 9,273 tracks, no exceptions.
     {
       let streamed = process.env.JT_STREAM_TEST === '1'
-      // Route a SYMLINKED track to homemini ONLY when THIS machine is a homemini
-      // streaming client (app-settings library.streamSource === 'homemini').
-      // Critical: on a NAS cache-farm machine (workmini has streamRoot set, where
-      // a symlink means "cached from the NAS", NOT homemini) this must stay OFF —
-      // otherwise every symlinked track is hijacked to homemini and normal NAS
-      // playback breaks. This gate is the fix for the 2026-07-10 workmini regression.
+      // Homemini clients already returned above. This residual path is for
+      // JT_STREAM_TEST on an otherwise-local machine.
       if (!streamed && (await readStreamSourceCached()) === 'homemini') {
         try { streamed = (await lstat(resolvedPath)).isSymbolicLink() } catch { /* real local file */ }
       }
