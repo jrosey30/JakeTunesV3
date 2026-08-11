@@ -32,6 +32,24 @@ export interface BandcampDeps {
 
 const BANDCAMP_HOME = 'https://bandcamp.com'
 
+// ── Store destinations ────────────────────────────────────────────────
+// Jake, 2026-08-10: "just do the squid.wtf re-integration."
+//
+// The embedded stores (squid, lucida, dab) were torn out in 7aa1519 because
+// squid was 502ing and the others sat behind bot walls. squid is answering
+// again, and this view is already the thing that made them work: a browser
+// pane whose downloads route into the library through the normal import
+// pipeline. It only ever needed somewhere else to go.
+//
+// Deliberately just a URL list, not a scraper. Jake drives the site's own UI
+// exactly as he would in a browser; the app supplies the window and files what
+// he downloads. The Bandcamp session/cookies are per-partition, so switching
+// destination does not disturb a signed-in Bandcamp session.
+export const STORE_DESTINATIONS: Array<{ id: string; label: string; url: string }> = [
+  { id: 'bandcamp', label: 'Bandcamp', url: BANDCAMP_HOME },
+  { id: 'squid', label: 'squid.wtf', url: 'https://squid.wtf' },
+]
+
 // Electron's default UA includes "Electron/X.X JakeTunes/X.X" tokens that
 // Fastly's bot-detection layer (which fronts bandcamp.com) flags as
 // automated traffic — the user hits a CAPTCHA wall instead of the normal
@@ -220,6 +238,20 @@ export function registerBandcampIntegration(deps: BandcampDeps): void {
     if (view.webContents.canGoBack()) view.webContents.goBack()
     return { ok: true as const }
   })
+
+  // Point the embedded view at one of STORE_DESTINATIONS. Rejects anything
+  // not on that list, so the renderer cannot ask the store to load arbitrary
+  // URLs — same containment reasoning as the audio protocol handler.
+  ipcMain.handle('bandcamp:navigate', (_e, destId: string) => {
+    const dest = STORE_DESTINATIONS.find((d) => d.id === destId)
+    if (!dest) return { ok: false as const, error: 'unknown destination' }
+    const v = view
+    if (!v || v.webContents.isDestroyed()) return { ok: false as const, error: 'store not mounted' }
+    void v.webContents.loadURL(dest.url)
+    return { ok: true as const, url: dest.url }
+  })
+
+  ipcMain.handle('bandcamp:destinations', () => ({ ok: true as const, destinations: STORE_DESTINATIONS }))
 
   ipcMain.handle('bandcamp:go-forward', () => {
     if (!view || view.webContents.isDestroyed()) return { ok: false as const }

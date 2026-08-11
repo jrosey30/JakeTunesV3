@@ -947,6 +947,8 @@ declare global {
       bandcampSetVisible?: (visible: boolean) => Promise<{ ok: true }>
       bandcampNavState: () => Promise<{ ok: boolean; canGoBack: boolean; canGoForward: boolean }>
       bandcampGoBack: () => Promise<{ ok: boolean }>
+      bandcampDestinations: () => Promise<{ ok: boolean; destinations: Array<{ id: string; label: string; url: string }> }>
+      bandcampNavigate: (destId: string) => Promise<{ ok: boolean; url?: string; error?: string }>
       bandcampGoForward: () => Promise<{ ok: boolean }>
       // ── streamrip download store (paste-a-link → rip CLI → import) ──
       streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }>

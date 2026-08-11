@@ -139,3 +139,17 @@
   margin-left: 10px;
   font-weight: 500;
 }
+
+/* Store switcher — sits beside the back/forward arrows. The embedded view is
+   a browser; these pick which store it points at. */
+.store-library-header__dests { display: inline-flex; gap: 4px; margin-left: 10px; }
+.store-library-header__dest {
+  font: inherit; font-size: 11px; letter-spacing: .02em;
+  padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--hairline, rgba(0,0,0,.14));
+  background: transparent; color: var(--text-dim, #6b6b6b);
+}
+.store-library-header__dest:hover { background: rgba(0,0,0,.05); }
+.store-library-header__dest.is-active {
+  background: var(--accent, #e0812e); border-color: var(--accent, #e0812e); color: #fff;
+}
