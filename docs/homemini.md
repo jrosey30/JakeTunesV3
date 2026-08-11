@@ -29,13 +29,15 @@ homemini is the **canonical streaming host** for JakeTunes Mobile and Nowhere TV
 │                                                                         │
 │  JakeTunes Mobile backend  :3000   com.jaketunes.mobile.backend         │
 │    → HTTP Range audio, artwork, API for iOS                             │
+│  JakeTunes Boom API        :3001   com.jaketunes.boom  (Phase 2)        │
+│    → SQLite library SoT + SSE push + /api/audio                         │
 │  Nowhere engine            :8730   com.nowhere.server                   │
 │    → HTTP Range video, Nowhere Cable, catalog API for tvOS/iPad         │
 │  NAS → local pull          60s     com.jaketunes.mini-nas-pull          │
 │    → keeps ~/Music/JakeTunesLibrary current for resilient playback      │
 │  JakeTunes V3 desktop app  (optional local player / screen-share target)  │
 └───────────────────────────────┬─────────────────────────────────────────┘
-                                │  Tailscale (homemini:3000, homemini:8730)
+                                │  Tailscale (homemini:3000, :3001, :8730)
         ┌───────────────────────┼───────────────────────┐
         ▼                       ▼                       ▼
   JakeTunes Mobile         Nowhere TV (Apple TV)    Nowhere iPad

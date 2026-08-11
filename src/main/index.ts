@@ -169,6 +169,13 @@ import {
   triggerSync,
   getLastSyncSnapshot,
 } from './sync-orchestrator'
+import {
+  startBoomBridge,
+  boomPublishTrack,
+  boomPublishTrackPatch,
+  boomPublishPlaylist,
+  resolveBoomUrlFromSettings,
+} from './boom/bridge.ts'
 // Brief 023: removed imports from ./library-snapshot and
 // ./library-overrides — both modules are deleted along with this
 // commit. They were the backing for the vestigial mobile-sync feature
@@ -7379,6 +7386,7 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
   // else) coalesces into ONE sync, not 12.
   if (r.ok && r.track) {
     triggerSync('import')
+    void boomPublishTrack(r.track as { id: number; [key: string]: unknown })
   }
 
   return r
@@ -7580,6 +7588,9 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   // alongside per-file import-track triggers).
   if (imported.length > 0) {
     triggerSync('import')
+    for (const t of imported) {
+      void boomPublishTrack(t as { id: number; [key: string]: unknown })
+    }
   }
 
   return { ok: true, tracks: imported, skippedDupes, artwork }
@@ -14130,6 +14141,8 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   // 4.4.18: metadata edits are a sync trigger — change a track's artist
   // on laptop, homemini reflects it within ~30 sec.
   triggerSync('metadata-edit')
+  // Phase 2 Boom: dual-write field patch to server SoT when enabled.
+  void boomPublishTrackPatch(trackId, { [field]: value })
 
   // 4.5.0-68: refresh the library digest when stats fields change
   // (rating / playCount / skipCount / artist / album / genre / year).
@@ -14564,6 +14577,11 @@ ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
   // on library.json (mtime-based) and just runs the music rsync —
   // which is also a near no-op when nothing in audio files changed.
   triggerSync('playlist')
+  if (Array.isArray(playlists)) {
+    for (const p of playlists as Array<{ id?: string }>) {
+      if (p?.id) void boomPublishPlaylist(p as { id: string })
+    }
+  }
   return { ok: true }
 })
 
@@ -17039,6 +17057,25 @@ app.whenReady().then(async () => {
   // import-tracks / save-metadata-override / save-playlists handlers
   // above; safety net fires every 10 min.
   startSyncOrchestrator(() => mainWindow)
+
+  // Phase 2 Boom — opt-in server SoT + SSE. No-op unless library.boomUrl
+  // (or BOOM_URL) is set. Existing rsync sync keeps running alongside.
+  void startBoomBridge({
+    libraryPath: () => LIBRARY_PATH,
+    stampSelfWrite: (mtimeMs) => { lastSelfWriteMtimeMs = mtimeMs },
+    notifyExternalChange: () => {
+      libraryCache.invalidate()
+      mainWindow?.webContents.send('library-external-change')
+    },
+    resolveBoomUrl: () => resolveBoomUrlFromSettings(async () => {
+      try {
+        const data = await readFile(appSettingsPath(), 'utf-8')
+        return JSON.parse(data) as Record<string, unknown>
+      } catch {
+        return null
+      }
+    }),
+  })
 
   // Auto-update: check for updates in production
   if (!isDev) {
