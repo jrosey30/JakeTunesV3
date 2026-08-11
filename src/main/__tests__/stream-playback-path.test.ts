@@ -159,3 +159,26 @@ describe('workmini deploy pins streamSource', () => {
     )
   })
 })
+
+describe('homemini fetch must not AbortSignal.timeout the body', () => {
+  test('fetchAudioFromHomemini uses fetchHeadersWithin, not AbortSignal.timeout', () => {
+    // AbortSignal.timeout(8000) on fetch() kills the body 8s after the
+    // request starts — even after headers have returned. That is the
+    // "certain songs need a restart" leftover (cold FLAC / long tracks).
+    const start = index.indexOf('async function fetchAudioFromHomemini')
+    assert.notEqual(start, -1, 'fetchAudioFromHomemini missing')
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    assert.match(body, /fetchHeadersWithin\s*\(/,
+      'fetchAudioFromHomemini must use fetchHeadersWithin (header-only deadline)')
+    // Match a real call site, not the comment that documents why we removed it.
+    assert.doesNotMatch(body, /signal:\s*AbortSignal\.timeout\s*\(/,
+      'AbortSignal.timeout is back on the fetch signal — it will cut mid-stream bodies again')
+  })
+})

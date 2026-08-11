@@ -38,6 +38,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, 
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
+import { fetchHeadersWithin } from './fetch-headers'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
@@ -3527,6 +3528,10 @@ const PHONE_AUTHORED_FILES = [
   'mobile-imports.json',
 ]
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
+  // Circuit breaker — bare stat() on a wedged Synology share parks a libuv
+  // thread forever. That is the "works after restart, then certain songs
+  // stop" leftover after the playback path itself stopped touching SMB.
+  if (!(await nasAvailable())) return
   const nasDir = '/Volumes/JakeShared/JakeTunesState'
   try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
   const refreshedNames: string[] = []
@@ -3978,10 +3983,14 @@ async function fetchAudioFromHomemini(
     // Chromium then never got a duration and the player sat in 'loading'.)
     if (rangeHeader) reqHeaders['Range'] = rangeHeader
     const qs = wantFlac ? '?fmt=flac' : ''
-    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${qs}`, {
-      headers: reqHeaders,
-      signal: AbortSignal.timeout(8000),
-    })
+    // Jake, 2026-08-11: AbortSignal.timeout(8000) aborted the BODY after
+    // headers — long/cold FLAC transfers died mid-stream and needed a
+    // relaunch. Header deadline only; body streams until Chromium is done.
+    const res = await fetchHeadersWithin(
+      `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${qs}`,
+      { headers: reqHeaders },
+      8000,
+    )
     if (!res.ok && res.status !== 206) return null
     if (!res.body) return null
     const out: Record<string, string> = {
@@ -3995,6 +4004,19 @@ async function fetchAudioFromHomemini(
   } catch {
     return null
   }
+}
+
+/** True when Chromium needs homemini's FLAC transcode (no native ALAC). */
+function wantsHomeminiFlac(absPath: string): boolean {
+  const hint = (codecByAbsPath.get(absPath) || '').toLowerCase()
+  if (hint === 'alac') return true
+  const ext = absPath.slice(absPath.lastIndexOf('.')).toLowerCase()
+  if (ext === '.alac') return true
+  // .m4a with no codec hint: could be AAC or ALAC. Prefer asking homemini
+  // for FLAC on streaming clients — AAC re-encoded to FLAC still plays;
+  // raw ALAC in Chromium does not. Known AAC (hint set) stays on the raw path.
+  if (ext === '.m4a' && !hint) return true
+  return false
 }
 
 /**
@@ -4815,6 +4837,11 @@ async function checkLibraryExternalChange(): Promise<void> {
     // so the next reader picks up fresh content. Without this the cache
     // would serve stale data until app restart.
     libraryCache.invalidate()
+    // Keep ALAC→FLAC routing current when the index sync pushes a fresh
+    // library.json (workmini learns songs every minute). Without this the
+    // codec map freezes at boot and new ALACs play as raw Chromium-illegal
+    // audio until relaunch.
+    void loadCodecMapFromLibrary()
     mainWindow?.webContents.send('library-external-change')
   } catch { /* file briefly missing during atomic replace — ignore */ }
 }
@@ -15633,7 +15660,7 @@ app.whenReady().then(async () => {
     if (homeminiClient) {
       const streamId = await trackIdForAbsPath(rawPath)
       if (streamId != null) {
-        const wantsFlac = codecByAbsPath.get(rawPath) === 'alac'
+        const wantsFlac = wantsHomeminiFlac(rawPath)
         const early = await fetchAudioFromHomemini(
           streamId, request.headers.get('range'), wantsFlac,
         )
@@ -15794,7 +15821,7 @@ app.whenReady().then(async () => {
     // 2026-07-08 freeze cause. Any homemini failure (timeout/unreachable/miss)
     // falls THROUGH to the local read below — a streamed track with no local
     // bytes then 404s cleanly (surfaced as unavailable) rather than hanging.
-    const isAlac = codecByAbsPath.get(rawPath) === 'alac' || ext === '.alac'
+    const isAlac = wantsHomeminiFlac(rawPath)
     // ALAC used to be excluded here because homemini served it raw and
     // Chromium cannot decode it. homemini transcodes to FLAC on request now,
     // so every codec takes the same fast path the phone has always used —
