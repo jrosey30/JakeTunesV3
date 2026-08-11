@@ -6,7 +6,7 @@
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--white, #f9f8f5);
+  background: var(--white, #fdfdfd);
   padding: 18px 22px 32px;
 }
 

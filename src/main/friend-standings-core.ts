@@ -151,15 +151,21 @@ export function computeStandings(
     })
     seen.add(key)
   }
-  // Friends who've sent things but have no credits yet still belong on the
+  // Friends who've sent SONGS but have no credits yet still belong on the
   // board at 0 — a standings table that hides the winless is a podium.
   for (const [key, led] of Object.entries(ledger)) {
     if (seen.has(key)) continue
     rows.push({ name: led.name, points: 0, credits: [], adds: led.adds ?? 0, tossed: led.tossed ?? 0 })
   }
+  // Jake's rule (2026-08-07, the Dan Gottlieb podcast case): a friend does
+  // not SHOW in standings until they've sent a legitimate song. A ledger
+  // entry with zero adds and zero credits means nothing they sent ever
+  // landed on the list — a podcast link, a failed capture. They stay in the
+  // ledger (first real song makes them appear) but never on the board.
+  const filtered = rows.filter((r) => r.adds > 0 || r.credits.length > 0 || r.tossed > 0)
   // Rank: points desc, then most credits (activity), then name for stability.
-  rows.sort((a, b) => b.points - a.points || b.credits.length - a.credits.length || a.name.localeCompare(b.name))
-  return rows
+  filtered.sort((a, b) => b.points - a.points || b.credits.length - a.credits.length || a.name.localeCompare(b.name))
+  return filtered
 }
 
 /**

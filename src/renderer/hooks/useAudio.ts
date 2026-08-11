@@ -92,6 +92,13 @@ interface AudioLogEntry { t: number; ev: string; detail?: unknown }
 const audioLogBuffer: AudioLogEntry[] = []
 export function logAudioEvent(ev: string, detail?: unknown) {
   audioLogBuffer.push({ t: Date.now(), ev, detail })
+  // Mirror to disk so a failure can be read AFTER the fact, without a
+  // debugger and without a relaunch. See the audio-log handler in main.
+  try {
+    window.electronAPI?.audioLog?.(
+      new Date().toISOString() + ' ' + ev + ' ' + JSON.stringify(detail ?? '').slice(0, 300),
+    )
+  } catch { /* never let logging break playback */ }
   if (audioLogBuffer.length > 50) audioLogBuffer.shift()
   // Skip the very chatty position-tick events from console output but
   // keep the structural ones. Everything still lands in the buffer.
@@ -346,7 +353,12 @@ export function prefetchTrackForPlay(track: Track) {
     prefetchHowl = new Howl({
       src: [url],
       format: [format],
-      html5: false,
+      // Same reason as the main path: Web Audio XHRs the file, and on an XHR
+      // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
+      // destroying the queued play(). This Howl gets PROMOTED into the main
+      // slot on track change, so leaving it in Web Audio kept auto-advance
+      // broken ("the next song never plays") after the main path was fixed.
+      html5: true,
       preload: true,
       autoplay: false,
       volume: 0,
@@ -376,7 +388,12 @@ export function prefetchTrackImmediate(track: Track) {
   prefetchHowl = new Howl({
     src: [url],
     format: [format],
-    html5: false,
+    // Same reason as the main path: Web Audio XHRs the file, and on an XHR
+    // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
+    // destroying the queued play(). This Howl gets PROMOTED into the main
+    // slot on track change, so leaving it in Web Audio kept auto-advance
+    // broken ("the next song never plays") after the main path was fixed.
+    html5: true,
     preload: true,
     autoplay: false,
     volume: 0,
@@ -764,7 +781,12 @@ export function useAudio(opts?: { primary?: boolean }) {
                 const preload = new Howl({
                   src: [nextUrl],
                   format: [nextFormat],
-                  html5: false,    // Web Audio: decoded buffer, sample-accurate play()
+                  // Same reason as the main path: Web Audio XHRs the file, and on an XHR
+                  // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
+                  // destroying the queued play(). This Howl gets PROMOTED into the main
+                  // slot on track change, so leaving it in Web Audio kept auto-advance
+                  // broken ("the next song never plays") after the main path was fixed.
+                  html5: true,
                   loop: false,
                   volume: 0,
                   preload: true,
@@ -1093,7 +1115,23 @@ export function useAudio(opts?: { primary?: boolean }) {
       //     works with html5:true). EQ is off by default per the
       //     existing comments; if someone needs it later we wire
       //     AudioBufferSource → EQ chain instead.
-      html5: false,
+      // html5, NOT Web Audio — and this reverses the 4.5 decision on purpose.
+      //
+      // Web Audio mode XHRs the whole file and decodes it. When that XHR
+      // errors, howler.js:2430 silently switches the Howl to HTML5, EMPTIES
+      // _sounds (destroying the sound our play() was queued on) and reloads.
+      // The track then reports state 'loaded' with _paused true, no
+      // bufferSource, no error and no playerror, and never makes a sound.
+      // Measured on workmini all day: any track, at random, stuck at 0:00.
+      //
+      // html5 mode never XHRs, so that path cannot be entered. It also
+      // streams instead of waiting for the whole file, which matters when the
+      // bytes come over a link. A plain audio element on these exact URLs
+      // reaches canplaythrough in ~10ms.
+      //
+      // The pop this replaced was a buffer underrun on a LOCAL disk read.
+      // A pop is recoverable; silence is not.
+      html5: true,
       loop: false,
       volume: startVolume,
       onplay: () => {
@@ -1163,6 +1201,49 @@ export function useAudio(opts?: { primary?: boolean }) {
 
     sharedHowl = howl
     howl.play()
+
+    // ── play() retry ──────────────────────────────────────────────────
+    // Jake, 2026-08-10, all day: tracks that sit at 0:00, silent, at random,
+    // on any song. Traced live on workmini with the player instrumented:
+    //
+    //   working track:  play() -> load -> play() -> EMIT play
+    //   stuck track:    play() -> load -> play() -> (nothing)
+    //
+    // Both get the same double play() — one from here before the file has
+    // loaded (Howler queues it), one when the queue drains on load. On the
+    // stuck ones the second call returns normally, emits nothing, creates no
+    // audio source, and reports no error. The Howl is 'loaded', _paused stays
+    // true, and it sits there forever. Calling play() ONE more time by hand
+    // started it immediately every time.
+    //
+    // So: if the sound is loaded and still not playing shortly after, ask
+    // again. Guarded on sharedHowl identity so a track the user has already
+    // moved past is never resurrected, and capped so a genuinely dead track
+    // fails instead of looping.
+    let waitTicks = 0        // ticks spent waiting for a (re)load to finish
+    let playAttempts = 0     // play() calls we have actually re-issued
+    const retryIfStuck = () => {
+      if (sharedHowl !== howl) return          // superseded — leave it alone
+      if (howl.playing()) return               // started fine
+      if (howl.state() !== 'loaded') {
+        // Still loading — and this is exactly the state Howler leaves the Howl
+        // in when it falls back. On an XHR error it sets _html5, EMPTIES
+        // _sounds (destroying the sound our play() was queued on) and calls
+        // load() again. Returning here without rescheduling is why the first
+        // version of this retry never fired at all. Keep waiting.
+        if (waitTicks < 8) { waitTicks++; window.setTimeout(retryIfStuck, 400) }
+        return
+      }
+      if (playAttempts >= 3) {
+        logAudioEvent('howl.play.gaveup', { title: track.title, tries: playAttempts })
+        return
+      }
+      playAttempts++
+      logAudioEvent('howl.play.retry', { title: track.title, attempt: playAttempts })
+      try { howl.play() } catch { /* nothing more to try */ }
+      window.setTimeout(retryIfStuck, 400)
+    }
+    window.setTimeout(retryIfStuck, 350)
   }, [updatePosition])
 
   // Bind the natural-end handler to a ref so both this loadAndPlay's

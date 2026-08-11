@@ -1,3 +1,4 @@
+import { foldAccents } from '../common/fold-text.ts'
 // 4.3.0: external API integrations that enrich the WJLR show + Picks
 // without bloating index.ts. Six sources, all with TTL caching so we
 // don't hammer free-tier limits. Every function is fail-soft — a
@@ -416,7 +417,16 @@ async function enrichReleaseReview(item: MusicNewsItem): Promise<void> {
       if (idx > 0) item.artist = og.slice(0, idx).trim()
     }
     const g = html.match(/"genre":"([^"]{2,40})"/)?.[1]
-    if (g) item.genre = decodeEntities(g)
+    if (g) {
+      // The capture is a RAW JSON string body — Pitchfork escapes "/" as
+      // backslash-u-002F inside its embedded JSON, and passing that
+      // through verbatim rendered the escape sequence as literal text on
+      // Home's New This Week cards (Jake, 2026-08-07). Re-quote +
+      // JSON.parse decodes every JSON escape; entities decoded after.
+      let s = g
+      try { s = JSON.parse(`"${g}"`) as string } catch { /* keep raw */ }
+      item.genre = decodeEntities(s)
+    }
   } catch { /* leave un-enriched */ }
 }
 
@@ -943,7 +953,8 @@ function escapeLuceneValue(s: string): string {
 // MusicBrainz's special-purpose "Various Artists" artist.
 const VARIOUS_ARTISTS_MBID = '89ad4ac3-39f7-470e-963a-56509c546377'
 function normArtist(s: string): string {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  // MusicBrainz writes Sigur Rós; folding first is what makes it meet ours.
+  return foldAccents(s).replace(/[^a-z0-9]/g, '')
 }
 
 async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease[]> {

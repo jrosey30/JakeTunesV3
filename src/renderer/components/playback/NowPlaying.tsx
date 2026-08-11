@@ -6,8 +6,8 @@ import { subscribePreview, getPreviewSnapshot, seekPreview } from '../../preview
 // V5 Live Concert Mode — approved surgical addition (Jake, 2026-07-02):
 // map the playhead to the current setlist song while a merged live set
 // plays. Store lives OUTSIDE the protected contexts (liveSets.ts).
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt } from '../../liveSets'
-import { subscribeMixtapes, getTapeSession, getDeckState, getMixtapes, liveTapeCounter, spoolTarget, setPendingTapeSeek, getWindDisplay } from '../../mixtapes'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTrackIndex, cueAt, cueIndexAt } from '../../liveSets'
+import { subscribeMixtapes, getTapeSession } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
 
@@ -89,6 +89,23 @@ function MiniVisualizer({ active }: { active: boolean }) {
 
 type PillMode = 'playing' | 'rip' | 'sync' | 'import' | 'notice' | 'broadcast'
 
+/**
+ * The importer reports a FILE, not a song — e.g.
+ * "terry malts – Nobody Realizes This Is Nowhere – 03 Life's A Dream.m4a".
+ * Dumping that into the LCD read as a jammed path (Jake, 2026-08-08: "looks
+ * weird and forced"). Split it back into something a person would say.
+ * Falls through gracefully: an unparseable name just becomes the title.
+ */
+function prettyImportName(raw: string): { title: string; artist: string } {
+  const noExt = (raw || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim()
+  // Both en-dash and hyphen show up as separators, with or without spaces.
+  const parts = noExt.split(/\s+[–-]\s+/).map((x) => x.trim()).filter(Boolean)
+  const stripNo = (t: string): string => t.replace(/^\d{1,3}[\s._-]+/, '').trim()
+  if (parts.length >= 3) return { title: stripNo(parts[parts.length - 1]), artist: parts[0] }
+  if (parts.length === 2) return { title: stripNo(parts[1]), artist: parts[0] }
+  return { title: stripNo(noExt), artist: '' }
+}
+
 function formatTime(s: number): string {
   if (!s || s < 0) return '0:00'
   const total = Math.floor(s)
@@ -125,50 +142,45 @@ export default function NowPlaying() {
   const liveEntry = state.nowPlaying ? (mergedTrackIndex().get(state.nowPlaying.id) ?? null) : null
   const liveCue = liveEntry ? cueAt(liveEntry, state.position * 1000) : null
 
-  // Mixtape side-scrubber (Jake: "the pill should show the track it's
-  // playing, but the scrubber should be all for Side A"). Engaged when
-  // the playing track sits on a tape that's in the session (playback)
-  // or in the recording deck. Renders a PARALLEL bar (preview-player
-  // pattern) — the protected per-song drag seam below stays untouched.
+  // MIXTAPES in the pill — THE MERGED TIMELINE (2026-08-08).
+  //
+  // Jake: "a mix merges the LENGTHS of all the songs in that mix...and you
+  // cant skip... you cant start from anywhere either. has to be from the
+  // beginning."
+  //
+  // So a tape is NOT one audio file — the songs stay separate and play as an
+  // ordinary queue. What's merged is the CLOCK. While a tape is running the
+  // pill stops showing "2:14 of this song" and shows the position and length
+  // of the whole tape, so eighteen minutes of music reads as one continuous
+  // side rather than eight little ones.
+  //
+  // (I built this the other way first — actually concatenating the tape into
+  // one ALAC and playing that. Wrong: the merged file is an optional EXPORT,
+  // not the playback path.)
+  //
+  // Read-only on purpose. The bar reports where the tape is; it does not
+  // accept clicks, because dropping the needle at an arbitrary point is
+  // exactly what "has to be from the beginning" rules out. Winding lives on
+  // the tape's own page, where FF/REW belong.
   useSyncExternalStore(subscribeMixtapes, getTapeSession)
-  const windNow = useSyncExternalStore(subscribeMixtapes, getWindDisplay)
   const { state: libState } = useLibrary()
   const tapeSession = getTapeSession()
-  const tapeDeck = getDeckState()
-  const engagedTapeId = tapeSession?.mixtapeId ?? (tapeDeck?.recArmed ? tapeDeck.mixtapeId : null)
-  const engagedTape = engagedTapeId ? getMixtapes().find((m) => m.id === engagedTapeId) ?? null : null
-  const nowIdForTape = state.nowPlaying?.id
-  const onEngagedTape = !!engagedTape && nowIdForTape != null
-    && (engagedTape.sideA.includes(nowIdForTape) || engagedTape.sideB.includes(nowIdForTape))
-  const tapeDurOf = (id: number) => libState.tracks.find((t) => t.id === id)?.duration || undefined
-  const tapeCounter = onEngagedTape && engagedTape
-    ? liveTapeCounter(engagedTape, tapeDeck?.side || 'A', nowIdForTape, state.position, state.isPlaying, tapeDurOf)
-    : null
-  const tapeArmed = !!tapeDeck?.recArmed
-  const handleTapeScrub = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!engagedTape || !tapeCounter || tapeArmed) return // no scrubbing while REC is latched
-    const el = e.currentTarget
-    const rect = el.getBoundingClientRect()
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    const totalMs = tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs
-    const targetMs = pct * totalMs
-    const tgt = spoolTarget(engagedTape, tapeCounter.side, tapeCounter.usedMs, targetMs - tapeCounter.usedMs, tapeDurOf)
-    if (!tgt) return
-    if (tgt.trackId === nowIdForTape) {
-      const durMs = tapeDurOf(tgt.trackId) || 0
-      if (durMs > 0) seek(Math.min(0.99, tgt.fileSeekMs / durMs))
-      return
+  const tapeOnAir = (() => {
+    if (!tapeSession || !state.nowPlaying) return null
+    const ids = tapeSession.tapeTrackIds
+    const idx = ids.indexOf(state.nowPlaying.id)
+    if (idx < 0) return null
+    const durOf = (id: number) => libState.tracks.find((t) => t.id === id)?.duration || 0
+    let before = 0
+    for (let i = 0; i < idx; i++) before += durOf(ids[i])
+    const totalMs = ids.reduce((sum, id) => sum + durOf(id), 0)
+    return {
+      elapsedMs: before + state.position * 1000,
+      totalMs,
+      slot: idx + 1,
+      of: ids.length,
     }
-    const sess = getTapeSession()
-    if (!sess) return
-    const queue = sess.tapeTrackIds
-      .map((id) => libState.tracks.find((t) => t.id === id))
-      .filter((t): t is NonNullable<typeof t> => !!t)
-    const idx = queue.findIndex((t) => t.id === tgt.trackId)
-    if (idx < 0) return
-    setPendingTapeSeek({ trackId: tgt.trackId, seekMs: tgt.fileSeekMs })
-    playTrack(queue[idx], queue, idx, undefined, true)
-  }, [engagedTape, tapeCounter, tapeArmed, nowIdForTape, libState.tracks, seek, playTrack])
+  })()
 
   // Pause the user's music while a preview plays; resume it when the
   // preview ends/stops (the "pause music, resume after" behavior). Acts
@@ -227,6 +239,23 @@ export default function NowPlaying() {
 
   const progress = state.duration > 0 ? (state.position / state.duration) * 100 : 0
   const track = state.nowPlaying
+
+  // Backlight behavior (2026-08-07, Jake: the iPod-mini experience) — the
+  // LCD rests dim and BLOOMS when the track changes or the pill is
+  // touched, fading back down after a few seconds. Display-only; the
+  // scrubber's drag logic below is untouched.
+  const [backlit, setBacklit] = useState(false)
+  const backlitTimer = useRef<number | null>(null)
+  const bloomBacklight = useCallback(() => {
+    setBacklit(true)
+    if (backlitTimer.current) window.clearTimeout(backlitTimer.current)
+    // ~10s lit in total ('keep the backlight on for a teeny bit longer'):
+    // 9.3s held + the 650ms fade-down.
+    backlitTimer.current = window.setTimeout(() => setBacklit(false), 9300)
+  }, [])
+  useEffect(() => {
+    if (track?.id != null) bloomBacklight()
+  }, [track?.id, bloomBacklight])
 
   // Subscribe to the global activity store so this pill can surface
   // background work (CD rip / iPod sync / drag-drop import / transient
@@ -383,7 +412,10 @@ export default function NowPlaying() {
   ) : null
 
   return (
-    <div className={`now-playing-pill ${isActivity ? 'now-playing-pill--activity' : ''} ${effectiveMode === 'broadcast' ? 'now-playing-pill--broadcast' : ''} ${radioActive ? 'now-playing-pill--radio' : ''} ${radioHero ? 'now-playing-pill--radio-hero' : ''}`}>
+    <div
+      className={`now-playing-pill ${backlit ? 'now-playing-pill--backlit' : ''} ${isActivity ? 'now-playing-pill--activity' : ''} ${effectiveMode === 'broadcast' ? 'now-playing-pill--broadcast' : ''} ${radioActive ? 'now-playing-pill--radio' : ''} ${radioHero ? 'now-playing-pill--radio-hero' : ''}`}
+      onPointerDownCapture={bloomBacklight}
+    >
       {radioStrip}
       {radioHero}
       {showCycle && (
@@ -403,7 +435,8 @@ export default function NowPlaying() {
             </div>
             <div className="now-playing-line-secondary">
               {preview.artist && <span className="now-playing-artist">{preview.artist}</span>}
-              <span className="now-playing-sep"> — </span>
+            </div>
+            <div className="now-playing-line-tertiary">
               <span className="now-playing-album">Preview</span>
             </div>
           </div>
@@ -434,20 +467,26 @@ export default function NowPlaying() {
             </div>
             <div className="now-playing-line-secondary">
               {liveCue && liveEntry ? (
-                <>
-                  <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
-                  <span className="now-playing-sep"> — </span>
-                  <span className="now-playing-album">{track.album}</span>
-                </>
+                <span className="now-playing-artist">{liveCue.index + 1}/{liveEntry.cues.length}</span>
               ) : (
-                <>
-                  <span className="now-playing-artist">{track.artist}</span>
-                  {track.album && <span className="now-playing-sep"> — </span>}
-                  {track.album && <span className="now-playing-album">{track.album}</span>}
-                </>
+                <span className="now-playing-artist">{track.artist}</span>
               )}
             </div>
+            {track.album && (
+              <div className="now-playing-line-tertiary">
+                <span className="now-playing-album">{track.album}</span>
+              </div>
+            )}
           </div>
+          {/* Tape counter — the slot you're on, etched in the corner of the
+              LCD like a deck's counter window. Jake, 2026-08-08: "can we put
+              the track number/track total in another place on the pill? i
+              dont like that its in the song artist album sandwich." So it
+              lives OUTSIDE the title/artist/album stack, absolutely
+              positioned, and only exists while a tape is running. */}
+          {tapeOnAir && (
+            <span className="now-playing-tape-counter">{tapeOnAir.slot}/{tapeOnAir.of}</span>
+          )}
           <div className="scrubber-row">
             {/* Brief 025: floor position + duration ONCE, then compute
                 remaining as their integer difference, so the count-up and
@@ -462,20 +501,16 @@ export default function NowPlaying() {
                 track end. Strictly read-only; the scrubber drag-logic
                 seam (handleMouseDown, barRef) on the next line is
                 untouched per the do-not-touch list. */}
-            {tapeCounter ? (
+            {tapeOnAir ? (
               <>
-                {/* Side-wide tape scrubber — the needle sweeps SIDE {A|B},
-                    not the song. Click = spool there (locked during REC). */}
-                {/* Playback runs against the MUSIC on the side; recording
-                    against the physical tape (blank included). While the
-                    reels WIND, the needle follows the wind position. */}
-                <span className="scrubber-time">{formatTime(Math.floor((windNow?.posMs ?? tapeCounter.usedMs) / 1000))}</span>
-                <div className={`scrubber-track scrubber-track--tape${tapeArmed ? ' scrubber-track--locked' : ''}`} onMouseDown={handleTapeScrub}
-                  title={tapeArmed ? `Recording Side ${tapeCounter.side} — the tape doesn't scrub while REC is down` : `Side ${tapeCounter.side} of the tape — click to spool`}>
-                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, ((windNow?.posMs ?? tapeCounter.usedMs) / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
-                  <div className="scrubber-knob" style={{ left: `${Math.min(100, ((windNow?.posMs ?? tapeCounter.usedMs) / Math.max(1, tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs)) * 100)}%` }} />
+                {/* The tape's clock: whole-tape elapsed and remaining, and a
+                    bar that reports rather than accepts clicks. */}
+                <span className="scrubber-time">{formatTime(Math.floor(tapeOnAir.elapsedMs / 1000))}</span>
+                <div className="scrubber-track scrubber-track--tape" title="The whole tape — it plays start to finish">
+                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
+                  <div className="scrubber-knob" style={{ left: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
                 </div>
-                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(((tapeArmed ? tapeCounter.budgetMs : tapeCounter.contentMs) - (windNow?.posMs ?? tapeCounter.usedMs)) / 1000)))}</span>
+                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor((tapeOnAir.totalMs - tapeOnAir.elapsedMs) / 1000)))}</span>
               </>
             ) : (
               <>
@@ -504,12 +539,27 @@ export default function NowPlaying() {
         </>
       ) : effectiveMode === 'rip' && rip ? (
         <>
-          <div className="now-playing-info now-playing-info--activity">
-            <span className="now-playing-title">Importing {rip.current} of {rip.total}</span>
-            {rip.trackTitle && <><span className="now-playing-sep"> — </span>
-            <span className="now-playing-artist">{rip.trackTitle}</span></>}
-            {rip.errors > 0 && <span className="now-playing-error"> ({rip.errors} skipped)</span>}
-          </div>
+          {(() => {
+            const p = prettyImportName(rip.trackTitle || '')
+            return (
+              <div className="now-playing-info now-playing-info--stacked">
+                <div className="now-playing-line-primary">
+                  <span className="now-playing-title">{p.title || 'Importing…'}</span>
+                </div>
+                {p.artist && (
+                  <div className="now-playing-line-secondary">
+                    <span className="now-playing-artist">{p.artist}</span>
+                  </div>
+                )}
+                <div className="now-playing-line-tertiary">
+                  <span className="now-playing-album">
+                    Importing {rip.current} of {rip.total}
+                    {rip.errors > 0 ? ` · ${rip.errors} skipped` : ''}
+                  </span>
+                </div>
+              </div>
+            )
+          })()}
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill" style={{ width: `${(rip.current / Math.max(1, rip.total)) * 100}%` }} />
@@ -518,12 +568,27 @@ export default function NowPlaying() {
         </>
       ) : effectiveMode === 'import' && imp ? (
         <>
-          <div className="now-playing-info now-playing-info--activity">
-            <span className="now-playing-title">Importing {imp.current} of {imp.total}</span>
-            {imp.trackTitle && <><span className="now-playing-sep"> — </span>
-            <span className="now-playing-artist">{imp.trackTitle}</span></>}
-            {imp.errors > 0 && <span className="now-playing-error"> ({imp.errors} failed)</span>}
-          </div>
+          {(() => {
+            const p = prettyImportName(imp.trackTitle || '')
+            return (
+              <div className="now-playing-info now-playing-info--stacked">
+                <div className="now-playing-line-primary">
+                  <span className="now-playing-title">{p.title || 'Importing…'}</span>
+                </div>
+                {p.artist && (
+                  <div className="now-playing-line-secondary">
+                    <span className="now-playing-artist">{p.artist}</span>
+                  </div>
+                )}
+                <div className="now-playing-line-tertiary">
+                  <span className="now-playing-album">
+                    Importing {imp.current} of {imp.total}
+                    {imp.errors > 0 ? ` · ${imp.errors} failed` : ''}
+                  </span>
+                </div>
+              </div>
+            )
+          })()}
           <div className="scrubber-row">
             <div className="activity-bar">
               <div className="activity-bar-fill" style={{ width: `${(imp.barFraction ?? imp.current / Math.max(1, imp.total)) * 100}%` }} />

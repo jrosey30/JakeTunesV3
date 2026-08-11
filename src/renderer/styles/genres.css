@@ -132,3 +132,26 @@
 .genres-track-artist, .genres-track-album { color: var(--text-secondary); }
 /* (No special artist/album color override needed now that --playing
  * doesn't repaint the row.) */
+
+/* Selection — the same iTunes blue every other track list uses. Rows had no
+   selected state at all before 2026-08-08 (there was no click handler to set
+   one), which is why clicking a song in Genres felt inert. */
+.genres-track-row--selected {
+  background: #4577d3;
+  color: #fff;
+}
+/* MUST be here: `.genres-track-row:hover` is (0,2,0) and outranks the
+   (0,1,0) selected rule, so hovering the row you just clicked repainted it
+   pale blue while the white text stayed — white on near-white, unreadable
+   (Jake, 2026-08-08, with a screenshot of exactly that). songs.css has
+   carried this same pairing for ages; Genres just never had a selected
+   state to pair it with. */
+.genres-track-row--selected:hover {
+  background: #4577d3;
+}
+.genres-track-row--selected .genres-track-title,
+.genres-track-row--selected .genres-track-artist,
+.genres-track-row--selected .genres-track-album {
+  color: #fff;
+}
+.genres-track-row--selected .genres-track-icon svg { fill: #fff; }

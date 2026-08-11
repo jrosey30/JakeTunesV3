@@ -679,10 +679,13 @@ function AppInner() {
       } catch (err) {
         abortReason = `exception while reading ui-state: ${err instanceof Error ? err.message : String(err)}`
       }
-      if (!convertOptions) {
-        console.warn(`[auto-sync] ABORTED — convert preference unreadable: ${abortReason}. Open Device view and click Apply to commit a known-good convert state.`)
-        return
-      }
+      // No early return on unreadable prefs — the confirmed set may carry
+      // the convert settings it was ACTUALLY synced with (recorded at
+      // commit time), and replaying that exact choice is not a silent
+      // default. 2026-08-07: a ui-state clobber erased the prefs and every
+      // plug-in repair silently aborted here for a console.warn nobody
+      // sees — while Jake's iPod sat with a firmware-mangled index that
+      // one repair pass would have rebuilt.
       // 2026-07-18 REVIEW GATE: plug-in auto-sync REPAIRS the last
       // CONFIRMED set only — the exact trackIds committed after the last
       // successful review-confirmed sync. It never rebuilds/rotates (that
@@ -697,6 +700,16 @@ function AppInner() {
             console.log('[auto-sync] no confirmed activity set — waiting for a manual Activity Sync')
             return
           }
+          // Prefer live ui-state prefs; fall back to the convert settings
+          // RECORDED with the confirmed set. Only if neither exists do we
+          // abort — and then VISIBLY, not into the console void.
+          const stored = (prev.state as { convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 } }).convertOptions
+          const convertToUse = convertOptions ?? stored ?? null
+          if (!convertToUse) {
+            console.warn(`[auto-sync] ABORTED — convert preference unreadable (${abortReason}) and none recorded with the confirmed set.`)
+            setNotice('iPod plugged in, but the repair sync was skipped — open Device view and press Apply once to set convert preferences.')
+            return
+          }
           const idSet = new Set(prev.state.trackIds)
           const setTracks = lib.tracks.filter((t) => idSet.has(t.id))
           if (setTracks.length === 0) {
@@ -704,8 +717,8 @@ function AppInner() {
             return
           }
           const playlists = assembleSyncPlaylists(setTracks, lib.playlists || [], prev.state.name)
-          console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertOptions)
-          await window.electronAPI.syncToIpod(setTracks, playlists, convertOptions)
+          console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertToUse)
+          await window.electronAPI.syncToIpod(setTracks, playlists, convertToUse)
         } catch (err) {
           console.warn('[auto-sync] failed:', err)
         }
@@ -713,6 +726,91 @@ function AppInner() {
     }
     window.addEventListener('jaketunes-ipod-mounted', onIpodMounted)
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)
+  }, [])
+
+  // Phone Qobuz DOWNLOADS arriving from the NAS sidecar (main mirrors +
+  // pushes every 5 minutes and once at boot). Absorb any track the library
+  // doesn't have — by id AND path, so a row whose id was independently
+  // taken by a desktop import is skipped (the mobile backend re-ids those
+  // itself within a minute and the next push absorbs the corrected row).
+  // ADD_IMPORTED_TRACKS + the debounced saveLibrary make the adoption
+  // CANONICAL: it lands in library.json, publishes to the NAS, homemini
+  // pulls it, and the mobile backend drops its now-redundant sidecar row.
+  const absorbMobileImports = useCallback((rows: unknown[], overrides?: Record<string, { fp?: string; fields?: Record<string, string> }>) => {
+    try {
+      const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
+      const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
+      let eligible = (rows || []).filter((raw): raw is import('./types').Track => {
+        const t = raw as { id?: unknown; path?: unknown }
+        return typeof t?.id === 'number' && typeof t?.path === 'string' &&
+          !existingIds.has(t.id) && !existingPaths.has(t.path as string)
+      })
+      // Phone Get Info edits ride in with the absorb (boot-pull path): the
+      // boot overlay ran BEFORE these tracks existed, so without this the
+      // absorbed songs showed raw file tags until the next restart ("the
+      // info didnt change from what i changed it to on mobile").
+      if (overrides) {
+        eligible = eligible.map((t) => {
+          const entry = overrides[String(t.id)]
+          if (!entry?.fields) return t
+          const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+          if (entry.fp !== fp) return t
+          return { ...t, ...entry.fields }
+        })
+      }
+      if (eligible.length) {
+        // dateAdded arrives VERBATIM from the phone's import moment — the
+        // absorbed songs slot into date-added history where they were
+        // actually downloaded, never as the library's newest (Jake:
+        // "they should not show up as the newest").
+        console.log(`[phone-sync] absorbing ${eligible.length} phone download(s) into the library`)
+        dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: eligible })
+      }
+    } catch (err) {
+      console.error('[phone-imports absorb] crash-guard:', err)
+    }
+  }, [dispatch])
+
+  // Mid-session pushes (mirror tick sees the sidecar change).
+  useEffect(() => {
+    const off = window.electronAPI.onMobileImportsUpdated?.((p) => absorbMobileImports(p.tracks))
+    return () => { off?.() }
+  }, [absorbMobileImports])
+
+  // Boot-time absorb: PULL once the library is actually loaded. The old
+  // boot PUSH raced this component's mount and vanished (2026-08-07 live).
+  const importsPulledRef = useRef(false)
+  useEffect(() => {
+    if (importsPulledRef.current || libState.tracks.length === 0) return
+    importsPulledRef.current = true
+    window.electronAPI.getMobileImports?.().then((p) => absorbMobileImports(p.tracks, p.overrides)).catch(() => {})
+  }, [libState.tracks.length, absorbMobileImports])
+
+  // Phone song-info edits arriving MID-SESSION (main mirrors the NAS file
+  // every 5 minutes and pushes fresh entries here). Same fingerprint rule as
+  // the boot apply below: an entry only applies if its fp still matches the
+  // track at that id — never on faith. The reducer coerces numeric fields.
+  useEffect(() => {
+    const off = window.electronAPI.onMobileOverridesUpdated?.((p) => {
+      const updates: { id: number; field: string; value: string | boolean }[] = []
+      const byId = new Map(libStateRef.current.tracks.map((t) => [String(t.id), t]))
+      for (const [id, entry] of Object.entries(p.overrides || {})) {
+        if (!entry || typeof entry !== 'object' || !entry.fields) continue
+        const t = byId.get(id)
+        if (!t) continue
+        const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
+        if (entry.fp !== fp) continue
+        for (const [field, value] of Object.entries(entry.fields)) {
+          updates.push({ id: t.id, field, value })
+        }
+      }
+      if (updates.length) {
+        console.log(`[phone-sync] applying ${updates.length} field edit(s) from the phone live`)
+        dispatch({ type: 'UPDATE_TRACKS', updates })
+      }
+    })
+    return () => { off?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -1794,7 +1892,7 @@ function AppInner() {
                 <div style={{
                   height: '100%',
                   width: `${applyOverridesProgress.total > 0 ? (applyOverridesProgress.done / applyOverridesProgress.total) * 100 : 0}%`,
-                  background: '#e0812e',
+                  background: '#F9864C',
                   transition: 'width 200ms ease-out',
                 }} />
               </div>
@@ -1880,7 +1978,7 @@ function AppInner() {
                 <div style={{
                   height: '100%',
                   width: `${refreshSizesProgress.total > 0 ? (refreshSizesProgress.scanned / refreshSizesProgress.total) * 100 : 0}%`,
-                  background: '#e0812e',
+                  background: '#F9864C',
                   transition: 'width 200ms ease-out',
                 }} />
               </div>

@@ -69,8 +69,20 @@ trap cleanup_children TERM INT
 LOG=/tmp/jaketunes-sync.log
 LOCK=/tmp/jaketunes-sync.lock
 LIBRARY_ROOT="${JT_LIBRARY_ROOT:-$HOME/Music2/JakeTunesLibrary}"
-SHARE_URL="${JT_SHARE:-smb://ds225/JakeShared}"
+SHARE_URL="${JT_SHARE:-smb://ds225.local/JakeShared}"
 MOUNT="${JT_MOUNT:-/Volumes/JakeShared}"
+# The live JakeShared mountpoint, WHEREVER macOS parked it (2026-08-07):
+# a root-locked ghost dir at the canonical path forces every remount onto
+# /Volumes/JakeShared-1, and chasing the canonical path forever meant a
+# pill error on every save. If the share is mounted under any name, use
+# that mount; the canonical path is a preference, not a requirement.
+resolve_jakeshared() {
+  /sbin/mount | /usr/bin/sed -n 's|^//[^ ]*/JakeShared on \([^ ]*\) (smbfs.*|\1|p' | /usr/bin/head -1
+}
+LIVE=$(resolve_jakeshared)
+if [ -n "$LIVE" ] && [ -d "$LIVE/JakeTunesLibrary" ]; then
+  MOUNT="$LIVE"
+fi
 HOMEMINI="${JT_HOMEMINI:-jakerosenbaumnas@homemini}"
 PLEX_SSH="${JT_PLEX_SSH:-jakerosenbaum@ds225}"
 PLEX_SECTION="${JT_PLEX_SECTION:-2}"
@@ -78,13 +90,52 @@ PLEX_SKIP="${JT_PLEX_SKIP:-0}"
 PLEX_SCANNER="/volume1/@appstore/PlexMediaServer/Plex Media Scanner"
 JT_DATA_LOCAL="$HOME/Library/Application Support/JakeTunes"
 JT_DATA_REMOTE='Library/Application Support/JakeTunes'
+
+# Shared remount helper (2026-08-07). A host qualifies ONLY by silently
+# proving it's the DS225 (smbutil view -N via keychain lists JakeShared —
+# never a prompt, never a dialog); then mount silently. Used both at startup
+# and MID-RUN: on remote networks the tailnet SMB session drops every so
+# often, and a drop between the startup check and the music rsync used to
+# kill the whole sync with the "sync script exited 2" banner.
+is_ds225() {
+  /usr/bin/perl -e 'alarm 12; exec @ARGV' /usr/bin/smbutil view -N "//jakerosenbaum@$1" 2>/dev/null | grep -q JakeShared
+}
+ensure_jakeshared() {
+  # Mounted anywhere (canonical OR suffix-drifted) = mounted. Adopt it.
+  local live
+  live=$(resolve_jakeshared)
+  if [ -n "$live" ] && [ -d "$live/JakeTunesLibrary" ]; then MOUNT="$live"; return 0; fi
+  [ -d "$MOUNT/JakeTunesLibrary" ] && return 0
+  MHOST=""
+  if /sbin/ping -c1 -W1000 ds225.local >/dev/null 2>&1 && is_ds225 ds225.local; then
+    MHOST="ds225.local"
+  elif is_ds225 192.168.1.223; then
+    MHOST="192.168.1.223"
+  elif is_ds225 100.117.19.93; then
+    MHOST="100.117.19.93"
+  fi
+  if [ -z "$MHOST" ]; then
+    log "NAS unreachable on every path (mDNS/LAN/tailnet) — no mount attempt (no dialog)"
+    return 1
+  fi
+  log "mounting smb://jakerosenbaum@$MHOST/JakeShared …"
+  /bin/rmdir "$MOUNT" 2>/dev/null || true   # stale dir would suffix-drift the mount
+  /usr/bin/perl -e 'alarm 45; exec @ARGV' /usr/bin/osascript -e "mount volume \"smb://jakerosenbaum@$MHOST/JakeShared\"" >> "$LOG" 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    live=$(resolve_jakeshared)
+    if [ -n "$live" ] && [ -d "$live/JakeTunesLibrary" ]; then MOUNT="$live"; return 0; fi
+    sleep 1
+  done
+  return 1
+}
 # 4.5.0-90 Phase 2 — when the app is in NAS-source mode, the freshest
 # copies of the SYNC_FILES live at JT_STATE_NAS, NOT in JT_DATA_LOCAL
 # (the local userData copies go stale because the app reads/writes
 # the NAS path directly). Sync's rsync source-selection below probes
 # JT_STATE_NAS first and falls back to JT_DATA_LOCAL when the NAS
 # mount isn't present.
-JT_STATE_NAS='/Volumes/JakeShared/JakeTunesState'
+# NAS state dir follows the LIVE mount — computed at use, since
+# ensure_jakeshared may relocate $MOUNT after this point.
 # Files that comprise the per-device library state we want everywhere
 # (treat homemini's JakeTunes as a read-mostly mirror of the laptop's):
 #   library.json            — track metadata, the master
@@ -104,7 +155,21 @@ JT_STATE_NAS='/Volumes/JakeShared/JakeTunesState'
 # written on BOTH sides (desktop + phone via homemini's backend), so a blunt
 # rsync overwrite could clobber a recent phone add; that one needs a merge-aware
 # push, handled separately.
-SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl embeddings.bin listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json mobile-playlists.json playlist-additions.json)
+# 2026-07-01 — added listening-log.jsonl (append-only 'p'/'s' play+skip log,
+# desktop-authored only — same one-way-push safety as play-events.jsonl). Carries
+# the skip signal play-events.jsonl doesn't have, for a per-subgenre engagement
+# quality prior in mix ranking.
+# 2026-07-02 — added live-sets.json (V5 Live Concert Mode setlist cues,
+# desktop-authored only — V3 is the single writer). The merged audio itself
+# reaches the Mini through the normal library/audio sync as a regular track;
+# this sidecar lets the mobile backend serve per-song setlist data later.
+# 2026-07-11 — REMOVED embeddings.bin (and it never carried mood-index.bin):
+# the brain is now OWNED + written by homemini's nightly job on the NAS
+# canonical (project_brain_homemini_migration). The laptop must NOT push
+# embeddings.bin to the NAS or it would clobber the mini's enriched brain —
+# single-writer. The laptop still authors metadata-overrides.json (Cynthia +
+# taxonomy) which the mini's brain-trainer READS to fold subgenres.
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json mobile-playlists.json playlist-additions.json)
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
@@ -113,6 +178,42 @@ log() {
 notify() {
   # macOS user notification — works whether launchd or interactive.
   osascript -e "display notification \"$1\" with title \"JakeTunes sync\"" 2>/dev/null || true
+}
+
+# Pull a file that may legitimately not exist yet, WITHOUT crying wolf.
+#
+# 2026-08-08: the log had 515 "rsync error: some files/attrs were not
+# transferred (code 23)" lines against 58 real errors — a 9:1 noise ratio that
+# made the real ones unfindable. Every one of the 515 was the phone listening
+# log, which simply hasn't been created yet (it appears after the first phone
+# play post-deploy). The control flow already handled that correctly; only the
+# stderr spam was wrong.
+#
+# So: run rsync with stderr captured. If it failed ONLY because the source
+# isn't there, stay silent and return 1 so the caller's `||` chain still works.
+# Anything else gets logged verbatim, exactly as before. An error in this log
+# should always mean something is actually wrong.
+# Log a standing-condition note at most once an hour. The sync runs every ~2
+# minutes, so a message about a state that persists for days (a file that won't
+# exist until Jake next plays on his phone) would otherwise write ~700 lines a
+# day. Same message, 1/30th the volume.
+log_hourly() {
+  local stamp=$1; shift
+  if [ -z "$(find "$stamp" -mmin -60 2>/dev/null)" ]; then
+    : > "$stamp"
+    log "$@"
+  fi
+}
+
+rsync_optional() {
+  local err rc
+  err=$(rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  rc=$?
+  [ $rc -eq 0 ] && return 0
+  case "$err" in
+    *"No such file or directory"*) return 1 ;;   # expected absence — say nothing
+    *) [ -n "$err" ] && printf '%s\n' "$err" >> "$LOG"; return 1 ;;
+  esac
 }
 
 # Acquire lock, exit 9 if another run is in flight.
@@ -137,17 +238,16 @@ log "=== sync started (PID $$) ==="
 # — see the tombstone at ~/Library/LaunchAgents/com.jaketunes.sync.plist).
 
 # ── 1. Ensure JakeShared is mounted ───────────────────────────────────
-if [ ! -d "$MOUNT/JakeTunesLibrary" ] && [ ! -d "$MOUNT" ]; then
-  log "mounting $SHARE_URL …"
-  # osascript drives the user-session Finder mount; works fine because
-  # the caller (JakeTunes main process) is already in the GUI session.
-  /usr/bin/osascript -e "mount volume \"$SHARE_URL\"" >> "$LOG" 2>&1 || true
-  # Wait up to 10 sec for the mount to settle.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [ -d "$MOUNT/JakeTunesLibrary" ] && break
-    sleep 1
-  done
-fi
+# 2026-08-07: this used to fire `mount volume "smb://ds225.local/…"`
+# UNCONDITIONALLY — no reachability check, no username in the URL. Off
+# the home LAN, ds225.local can't resolve and macOS raises the Finder
+# "There was a problem connecting to the server ds225.local" dialog —
+# one per sync the app triggered, which is the dialog storm Jake kept
+# seeing. Now: pick a reachable host first (mDNS → LAN IP → tailnet IP,
+# same ladder as ~/bin/nas-mount-keeper.sh), mount with the USERNAME in
+# the URL (keychain, silent), alarm-capped, and if nothing is reachable
+# SKIP the mount quietly — never attempt a mount that must fail.
+ensure_jakeshared || true
 
 if [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
   log "ERROR: $MOUNT/JakeTunesLibrary not present after mount attempt — aborting"
@@ -162,8 +262,8 @@ fi
 resolve_sync_src() {
   if [ -f "$JT_DATA_LOCAL/$1" ]; then
     echo "$JT_DATA_LOCAL/$1"
-  elif [ -f "$JT_STATE_NAS/$1" ]; then
-    echo "$JT_STATE_NAS/$1"
+  elif [ -f "$MOUNT/JakeTunesState/$1" ]; then
+    echo "$MOUNT/JakeTunesState/$1"
   fi
 }
 
@@ -260,6 +360,7 @@ for arg in "$@"; do
   [ "$arg" = "--quick" ] && QUICK_MODE=1
 done
 
+run_music_rsync() {
 if [ $QUICK_MODE -eq 1 ]; then
   log "rsync music (quick: files modified in last 10 min) → $MOUNT/JakeTunesLibrary/ …"
   TMP_LIST=$(mktemp /tmp/jaketunes-sync-files.XXXXXX)
@@ -299,11 +400,39 @@ else
   # The canonical post-import content lives in iPod_Control/Music/F**/
   # via JakeTunes' importOneFile copy step. Local _pending-imports/ stays
   # untouched as a local "paper trail" per download-router.ts intent.
+  # 2026-08-08: --exclude='.moov-repair-backup/' — same class of bug as
+  # _pending-imports/ above, found the moment the log stopped crying wolf
+  # about the phone listening log. That directory holds the pre-remux
+  # ORIGINALS from the April faststart repair (1,136 files, 7.9 GB, all
+  # dated Apr 25). Nothing in the app or any script references it; it is an
+  # inert local safety copy. Mirroring it meant every full sync asked the
+  # NAS to stat 983 files it had no reason to care about, 19 of which
+  # timed out at 60s each — which is what made full syncs crawl, and what
+  # made the script log "a file was busy (likely streaming) or vanished"
+  # on every full run. That diagnosis was wrong; nothing was streaming.
+  # NOTE: sync is additive-only, so this does NOT remove the 8 GB copy
+  # already sitting on the NAS. Reclaiming that is a deliberate deletion
+  # and needs Jake's say-so — it is not a side effect of this change.
   rsync -az \
     --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
+    --exclude='.moov-repair-backup/' \
     "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
     >> "$LOG" 2>&1
   music_rc=$?
+fi
+}
+run_music_rsync
+# Mid-run share drop (2026-08-07): on remote networks the tailnet SMB
+# session dies every so often; when it dies BETWEEN the startup check and
+# this rsync, the target dir vanishes and rsync hard-fails — that was the
+# "sync script exited 2" banner colliding with every flap window. Remount
+# (identity-gated, silent) and retry ONCE; only a genuine outage still
+# reaches the banner.
+if [ "$music_rc" -ne 0 ] && [ "$music_rc" -ne 23 ] && [ "$music_rc" -ne 24 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
+  log "share dropped mid-run (music rsync exit=$music_rc, target gone) — remounting + one retry"
+  if ensure_jakeshared; then
+    run_music_rsync
+  fi
 fi
 log "music rsync exit=$music_rc (mode=$([ $QUICK_MODE -eq 1 ] && echo quick || echo full))"
 # rsync exit 23/24 = PARTIAL transfer, not a hard failure:
@@ -437,6 +566,15 @@ if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
   log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
   notify "Couldn't pull phone stars from homemini — desktop may be behind."
 fi
+# Phone listening stream (2026-08-07 parity: "same page as mobile at all
+# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
+# desktop KPIs merge them with its own listening-log. Backend writes it
+# next to library.json on homemini's LOCAL state dir.
+# Both locations are tried and BOTH may be absent pre-first-play, so these use
+# rsync_optional: a missing source is normal here and must not log an error.
+rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+  log_hourly /tmp/.jt-phonelog-note "phone listening log not present yet (appears after the first phone play post-deploy)"
 log "pushing desktop stars (local → homemini) …"
 if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
@@ -458,16 +596,16 @@ fi
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
 #
 # 2026-06-10 — the phone's backend records every reco deletion as a
-# tombstone in JakeTunesState/recommendations-deleted.json. Desktop V3
-# merges its LOCAL recommendations.json ADDITIVELY (by id) and mirrors
-# the result back to the NAS, so without this prune a phone-deleted reco
-# resurrects on every desktop sync cycle (Jake: "if it is deleted on
-# phone it should be deleted on laptop, and vice versa" — the laptop→
-# phone direction already works via V3's own tombstones + the mirror).
-# V3 re-reads its local file on every reco IPC call, so a file-level
-# prune takes effect on the desktop's next read — no app restart needed.
-# Atomic write (tmp + os.replace) so a concurrent V3 read never sees a
-# partial file.
+# tombstone in JakeTunesState/recommendations-deleted.json; this prune
+# drops those rows from V3's LOCAL cache file.
+#
+# 2026-07-02 (Brief 125) — V3 no longer merges additively or mirrors to
+# the NAS: its sync now MIRRORS the backend list (single-writer), so
+# phone-deleted rows vanish on V3's next sync without this prune. Kept
+# as a harmless fast-path only (takes effect before V3's next backend
+# GET); writes V3's LOCAL file only, never the NAS files — safe to
+# retire whenever. Atomic write (tmp + os.replace) so a concurrent V3
+# read never sees a partial file.
 TOMBSTONES="$MOUNT/JakeTunesState/recommendations-deleted.json"
 LOCAL_RECOS="$JT_DATA_LOCAL/recommendations.json"
 if [ -f "$TOMBSTONES" ] && [ -f "$LOCAL_RECOS" ]; then

@@ -13,7 +13,7 @@ const electronAPI = {
     return () => { ipcRenderer.removeListener('menu-action', handler) }
   },
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
-  musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string; textRaw: string }> =>
+  musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
     ipcRenderer.invoke('musicman-chat', messages),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
@@ -52,6 +52,7 @@ const electronAPI = {
   // colour itself correctly.
   getActiveHost: (): Promise<'mm' | 'megan'> =>
     ipcRenderer.invoke('get-active-host'),
+  audioLog: (line: string): void => ipcRenderer.send('audio-log', line),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
@@ -216,6 +217,7 @@ const electronAPI = {
   itunesAlbumTracks: (collectionId: number) => ipcRenderer.invoke('itunes-album-tracks', collectionId),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
+  lookupAlbumPreview: (input: { artist: string; album: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => ipcRenderer.invoke('lookup-album-preview', input),
   // 4.5.0-115 — album detail page: factual credits + Music Man blurb.
   getAlbumInfo: (artist: string, album: string, year?: string) => ipcRenderer.invoke('get-album-info', artist, album, year),
   getAlbumBlurb: (artist: string, album: string, year?: string | number) => ipcRenderer.invoke('get-album-blurb', artist, album, year),
@@ -232,8 +234,14 @@ const electronAPI = {
   getRelatedArtists: (artist: string) => ipcRenderer.invoke('get-related-artists', artist),
   // 4.5.0-118 — Discovery Brain Phase 2: new-music radar.
   getNewMusicRadar: (force?: boolean) => ipcRenderer.invoke('get-new-music-radar', force),
-  discoveryNotForMe: (artist: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('discovery-not-for-me', artist),
+  discoveryNotForMe: (artist: string, cardKey?: string): Promise<{ ok: boolean; scope?: string }> => ipcRenderer.invoke('discovery-not-for-me', artist, cardKey),
+  discoveryAllowAgain: (artist: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('discovery-allow-again', artist),
+  discoveryLearned: (): Promise<{ ok: boolean; summary?: unknown; error?: string }> => ipcRenderer.invoke('discovery-learned'),
   getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }> => ipcRenderer.invoke('get-friends'),
+  tasteLedgerAppend: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>): Promise<{ ok: boolean; appended?: number }> =>
+    ipcRenderer.invoke('taste-ledger-append', events),
+  getTasteWeights: (): Promise<{ ok: boolean; weights: Record<string, unknown> }> =>
+    ipcRenderer.invoke('get-taste-weights'),
   getFriendStandings: (): Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }> => ipcRenderer.invoke('get-friend-standings'),
   sweepFriendImports: (): Promise<{ ok: boolean; credited: number }> => ipcRenderer.invoke('sweep-friend-imports'),
   // 2026-07-20 — the sync journal: fired at boot when the last iPod sync
@@ -254,6 +262,21 @@ const electronAPI = {
   imessageCaptureScanNow: (): Promise<{ ok: boolean; access: 'granted' | 'denied' | 'unknown' }> => ipcRenderer.invoke('imessage-capture-scan'),
   openFullDiskAccessSettings: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('open-full-disk-access-settings'),
   getDiscoverFeed: (force?: boolean): Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }> => ipcRenderer.invoke('get-discover-feed', force),
+  // Phone song-info edits mirrored down from the NAS mid-session — the
+  // renderer fingerprint-validates and applies them live (seamless sync).
+  getMobileImports: (): Promise<{ tracks: unknown[]; overrides?: Record<string, { fp?: string; fields?: Record<string, string> }> }> => ipcRenderer.invoke('get-mobile-imports'),
+  // Phone Qobuz downloads mirrored down from the NAS — the renderer absorbs
+  // any it doesn't already have into the library (seamless sync, downloads leg).
+  onMobileImportsUpdated: (callback: (p: { tracks: unknown[] }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { tracks: unknown[] }) => callback(p)
+    ipcRenderer.on('mobile-imports-updated', handler)
+    return () => { ipcRenderer.removeListener('mobile-imports-updated', handler) }
+  },
+  onMobileOverridesUpdated: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => callback(p)
+    ipcRenderer.on('mobile-overrides-updated', handler)
+    return () => { ipcRenderer.removeListener('mobile-overrides-updated', handler) }
+  },
   onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => callback(p)
     ipcRenderer.on('discover-feed-updated', handler)
@@ -374,7 +397,7 @@ const electronAPI = {
   // 4.5: brain-driven playlist suggestions — the playlist's embedding centroid's
   // nearest library tracks (vibe match). PlaylistView's "Suggested" strip filters
   // these for freshness + diversity instead of the old artist-match heuristic.
-  playlistSimilar: (playlistIds: number[], clusters?: number): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }> }> =>
+  playlistSimilar: (playlistIds: number[], clusters?: number): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
     ipcRenderer.invoke('playlist-similar', playlistIds, clusters),
   onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void): () => void => {
     const handler = (_e: unknown, p: { done: number; total: number }) => callback(p)
@@ -534,23 +557,41 @@ const electronAPI = {
   }> => ipcRenderer.invoke('build-workout-sync-set', tracks, opts),
   listMixtapes: (): Promise<{ ok: boolean; mixtapes: unknown[] }> =>
     ipcRenderer.invoke('mixtapes-list'),
-  buildMixtape: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string): Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; sideACutMs?: number; sideBCutMs?: number; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }> =>
-    ipcRenderer.invoke('build-mixtape', tracks, tapeLength, dedication, note),
+  buildMixtape: (tracks: unknown[], dedication?: string, note?: string): Promise<{ ok: boolean; title?: string; commentary?: string; tracks?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; error?: string }> =>
+    ipcRenderer.invoke('build-mixtape', tracks, dedication, note),
   saveMixtape: (tape: unknown): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('mixtape-save', tape),
   deleteMixtape: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('mixtape-delete', id),
   dubMixtape: (payload: unknown): Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }> =>
     ipcRenderer.invoke('dub-mixtape', payload),
+  // Encoder priming for a file (iTunSMPB) so the seam scheduler can skip
+  // it instead of playing ~48ms of silence at every track change.
+  // Custom playlist cover: pick a file (jpg/png/heic/webp…), normalized to
+  // JPEG and copied into userData so moving the original can't break it.
+  playlistNotesGet: (): Promise<{ ok: boolean; notes: Record<string, string> }> =>
+    ipcRenderer.invoke('playlist-notes-get'),
+  playlistNoteSet: (playlistId: string, text: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-note-set', playlistId, text),
+  playlistCoversMap: (): Promise<{ ok: boolean; covers: Record<string, number>; dir: string }> =>
+    ipcRenderer.invoke('playlist-covers-map'),
+  pickPlaylistCover: (playlistId: string): Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-cover-pick', playlistId),
+  copyPlaylistCover: (fromId: string, toId: string): Promise<{ ok: boolean; copied?: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-cover-copy', fromId, toId),
+  clearPlaylistCover: (playlistId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('playlist-cover-clear', playlistId),
+  gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null> =>
+    ipcRenderer.invoke('gapless-trim', absPath),
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('save-mixtape-intro', data, voiceId),
   listMixtapeVoices: (): Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }> =>
     ipcRenderer.invoke('mixtape-voices'),
   previewIpodSync: (tracks: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }): Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }> =>
     ipcRenderer.invoke('preview-ipod-sync', tracks, convertOptions),
-  commitWorkoutSyncSet: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }): Promise<{ ok: boolean; error?: string }> =>
+  commitWorkoutSyncSet: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('commit-workout-sync-set', payload),
-  getWorkoutSyncState: (): Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }> =>
+  getWorkoutSyncState: (): Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }> =>
     ipcRenderer.invoke('get-workout-sync-state'),
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-activity-profiles'),
@@ -720,7 +761,7 @@ const electronAPI = {
   bandcampGoBack: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-back'),
   bandcampGoForward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('bandcamp:go-forward'),
   // ── streamrip download store (paste-a-link → rip CLI → import) ──
-  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string }> =>
+  streamripStatus: (): Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }> =>
     ipcRenderer.invoke('streamrip:status'),
   streamripDownload: (url: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download', url),
@@ -728,7 +769,7 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
-  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active'),
@@ -858,6 +899,8 @@ const electronAPI = {
   // 4.4.32 — Tour dates per Bandsintown for the user's top library
   // artists. First call on a cold cache takes a few seconds; subsequent
   // calls within 24h return instantly from main-side cache.
+  getVenueShows: (): Promise<{ ok: boolean; shows: Array<{ artist: string; date: string; venue: string; venueKey: string; city: string; url: string; known?: boolean }> }> =>
+    ipcRenderer.invoke('get-venue-shows'),
   getTourDates: (): Promise<{ ok: boolean; dates: Array<{ artist: string; date: string; venue: string; city: string; url: string; imageUrl?: string }> }> =>
     ipcRenderer.invoke('get-tour-dates'),
 

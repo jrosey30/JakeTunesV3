@@ -1,5 +1,7 @@
 /* Mixtape view — the cassette + unfolded J-card (2026-07-18).
-   Handwriting = Marker Felt with fallbacks; ink color is per-tape. */
+   2026-08-09: the handwriting is gone. Jake: the tape pages were "corny,
+   tacky and gross" — Marker Felt on every line was most of that. Type is the
+   app's own now; the per-tape ink survives as a single accent, not a font. */
 
 .mixtape-view {
   padding: 24px 28px;
@@ -15,19 +17,89 @@
 }
 
 .mixtape-hero {
+  /* 2026-08-09 rebuild — same hero geometry as the album/playlist/mix pages
+     so the tape page stops being the odd one out. Everything on ONE grid:
+     cover, then a text column whose title, meta, transport and links all
+     share a single left edge. The old version had four different ones. */
   display: flex;
   gap: 28px;
   align-items: flex-start;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
+.mixtape-cover {
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  width: 220px;
+  height: 220px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #e3e1db;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 10px 28px rgba(0, 0, 0, 0.24),
+    0 2px 8px rgba(0, 0, 0, 0.14);
+}
+/* The cassette as a badge on the cover — a detail, not the furniture. */
+.mixtape-cover-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: rgba(253, 253, 253, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  line-height: 0;
+  pointer-events: none;
+}
+.mixtape-cover-badge .cassette { width: 40px; height: 23px; }
+.mixtape-cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The text column owns the remaining width and sets ONE left edge for
+   everything under it. */
+.mixtape-hero-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  /* Push the transport + actions to the BOTTOM of the cover's height so the
+     hero reads as one block instead of text floating beside a tall square
+     with dead space under it. */
+  min-height: 220px;
+}
+.mixtape-hero-spacer { flex: 1; }
+/* Primary action — every other page in the app leads with one, and this page
+   was making PLAY a small key inside a floating pill instead. */
+.mixtape-play {
+  padding: 8px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(180deg, #c1622f, #a2481f);
+  border: 1px solid #8d3d18;
+  border-radius: 5px;
+  cursor: pointer;
+  /* The title's 30px/1.12 box carries ~12px of leading below its cap line,
+     so the OPTICAL gap is already there — measured, not guessed. Nudging the
+     margin to 0 lands the visual gap on the target's ~15px. */
+  margin: 0 0 12px;
+}
+.mixtape-play:hover { filter: brightness(1.06); }
 
-.cassette { flex-shrink: 0; filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35)); }
+/* No drop shadow — the mark is line art on the page, not an object
+   sitting on it (2026-08-09). */
+.cassette { flex-shrink: 0; }
 .cassette-title {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 17px;
 }
 .cassette-side-mark {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 11px;
 }
 .cassette-len {
@@ -41,22 +113,29 @@
 @keyframes spool-rotate { to { transform: rotate(360deg); } }
 
 .mixtape-hero-info { min-width: 0; }
+/* Hero text column. Every item below the title sits on the SAME left edge
+   and uses one vertical rhythm — the previous version had the title, the
+   transport, the mic row and the links each doing their own thing. */
 .mixtape-title {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
-  font-size: 26px;
-  margin: 2px 0 4px;
+  font-family: inherit;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.12;
+  margin: 0 0 4px;
 }
 .mixtape-dedication {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
-  font-size: 14px;
-  margin-bottom: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 6px;
 }
 .mixtape-commentary {
   font-size: 12.5px;
-  color: #555;
-  max-width: 480px;
+  color: var(--text-secondary);
+  max-width: 62ch;
   margin: 0 0 12px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .mixtape-actions { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -99,59 +178,73 @@
 .mixtape-mic-ready { display: inline-flex; gap: 6px; }
 
 /* J-card */
+/* The tracklist. Was a cream "J-card" panel with a blue heading and columns
+   that drifted apart at wide widths — the artist ended up marooned near the
+   right edge with a lake of nothing between. It's a normal table now, on the
+   app's own grid, capped so the columns stay related to each other. */
 .jcard {
-  display: flex;
-  gap: 20px;
-  background: #f8f3e6;
-  border: 1px solid #d8cfae;
-  border-radius: 6px;
-  padding: 18px 20px;
-  box-shadow: inset 0 1px 0 #fffdf4, 0 2px 8px rgba(0, 0, 0, 0.08);
-  max-width: 980px;
+  padding-right: 8px;
+  /* Full width like every other tracklist in the app. The 1080px cap I put
+     here made the columns huddle in the left half of a wide window while the
+     rest of the page sat empty — which is most of what read as unfinished
+     (2026-08-09, seen on a real screenshot rather than guessed at). */
+  border-top: 1px solid var(--border-subtle, #e2ded6);
 }
-.jcard-side { flex: 1; min-width: 0; }
+.jcard-side { min-width: 0; }
 .jcard-side-head {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  border-bottom: 2px solid #d8cfae;
-  padding-bottom: 4px;
-  margin-bottom: 8px;
+  justify-content: space-between;
+  padding: 14px 10px 8px;
+  border-bottom: 1px solid var(--border-subtle, #e2ded6);
 }
 .jcard-side-label {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
-  font-size: 15px;
-  letter-spacing: 1px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary) !important;   /* never the per-tape ink: a blue
+                                                heading in a warm page was half
+                                                of what read as sloppy */
 }
-.jcard-side-time { font-size: 11px; color: #8a7f5e; }
-
-/* The tracklist is HANDWRITING on the card — not an app list. No hover,
-   no clicks, no tooltips; the deck plays the tape, same as real life. */
+.jcard-side-time { font-size: 11.5px; color: var(--text-secondary); }
 .jcard-row {
+  /* Name takes 2 parts, Artist 1, Time fixed — the proportional split the
+     app's other lists use. The previous fixed 15rem artist column pinned
+     itself to the right edge and left a lake between it and the title. */
   display: grid;
-  grid-template-columns: 22px 1fr auto 40px;
-  column-gap: 8px;
-  align-items: baseline;
-  padding: 3px 4px;
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
-  font-size: 13.5px;
-  cursor: default;
-  user-select: none;
+  grid-template-columns: 34px minmax(0, 2fr) minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  font-size: 13px;
 }
-/* Now playing reads as a pen underline, not a UI highlight. */
-.jcard-row--now .jcard-row-title {
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
+.jcard-row:hover { background: rgba(0, 0, 0, 0.025); }
+.jcard-row--now { background: rgba(179, 84, 42, 0.07); }
+.jcard-row--now .jcard-row-title { font-weight: 700; color: var(--accent, #FC5501); }
+.jcard-row-num {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
-.jcard-row-num { color: #9a8f6c; font-size: 12px; }
-/* Truncation policy: titles never clip — long ones wrap. */
-.jcard-row-title { overflow-wrap: anywhere; }
-.jcard-row-artist { color: #7d7458; font-size: 12.5px; overflow-wrap: anywhere; text-align: right; }
-.jcard-row-time { color: #9a8f6c; font-size: 12px; text-align: right; }
+.jcard-row-title { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jcard-row-artist {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-align: left;          /* beside the title, where the eye expects it */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jcard-row-time {
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .jcard-row-note {
   grid-column: 2 / 5;
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 11.5px;
   padding-left: 2px;
   opacity: 0.85;
@@ -182,7 +275,7 @@
 .mixsheet-side-head {
   display: flex;
   justify-content: space-between;
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 13px;
   border-bottom: 1px solid #e0d8c2;
   padding-bottom: 3px;
@@ -221,7 +314,7 @@
 
 /* ── the deck ── */
 .mixsheet-title-input {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 20px;
   border: none;
   border-bottom: 1px dashed #c9bfa2;
@@ -331,7 +424,7 @@
 }
 .deckbar-cassette { flex-shrink: 0; }
 .deckbar-cassette-title {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 9px;
 }
 .deckbar-cassette--rolling .deckbar-spool { animation: spool-rotate 1.4s linear infinite; }
@@ -412,52 +505,103 @@
 
 /* ── the faceplate: traditional as hell ── */
 .faceplate {
-  display: flex;
-  gap: 4px;
-  background: linear-gradient(#4c4c4c, #2c2c2c);
-  border: 1px solid #171717;
-  border-radius: 8px;
-  padding: 8px 10px;
+  /* 2026-08-09 — was a moulded plastic slab (grey gradient, inset
+     highlight, drop shadow) holding eight toy keys. Now a quiet strip that
+     belongs to the page: the controls read as controls, not as an imitation
+     of a machine. Jake kept a tape FEEL, not a tape PROP. */
+  display: inline-flex;
+  gap: 0;
+  align-items: stretch;
+  background: linear-gradient(180deg, #ffffff, #f4f1ea);
+  border: 1px solid #cfcabe;
+  border-radius: 9px;
+  padding: 5px 8px;
   width: fit-content;
-  box-shadow: inset 0 1px 0 #5e5e5e, 0 3px 8px rgba(0,0,0,0.35);
-  margin-bottom: 6px;
+  margin: 0;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .fp-key {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  width: 66px;
-  height: 54px;
-  border: 1px solid #141414;
+  gap: 4px;
+  width: 56px;
+  height: 44px;
+  border: 1px solid transparent;
   border-radius: 5px;
-  background: linear-gradient(#5e5e5e, #3a3a3a);
-  color: #ddd;
+  background: transparent;
+  color: #6d6858;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 #757575, 0 3px 4px rgba(0,0,0,0.45);
+  transition: background 90ms ease, color 90ms ease;
 }
-.fp-key:active { transform: translateY(2px); box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
+.fp-key:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #ded9cd;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+  color: #3f3b30;
+}
+/* Unavailable, not broken: dim the whole key evenly rather than leaving a
+   pale icon next to full-strength text. */
+.fp-key:disabled { opacity: 0.32; }
+.fp-key:active:not(:disabled) { background: rgba(0, 0, 0, 0.09); }
 .fp-key:disabled { opacity: 0.45; cursor: default; }
-.fp-label { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; }
-.fp-shape { display: flex; align-items: center; justify-content: center; height: 16px; }
-/* shapes, color coordinated */
-.fp-shape--circle { width: 14px; height: 14px; border-radius: 50%; background: #d0321e; }
+.fp-label { font-size: 8.5px; font-weight: 700; letter-spacing: 0.9px; opacity: 0.8; }
+/* ── Transport icons (2026-08-09 rebuild) ─────────────────────────────
+   These were coloured for the DARK plastic faceplate this strip used to be:
+   #ddd icons that read fine on grey moulding and washed out to nothing once
+   the strip went white. They were also all different sizes — circle 14,
+   triangle 16, eject 9, stop 13 — which is why the row never lined up.
+   One optical box, one ink, and colour reserved for the two keys where it
+   MEANS something: REC is red, PLAY is green. Everything else is ink. */
+.fp-shape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 15px;
+  color: #6d6858;
+}
+.fp-shape--circle { width: 12px; height: 12px; border-radius: 50%; background: #cc3a22; }
 .fp-shape--tri {
   width: 0; height: 0;
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  border-left: 13px solid #3fae5a;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 12px solid #2f9c4c;
+  margin-left: 2px;              /* optical centring — a triangle's mass sits left */
 }
-.fp-shape--bars { width: 12px; height: 14px; border-left: 4px solid #e8b23a; border-right: 4px solid #e8b23a; }
+.fp-shape--bars { width: 11px; height: 13px; border-left: 4px solid currentColor; border-right: 4px solid currentColor; }
 .fp-shape--eject {
-  width: 0; height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 9px solid #bbb;
   position: relative;
+  width: 13px; height: 13px;
 }
-.fp-shape--mic { color: #ddd; }
+.fp-shape--eject::before {
+  content: ''; position: absolute; left: 0; top: 1px;
+  width: 0; height: 0;
+  border-left: 6.5px solid transparent;
+  border-right: 6.5px solid transparent;
+  border-bottom: 7px solid currentColor;
+}
+.fp-shape--eject::after {
+  content: ''; position: absolute; left: 0; bottom: 0;
+  width: 13px; height: 2px; background: currentColor;
+}
+.fp-shape--mic { color: inherit; }
+.fp-shape--rew, .fp-shape--ff { display: flex; gap: 1px; align-items: center; }
+.fp-shape--rew::before, .fp-shape--rew::after {
+  content: ''; width: 0; height: 0;
+  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+  border-right: 8px solid currentColor;
+}
+.fp-shape--ff::before, .fp-shape--ff::after {
+  content: ''; width: 0; height: 0;
+  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+  border-left: 8px solid currentColor;
+}
+.fp-shape--stop { width: 12px; height: 12px; background: currentColor; border-radius: 1px; }
+
 /* pressed-in states */
 .fp-key--rec.is-down {
   background: linear-gradient(#c23a24, #8f1d10);
@@ -467,84 +611,84 @@
 }
 .fp-key--rec.is-down .fp-shape--circle { background: #fff; }
 .fp-key--mic.is-down {
-  background: linear-gradient(#b3542a, #8a3a18);
-  color: #fff;
-  transform: translateY(2px);
-  box-shadow: inset 0 2px 5px rgba(0,0,0,0.55);
+  background: rgba(208, 50, 30, 0.10);
+  border-color: rgba(208, 50, 30, 0.35);
+  color: #a32b17;
 }
+/* Status line. Was bold, wide-tracked and shouting under the transport;
+   it's a caption, so it reads like one now. */
 .fp-status {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  color: #777;
-  margin: 2px 0 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+  margin: 18px 0 0;
 }
 .fp-status--armed { color: #b07818; }
 .fp-status--recording { color: #c23a24; animation: mic-blink 1.2s steps(2, start) infinite; }
 .mixtape-smallrow {
   display: flex;
-  gap: 8px;
+  gap: 16px;
   align-items: center;
   font-size: 11.5px;
-  color: #999;
-  margin-bottom: 8px;
+  color: var(--text-secondary);
+  margin: 14px 0 0;
 }
+/* Actions, not underlined web links in a row — underlines everywhere is
+   most of why this block looked unfinished. */
 .mixtape-link {
   border: none;
   background: none;
-  color: #777;
+  color: var(--accent, #FC5501);
   font-size: 11.5px;
-  text-decoration: underline;
+  font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
   padding: 0;
 }
-.mixtape-link:hover { color: #333; }
+.mixtape-link:hover { text-decoration: underline; }
+/* Destructive action sits BELOW the useful ones in weight. Three identical
+   orange links gave "Delete Tape" the same pull as "Export" (2026-08-09,
+   from the gpt-image target render). */
+.mixtape-link--danger { color: var(--text-secondary); font-weight: 500; }
+.mixtape-link--danger:hover { color: #a3301b; }
 .mixtape-link:disabled { opacity: 0.5; cursor: default; }
 /* REW / FF / STOP shapes */
-.fp-shape--rew, .fp-shape--ff { display: flex; gap: 1px; }
-.fp-shape--rew::before, .fp-shape--rew::after {
-  content: ''; width: 0; height: 0;
-  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
-  border-right: 10px solid #ddd;
-}
-.fp-shape--ff::before, .fp-shape--ff::after {
-  content: ''; width: 0; height: 0;
-  border-top: 7px solid transparent; border-bottom: 7px solid transparent;
-  border-left: 10px solid #ddd;
-}
-.fp-shape--stop { width: 13px; height: 13px; background: #ddd; }
 
 /* the counter window — mechanical odometer vibes */
 .fp-counter {
+  /* 2026-08-09 — was a glowing green LCD window (near-black well, inset
+     shadow, text-shadow bloom). That was the single tackiest thing on the
+     page. It's typography now: the numbers still count, they just don't
+     pretend to be a lit panel. */
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: 1px;
-  min-width: 86px;
-  height: 54px;
-  margin-right: 6px;
-  background: #101408;
-  border: 1px solid #000;
-  border-radius: 4px;
-  box-shadow: inset 0 2px 6px rgba(0,0,0,0.8), inset 0 -1px 0 #2a2f1a;
+  min-width: 84px;
+  height: 44px;
+  margin-right: 12px;
+  padding: 0 14px 0 4px;
+  border-right: 1px solid var(--border, #d7d3ca);
+  background: none;
 }
-.fp-counter-side { font-size: 8.5px; font-weight: 800; letter-spacing: 1.4px; color: #7a8a5a; }
+.fp-counter-side { font-size: 9px; font-weight: 700; letter-spacing: 0.09em; color: #9a927e; }
 .fp-counter-digits {
-  font-family: 'Menlo', 'Courier New', monospace;
-  font-size: 19px;
-  font-weight: 700;
-  color: #cfe3a8;
+  font-size: 18px;
+  margin: 1px 0;
+  font-weight: 600;
+  color: #3f3b30;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 6px rgba(180, 220, 120, 0.35);
+  letter-spacing: -0.01em;
 }
-.fp-counter-sub { font-size: 8px; letter-spacing: 1px; color: #7a8a5a; text-transform: uppercase; }
-.fp-counter--rolling .fp-counter-digits { color: #e8f7c0; text-shadow: 0 0 9px rgba(200, 240, 140, 0.6); }
+.fp-counter-sub { font-size: 8px; letter-spacing: 0.9px; color: #9a927e; text-transform: uppercase; }
+.fp-counter--rolling .fp-counter-digits { color: var(--accent, #FC5501); }
 
 /* mic voice selector */
-.fp-voicerow { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
-.fp-voicerow-label { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; color: #999; }
+.fp-voicerow { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
+.fp-voicerow-label { font-size: 9px; font-weight: 700; letter-spacing: 0.09em; color: var(--text-secondary); }
 .fp-voice-select {
   font-size: 11.5px;
   border: 1px solid #b5b5b5;
@@ -599,7 +743,7 @@
 }
 .newmix-door:hover { background: #f2ecd9; border-color: #a89868; }
 .newmix-door-title {
-  font-family: 'Marker Felt', 'Bradley Hand', 'Noteworthy', cursive;
+  font-family: inherit;
   font-size: 17px;
   color: #1d3f8f;
 }

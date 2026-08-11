@@ -24,7 +24,13 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
     </svg>
   ),
   genres: <GenresIcon />,
-  discovery: <DiscoveryIcon />,
+  discovery: (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.5" fill="#b87333" />
+      <circle cx="8" cy="8" r="2.2" fill="#fff" />
+      <circle cx="8" cy="8" r="0.8" fill="#b87333" />
+    </svg>
+  ),
 }
 
 const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
@@ -38,9 +44,11 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Genres', view: 'genres' },
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
   // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the
-  // Music Man's #bb4308 below, which used to clash with New for You's orange.
-  { label: 'Discovery', view: 'discovery', highlight: '#1f7a8c' },
-  { label: 'The Music Man', view: 'musicman', highlight: '#bb4308' },
+  // Music Man's #FC5501 below, which used to clash with New for You's orange.
+  // 2026-08-07 rebrand: Discovery is now the Record Shop — copper vinyl,
+  // same view id ('discovery') so nav history + ui-state stay valid.
+  { label: 'Record Shop', view: 'discovery', highlight: '#b87333' },
+  { label: 'The Music Man', view: 'musicman', highlight: '#FC5501' },
 ]
 
 // 4.4.0: split into two sections so the WJLR Picks panel stands out as
@@ -58,7 +66,6 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
   { label: 'Starred', id: 'top-rated' },
-  { label: "Songs You'd Star", id: 'youd-star' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them.
@@ -74,10 +81,10 @@ const ICON_BLUE   = '#4a7fbf'   // Songs / Albums (Music)
 const ICON_PURPLE = '#a557a6'   // Artists (person silhouette)
 const ICON_GREEN  = '#5b9b54'   // Genres (category grid)
 const ICON_PLAYLIST_PURPLE = '#7351a3'   // Playlist + Smart Playlist gear
-// 4.4.47: the brand orange, sampled from the app logo (#bb4308). Used
+// 4.4.47: the brand orange, sampled from the app logo (#FC5501). Used
 // for the Home icon and the Music Man sidebar entry's icon + highlight.
-const ICON_HOME_ORANGE = '#bb4308'  // Home — warm color, distinct from the cooler library icons.
-// Backlog 2026-06-06: Discovery's cool teal — deliberately unlike Music Man's #bb4308.
+const ICON_HOME_ORANGE = '#FC5501'  // Home — warm color, distinct from the cooler library icons.
+// Backlog 2026-06-06: Discovery's cool teal — deliberately unlike Music Man's #FC5501.
 const ICON_DISCOVERY_TEAL = '#1f7a8c'
 
 function HomeIcon() {
@@ -178,11 +185,11 @@ function MusicManPicksIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       {/* Vinyl record */}
-      <circle cx="6" cy="6" r="5" stroke="#bb4308" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#bb4308" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#bb4308" />
+      <circle cx="6" cy="6" r="5" stroke="#FC5501" strokeWidth="0.9" />
+      <circle cx="6" cy="6" r="2.8" stroke="#FC5501" strokeWidth="0.5" opacity="0.5" />
+      <circle cx="6" cy="6" r="1.2" fill="#FC5501" />
       {/* Sparkle */}
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#bb4308" />
+      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#FC5501" />
     </svg>
   )
 }
@@ -248,7 +255,34 @@ export default function Sidebar() {
   const [ipodName, setIpodName] = useState('iPod')
   const [cdMounted, setCdMounted] = useState(false)
   const [cdName, setCdName] = useState('Audio CD')
-  const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string } | null>(null)
+  const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
+  // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
+  // very tippy top above defaults....i can absolutely pin a default").
+  // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
+  // Persisted in ui-state via FRESH read-modify-write (the scroll-clobber
+  // lesson: never save from a stale snapshot).
+  const [pinned, setPinned] = useState<string[]>([])
+  useEffect(() => {
+    void window.electronAPI.loadUiState().then((r) => {
+      const raw = (r?.state as Record<string, unknown> | null)?.pinnedPlaylists
+      if (Array.isArray(raw)) setPinned(raw.filter((x): x is string => typeof x === 'string').slice(0, 3))
+    })
+  }, [])
+  const persistPins = useCallback(async (next: string[]) => {
+    setPinned(next)
+    const r = await window.electronAPI.loadUiState()
+    const fresh = (r?.state as Record<string, unknown> | null) ?? {}
+    await window.electronAPI.saveUiState({ ...fresh, pinnedPlaylists: next })
+  }, [])
+  const togglePin = useCallback((id: string) => {
+    setPlCtxMenu(null)
+    if (pinned.includes(id)) { void persistPins(pinned.filter(p => p !== id)); return }
+    if (pinned.length >= 3) {
+      setNotice('3 pins max — unpin one first', { kind: 'error', durationMs: 4000 })
+      return
+    }
+    void persistPins([...pinned, id])
+  }, [pinned, persistPins])
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null)
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
   const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null)
@@ -293,10 +327,10 @@ export default function Sidebar() {
     dispatch({ type: 'VIEW_PLAYLIST', id: playlist.id })
   }, [dispatch])
 
-  const handlePlaylistContextMenu = useCallback((e: React.MouseEvent, id: string, name: string) => {
+  const handlePlaylistContextMenu = useCallback((e: React.MouseEvent, id: string, name: string, kind: 'user' | 'smart' = 'user') => {
     e.preventDefault()
     e.stopPropagation()
-    setPlCtxMenu({ x: e.clientX, y: e.clientY, playlistId: id, playlistName: name })
+    setPlCtxMenu({ x: e.clientX, y: e.clientY, playlistId: id, playlistName: name, kind })
   }, [])
 
   const handleRenamePlaylist = useCallback(() => {
@@ -450,7 +484,7 @@ export default function Sidebar() {
               <SidebarItem
               label="DJ"
               icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#e0812e" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#F9864C" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="4.6" cy="5.4" r="2.9" />
               <circle cx="11.4" cy="5.4" r="2.9" />
               <path d="M2 12.4h12" />
@@ -595,16 +629,52 @@ export default function Sidebar() {
         )}
 
         <SidebarSection title="PLAYLISTS">
-          {smartPlaylists.map((sp) => (
-            <SidebarItem
-              key={sp.id}
-              label={sp.label}
-              icon={<SmartPlaylistIcon />}
-              selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
-              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
-            />
+          {/* Pinned first (max 3, any mix of defaults + user playlists),
+              then the remaining defaults, then user playlists A–Z. A pin
+              MOVES its entry up — no duplicate below. Stale pins (deleted
+              playlists) simply resolve to nothing. */}
+          {pinned.map((id) => {
+            const sp = smartPlaylists.find(x => x.id === id)
+            if (sp) return (
+              <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
+                <SidebarItem
+                  label={sp.label}
+                  icon={<SmartPlaylistIcon />}
+                  selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
+                  onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
+                />
+              </div>
+            )
+            const pl = state.playlists.find(x => x.id === id)
+            if (!pl) return null
+            return (
+              <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+                <SidebarItem
+                  label={pl.name}
+                  icon={<PlaylistIcon />}
+                  selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+                  onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  droppable
+                  onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                />
+              </div>
+            )
+          })}
+          {smartPlaylists.filter(sp => !pinned.includes(sp.id)).map((sp) => (
+            <div key={sp.id} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
+              <SidebarItem
+                label={sp.label}
+                icon={<SmartPlaylistIcon />}
+                selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
+                onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
+              />
+            </div>
           ))}
-          {state.playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set').map((pl) => (
+          {state.playlists
+            .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id))
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+            .map((pl) => (
             editingPlaylistId === pl.id ? (
               <div key={pl.id} className="sidebar-item" style={{ paddingLeft: 22 }}>
                 <span className="sidebar-item-icon"><PlaylistIcon /></span>
@@ -659,9 +729,13 @@ export default function Sidebar() {
           x={plCtxMenu.x}
           y={plCtxMenu.y}
           items={[
-            { label: 'Rename…', onClick: handleRenamePlaylist },
-            { separator: true as const },
-            { label: 'Delete Playlist', onClick: handleDeletePlaylist },
+            { label: pinned.includes(plCtxMenu.playlistId) ? 'Unpin from Top' : 'Pin to Top', onClick: () => togglePin(plCtxMenu.playlistId) },
+            ...(plCtxMenu.kind === 'user' ? [
+              { separator: true as const },
+              { label: 'Rename…', onClick: handleRenamePlaylist },
+              { separator: true as const },
+              { label: 'Delete Playlist', onClick: handleDeletePlaylist },
+            ] : []),
           ]}
           onClose={() => setPlCtxMenu(null)}
         />
@@ -674,6 +748,13 @@ export default function Sidebar() {
           confirmLabel="Delete"
           onConfirm={() => {
             dispatch({ type: 'REMOVE_PLAYLIST', id: deleteConfirm.id })
+            if (deleteConfirm.id.startsWith('mm-')) {
+              void window.electronAPI.tasteLedgerAppend?.([{
+                surface: 'mm-playlist', verdict: 'reject',
+                key: { playlistId: deleteConfirm.id },
+                ctx: { name: deleteConfirm.name },
+              }])
+            }
             setDeleteConfirm(null)
           }}
           onCancel={() => setDeleteConfirm(null)}

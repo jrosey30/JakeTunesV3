@@ -160,6 +160,18 @@ export default function MusicManView() {
 
     try {
       const result = await window.electronAPI.musicmanChat(newMessages)
+      // 2026-08-07: the Music Man has HANDS — when his create_playlist
+      // tool fired, the resolved playlist lands in the sidebar HERE, the
+      // same ADD_PLAYLIST path a hand-made playlist uses.
+      if (result.createdPlaylist && result.createdPlaylist.trackIds.length > 0) {
+        const playlist = { id: `mm-${Date.now()}`, name: result.createdPlaylist.name, trackIds: result.createdPlaylist.trackIds }
+        dispatch({ type: 'ADD_PLAYLIST', playlist })
+        void window.electronAPI.tasteLedgerAppend?.([{
+          surface: 'mm-playlist', verdict: 'accept',
+          key: { playlistId: playlist.id },
+          ctx: { name: playlist.name, trackCount: playlist.trackIds.length },
+        }])
+      }
       // 4.5: store BOTH the stripped text (for display) and the raw text with
       // [scoff]/[laughs] tags intact (for the speaker button to feed ElevenLabs
       // v3). textRaw defaults to text on older builds + error paths.

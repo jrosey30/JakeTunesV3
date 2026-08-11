@@ -126,8 +126,34 @@ function buildChain(): void {
     tail = f
     return f
   })
-  tail.connect(buildEnhanceChain(audioContext))
-  chainTail = enhanceOutput
+  // ⚠️ Enhance is OUT of the signal path, and this is a restoration, not a
+  // preference. The stage below calls itself "always-on", but until
+  // 2026-08-10 no music had ever reached it: every playback Howl was
+  // html5:false, and attachHowlToEq early-returns on an html5:false Howl
+  // because there is no <audio> element to tap. The only thing feeding the
+  // chain was TTS via attachClipToBroadcast.
+  //
+  // On 2026-08-10 I switched all four Howls to html5:true to fix a playback
+  // failure (Howler's silent XHR→HTML5 fallback eating the queued play).
+  // That switch also, invisibly, routed every song through a saturator, a
+  // glue compressor, +1.8 dB of makeup and a limiter for the first time.
+  // Jake heard it immediately — "super bass sounds muffly" — which is what a
+  // hot modern master sounds like after being squashed by a limiter it was
+  // never mixed for. The playback fix was worth keeping; the mastering stage
+  // riding in on its back was not.
+  //
+  // So: bypass. `false` here reproduces the exact signal path Jake's library
+  // has had for its whole life — preamp → EQ bands → speakers. If Enhance is
+  // ever wanted, it needs to be a control Jake can hear himself turn on, not
+  // a default that arrives as a side effect of an unrelated bug fix.
+  const ENHANCE_IN_PATH = false
+  if (ENHANCE_IN_PATH) {
+    tail.connect(buildEnhanceChain(audioContext))
+    chainTail = enhanceOutput
+  } else {
+    tail.connect(audioContext.destination)
+    chainTail = tail
+  }
   // If recording was started before the chain existed, wire it up now.
   if (recordStreamDest && chainTail) {
     chainTail.connect(recordStreamDest)

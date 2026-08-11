@@ -22,10 +22,15 @@
  * separate state.
  */
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
+import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
+import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { getCached, setCached, isWarm } from '../homeCache'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { requestDrillIn } from '../utils/drillIn'
 import { formatAppDate } from '../utils/formatDate'
 import ScrollTopButton from '../components/ScrollTopButton'
@@ -34,7 +39,7 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import MadeForYou from '../components/MadeForYou'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
-import type { Track, MusicNewsItem, TourDate, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
+import type { Track, MusicNewsItem, TourDate, VenueShow, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -60,6 +65,12 @@ interface ArtistCard {
 
 export default function HomeView() {
   const { state: lib, dispatch } = useLibrary()
+
+  // 2026-08-08 — Home's rails must use the REGULAR library. A declared
+  // concert's 55 constituent songs were counted here, inflating artist
+  // play totals and letting a setlist album surface as 'Recently Added'.
+  // Same projection every other list already wraps its source in.
+  const regularTracks = useRegularLibraryTracks(lib.tracks)
   const { playTrack } = useAudio()
 
   // 4.4.21 polish: persist scroll position across view switches (4.4.13 hook).
@@ -97,18 +108,79 @@ export default function HomeView() {
   // 4.4.28: Music News + Notable Releases. Both back-ends share a 1-hour
   // cache in main, so the parallel fetch here is cheap. Null means
   // "still loading"; [] means "loaded but empty".
-  const [news, setNews] = useState<MusicNewsItem[] | null>(null)
-  const [releases, setReleases] = useState<MusicNewsItem[] | null>(null)
-  const [tourDates, setTourDates] = useState<TourDate[] | null>(null)
-  const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(null)
+  const [news, setNews] = useState<MusicNewsItem[] | null>(() => getCached('news') ?? null)
+  const [releases, setReleases] = useState<MusicNewsItem[] | null>(() => getCached('releases') ?? null)
+  // 30s iTunes preview per New This Week album, fetched on first ▶ press
+  // (Jake, 2026-08-07: "a way to preview a song from each of those new
+  // albums without leaving that screen"). link → url; null = looked up,
+  // iTunes has nothing (button hides rather than lying).
+  const [releasePreviews, setReleasePreviews] = useState<Map<string, string | null>>(() => new Map())
+  const preview = useSyncExternalStore(subscribePreview, getPreviewSnapshot)
+  const previewRelease = async (e: React.MouseEvent, item: MusicNewsItem): Promise<void> => {
+    e.stopPropagation()   // the card itself opens the review link
+    const known = releasePreviews.get(item.link)
+    if (known) { togglePreview(item.link, known, item.title, item.artist || ''); return }
+    if (known === null) return
+    // iTunes-with-Deezer-fallback lookup in main — survives Apple's
+    // rate-limit windows, which is what made the first cut of this
+    // button die silently (Jake: "shit dont work!!!!").
+    const r = await window.electronAPI.lookupAlbumPreview?.({ artist: item.artist || '', album: item.title })
+    const url = r?.previewUrl || null
+    setReleasePreviews((m) => new Map(m).set(item.link, url))
+    if (url) togglePreview(item.link, url, item.title, item.artist || '')
+  }
+  const [tourDates, setTourDates] = useState<TourDate[] | null>(() => getCached('tour') ?? null)
+  const [venueShows, setVenueShows] = useState<VenueShow[] | null>(() => getCached('venues') ?? null)
+  const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(() => getCached('upcoming') ?? null)
   const newsRowRef = useRef<HTMLDivElement>(null)
   const releasesRowRef = useRef<HTMLDivElement>(null)
   const tourDatesRowRef = useRef<HTMLDivElement>(null)
+  const venueRowRef = useRef<HTMLDivElement>(null)
   const upcomingRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-news', newsRowRef)
   useScrollPersistence('home-row-releases', releasesRowRef)
   useScrollPersistence('home-row-tours', tourDatesRowRef)
+  useScrollPersistence('home-row-venues', venueRowRef)
   useScrollPersistence('home-row-upcoming', upcomingRowRef)
+
+  // 2026-08-08 — Bandsintown lists every NIGHT of a residency as its own
+  // event, so "Live Near You" was showing 20 cards for 6 actual shows
+  // (Olivia Rodrigo alone took 10 slots at Barclays). Collapse consecutive
+  // nights by artist+venue into ONE card that says how many nights it runs.
+  // Grouping key is artist+venue (identity), never the display string.
+  const tourRuns = useMemo(() => {
+    if (!tourDates) return []
+    const byPlace = new Map<string, TourDate[]>()
+    for (const ev of tourDates) {
+      const k = `${(ev.artist || '').toLowerCase().trim()}|${(ev.venue || '').toLowerCase().trim()}`
+      const arr = byPlace.get(k)
+      if (arr) arr.push(ev)
+      else byPlace.set(k, [ev])
+    }
+    const runs: Array<{ ev: TourDate; nights: number; lastDate: string | null }> = []
+    for (const evs of byPlace.values()) {
+      const sorted = [...evs].sort((a, b) => a.date.localeCompare(b.date))
+      runs.push({
+        ev: sorted[0],
+        nights: sorted.length,
+        lastDate: sorted.length > 1 ? sorted[sorted.length - 1].date : null,
+      })
+    }
+    return runs.sort((a, b) => a.ev.date.localeCompare(b.ev.date))
+  }, [tourDates])
+
+  // Cache-writing setters: the fetch bodies below are unchanged, they just
+  // now persist what they got so the next visit doesn't have to ask
+  // (2026-08-09, "they appear too often"). See homeCache.ts.
+  const cacheThen = useCallback(<T,>(key: string, set: (v: T) => void) => (v: T) => {
+    setCached(key, v)
+    set(v)
+  }, [])
+
+  // Every lane Home waits on. Named once so `isWarm` and the settle map can't
+  // drift apart — a lane added to one and not the other would either gate
+  // forever or paint half-empty.
+  const HOME_LANES = ['memory', 'rediscovery', 'news', 'releases', 'tour', 'venues', 'upcoming', 'weather'] as const
 
   // ── one-paint gate ────────────────────────────────────────────────────────
   // Home fires six independent fetches (memory, rediscover, news+releases,
@@ -128,15 +200,21 @@ export default function HomeView() {
     const cap = setTimeout(() => setHomeCapHit(true), 2500)
     return () => clearTimeout(cap)
   }, [])
-  const pageReady = homeCapHit || Object.values(homeSettled).every(Boolean)
+  // A RETURN VISIT PAINTS IMMEDIATELY. `warm` is computed once, before the
+  // first render, so a revisit has real content on frame one and the gate is
+  // never mounted at all — the whole point of the cache (2026-08-09: "they
+  // appear too often"). Cold visits behave exactly as before: hold one
+  // skeleton until the lanes settle, capped at 2.5s.
+  const [warm] = useState(() => isWarm(HOME_LANES))
+  const pageReady = warm || homeCapHit || Object.values(homeSettled).every(Boolean)
 
   // Brain #1 — Listening Memory. One fetch per mount; main computes streaks/
   // habits from the local play log (no network). Null → card hidden.
-  const [memory, setMemory] = useState<ListeningMemoryData | null>(null)
+  const [memory, setMemory] = useState<ListeningMemoryData | null>(() => getCached('memory') ?? null)
   useEffect(() => {
     let cancelled = false
     window.electronAPI.getListeningMemory?.().then((r) => {
-      if (!cancelled && r?.ok && r.insights) setMemory(r as ListeningMemoryData)
+      if (!cancelled) { const v = (r?.ok && r.insights) ? (r as ListeningMemoryData) : null; setCached('memory', v); if (v) setMemory(v) }
     }).catch(() => { /* card just doesn't render */ })
       .finally(() => { if (!cancelled) settleHome('memory') })
     return () => { cancelled = true }
@@ -145,11 +223,11 @@ export default function HomeView() {
   // Brain — Rediscover: owned-but-overlooked artists with Music Man's pitch.
   const rediscoverRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-rediscover', rediscoverRowRef)
-  const [rediscovery, setRediscovery] = useState<RediscoveryPick[] | null>(null)
+  const [rediscovery, setRediscovery] = useState<RediscoveryPick[] | null>(() => getCached('rediscovery') ?? null)
   useEffect(() => {
     let cancelled = false
     window.electronAPI.getRediscovery?.().then((r) => {
-      if (!cancelled && r?.ok && r.picks) setRediscovery(r.picks)
+      if (!cancelled) { const v = (r?.ok && r.picks) ? r.picks : null; setCached('rediscovery', v); if (v) setRediscovery(v) }
     }).catch(() => { /* section just doesn't render */ })
       .finally(() => { if (!cancelled) settleHome('rediscovery') })
     return () => { cancelled = true }
@@ -170,12 +248,11 @@ export default function HomeView() {
           window.electronAPI.getNotableReleases(),
         ])
         if (cancelled) return
-        setNews(n.ok ? n.items : [])
-        setReleases(r.ok ? r.items : [])
+        { const nv = n.ok ? n.items : []; const rv = r.ok ? r.items : []
+          setCached('news', nv); setCached('releases', rv); setNews(nv); setReleases(rv) }
       } catch {
         if (cancelled) return
-        setNews([])
-        setReleases([])
+        { setCached('news', []); setCached('releases', []); setNews([]); setReleases([]) }
       } finally {
         if (!cancelled) settleHome('newsRel')
       }
@@ -187,12 +264,25 @@ export default function HomeView() {
       try {
         const t = await window.electronAPI.getTourDates()
         if (cancelled) return
-        setTourDates(t.ok ? t.dates : [])
+        { const v = t.ok ? t.dates : []; setCached('tour', v); setTourDates(v) }
       } catch {
         if (cancelled) return
-        setTourDates([])
+        { setCached('tour', []); setTourDates([]) }
       } finally {
         if (!cancelled) settleHome('tour')
+      }
+    })()
+    // 2026-08-08: venue shows — independent of the artist query above, and
+    // deliberately not gated on it. Ten small unofficial venue scrapes; a
+    // rotted one yields [] and the lane just renders fewer rooms.
+    void (async () => {
+      try {
+        const v = await window.electronAPI.getVenueShows()
+        if (cancelled) return
+        { const vv = v.ok ? v.shows : []; setCached('venues', vv); setVenueShows(vv) }
+      } catch {
+        if (cancelled) return
+        { setCached('venues', []); setVenueShows([]) }
       }
     })()
     // 4.4.34: upcoming releases also runs separately. MusicBrainz
@@ -201,10 +291,10 @@ export default function HomeView() {
       try {
         const u = await window.electronAPI.getUpcomingReleasesPersonal()
         if (cancelled) return
-        setUpcoming(u.ok ? u.items : [])
+        { const uv = u.ok ? u.items : []; setCached('upcoming', uv); setUpcoming(uv) }
       } catch {
         if (cancelled) return
-        setUpcoming([])
+        { setCached('upcoming', []); setUpcoming([]) }
       } finally {
         if (!cancelled) settleHome('upcoming')
       }
@@ -306,11 +396,11 @@ export default function HomeView() {
   // Brooklyn weather (when the API key's configured), and a friendly
   // library-stats line. The greeting cycles by hour to feel less
   // robotic across a long listening day.
-  const [weather, setWeather] = useState<{ tempF: number; condition: string; description: string } | null>(null)
+  const [weather, setWeather] = useState<{ tempF: number; condition: string; description: string } | null>(() => getCached('weather') ?? null)
   useEffect(() => {
     let cancelled = false
     void window.electronAPI.getBrooklynWeather().then(r => {
-      if (!cancelled && r.ok) setWeather(r.weather)
+      if (!cancelled) { const wv = r.ok ? r.weather : null; setCached('weather', wv); if (wv) setWeather(wv) }
     }).catch(() => { /* fall through to date-only header */ })
       .finally(() => { if (!cancelled) settleHome('weather') })
     return () => { cancelled = true }
@@ -348,7 +438,7 @@ export default function HomeView() {
   // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
   const recentAlbums = useMemo((): AlbumCard[] => {
     const map = new Map<string, AlbumCard>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       const artist = t.albumArtist || t.artist || 'Unknown Artist'
       const album = t.album || 'Unknown Album'
       const artistFolded = artist.toLowerCase().trim()
@@ -472,7 +562,7 @@ export default function HomeView() {
   // ── Top Artists: aggregate by artist, sort by total play count ────────
   const topArtists = useMemo((): ArtistCard[] => {
     const map = new Map<string, ArtistCard>()
-    for (const t of lib.tracks) {
+    for (const t of regularTracks) {
       const artist = t.albumArtist || t.artist || 'Unknown Artist'
       const folded = artist.toLowerCase().trim()
       if (!folded || folded === 'unknown artist') continue
@@ -550,10 +640,7 @@ export default function HomeView() {
   if (!pageReady) {
     return (
       <div className="home-view">
-        <div className="page-gate" role="status" aria-label="Loading">
-          <div className="page-gate-name">{greeting}</div>
-          <div className="page-gate-bar"><span /></div>
-        </div>
+        <PageGate title={greeting} note="Warming up the room…" layout="grid" />
       </div>
     )
   }
@@ -891,9 +978,8 @@ export default function HomeView() {
             <span className="home-section-source">via Bandsintown</span>
           </div>
           <div className="home-card-row" role="list" ref={tourDatesRowRef}>
-            {tourDates.slice(0, 20).map((ev, i) => {
+            {tourRuns.slice(0, 20).map(({ ev, nights, lastDate }, i) => {
               const d = new Date(ev.date)
-              const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
               const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : ''
               return (
                 <div
@@ -901,16 +987,61 @@ export default function HomeView() {
                   className="home-tour-card"
                   role="listitem"
                   onClick={() => ev.url && openLink(ev.url)}
-                  title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
+                  title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${nights > 1 && lastDate
+                    ? `${nights} nights: ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ${new Date(lastDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
+                    : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
+                >
+                  <div className="home-tour-date">
+                    <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
+                    <div className={`home-tour-date-day${nights > 1 ? ' home-tour-date-day--range' : ''}`}>
+                      {d.getDate()}{nights > 1 && lastDate ? `–${new Date(lastDate).getDate()}` : ''}
+                    </div>
+                    {nights > 1 && <div className="home-tour-date-nights">{nights} nights</div>}
+                  </div>
+                  <div className="home-tour-info">
+                    <div className="home-tour-artist">{ev.artist}</div>
+                    <div className="home-tour-venue">{ev.venue}</div>
+                    <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── 2026-08-08: At Your Venues — the rooms Jake actually goes to,
+            regardless of whether the artist is in his library. Library
+            artists carry a mark so the "don't miss this" signal survives
+            inside the discovery lane. ──────────────────────────────────── */}
+      {venueShows !== null && venueShows.length > 0 && (
+        <section className="home-section">
+          <div className="home-section-header">
+            <h2 className="home-section-title">At Your Venues</h2>
+            <span className="home-section-source">Brooklyn rooms</span>
+          </div>
+          <div className="home-card-row" role="list" ref={venueRowRef}>
+            {venueShows.slice(0, 40).map((s, i) => {
+              const d = new Date(s.date)
+              return (
+                <div
+                  key={`${s.venueKey}-${s.date}-${i}`}
+                  className={`home-tour-card${s.known ? ' home-tour-card--known' : ''}`}
+                  role="listitem"
+                  onClick={() => s.url && openLink(s.url)}
+                  title={`${s.artist} — ${s.venue}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${s.known ? '\nIn your library' : ''}`}
                 >
                   <div className="home-tour-date">
                     <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
                     <div className="home-tour-date-day">{d.getDate()}</div>
                   </div>
                   <div className="home-tour-info">
-                    <div className="home-tour-artist">{ev.artist}</div>
-                    <div className="home-tour-venue">{ev.venue}</div>
-                    <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
+                    <div className="home-tour-artist">
+                      {s.artist}
+                      {s.known && <span className="home-venue-known" title="In your library"> ★</span>}
+                    </div>
+                    <div className="home-tour-venue">{s.venue}</div>
+                    <div className="home-tour-city">{s.city}</div>
                   </div>
                 </div>
               )
@@ -993,6 +1124,18 @@ export default function HomeView() {
                         <circle cx="20" cy="20" r="2" fill="#999" />
                       </svg>
                     </div>
+                  )}
+                  {item.artist && (
+                    // A miss stays VISIBLE (muted disc, honest tooltip) —
+                    // a button that silently vanishes reads as broken.
+                    <button
+                      type="button"
+                      className={`home-release-play${preview.playingId === item.link ? ' home-release-play--on' : ''}${releasePreviews.get(item.link) === null ? ' home-release-play--none' : ''}`}
+                      title={releasePreviews.get(item.link) === null ? 'No preview available for this album' : preview.playingId === item.link ? 'Stop' : 'Preview a song from this album'}
+                      onClick={(e) => void previewRelease(e, item)}
+                    >
+                      {preview.playingId === item.link ? <PauseIcon /> : <PlayIcon />}
+                    </button>
                   )}
                 </div>
                 <div className="home-album-info">

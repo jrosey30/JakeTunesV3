@@ -4,8 +4,10 @@
      across every silver/metallic surface so the desktop palette is
      in sync with the mobile app. ~3% warm shift — eye reads it as
      "warmer silver" without consciously seeing the orange. */
-  --chrome-top: #d8d3cb;
-  --chrome-bottom: #c6c1b8;
+  /* 2026-08-07: "a hint more silver" — yellow cast eased, still warm
+     enough to live with the cream surfaces. */
+  --chrome-top: #d6d4d1;
+  --chrome-bottom: #c5c2bd;
   /* Sidebar stays cool blue-grey — distinct visual zone from the
      warm toolbar. */
   --sidebar-top: #c1cad7;
@@ -20,37 +22,54 @@
   --selection-top-rgb: 91, 134, 220;
   /* V5 facelift: alt-row tint consolidated to ONE app-wide zebra.
      History: 4.5 dialed #f9f4eb back to #f6f2e8 (too warm-yellow vs the
-     pill); then 4.5.0-111 cooled --white to #f9f8f5 and songs.css was
+     pill); then 4.5.0-111 cooled --white to #fdfdfd and songs.css was
      re-tuned to #eeede9 — but only songs.css, so three stripes drifted
      apart (#f6f2e8 token / #eeede9 songs / #f0f4fa genres, the last one
      a previously-REJECTED cool blue). The token now carries the most
      recent deliberate value, tuned against the current --white; songs,
      genres, and musicman all reference it. */
-  --row-alt: #eeede9;
+  --row-alt: #f2f2f2;   /* re-tuned to the brighter --white (same ~4% step) */
   /* 4.5: Now-playing LCD pill — another notch of orange. Iteration 3:
      prior pass (#f7e6c4 → #e1d0a5) read amber but still leaned cream;
      this nudges the hue ~5% toward the brand orange. Reads as soft
      peach-amber now — the pill is unambiguously the warm focal point
      of the chrome without crossing into "Halloween panel" territory.
      Gradient still subtle enough to read as iTunes-LCD. */
-  --pill-top: #f7e0b6;
-  --pill-bottom: #e0c690;
-  --pill-border: #b59c70;
+  /* B+C hybrid (2026-08-07): the pill is now a BACKLIT iPod-mini LCD —
+     luminous pale green with the light clearly ON ("turn on the backlight
+     a little"), olive text, square-ish bezel. The amber iteration lives
+     on in git history. */
+  /* v2 (Jake: "more like a brown olive") — hue pulled off lime toward
+     khaki; the backlight stays on but the glass is olive-brown. */
+  --pill-top: #e0e0b2;
+  --pill-bottom: #c4c28e;
+  --pill-border: #8f8a62;
   --musicman-bg: #1e140a;
 
   /* 4.4.47 — Brand palette, sampled directly from the JakeTunes app
-     logo (newjaketunes.png): the icon's orange is #bb4308, the note's
-     off-white is #faeddc. ONE canonical orange; the gradient shades +
-     button border are derived from it so every glossy iTunes-8 button
-     reads as the same hue the logo uses. Anything orange in the app
-     routes through these — never a one-off literal. */
-  --brand-orange:        #bb4308;       /* canonical: solid fills, accent text, icons */
-  --brand-orange-rgb:    187, 67, 8;    /* same value, for rgba() glows / shadows / tints */
-  --brand-orange-light:  #d6601f;       /* gradient tops + hover */
-  --brand-orange-dark:   #982f05;       /* gradient bottoms */
-  --brand-orange-border: #7f2803;       /* button borders (darkest) */
-  --brand-cream:         #faeddc;       /* the logo note's off-white */
-  --brand-cream-rgb:     250, 237, 220;
+     2026-08-09 — RE-DERIVED FROM THE NEW LOGO ("JAKETUNES 2.0"): a pixel
+     eighth-note in white on a hot orange tile. Jake: "ENTIRE APP'S COLOR
+     SCHEME NEEDS TO FEED OFF OF THIS NEW LOGO."
+
+     The canonical orange is #FC5501 — not eyeballed, but the MEDIAN of the
+     1,040,005 orange pixels in the logo file, so it is exactly the hue the
+     tile is. The previous #FC5501 came from the old mark and reads muddy
+     beside it. Every shade below is derived from #FC5501 in HLS (H 21deg,
+     S 99%, L 50%) rather than picked, so the whole app stays one hue:
+       light  L+10%   grad tops / hover
+       dark   L-10%   grad bottoms
+       border L-19%   button borders
+       glow   L+14% S-6%   LCD / progress / now-playing
+     ONE canonical orange. Anything orange in the app routes through these —
+     never a one-off literal. */
+  --brand-orange:        #FC5501;       /* canonical: solid fills, accent text, icons */
+  --brand-orange-rgb:    252, 85, 1;    /* same value, for rgba() glows / shadows / tints */
+  --brand-orange-light:  #FE7632;       /* gradient tops + hover */
+  --brand-orange-dark:   #C94401;       /* gradient bottoms */
+  --brand-orange-border: #9B3401;       /* button borders (darkest) */
+  --brand-cream:         #FEFDFC;       /* the logo note's white */
+  --brand-cream-rgb:     254, 253, 252;
+  --brand-ink:           #0B0B0A;       /* the note's outline black */
 
   /* The Music Man view's accent is the brand orange (was a separate
      #c87828). Kept as its own name so the dark-themed Music Man UI
@@ -88,12 +107,16 @@
   /* 4.5: --white is no longer pure #fff — a whisper of warmth so every
      surface reads as a soft off-white, not clinical. 4.5.0-111: cooled
      from the old cream #fdf9f2 (R253/G249/B242, warm spread 11 — too
-     orange in the song list) to #f9f8f5 (R249/G248/B245, spread 4): a
+     orange in the song list) to #fdfdfd (R249/G248/B245, spread 4): a
      slight-slight-slight warm hint, no glow. Pure-white usage in
      components that should stay clinical (modals, dialogs) overrides
      locally. NOTE: this was tuned to match the mobile app's warm white;
      mobile may want the same cool-down to stay in sync. */
-  --white: #f9f8f5;
+  /* 2026-08-08 — the app's white now MATCHES THE LOGO'S white. Jake, on the
+     pixel-iPod mark: "the white of the logo is brighter on purpose. any white
+     in the app needs to match it." Sampled straight off the master:
+     rgb(253,253,253). The old #fdfdfd warm cream read dingy next to it. */
+  --white: #fdfdfd;
   --sidebar-width: 148px;
   --titlebar-height: 38px;
   --toolbar-height: 78px;
@@ -103,10 +126,12 @@
      every track table shares ONE row height instead of per-file literals. */
   --row-height: 18px;
   --font-family: -apple-system, "Lucida Grande", sans-serif;
-  --font-body: 11px;
-  --font-label: 10px;
-  --font-timestamp: 9px;
-  --font-title: 12px;
+  /* 2026-08-07: "+0.25px" legibility pass (Jake: "like from font size
+     12 to font size 12.25") — fractional px render fine on retina. */
+  --font-body: 11.25px;
+  --font-label: 10.25px;
+  --font-timestamp: 9.25px;
+  --font-title: 12.25px;
 
   /* Motion — short physical snaps, warm settle (iTunes 8 weight) */
   --motion-instant: 90ms;
@@ -230,7 +255,7 @@
 
   /* — Semantic surface + intent layer (thin names over the physical
        hexes; no source hex changes). */
-  --surface-content: var(--white);        /* #f9f8f5 — the content sheet */
+  --surface-content: var(--white);        /* #fdfdfd — the content sheet */
   --surface-raised: #fcfbf8;              /* cards / tiles that sit above the sheet */
   --surface-canvas: #f0ebe1;              /* the warm page canvas behind cards */
   --border-warm: rgba(120, 90, 50, 0.14); /* hairline on cream surfaces */
@@ -238,6 +263,6 @@
   --color-danger: #c0392b;
   --color-success: #2c6b4f;
   --accent: var(--brand-orange);          /* fixes the accidental blue See-All */
-  --brand-orange-glow: #e0812e;           /* the brighter LCD/progress/now-playing warm orange */
+  --brand-orange-glow: #F9864C;           /* the brighter LCD/progress/now-playing warm orange */
   --ring-focus: 0 0 0 2px rgba(var(--selection-top-rgb), 0.55);
 }

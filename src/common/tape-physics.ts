@@ -13,6 +13,66 @@ export const MIN_CUT_MS = 20_000
 /** Assumed length when a track has no known duration (≈3:30). */
 export const UNKNOWN_DURATION_MS = 210_000
 
+// ── The 2026-08-08 model ────────────────────────────────────────────────
+// Jake: "all mixtapes are no longer doing side a side b. 25 songs max …
+// manually made can be any playlist … as long as 25 or less songs. it can
+// be a whole album if i want. my choice."
+//
+// A tape is now ONE sequence with a song-count limit. There is no A/B
+// boundary, no minutes budget, and no boundary-song cut — fitSide() above
+// still exists only to read tapes recorded under the old rules.
+
+/** The only limit a tape has now. */
+export const MAX_TAPE_SONGS = 25
+
+/** Minimum shape this helper needs — the full Mixtape in main and renderer
+ *  both satisfy it, which is why this lives here and not next to either. */
+export interface TapeLike {
+  tracks?: number[]
+  sideA?: number[]
+  sideB?: number[]
+}
+
+/**
+ * What's on the tape, in play order — THE one answer.
+ *
+ * New tapes carry `tracks`. Tapes Jake recorded under the two-sided rules
+ * are grandfathered ("old mixtapes i made already should be grandfathered
+ * in") by reading straight through A into B, which is the order they always
+ * played in anyway. Never read tape.sideA/sideB directly for playback; go
+ * through here so both eras behave the same everywhere.
+ */
+export function tapeTracks(tape: TapeLike): number[] {
+  if (Array.isArray(tape.tracks)) return tape.tracks
+  return [...(tape.sideA || []), ...(tape.sideB || [])]
+}
+
+/** Trim to the song cap, preserving order. */
+export function fitTape(ids: number[], max: number = MAX_TAPE_SONGS): number[] {
+  return ids.slice(0, max)
+}
+
+/**
+ * One song per artist, keeping the first appearance — the rule for
+ * AI-generated mixes only (Jake: "AI mixes follow the one song per artist
+ * rule"). Hand-made tapes are explicitly exempt: a whole album is allowed
+ * when that's what he wants.
+ */
+export function oneSongPerArtist(
+  ids: number[],
+  artistOf: (id: number) => string | undefined,
+): number[] {
+  const seen = new Set<string>()
+  const out: number[] = []
+  for (const id of ids) {
+    const key = (artistOf(id) || '').trim().toLowerCase()
+    if (key && seen.has(key)) continue
+    if (key) seen.add(key)
+    out.push(id)
+  }
+  return out
+}
+
 export interface SideFit {
   /** Songs that actually made it onto the tape, in order. */
   ids: number[]

@@ -81,3 +81,15 @@ describe('radar-core — rankCandidates', () => {
     assert.ok(withAnchor[0].reasons.some((r) => /daft punk/i.test(r)))
   })
 })
+
+it('pseudo-artists can never become taste anchors', () => {
+  const tracks = [
+    ...Array.from({ length: 60 }, (_, i) => ({ artist: `A${i}`, albumArtist: 'Various Artists', playCount: 9, genre: 'Rock' })),
+    ...Array.from({ length: 8 }, () => ({ artist: 'Sublime', albumArtist: 'Sublime', playCount: 5, genre: 'Ska' })),
+    { artist: 'X', albumArtist: 'Original Motion Picture Soundtrack', playCount: 40, genre: 'Score' },
+  ]
+  const anchors = getTasteAnchors(tracks, 8)
+  const names = anchors.map((a) => a.artist.toLowerCase())
+  assert.ok(names.includes('sublime'))
+  assert.ok(!names.some((n) => n.includes('various') || n.includes('soundtrack')))
+})

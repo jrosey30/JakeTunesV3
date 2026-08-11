@@ -13,7 +13,7 @@
   width: min(520px, 100%);
   max-height: min(90vh, 720px);
   overflow-y: auto;
-  background: #f9f8f5;
+  background: var(--white);
   border: 1px solid #c8c4bb;
   border-radius: 12px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
@@ -252,6 +252,6 @@
 }
 .activity-more-toggle:hover {
   background: rgba(224, 129, 46, 0.07);
-  border-color: #e0812e;
+  border-color: #F9864C;
   color: #b5651d;
 }

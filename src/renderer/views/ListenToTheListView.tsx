@@ -17,6 +17,8 @@
  * ltlDownload (serial Qobuz queue), previewPlayer, friends/Scouts ledger.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, subscribePreview, togglePreview, stopPreview } from '../previewPlayer'
 import { formatAppDate } from '../utils/formatDate'
@@ -51,6 +53,8 @@ export default function ListenToTheListView() {
   const { dispatch } = useLibrary()
   const { recs, loading, adding, addFromForm, deleteRecommendation, EMPTY_FORM } = useListenToTheList()
 
+  const ltlPageRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence('ltl-page', ltlPageRef)
   const [form, setForm] = useState<AddFormState>(EMPTY_FORM)
   const [omni, setOmni] = useState('')
   const [fromWho, setFromWho] = useState('')
@@ -265,10 +269,23 @@ export default function ListenToTheListView() {
   useEffect(() => {
     if (!showFriends) return
     let cancelled = false
-    void window.electronAPI.getFriendStandings?.().then((r) => {
-      if (!cancelled && r?.ok && r.standings) setStandings(r.standings)
-    }).catch(() => { /* keep last */ })
-    return () => { cancelled = true }
+    let retry: ReturnType<typeof setTimeout> | null = null
+    // Cold-boot race (2026-08-07, Jake: "where did my friends go???"): opening
+    // the panel right after launch could catch the main process before its
+    // caches were warm — one empty/failed response, and nothing ever refired,
+    // so the board stayed blank until a navigation. Retry until a real answer
+    // lands; the panel being open is the demand signal.
+    const fetchStandings = (attempt: number) => {
+      void window.electronAPI.getFriendStandings?.().then((r) => {
+        if (cancelled) return
+        if (r?.ok && r.standings && r.standings.length > 0) { setStandings(r.standings); return }
+        if (attempt < 5) retry = setTimeout(() => fetchStandings(attempt + 1), 1200)
+      }).catch(() => {
+        if (!cancelled && attempt < 5) retry = setTimeout(() => fetchStandings(attempt + 1), 1200)
+      })
+    }
+    fetchStandings(0)
+    return () => { cancelled = true; if (retry) clearTimeout(retry) }
   }, [showFriends, friends, recs.length])
 
   const renderTriageRow = (r: Recommendation, i: number) => {
@@ -337,7 +354,7 @@ export default function ListenToTheListView() {
   const inboxEmpty = !loading && inboxFlat.length === 0
 
   return (
-    <div className="ltl-view ltl-view--v3">
+    <div className="ltl-view ltl-view--v3" ref={ltlPageRef}>
       <div className="ltl-header">
         <div className="ltl-header-titles">
           <h1 className="ltl-title">Listen to the List</h1>
@@ -456,7 +473,7 @@ export default function ListenToTheListView() {
 
       {/* ── Inbox (triage) ── */}
       {loading ? (
-        <div className="ltl-loading">Loading…</div>
+        <PageGate note="Fetching the list…" layout="list" />
       ) : inboxEmpty ? (
         <div className="ltl-inboxzero">
           <div className="ltl-inboxzero-mark" aria-hidden="true">✓</div>

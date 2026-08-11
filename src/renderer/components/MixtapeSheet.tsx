@@ -18,9 +18,10 @@
  */
 import { useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { inheritCover } from '../playlistCovers'
 import MixtapeMic from './MixtapeMic'
 import { refreshMixtapes, setMixtapeId, pickInk } from '../mixtapes'
-import { fitSide, effectiveDurationFn } from '../../common/tape-physics'
+import { effectiveDurationFn, tapeTracks, fitTape, MAX_TAPE_SONGS } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/activity-sheet.css'
 import '../styles/mixtape.css'
@@ -30,45 +31,66 @@ interface Props {
   onClose: () => void
   /** Remix mode: open a saved tape straight on the deck; Save tapes over it. */
   existing?: Mixtape
+  /**
+   * The incoming order is DELIBERATE — don't let Music Man resequence it.
+   *
+   * Jake, 2026-08-09: "the music man should not be switching the order of the
+   * tape. if i turn a playlist into one. i designed that playlist track order
+   * on purpose. he needs to just make it a playlist as the tracks are laid
+   * out."
+   *
+   * Set when a tape is made FROM a playlist (whole or selection). The sheet
+   * then opens straight on the deck with these tracks in this order, and the
+   * sequencing call — the entire reason build() exists — is skipped. He can
+   * still nudge and drop rows by hand; nothing rearranges them for him.
+   */
+  keepOrder?: boolean
+  /** Pre-fills the label — the playlist's name, when that's where this came from. */
+  initialTitle?: string
+  /**
+   * The playlist this tape is being made from. Its custom cover comes with it
+   * (2026-08-09) — the tape already inherits the name and the running order,
+   * so the picture belonged in that set too.
+   */
+  coverFromPlaylistId?: string
 }
 
 type Stage = 'setup' | 'building' | 'deck'
 
-const TAPES: Array<{ len: 60 | 90 | 120; side: number }> = [
-  { len: 60, side: 30 },
-  { len: 90, side: 45 },
-  { len: 120, side: 60 },
-]
 
 function fmt(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
+export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, initialTitle, coverFromPlaylistId }: Props) {
   const { state: lib, dispatch } = useLibrary()
-  const [stage, setStage] = useState<Stage>(existing ? 'deck' : 'setup')
-  const [tapeLength, setTapeLength] = useState<60 | 90 | 120>(existing?.tapeLength ?? 90)
+  // keepOrder skips 'setup' too: there's nothing to ask when the running
+  // order is already decided and the songs are already chosen.
+  const [stage, setStage] = useState<Stage>(existing || keepOrder ? 'deck' : 'setup')
   const [dedication, setDedication] = useState(existing?.dedication ?? '')
   const [note, setNote] = useState('')
   const [introPath, setIntroPath] = useState<string | null>(existing?.introPath ?? null)
   const [error, setError] = useState('')
-  const [title, setTitle] = useState(existing?.title ?? '')
+  const [title, setTitle] = useState(existing?.title ?? initialTitle ?? '')
   const [commentary, setCommentary] = useState(existing?.commentary ?? '')
   const [linerNotes, setLinerNotes] = useState<Array<{ id: number; note: string }>>(existing?.linerNotes ?? [])
-  // The deck: full placed order per side — may run past the end of the
-  // tape; physics decides what actually records.
-  const [deckA, setDeckA] = useState<number[]>(existing?.sideA ?? [])
-  const [deckB, setDeckB] = useState<number[]>(existing?.sideB ?? [])
+  // The deck: the tape's running order. ONE list since 2026-08-08 — the
+  // A/B split and the minutes budget are gone; the only limit is the song
+  // count, applied at the edges so the deck can never exceed it.
+  const [deck, setDeck] = useState<number[]>(() => (
+    existing ? tapeTracks(existing)
+      // AS LAID OUT. Not sorted, not scored, not sequenced.
+      : keepOrder ? tracks.map((t) => t.id)
+        : []
+  ))
 
   const libById = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
   const dur = effectiveDurationFn((id: number) => libById.get(id)?.duration || undefined, existing?.startOffsets)
-  const sideBudgetMs = (tapeLength / 2) * 60_000
+  const fit = useMemo(() => fitTape(deck), [deck])
+  const deckMs = useMemo(() => fit.reduce((sum: number, id: number) => sum + dur(id), 0), [fit, libById])
 
-  const fitA = useMemo(() => fitSide(deckA, dur, sideBudgetMs), [deckA, sideBudgetMs, libById])
-  const fitB = useMemo(() => fitSide(deckB, dur, sideBudgetMs), [deckB, sideBudgetMs, libById])
-
-  const placed = useMemo(() => new Set([...deckA, ...deckB]), [deckA, deckB])
+  const placed = useMemo(() => new Set(deck), [deck])
   // The floor: songs brought to the session but not on either side.
   const floor = useMemo(() => tracks.filter((t) => !placed.has(t.id)), [tracks, placed])
 
@@ -83,8 +105,8 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
         genre: t.genre, bpm: t.bpm, duration: t.duration,
         playCount: t.playCount, rating: t.rating,
       }))
-      const r = await window.electronAPI.buildMixtape?.(input, tapeLength, dedication.trim() || undefined, note.trim() || undefined)
-      if (!r?.ok || !r.sideA) {
+      const r = await window.electronAPI.buildMixtape?.(input, dedication.trim() || undefined, note.trim() || undefined)
+      if (!r?.ok || !r.tracks) {
         setError(r?.error || 'Music Man dropped the tape — try again.')
         setStage('setup')
         return
@@ -92,8 +114,7 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
       setTitle(r.title || 'Mixtape')
       setCommentary(r.commentary || '')
       setLinerNotes(r.linerNotes || [])
-      setDeckA(r.sideA)
-      setDeckB(r.sideB || [])
+      setDeck(r.tracks)
       setStage('deck')
     } catch (err) {
       setError(String(err))
@@ -102,22 +123,23 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
   }
 
   const save = async () => {
-    if (fitA.ids.length + fitB.ids.length < 1) {
-      setError('The tape is blank — put at least one song on a side.')
+    if (fit.length < 1) {
+      setError('The tape is blank — put at least one song on it.')
       return
     }
     const id = existing?.id ?? `mix-${Date.now().toString(36)}`
-    const onTape = new Set([...fitA.ids, ...fitB.ids])
+    const onTape = new Set(fit)
     const tape: Mixtape = {
       id,
       title: title.trim() || 'Mixtape',
       commentary,
       dedication: dedication.trim() || undefined,
-      tapeLength,
-      sideA: fitA.ids,
-      sideB: fitB.ids,
-      sideACutMs: fitA.cutMs,
-      sideBCutMs: fitB.cutMs,
+      tracks: fit,
+      // Legacy fields the record still carries so old tapes keep reading;
+      // a tape made now is one sequence and nothing consults these.
+      tapeLength: existing?.tapeLength ?? 90,
+      sideA: [],
+      sideB: [],
       linerNotes: linerNotes.filter((n) => onTape.has(n.id)),
       introPath: introPath || undefined,
       startOffsets: existing?.startOffsets,
@@ -125,6 +147,9 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       inkColor: existing?.inkColor ?? pickInk(id),
     }
+    // Inherit the source playlist's cover before saving lands us on the tape
+    // page, so it's already wearing it when it opens.
+    if (coverFromPlaylistId) await inheritCover(coverFromPlaylistId, id)
     const r = await window.electronAPI.saveMixtape?.(tape)
     if (!r?.ok) {
       setError(r?.error || 'Could not save the tape.')
@@ -137,9 +162,10 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
   }
 
   // ── deck tools ──────────────────────────────────────────────────────
-  const move = (side: 'A' | 'B', idx: number, delta: number) => {
-    const set = side === 'A' ? setDeckA : setDeckB
-    set((cur) => {
+  // One list now, so "bump to the other side" is gone; nudging and removing
+  // are the whole vocabulary (2026-08-08).
+  const move = (idx: number, delta: number) => {
+    setDeck((cur) => {
       const next = [...cur]
       const j = idx + delta
       if (j < 0 || j >= next.length) return cur
@@ -147,54 +173,37 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
       return next
     })
   }
-  const bump = (side: 'A' | 'B', idx: number) => {
-    if (side === 'A') {
-      const id = deckA[idx]
-      if (id == null) return
-      setDeckA(deckA.filter((_, i) => i !== idx))
-      setDeckB([...deckB, id])
-    } else {
-      const id = deckB[idx]
-      if (id == null) return
-      setDeckB(deckB.filter((_, i) => i !== idx))
-      setDeckA([...deckA, id])
-    }
-  }
-  const drop = (side: 'A' | 'B', idx: number) => {
-    const set = side === 'A' ? setDeckA : setDeckB
-    set((cur) => cur.filter((_, i) => i !== idx))
-  }
-  const renderDeckSide = (label: 'A' | 'B', ids: number[], fit: ReturnType<typeof fitSide>) => {
-    const leftMs = sideBudgetMs - fit.usedMs
-    const cutId = fit.cutMs !== undefined ? fit.ids[fit.ids.length - 1] : null
-    const dead = new Set(fit.overflowIds)
+  const drop = (idx: number) => setDeck((cur) => cur.filter((_, i) => i !== idx))
+
+  const renderDeck = () => {
+    const over = new Set(deck.slice(MAX_TAPE_SONGS))
     return (
       <div className="mixsheet-side">
         <div className="mixsheet-side-head">
-          SIDE {label}
+          THE TAPE
           <span className="mixsheet-counter">
-            {fit.cutMs !== undefined || leftMs <= 0 ? 'tape full' : `${fmt(fit.usedMs)} · ${fmt(leftMs)} left`}
+            {fit.length}/{MAX_TAPE_SONGS} songs · {fmt(deckMs)}
+            {fit.length >= MAX_TAPE_SONGS ? ' · full' : ''}
           </span>
         </div>
-        {ids.map((tid, i) => {
+        {deck.map((tid, i) => {
           const t = libById.get(tid)
-          const isCut = tid === cutId
-          const isDead = dead.has(tid)
+          // Past the cap: still shown, greyed, labelled — same honesty the
+          // old overflow rows had when the tape ran out of minutes.
+          const isDead = over.has(tid)
           return (
             <div key={tid} className={`mixsheet-row${isDead ? ' mixsheet-row--dead' : ''}`}>
               <span className="mixsheet-row-num">{i + 1}.</span>
               <span className="mixsheet-row-text">
                 <span className="mixsheet-row-title">{t?.title || `#${tid}`}</span>
                 {t?.artist ? <span className="mixsheet-row-artist">{t.artist}</span> : null}
-                {isCut ? <em className="mixsheet-cut-note"> — cuts off at {fmt(fit.cutMs!)}</em> : null}
-                {isDead ? <em className="mixsheet-cut-note"> — didn't record</em> : null}
+                {isDead ? <em className="mixsheet-cut-note"> — past {MAX_TAPE_SONGS}, won't record</em> : null}
               </span>
               <span className="mixsheet-row-time">{t?.duration ? fmt(t.duration) : ''}</span>
               <span className="mixsheet-row-tools">
-                <button type="button" title="Nudge up" onClick={() => move(label, i, -1)}>↑</button>
-                <button type="button" title="Nudge down" onClick={() => move(label, i, 1)}>↓</button>
-                <button type="button" title={`Bump to Side ${label === 'A' ? 'B' : 'A'}`} onClick={() => bump(label, i)}>⇄</button>
-                <button type="button" title="Off the tape" onClick={() => drop(label, i)}>×</button>
+                <button type="button" title="Nudge up" onClick={() => move(i, -1)}>↑</button>
+                <button type="button" title="Nudge down" onClick={() => move(i, 1)}>↓</button>
+                <button type="button" title="Off the tape" onClick={() => drop(i)}>×</button>
               </span>
             </div>
           )
@@ -211,19 +220,8 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
             <div className="activity-sheet-head">
               <h2 className="activity-sheet-title">Make a mixtape</h2>
               <p className="activity-sheet-sub">
-                {tracks.length} songs · {fmt(totalMs)} of music. TRUE tape time — when a side runs out, the song cuts off right there, like 1985. No undo. You can always tape over it.
+                {tracks.length} songs · {fmt(totalMs)} of music. A tape holds {MAX_TAPE_SONGS} songs and plays start to finish as one gapless file. No undo — you can always tape over it.
               </p>
-            </div>
-            <div className="activity-q">
-              <span className="activity-q-label">The tape (minutes a side)</span>
-              <div className="activity-chips">
-                {TAPES.map(({ len, side }) => (
-                  <button key={len} type="button"
-                    className={`activity-chip${tapeLength === len ? ' is-on' : ''}`}
-                    onClick={() => setTapeLength(len)}
-                  >{side} / {side} <small>(C{len})</small></button>
-                ))}
-              </div>
             </div>
             <div className="activity-q">
               <span className="activity-q-label">For… (optional)</span>
@@ -269,20 +267,12 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
                 placeholder="write on the label…"
               />
               {commentary && <p className="activity-sheet-sub">{commentary}</p>}
-              <div className="activity-chips mixsheet-deck-tapes">
-                {TAPES.map(({ len, side }) => (
-                  <button key={len} type="button"
-                    className={`activity-chip${tapeLength === len ? ' is-on' : ''}`}
-                    onClick={() => setTapeLength(len)}
-                    title="Dub to a different length tape — the counters recompute"
-                  >{side} / {side}</button>
-                ))}
-              </div>
+              {/* The C60/C90/C120 chips are gone: a tape's limit is 25
+                  songs, not minutes, so there is no length to pick. */}
             </div>
 
             <div className="mixsheet-sides">
-              {renderDeckSide('A', deckA, fitA)}
-              {renderDeckSide('B', deckB, fitB)}
+              {renderDeck()}
             </div>
 
             {floor.length > 0 && (
@@ -300,7 +290,10 @@ export default function MixtapeSheet({ tracks, onClose, existing }: Props) {
             {error && <div className="mixsheet-error">{error}</div>}
             <div className="activity-sheet-actions">
               <button type="button" className="activity-btn activity-btn--ghost" onClick={onClose}>Cancel</button>
-              {!existing && (
+              {/* No Re-deal when the order came from a playlist — that
+                  button's whole job is to resequence, which is exactly what
+                  Jake asked it not to do (2026-08-09). */}
+              {!existing && !keepOrder && (
                 <button type="button" className="activity-btn activity-btn--ghost" onClick={() => { void build() }}>Re-deal</button>
               )}
               <button type="button" className="activity-btn activity-btn--go" onClick={() => { void save() }}>

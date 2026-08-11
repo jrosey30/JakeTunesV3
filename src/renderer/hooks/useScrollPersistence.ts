@@ -6,7 +6,7 @@
  * ui-state.json on boot and flush back debounced on scroll.
  */
 
-import { useEffect, useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 interface ScrollPosition {
   top: number
@@ -49,13 +49,17 @@ function schedulePersistScrollCache(): void {
 async function flushScrollCacheToUiState(): Promise<void> {
   if (scrollCache.size === 0) return
   try {
-    if (!uiStateSnapshot) {
-      const r = await window.electronAPI.loadUiState()
-      uiStateSnapshot = (r.ok && r.state && typeof r.state === 'object') ? r.state as Record<string, unknown> : {}
-    }
+    // ALWAYS merge onto the freshest on-disk state — never a held snapshot.
+    // A snapshot merge resurrects stale state and ERASES fields other
+    // writers added after the snapshot loaded: that clobber class is how
+    // Device view's optConvertBitrate vanished from ui-state, which made
+    // every plug-in auto-repair silently abort (2026-08-07, the 500-vs-103
+    // iPod investigation).
+    const r = await window.electronAPI.loadUiState()
+    const base = (r.ok && r.state && typeof r.state === 'object') ? r.state as Record<string, unknown> : (uiStateSnapshot ?? {})
     const scrollPositions: Record<string, ScrollPosition> = {}
     for (const [k, v] of scrollCache) scrollPositions[k] = v
-    const merged = { ...uiStateSnapshot, [SCROLL_UI_KEY]: scrollPositions }
+    const merged = { ...base, [SCROLL_UI_KEY]: scrollPositions }
     uiStateSnapshot = merged
     await window.electronAPI.saveUiState(merged)
   } catch {
@@ -75,30 +79,63 @@ export function useScrollPersistence(
   key: string,
   containerRef: React.RefObject<HTMLElement | null>
 ): void {
+  // True while a restore is still chasing its target on an async page.
+  // The recorder effect below must NOT capture positions during this
+  // window — before this guard existed, a clamped restore (content not
+  // loaded yet → scrollTop pinned to 0) dispatched a scroll event that
+  // RECORDED the 0, erasing the saved position on every revisit. That
+  // was Jake's "many pages don't remember where I was" (2026-08-07):
+  // pages with async content (Home, Discover…) wiped their own memory.
+  const restoringRef = useRef(false)
+
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
     const saved = scrollCache.get(key)
-    if (saved !== undefined) {
+    if (saved === undefined) return
+    const apply = (): void => {
       el.scrollTop = saved.top
       el.scrollLeft = saved.left
       // 2026-07-08 (the "blank library" P0): a programmatic scrollTop
-      // assignment doesn't reach virtualizers synchronously, and if the
-      // assignment CLAMPED (content not at full height yet on remount)
-      // the virtual window and the real scroll position disagree — the
-      // list renders rows thousands of px away from the viewport and
-      // looks EMPTY until a manual scroll. Dispatching a real scroll
-      // event forces every listener (useVirtualScroll's onScroll, the
-      // cache handler) to recompute from the ACTUAL DOM position, making
-      // the restore self-healing no matter which race happened.
+      // assignment doesn't reach virtualizers synchronously. Dispatching
+      // a real scroll event forces every listener (useVirtualScroll's
+      // onScroll) to recompute from the ACTUAL DOM position.
       el.dispatchEvent(new Event('scroll'))
     }
+    apply()
+    if (Math.abs(el.scrollTop - saved.top) <= 2) return   // reached — done
+
+    // The assignment CLAMPED: content hasn't grown tall enough yet
+    // (async sections still loading). Keep re-applying as the page
+    // grows, for up to 4s — a real user input takes ownership instead.
+    restoringRef.current = true
+    let raf = 0
+    const deadline = performance.now() + 4000
+    const cancel = (): void => {
+      restoringRef.current = false
+      if (raf) cancelAnimationFrame(raf)
+      el.removeEventListener('wheel', cancel)
+      el.removeEventListener('pointerdown', cancel)
+      el.removeEventListener('keydown', cancel)
+    }
+    const tick = (): void => {
+      if (!restoringRef.current) return
+      if (el.scrollHeight >= saved.top + el.clientHeight) apply()
+      if (Math.abs(el.scrollTop - saved.top) <= 2 || performance.now() > deadline) { cancel(); return }
+      raf = requestAnimationFrame(tick)
+    }
+    el.addEventListener('wheel', cancel, { passive: true })
+    el.addEventListener('pointerdown', cancel, { passive: true })
+    el.addEventListener('keydown', cancel)
+    raf = requestAnimationFrame(tick)
+    return cancel
   }, [key, containerRef])
 
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     const handler = () => {
+      if (restoringRef.current) return   // never record a clamped restore
       scrollCache.set(key, { top: el.scrollTop, left: el.scrollLeft })
       schedulePersistScrollCache()
     }

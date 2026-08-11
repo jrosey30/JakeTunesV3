@@ -6,7 +6,7 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: linear-gradient(180deg, #ebe8e1 0%, #f5f3ef 280px, #f9f8f5 100%);
+  background: linear-gradient(180deg, #ebe8e1 0%, #f5f3ef 280px, #fdfdfd 100%);
   animation: view-mount-fade var(--motion-ui) var(--ease-settle) both;
 }
 
@@ -89,7 +89,7 @@
 /* Clickable when the album has a single resolvable artist — drills to the
    artist detail page (album → artist navigation). */
 .album-page-artist--link { cursor: pointer; width: fit-content; }
-.album-page-artist--link:hover { color: #bb4308; text-decoration: underline; }
+.album-page-artist--link:hover { color: #FC5501; text-decoration: underline; }
 
 .album-page-title {
   margin: 0 0 8px;
@@ -125,16 +125,16 @@
 
 .album-page-play {
   border: 1px solid #963505;
-  background: linear-gradient(180deg, #d77b27 0%, #bb4308 100%);
+  background: linear-gradient(180deg, #d77b27 0%, #FC5501 100%);
   color: #fff8f2;
-  box-shadow: 0 2px 6px rgba(187, 67, 8, 0.32);
+  box-shadow: 0 2px 6px rgba(252, 85, 1, 0.32);
 }
 .album-page-play:hover { filter: brightness(1.07); }
 
 .album-page-shuffle {
   border: 1px solid #bfb9b0;
   background: rgba(255, 255, 255, 0.85);
-  color: #bb4308;
+  color: #FC5501;
 }
 .album-page-shuffle:hover { background: #fff; }
 
@@ -179,7 +179,7 @@
   appearance: none;
   border: none;
   background: transparent;
-  color: #bb4308;
+  color: #FC5501;
   font-size: 12px;
   font-weight: 600;
   padding: 8px 0 0;
@@ -245,21 +245,21 @@
 .album-page-take-toggle {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 6px 12px 6px 11px;
-  background: rgba(187, 67, 8, 0.07);
-  border: 1px solid rgba(187, 67, 8, 0.22);
+  background: rgba(252, 85, 1, 0.07);
+  border: 1px solid rgba(252, 85, 1, 0.22);
   border-radius: 16px;
-  color: var(--brand-orange, #bb4308);
+  color: var(--brand-orange, #FC5501);
   font-size: 12.5px; font-weight: 600; cursor: pointer;
   transition: background 140ms ease;
 }
-.album-page-take-toggle:hover { background: rgba(187, 67, 8, 0.13); }
+.album-page-take-toggle:hover { background: rgba(252, 85, 1, 0.13); }
 .album-page-take-icon { font-size: 13px; line-height: 1; }
 .album-page-take-caret { font-size: 15px; line-height: 1; margin-left: 1px; transition: transform 160ms ease; }
 .album-page-take-toggle.is-open .album-page-take-caret { transform: rotate(90deg); }
 .album-page-take-body {
   margin-top: 9px; max-width: 780px; padding: 11px 14px;
-  background: rgba(187, 67, 8, 0.05);
-  border-left: 2px solid var(--brand-orange, #bb4308);
+  background: rgba(252, 85, 1, 0.05);
+  border-left: 2px solid var(--brand-orange, #FC5501);
   border-radius: 0 8px 8px 0;
 }
 .album-page-take-text { margin: 0; font-size: 13.5px; line-height: 1.5; font-style: italic; color: var(--text-primary, #2a2018); }
@@ -293,7 +293,7 @@
   cursor: pointer;
   transition: background 140ms ease, color 140ms ease;
 }
-.album-page-flip-btn:hover:not(:disabled) { background: #fff; color: var(--brand-orange, #bb4308); }
+.album-page-flip-btn:hover:not(:disabled) { background: #fff; color: var(--brand-orange, #FC5501); }
 .album-page-flip-btn:disabled { opacity: 0.3; cursor: default; }
 .album-page-flip-pos {
   font-size: 11px;
@@ -327,8 +327,8 @@
   transition: color 120ms ease-out, box-shadow 120ms ease-out;
 }
 .album-page-liveset-crowd--on {
-  color: var(--brand-orange, #bb4308);
-  box-shadow: inset 0 0 0 1px var(--brand-orange, #bb4308);
+  color: var(--brand-orange, #FC5501);
+  box-shadow: inset 0 0 0 1px var(--brand-orange, #FC5501);
 }
 
 .album-page-setlist {
@@ -375,10 +375,10 @@
 .album-page-setlist-row--active:hover,
 .album-page-setlist-row--active:nth-child(odd) {
   background: rgba(224, 129, 46, 0.15);
-  box-shadow: inset 3px 0 0 var(--brand-orange, #bb4308);
+  box-shadow: inset 3px 0 0 var(--brand-orange, #FC5501);
 }
 .album-page-setlist-row--active .album-page-setlist-name { color: #7a3608; font-weight: 700; }
-.album-page-setlist-row--active .album-page-setlist-num { color: var(--brand-orange, #bb4308); font-weight: 700; }
+.album-page-setlist-row--active .album-page-setlist-num { color: var(--brand-orange, #FC5501); font-weight: 700; }
 .album-page-setlist-row--active .album-page-setlist-time { color: #a0561a; font-weight: 600; }
 /* PLAYED — songs already gone by read dimmer, so the setlist shows progress. */
 .album-page-setlist-row--played .album-page-setlist-name,
@@ -403,12 +403,12 @@
 }
 /* A setlist song the user reimported into the regular library. */
 .album-page-setlist-inlib {
-  color: var(--brand-orange, #bb4308);
+  color: var(--brand-orange, #FC5501);
   font-size: 11px;
   margin: 0 6px 0 2px;
   flex-shrink: 0;
 }
-.album-page-setlist-row--in-library .album-page-setlist-name { color: var(--brand-orange, #bb4308); }
+.album-page-setlist-row--in-library .album-page-setlist-name { color: var(--brand-orange, #FC5501); }
 .album-page-setlist-row--active .album-page-setlist-inlib { color: #fff; }
 
 /* Completeness gate — quiet explanatory line under the actions when the

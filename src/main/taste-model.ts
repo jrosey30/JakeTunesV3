@@ -1,3 +1,4 @@
+import { foldAccents } from '../common/fold-text.ts'
 /**
  * 4.5.0-118 — Taste Model (Phase 1 of the Discovery Brain).
  *
@@ -52,7 +53,9 @@ export interface TasteAnchor {
   score: number
 }
 
-export const norm = (s: string): string => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '')
+// COMPARISON ONLY — the fingerprint is recomputed from tracks every time and
+// never persisted, so folding here cannot orphan a stored key.
+export const norm = (s: string): string => foldAccents(String(s ?? '')).replace(/[^a-z0-9]/g, '')
 
 // Genre → family. First match wins; order matters (rock before pop so "pop punk"
 // lands in rock). Tuned to Jake's library spines.
@@ -87,9 +90,16 @@ function topMapEntry(m: Map<string, number>): string {
 export function getTasteAnchors(tracks: TrackLike[], limit = 8): TasteAnchor[] {
   interface Agg { artist: string; plays: number; tracks: number; skips: number; genres: Map<string, number> }
   const byArtist = new Map<string, Agg>()
+  // Compilation shelves masquerade as artists: "Various Artists" carries
+  // hundreds of tracks and out-scores every real band, then Discovery
+  // anchors on it — pulling random VA compilations from MusicBrainz into
+  // "You're Missing" and printing "Because you play Various Artists"
+  // (Jake, 2026-08-07: "sloppy, inconsistent... absolutely despise").
+  // A pseudo-artist can never be a taste anchor.
+  const PSEUDO_ARTIST = /^(various(\s+(artists|interprets))?|va|soundtrack|original\s+(motion\s+picture\s+)?soundtrack|original\s+(broadway\s+|london\s+)?cast(\s+recording)?|unknown(\s+artist)?|compilation|karaoke)$/i
   for (const t of tracks) {
     const name = (t.albumArtist || t.artist || '').trim()
-    if (!name) continue
+    if (!name || PSEUDO_ARTIST.test(name)) continue
     const key = norm(name)
     let a = byArtist.get(key)
     if (!a) {

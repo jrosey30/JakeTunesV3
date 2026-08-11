@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState , useSyncExternalStore } from 'react'
+import { foldAccents } from '../../../common/fold-text'
 import { useLibrary } from '../../context/LibraryContext'
 import { setNotice } from '../../activity'
 import { subscribeMixtapes, getDeckState } from '../../mixtapes'
@@ -32,7 +33,8 @@ function slugToDisplay(slug: string): string {
 }
 
 function normalize(s: string | undefined | null): string {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  // Accent-folded first: a Bandcamp page for Sigur Rós must match the library.
+  return foldAccents(s).replace(/[^a-z0-9]/g, '')
 }
 
 export default function StoreView() {

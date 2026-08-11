@@ -14,14 +14,8 @@ interface Props {
   onClose: () => void
 }
 
-const TAPES: Array<{ len: 60 | 90 | 120; side: number }> = [
-  { len: 60, side: 30 },
-  { len: 90, side: 45 },
-  { len: 120, side: 60 },
-]
 
 export default function BlankTapeSheet({ onClose }: Props) {
-  const [tapeLength, setTapeLength] = useState<60 | 90 | 120>(90)
   const [title, setTitle] = useState('')
   const [error, setError] = useState('')
 
@@ -31,7 +25,9 @@ export default function BlankTapeSheet({ onClose }: Props) {
       id,
       title: title.trim() || `Tape · ${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })}`,
       commentary: '',
-      tapeLength,
+      tracks: [],
+      // Legacy shape, still on the record so old tapes keep reading.
+      tapeLength: 90,
       sideA: [],
       sideB: [],
       linerNotes: [],
@@ -55,19 +51,8 @@ export default function BlankTapeSheet({ onClose }: Props) {
         <div className="activity-sheet-head">
           <h2 className="activity-sheet-title">Blank tape</h2>
           <p className="activity-sheet-sub">
-            It goes straight into the deck. Press REC, play music — whatever plays lands on the tape, in order, until the side runs out. TALK puts your voice down with the music.
+            It goes straight into the deck. Press REC, play music — whatever plays lands on the tape, in order, until the tape is full. TALK puts your voice down with the music.
           </p>
-        </div>
-        <div className="activity-q">
-          <span className="activity-q-label">The tape (minutes a side)</span>
-          <div className="activity-chips">
-            {TAPES.map(({ len, side }) => (
-              <button key={len} type="button"
-                className={`activity-chip${tapeLength === len ? ' is-on' : ''}`}
-                onClick={() => setTapeLength(len)}
-              >{side} / {side} <small>(C{len})</small></button>
-            ))}
-          </div>
         </div>
         <div className="activity-q">
           <span className="activity-q-label">Write on the label</span>

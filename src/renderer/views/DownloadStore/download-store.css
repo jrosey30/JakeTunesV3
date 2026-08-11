@@ -623,8 +623,446 @@
 }
 .download-cancel:hover { background: rgba(160, 40, 30, 0.08); border-color: rgba(160, 40, 30, 0.4); }
 .download-result-badge {
+  flex-shrink: 0;
   font-size: 8.5px; font-weight: 800; letter-spacing: 0.1em;
   padding: 1px 5px; border-radius: 3px; color: #4a5a3a; background: rgba(90, 110, 60, 0.14);
 }
+/* EP and SINGLE read as their own thing rather than a quieter ALBUM — the
+   whole point of the badge is that these are different sizes of release. */
+.download-result-badge--ep,
+.download-result-badge--single {
+  color: var(--brand-orange-dark);
+  background: rgba(var(--brand-orange-rgb), 0.13);
+}
 .download-result-album { font-size: 11px; color: #999; }
+
+/* The year. Tabular figures so a column of them lines up digit-for-digit
+   instead of wobbling, and it never shrinks or truncates — a half-shown year
+   is worse than none (Jake, 2026-08-09: "albums and EP's need the release
+   year next to them"). */
+.download-result-year {
+  flex-shrink: 0;
+  font-size: var(--font-12);
+  font-weight: var(--fw-bold);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.download-result-tracks {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #999;
+  font-variant-numeric: tabular-nums;
+}
 .is-canceled { opacity: 0.6; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Download, rebuilt (2026-08-09)
+   Jake: "its very very very difficult to navigate and use still. needs a
+   shit ton of work" — then, on the first pass at this: "more detail
+   needed....nothing insane though. too plain though"
+
+   The old page was one 640px column in a ~1175px space doing four unrelated
+   jobs: search, paste-a-link, a permanent Qobuz sign-in form with a four-step
+   dev-tools tutorial, and an install warning. The thing you use every time
+   shared a scroll with the things you do once, ever — and the search field
+   scrolled off the top the moment results arrived.
+
+   Now: the command bar is PINNED, setup is a drawer, and results own the
+   width. The plainness is answered with material rather than ornament —
+   warm paper, hairline rules, framed art with real shadow, hover states that
+   move — so it reads as built rather than as a form.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.download-view {
+  height: 100%;
+  overflow-y: auto;
+  display: block;                 /* was a centering flex around one card */
+  justify-content: initial;
+  padding: 0;
+  background:
+    linear-gradient(180deg, rgba(var(--brand-orange-rgb), 0.035), rgba(var(--brand-orange-rgb), 0) 260px),
+    var(--surface-canvas);
+}
+
+/* ── command bar ─────────────────────────────────────────────────────────── */
+.dl-bar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: var(--space-6) var(--space-8) var(--space-5);
+  background: color-mix(in srgb, var(--surface-canvas) 92%, transparent);
+  -webkit-backdrop-filter: saturate(1.7) blur(14px);
+  backdrop-filter: saturate(1.7) blur(14px);
+  border-bottom: 1px solid var(--border-warm);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 6px 16px -14px rgba(0, 0, 0, 0.5);
+}
+.dl-bar-top { display: flex; align-items: flex-end; gap: var(--space-4); margin-bottom: var(--space-4); }
+.dl-bar-id { display: flex; flex-direction: column; min-width: 0; }
+.dl-eyebrow {
+  font-size: var(--font-10); font-weight: var(--fw-heavy);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  color: var(--brand-orange);
+}
+.dl-h1 { margin: 1px 0 0; font-size: var(--font-20); font-weight: var(--fw-heavy); letter-spacing: -0.012em; }
+.dl-bar-spacer { flex: 1; }
+
+/* Connection state as two small lamps — the old page could only tell you this
+   by scrolling to the bottom of the form it lived in. */
+.dl-chip {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: var(--font-10); font-weight: var(--fw-bold);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 3px var(--space-3);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.5);
+}
+.dl-chip i { width: 6px; height: 6px; border-radius: 50%; background: #b9b2a4; box-shadow: 0 0 0 2px rgba(0,0,0,0.03); }
+.dl-chip.is-on i  { background: var(--color-success); box-shadow: 0 0 5px rgba(44, 107, 79, 0.5); }
+.dl-chip.is-bad i { background: var(--color-danger, #b23b2e); box-shadow: 0 0 5px rgba(178, 59, 46, 0.5); }
+
+.dl-setup-btn {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: var(--font-11); font-weight: var(--fw-bold);
+  color: var(--text-dim);
+  padding: 4px var(--space-4);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  background: linear-gradient(#fff, #f4f1ea);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.dl-setup-btn svg { width: 12px; height: 12px; transition: transform var(--motion-panel) var(--ease-settle); }
+.dl-setup-btn:hover { color: var(--brand-orange-dark); border-color: rgba(var(--brand-orange-rgb), 0.4); }
+.dl-setup-btn.is-open { color: var(--brand-orange-dark); border-color: rgba(var(--brand-orange-rgb), 0.55); background: rgba(var(--brand-orange-rgb), 0.09); }
+.dl-setup-btn.is-open svg { transform: rotate(60deg); }
+
+.dl-field { position: relative; display: flex; align-items: center; }
+.dl-field-icon { position: absolute; left: 11px; width: 15px; height: 15px; color: #9a9384; pointer-events: none; }
+.dl-input {
+  width: 100%; height: 36px;
+  padding: 0 var(--space-9) 0 33px;
+  font-size: var(--font-14); font-family: inherit;
+  color: var(--text-primary);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05) inset;
+  transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+}
+.dl-input:focus {
+  outline: none;
+  border-color: rgba(var(--brand-orange-rgb), 0.55);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05) inset, 0 0 0 3px rgba(var(--brand-orange-rgb), 0.16);
+}
+.dl-field-spin { position: absolute; right: 12px; }
+.dl-field-clear {
+  position: absolute; right: 9px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: none; background: rgba(0,0,0,0.07); color: #6f6759;
+  font-size: 9px; line-height: 1; cursor: pointer;
+}
+.dl-field-clear:hover { background: rgba(var(--brand-orange-rgb), 0.16); color: var(--brand-orange-dark); }
+
+/* ── queue strip ─────────────────────────────────────────────────────────── */
+.dl-queue {
+  /* NOT sticky: the command bar above it is variable height, so pinning this
+     to a hardcoded offset would overlap the search field the moment the bar
+     grows. It scrolls with the results it describes. */
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-8);
+  font-size: var(--font-11);
+  background: rgba(var(--brand-orange-rgb), 0.07);
+  border-bottom: 1px solid rgba(var(--brand-orange-rgb), 0.2);
+}
+.dl-queue-art { width: 22px; height: 22px; border-radius: 3px; flex: none; object-fit: cover; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+.dl-queue-name { font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.dl-queue-name--idle { color: var(--text-dim); font-weight: var(--fw-normal); }
+.dl-queue-bar { flex: 1; max-width: 200px; height: 4px; border-radius: 2px; background: rgba(0,0,0,0.11); overflow: hidden; }
+/* Indeterminate on purpose: streamrip reports no byte progress, so a filling
+   bar would be a lie. This travels to say "working", and nothing more. */
+.dl-queue-bar i {
+  display: block; height: 100%; width: 38%;
+  background: linear-gradient(90deg, var(--brand-orange-light), var(--brand-orange));
+  border-radius: 2px;
+  animation: dl-q-travel 1.5s var(--ease-in-out, ease-in-out) infinite;
+}
+@keyframes dl-q-travel { 0% { transform: translateX(-100%); } 100% { transform: translateX(262%); } }
+.dl-queue-meta { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.dl-queue-counts { display: flex; align-items: center; gap: var(--space-4); margin-left: auto; }
+.dl-queue .download-cancel, .dl-queue .download-link-btn { flex: none; }
+
+/* ── setup drawer ────────────────────────────────────────────────────────── */
+.dl-setup-panel {
+  padding: var(--space-6) var(--space-8) var(--space-7);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-warm);
+  box-shadow: 0 8px 18px -16px rgba(0,0,0,0.55) inset;
+  animation: dl-drawer var(--motion-panel) var(--ease-settle) both;
+}
+@keyframes dl-drawer { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.dl-setup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--space-6); }
+.dl-setup-card {
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  background: rgba(255,255,255,0.6);
+}
+.dl-setup-card-head {
+  font-size: var(--font-10); font-weight: var(--fw-heavy);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: var(--space-4);
+}
+
+/* ── body + section headers ──────────────────────────────────────────────── */
+.dl-body { padding: var(--space-6) var(--space-8) var(--space-11); }
+.dl-inline-err { margin: var(--space-5) var(--space-8) 0; }
+.dl-sec + .dl-sec { margin-top: var(--space-8); }
+.dl-sec-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.dl-sec-title {
+  font-size: var(--font-10); font-weight: var(--fw-heavy);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  color: var(--text-secondary, #5c554a); flex: none;
+}
+.dl-sec-title--top { color: var(--brand-orange); }
+.dl-sec-count { font-size: var(--font-10); color: var(--text-dim); font-variant-numeric: tabular-nums; flex: none; }
+/* The hairline that makes a label read as a section rather than a stray word. */
+.dl-rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--border-warm), transparent); }
+
+/* ── top match ───────────────────────────────────────────────────────────── */
+.dl-hero {
+  display: flex; align-items: center; gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid rgba(var(--brand-orange-rgb), 0.28);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(180deg, rgba(var(--brand-orange-rgb), 0.075), rgba(var(--brand-orange-rgb), 0.02)),
+    var(--surface-raised);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.75) inset, var(--shadow-2);
+  cursor: pointer;
+  animation: dl-mount var(--motion-panel) var(--ease-settle) both;
+}
+.dl-hero-artwrap { position: relative; flex: none; line-height: 0; }
+.dl-hero-art {
+  width: 78px; height: 78px; flex: none; border-radius: var(--radius-md); object-fit: cover;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.24), 0 8px 18px -8px rgba(0,0,0,0.35);
+}
+.dl-hero-play {
+  position: absolute; inset: 0; margin: auto;
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.55);
+  background: rgba(20,14,10,0.55); color: #fff; font-size: 10px;
+  cursor: pointer; opacity: 0; transition: opacity var(--motion-fast) var(--ease-out);
+}
+.dl-hero:hover .dl-hero-play, .dl-hero-play.is-on { opacity: 1; }
+.dl-hero-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.dl-hero-title { font-size: var(--font-16); font-weight: var(--fw-heavy); letter-spacing: -0.008em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-hero-artist { font-size: var(--font-13); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-hero-facts { display: flex; align-items: center; gap: var(--space-3); margin-top: 3px; flex-wrap: wrap; }
+.dl-hero-act { flex: none; }
+
+/* ── releases shelf ──────────────────────────────────────────────────────── */
+.dl-shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: var(--space-6) var(--space-5); }
+.dl-rel {
+  display: flex; flex-direction: column; min-width: 0; cursor: pointer;
+  animation: dl-mount var(--motion-panel) var(--ease-settle) both;
+  animation-delay: calc(var(--i, 0) * 22ms);
+}
+.dl-rel-frame { position: relative; line-height: 0; border-radius: var(--radius-md); }
+.dl-rel-art {
+  width: 100%; aspect-ratio: 1; object-fit: cover; display: block;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0,0,0,0.10);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18), 0 10px 20px -12px rgba(0,0,0,0.45);
+  transition: transform var(--motion-panel) var(--ease-settle), box-shadow var(--motion-panel) var(--ease-settle);
+}
+.dl-rel:hover .dl-rel-art { transform: translateY(-3px); box-shadow: 0 2px 5px rgba(0,0,0,0.2), 0 16px 26px -12px rgba(0,0,0,0.5); }
+.dl-rel.is-open .dl-rel-art { box-shadow: 0 0 0 2px var(--brand-orange), 0 10px 20px -12px rgba(0,0,0,0.45); }
+.dl-rel-hover {
+  position: absolute; inset: 0; border-radius: var(--radius-md);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  /* Darker than it was: album art is a PHOTOGRAPH as often as not, and white
+     type over a light cover at 0.12 scrim was unreadable. */
+  background: linear-gradient(180deg, rgba(18,12,8,0.30), rgba(18,12,8,0.76));
+  opacity: 0; transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+/* The busy strip — always visible, along the bottom edge, out of the art's way. */
+.dl-rel-busy {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: linear-gradient(180deg, rgba(18,12,8,0), rgba(18,12,8,0.88) 45%);
+}
+.dl-rel-busy .dl-actions { display: flex; align-items: center; gap: var(--space-3); }
+.dl-rel-busy .dl-state { font-size: var(--font-10); color: rgba(255,255,255,0.94); }
+.dl-rel-busy .download-cancel,
+.dl-rel-busy .download-retry {
+  font-size: var(--font-10); font-weight: var(--fw-bold);
+  color: #fff; background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.34); border-radius: var(--radius-pill);
+  padding: 1px var(--space-3);
+}
+.dl-rel-busy .download-cancel:hover, .dl-rel-busy .download-retry:hover { background: rgba(255,255,255,0.30); }
+.dl-rel:hover .dl-rel-hover, .dl-rel:focus-visible .dl-rel-hover { opacity: 1; }
+.dl-rel-open { font-size: var(--font-10); font-weight: var(--fw-bold); letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255,255,255,0.9); line-height: 1; }
+.dl-rel-owned {
+  position: absolute; top: 5px; right: 5px;
+  width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 900; line-height: 1;
+  color: #fff; background: var(--color-success);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+}
+.dl-rel-title { margin-top: var(--space-3); font-size: var(--font-12); font-weight: var(--fw-bold); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-rel-facts { display: flex; align-items: center; gap: 5px; margin-top: 2px; min-width: 0; }
+.dl-rel-count { font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; }
+.dl-rel-sub { margin-top: 1px; font-size: var(--font-11); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Expanded tracklist spans the whole grid row, so the shelf keeps its shape
+   and the panel opens directly beneath the card you clicked. */
+.dl-rel-panel {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  animation: dl-drawer var(--motion-panel) var(--ease-settle) both;
+}
+.dl-rel-panel-head {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-warm);
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(0,0,0,0.014));
+}
+.dl-rel-panel-title { font-size: var(--font-13); font-weight: var(--fw-heavy); }
+.dl-rel-panel-meta { font-size: var(--font-11); color: var(--text-dim); }
+.dl-rel-panel-spacer { flex: 1; }
+.dl-rel-panel-close { border: none; background: none; color: var(--text-dim); font-size: 11px; cursor: pointer; padding: 2px 4px; }
+.dl-rel-panel-close:hover { color: var(--brand-orange-dark); }
+.dl-rel-panel-note { padding: var(--space-4); font-size: var(--font-12); color: var(--text-dim); display: flex; align-items: center; gap: var(--space-3); }
+.dl-rel-panel-note--err { color: var(--color-danger, #b23b2e); }
+
+.dl-track-list {
+  list-style: none; margin: 0; padding: 0;
+  /* NOT `columns: 2`. Multi-column let an over-wide cell spill across the gap,
+     and the gap was 0 — so a track's "In your library" state printed on top of
+     the next column's title. Explicit rows + column flow keeps the same
+     down-then-across reading order and clips instead. */
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  column-gap: var(--space-7);
+}
+.dl-track {
+  display: grid; grid-template-columns: 26px minmax(0, 1fr) 42px 116px;
+  align-items: center; gap: var(--space-3);
+  min-width: 0; overflow: hidden;
+  height: 30px; padding: 0 var(--space-4);
+  font-size: var(--font-12);
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+/* Whatever state lands in a track row has to fit a 116px cell on one line. */
+.dl-track-act > * { max-width: 100%; }
+.dl-track .dl-state, .dl-track .download-result-btn, .dl-track .download-retry,
+.dl-track .download-cancel, .dl-track .dl-inlib {
+  font-size: var(--font-10);
+  white-space: nowrap;
+}
+.dl-track .dl-state svg { width: 10px; height: 10px; }
+.dl-track:hover { background: rgba(var(--brand-orange-rgb), 0.055); }
+.dl-track-lead { position: relative; width: 26px; height: 20px; }
+.dl-track-num { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--font-10); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.dl-track-play { position: absolute; inset: 0; display: grid; place-items: center; border: none; background: none; color: var(--brand-orange-dark); font-size: 9px; cursor: pointer; opacity: 0; }
+.dl-track:hover .dl-track-num { opacity: 0; }
+.dl-track:hover .dl-track-play, .dl-track-play.is-on { opacity: 1; }
+.dl-track-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-track-dur { font-size: var(--font-11); color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
+.dl-track-act { text-align: right; }
+
+/* ── songs ───────────────────────────────────────────────────────────────── */
+.dl-song-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-warm); }
+.dl-song {
+  display: grid;
+  grid-template-columns: 26px 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr) 44px 44px 96px;
+  align-items: center; gap: var(--space-4);
+  height: 40px; padding: 0 var(--space-3);
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  font-size: var(--font-12);
+  animation: dl-mount var(--motion-fast) var(--ease-settle) both;
+  animation-delay: calc(var(--i, 0) * 14ms);
+}
+.dl-song:nth-child(even) { background: rgba(0,0,0,0.016); }
+.dl-song:hover { background: rgba(var(--brand-orange-rgb), 0.065); }
+.dl-song-lead { position: relative; width: 26px; height: 22px; }
+.dl-song-idx { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--font-10); color: #b3ac9e; font-variant-numeric: tabular-nums; }
+.dl-song-play { position: absolute; inset: 0; display: grid; place-items: center; border: none; background: none; color: var(--brand-orange-dark); font-size: 10px; cursor: pointer; opacity: 0; }
+.dl-song:hover .dl-song-idx { opacity: 0; }
+.dl-song:hover .dl-song-play, .dl-song-play.is-on { opacity: 1; }
+.dl-song-art { width: 30px; height: 30px; border-radius: 3px; object-fit: cover; box-shadow: 0 1px 2px rgba(0,0,0,0.22); }
+.dl-song-title { font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-song-artist { color: var(--text-secondary, #5c554a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-song-album { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-song-year { color: var(--text-dim); font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; font-size: var(--font-11); }
+.dl-song-dur { color: #a9a294; font-variant-numeric: tabular-nums; font-size: var(--font-11); text-align: right; }
+.dl-song-act { text-align: right; }
+.dl-inlib { font-size: var(--font-10); font-weight: var(--fw-heavy); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-success); }
+
+/* Placeholder art, wherever it lands. */
+.download-result-art--ph { display: grid; place-items: center; background: linear-gradient(160deg, #efe9dd, #ded6c6); color: #b3ab99; }
+.download-result-art--ph svg { width: 46%; height: 46%; }
+
+/* ── empty state ─────────────────────────────────────────────────────────── */
+.dl-empty {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  padding: var(--space-12) var(--space-8);
+  text-align: center; color: var(--text-dim);
+}
+.dl-empty svg { width: 34px; height: 34px; color: rgba(var(--brand-orange-rgb), 0.3); margin-bottom: var(--space-2); }
+.dl-empty-title { font-size: var(--font-14); font-weight: var(--fw-bold); color: var(--text-secondary, #5c554a); }
+.dl-empty-sub { font-size: var(--font-12); max-width: 380px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-rel, .dl-song, .dl-hero, .dl-rel-panel, .dl-setup-panel { animation: none; }
+  .dl-rel:hover .dl-rel-art { transform: none; }
+  .dl-queue-bar i { animation: none; width: 100%; opacity: 0.5; }
+}
+
+/* A censored edition says so. iTunes carries some albums ONLY as "[Amended
+   Version]", and downloading one silently is how a radio edit of Mo Money Mo
+   Problems ended up in the library (Jake, 2026-08-09). Deliberately loud —
+   this is a warning, not a decoration. */
+.dl-clean {
+  flex-shrink: 0;
+  font-size: 8.5px; font-weight: 800; letter-spacing: 0.09em;
+  padding: 1px 5px; border-radius: 3px;
+  color: #8a3a12;
+  background: rgba(var(--brand-orange-rgb), 0.18);
+  border: 1px solid rgba(var(--brand-orange-rgb), 0.42);
+}
+
+/* ── the CLEAN tag lives on the ARTWORK, not in the facts row ──────────────
+   Jake, 2026-08-09, screenshot of the Snoop Dogg shelf: "ALBUM 2005 CLEAN 19
+   tra" running straight into the next card's "ALBUM". A release card is
+   ~136px; badge + year + CLEAN + "21 tracks" does not fit on one line, and
+   nothing in that row wrapped or clipped, so it overflowed into its
+   neighbour. Putting the warning on the cover keeps the facts row at its
+   original width AND makes it more visible, which is what a warning wants. */
+.dl-rel-clean {
+  position: absolute; top: 5px; left: 5px;
+  font-size: 8px; font-weight: 800; letter-spacing: 0.08em;
+  padding: 2px 5px; border-radius: 3px;
+  color: #fff;
+  background: rgba(var(--brand-orange-rgb), 0.92);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+/* Belt and braces: a card can never paint outside itself again, and if the
+   facts row ever does outgrow the card it wraps instead of escaping. */
+.dl-rel { overflow: hidden; }
+.dl-rel-facts { flex-wrap: wrap; row-gap: 3px; }
+.dl-rel-title, .dl-rel-sub { max-width: 100%; }

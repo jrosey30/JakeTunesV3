@@ -69,7 +69,7 @@
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
   padding: 1px 6px; border-radius: 9px;
 }
-.agm-badge--collaboration { background: #fbeee5; color: #bb4308; }
+.agm-badge--collaboration { background: #fbeee5; color: #FC5501; }
 .agm-badge--standalone { background: #e9e7e0; color: #8a857c; }
 
 .agm-foot {
@@ -91,7 +91,7 @@
   position: sticky; top: 0; z-index: 5;
   display: flex; justify-content: flex-end;
   padding: 8px 14px;
-  background: var(--white, #f9f8f5);
+  background: var(--white, #fdfdfd);
   border-bottom: 1px solid #ecebe5;
 }
 .artists-group-btn {

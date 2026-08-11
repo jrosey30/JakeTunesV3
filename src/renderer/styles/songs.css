@@ -117,9 +117,9 @@
   border-bottom: 1px solid transparent;
   user-select: none;
   -webkit-user-select: none;
-  /* Match the page's --white (#f9f8f5, cooled in 4.5.0-111) so the empty
+  /* Match the page's --white (#fdfdfd, cooled in 4.5.0-111) so the empty
    * area below the last row reads as the same surface as the rows. Prior pass
-   * pinned this to #fefefd (near-pure white) to keep the alt-row stripe
+   * pinned this to #fdfdfd (near-pure white) to keep the alt-row stripe
    * neutral, but that left a visible warm/cool boundary where the
    * track list ends — Jake flagged the bottom band as "not the off-
    * white we picked". --white IS the canonical 4.5 off-white. */
@@ -132,12 +132,18 @@
      table width. Parent .songs-body uses width:max-content +
      min-width:100% so rows always match header width. */
   width: 100%;
+  /* Header-offset fix (2026-08-07, "look at the column headers...theyre
+     offset"): in-flow rows (Playlist/SmartPlaylist) must not contribute
+     their max-content to .songs-body — a long title inflated the row's
+     minmax(…,1fr) track past the header's and every column right of Name
+     drifted. The fixed-px width-sizer owns the scroll width instead. */
+  contain: inline-size;
 }
 
 /* 4.5: neutral pale grey alt-row. Earlier values were either too
  * warm (#f7f7f7 read Leopard-era cream) or too cool (#f0f4fa cool
  * blue that fought the warm chrome). 4.5.0-111: nudged #f3f3f1 → #eeede9
- * after --white was cooled to #f9f8f5. V5 facelift: that #eeede9 became
+ * after --white was cooled to #fdfdfd. V5 facelift: that #eeede9 became
  * the app-wide --row-alt token value — same pixels here, one zebra
  * everywhere. */
 .songs-row--alt {
@@ -254,7 +260,7 @@
 
 /* "Downloaded for offline" indicator — a SOLID circle with a knocked-out
  * download arrow (Spotify-style), shown on pinned tracks just left of the
- * inline star. 13×13 icon in a 15px slot. Filled brand orange (#bb4308) with
+ * inline star. 13×13 icon in a 15px slot. Filled brand orange (#FC5501) with
  * a white arrow on a normal row; flips to a white circle with an orange
  * arrow on a selected row so it pops against the selection highlight. */
 .title-row-dl {

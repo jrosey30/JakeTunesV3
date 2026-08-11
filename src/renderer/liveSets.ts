@@ -147,11 +147,28 @@ export async function promoteTrackToLibrary(albumKey: string, trackId: number): 
  * setlist sizes (10-40 songs), binary search would be overkill.
  */
 export function cueAt(entry: LiveSetEntry, positionMs: number): { cue: LiveSetCue; index: number } | null {
-  if (entry.cues.length === 0) return null
+  const i = cueIndexAt(entry.cues, positionMs)
+  return i < 0 ? null : { cue: entry.cues[i], index: i }
+}
+
+/**
+ * THE cue-lookup: which slot of a merged file is playing at positionMs.
+ * Returns -1 for an empty cue list.
+ *
+ * Deliberately typed to the minimum it needs (anything with startMs) so
+ * mixtapes can share it — a merged tape (2026-08-08) answers exactly the
+ * same question as a merged live set, and this codebase's most expensive
+ * failures have come from two copies of one comparator drifting apart.
+ * Tape cues carry only {trackId,startMs,durationMs} and resolve their
+ * titles from the library, because a tape's songs stay in the library as
+ * individual tracks and should follow any retitle there.
+ */
+export function cueIndexAt(cues: Array<{ startMs: number }>, positionMs: number): number {
+  if (cues.length === 0) return -1
   let hit = 0
-  for (let i = 0; i < entry.cues.length; i++) {
-    if (entry.cues[i].startMs <= positionMs) hit = i
+  for (let i = 0; i < cues.length; i++) {
+    if (cues[i].startMs <= positionMs) hit = i
     else break
   }
-  return { cue: entry.cues[hit], index: hit }
+  return hit
 }

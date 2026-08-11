@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { albumKeyOf } from '../utils/albumKey'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { albumCreditReleaseDate } from '../utils/albumReleaseDate'
@@ -69,6 +71,9 @@ export default function AlbumDetailView() {
   const albumKeyRef = useRef<string>('')
   if (lib.pendingAlbumKey) albumKeyRef.current = lib.pendingAlbumKey
   const albumKey = albumKeyRef.current || lib.pendingAlbumKey || ''
+  // Page memory, per album — reopening the same record lands where you left.
+  const tracklistRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence(`album-detail:${albumKey}`, tracklistRef)
 
   const { canGoBack, goBack: navBack } = useNavigation()
   const returnView = lib.albumDetailReturnView || 'albums'
@@ -498,10 +503,7 @@ export default function AlbumDetailView() {
   if (!pageReady) {
     return (
       <div className="album-page">
-        <div className="page-gate" role="status" aria-label="Loading">
-          <div className="page-gate-name">{albumName}</div>
-          <div className="page-gate-bar"><span /></div>
-        </div>
+        <PageGate title={albumName} note="Dropping the needle…" layout="hero" />
       </div>
     )
   }
@@ -669,7 +671,7 @@ export default function AlbumDetailView() {
         </div>
       )}
 
-      <div className="album-page-tracklist songs-view">
+      <div className="album-page-tracklist songs-view" ref={tracklistRef}>
         <div className="songs-header" style={{ gridTemplateColumns: GRID_COLS }}>
           <div className="songs-header-cell" style={{ textAlign: 'center', justifyContent: 'center' }}>#</div>
           <div className="songs-header-cell">Name</div>

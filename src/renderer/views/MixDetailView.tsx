@@ -12,6 +12,8 @@ import { useCallback, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
+import { setTapeSession, refreshMixtapes, pickInk } from '../mixtapes'
+import { MAX_TAPE_SONGS } from '../../common/tape-physics'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
 import { canonicalArtist } from '../utils/artistAlias'
@@ -23,8 +25,9 @@ import GetInfoModal from '../components/GetInfoModal'
 import MixArtwork from '../components/MixArtwork'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { getActiveMix, getMixReturnView } from '../utils/activeMix'
+import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { setNotice } from '../activity'
-import type { Track } from '../types'
+import type { Mixtape, Track } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
@@ -44,9 +47,15 @@ export default function MixDetailView() {
   const { openCynthia } = useCynthia()
 
   const mix = getActiveMix()
+  const mixTracklistRef = useRef<HTMLDivElement>(null)
+  useScrollPersistence(`mix-detail:${mix?.id ?? 'none'}`, mixTracklistRef)
   const tracks = mix?.tracks ?? []
   const lastClickedIdx = useRef<number>(-1)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportNote, setExportNote] = useState('')
+  const [keeping, setKeeping] = useState(false)
+  const [keptNote, setKeptNote] = useState('')
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
 
   // Click-to-select, exactly like SongsView / AlbumDetailView: plain click selects
@@ -63,11 +72,15 @@ export default function MixDetailView() {
     }
   }, [tracks, dispatch])
 
-  const handleDoubleClick = useCallback((idx: number) => {
+  // Double-clicking a row starts THE MIX, from the top — you can't drop into
+  // the middle of a tape ("you cant start from anywhere either. has to be
+  // from the beginning").
+  const handleDoubleClick = useCallback((_idx: number) => {
     window.getSelection()?.removeAllRanges()
-    const track = tracks[idx]
-    if (track) playTrack(track, tracks, idx, undefined, true)
-  }, [tracks, playTrack])
+    if (!tracks.length) return
+    setTapeSession({ mixtapeId: `mix:${mix?.id ?? 'unknown'}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+    playTrack(tracks[0], tracks, 0, undefined, true)
+  }, [tracks, playTrack, mix])
 
   // Right-click → the same track context menu the rest of the app uses.
   const handleContextMenu = useCallback((e: React.MouseEvent, track: Track, idx: number) => {
@@ -85,7 +98,10 @@ export default function MixDetailView() {
     const count = selectedTracks.length
     const label = count > 1 ? `${count} Songs` : track.title
     return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
+      { label: 'Play the mix from the top', onClick: () => {
+        setTapeSession({ mixtapeId: `mix:${mix?.id ?? 'unknown'}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+        playTrack(tracks[0], tracks, 0, undefined, true)
+      } },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
@@ -100,7 +116,7 @@ export default function MixDetailView() {
       { separator: true as const },
       { label: 'Cynthia!!', onClick: () => openCynthia({ x: ctxMenu.x, y: ctxMenu.y, scope: { type: 'tracks', label: count > 1 ? `${count} tracks` : track.title, tracks: selectedTracks.map(toCynthiaTrack) } }) },
     ]
-  }, [ctxMenu, lib.selectedTrackIds, tracks, playTrack, pbDispatch, dispatch, openCynthia])
+  }, [ctxMenu, lib.selectedTrackIds, tracks, playTrack, pbDispatch, dispatch, openCynthia, mix])
 
   // Get Info save / artwork handlers — mirror AlbumDetailView (which mirrors SongsView).
   const handleGetInfoSave = useCallback(async (updates: { id: number; field: string; value: string }[]) => {
@@ -160,8 +176,94 @@ export default function MixDetailView() {
     )
   }
 
-  const playAll = (): void => { if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true) }
-  const shuffle = (): void => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }
+  /**
+   * A daily mix IS a mixtape (Jake, 2026-08-08: "turn daily mixes into
+   * mixtapes replace the current process", then: "the daily mixes still
+   * arent mixtapes, i can pick any song out of its 25 songs").
+   *
+   * So playing one opens a TAPE SESSION, exactly like pressing PLAY on a
+   * tape: the pill switches to the whole-mix clock, prev/next/shuffle go
+   * dead, and it runs start to finish. The session id is namespaced 'mix:'
+   * — these have no Mixtape record on the shelf, and TapeMonitor simply
+   * finds no tape for it, which is right: there are no cuts, no talkovers
+   * and no intro to fire, just the running order and the rules.
+   */
+  /**
+   * Export the mix as one continuous file — the same thing the tape page
+   * does. Jake, 2026-08-08: "no way i can export the daily mixes? why not?"
+   * No reason at all; I built it on MixtapeView and never carried it across,
+   * even after making mixes BE tapes. A daily mix has no intro, talkovers or
+   * start offsets, so it's one plain side.
+   */
+  const exportMix = async (): Promise<void> => {
+    if (!tracks.length || exporting) return
+    setExporting(true)
+    setExportNote('Exporting… rendering the mix.')
+    try {
+      const mount = await window.electronAPI?.getMusicLibraryPath?.() ?? ''
+      const r = await window.electronAPI.dubMixtape?.({
+        title: mix?.title || 'Mix',
+        sides: [{
+          label: 'A',
+          songs: tracks.map((t) => ({ absPath: mount + String(t.path || '').replace(/:/g, '/') })),
+          talkovers: [],
+        }],
+      })
+      setExportNote(r?.ok
+        ? `Exported to Desktop → JakeTunes Dubs → ${mix?.title || 'Mix'}.`
+        : (r?.error || 'Export failed.'))
+    } catch (err) {
+      setExportNote(err instanceof Error ? err.message : 'Export failed.')
+    } finally {
+      setExporting(false)
+      setTimeout(() => setExportNote(''), 12_000)
+    }
+  }
+
+  /**
+   * Keep this mix as a real tape. Jake, 2026-08-08: "no way to save a daily
+   * mix to the mixtape area. if i dont save it i will likely lose it
+   * forever" — correct, and a real loss: the daily row regenerates, so a mix
+   * he liked is gone tomorrow with nothing he could have done about it.
+   *
+   * Saving COPIES the running order onto the shelf as its own tape with its
+   * own id. The mix on the row is untouched and still rotates out; the tape
+   * is his and stays. Capped at the tape limit like any other.
+   */
+  const keepAsTape = async (): Promise<void> => {
+    if (!tracks.length || keeping) return
+    setKeeping(true)
+    try {
+      const id = `mix-${Date.now().toString(36)}`
+      const r = await window.electronAPI.saveMixtape?.({
+        id,
+        title: mix?.title || 'Mix',
+        commentary: mix?.subtitle || '',
+        tracks: tracks.slice(0, MAX_TAPE_SONGS).map((t) => t.id),
+        // Legacy fields the record still carries for older tapes.
+        tapeLength: 90,
+        sideA: [],
+        sideB: [],
+        linerNotes: [],
+        createdAt: new Date().toISOString(),
+        inkColor: pickInk(id),
+      } as Mixtape)
+      if (!r?.ok) { setKeptNote(r?.error || 'Could not save the tape.'); return }
+      await refreshMixtapes()
+      setKeptNote('Saved to Mixtapes — it\'s yours now, this row still rotates.')
+    } catch (err) {
+      setKeptNote(err instanceof Error ? err.message : 'Could not save the tape.')
+    } finally {
+      setKeeping(false)
+      setTimeout(() => setKeptNote(''), 12_000)
+    }
+  }
+
+  const playMix = (): void => {
+    if (!tracks.length) return
+    setTapeSession({ mixtapeId: `mix:${mix.id}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
+    playTrack(tracks[0], tracks, 0, undefined, true)
+  }
 
   return (
     <div className="album-page">
@@ -177,14 +279,24 @@ export default function MixDetailView() {
           <h1 className="album-page-title">{mix.title}</h1>
           <div className="album-page-facts">{tracks.length} song{tracks.length === 1 ? '' : 's'}</div>
           <div className="album-page-actions">
-            <button type="button" className="album-page-play" onClick={playAll}>▶ Play</button>
-            <button type="button" className="album-page-shuffle" onClick={shuffle}>⤮ Shuffle</button>
+            <button type="button" className="album-page-play" onClick={playMix}>▶ Play</button>
+            <button type="button" className="album-page-shuffle" disabled={keeping}
+              onClick={() => { void keepAsTape() }}>
+              {keeping ? 'Saving…' : 'Save to Mixtapes'}
+            </button>
+            <button type="button" className="album-page-shuffle" disabled={exporting}
+              onClick={() => { void exportMix() }}>
+              {exporting ? 'Exporting…' : 'Export as one file'}
+            </button>
+            {/* No shuffle on a mix — it plays in its running order. */}
           </div>
+          {keptNote && <div className="album-page-creditline">{keptNote}</div>}
+          {exportNote && <div className="album-page-creditline">{exportNote}</div>}
           {mix.subtitle && <div className="album-page-creditline">{mix.subtitle}</div>}
         </div>
       </div>
 
-      <div className="album-page-tracklist songs-view">
+      <div className="album-page-tracklist songs-view" ref={mixTracklistRef}>
         <div className="songs-header" style={{ gridTemplateColumns: GRID }}>
           <div className="songs-header-cell" style={{ textAlign: 'center', justifyContent: 'center' }}>#</div>
           <div className="songs-header-cell">Name</div>

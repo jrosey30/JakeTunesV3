@@ -47,7 +47,9 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
   { id: 'recently-played', name: 'Recently Played' },
   { id: 'top-25',          name: 'Top 25 Most Played' },
   { id: 'top-rated',       name: 'Starred' },
-  { id: 'youd-star',       name: "Songs You'd Star" },
+  // 'youd-star' RETIRED from the roster (2026-08-07, Jake: "songs id star
+  // should be eliminated") — evaluator case kept so stale state degrades
+  // gracefully; SMART_PLAYLIST_NAMES keeps the name to hide iPod dupes.
 ]
 
 // Selection limits — ONE place. Display and sync read the same numbers

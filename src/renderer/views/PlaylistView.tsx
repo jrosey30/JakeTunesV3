@@ -6,11 +6,20 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { getDeckState, layOnDeck } from '../mixtapes'
+import { MAX_TAPE_SONGS } from '../../common/tape-physics'
+import MixArtwork from '../components/MixArtwork'
+import MixtapeSheet from '../components/MixtapeSheet'
+import {
+  subscribePlaylistCovers, getPlaylistCovers, ensurePlaylistCoversLoaded,
+  playlistCoverSrc, pickPlaylistCover, clearPlaylistCover,
+  ensurePlaylistNotesLoaded, getPlaylistNote, setPlaylistNote,
+} from '../playlistCovers'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
 import { suggestForPlaylist, suggestFromVibeHits } from '../utils/playlistSuggest'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import { useCynthia } from '../context/CynthiaContext'
@@ -25,7 +34,7 @@ import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
-import { songsGridTemplate } from '../utils/songsGridTemplate'
+import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
 import { addToPlaylistEntry } from '../utils/playlistMenu'
 
@@ -99,6 +108,42 @@ export default function PlaylistView() {
 
   const playlist = state.playlists.find(p => p.id === state.activePlaylistId)
 
+  // Custom playlist cover (2026-08-09). State lives in playlistCovers.ts —
+  // a module store, because LibraryContext is do-not-touch.
+  useSyncExternalStore(subscribePlaylistCovers, getPlaylistCovers)
+  useEffect(() => { ensurePlaylistCoversLoaded() }, [])
+  // Description Jake typed (2026-08-09). Falls back to any commentary a
+  // generated playlist arrived with; his text always wins.
+  useEffect(() => { ensurePlaylistNotesLoaded() }, [])
+  const [descEditing, setDescEditing] = useState(false)
+  const [descDraft, setDescDraft] = useState('')
+  const savedNote = getPlaylistNote(playlist?.id ?? '')
+  const shownDesc = savedNote || playlist?.commentary || ''
+  const commitDesc = async (): Promise<void> => {
+    if (!playlist) return
+    setDescEditing(false)
+    if (descDraft.trim() !== savedNote) await setPlaylistNote(playlist.id, descDraft)
+  }
+
+  // Tracks handed to the mixtape sheet — null when it's closed.
+  const [mixtapeFrom, setMixtapeFrom] = useState<Track[] | null>(null)
+  const [coverBusy, setCoverBusy] = useState(false)
+  const [coverNote, setCoverNote] = useState('')
+  const customCover = playlistCoverSrc(playlist?.id ?? '')
+  const chooseCover = async (): Promise<void> => {
+    if (!playlist || coverBusy) return
+    setCoverBusy(true)
+    const err = await pickPlaylistCover(playlist.id)
+    setCoverBusy(false)
+    if (err) { setCoverNote(err); setTimeout(() => setCoverNote(''), 8000) }
+  }
+  const dropCover = async (): Promise<void> => {
+    if (!playlist || coverBusy) return
+    setCoverBusy(true)
+    await clearPlaylistCover(playlist.id)
+    setCoverBusy(false)
+  }
+
   // Local sort state — restored from module-level map so it survives navigation
   const [sortCol, setSortCol] = useState<string | null>(() => {
     const saved = state.activePlaylistId ? sortPrefs.get(state.activePlaylistId) : undefined
@@ -138,6 +183,7 @@ export default function PlaylistView() {
   const visibleCols = ALL_COLUMN_DEFS.filter(c => !hiddenCols.has(c.key))
   const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
   const gridTemplate = songsGridTemplate(visibleCols, colWidths)
+  const gridTemplateFixed = songsGridTemplateFixed(colWidths)
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -145,6 +191,14 @@ export default function PlaylistView() {
       inputRef.current.select()
     }
   }, [editing])
+
+  // 2026-08-08 — suggestions must draw from the REGULAR library. A declared
+  // concert's constituent songs are hidden everywhere else, but the strip was
+  // reading raw state.tracks, so a Dead setlist cue turned up as a standalone
+  // suggestion (Jake: "this track is apart of a live set why is it a seperate
+  // thing"). The playlist's OWN tracks still resolve from the full map — a
+  // tape or playlist that legitimately holds a concert track keeps working.
+  const suggestPool = useRegularLibraryTracks(state.tracks)
 
   const trackMap = new Map(state.tracks.map(t => [t.id, t]))
   const allPlaylistTracks = playlist
@@ -169,6 +223,20 @@ export default function PlaylistView() {
   // surfaced more songs by the artists already on the playlist.
   const [suggestRotate, setSuggestRotate] = useState(0)
   const [vibeHits, setVibeHits] = useState<Array<{ trackId: number; score: number; cluster: number }>>([])
+  const [vibeClusterSeeds, setVibeClusterSeeds] = useState<number[]>([])
+  // Taste-ledger loop: learned per-playlist blend weights + the diag map
+  // (each shown candidate's blend components) that verdict events carry.
+  const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number }>>({})
+  const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number }>())
+  useEffect(() => {
+    void window.electronAPI.getTasteWeights?.().then((r) => {
+      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number }> })?.playlists
+      if (pl) setTasteWeights(pl)
+    })
+  }, [])
+  const ledger = (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => {
+    void window.electronAPI.tasteLedgerAppend?.(events)
+  }
   useEffect(() => { setSuggestRotate(0) }, [state.activePlaylistId])
   // Re-fetch whenever the playlist's MEMBERSHIP changes — adding a song (the +,
   // or manually), removing one, or swapping one for another all re-center the
@@ -181,15 +249,23 @@ export default function PlaylistView() {
     const ids = playlist?.trackIds ?? []
     if (ids.length === 0) { setVibeHits([]); return }
     window.electronAPI.playlistSimilar(ids, 5)
-      .then(r => { if (!cancelled) setVibeHits(r.ok ? r.hits : []) })
-      .catch(() => { if (!cancelled) setVibeHits([]) })
+      .then(r => {
+        if (cancelled) return
+        setVibeHits(r.ok ? r.hits : [])
+        setVibeClusterSeeds(r.ok ? (r.clusterSeeds ?? []) : [])
+      })
+      .catch(() => { if (!cancelled) { setVibeHits([]); setVibeClusterSeeds([]) } })
     return () => { cancelled = true }
   }, [state.activePlaylistId, plMembershipKey])
   const suggestions = useMemo(
-    () => vibeHits.length
-      ? suggestFromVibeHits(allPlaylistTracks, state.tracks, vibeHits, 5, suggestRotate)
-      : suggestForPlaylist(allPlaylistTracks, state.tracks, 5, suggestRotate),
-    [allPlaylistTracks, state.tracks, vibeHits, suggestRotate],
+    () => {
+      suggestDiag.current = new Map()
+      return vibeHits.length
+        ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
+            (playlist ? tasteWeights[playlist.id] : undefined) ?? {}, suggestDiag.current)
+        : suggestForPlaylist(allPlaylistTracks, suggestPool, 5, suggestRotate)
+    },
+    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
 
@@ -289,6 +365,13 @@ export default function PlaylistView() {
       setSelectedIds(new Set())
     } else if (confirmAction.type === 'delete-playlist') {
       dispatch({ type: 'REMOVE_PLAYLIST', id: playlist.id })
+      if (playlist.id.startsWith('mm-')) {
+        void window.electronAPI.tasteLedgerAppend?.([{
+          surface: 'mm-playlist', verdict: 'reject',
+          key: { playlistId: playlist.id },
+          ctx: { name: playlist.name },
+        }])
+      }
     }
     setConfirmAction(null)
   }, [playlist, confirmAction, dispatch])
@@ -543,6 +626,18 @@ export default function PlaylistView() {
       },
       { separator: true as const },
       {
+        // Jake, 2026-08-09: "dont i have the option of turning into a
+        // mixtape if i right click? or maybe there should be a button on
+        // top that turns into a mixtape". Both — this is the selection
+        // path, the header button below takes the whole playlist. The
+        // entrance existed once and got collapsed when "New Mixtape…"
+        // became the single front door, which is exactly backwards from
+        // the playlist you're already looking at.
+        label: count > 1 ? `Make a Mixtape from ${count} songs` : 'Make a Mixtape from this song',
+        onClick: () => setMixtapeFrom(selected),
+      },
+      { separator: true as const },
+      {
         label: count > 1 ? `Remove ${count} from Playlist` : `Remove from Playlist`,
         onClick: () => {
           setConfirmAction({ type: 'remove-tracks', trackIds: selected.map(t => t.id) })
@@ -563,6 +658,25 @@ export default function PlaylistView() {
   return (
     <div className="playlist-view">
       <div className="playlist-view-header">
+        {/* Cover — Jake, 2026-08-09: "playlists on desktop need covers....like
+            it is on mobile (first 4 songs' album covers or i can upload a
+            custom cover)". The default is MixArtwork, which already builds
+            the 2x2 of the first four unique album covers using the same rule
+            iOS uses, so parity is structural rather than re-implemented.
+            Click to choose your own; right-click a custom one to drop back
+            to the mosaic. */}
+        <button
+          type="button"
+          className="playlist-view-cover"
+          title={customCover ? 'Click to replace this cover · right-click to go back to the album mosaic' : 'Click to choose a cover'}
+          onClick={() => { void chooseCover() }}
+          onContextMenu={(e) => { e.preventDefault(); if (customCover) void dropCover() }}
+        >
+          {customCover
+            ? <img src={customCover} alt="" className="playlist-view-cover-img" />
+            : <MixArtwork tracks={sortedTracks} alt={playlist.name} priority />}
+          <span className="playlist-view-cover-hint">{coverBusy ? '…' : 'Cover'}</span>
+        </button>
         <div>
           {editing ? (
             <input
@@ -586,6 +700,7 @@ export default function PlaylistView() {
             </h2>
           )}
           <div className="playlist-view-meta">{sortedTracks.length} {sortedTracks.length === 1 ? 'song' : 'songs'}, {timeStr}</div>
+          {coverNote && <div className="playlist-view-meta">{coverNote}</div>}
         </div>
         <div className="playlist-view-actions">
           <button
@@ -595,6 +710,15 @@ export default function PlaylistView() {
             }}
           >
             Play All
+          </button>
+          <button
+            className="playlist-view-tape"
+            onClick={() => setMixtapeFrom(sortedTracks)}
+            title={sortedTracks.length > MAX_TAPE_SONGS
+              ? `A tape holds ${MAX_TAPE_SONGS} songs — you'll trim it on the deck`
+              : 'Turn this playlist into a mixtape'}
+          >
+            Make a Mixtape
           </button>
           <button
             className="playlist-view-delete"
@@ -611,7 +735,16 @@ export default function PlaylistView() {
             <span className="pl-suggest-title">Suggested for this playlist</span>
             <button
               className="pl-suggest-refresh"
-              onClick={() => setSuggestRotate(r => r + 1)}
+              onClick={() => {
+                if (playlist) {
+                  ledger(suggestions.map((sg) => ({
+                    surface: 'strip', verdict: 'pass',
+                    key: { trackId: sg.id, playlistId: playlist.id },
+                    ctx: suggestDiag.current.get(sg.id) ?? {},
+                  })))
+                }
+                setSuggestRotate(r => r + 1)
+              }}
               title="Show different suggestions"
               aria-label="More suggestions"
             >↻</button>
@@ -630,7 +763,11 @@ export default function PlaylistView() {
                   </div>
                   <button
                     className="pl-suggest-add"
-                    onClick={() => { if (playlist) dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [s.id] }) }}
+                    onClick={() => {
+                      if (!playlist) return
+                      dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [s.id] })
+                      ledger([{ surface: 'strip', verdict: 'accept', key: { trackId: s.id, playlistId: playlist.id }, ctx: suggestDiag.current.get(s.id) ?? {} }])
+                    }}
                     title={`Add "${s.title}" to this playlist`}
                     aria-label={`Add ${s.title}`}
                   >＋</button>
@@ -640,8 +777,31 @@ export default function PlaylistView() {
           </div>
         </div>
       )}
-      {playlist.commentary && (
-        <div className="playlist-view-commentary">{playlist.commentary}</div>
+      {/* Click to write or edit. Always present (as a prompt when empty) so
+          the ability is discoverable — a description you can only find by
+          guessing isn't one. Enter saves, Escape cancels, blur saves. */}
+      {descEditing ? (
+        <textarea
+          className="playlist-view-desc-input"
+          autoFocus
+          value={descDraft}
+          rows={2}
+          placeholder="What is this playlist for?"
+          onChange={(e) => setDescDraft(e.target.value)}
+          onBlur={() => { void commitDesc() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitDesc() }
+            if (e.key === 'Escape') { setDescDraft(savedNote); setDescEditing(false) }
+          }}
+        />
+      ) : (
+        <div
+          className={`playlist-view-commentary${shownDesc ? '' : ' playlist-view-commentary--empty'}`}
+          title="Click to write a description"
+          onClick={() => { setDescDraft(savedNote); setDescEditing(true) }}
+        >
+          {shownDesc || 'Add a description…'}
+        </div>
       )}
       {/* V5 facelift: Grid / Cover Flow modes swap only the table below
           the playlist header. */}
@@ -680,6 +840,9 @@ export default function PlaylistView() {
           ))}
         </div>
         <div className="songs-body">
+          {/* Fixed-px width anchor: owns .songs-view scrollWidth so rows
+              (contain:inline-size) can't inflate past the header. */}
+          <div className="songs-body-width-sizer" style={{ gridTemplateColumns: gridTemplateFixed }} aria-hidden="true" />
           {sortedTracks.map((track, i) => {
             const isPlaying = pb.nowPlaying?.id === track.id
             const isSelected = selectedIds.has(track.id)
@@ -895,6 +1058,23 @@ export default function PlaylistView() {
           onSave={handleGetInfoSave}
           onFetchArt={handleFetchArt}
           onSetCustomArt={handleSetCustomArt}
+        />
+      )}
+
+      {/* The mixtape sheet, opened from either entrance (header button = the
+          whole playlist, right-click = the selection). It handles the 25-song
+          cap itself: anything past the limit shows greyed on the deck rather
+          than vanishing silently. */}
+      {mixtapeFrom && mixtapeFrom.length > 0 && (
+        // keepOrder: the running order came from a playlist Jake sequenced
+        // himself, so it goes on the tape exactly as laid out — Music Man
+        // doesn't get to touch it (2026-08-09).
+        <MixtapeSheet
+          tracks={mixtapeFrom}
+          keepOrder
+          initialTitle={playlist.name}
+          coverFromPlaylistId={playlist.id}
+          onClose={() => setMixtapeFrom(null)}
         />
       )}
     </div>

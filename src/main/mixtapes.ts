@@ -16,14 +16,14 @@
  */
 
 import { ipcMain, app, shell } from 'electron'
-import { readFile, writeFile, mkdir, unlink, stat } from 'fs/promises'
+import { readFile, writeFile, mkdir, unlink, stat, rename } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
-import { fitSide } from '../common/tape-physics'
+import { fitSide, tapeTracks, MAX_TAPE_SONGS } from '../common/tape-physics'
 import { RADIO_CAST } from './cast'
 import { isSkitOrIntro } from './workout-sync.ts'
 
@@ -46,6 +46,14 @@ export interface Mixtape {
   title: string
   commentary: string
   dedication?: string
+  /**
+   * The tape, in play order. THE field as of 2026-08-08 — read it through
+   * tapeTracks(), never directly, so two-sided tapes recorded under the old
+   * rules keep working (Jake: "old mixtapes i made already should be
+   * grandfathered in"). Capped at MAX_TAPE_SONGS.
+   */
+  tracks?: number[]
+  /** Legacy, two-sided era. Kept so old tapes still read; never written anew. */
   tapeLength: 60 | 90 | 120
   sideA: number[]
   sideB: number[]
@@ -164,8 +172,29 @@ function enforceTape(
   return { sideA: a.ids, sideB: b.ids, sideACutMs: a.cutMs, sideBCutMs: b.cutMs }
 }
 
+/**
+ * The tape's rules, applied to whatever came back — known ids only, no
+ * duplicates, order preserved, capped at MAX_TAPE_SONGS. Same discipline
+ * enforceTape() applied to the two-sided era: the model proposes, code
+ * decides. (2026-08-08)
+ */
+function cleanSequence(raw: unknown, byId: Map<number, MixtapeInputTrack>): number[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const v of raw) {
+    const id = Number(v)
+    if (!byId.has(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+    if (out.length >= MAX_TAPE_SONGS) break
+  }
+  return out
+}
+
 /** Deterministic fallback when the model reply is unusable: keep the
- *  given order, fill Side A then Side B — same true-limit physics. */
+ *  given order, fill Side A then Side B — same true-limit physics.
+ *  LEGACY (two-sided era) — kept for tapes recorded under the old rules. */
 function fallbackTape(
   tracks: MixtapeInputTrack[],
   sideBudgetMs: number,
@@ -180,39 +209,42 @@ function fallbackTape(
   )
 }
 
+/**
+ * Build a tape proposal (review-gate: nothing persists until mixtape-save).
+ *
+ * 2026-08-08 rules — Jake: "all mixtapes are no longer doing side a side b.
+ * 25 songs max." So this sequences ONE run of songs with a COUNT limit, and
+ * the minutes budget, the A/B split and the boundary cut are all gone. The
+ * old two-sided path stays only in enforceTape()/fitSide(), which now exist
+ * purely to read tapes recorded before this.
+ */
 async function buildMixtapeProposal(
   host: MixtapesHost,
   tracks: MixtapeInputTrack[],
-  tapeLength: 60 | 90 | 120,
   dedication?: string,
   note?: string,
 ): Promise<{
   ok: true
   title: string
   commentary: string
-  sideA: number[]
-  sideB: number[]
-  sideACutMs?: number
-  sideBCutMs?: number
+  tracks: number[]
   linerNotes: MixtapeLinerNote[]
   leftovers: number[]
-  sideBudgetMs: number
 } | { ok: false; error: string }> {
   if (!Array.isArray(tracks) || tracks.length < 2) {
     return { ok: false, error: 'Pick at least 2 songs for a mixtape.' }
   }
   if (tracks.length > MAX_INPUT_SONGS) {
-    return { ok: false, error: `That's ${tracks.length} songs — a tape can't hold that. Narrow it down (${MAX_INPUT_SONGS} max).` }
+    return { ok: false, error: `That's ${tracks.length} songs — narrow it down (${MAX_INPUT_SONGS} max).` }
   }
   const byId = new Map(tracks.map((t) => [Number(t.id), t]))
-  const sideBudgetMs = (tapeLength / 2) * 60_000
 
   const list = tracks.map((t) =>
     `${t.id} | ${t.title || '?'} | ${t.artist || '?'} | ${t.album || ''} | ${t.genre || ''} | ${t.bpm || ''} | ${fmtDur(Number(t.duration) || 0)}`
   ).join('\n')
 
   const user = [
-    `Make a REAL cassette mixtape from these songs. This is a C${tapeLength}: two sides, EXACTLY ${tapeLength / 2}:00 each. TRUE tape physics: when a side runs out, it runs out — if the last song runs past the end it gets CUT OFF mid-song, just like 1985. You may use that deliberately (a song swallowed by the leader is its own kind of ending) or land the side clean. No slack, no mercy.`,
+    `Make a mixtape from these songs. ONE continuous run — no sides, no flip. HARD LIMIT: ${MAX_TAPE_SONGS} songs. Fewer is fine and often better; never more.`,
     '',
     `Songs (id | title | artist | album | genre | bpm | length):`,
     list,
@@ -220,16 +252,19 @@ async function buildMixtapeProposal(
     dedication ? `The tape is dedicated: "${dedication}" — let that shape the mood and the title.` : '',
     note ? `Maker's note: ${note}` : '',
     '',
-    'Sequence for FLOW like someone who has made a hundred tapes: Side A opens with a grabber and closes on a high; Side B can dig deeper and the last song is the goodbye. Energy and key changes should feel intentional. If not everything fits, leave songs off — the best TAPE wins, not the most songs.',
+    'Sequence for FLOW like someone who has made a hundred tapes: open with a grabber, let the middle dig deeper, and make the last song the goodbye. Energy and key changes should feel intentional. It plays start to finish with no skipping, so every transition has to earn itself.',
     'Use ONLY the ids above.',
     '',
     'Return ONLY JSON:',
-    '{"title":"the tape\'s name, like it was written on the label","commentary":"2-3 sentences in your voice for the inside of the J-card","sideA":[ids in play order],"sideB":[ids in play order],"linerNotes":[{"id":123,"note":"aside for that song, max 12 words, like a scribble next to the tracklist"}]}',
+    // No linerNotes: nothing renders them since 2026-08-09 ("i highly dislike
+    // the comments under the songs"), so asking for 25 of them per tape was
+    // paying for output that went straight in the bin.
+    '{"title":"the tape\'s name, like it was written on the label","commentary":"2-3 sentences in your voice for the inside of the J-card","tracks":[ids in play order]}',
   ].filter(Boolean).join('\n')
 
   let title = ''
   let commentary = ''
-  let sides: TapeSides | null = null
+  let seq: number[] | null = null
   let linerNotes: MixtapeLinerNote[] = []
   try {
     const reply = await host.claudeCall('mixtape-build', {
@@ -244,7 +279,9 @@ async function buildMixtapeProposal(
     if (parsed) {
       title = String(parsed.title || '').trim()
       commentary = String(parsed.commentary || '').trim()
-      sides = enforceTape(parsed.sideA, parsed.sideB, byId, sideBudgetMs)
+      // Enforce the rules in CODE, never on trust: known ids only, no
+      // duplicates, order preserved, hard-capped at MAX_TAPE_SONGS.
+      seq = cleanSequence(parsed.tracks, byId)
       if (Array.isArray(parsed.linerNotes)) {
         linerNotes = (parsed.linerNotes as Array<Record<string, unknown>>)
           .map((n) => ({ id: Number(n?.id), note: String(n?.note || '').trim() }))
@@ -255,17 +292,16 @@ async function buildMixtapeProposal(
     console.warn('[mixtapes] build call failed, using fallback sequencing:', err)
   }
 
-  if (!sides || (sides.sideA.length + sides.sideB.length) < 2) {
-    sides = fallbackTape(tracks, sideBudgetMs)
-  }
+  // Fallback: keep the given order, take the first MAX_TAPE_SONGS.
+  if (!seq || seq.length < 2) seq = cleanSequence(tracks.map((t) => t.id), byId)
   if (!title) title = `Mixtape · ${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })}`
   if (!commentary) commentary = 'Dubbed with love. Play loud, rewind with a pencil.'
 
-  const onTape = new Set([...sides.sideA, ...sides.sideB])
+  const onTape = new Set(seq)
   const leftovers = tracks.map((t) => Number(t.id)).filter((id) => !onTape.has(id))
   linerNotes = linerNotes.filter((n) => onTape.has(n.id))
 
-  return { ok: true, title, commentary, ...sides, linerNotes, leftovers, sideBudgetMs }
+  return { ok: true, title, commentary, tracks: seq, linerNotes, leftovers }
 }
 
 /**
@@ -343,6 +379,49 @@ async function speechToSpeech(rawWebmPath: string, voiceId: string): Promise<str
  */
 const INKS_SEASON = ['#1d3f8f', '#8f1d1d', '#1d6f3f', '#3f1d8f', '#8f5f1d']
 
+/**
+ * Which months have EVER been dubbed — a tombstone, kept apart from the tapes.
+ *
+ * Jake, 2026-08-09: "i dont know why this mixtape keeps appearing i have
+ * deleted it a million times. why does it keep showing up???"
+ *
+ * Because deletion left no trace. The old guard was
+ *
+ *     if (all.some((m) => m.seasonal === key)) return
+ *
+ * which uses EXISTENCE as memory: delete the tape and the check can no longer
+ * tell "never dubbed" from "dubbed and thrown away", so the next run dubs it
+ * again. And the next run is 90 seconds after every app launch — so every
+ * restart handed it back. The comment above it promised "never dubs the same
+ * month twice"; that promise was only ever kept by the tape surviving.
+ *
+ * A season key written here is permanent. Deleting the tape is now final,
+ * which is what deleting has always looked like it meant.
+ *
+ * Its own file because mixtapes.json is a bare ARRAY and loadMixtapes refuses
+ * to touch it if it isn't.
+ */
+const SEASONS_FILE = () => join(app.getPath('userData'), 'mixtape-seasons.json')
+
+async function loadDubbedSeasons(): Promise<Set<string>> {
+  try {
+    const raw = await readFile(SEASONS_FILE(), 'utf-8')
+    const o = JSON.parse(raw) as { dubbed?: string[] }
+    return new Set(Array.isArray(o?.dubbed) ? o.dubbed : [])
+  } catch {
+    return new Set()   // no file yet = nothing dubbed
+  }
+}
+
+async function rememberDubbedSeason(key: string): Promise<void> {
+  const set = await loadDubbedSeasons()
+  if (set.has(key)) return
+  set.add(key)
+  const tmp = SEASONS_FILE() + '.tmp'
+  await writeFile(tmp, JSON.stringify({ dubbed: [...set] }, null, 2))
+  await rename(tmp, SEASONS_FILE())
+}
+
 async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   if (!host.loadLibraryTracks || !host.loadPlayEvents) return
   const now = new Date()
@@ -351,7 +430,16 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   const key = `${prevStart.getFullYear()}-${String(prevStart.getMonth() + 1).padStart(2, '0')}`
   let all: Mixtape[]
   try { all = await loadMixtapes() } catch { return } // torn store — never write
-  if (all.some((m) => m.seasonal === key)) return
+
+  // A month is dubbed ONCE, ever — whether or not its tape is still on the
+  // shelf. Existing seasonal tapes seed the tombstone on first run, so a tape
+  // made before this existed is never re-dubbed after it is deleted either.
+  const dubbed = await loadDubbedSeasons()
+  for (const m of all) {
+    if (m.seasonal && !dubbed.has(m.seasonal)) await rememberDubbedSeason(m.seasonal)
+  }
+  if (dubbed.has(key)) return
+  if (all.some((m) => m.seasonal === key)) { await rememberDubbedSeason(key); return }
 
   const events = await host.loadPlayEvents()
   const counts = new Map<number, number>()
@@ -385,7 +473,7 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   const monthName = prevStart.toLocaleString('en-US', { month: 'long' })
   const yy = String(prevStart.getFullYear()).slice(2)
   const r = await buildMixtapeProposal(
-    host, ranked, 90,
+    host, ranked,
     `${monthName} ${prevStart.getFullYear()} — the month that actually happened`,
     `This is the HONEST tape of ${monthName} ${prevStart.getFullYear()} — the songs Jake actually lived in, ranked by his real plays this month. Title it "${monthName} '${yy}" or riff very close. Sequence for MEMORY — how the month felt — not for a gym.`,
   )
@@ -395,11 +483,12 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
     id,
     title: r.title,
     commentary: r.commentary,
+    tracks: r.tracks,
+    // Legacy fields the type still carries for old tapes; a tape made now
+    // is one sequence, so the sides stay empty and nothing reads them.
     tapeLength: 90,
-    sideA: r.sideA,
-    sideB: r.sideB,
-    sideACutMs: r.sideACutMs,
-    sideBCutMs: r.sideBCutMs,
+    sideA: [],
+    sideB: [],
     linerNotes: r.linerNotes,
     createdAt: new Date().toISOString(),
     inkColor: INKS_SEASON[prevStart.getMonth() % INKS_SEASON.length],
@@ -409,7 +498,10 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
   if (cur.some((m) => m.seasonal === key)) return // raced another writer
   cur.unshift(tape)
   await saveMixtapes(cur)
-  console.log(`[mixtapes] season tape dubbed: "${r.title}" (${key}) — ${r.sideA.length}+${r.sideB.length} songs`)
+  // Written AFTER the tape lands: a crash between the two costs a re-dub,
+  // which is recoverable. The other order would lose the month silently.
+  await rememberDubbedSeason(key)
+  console.log(`[mixtapes] season tape dubbed: "${r.title}" (${key}) — ${r.tracks.length} songs`)
 }
 
 export function registerMixtapesIpc(host: MixtapesHost): void {
@@ -439,8 +531,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
     note?: string,
   ) => {
     try {
-      const len: 60 | 90 | 120 = tapeLength === 60 || tapeLength === 120 ? tapeLength : 90
-      return await buildMixtapeProposal(host, tracks, len, dedication, note)
+      return await buildMixtapeProposal(host, tracks, dedication, note)
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'mixtape build failed' }
     }
@@ -450,8 +541,16 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
   // build proposal, or an edit like attaching an intro).
   ipcMain.handle('mixtape-save', async (_e, tape: Mixtape) => {
     try {
-      if (!tape?.id || !Array.isArray(tape.sideA) || !Array.isArray(tape.sideB)) {
+      // A tape is valid if it has EITHER shape: `tracks` (2026-08-08 rules)
+      // or the two side arrays (everything Jake recorded before that).
+      // Requiring both would have rejected every new tape outright.
+      const hasNew = Array.isArray(tape?.tracks)
+      const hasOld = Array.isArray(tape?.sideA) && Array.isArray(tape?.sideB)
+      if (!tape?.id || (!hasNew && !hasOld)) {
         return { ok: false, error: 'Malformed mixtape.' }
+      }
+      if (hasNew && (tape.tracks as number[]).length > MAX_TAPE_SONGS) {
+        return { ok: false, error: `A tape holds ${MAX_TAPE_SONGS} songs.` }
       }
       const all = await loadMixtapes()
       const idx = all.findIndex((m) => m.id === tape.id)
@@ -474,6 +573,10 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       if (next.length === all.length) return { ok: false, error: 'No mixtape with that id.' }
       await saveMixtapes(next)
       if (gone?.introPath) await unlink(gone.introPath).catch(() => {})
+      // The merged tape audio goes with the tape — otherwise every deleted
+      // tape leaves a few hundred MB of ALAC behind forever. Identity-gated
+      // on the tape's own id inside OUR directory, so this can never aim at
+      // library audio.
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'delete failed' }

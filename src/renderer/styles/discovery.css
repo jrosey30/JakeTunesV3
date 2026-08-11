@@ -6,7 +6,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--white, #f9f8f5);
+  background: var(--white, #fdfdfd);
 }
 
 .discovery-tabs {

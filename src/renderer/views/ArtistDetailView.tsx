@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import PageGate from '../components/PageGate'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -442,10 +443,7 @@ export default function ArtistDetailView() {
   if (!pageReady) {
     return (
       <div className="artist-detail-view">
-        <div className="page-gate" role="status" aria-label="Loading">
-          <div className="page-gate-name">{artist}</div>
-          <div className="page-gate-bar"><span /></div>
-        </div>
+        <PageGate title={artist} note="Pulling the records off the shelf…" layout="grid" />
       </div>
     )
   }
@@ -479,7 +477,7 @@ export default function ArtistDetailView() {
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
               />
             ) : (
-              <div className="artist-detail-monogram" style={{ background: `linear-gradient(135deg, var(--brand-orange, #bb4308), #6f2c08)` }}>
+              <div className="artist-detail-monogram" style={{ background: `linear-gradient(135deg, var(--brand-orange, #FC5501), #6f2c08)` }}>
                 {/* 4.5.0-72: strip leading "The "/"A "/"An " for the
                     monogram letter so "The Beatles" reads "B" not "T",
                     "A Tribe Called Quest" → "T", "An Awesome Wave" → "A"

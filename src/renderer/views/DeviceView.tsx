@@ -538,6 +538,14 @@ export default function DeviceView() {
         name,
         commentary: review.payload.commentary,
         alacCount: review.payload.alacCount,
+        // Record the convert settings this set was ACTUALLY synced with, so
+        // the plug-in auto-repair can replay them if ui-state's copy of the
+        // prefs is ever missing (2026-08-07: a ui-state clobber erased them
+        // and every repair silently aborted).
+        convertOptions: {
+          enabled: appliedSettings.optConvertBitrate,
+          targetKbps: appliedSettings.optConvertBitrateTarget === '256' ? 256 : appliedSettings.optConvertBitrateTarget === '192' ? 192 : 128,
+        },
         brief: review.brief as unknown as Record<string, unknown>,
         // Jake's review edits — the strongest taste signal the brain
         // gets: removed = demote next time, added = boost.

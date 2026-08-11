@@ -316,7 +316,7 @@
 }
 
 .album-art-btn--dj {
-  /* 4.4.47: brand orange (was #e0812e). */
+  /* 4.4.47: brand orange (was #F9864C). */
   background: var(--brand-orange);
   color: #fff;
   border-color: var(--brand-orange-border);

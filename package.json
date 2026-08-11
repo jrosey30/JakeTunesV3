@@ -7,7 +7,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "rm -rf out && electron-vite build",
     "preview": "electron-vite preview",
     "dist": "electron-vite build && electron-builder",
     "dist:mac": "electron-vite build && electron-builder --mac",

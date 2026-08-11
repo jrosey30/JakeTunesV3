@@ -44,6 +44,38 @@ const MAX_CACHED_BUFFERS = 3
 // share the same Promise rather than each fetching + decoding.
 const inFlightDecodes = new Map<string, Promise<AudioBuffer>>()
 
+// ── Encoder priming (2026-08-08) ────────────────────────────────────
+// Jake, on an album-length tape: "clearly i can hear the track change."
+//
+// Every AAC file begins with silence the encoder prepended — 2112 samples
+// (47.9 ms) on his library, and the file says so in its own iTunSMPB tag.
+// decodeAudioData hands that silence back as real audio, and we were
+// starting each incoming buffer at offset 0: landing the next track
+// perfectly, then playing 48 ms of nothing. The scheduling was never the
+// problem; it was accurately playing the priming.
+//
+// So each decoded buffer remembers where its MUSIC starts, and the
+// scheduler starts there. The lookup rides along with decode (which
+// already owns the URL) rather than being threaded through the call site,
+// so useAudio.ts — do-not-touch — needs no changes.
+//
+// A file with no iTunSMPB, or one we can't read, gets 0 and behaves
+// exactly as before. Tail padding (4-23 ms) is NOT handled here: skipping
+// it means firing the seam earlier, and that timing lives in useAudio.
+const headTrimSec = new WeakMap<AudioBuffer, number>()
+
+/** `ipod-audio://<encoded abs path>` → the path ffprobe needs. */
+function fsPathFromAudioUrl(url: string): string | null {
+  const marker = 'ipod-audio://'
+  if (!url.startsWith(marker)) return null
+  try { return decodeURIComponent(url.slice(marker.length)) } catch { return null }
+}
+
+/** How far into this buffer the actual music starts. 0 when unknown. */
+export function headTrimFor(buffer: AudioBuffer): number {
+  return headTrimSec.get(buffer) ?? 0
+}
+
 export async function decodeUrl(url: string, ctx: AudioContext): Promise<AudioBuffer> {
   const hit = decodeCache.get(url)
   if (hit) {
@@ -60,6 +92,23 @@ export async function decodeUrl(url: string, ctx: AudioContext): Promise<AudioBu
     if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`)
     const ab = await resp.arrayBuffer()
     const buf = await ctx.decodeAudioData(ab)
+    // Ask the file how much priming it carries. Best-effort and never
+    // fatal: no answer simply means no trim, i.e. today's behaviour.
+    const fsPath = fsPathFromAudioUrl(url)
+    if (fsPath) {
+      try {
+        // Raced with a short timeout: this runs inside the preload, and a
+        // slow or wedged probe must never delay the decode it rides on.
+        // Losing the race just means no trim for that track.
+        const trim = await Promise.race([
+          window.electronAPI?.gaplessTrim?.(fsPath),
+          new Promise<null>((res) => setTimeout(() => res(null), 1500)),
+        ])
+        if (trim && trim.delaySec > 0 && trim.delaySec < buf.duration / 2) {
+          headTrimSec.set(buf, trim.delaySec)
+        }
+      } catch { /* no trim */ }
+    }
     decodeCache.set(url, buf)
     decodeCacheOrder.unshift(url)
     while (decodeCacheOrder.length > MAX_CACHED_BUFFERS) {
@@ -89,12 +138,44 @@ export function clearDecodeCache(): void {
  * Safe to call on either html5:false or html5:true Howls; Howler's
  * fade abstracts the underlying gain primitive.
  */
+/**
+ * Duck the outgoing track just before its end — SHORT, not the whole run-up.
+ *
+ * 2026-08-08. This used to fade over the entire msUntilEnd, which the rAF
+ * trigger makes as much as 250 ms. That guaranteed the ramp reached zero
+ * exactly at EOF, but the price was a quarter-second fade on the end of
+ * every track. Jake heard it on an album meant to run continuously: "theres
+ * a slight gap in between tracks... it might only be from track 1 to 2."
+ * Track 1 there is 48 seconds and ends cold, so a 250 ms fade is naked;
+ * tracks that decay naturally were hiding it.
+ *
+ * A long fade was never what the pop needed. The pop came from the buffer
+ * ending at non-zero amplitude, and ~10-30 ms of ramp is plenty to avoid
+ * that — AAC files also end in the encoder's own padding silence, so the
+ * ramp is mostly landing on silence anyway.
+ *
+ * The outgoing is an html5 (streaming) Howl, whose fade Howler steps in JS
+ * rather than on Web Audio's clock, so there is no sample-accurate ramp to
+ * schedule here. Instead the short fade is fired at (EOF - duration): even
+ * with setTimeout's 4-15 ms jitter the ramp still lands within a few ms of
+ * EOF, and it now costs ~30 ms of tail instead of 250 ms.
+ */
+const OUTGOING_DUCK_MS = 30
+
 export function scheduleAbsoluteFadeOut(howl: Howl, msUntilEnd: number): void {
   if (!howl) return
-  const ms = Math.max(1, Math.floor(msUntilEnd))
+  const total = Math.max(1, Math.floor(msUntilEnd))
+  const dur = Math.min(OUTGOING_DUCK_MS, total)
+  const delay = Math.max(0, total - dur)
   try {
     const cur = (howl.volume() as number)
-    howl.fade(cur, 0, ms)
+    if (delay <= 0) { howl.fade(cur, 0, dur); return }
+    setTimeout(() => {
+      try {
+        const v = (howl.volume() as number)
+        howl.fade(v, 0, dur)
+      } catch { /* the seam still works; worst case is the old pop */ }
+    }, delay)
   } catch {
     /* ignore — caller falls back to no fade, which sounds the same
      * as today's failure mode */
@@ -146,7 +227,10 @@ export function scheduleAbsoluteStart(
   } else {
     gain.gain.setValueAtTime(targetVolume, absoluteStartTime)
   }
-  source.start(absoluteStartTime, 0)
+  // Start where the MUSIC starts, not where the file starts — skipping the
+  // encoder priming that would otherwise play as ~48 ms of silence at the
+  // seam (2026-08-08). 0 for anything without a readable iTunSMPB.
+  source.start(absoluteStartTime, headTrimFor(buffer))
   const handle: ScheduledIncoming = {
     source,
     gain,

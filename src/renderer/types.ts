@@ -108,6 +108,11 @@ export interface Mixtape {
   title: string
   commentary: string
   dedication?: string
+  // The tape in play order — THE field as of 2026-08-08 (no more sides,
+  // 25 songs max). Always read it via tapeTracks() from common/tape-physics
+  // so tapes recorded under the two-sided rules keep playing.
+  tracks?: number[]
+  // Legacy, two-sided era. Read for old tapes; never written anew.
   tapeLength: 60 | 90 | 120
   sideA: number[]
   sideB: number[]
@@ -232,6 +237,23 @@ export interface RecoSyncMeta {
 
 // Brief 122 Phase 2 — an iTunes Search autocomplete suggestion for the
 // "Listen to the List" add form.
+/** ⚠️ TWIN: src/main/index.ts (ItunesSuggestion). Crosses IPC — a field added
+ *  on one side only is silently dropped, never caught. Change both together. */
+/** What the brain has learned, as reported by main/discovery-learned.ts. */
+export interface DiscoveryLearned {
+  discoverSignals: number
+  accepts: number
+  rejects: number
+  totalSignals: number
+  stripSignals: number
+  lanes: Array<{ lane: string; accepts: number; rejects: number }>
+  stoppedShowing: Array<{ artist: string; at: number }>
+  confidence: 'none' | 'thin' | 'growing' | 'solid'
+  headline: string
+  learnedAt?: string
+  daysCovered: number
+}
+
 export interface ItunesSuggestion {
   song: string
   artist: string
@@ -239,6 +261,17 @@ export interface ItunesSuggestion {
   artworkUrl?: string
   previewUrl?: string
   appleMusicUrl?: string
+  /** Release year, and the collection's real track count — what lets the
+   *  Download list say "EP · 2019" instead of a hardcoded "ALBUM" with no
+   *  date (Jake, 2026-08-09). Absent when the source can't state it (the
+   *  Deezer failover has no release date), and a blank beats a guess. */
+  releaseYear?: number
+  trackCount?: number
+  /** iTunes' primaryGenreName — a third real fact for a release card. */
+  genre?: string
+  /** 'explicit' | 'cleaned' | 'notExplicit' — so a censored edition can say so
+   *  BEFORE it is downloaded (Jake, 2026-08-09). */
+  explicitness?: string
   /** iTunes album (collection) id — lets the Download view expand an album
    *  into its FULL tracklist via itunesAlbumTracks (2026-07-23). */
   collectionId?: number
@@ -565,11 +598,12 @@ declare global {
       getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
-      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string; textRaw: string }>
+      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
       // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
       getActiveHost: () => Promise<'mm' | 'megan'>
+      audioLog: (line: string) => void
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
       musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>
@@ -628,10 +662,11 @@ declare global {
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
-      itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string }>
+      itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
       lookupRecoArtwork: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
+      lookupAlbumPreview?: (input: { artist: string; album: string }) => Promise<{ previewUrl?: string; trackTitle?: string }>
       // Album detail page (4.5.0-115): factual credits (MusicBrainz + iTunes,
       // honest gaps where unknown) and a grounded Music Man blurb.
       getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
@@ -650,8 +685,12 @@ declare global {
       // 4.5.0-118 — Discovery Brain Phase 2: new-music radar. anchor/anchors/
       // fingerprintSummary feed the "Seeded from" chips + "because you play X" reasoning.
       getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; brainPct?: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
-      discoveryNotForMe: (artist: string) => Promise<{ ok: boolean }>
+      discoveryNotForMe: (artist: string, cardKey?: string) => Promise<{ ok: boolean; scope?: string }>
+      discoveryAllowAgain?: (artist: string) => Promise<{ ok: boolean }>
+      discoveryLearned?: () => Promise<{ ok: boolean; summary?: DiscoveryLearned; error?: string }>
       getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }>
+      tasteLedgerAppend?: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => Promise<{ ok: boolean; appended?: number }>
+      getTasteWeights?: () => Promise<{ ok: boolean; weights: Record<string, unknown> }>
       getFriendStandings: () => Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }>
       sweepFriendImports: () => Promise<{ ok: boolean; credited: number }>
       imessageCaptureStatus: () => Promise<{ ok: boolean; access: 'granted' | 'denied' | 'unknown'; lastScanAt?: string; error?: string; pending: number; recent: Array<{ url: string; song?: string; artist?: string; album?: string; from?: string; at: string; status: string }> }>
@@ -661,6 +700,9 @@ declare global {
       captureResolveLink: (url: string) => Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }>
       getContacts: () => Promise<{ ok: boolean; names: string[] }>
       getDiscoverFeed: (force?: boolean) => Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }>
+      getMobileImports?: () => Promise<{ tracks: unknown[]; overrides?: Record<string, { fp?: string; fields?: Record<string, string> }> }>
+  onMobileImportsUpdated?: (callback: (p: { tracks: unknown[] }) => void) => () => void
+  onMobileOverridesUpdated?: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => () => void
       onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => () => void
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>
@@ -720,7 +762,7 @@ declare global {
       embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number; stale: number }>
       embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
       // 4.5: brain-driven playlist suggestions — centroid nearest library tracks.
-      playlistSimilar: (playlistIds: number[], clusters?: number) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }> }>
+      playlistSimilar: (playlistIds: number[], clusters?: number) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
       onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
       // / mobileOverridesApply types — vestigial mobile-sync feature gone.
@@ -811,15 +853,22 @@ declare global {
         error?: string
       }>
       listMixtapes?: () => Promise<{ ok: boolean; mixtapes: Mixtape[] }>
-      buildMixtape?: (tracks: unknown[], tapeLength: 60 | 90 | 120, dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; sideA?: number[]; sideB?: number[]; sideACutMs?: number; sideBCutMs?: number; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; sideBudgetMs?: number; error?: string }>
+      buildMixtape?: (tracks: unknown[], dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; tracks?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; error?: string }>
       saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
       deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
       dubMixtape?: (payload: { title: string; sides: Array<{ label: 'A' | 'B'; songs: Array<{ absPath: string; cutMs?: number }>; talkovers: Array<{ atMs: number; path: string }>; introPath?: string }> }) => Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }>
+      playlistNotesGet?: () => Promise<{ ok: boolean; notes: Record<string, string> }>
+      playlistNoteSet?: (playlistId: string, text: string) => Promise<{ ok: boolean; error?: string }>
+      playlistCoversMap?: () => Promise<{ ok: boolean; covers: Record<string, number>; dir: string }>
+      pickPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }>
+      copyPlaylistCover?: (fromId: string, toId: string) => Promise<{ ok: boolean; copied?: boolean; error?: string }>
+      clearPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; error?: string }>
+      gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null>
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
-      commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
-      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; commentary: string; syncedAt: string; alacCount: number } | null }>
+      commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
+      getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
       getActivityBrainContext?: () => Promise<{ ok: boolean; context?: unknown; promptBlock?: string }>
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
@@ -900,11 +949,11 @@ declare global {
       bandcampGoBack: () => Promise<{ ok: boolean }>
       bandcampGoForward: () => Promise<{ ok: boolean }>
       // ── streamrip download store (paste-a-link → rip CLI → import) ──
-      streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string }>
+      streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }>
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
       streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
-      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
+      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
       streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
@@ -939,6 +988,7 @@ declare global {
       // 4.4.29 — Brooklyn weather for the Home view greeting.
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
       // 4.4.32 — Bandsintown tour dates for top library artists.
+      getVenueShows: () => Promise<{ ok: boolean; shows: VenueShow[] }>
       getTourDates: () => Promise<{ ok: boolean; dates: TourDate[] }>
       // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
       // library artists.
@@ -970,6 +1020,19 @@ export interface MusicNewsItem {
 }
 
 // 4.4.32 — Tour date shape from Bandsintown.
+/** A show at one of Jake's rooms, sourced from the venue itself (2026-08-08).
+ *  `known` marks artists already in the library — everything else is the
+ *  discovery half: the Ceremony-at-Warsaw show he'd otherwise never see. */
+export interface VenueShow {
+  artist: string
+  date: string
+  venue: string
+  venueKey: string
+  city: string
+  url: string
+  known?: boolean
+}
+
 export interface TourDate {
   artist: string
   date: string         // ISO

@@ -120,7 +120,7 @@ Health check: `curl http://homemini:8730/health`
 
 | Host | Tailscale name | Role |
 |------|---------------|------|
-| **workmini** | `workmini` | Work Mac mini — JakeTunes desktop clone via `~/bin/jaketunes-workmini-deploy.sh`. Sync **destination**, not a streaming host. |
+| **workmini** | `workmini` | Work Mac mini — JakeTunes desktop clone via `~/bin/jaketunes-workmini-deploy.sh`. Sync **destination**. Plays by streaming from **homemini:3000** (`library.streamSource=homemini`) with a local NAS cache-farm fallback; it must never read the Synology SMB mount on the playback hot path (that is what made it hang). |
 | **ds225** | `ds225` | Synology NAS — vault, Plex, SMB shares |
 | **MacBook** | (varies) | Primary editor, sync source, dev |
 

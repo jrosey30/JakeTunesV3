@@ -32,7 +32,7 @@ function fixture() {
 describe('playlist-vibes — scorePlaylistCandidates quality floor', () => {
   it('an outlier seed cluster with only weak matches serves NOTHING', () => {
     const { seeds, candidates } = fixture()
-    const hits = scorePlaylistCandidates(seeds, candidates, null, 3)
+    const { hits } = scorePlaylistCandidates(seeds, candidates, null, 3)
     const servedIds = new Set(hits.map((h) => h.trackId))
     // every weak rock-ish candidate (ids 130-144) is floored out
     for (let id = 130; id < 145; id++) assert.equal(servedIds.has(id), false, `weak match ${id} must not serve`)
@@ -44,7 +44,7 @@ describe('playlist-vibes — scorePlaylistCandidates quality floor', () => {
   it('healthy multi-vibe playlists keep every cluster (no diversity regression)', () => {
     const { seeds, candidates } = fixture()
     // drop the outlier seed + its weak candidates → all clusters healthy
-    const hits = scorePlaylistCandidates(seeds.slice(0, 7), candidates.slice(0, 30), null, 2)
+    const { hits } = scorePlaylistCandidates(seeds.slice(0, 7), candidates.slice(0, 30), null, 2)
     const clusters = new Set(hits.map((h) => h.cluster))
     assert.equal(clusters.size, 2, 'both sub-vibes represented')
   })
@@ -59,28 +59,36 @@ describe('playlist-vibes — scorePlaylistCandidates quality floor', () => {
       w[4] = Math.sqrt(1 - 0.49) // keep unit-ish norm, off-vibe component
       return [id, w]
     })
-    const hits = scorePlaylistCandidates(seeds.slice(0, 7), damped, null, 2)
+    const { hits } = scorePlaylistCandidates(seeds.slice(0, 7), damped, null, 2)
     assert.ok(hits.length > 0, 'a uniformly-weak library still suggests its best')
   })
 
   it('single-vibe playlist works (k collapses to seed count)', () => {
     const seeds = [vec(0, 2, 0.05), vec(0, 2, 0.1)]
     const candidates: Array<[number, Float32Array]> = [[1, vec(0, 2, 0.07)], [2, vec(0, 2, 0.12)]]
-    const hits = scorePlaylistCandidates(seeds, candidates, null, 5)
+    const { hits } = scorePlaylistCandidates(seeds, candidates, null, 5)
     assert.equal(hits.length, 2)
   })
 
   it('empty inputs are safe', () => {
-    assert.deepEqual(scorePlaylistCandidates([], [], null, 5), [])
-    assert.deepEqual(scorePlaylistCandidates([vec(0, 1)], [], null, 5), [])
+    assert.deepEqual(scorePlaylistCandidates([], [], null, 5), { hits: [], clusterSeeds: [] })
+    assert.deepEqual(scorePlaylistCandidates([vec(0, 1)], [], null, 5).hits, [])
   })
 
   it('global-center penalty still applies to scores', () => {
     const seeds = [vec(0, 2, 0.05), vec(0, 2, 0.1)]
     const generic = vec(0, 2, 0.07)
-    const hitsNoGc = scorePlaylistCandidates(seeds, [[1, generic]], null, 1)
-    const hitsGc = scorePlaylistCandidates(seeds, [[1, generic]], generic, 1)
+    const hitsNoGc = scorePlaylistCandidates(seeds, [[1, generic]], null, 1).hits
+    const hitsGc = scorePlaylistCandidates(seeds, [[1, generic]], generic, 1).hits
     assert.ok(hitsGc[0].score < hitsNoGc[0].score, 'penalized when near the global center')
+  })
+
+  it('clusterSeeds reports how many playlist songs seeded each sub-vibe', () => {
+    const { seeds, candidates } = fixture()
+    const { clusterSeeds } = scorePlaylistCandidates(seeds, candidates, null, 3)
+    assert.equal(clusterSeeds.reduce((s, n) => s + n, 0), seeds.length, 'every seed assigned')
+    // The fixture's outlier is a single seed — exactly one 1-seed cluster.
+    assert.ok(clusterSeeds.includes(1), 'outlier occupies its own 1-seed cluster')
   })
 })
 
