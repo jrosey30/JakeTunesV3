@@ -5922,7 +5922,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // Activity wipe+rebuild: remount-verify every N songs so the fskit cache
   // never accumulates hundreds of "successful" writes the card then drops.
   // Without this, each sync lands a random subset (103 / 421 / 238 of 500).
-  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 20 : 0
+  // Chunk of 10 (not 20): smaller dirty-cache windows = fewer mid-flush drops
+  // on Jake's iFlash card — the count variance was non-deterministic for a reason.
+  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 10 : 0
   let chunkPending: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
   const flushCopyChunk = async (force = false) => {
     if (COPY_VERIFY_CHUNK <= 0) return
@@ -5936,7 +5938,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     })
     await flushCardCaches()
     const r = await remountVerifyEntries(IPOD_MOUNT, batch, {
-      maxPasses: 4,
+      maxPasses: 6,
       label: 'chunk',
       isCancelled: () => syncCancelRequested,
     })
@@ -6186,7 +6188,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     }
     // Activity sync: more passes — random short counts were us giving up too early
     // while the card was still dropping mid-flush writes.
-    const MAX_VERIFY_PASSES = syncOpts?.wipeFirst ? 12 : 4
+    const MAX_VERIFY_PASSES = syncOpts?.wipeFirst ? 16 : 4
     let landedIds = new Set<number>()
     if (verify.length > 0) {
       mainWindow?.webContents.send('sync-progress', {
@@ -6251,6 +6253,15 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         activityShortfall = true
         console.error(`sync-to-ipod: ACTIVITY SHORTFALL — asked for ${syncTarget}, card kept ${verifiedLanded}. Will write the honest catalog and report failure (500 means 500).`)
       }
+    } else if (syncOpts?.wipeFirst) {
+      // Activity sync on Mac MUST remount-verify. A cache-only "all present"
+      // read is exactly how 500 → 103 / 421 / 238 happened with a green check.
+      await writeSyncJournal(null)
+      return {
+        ok: false,
+        error: `Could not remount-verify the activity set — refusing to trust the mount cache. Sync again without unplugging.`,
+        copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, verifyAttempts,
+      }
     }
   }
 
@@ -6282,6 +6293,15 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       tracks = present
       verifiedLanded = tracks.length
     }
+  }
+
+  // Last word for activity wipe+rebuild: ANY path that ends below the picked
+  // count (remount verify, on-disk gate, streamed skips, copy errors) is a
+  // failed sync. Without this, the on-disk gate could shrink 500→238 and still
+  // return ok:true — which is the "random Songs count every time" Jake sees.
+  if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
+    activityShortfall = true
+    console.error(`sync-to-ipod: ACTIVITY SHORTFALL (pre-DB) — asked for ${syncTarget}, have ${verifiedLanded} verified files`)
   }
 
   // The full-library tag-verification preflight that used to live here
