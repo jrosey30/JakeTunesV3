@@ -111,3 +111,66 @@ export function partitionLanded(
   }
   return { landed, failed }
 }
+
+/**
+ * Bytes we expect a track to occupy ON THE IPOD after sync.
+ *
+ * When convert-higher-bitrate is on, lossless sources land as AAC — often
+ * 4–6× smaller than the library master. Using the master size here is how a
+ * 500-song activity sync used to report "syncing 500" and then leave ~100
+ * on a Mini: verify compared AAC-on-card to ALAC-in-library, failed every
+ * track, recopied the full ALAC over the AAC, and the card filled up.
+ */
+export function estimateIpodBytes(opts: {
+  fileSize?: number | null
+  durationMs?: number | null
+  convertEnabled?: boolean
+  targetKbps?: number
+  isLossless?: boolean
+}): number {
+  const fileSize = Math.max(0, Number(opts.fileSize) || 0)
+  if (opts.convertEnabled && opts.isLossless) {
+    const durSec = Math.max(0, Number(opts.durationMs) || 0) / 1000
+    const kbps = Math.max(64, Number(opts.targetKbps) || 128)
+    if (durSec > 0) return Math.ceil(durSec * kbps * 1000 / 8)
+    // No duration → rough AAC estimate from the lossless master (~5:1).
+    return Math.max(1, Math.ceil((fileSize || 5_000_000) / 5))
+  }
+  return Math.max(1, fileSize || 5_000_000)
+}
+
+/** True when codec/path say the library master is lossless (convert candidate). */
+export function looksLossless(codec?: string | null, pathOrExt?: string | null): boolean {
+  const c = String(codec || '').toLowerCase()
+  if (c === 'alac' || c.includes('alac') || c.includes('apple lossless') || c === 'flac' || c.includes('flac') || c.startsWith('pcm')) {
+    return true
+  }
+  const p = String(pathOrExt || '').toLowerCase()
+  const ext = p.includes('.') ? p.slice(p.lastIndexOf('.')) : p
+  return ext === '.alac' || ext === '.flac' || ext === '.wav' || ext === '.wave' || ext === '.aiff' || ext === '.aif'
+}
+
+/**
+ * How many leading tracks fit in `freeBytes` (after a small DB/overhead reserve).
+ * Pure — the sync layer supplies already-estimated per-track ipod byte sizes.
+ */
+export function packTracksToCapacity<T extends { bytes: number }>(
+  tracks: T[],
+  freeBytes: number,
+  reserveBytes = 64 * 1024 * 1024,
+): { packed: T[]; dropped: T[]; budgetBytes: number; usedBytes: number } {
+  const budget = Math.max(0, freeBytes - Math.max(0, reserveBytes))
+  const packed: T[] = []
+  const dropped: T[] = []
+  let used = 0
+  for (const t of tracks) {
+    const b = Math.max(0, Number(t.bytes) || 0)
+    if (b > 0 && used + b <= budget) {
+      packed.push(t)
+      used += b
+    } else {
+      dropped.push(t)
+    }
+  }
+  return { packed, dropped, budgetBytes: budget, usedBytes: used }
+}

@@ -140,7 +140,13 @@ import {
   resolveImportFormat,
   type AudioFormat,
 } from './platform'
-import { partitionLanded, type IntendedTrack } from './ipod-reconcile'
+import {
+  partitionLanded,
+  estimateIpodBytes,
+  looksLossless,
+  packTracksToCapacity,
+  type IntendedTrack,
+} from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
@@ -5596,6 +5602,66 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // file's EMBEDDED TAGS (title + artist) actually agree with the
   // library entry's metadata. If tags disagree or are missing, we
   // fall back to copying the real file.
+  // ── CAPACITY PREFLIGHT (2026-08-11) ──
+  // Activity sync used to say "Syncing 500…" then leave ~100 on a Mini: either
+  // the set was ALAC and the card filled mid-copy, or (worse) verify recopied
+  // ALACs over successful AAC mirrors and filled it. Refuse BEFORE wipe/copy
+  // when the set cannot fit at the convert setting — 500 means 500, or we say
+  // no. Wipe-first free space = free now + every music file about to be deleted.
+  {
+    const requested = tracks.length
+    let freeBytes = 0
+    try {
+      const { statfs } = await import('fs/promises')
+      const s = await statfs(IPOD_MOUNT)
+      freeBytes = Number(s.bavail) * Number(s.bsize)
+    } catch { /* capacity unknown — skip the gate rather than block sync */ }
+    if (freeBytes > 0) {
+      let reclaimable = 0
+      if (syncOpts?.wipeFirst) {
+        try {
+          const { readdir: rdw } = await import('fs/promises')
+          const musicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
+          for (let i = 0; i < 50; i++) {
+            const sub = join(musicRoot, `F${String(i).padStart(2, '0')}`)
+            const entries = await rdw(sub).catch(() => [] as string[])
+            for (const fn of entries) {
+              try { reclaimable += (await stat(join(sub, fn))).size } catch { /* skip */ }
+            }
+          }
+        } catch { /* best-effort */ }
+      }
+      const freeAfter = freeBytes + reclaimable
+      const sized = tracks.map((t) => {
+        const path = String(t.path || '')
+        const ext = path.includes('.') ? path.slice(path.lastIndexOf('.')) : ''
+        const codec = String(t.codec || '')
+        const bytes = estimateIpodBytes({
+          fileSize: typeof t.fileSize === 'number' ? t.fileSize : null,
+          durationMs: typeof t.duration === 'number' ? t.duration : null,
+          convertEnabled: !!convertOptions?.enabled,
+          targetKbps: convertOptions?.targetKbps,
+          isLossless: looksLossless(codec, ext || path),
+        })
+        return { t, bytes }
+      })
+      const needed = sized.reduce((n, x) => n + x.bytes, 0)
+      const RESERVE = 64 * 1024 * 1024
+      if (needed > freeAfter - RESERVE) {
+        const fit = packTracksToCapacity(sized, freeAfter, RESERVE)
+        const fitCount = fit.packed.length
+        const gb = (n: number) => `${(n / (1024 ** 3)).toFixed(1)} GB`
+        const convertHint = convertOptions?.enabled
+          ? `Even as ${convertOptions.targetKbps}k AAC this set needs ~${gb(needed)} and the iPod only has ~${gb(Math.max(0, freeAfter - RESERVE))} free.`
+          : `With Convert higher bit rate OFF these songs stay full-size (~${gb(needed)}) and the iPod only has ~${gb(Math.max(0, freeAfter - RESERVE))} free. Turn Convert on, or pick a smaller set.`
+        const msg = `Sync refused — ${requested} songs will not fit on this iPod. ${convertHint} About ${fitCount.toLocaleString()} would fit right now.`
+        console.error(`sync-to-ipod: CAPACITY — ${msg}`)
+        return { ok: false, copied: 0, error: msg, target: requested, landed: 0, shortfall: requested }
+      }
+      console.log(`sync-to-ipod: capacity OK — ~${(needed / (1024 ** 2)).toFixed(0)} MB needed, ~${((freeAfter - RESERVE) / (1024 ** 2)).toFixed(0)} MB free after${syncOpts?.wipeFirst ? ' wipe' : ''}`)
+    }
+  }
+
   // ── WIPE-FIRST (2026-07-24, Jake: "just wipe the songs from the iPod each
   // time i do activity sync, then rebuild to whatever number i pick"). Deletes
   // every audio file under iPod_Control/Music/F00–F49 so the set is rebuilt from
@@ -5764,6 +5830,18 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
 
   const toCopy: Array<{ local: string; ipod: string; title: string }> = []
   const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  // Exact bytes that landed (or were confirmed already present) per track.
+  // Verify/recopy MUST use these — never the library master — or a convert
+  // sync compares AAC-on-card to ALAC-in-library, "fails" every song, and
+  // recopies full-size masters until the Mini fills (~100 of 500).
+  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+  const rememberWritten = async (trackId: number | undefined, srcPath: string, dstPath: string) => {
+    if (trackId == null) return
+    try {
+      const sz = (await stat(srcPath)).size
+      writtenById.set(trackId, { srcPath, dstPath, expectedSize: sz })
+    } catch { /* non-fatal — verify will treat as missing */ }
+  }
   let rewritesVetoed = 0
   for (const c of candidates) {
     if (c.altIpodPath) {
@@ -5787,6 +5865,24 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           oldPath: c.colonPath,
           newPath: altColonPath,
         })
+        // Already on the device at altIpodPath — record on-card size as the
+        // verify target. Recopy source prefers the AAC mirror when convert is
+        // on so a recovery pass doesn't shove the ALAC master back onto a Mini.
+        try {
+          const onCard = (await stat(c.altIpodPath)).size
+          let srcPath = c.localFile
+          if (convertOptions?.enabled) {
+            try {
+              const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps)
+              if (mirror) srcPath = mirror
+            } catch { /* keep library master as recopy source */ }
+          }
+          writtenById.set(c.track.id as number, {
+            srcPath,
+            dstPath: c.altIpodPath,
+            expectedSize: onCard,
+          })
+        } catch { /* verify will notice */ }
         continue
       }
       // Tags didn't match — don't silently re-link. Copy the real file.
@@ -5910,6 +6006,8 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       const srcStat = await stat(srcToCopy)
       const dstStat = await stat(dstToCopy).catch(() => null)
       if (dstStat && dstStat.size === srcStat.size) {
+        const tr = trackByLocal.get(local)
+        await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
         copied++
         mainWindow?.webContents.send('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
@@ -5931,6 +6029,10 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           title: `✗ did not stick: ${title}`,
         })
         continue
+      }
+      {
+        const tr = trackByLocal.get(local)
+        await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
       }
       if (++sinceFlush >= 8) { await flushCardCaches(); sinceFlush = 0 }
       copied++
@@ -5993,20 +6095,47 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   let verifyAttempts = 0
   let verifyRan = false
   if (IS_MAC && tracks.length > 0) {
-    // Intended set = every track that should have a real file on the device.
-    // Exclude streamed tracks (intentionally not copied) and any with no local
-    // source to verify/recopy from (those fall through to the old readback).
+    // Intended set = every track we have an exact write record for (the bytes
+    // that actually went on the card — AAC mirror after convert, else the
+    // library master). Falling back to "stat the library path" was the
+    // Mini 500→~100 bug: convert wrote AAC, verify expected ALAC size,
+    // recopy overwrote with ALAC, card filled. Tracks with no write record
+    // (failed copy / streamed skip) stay out and are dropped from the DB.
     const verify: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
     for (const t of tracks) {
+      const id = t.id as number
+      const remembered = writtenById.get(id)
+      if (remembered) {
+        verify.push({
+          id,
+          dstPath: remembered.dstPath,
+          localFile: remembered.srcPath,
+          expectedSize: remembered.expectedSize,
+        })
+        continue
+      }
+      // Keep/skip path (already on device, never entered toCopy): resolve the
+      // bytes that SHOULD be on the card at the convert setting, not the raw
+      // library master when convert is on.
       const colonPath = String(t.path || '')
       if (!colonPath) continue
       const relPath = colonPath.replace(/:/g, pathSep)
-      const localFile = join(LOCAL_MOUNT, relPath)
+      const libraryFile = join(LOCAL_MOUNT, relPath)
       try {
-        if (await isStreamedTrackFile(localFile)) continue
-        const sz = (await stat(localFile)).size
-        verify.push({ id: t.id as number, dstPath: join(IPOD_MOUNT, relPath), localFile, expectedSize: sz })
-      } catch { /* no local source — can't verify/recopy; leave to the old readback */ }
+        if (await isStreamedTrackFile(libraryFile)) continue
+        let srcForVerify = libraryFile
+        if (convertOptions?.enabled) {
+          const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps)
+          if (mirror) srcForVerify = mirror
+        }
+        const sz = (await stat(srcForVerify)).size
+        verify.push({
+          id,
+          dstPath: join(IPOD_MOUNT, relPath),
+          localFile: srcForVerify,
+          expectedSize: sz,
+        })
+      } catch { /* no local source — can't verify/recopy */ }
     }
     const MAX_VERIFY_PASSES = 4
     let landedIds = new Set<number>()
@@ -6036,8 +6165,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         if (failed.length === 0) break
         if (pass === MAX_VERIFY_PASSES) break
         if (syncCancelRequested) break
-        // Recopy only the ones that didn't survive; the NEXT pass's remount
-        // flushes them to the card and re-verifies.
+        // Recopy only the ones that didn't survive; use the SAME source that
+        // was written originally (AAC mirror if converted) — never the
+        // library ALAC master.
         const failedSet = new Set(failed)
         let recopied = 0
         mainWindow?.webContents.send('sync-progress', {
