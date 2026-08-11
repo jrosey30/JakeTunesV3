@@ -29,11 +29,9 @@ import {
 import {
   initLibraryDigest, type DigestTrack,
   refreshLibraryDigest, getLibraryDigest, scheduleLibraryDigestRefresh,
-  setLibraryContext, getLibraryContext,
 } from './library-digest.ts'
 import {
   initListenerProfile, loadListenerProfile, saveListenerProfile, appendListeningEvent,
-  recordPlay, recordSkip, recordRating, getListeningMemory,
   addObservation, getListenerProfile, buildTasteProfile, type ListenerProfile,
 } from './listener-profile.ts'
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
@@ -48,6 +46,10 @@ import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
 import { registerSettingsIpc } from './ipc/settings-ipc.ts'
 import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
+import { registerLibraryIpc } from './ipc/library-ipc.ts'
+import { registerIpodIpc } from './ipc/ipod-ipc.ts'
+import { registerSyncIpc } from './ipc/sync-ipc.ts'
+import { registerAiIpc } from './ipc/ai-ipc.ts'
 import { allowImportPaths, isImportPathAllowed } from './import-allowlist.ts'
 import { isAllowedCaptureUrl, allowWithinRateLimit, isPrivateOrLocalHostname } from './url-safety'
 import {
@@ -62,11 +64,10 @@ import {
   getUpcomingReleasesForArtists, type UpcomingRelease,
 } from './external'
 import {
-  appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
+  appendMemory, formatMemoryForPrompt, extractCallbacks,
   setHotTake, getHotTake,
-  setShowPlan, clearShowPlan, formatPlanForPrompt, getShowPlan,
 } from './radio-memory'
-import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
+import { CALLERS, buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { computeImportCredits, pairKeys, friendOfNote } from './friend-imports-core'
@@ -82,16 +83,16 @@ import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
-import { computeArtistCandidates, parseGroupingResponse, parseRelatedArtists } from './artist-groups-core'
+import { parseRelatedArtists } from './artist-groups-core'
 // Cynthia overhaul — deterministic scanner, MB cache+diff, background sweep.
 import { scanAlbum as cynthiaScanAlbum, type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
 import { diffAgainstMusicBrainz, type MbLookupResult } from './cynthia-mb-diff'
 import { getCachedMbRelease } from './mb-release-cache'
 import {
-  startCynthiaSweep, enqueueAlbumsForSweep, getFindingsFor, dismissFinding,
-  getLedger, revertLedgerEntry, sweepStatus, albumKeyOfMain,
+  startCynthiaSweep, enqueueAlbumsForSweep,
+  revertLedgerEntry, albumKeyOfMain,
 } from './cynthia-sweep'
-import type { GroupingProposal, RelatedArtist } from './artist-groups-core'
+import type { RelatedArtist } from './artist-groups-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -921,6 +922,69 @@ registerSettingsIpc(ipc, {
   setCachedActiveHost: (host) => { cachedActiveHost = host },
 })
 registerImportIpc(ipc)
+registerLibraryIpc(ipc, {
+  getLibraryTracks: async () => {
+    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
+    return Array.isArray(lib.tracks) ? lib.tracks : []
+  },
+  claudeCall,
+  getPlaylists: () => playlistsCache.get(),
+  setPlaylists: (playlists) => { playlistsCache.set(playlists) },
+  isSaveLocked,
+  triggerSync,
+  scanLibraryOrphans: () => scanLibraryOrphans(),
+  purgeLibraryOrphans: () => purgeLibraryOrphans(),
+})
+registerIpodIpc(ipc, {
+  getMount: () => ({ mount: detectedIpodMount, volume: detectedIpodVolume, missStreak: ipodMissStreak }),
+  setMount: (next) => {
+    if ('mount' in next) detectedIpodMount = next.mount ?? null
+    if ('volume' in next) detectedIpodVolume = next.volume ?? null
+    if ('missStreak' in next && typeof next.missStreak === 'number') ipodMissStreak = next.missStreak
+  },
+  runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
+})
+registerSyncIpc(ipc, {
+  requestSyncCancel: () => {
+    if (!syncInFlight) return { wasRunning: false }
+    syncCancelRequested = true
+    return { wasRunning: true }
+  },
+  syncToIpod: (tracks, playlists, convertOptions, syncOpts) =>
+    handleSyncToIpod(tracks, playlists, convertOptions, syncOpts),
+  syncIpodFromDevice: (existingIds) => handleSyncIpodFromDevice(existingIds),
+  readIpodDatabase: () => readIpodDatabase(),
+  getStateConflicts: () => stateConflicts,
+  reconcileStateConflicts: (event) => handleReconcileStateConflicts(event),
+})
+registerAiIpc(ipc, {
+  setClaudeDailyCeiling: async (ceiling) => {
+    await loadClaudeStats()
+    const safe = Math.max(1, Math.min(2000, Number(ceiling) || 200))
+    claudeStats.dailyCeiling = safe
+    await saveClaudeStats()
+    return { ok: true, dailyCeiling: safe }
+  },
+  getClaudeStats: async () => {
+    await loadClaudeStats()
+    rolloverIfNewDay()
+    return {
+      ok: true,
+      sessionCallCount,
+      callsToday: claudeStats.callsToday,
+      dailyCeiling: claudeStats.dailyCeiling,
+      lastResetDate: claudeStats.lastResetDate,
+      cachedKeys: Object.keys(claudeStats.lastResponses),
+    }
+  },
+  revertCynthiaLedgerEntry: async (id) => {
+    const hooks = buildCynthiaSweepHooks()
+    const albums = cynthiaGetAlbumsSnapshot()
+    const byId = new Map<number, CynthiaScanTrack>()
+    for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
+    return revertLedgerEntry(id, hooks.applyOverride, (trackId) => byId.get(trackId))
+  },
+})
 
 // 4.4.85: codec hint for the ipod-audio:// protocol handler so it can
 // skip the ~200-500 ms ffprobe call on every first-play. Populated from
@@ -1017,9 +1081,11 @@ async function saveWindowState(win: BrowserWindow): Promise<void> {
   await writeFile(windowStatePath(), JSON.stringify(state), 'utf-8')
 }
 
-// ── UI state + backup + app-settings IPC ──────────────────────────────
+// ── UI state + backup + app-settings + domain IPC ─────────────────────
 // Registered via createIpcRegistrar domain modules:
-//   ipc/ui-state-ipc.ts, ipc/backup-ipc.ts, ipc/settings-ipc.ts
+//   ipc/ui-state-ipc.ts, ipc/backup-ipc.ts, ipc/settings-ipc.ts,
+//   ipc/import-ipc.ts, ipc/library-ipc.ts, ipc/ipod-ipc.ts,
+//   ipc/sync-ipc.ts, ipc/ai-ipc.ts
 // (see register* calls next to `let mainWindow`).
 
 // User-preference settings path (4.0 §6.7). Distinct from ui-state.json.
@@ -1028,82 +1094,6 @@ async function saveWindowState(win: BrowserWindow): Promise<void> {
 function appSettingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
 }
-
-// ── Artist aliases (metadata hierarchy) — user/AI grouping map. ──────
-// artist-aliases.json: { "<raw artist tag>": "<canonical artist>" }. The
-// renderer's canonicalArtist() consults it OVER the curated baseline, so Wings,
-// Paul & Linda McCartney, etc. roll up to a primary. Written by the AI-grouping
-// review + manual "Same as…". Small user data; atomic tmp+rename like the rest.
-function artistAliasesPath(): string {
-  return join(STATE_DIR, 'artist-aliases.json')
-}
-ipcMain.handle('load-artist-aliases', async (): Promise<{ ok: boolean; aliases: Record<string, string> }> => {
-  try {
-    const parsed = JSON.parse(await readFile(artistAliasesPath(), 'utf-8'))
-    const aliases = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed as Record<string, string> : {}
-    return { ok: true, aliases }
-  } catch {
-    return { ok: true, aliases: {} }   // missing/torn → empty map (no grouping overrides)
-  }
-})
-ipc.handle('save-artist-aliases', async (_e, aliases: Record<string, string>): Promise<{ ok: boolean; error?: string }> => {
-  try {
-    const clean: Record<string, string> = {}
-    for (const [k, v] of Object.entries(aliases || {})) {
-      const key = String(k).trim(); const val = String(v ?? '').trim()
-      if (key && val) clean[key] = val   // identity maps allowed (they override/undo a baseline grouping)
-    }
-    await mkdir(STATE_DIR, { recursive: true })
-    const path = artistAliasesPath()
-    const tmp = `${path}.tmp.json`
-    await writeFile(tmp, JSON.stringify(clean, null, 2), 'utf-8')
-    const { rename: renameFS } = await import('fs/promises')
-    await renameFS(tmp, path)
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// Metadata hierarchy Phase 2 — AI-assisted artist grouping. Claude classifies
-// the library's marker tags ("X & Y") as persona / collaboration / standalone
-// and names the canonical primary for personas. Nothing is applied here — the
-// renderer shows the proposals for the user to approve, then writes the
-// approved personas to artist-aliases.json. Conservative system prompt: prefer
-// "standalone"/"collaboration" over a wrong merge.
-ipc.handle('classify-artist-groups', async (): Promise<{ ok: boolean; proposals?: GroupingProposal[]; candidateCount?: number; error?: string }> => {
-  try {
-    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
-    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
-    const { candidates, primaries } = computeArtistCandidates(tracks, { maxCandidates: 150, maxPrimaries: 400 })
-    if (candidates.length === 0) return { ok: true, proposals: [], candidateCount: 0 }
-    const user = [
-      'Below are artist tags from a personal music library that contain a join marker ("&", "and", "/", "feat", "with", a comma, etc.). Each is exactly ONE of:',
-      '  • "persona" — the SAME act/musician as a primary artist (their band, alias, "X & His Band", a spouse duo). e.g. Wings → Paul McCartney; Paul & Linda McCartney → Paul McCartney; Bruce Springsteen & The E Street Band → Bruce Springsteen.',
-      '  • "collaboration" — distinct artists who collaborated; the track belongs to each but the tag is not one act. e.g. Paul McCartney & Stevie Wonder; "Rihanna, Kanye West, and Paul McCartney".',
-      '  • "standalone" — the tag IS a single artist/band whose NAME merely contains those words; do NOT merge. e.g. Hall & Oates; King Gizzard & The Lizard Wizard; AC/DC; Simon & Garfunkel; Earth, Wind & Fire; Polo & Pan.',
-      '',
-      'For a "persona", set "canonical" to the primary. PREFER an exact name from this list of existing primary artists when one fits:',
-      primaries.join(' | ') || '(none)',
-      '',
-      'Tags to classify (with track counts):',
-      candidates.map((c) => `- ${c.tag} (${c.count})`).join('\n'),
-      '',
-      'Return ONLY JSON — an array of {"tag","type","canonical","contributors","why"}: "canonical" only for persona, "contributors" (array) only for collaboration, "why" = one short sentence. No prose, no code fence.',
-    ].join('\n')
-    const reply = await claudeCall('artist-groups:classify', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 6000,
-      system: 'You are a meticulous music-metadata expert. You know artist relationships precisely — a musician\'s bands/aliases/side-projects vs. one-off collaborations vs. standalone groups whose name simply contains "&"/"and"/"/". Be conservative: when unsure whether two tags are the SAME act, prefer "standalone" or "collaboration" over a wrong merge.',
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = block && block.type === 'text' ? block.text : ''
-    return { ok: true, proposals: parseGroupingResponse(text), candidateCount: candidates.length }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
 
 // Metadata hierarchy — related-artists graph (associate, don't merge). On-demand
 // per artist page, cached a day (band lineups don't change). Claude (Haiku —
@@ -2235,19 +2225,6 @@ ipcMain.on('audio-log', (_e, line: string) => {
 // taste profile changes as he listens. Reading them at call time keeps both live.
 initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTasteProfile() })
 
-// Update the Claude daily ceiling immediately (mirrors what's saved in
-// app-settings.json). The wrapper at top of file reads claudeStats so
-// we update that in-memory and on disk.
-ipc.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
-  await loadClaudeStats()
-  // Hard max 2000 without a rebuild — the old 10000 ceiling was raisable
-  // by any frame that could invoke IPC and burned real API budget.
-  const safe = Math.max(1, Math.min(2000, Number(ceiling) || 200))
-  claudeStats.dailyCeiling = safe
-  await saveClaudeStats()
-  return { ok: true, dailyCeiling: safe }
-}, { refuse: REFUSED_SENDER })
-
 async function createWindow(): Promise<void> {
   const saved = await loadWindowState()
   mainWindowEverCreated = true
@@ -3292,7 +3269,6 @@ let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "
 // believe it's really gone, and re-stat the last-known iTunesDB directly
 // (that read survives a /Volumes readdir hiccup) before counting a miss.
 let ipodMissStreak = 0
-const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
 
 // Wired up by the ipod-audio protocol handler inside app.whenReady().
 // Call with a list of absolute source-file paths to kick off background
@@ -3305,102 +3281,6 @@ let prewarmAlacCache: (paths: string[]) => Promise<void> = async () => { /* not 
 // bypass ffprobe entirely on the next access. Wired up alongside
 // prewarmAlacCache when the audio protocol handler initialises.
 let registerKnownCodec: (path: string, mtime: number, codec: string) => void = () => {}
-
-// Report the iPod's actual storage capacity by statting the mounted
-// volume. Previously the renderer hardcoded 64GB, which misreports
-// modded iPods (SD card swaps, etc.) as the wrong size.
-ipcMain.handle('get-ipod-capacity', async () => {
-  try {
-    if (!detectedIpodMount) {
-      detectedIpodMount = await findIpodMount()
-      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
-    }
-    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
-    const { statfs } = await import('fs/promises')
-    const s = await statfs(detectedIpodMount)
-    const totalBytes = Number(s.blocks) * Number(s.bsize)
-    const freeBytes = Number(s.bavail) * Number(s.bsize)
-    // Report the REAL filesystem. DeviceView hard-coded "Mac OS Extended
-    // (Journaled)" — flatly wrong for Jake's iFlash-modded Mini, which is
-    // FAT32/msdos. That matters beyond cosmetics: FAT32 vs HFS+ changes what a
-    // sync can assume (cluster geometry, the flapping fskit mount, cache
-    // behaviour), and the panel was asserting the opposite of reality.
-    let fsName: string | undefined
-    if (IS_MAC) {
-      try {
-        const { execFile: xf } = await import('child_process')
-        const { promisify: pf } = await import('util')
-        const { stdout } = await pf(xf)('/sbin/mount', [], { timeout: 5000 })
-        const line = stdout.split('\n').find((l: string) => l.includes(` on ${detectedIpodMount} `))
-        const m = line?.match(/\(([a-z0-9_]+)[,)]/i)
-        const raw = m?.[1]?.toLowerCase()
-        fsName = raw === 'msdos' ? 'MS-DOS (FAT32)'
-          : raw === 'hfs' ? 'Mac OS Extended (HFS+)'
-          : raw === 'apfs' ? 'APFS'
-          : raw === 'exfat' ? 'ExFAT'
-          : raw
-      } catch { /* leave undefined — the UI falls back to "Unknown" */ }
-    }
-    return { ok: true, totalBytes, freeBytes, mount: detectedIpodMount, fsName }
-  } catch (err) {
-    return { ok: false, error: String(err) }
-  }
-})
-
-ipcMain.handle('check-ipod-mounted', async () => {
-  try {
-    let mount = await findIpodMount()
-    // findIpodMount scans /Volumes, which can transiently miss a flapping
-    // fskit mount even while it's fully readable — re-stat the last-known
-    // iTunesDB directly before believing it's gone.
-    if (!mount && detectedIpodMount) {
-      try {
-        const { stat } = await import('fs/promises')
-        await stat(join(detectedIpodMount, 'iPod_Control', 'iTunes', 'iTunesDB'))
-        mount = detectedIpodMount
-      } catch { /* genuinely absent this poll */ }
-    }
-    if (mount) {
-      ipodMissStreak = 0
-      detectedIpodMount = mount
-      detectedIpodVolume = volumeNameFromMount(mount)
-      return { mounted: true, name: detectedIpodVolume }
-    }
-    // No mount this poll. If we recently had one, ride out a brief flap
-    // rather than yanking the iPod from the UI — only give up after a few
-    // consecutive misses (a real unplug clears within ~7.5s).
-    if (detectedIpodMount && ipodMissStreak < IPOD_MISS_THRESHOLD) {
-      ipodMissStreak++
-      return { mounted: true, name: detectedIpodVolume }
-    }
-    ipodMissStreak = 0
-    detectedIpodMount = null
-    detectedIpodVolume = null
-    return { mounted: false, name: null }
-  } catch {
-    return { mounted: false, name: null }
-  }
-})
-
-ipc.handle('eject-ipod', async (_e) => {
-  try {
-    // Probe disk if module-level state is stale. Other handlers
-    // (readIpodDatabase, check-ipod-mounted) already do this. Without
-    // the probe, eject silently refused any time state desynced from
-    // disk reality — e.g. after sleep/wake or a sync remount.
-    if (!detectedIpodMount) {
-      detectedIpodMount = await findIpodMount()
-      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
-    }
-    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
-    await ejectVolume(detectedIpodMount)
-    detectedIpodMount = null
-    detectedIpodVolume = null
-    return { ok: true }
-  } catch {
-    return { ok: false, error: 'Eject failed' }
-  }
-}, { refuse: REFUSED_SENDER })
 
 // Read directly from iPod database (used for sync only).
 // If the mount hasn't been detected yet (e.g. load-tracks fires before
@@ -3881,18 +3761,7 @@ async function stageCopyToTmp(srcPath: string, tmpPath: string): Promise<void> {
   } catch { /* fsync/open unsupported on this share — rename still makes it atomic */ }
 }
 
-ipcMain.handle('get-state-conflicts', (): {
-  mode: 'NAS' | 'local-primary'; nasDir: string; localDir: string; nasMounted: boolean; conflicts: StateConflict[];
-} => {
-  return {
-    mode: STATE_IS_NAS ? 'NAS' : 'local-primary',
-    nasDir: NAS_STATE_DIR_PATH,
-    localDir: app.getPath('userData'),
-    nasMounted: isNasMounted(),
-    conflicts: stateConflicts,
-  }
-})
-ipc.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
+async function handleReconcileStateConflicts(event: import('electron').IpcMainInvokeEvent): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> {
   if (!(await nasAvailable())) {
     return { ok: false, pushed: 0, backups: [], error: 'Synology not mounted or not responding — connect /Volumes/JakeShared and retry.' }
   }
@@ -3939,7 +3808,7 @@ ipc.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pu
   sendProgress('verify', '', total)
   await detectStateConflicts()
   return { ok: true, pushed, backups }
-}, { refuse: REFUSED_SENDER })
+}
 
 // 4.5: automatic, silent NAS backup. Jake doesn't want a "local is ahead, go
 // click a button" banner — the backup should just happen. This pushes any
@@ -4944,7 +4813,7 @@ function startLibraryWatcher() {
 }
 
 // Sync: read iPod DB and return NEW tracks/playlists not already in the library
-ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
+async function handleSyncIpodFromDevice(existingIds: number[]): Promise<unknown> {
   try {
     const ipodData = await readIpodDatabase()
     const knownIds = new Set(existingIds)
@@ -4969,7 +4838,7 @@ ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
   } catch (err) {
     return { ok: false, error: String(err), newTracks: [], playlists: [], totalIpod: 0 }
   }
-})
+}
 
 // Read the iPod's actual iTunesDB and return the full track + playlist
 // set. This is what iTunes used to call "On This iPod" — it's what the
@@ -5014,14 +4883,7 @@ ipcMain.handle('brain-status', async () => {
   return { ok: true, ...out }
 })
 
-ipcMain.handle('get-ipod-db-tracks', async () => {
-  try {
-    const ipodData = await readIpodDatabase()
-    return { ok: true, tracks: ipodData.tracks, playlists: ipodData.playlists, total: ipodData.tracks.length }
-  } catch (err) {
-    return { ok: false, error: String(err), tracks: [], playlists: [], total: 0 }
-  }
-})
+
 
 // ── Preview an iPod sync (REVIEW GATE, 2026-07-18) ──
 // Answers "what would this sync actually DO" using the SAME criteria the
@@ -5147,18 +5009,14 @@ const SYNC_HANG_TIMEOUT_MS = 5 * 60 * 1000
 // Reset to false at the top of every new runSyncToIpod call.
 let syncCancelRequested = false
 
-ipc.handle('cancel-sync', async () => {
-  if (!syncInFlight) return { ok: true, wasRunning: false }
-  syncCancelRequested = true
-  return { ok: true, wasRunning: true }
-}, { refuse: REFUSED_SENDER })
+
 
 interface SyncConvertOptions {
   enabled: boolean
   targetKbps: 128 | 192 | 256
 }
 
-ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
+async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }): Promise<unknown> {
   // Same guard as save-library: this one writes to the iPod.
   // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
   // for full concerts). Drop the merged concert track AND any of its constituent
@@ -5209,7 +5067,7 @@ ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, pl
     syncInFlight = false
     syncStartedAt = 0
   }
-}, { refuse: { ok: false, copied: 0, error: 'refused-sender' } as const })
+}
 
 interface SyncReport {
   syncedAt: string
@@ -5291,12 +5149,7 @@ async function writeSyncJournal(phase: string | null): Promise<void> {
 }
 // Pull side (authoritative — no boot race): the renderer asks once its
 // UI is actually mounted.
-ipcMain.handle('get-ipod-sync-journal', async (): Promise<{ phase: string; at?: string } | null> => {
-  try {
-    const j = JSON.parse(await readFile(IPOD_SYNC_JOURNAL_FILE(), 'utf-8')) as { phase?: string; at?: string }
-    return j?.phase ? { phase: j.phase, at: j.at } : null
-  } catch { return null }
-})
+
 // Boot check: an un-cleared journal means the last sync never finished —
 // the iPod's database is stale and the device will misbehave until the
 // user syncs again. Nag every boot until a successful sync clears it.
@@ -8785,17 +8638,6 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   }
 }, { refuse: { ok: false, text: '', error: 'refused-sender' } as const })
 
-// 4.3.2: clear radio memory — wired up to the user's "stop Radio Mode"
-// gesture. Without this the show carries memory across sessions, which
-// can be a feature OR can feel stale if the user wants a fresh start.
-ipc.handle('clear-radio-memory', async () => {
-  try {
-    await clearMemory()
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
 
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
 ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
@@ -8941,17 +8783,6 @@ async function fetchDiscogsCollection() {
     console.error('Discogs fetch error:', err)
   }
 }
-
-ipc.handle('get-listening-memory', async () => getListeningMemory(), { public: true })
-
-// Called when a song finishes playing (not skipped)
-ipc.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) => recordPlay(track), { refuse: undefined })
-
-// Called when a song is skipped (next button pressed before song finishes)
-ipc.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) => recordSkip(track), { refuse: undefined })
-
-// Called when user rates a track highly (4-5 stars)
-ipc.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) => recordRating(track), { refuse: undefined })
 
 
 // Periodically generate new Music Man observations (called after every ~20 plays)
@@ -9759,34 +9590,6 @@ function buildCynthiaSweepHooks() {
   }
 }
 
-ipc.handle('cynthia-get-findings', async (_e, albumKeys: string[]) => {
-  const findings = await getFindingsFor(Array.isArray(albumKeys) ? albumKeys : [])
-  return { ok: true, findings }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('cynthia-dismiss-fix', async (_e, fix: { trackId: number; field: string; newValue: string }) => {
-  if (!fix || typeof fix.trackId !== 'number' || !fix.field) return { ok: false, error: 'invalid fix key' }
-  await dismissFinding(fix)
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('cynthia-get-ledger', async (_e, limit?: number) => {
-  const entries = await getLedger(typeof limit === 'number' ? limit : 200)
-  return { ok: true, entries }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('cynthia-revert-ledger-entry', async (_e, id: string) => {
-  const hooks = buildCynthiaSweepHooks()
-  const albums = cynthiaGetAlbumsSnapshot()
-  const byId = new Map<number, CynthiaScanTrack>()
-  for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
-  return revertLedgerEntry(String(id || ''), hooks.applyOverride, (trackId) => byId.get(trackId))
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('cynthia-sweep-status', async () => {
-  const status = await sweepStatus()
-  return { ok: true, ...status }
-}, { refuse: REFUSED_SENDER })
 
 /** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
  *  specific instructions, library context, taste profile, and recent
@@ -9807,10 +9610,6 @@ ipc.handle('cynthia-sweep-status', async () => {
 
 
 // Music Man chat
-ipc.handle('set-library-context', (_event, ctx: string) => {
-  setLibraryContext(ctx)
-}, { refuse: undefined })
-
 ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
   // 4.5.0-87 — RAG retrieval kicks off in parallel with web search so
@@ -9964,39 +9763,6 @@ This response is shown as text in a chat panel, but the user may click a speaker
     return { ok: false, text: msg, textRaw: msg, error: msg }
   }
 }, { refuse: { ok: false, text: '', textRaw: '', error: 'refused-sender' } as const })
-
-// Music Man playlist generator
-// 4.5: persist the show plan the Toolbar got back from the planner so
-// every per-segment musicman-radio call can inject "tonight's theme +
-// arc + track N of M" into the hosts' prompt. Clear on Radio off so a
-// stale plan never bleeds into the next session.
-ipc.handle('radio-set-show-plan', async (_e, plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => {
-  try {
-    await setShowPlan(plan)
-    return { ok: true }
-  } catch (err: unknown) {
-    return { ok: false, error: safeIpcError(err, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// 4.5 radioV2: expose the unified cast registry to the renderer engine so it
-// resolves speaker → voice id + pill label from ONE source (no duplicated
-// renderer-side voice map). Returns the renderer-relevant subset only.
-ipc.handle('radio-get-cast', async () => {
-  return {
-    ok: true,
-    cast: RADIO_CAST.map((m) => ({ id: m.id, tag: m.tag, label: m.label, voiceId: m.voiceId, kind: m.kind })),
-  }
-}, { public: true })
-
-ipc.handle('radio-clear-show-plan', async () => {
-  try {
-    await clearShowPlan()
-    return { ok: true }
-  } catch (err: unknown) {
-    return { ok: false, error: safeIpcError(err, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
 
 // 4.5: Radio Mode show planner. Before playback starts the hosts
 // generate a 12-15 track SET LIST with a theme + throughline — instead
@@ -11347,32 +11113,6 @@ ipc.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mimeType
 }, { refuse: REFUSED_SENDER })
 
 // import-pick-files registered in ipc/import-ipc.ts
-
-ipcMain.handle('restore-xml-pick-file', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Choose your iTunes Library XML export',
-    properties: ['openFile'],
-    filters: [{ name: 'iTunes XML', extensions: ['xml'] }],
-    defaultPath: join(process.env.HOME || '', 'Desktop'),
-  })
-  if (result.canceled || result.filePaths.length === 0) {
-    return { ok: false, canceled: true }
-  }
-  return { ok: true, path: result.filePaths[0] }
-})
-
-ipcMain.handle('restore-xml-scan', async (_event, xmlPath: string) => {
-  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
-  const mount = `/Volumes/${detectedIpodVolume}`
-  return await runPythonRestore(['--scan', mount, xmlPath])
-})
-
-ipc.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds: number[]) => {
-  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
-  const mount = `/Volumes/${detectedIpodVolume}`
-  const payload = JSON.stringify({ approvedIds })
-  return await runPythonRestore(['--apply', mount, xmlPath], payload)
-}, { refuse: REFUSED_SENDER })
 
 // Metadata overrides persistence — STATE_DIR-resolved (NAS or local).
 function getOverridesPath(): string {
@@ -14334,70 +14074,6 @@ ipcMain.handle('refresh-file-sizes', async (event) => {
   }
 })
 
-// Chat history persistence
-function getChatHistoryPath(): string {
-  return join(app.getPath('userData'), 'chat-history.json')
-}
-
-ipcMain.handle('load-chat-history', async () => {
-  try {
-    const data = await readFile(getChatHistoryPath(), 'utf-8')
-    return { ok: true, conversations: JSON.parse(data) }
-  } catch {
-    return { ok: true, conversations: [] }
-  }
-})
-
-ipc.handle('save-chat-history', async (_event, conversations: unknown[]) => {
-  await mkdir(join(app.getPath('userData')), { recursive: true })
-  await writeFile(getChatHistoryPath(), JSON.stringify(conversations, null, 2), 'utf-8')
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
-
-// Playlist persistence — STATE_DIR-resolved (NAS or local).
-function getPlaylistsPath(): string {
-  return join(STATE_DIR, 'playlists.json')
-}
-
-ipcMain.handle('load-playlists', async () => {
-  // 4.5.0-106: served from cache.
-  return { ok: true, playlists: await playlistsCache.get() }
-})
-
-ipc.handle('save-playlists', async (_event, playlists: unknown[]) => {
-  const lockReason = isSaveLocked()
-  if (lockReason) {
-    console.warn(`[save-playlists] refused (saves locked): ${lockReason}`)
-    return { ok: false, error: 'state-save-locked', reason: lockReason }
-  }
-  // 4.5.0-106: cache update + background flush; IPC returns immediately.
-  playlistsCache.set(playlists)
-  // 4.4.18: playlist edits also propagate. library.json itself doesn't
-  // include playlists (separate file), but the sync script's safety-net
-  // restart of homemini's JakeTunes picks them up alongside any
-  // library.json change. If only playlists changed, the script no-ops
-  // on library.json (mtime-based) and just runs the music rsync —
-  // which is also a near no-op when nothing in audio files changed.
-  triggerSync('playlist')
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
-
-// Claude API stats — exposed for dev/diagnostic surfaces. Renderer can poll
-// or display this in a hidden corner during development. lastResponses is
-// excluded from the wire format (large payloads, not useful in UI).
-ipc.handle('get-claude-stats', async () => {
-  await loadClaudeStats()
-  rolloverIfNewDay()
-  return {
-    ok: true,
-    sessionCallCount,
-    callsToday: claudeStats.callsToday,
-    dailyCeiling: claudeStats.dailyCeiling,
-    lastResetDate: claudeStats.lastResetDate,
-    cachedKeys: Object.keys(claudeStats.lastResponses),
-  }
-}, { public: true })
-
 // Normalize an artist/album string for strict matching: drop edition
 // parens/brackets, a leading "the", and collapse whitespace.
 function normalizeArtTerm(s: string): string {
@@ -16257,24 +15933,6 @@ app.whenReady().then(async () => {
       cancelled: prepareCacheCancelled,
     }
   })
-
-  ipcMain.handle('scan-library-orphans', async () => {
-    try {
-      const result = await scanLibraryOrphans()
-      return { ok: true, ...result }
-    } catch (err) {
-      return { ok: false, error: safeIpcError(err, 'unknown') }
-    }
-  })
-
-  ipc.handle('purge-library-orphans', async (_e) => {
-    try {
-      const { deleted, bytesFreed } = await purgeLibraryOrphans()
-      return { ok: true, deleted, bytesFreed }
-    } catch (err) {
-      return { ok: false, error: safeIpcError(err, 'unknown') }
-    }
-  }, { refuse: REFUSED_SENDER })
 
   ipcMain.handle('scan-dead-tracks', async () => {
     try {
