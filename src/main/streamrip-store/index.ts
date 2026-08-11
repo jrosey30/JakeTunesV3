@@ -15,7 +15,9 @@
 //  user's library format (iPod-safe), same as every other import.
 // ════════════════════════════════════════════════════════════════════════
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
+import type { IpcRegistrar } from '../ipc-register.ts'
+import { REFUSED_SENDER } from '../ipc-register.ts'
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import { join } from 'path'
@@ -24,10 +26,10 @@ import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
-import { refuseIfNotMainWindow } from '../ipc-guard'
 import { isAllowedStreamripUrl } from '../url-safety'
 
 export interface StreamripDeps {
+  ipc: IpcRegistrar
   getMainWindow: () => BrowserWindow | null
   /** Same importer Bandcamp uses; we pass source='streamrip'. */
   importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
@@ -170,6 +172,7 @@ function writeQobuzFields(cfg: string, fields: Record<string, string>): string {
 export interface SearchResult { source: string; mediaType: string; id: string; desc: string }
 
 export function registerStreamripStore(deps: StreamripDeps): void {
+  const { ipc } = deps
   type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string }
 
   // Download stage 1: run a rip subcommand (`url …` or `id …`) into a fresh
@@ -201,7 +204,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: true, staged: { staging, files } }
     } catch (err) {
       if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: 'tool-failed' }
     }
   }
 
@@ -247,7 +250,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: true, staged: { staging, files } }
     } catch (err) {
       if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: 'tool-failed' }
     }
   }
 
@@ -294,7 +297,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const dupes = Array.isArray(summary) ? 0 : ((summary as { dupeCount?: number }).dupeCount ?? 0)
       return { ok: true, imported: importedTracks.length, dupes }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: 'tool-failed' }
     } finally {
       await rm(staged.staging, { recursive: true, force: true }).catch(() => {})
     }
@@ -312,20 +315,20 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   // Abort every in-flight rip process (download or search). The queue marks
   // the item canceled; the killed process's staging dir is cleaned as usual.
-  ipcMain.handle('streamrip:cancel-active', async () => {
+  ipc.handle('streamrip:cancel-active', async () => {
     let killed = 0
     for (const c of activeProcs) { try { c.kill('SIGKILL'); killed++ } catch { /* already gone */ } }
     return { ok: true, killed }
-  })
+  }, { refuse: REFUSED_SENDER })
 
-  ipcMain.handle('streamrip:status', async () => {
+  ipc.handle('streamrip:status', async () => {
     const rip = await resolveRip()
     // When it isn't usable, say WHY — "not installed" and "installed but
     // its Homebrew dependency vanished" need different fixes (2026-08-08).
     return rip
       ? { ok: true, installed: true, version: rip.version }
       : { ok: true, installed: false, reason: await ripDiagnosis() }
-  })
+  }, { public: true })
 
   async function searchCatalog(opts: {
     query: string
@@ -356,21 +359,21 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         .map((r) => ({ source: r.source || source, mediaType: r.media_type || mediaType, id: String(r.id), desc: String(r.desc) }))
       return { ok: true, results }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: 'tool-failed' }
     } finally {
       if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
     }
   }
 
   // Browse: search a source's catalog, return a results list to pick from.
-  ipcMain.handle('streamrip:search', async (_e, opts: { query?: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: SearchResult[]; error?: string }> => {
+  ipc.handle('streamrip:search', async (_e, opts: { query?: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: SearchResult[]; error?: string }> => {
     return searchCatalog({
       query: opts?.query || '',
       source: opts?.source,
       mediaType: opts?.mediaType,
       numResults: opts?.numResults,
     })
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // One-shot: search Qobuz for artist+title, pick the best match, download + import.
   // Used by Listen to the List and the Download view so the renderer doesn't
@@ -391,7 +394,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
   const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipcMain.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
@@ -547,12 +550,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: false, error: `Qobuz only has other versions of “${title}” (${rejectedVersions.slice(0, 3).join(', ')}). Try pasting a link in the Download view.` }
     }
     return { ok: false, error: `Not on Qobuz${wantAlbum ? '' : ' or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Download a picked search result by its streamrip id.
-  ipcMain.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string): Promise<DownloadResult> => {
-    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:download-id', { ok: false, error: 'refused-sender' } as const)
-    if (refused) return refused
+  ipc.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string): Promise<DownloadResult> => {
     if (!source || !mediaType || !id) return { ok: false, error: 'Nothing selected to download.' }
     // IDs from search results are opaque store ids — reject path-like junk.
     if (/[\/\\\0]/.test(String(id)) || String(id).length > 128) {
@@ -565,21 +566,19 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: false, error: 'Unsupported media type.' }
     }
     return runDownload(['id', source, mediaType, id])
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Download a pasted streaming link directly.
-  ipcMain.handle('streamrip:download', async (_e, url: string): Promise<DownloadResult> => {
-    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:download', { ok: false, error: 'refused-sender' } as const)
-    if (refused) return refused
+  ipc.handle('streamrip:download', async (_e, url: string): Promise<DownloadResult> => {
     const link = (url || '').trim()
     if (!isAllowedStreamripUrl(link)) {
       return { ok: false, error: 'Paste a Qobuz, Tidal, Deezer, or YouTube https link.' }
     }
     return runDownload(['url', link])
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Is Qobuz configured? (email + password hash both present)
-  ipcMain.handle('streamrip:get-qobuz', async (): Promise<{ ok: boolean; configured: boolean; email?: string }> => {
+  ipc.handle('streamrip:get-qobuz', async (): Promise<{ ok: boolean; configured: boolean; email?: string }> => {
     try {
       const cfg = await readFile(streamripConfigPath(), 'utf-8')
       const email = readQobuzField(cfg, 'email_or_userid')
@@ -588,14 +587,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch {
       return { ok: true, configured: false }
     }
-  })
+  }, { public: true })
 
   // Save Qobuz creds: hash the password (MD5, what streamrip wants) and write
   // email + hash into config.toml. use_auth_token forced false (email+password
   // mode). Plaintext password is used only to compute the hash, never stored.
-  ipcMain.handle('streamrip:set-qobuz', async (_e, email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
-    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:set-qobuz', { ok: false, error: 'refused-sender' } as const)
-    if (refused) return refused
+  ipc.handle('streamrip:set-qobuz', async (_e, email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
     const e = (email || '').trim()
     const p = password || ''
     if (!e || !p) return { ok: false, error: 'Enter both your Qobuz email and password.' }
@@ -609,15 +606,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch {
       return { ok: false, error: 'Could not save Qobuz credentials.' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Google-SSO Qobuz: there is no password, so authenticate with the
   // user_auth_token Qobuz hands the logged-in web player (streamrip's
   // use_auth_token=true mode → user_id + token). The token IS the credential,
   // stored as-is; nothing to hash.
-  ipcMain.handle('streamrip:set-qobuz-token', async (_e, userId: string, token: string): Promise<{ ok: boolean; error?: string }> => {
-    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:set-qobuz-token', { ok: false, error: 'refused-sender' } as const)
-    if (refused) return refused
+  ipc.handle('streamrip:set-qobuz-token', async (_e, userId: string, token: string): Promise<{ ok: boolean; error?: string }> => {
     const u = (userId || '').trim()
     const t = (token || '').trim()
     if (!u || !t) return { ok: false, error: 'Enter both your Qobuz user ID and auth token.' }
@@ -630,5 +625,5 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch {
       return { ok: false, error: 'Could not save Qobuz token.' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 }

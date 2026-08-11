@@ -15,7 +15,9 @@
  * same ipod-audio:// protocol the library uses.
  */
 
-import { ipcMain, app, shell } from 'electron'
+import { app, shell } from 'electron'
+import type { IpcRegistrar } from './ipc-register.ts'
+import { REFUSED_SENDER } from './ipc-register.ts'
 import { readFile, writeFile, mkdir, unlink, stat, rename } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -32,6 +34,7 @@ const execP = promisify(execFile)
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
 
 export interface MixtapesHost {
+  ipc: IpcRegistrar
   claudeCall: ClaudeCall
   musicManCore: string
   /** Season tapes: real listening data, supplied by index.ts. */
@@ -505,15 +508,16 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
 }
 
 export function registerMixtapesIpc(host: MixtapesHost): void {
+  const { ipc } = host
   // Season tapes: check shortly after boot (let the app settle), then daily.
   setTimeout(() => { void maybeDubSeasonTape(host).catch(() => {}) }, 90_000)
   setInterval(() => { void maybeDubSeasonTape(host).catch(() => {}) }, 24 * 60 * 60 * 1000)
 
-  ipcMain.handle('mixtape-voices', async () => {
+  ipc.handle('mixtape-voices', async () => {
     return { ok: true, voices: mixtapeVoiceRoster().map((v) => ({ id: v.id, name: v.name })) }
-  })
+  }, { public: true })
 
-  ipcMain.handle('mixtapes-list', async () => {
+  ipc.handle('mixtapes-list', async () => {
     try {
       const mixtapes = await loadMixtapes()
       return { ok: true, mixtapes }
@@ -521,9 +525,9 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       console.error('[mixtapes] refusing to serve a possibly-torn store:', err)
       return { ok: false, mixtapes: [] }
     }
-  })
+  }, { public: true })
 
-  ipcMain.handle('build-mixtape', async (
+  ipc.handle('build-mixtape', async (
     _e,
     tracks: MixtapeInputTrack[],
     tapeLength: 60 | 90 | 120,
@@ -533,13 +537,13 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
     try {
       return await buildMixtapeProposal(host, tracks, dedication, note)
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'mixtape build failed' }
+      return { ok: false, error: 'api-failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Upsert by id. The renderer sends the full record (from a confirmed
   // build proposal, or an edit like attaching an intro).
-  ipcMain.handle('mixtape-save', async (_e, tape: Mixtape) => {
+  ipc.handle('mixtape-save', async (_e, tape: Mixtape) => {
     try {
       // A tape is valid if it has EITHER shape: `tracks` (2026-08-08 rules)
       // or the two side arrays (everything Jake recorded before that).
@@ -561,11 +565,11 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'save failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Delete gates on the stable mixtape id (identity, not text). The
   // renderer confirms with the user first (ConfirmDialog).
-  ipcMain.handle('mixtape-delete', async (_e, id: string) => {
+  ipc.handle('mixtape-delete', async (_e, id: string) => {
     try {
       const all = await loadMixtapes()
       const gone = all.find((m) => m.id === id)
@@ -581,7 +585,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'delete failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // ── Dub to cassette (Jake: "that tape is recorded onto an actual
   // cassette tape") — render each side as ONE continuous audio file:
@@ -589,7 +593,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
   // tape cut, Jake's intro at the head of Side A, talkovers mixed OVER
   // the music at their pinned spots. Play the file out the headphone
   // jack into a real deck; the cassette adds its own character.
-  ipcMain.handle('dub-mixtape', async (
+  ipc.handle('dub-mixtape', async (
     _e,
     payload: {
       title: string
@@ -678,12 +682,12 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       console.warn('[mixtapes] dub failed:', err)
       return { ok: false, error: err instanceof Error ? err.message : 'dub failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Raw mic capture in → 1979 cassette voice out. Returns the processed
   // path; the renderer previews it via ipod-audio:// and attaches it to
   // the tape with mixtape-save.
-  ipcMain.handle('save-mixtape-intro', async (_e, data: ArrayBuffer | Uint8Array, voiceId?: string) => {
+  ipc.handle('save-mixtape-intro', async (_e, data: ArrayBuffer | Uint8Array, voiceId?: string) => {
     const stamp = Date.now()
     const dir = INTROS_DIR()
     const rawPath = join(dir, `raw-${stamp}.webm`)
@@ -713,5 +717,5 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       await unlink(rawPath).catch(() => {})
       if (stsPath) await unlink(stsPath).catch(() => {})
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 }

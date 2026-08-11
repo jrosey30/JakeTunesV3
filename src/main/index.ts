@@ -42,8 +42,8 @@ import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safet
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
-import { refuseIfNotMainWindow } from './ipc-guard'
-import { createIpcRegistrar } from './ipc-register.ts'
+import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
+import { safeIpcError } from './safe-ipc-error.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
 import { registerSettingsIpc } from './ipc/settings-ipc.ts'
@@ -1046,7 +1046,7 @@ ipcMain.handle('load-artist-aliases', async (): Promise<{ ok: boolean; aliases: 
     return { ok: true, aliases: {} }   // missing/torn → empty map (no grouping overrides)
   }
 })
-ipcMain.handle('save-artist-aliases', async (_e, aliases: Record<string, string>): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('save-artist-aliases', async (_e, aliases: Record<string, string>): Promise<{ ok: boolean; error?: string }> => {
   try {
     const clean: Record<string, string> = {}
     for (const [k, v] of Object.entries(aliases || {})) {
@@ -1061,9 +1061,9 @@ ipcMain.handle('save-artist-aliases', async (_e, aliases: Record<string, string>
     await renameFS(tmp, path)
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'save failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Metadata hierarchy Phase 2 — AI-assisted artist grouping. Claude classifies
 // the library's marker tags ("X & Y") as persona / collaboration / standalone
@@ -1071,7 +1071,7 @@ ipcMain.handle('save-artist-aliases', async (_e, aliases: Record<string, string>
 // renderer shows the proposals for the user to approve, then writes the
 // approved personas to artist-aliases.json. Conservative system prompt: prefer
 // "standalone"/"collaboration" over a wrong merge.
-ipcMain.handle('classify-artist-groups', async (): Promise<{ ok: boolean; proposals?: GroupingProposal[]; candidateCount?: number; error?: string }> => {
+ipc.handle('classify-artist-groups', async (): Promise<{ ok: boolean; proposals?: GroupingProposal[]; candidateCount?: number; error?: string }> => {
   try {
     const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
     const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
@@ -1101,9 +1101,9 @@ ipcMain.handle('classify-artist-groups', async (): Promise<{ ok: boolean; propos
     const text = block && block.type === 'text' ? block.text : ''
     return { ok: true, proposals: parseGroupingResponse(text), candidateCount: candidates.length }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'classify failed' }
+    return { ok: false, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Metadata hierarchy — related-artists graph (associate, don't merge). On-demand
 // per artist page, cached a day (band lineups don't change). Claude (Haiku —
@@ -1130,7 +1130,7 @@ ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: 
     relatedArtistsCache.set(key, { related, at: Date.now() })
     return { ok: true, related }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'related-artists failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1141,7 +1141,7 @@ ipcMain.handle('get-taste-fingerprint', async () => {
     const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
     return { ok: true, fingerprint: computeTasteFingerprint(Array.isArray(lib.tracks) ? lib.tracks : []) }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'taste failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1176,7 +1176,7 @@ ipcMain.handle('get-friends', async () => {
     b.adds - a.adds)
   return { ok: true, friends }
 })
-ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
+ipc.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
   const key = String(name || '').trim().toLowerCase()
   if (!key) return { ok: false }
   await friendsCache.update((cur) => {
@@ -1189,7 +1189,7 @@ ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tos
     return cur
   })
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // macOS Contacts names for the "From" typeahead. One osascript JXA call
 // (triggers the system's one-time Automation permission prompt for Contacts);
@@ -1216,7 +1216,7 @@ ipcMain.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] 
 // the candidate; nothing is auto-added from a guess.
 // Host allowlist + private-IP deny: a compromised renderer must not turn
 // this into LAN SSRF (homemini, routers, metadata services).
-ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => {
+ipc.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => {
   const u = String(rawUrl || '').trim()
   if (!isAllowedCaptureUrl(u)) return { ok: false }
   const get = async (url: string): Promise<string | null> => {
@@ -1262,7 +1262,7 @@ ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok:
   } catch {
     return { ok: false }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Jake's thumbs-down: suppress this artist from Discovery permanently and
 // drop them from the current cache so the card vanishes on next read.
@@ -1293,7 +1293,7 @@ ipcMain.handle('discovery-learned', async () => {
 
     return { ok: true, summary: summariseLearning(rows, notForMe, weightsAt, Date.now()) }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'could not read the ledger' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1319,7 +1319,7 @@ ipcMain.handle('discovery-learned', async () => {
  * The renderer passes the card key so the rest can be precise; without one it
  * falls back to resting nothing rather than banning an artist you own.
  */
-ipcMain.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) => {
+ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
 
@@ -1344,15 +1344,15 @@ ipcMain.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: stri
     radarCache.candidates = radarCache.candidates.filter((c: { artist: string }) => normArtistKey(c.artist) !== key)
   }
   return { ok: true, scope: owned ? 'card' : 'artist' }
-})
+}, { refuse: REFUSED_SENDER })
 
 /** Un-suppress an artist — the undo that never existed. */
-ipcMain.handle('discovery-allow-again', async (_e, artist: string) => {
+ipc.handle('discovery-allow-again', async (_e, artist: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
   await discoveryFeedbackCache.update((cur) => { delete cur.notForMe[key]; return cur })
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Discover feed v2 — typed, multi-lane (song/album/artist × new/old). ──
 // See src/main/discover-feed.ts for the grounding rules. Replaces the
@@ -1633,7 +1633,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     }
     return { ok: true, lanes, generatedAt: nowMs }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'discover failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   } finally {
     discoverGenInFlight = false
   }
@@ -1825,7 +1825,7 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
     radarCache = { candidates, generatedAt: Date.now(), fingerprintSummary: fp.summary, anchors }
     return { ok: true, candidates, generatedAt: radarCache.generatedAt, fingerprintSummary: fp.summary, anchors }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'radar failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1881,7 +1881,7 @@ ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
     rediscoveryCache = { at: Date.now(), picks: pitched }
     return { ok: true, picks: pitched }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'rediscovery failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -2154,7 +2154,7 @@ ipcMain.handle('get-notable-releases', async (): Promise<{ ok: boolean; items: M
 // the same window otherwise. Allowlisted to http/https schemes so a
 // corrupted renderer can't ask main to `open` arbitrary file:// or
 // custom-scheme URLs.
-ipcMain.handle('open-external-url', async (_e, url: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('open-external-url', async (_e, url: string): Promise<{ ok: boolean; error?: string }> => {
   if (typeof url !== 'string') return { ok: false, error: 'invalid url' }
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'only http(s) urls allowed' }
   try {
@@ -2172,7 +2172,7 @@ ipcMain.handle('open-external-url', async (_e, url: string): Promise<{ ok: boole
   } catch {
     return { ok: false, error: 'failed to open url' }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // The iMessage-capture setup chip's button. Fixed target, zero renderer
 // input — the http(s)-only rule above stays intact for everything else.
@@ -2213,7 +2213,7 @@ function readActiveHostSync(): 'mm' | 'megan' {
 // bubble can attribute a mic-button comment to the RIGHT persona — the
 // mic button routes through buildMusicManPrompt(), which swaps to
 // Megan when she's the chosen host, so the bubble must follow.
-ipcMain.handle('get-active-host', () => readActiveHostSync())
+ipc.handle('get-active-host', () => readActiveHostSync(), { public: true })
 
 // ── Persistent audio log ──────────────────────────────────────────────
 // Every diagnosis of the "it just sits at 0:00" failure needed a debugger
@@ -2238,9 +2238,7 @@ initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTa
 // Update the Claude daily ceiling immediately (mirrors what's saved in
 // app-settings.json). The wrapper at top of file reads claudeStats so
 // we update that in-memory and on disk.
-ipcMain.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'set-claude-daily-ceiling', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
+ipc.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
   await loadClaudeStats()
   // Hard max 2000 without a rebuild — the old 10000 ceiling was raisable
   // by any frame that could invoke IPC and burned real API budget.
@@ -2248,7 +2246,7 @@ ipcMain.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
   claudeStats.dailyCeiling = safe
   await saveClaudeStats()
   return { ok: true, dailyCeiling: safe }
-})
+}, { refuse: REFUSED_SENDER })
 
 async function createWindow(): Promise<void> {
   const saved = await loadWindowState()
@@ -2277,7 +2275,11 @@ async function createWindow(): Promise<void> {
       // cover ipod-audio / album-art / etc., so SOP stays on.
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      // Preload only imports electron APIs (contextBridge, ipcRenderer,
+      // webUtils) — all available under Chromium sandbox. Verified against
+      // Electron 30 sandbox docs + this preload's import surface; no bare
+      // Node builtins (fs/path/child_process) in preload.
+      sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
       // Don't throttle the renderer when JakeTunes loses focus or the
@@ -3380,9 +3382,7 @@ ipcMain.handle('check-ipod-mounted', async () => {
   }
 })
 
-ipcMain.handle('eject-ipod', async (_e) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'eject-ipod', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
+ipc.handle('eject-ipod', async (_e) => {
   try {
     // Probe disk if module-level state is stale. Other handlers
     // (readIpodDatabase, check-ipod-mounted) already do this. Without
@@ -3400,7 +3400,7 @@ ipcMain.handle('eject-ipod', async (_e) => {
   } catch {
     return { ok: false, error: 'Eject failed' }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Read directly from iPod database (used for sync only).
 // If the mount hasn't been detected yet (e.g. load-tracks fires before
@@ -3892,7 +3892,7 @@ ipcMain.handle('get-state-conflicts', (): {
     conflicts: stateConflicts,
   }
 })
-ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
+ipc.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
   if (!(await nasAvailable())) {
     return { ok: false, pushed: 0, backups: [], error: 'Synology not mounted or not responding — connect /Volumes/JakeShared and retry.' }
   }
@@ -3939,7 +3939,7 @@ ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean
   sendProgress('verify', '', total)
   await detectStateConflicts()
   return { ok: true, pushed, backups }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5: automatic, silent NAS backup. Jake doesn't want a "local is ahead, go
 // click a button" banner — the backup should just happen. This pushes any
@@ -4219,7 +4219,7 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     await rename(tmp, fp)                                  // atomic: real file → symlink
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
 // Pull a streamed track's real bytes down from homemini into a local file (the
@@ -4242,7 +4242,7 @@ async function pinStreamedTrackFromHomemini(ipodPath: string): Promise<{ ok: boo
     await rename(tmp, fp)                                  // atomic: symlink → real file
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
 
@@ -4325,7 +4325,7 @@ ipcMain.handle('load-downloads-state', async (): Promise<{ pinned: string[]; str
   return { pinned: await readPins(), streaming }
 })
 
-ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
     if ((await readStreamSource()) === 'homemini') {
       // Laptop homemini mode: pull the real bytes over HTTP from homemini.
@@ -4348,11 +4348,11 @@ ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boo
     if (!pins.includes(ipodPath)) { pins.push(ipodPath); await writePins(pins) }
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
     if ((await readStreamSource()) === 'homemini') {
       // Laptop homemini mode: re-stream. convertTrackToStreamed hash-verifies
@@ -4378,9 +4378,9 @@ ipcMain.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: bo
     await writePins((await readPins()).filter((p) => p !== ipodPath))
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.4.85: at app boot, read library.json and seed the codecByAbsPath map
 // from every track that has a `codec` field. Imports made before this
@@ -4660,19 +4660,17 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
 // overlap: an 8.6 MB pretty-printed write to SMB can outlast the next debounce.
 let librarySaveChain: Promise<unknown> = Promise.resolve()
 
-ipcMain.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+ipc.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
   // Only our own top-level window may rewrite the library. `ipcMain.handle`
   // answers any frame in the app, and the Bandcamp store runs a remote page
   // in a <webview> in this session.
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'save-library', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
   const run = librarySaveChain.then(
     () => saveLibraryImpl(tracks, playlists, force),
     () => saveLibraryImpl(tracks, playlists, force),
   )
   librarySaveChain = run.catch(() => {})
   return run
-})
+}, { refuse: REFUSED_SENDER })
 
 async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?: boolean) {
   // Bug #1 guard: if we booted in local-fallback mode and NAS later
@@ -5149,21 +5147,19 @@ const SYNC_HANG_TIMEOUT_MS = 5 * 60 * 1000
 // Reset to false at the top of every new runSyncToIpod call.
 let syncCancelRequested = false
 
-ipcMain.handle('cancel-sync', async () => {
+ipc.handle('cancel-sync', async () => {
   if (!syncInFlight) return { ok: true, wasRunning: false }
   syncCancelRequested = true
   return { ok: true, wasRunning: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 interface SyncConvertOptions {
   enabled: boolean
   targetKbps: 128 | 192 | 256
 }
 
-ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
+ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
   // Same guard as save-library: this one writes to the iPod.
-  const refusedSync = refuseIfNotMainWindow(_e, mainWindow, 'sync-to-ipod', { ok: false, copied: 0, error: 'refused-sender' } as const)
-  if (refusedSync) return refusedSync
   // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
   // for full concerts). Drop the merged concert track AND any of its constituent
   // songs not individually reimported (promoted). A promoted song is a normal
@@ -5213,7 +5209,7 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     syncInFlight = false
     syncStartedAt = 0
   }
-})
+}, { refuse: { ok: false, copied: 0, error: 'refused-sender' } as const })
 
 interface SyncReport {
   syncedAt: string
@@ -6251,7 +6247,7 @@ ipcMain.handle('alac-compat-scan', async () => {
   })
 })
 
-ipcMain.handle('alac-compat-fix', async () => {
+ipc.handle('alac-compat-fix', async () => {
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
   return await new Promise<{ ok: boolean; error?: string; summary?: string }>((resolve) => {
     const py = spawn(PYTHON_CMD ?? 'python3', [script, '--apply'])
@@ -6283,7 +6279,7 @@ ipcMain.handle('alac-compat-fix', async () => {
       }
     })
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Import tracks from dropped files ──
 // Music library storage — Brief 011b three-tier resolution:
@@ -7120,9 +7116,7 @@ async function importOneFile(
 // this once per item, in series, with retry on failure. Folders are
 // resolved before enqueuing in the renderer so this only ever sees
 // individual audio files.
-ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'import-track', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
+ipc.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
   // Session allowlist — path must have come from the file picker, a
   // drag-drop grant (webUtils), inbox emission, or folder expand.
   if (!isImportPathAllowed(srcPath)) {
@@ -7211,7 +7205,7 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
   }
 
   return r
-})
+}, { refuse: REFUSED_SENDER })
 
 // One-shot audio analysis for a single track. Used by §2.4b's backfill
 // scan UI (renderer drives the loop) and for any future on-demand
@@ -7221,7 +7215,7 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
 // Takes the track's colon-format path (the on-disk format used in
 // library.json); main resolves to an absolute path because renderer
 // doesn't know LOCAL_MOUNT.
-ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, fingerprint: string) => {
+ipc.handle('analyze-track', async (_e, trackId: number, colonPath: string, fingerprint: string) => {
   // Brief 010b: same null guard as processAudioAnalysisJob — skip
   // entirely (no sentinel write) when no librosa-equipped Python was
   // found at startup, so the failure is surfaced loud and the track
@@ -7247,10 +7241,10 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
   try {
     await persistOverrideFields(trackId, fields, fingerprint)
   } catch (err) {
-    return { ok: false, error: `persist failed: ${err instanceof Error ? err.message : err}` }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
   return result
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 010 Phase 4: queue-based audio analysis IPCs. The renderer
 // backfill button uses these instead of calling analyze-track per-track
@@ -7258,7 +7252,7 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
 // persistent queue (Phase 2) then handle pause/resume + survive-restart
 // for free. Renderer sends colon-path; main resolves to absolute path
 // using the same logic the analyze-track handler uses.
-ipcMain.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
+ipc.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
   // Dedupe against a Set instead of re-scanning the array per job, and persist
@@ -7276,7 +7270,7 @@ ipcMain.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: 
   await persistQueue()
   kickAudioAnalysisWorker()
   return { ok: true, enqueued, totalQueued: audioAnalysisQueue.length }
-})
+}, { refuse: REFUSED_SENDER })
 
 ipcMain.handle('audio-analysis:status', async () => {
   return {
@@ -7287,18 +7281,16 @@ ipcMain.handle('audio-analysis:status', async () => {
   }
 })
 
-ipcMain.handle('audio-analysis:clear-queue', async () => {
+ipc.handle('audio-analysis:clear-queue', async () => {
   audioAnalysisQueue.length = 0
   await persistQueue()
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // import-resolve-paths + import-pick-files + import-allow-dropped-paths
 // registered in ipc/import-ipc.ts (session allowlist grants).
 
-ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'import-tracks', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
+ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
   if (!Array.isArray(filePaths) || filePaths.some((p) => !isImportPathAllowed(p))) {
     console.warn('[import-tracks] refused non-allowlisted path(s)')
     return { ok: false, error: 'path-not-allowed' }
@@ -7411,7 +7403,7 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   }
 
   return { ok: true, tracks: imported, skippedDupes, artwork }
-})
+}, { refuse: REFUSED_SENDER })
 
 const MIME_TYPES: Record<string, string> = {
   '.mp3': 'audio/mpeg',
@@ -8113,9 +8105,7 @@ protocol.registerSchemesAsPrivileged([
 
 // ElevenLabs TTS
 const ttsRateBucket = new Map<string, number[]>()
-ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
-  const refused = refuseIfNotMainWindow(_event, mainWindow, 'musicman-speak', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
+ipc.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
   // Cap spend: 60 TTS calls / rolling minute is enough for DJ Mode +
   // one-shots; a runaway or XSS'd renderer cannot empty the ElevenLabs wallet.
   if (!allowWithinRateLimit(ttsRateBucket, 'musicman-speak', 60, 60_000)) {
@@ -8241,12 +8231,12 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
         console.warn(`[TTS] ${model} threw for voice ${voice.slice(0, 8)}…: ${lastError}`)
       }
     }
-    return { ok: false, error: lastError || 'all TTS models failed' }
+    return { ok: false, error: safeIpcError(lastError || 'all TTS models failed', 'api-failed') }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Music Man DJ commentary
 // 4.5: hover-prefetch of artist facts. Wired to the mic button hover so
@@ -8255,14 +8245,14 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
 // 1500 ms sooner. Fire-and-forget — the handler returns immediately
 // (resolving once the lookup either hits cache or completes), and the
 // renderer never depends on the return value.
-ipcMain.handle('musicman-prefetch-facts', async (_event, track: { artist: string; album: string }) => {
+ipc.handle('musicman-prefetch-facts', async (_event, track: { artist: string; album: string }) => {
   try {
     await searchWebCached(`${track.artist} musician`, track.album)
     return { ok: true }
   } catch {
     return { ok: false }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5: streaming variant of musicman-dj for the mic button. Same prompt
 // + persona logic as the non-streaming handler above, but emits each
@@ -8272,7 +8262,7 @@ ipcMain.handle('musicman-prefetch-facts', async (_event, track: { artist: string
 // (Stephen-only) so the renderer can fire TTS and audio playback on the
 // completed string. Non-streaming handler stays for DJ Mode transitions
 // where the auto-DJ doesn't need the typing UX.
-ipcMain.handle('musicman-dj-streaming', async (event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
+ipc.handle('musicman-dj-streaming', async (event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
   const isStephen = persona === 'stephen'
   const djInstructions = isStephen
     ? `A track is on. Give a Stephen Hands DJ comment. Pure Stephen voice — short, hyped, party-first. Usually one beat is the whole comment; two beats if the second one earns it. NEVER pad to hit a meter; never explain a banger.`
@@ -8338,12 +8328,12 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for f
     return { ok: true, text }
   } catch (err: unknown) {
     void saveClaudeStats()
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
+ipc.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
   // 4.4.0: persona override. The mic button (one-shot commentary on the
   // current track) keeps Music Man as the host. DJ Mode (continuous
   // AI-DJ between-track commentary) routes through Stephen Hands —
@@ -8424,10 +8414,10 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
     }
     return { ok: true, text, transition }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}` }
+    const msg = safeIpcError(err, 'api-failed')
+    return { ok: false, text: msg, error: msg }
   }
-})
+}, { refuse: { ok: false, text: '', error: 'refused-sender' } as const })
 
 // Music Man Radio Mode — between-song commentary in classic FM-radio
 // style (call sign, station ID, back-announce, hype-up). Distinct from
@@ -8438,7 +8428,7 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
 // `opener=true` flips the prompt into "welcome to the show" mode for
 // the very first segment when the user clicks Radio on. Without this
 // the show feels like it starts mid-sentence.
-ipcMain.handle('musicman-radio', async (_event,
+ipc.handle('musicman-radio', async (_event,
   track: { title: string; artist: string; album: string; genre: string; year: string | number },
   nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number },
   opener?: boolean,
@@ -8790,25 +8780,25 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     }
     return { ok: true, text }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}` }
+    const msg = safeIpcError(err, 'api-failed')
+    return { ok: false, text: msg, error: msg }
   }
-})
+}, { refuse: { ok: false, text: '', error: 'refused-sender' } as const })
 
 // 4.3.2: clear radio memory — wired up to the user's "stop Radio Mode"
 // gesture. Without this the show carries memory across sessions, which
 // can be a feature OR can feel stale if the user wants a fresh start.
-ipcMain.handle('clear-radio-memory', async () => {
+ipc.handle('clear-radio-memory', async () => {
   try {
     await clearMemory()
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
-ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
+ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
   // 4.5.0-88 — RAG candidate pool for DJ-set. No user mood string
   // here (the IPC just says "pick a set"), so seed with a generic
   // danceable-vibe query to bias retrieval toward party-flow tracks
@@ -8873,10 +8863,10 @@ Rules:
     }
     return { ok: false, error: 'Could not parse DJ set' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Discogs Collection — Music Man knows your vinyl/CD collection ──
 const DISCOGS_CACHE_PATH = join(app.getPath('userData'), 'discogs-collection.json')
@@ -8952,16 +8942,16 @@ async function fetchDiscogsCollection() {
   }
 }
 
-ipcMain.handle('get-listening-memory', async () => getListeningMemory())
+ipc.handle('get-listening-memory', async () => getListeningMemory(), { public: true })
 
 // Called when a song finishes playing (not skipped)
-ipcMain.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) => recordPlay(track))
+ipc.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) => recordPlay(track), { refuse: undefined })
 
 // Called when a song is skipped (next button pressed before song finishes)
-ipcMain.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) => recordSkip(track))
+ipc.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) => recordSkip(track), { refuse: undefined })
 
 // Called when user rates a track highly (4-5 stars)
-ipcMain.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) => recordRating(track))
+ipc.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) => recordRating(track), { refuse: undefined })
 
 
 // Periodically generate new Music Man observations (called after every ~20 plays)
@@ -9539,11 +9529,11 @@ Investigate. Use your tools only for what the evidence doesn't already answer. T
       rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
     }
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
 
-ipcMain.handle('cynthia-investigate', async (_event, input: CynthiaInvestigateInput) => {
+ipc.handle('cynthia-investigate', async (_event, input: CynthiaInvestigateInput) => {
   if (!process.env.ANTHROPIC_API_KEY) {
     return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
   }
@@ -9552,7 +9542,7 @@ ipcMain.handle('cynthia-investigate', async (_event, input: CynthiaInvestigateIn
     return { ok: false, error: 'Cynthia needs a prompt and at least one track in scope.' }
   }
   return runCynthiaInvestigation(userPrompt, scope)
-})
+}, { refuse: REFUSED_SENDER })
 
 // Conversational front of Cynthia. Haiku 4.5 talks to the user in short
 // replies. When the user wants something checked or fixed, Haiku calls
@@ -9591,7 +9581,7 @@ interface CynthiaChatInput {
   messages: { role: 'user' | 'assistant'; content: string }[]
 }
 
-ipcMain.handle('cynthia-chat', async (_event, input: CynthiaChatInput) => {
+ipc.handle('cynthia-chat', async (_event, input: CynthiaChatInput) => {
   if (!process.env.ANTHROPIC_API_KEY) {
     return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
   }
@@ -9690,21 +9680,21 @@ ${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)
       } : null,
     }
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // After the user approves Cynthia's fixes, the renderer calls this so her
 // summary lands in Music Man's rolling memory ("Recently you said...") and
 // her own log. Now Music Man can casually reference the work in chat:
 // "yeah, my archivist sorted out the Pink Floyd thing yesterday."
-ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale: string; summary?: string }) => {
+ipc.handle('cynthia-report-to-musicman', async (_event, payload: { rationale: string; summary?: string }) => {
   const text = (payload?.rationale || payload?.summary || '').trim()
   if (!text) return { ok: false, error: 'Empty report' }
   noteCynthiaUtterance(text)
   noteMusicManUtterance('cynthia-report', `[Cynthia, archivist] ${text}`)
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ─────────────────────────────────────────────────────────────────────
 // Cynthia overhaul — background sweep wiring + IPC family.
@@ -9769,34 +9759,34 @@ function buildCynthiaSweepHooks() {
   }
 }
 
-ipcMain.handle('cynthia-get-findings', async (_e, albumKeys: string[]) => {
+ipc.handle('cynthia-get-findings', async (_e, albumKeys: string[]) => {
   const findings = await getFindingsFor(Array.isArray(albumKeys) ? albumKeys : [])
   return { ok: true, findings }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('cynthia-dismiss-fix', async (_e, fix: { trackId: number; field: string; newValue: string }) => {
+ipc.handle('cynthia-dismiss-fix', async (_e, fix: { trackId: number; field: string; newValue: string }) => {
   if (!fix || typeof fix.trackId !== 'number' || !fix.field) return { ok: false, error: 'invalid fix key' }
   await dismissFinding(fix)
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('cynthia-get-ledger', async (_e, limit?: number) => {
+ipc.handle('cynthia-get-ledger', async (_e, limit?: number) => {
   const entries = await getLedger(typeof limit === 'number' ? limit : 200)
   return { ok: true, entries }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('cynthia-revert-ledger-entry', async (_e, id: string) => {
+ipc.handle('cynthia-revert-ledger-entry', async (_e, id: string) => {
   const hooks = buildCynthiaSweepHooks()
   const albums = cynthiaGetAlbumsSnapshot()
   const byId = new Map<number, CynthiaScanTrack>()
   for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
   return revertLedgerEntry(String(id || ''), hooks.applyOverride, (trackId) => byId.get(trackId))
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('cynthia-sweep-status', async () => {
+ipc.handle('cynthia-sweep-status', async () => {
   const status = await sweepStatus()
   return { ok: true, ...status }
-})
+}, { refuse: REFUSED_SENDER })
 
 /** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
  *  specific instructions, library context, taste profile, and recent
@@ -9817,11 +9807,11 @@ ipcMain.handle('cynthia-sweep-status', async () => {
 
 
 // Music Man chat
-ipcMain.handle('set-library-context', (_event, ctx: string) => {
+ipc.handle('set-library-context', (_event, ctx: string) => {
   setLibraryContext(ctx)
-})
+}, { refuse: undefined })
 
-ipcMain.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
+ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
   // 4.5.0-87 — RAG retrieval kicks off in parallel with web search so
   // both round trips overlap. The retrieval result is injected as a
@@ -9970,43 +9960,43 @@ This response is shown as text in a chat panel, but the user may click a speaker
     if (text) noteMusicManUtterance('chat', text)
     return { ok: true, text, textRaw, createdPlaylist }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}`, textRaw: `Error: ${msg}` }
+    const msg = safeIpcError(err, 'api-failed')
+    return { ok: false, text: msg, textRaw: msg, error: msg }
   }
-})
+}, { refuse: { ok: false, text: '', textRaw: '', error: 'refused-sender' } as const })
 
 // Music Man playlist generator
 // 4.5: persist the show plan the Toolbar got back from the planner so
 // every per-segment musicman-radio call can inject "tonight's theme +
 // arc + track N of M" into the hosts' prompt. Clear on Radio off so a
 // stale plan never bleeds into the next session.
-ipcMain.handle('radio-set-show-plan', async (_e, plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => {
+ipc.handle('radio-set-show-plan', async (_e, plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => {
   try {
     await setShowPlan(plan)
     return { ok: true }
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5 radioV2: expose the unified cast registry to the renderer engine so it
 // resolves speaker → voice id + pill label from ONE source (no duplicated
 // renderer-side voice map). Returns the renderer-relevant subset only.
-ipcMain.handle('radio-get-cast', async () => {
+ipc.handle('radio-get-cast', async () => {
   return {
     ok: true,
     cast: RADIO_CAST.map((m) => ({ id: m.id, tag: m.tag, label: m.label, voiceId: m.voiceId, kind: m.kind })),
   }
-})
+}, { public: true })
 
-ipcMain.handle('radio-clear-show-plan', async () => {
+ipc.handle('radio-clear-show-plan', async () => {
   try {
     await clearShowPlan()
     return { ok: true }
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5: Radio Mode show planner. Before playback starts the hosts
 // generate a 12-15 track SET LIST with a theme + throughline — instead
@@ -10035,7 +10025,7 @@ ipcMain.handle('radio-clear-show-plan', async () => {
 // 87 tracks of jazz, 142 of hip-hop" so the show can lean into the
 // listener's actual collection shape rather than reading the prompt
 // list literally.
-ipcMain.handle('musicman-radio-plan', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => {
+ipc.handle('musicman-radio-plan', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => {
   // ── Library digest ───────────────────────────────────────────────
   const recentSet = new Set(recentPlayedIds || [])
   const eligibleTracks = tracks.filter(t => !recentSet.has(t.id))
@@ -10173,12 +10163,12 @@ CRAFT RULES:
     }
     return { ok: true, theme: attempt.theme, throughline: attempt.throughline, trackIds: attempt.trackIds }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => {
+ipc.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => {
   // 4.5: serialize each row with play signals so Claude can weight
   // picks by listening behaviour. Without these the model only sees
   // metadata and falls back to clustering by the first few artists
@@ -10475,10 +10465,10 @@ CRAFT RULES (for non-canon mood requests):
     if (attempt.commentary) noteMusicManUtterance('playlist', attempt.commentary)
     return { ok: true, name: attempt.name, commentary: attempt.commentary, trackIds: finalIds }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── 4.4.48: Weekly picks cache + variety enforcement ──────────────────
 //
@@ -10793,7 +10783,7 @@ Rules:
 
 // 4.4.48: thin handler — getOrGeneratePicks owns the weekly cache +
 // variety pass. `force` (from the Regenerate button) bypasses the cache.
-ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ipc.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
   return getOrGeneratePicks('mm', tracks, !!force, async () => {
     // 4.5.0-89 — RAG candidate pool. Seed query frames Music Man's
     // lane: deep-cut record-store-savant picks spanning genres and
@@ -10831,18 +10821,18 @@ ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: bo
       }
       return { ok: false, error: 'Could not parse picks' }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = safeIpcError(err, 'api-failed')
       return { ok: false, error: msg }
     }
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 // Megan's weekly picks — same structure as MM picks but uses MEGAN_CORE
 // so her fixed contrarian opinions (Charli XCX overrated, Steely Dan
 // cold, LCD Soundsystem unimpressive, Phoebe Bridgers' Stranger in the
 // Alps over Punisher, etc.) shape what gets selected and how the
 // commentary reads. 25 tracks, weekly Friday-to-Friday rotation.
-ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ipc.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
   return getOrGeneratePicks('megan', tracks, !!force, async () => {
     // 4.5.0-89 — RAG pool biased toward Megan's lane: working-critic
     // perspective, newer / indie / contrarian / female-fronted. K=400
@@ -10878,15 +10868,15 @@ ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boole
       }
       return { ok: false, error: 'Could not parse picks' }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = safeIpcError(err, 'api-failed')
       return { ok: false, error: msg }
     }
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 // DJ Hands' weekly picks — beats / electronic / hip-hop forward. Same
 // 25-track Friday-to-Friday weekly rotation as MM and Megan.
-ipcMain.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ipc.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
  return getOrGeneratePicks('djhands', tracks, !!force, async () => {
   // 4.5.0-89 — RAG pool biased toward Stephen Hands' DJ lane (dance,
   // hip-hop, electronic, funk/soul with groove). Matches the YOUR
@@ -10978,14 +10968,14 @@ Rules:
     }
     return { ok: false, error: 'Could not parse picks' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
  })
-})
+}, { refuse: REFUSED_SENDER })
 
 // Music Man recommendations
-ipcMain.handle('musicman-recommendations', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+ipc.handle('musicman-recommendations', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   // Build a compact library summary — top artists and genres, not every track
   const artistCounts = new Map<string, number>()
   const genreCounts = new Map<string, number>()
@@ -11145,10 +11135,10 @@ Their top genres: ${topGenres}`
     }
     return { ok: false, error: 'Could not parse recommendations' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Concert-owned track ids — unsyncable to the main iPod. ONE definition,
 // used by BOTH sync-to-ipod (copy-time drop) and the workout-sync picker
@@ -11167,6 +11157,7 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
 
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
+  ipc,
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
   getIneligibleTrackIds: getConcertOwnedTrackIds,
@@ -11174,8 +11165,9 @@ registerWorkoutSyncIpc({
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc()
-registerPlaylistCoverIpc(() => mainWindow)
+registerPlaylistCoverIpc(ipc, () => mainWindow)
 registerMixtapesIpc({
+  ipc,
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
   // Season tapes read the real listening record.
@@ -11188,7 +11180,7 @@ registerMixtapesIpc({
 })
 
 // Music Man metadata scanner
-ipcMain.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+ipc.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
 
   const scanInstructions = `You've been asked to scan a music library for metadata issues. Analyze the track list and find ALL issues. Categories:
@@ -11240,10 +11232,10 @@ Rules:
     }
     return { ok: false, error: 'Could not parse scan results' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Restore iPod metadata from iTunes XML ──
 async function runPythonRestore(args: string[], stdinData?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
@@ -11293,7 +11285,7 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
 // user where to save, write a tmp file, transcode to MP3 with ffmpeg,
 // then atomic-rename into place. Same ffmpeg + atomic-write pattern used
 // for the ALAC → AAC cache so any partial-write on a kill is invisible.
-ipcMain.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mimeType: string) => {
+ipc.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mimeType: string) => {
   try {
     const { execFile } = await import('child_process')
     const { promisify } = await import('util')
@@ -11349,10 +11341,10 @@ ipcMain.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mime
       throw err
     }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // import-pick-files registered in ipc/import-ipc.ts
 
@@ -11375,14 +11367,12 @@ ipcMain.handle('restore-xml-scan', async (_event, xmlPath: string) => {
   return await runPythonRestore(['--scan', mount, xmlPath])
 })
 
-ipcMain.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds: number[]) => {
-  const refused = refuseIfNotMainWindow(_event, mainWindow, 'restore-xml-apply', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
+ipc.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds: number[]) => {
   if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
   const mount = `/Volumes/${detectedIpodVolume}`
   const payload = JSON.stringify({ approvedIds })
   return await runPythonRestore(['--apply', mount, xmlPath], payload)
-})
+}, { refuse: REFUSED_SENDER })
 
 // Metadata overrides persistence — STATE_DIR-resolved (NAS or local).
 function getOverridesPath(): string {
@@ -11576,7 +11566,7 @@ ipcMain.handle('embedding-status', async (): Promise<{
   return value
 })
 
-ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
+ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
   if (!ragIsConfigured()) {
     return { ok: false, embedded: 0, total: 0, error: 'OPENAI_API_KEY not set. Add to .env to enable RAG.' }
   }
@@ -11621,9 +11611,9 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
     invalidateEmbeddingStatusCache()
     return { ok: true, embedded: done, total }
   } catch (err) {
-    return { ok: false, embedded: 0, total: 0, error: String(err) }
+    return { ok: false, embedded: 0, total: 0, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5: auto-index new songs into RAG. Jake wants EVERY imported track embedded
 // automatically — not only when the nightly brain-trainer runs. This embeds any
@@ -12917,10 +12907,10 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
     return { ok: true, recommendation: local, savedLocally: true }
   } catch (err) {
     console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
-    return { ok: false, error: err instanceof Error ? err.message : 'could not save recommendation' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
-ipcMain.handle('add-recommendation', (_event, input: Parameters<typeof addRecommendationCore>[0]) => addRecommendationCore(input))
+ipc.handle('add-recommendation', (_event, input: Parameters<typeof addRecommendationCore>[0]) => addRecommendationCore(input), { refuse: { ok: false, error: 'refused-sender' } as const })
 
 // ── iMessage capture (2026-07-19): Spotify / Apple Music links texted to
 // Jake land on the list automatically, credited "from <sender>". The
@@ -13032,7 +13022,7 @@ type TasteEvent = {
   key?: Record<string, unknown>
   ctx?: Record<string, unknown>
 }
-ipcMain.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
+ipc.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
   try {
     if (!Array.isArray(events) || events.length === 0) return { ok: true, appended: 0 }
     const lines = events
@@ -13043,9 +13033,9 @@ ipcMain.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
     await appendFile(TASTE_LEDGER_PATH(), lines.join('\n') + '\n', 'utf-8')
     return { ok: true, appended: lines.length }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 // Per-playlist blend weights the nightly learner writes; the suggestion
 // strip multiplies its blend components by these. mtime-cached.
 let tasteWeightsCache: { at: number; mtime: number; weights: Record<string, unknown> } | null = null
@@ -13097,14 +13087,14 @@ ipcMain.handle('get-friend-standings', async () => {
     const all = toMigrate.length > 0 ? (await friendCreditsCache.get()).credits : store.credits
     return { ok: true, standings: computeStandings(all, ledger, lib.tracks || []) }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
-ipcMain.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }))
+ipc.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }), { refuse: REFUSED_SENDER })
 setTimeout(() => { void sweepFriendImports() }, 30_000)
 setInterval(() => { void sweepFriendImports() }, 5 * 60_000)
 
-ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
   // Identity-wide delete: removing a song removes EVERY copy of it (the list
   // once carried 14 copies of one track under different ids). The remote
   // removal routes through the backend API via the outbox — the backend
@@ -13142,7 +13132,7 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
   void replayRecommendationsOutbox().catch(() => {})
   scheduleRecoConvergeSync()
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
 // DISCOVERY only: artists/songs not already in the library or on the list.
@@ -13154,7 +13144,7 @@ let suggestResultCache: { at: number; suggestions: Array<{ song: string; artist:
 let suggestRecoInflight: Promise<SuggestRecoResult> | null = null
 const SUGGEST_RESULT_TTL_MS = 30 * 60 * 1000
 
-ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<SuggestRecoResult> => {
+ipc.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<SuggestRecoResult> => {
   const force = opts?.force === true
   const now = Date.now()
   if (!force && suggestResultCache && now - suggestResultCache.at < SUGGEST_RESULT_TTL_MS) {
@@ -13306,13 +13296,13 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
     return { ok: true, suggestions }
   } catch (err) {
     console.error('[reco] suggest failed:', err instanceof Error ? err.message : err)
-    return { ok: false, error: err instanceof Error ? err.message : 'suggest failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   } finally {
     suggestRecoInflight = null
   }
   })()
   return suggestRecoInflight
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
 // iTunes Search is public + key-less; hit it straight from the main process
@@ -13423,11 +13413,11 @@ ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?
     albumInfoCache.set(key, sanitized)
     return { ok: true, credits: sanitized }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'album-info failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
-ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
+ipc.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
   if (!album) return { ok: true, blurb: '' }
   const yr = year ? String(year).trim() : ''
   const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
@@ -13459,15 +13449,15 @@ ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string, year
     albumBlurbCache.set(key, text)
     return { ok: true, blurb: text }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'album-blurb failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // The Music Man's TAKE — his opinion, OPT-IN and separate from the factual
 // history blurb above. Jake didn't want a contrarian hot-take standing in for
 // the history of a landmark album; same voice, but now behind a button.
 const albumTakeCache = new Map<string, string>()
-ipcMain.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
+ipc.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
   if (!album) return { ok: true, take: '' }
   const yr = year ? String(year).trim() : ''
   const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
@@ -13492,9 +13482,9 @@ ipcMain.handle('get-album-take', async (_e, artist: string, album: string, year?
     albumTakeCache.set(key, text)
     return { ok: true, take: text }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'album-take failed' }
+    return { ok: false, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 /** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
  *  boundary, so a field added on one side and not the other is silently
@@ -13922,7 +13912,7 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
   })
 }
 
-ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
+ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
   const lockReason = isSaveLocked()
   if (lockReason) {
     console.warn(`[save-metadata-override] refused (saves locked): ${lockReason}`)
@@ -14126,7 +14116,7 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   })
 
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 020: batch backfill — push every existing override's writable
 // fields into the corresponding audio files. Invoked from the
@@ -14144,7 +14134,7 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
 //      'tag-writeback:progress' so the UI can show a live counter.
 //
 // Returns a summary the renderer can show in the result toast/dialog.
-ipcMain.handle('apply-overrides-batch', async (event) => {
+ipc.handle('apply-overrides-batch', async (event) => {
   try {
     // 4.5.0-106: cached reads.
     const lib = await libraryCache.get() as { tracks?: Array<Record<string, unknown>> }
@@ -14250,7 +14240,7 @@ ipcMain.handle('apply-overrides-batch', async (event) => {
       error: err instanceof Error ? err.message : String(err),
     }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 016 commit 2: refresh `fileSize` in library.json by stat'ing
 // the on-disk file for every track whose absolute audio-file path
@@ -14340,7 +14330,7 @@ ipcMain.handle('refresh-file-sizes', async (event) => {
     )
     return { ok: true, refreshed }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -14358,11 +14348,11 @@ ipcMain.handle('load-chat-history', async () => {
   }
 })
 
-ipcMain.handle('save-chat-history', async (_event, conversations: unknown[]) => {
+ipc.handle('save-chat-history', async (_event, conversations: unknown[]) => {
   await mkdir(join(app.getPath('userData')), { recursive: true })
   await writeFile(getChatHistoryPath(), JSON.stringify(conversations, null, 2), 'utf-8')
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Playlist persistence — STATE_DIR-resolved (NAS or local).
 function getPlaylistsPath(): string {
@@ -14374,7 +14364,7 @@ ipcMain.handle('load-playlists', async () => {
   return { ok: true, playlists: await playlistsCache.get() }
 })
 
-ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
+ipc.handle('save-playlists', async (_event, playlists: unknown[]) => {
   const lockReason = isSaveLocked()
   if (lockReason) {
     console.warn(`[save-playlists] refused (saves locked): ${lockReason}`)
@@ -14390,12 +14380,12 @@ ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
   // which is also a near no-op when nothing in audio files changed.
   triggerSync('playlist')
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Claude API stats — exposed for dev/diagnostic surfaces. Renderer can poll
 // or display this in a hidden corner during development. lastResponses is
 // excluded from the wire format (large payloads, not useful in UI).
-ipcMain.handle('get-claude-stats', async () => {
+ipc.handle('get-claude-stats', async () => {
   await loadClaudeStats()
   rolloverIfNewDay()
   return {
@@ -14406,7 +14396,7 @@ ipcMain.handle('get-claude-stats', async () => {
     lastResetDate: claudeStats.lastResetDate,
     cachedKeys: Object.keys(claudeStats.lastResponses),
   }
-})
+}, { public: true })
 
 // Normalize an artist/album string for strict matching: drop edition
 // parens/brackets, a leading "the", and collapse whitespace.
@@ -14516,7 +14506,7 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
     await saveArtworkIndex(index)
     return { ok: true, key, hash: versionedHash }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
 })
@@ -14532,7 +14522,7 @@ ipcMain.handle('get-artwork-lock-count', async (): Promise<{ ok: boolean; count:
   }
 })
 
-ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
+ipc.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
   try {
     const dir = getArtworkDir()
     await mkdir(dir, { recursive: true })
@@ -14593,7 +14583,7 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
   } catch (err) {
     return { ok: false, error: String(err) }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.4.12: one-shot embedded-art backfill. Recovers art for tracks the
 // user imported BEFORE the import-time extractor landed. Runs once per
@@ -14623,7 +14613,7 @@ ipcMain.handle('artwork-backfill-status', async () => {
   const done = await markerExists(getArtworkBackfillMarkerPath())
   return { ok: true, done }
 })
-ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
+ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
   // resolve iPod-style colon paths to absolute file paths
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
@@ -14699,9 +14689,9 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
 
   mainWindow?.webContents.send('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
   return { ok: true, artwork: results }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('remove-artwork', async (_event, artist: string, album: string, force?: boolean) => {
+ipc.handle('remove-artwork', async (_event, artist: string, album: string, force?: boolean) => {
   try {
     const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
     // 4.5.0-80 — defense layer 4: refuse to silently nuke a user-
@@ -14737,7 +14727,7 @@ ipcMain.handle('remove-artwork', async (_event, artist: string, album: string, f
   } catch (err) {
     return { ok: false, error: String(err) }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 ipcMain.handle('choose-artwork-file', async () => {
   if (!mainWindow) return { ok: false }
@@ -14796,22 +14786,22 @@ ipcMain.handle('load-live-sets', async () => {
   return { ok: true, sets }
 })
 
-ipcMain.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
+ipc.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
   if (!albumKey || !entry || typeof entry.mergedTrackId !== 'number' || !Array.isArray(entry.cues)) {
     return { ok: false, error: 'invalid live-set entry' }
   }
   await liveSetsCache.update((sets) => ({ ...sets, [albumKey]: entry }))
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('remove-live-set', async (_e, albumKey: string) => {
+ipc.handle('remove-live-set', async (_e, albumKey: string) => {
   await liveSetsCache.update((sets) => {
     const next = { ...sets }
     delete next[albumKey]
     return next
   })
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Concert crowd ambience (LC-7): serve the short "that night's crowd" clip
 // extracted from the show's own between-song gap. Stored per merged-track-id in
@@ -14834,7 +14824,7 @@ ipcMain.handle('load-crowd-tuning', async (): Promise<Record<string, number> | n
   try { return JSON.parse(await readFile(crowdTuningPath(), 'utf-8')) } catch { return null }
 })
 
-ipcMain.handle('live-set-merge', async (
+ipc.handle('live-set-merge', async (
   event,
   tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,
   album: { name: string; artist: string; genre?: string; year?: string | number },
@@ -14870,14 +14860,14 @@ ipcMain.handle('live-set-merge', async (
     }
     return { ok: true, ...result }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Post-import cleanup of the merged source file. Identity-gated: only
 // paths inside OUR scratch dir are deletable — a confused caller can't
 // aim this at library audio.
-ipcMain.handle('live-set-cleanup', async (_e, absPath: string) => {
+ipc.handle('live-set-cleanup', async (_e, absPath: string) => {
   const scratch = liveSetScratchDir()
   const normalized = String(absPath || '')
   if (!normalized.startsWith(scratch + (IS_WINDOWS ? '\\' : '/'))) {
@@ -14886,7 +14876,7 @@ ipcMain.handle('live-set-cleanup', async (_e, absPath: string) => {
   const { rm } = await import('fs/promises')
   await rm(normalized, { force: true }).catch(() => {})
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 /**
  * 4.5.0-51 — Authoritative artwork resolver.
@@ -15197,7 +15187,7 @@ async function stageCdTrackLocally(src: string, dest: string): Promise<void> {
   }
 }
 
-ipcMain.handle('rip-cd-tracks', async (_e,
+ipc.handle('rip-cd-tracks', async (_e,
   cdTracks: Array<{ number: number; title: string; duration: number; filePath: string }>,
   metadata: { artist: string; album: string; year: string; genre: string },
   nextId: number,
@@ -15360,7 +15350,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
   }
 
   return { ok: true, tracks: imported }
-})
+}, { refuse: REFUSED_SENDER })
 
 ipcMain.handle('eject-cd', async () => {
   try {
@@ -16202,7 +16192,7 @@ app.whenReady().then(async () => {
     try {
       lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
     } catch (err) {
-      return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
     const tracks = lib.tracks || []
     const total = tracks.length
@@ -16273,20 +16263,18 @@ app.whenReady().then(async () => {
       const result = await scanLibraryOrphans()
       return { ok: true, ...result }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'unknown') }
     }
   })
 
-  ipcMain.handle('purge-library-orphans', async (_e) => {
-    const refused = refuseIfNotMainWindow(_e, mainWindow, 'purge-library-orphans', { ok: false, error: 'refused-sender' } as const)
-    if (refused) return refused
+  ipc.handle('purge-library-orphans', async (_e) => {
     try {
       const { deleted, bytesFreed } = await purgeLibraryOrphans()
       return { ok: true, deleted, bytesFreed }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'unknown') }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   ipcMain.handle('scan-dead-tracks', async () => {
     try {
@@ -16315,13 +16303,11 @@ app.whenReady().then(async () => {
         }))
       return { ok: true, count: deadTracks.length, tracks: deadTracks.slice(0, 20) }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'unknown') }
     }
   })
 
-  ipcMain.handle('remove-dead-tracks', async (_e) => {
-    const refused = refuseIfNotMainWindow(_e, mainWindow, 'remove-dead-tracks', { ok: false, error: 'refused-sender' } as const)
-    if (refused) return refused
+  ipc.handle('remove-dead-tracks', async (_e) => {
     try {
       const lib: { tracks?: Array<Record<string, unknown>>; playlists?: unknown[] } =
         JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
@@ -16386,9 +16372,9 @@ app.whenReady().then(async () => {
       console.log(`[remove-dead-tracks] removed ${removed} dead track(s) (${prevCount}→${lib.tracks.length}); backup library.json.bak-dead-${stamp}`)
       return { ok: true, removed }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'unknown') }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   ipcMain.handle('prune-alac-cache', async () => {
     // Delete cache entries whose hashed source path doesn't match any
@@ -16403,7 +16389,7 @@ app.whenReady().then(async () => {
     try {
       lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
     } catch (err) {
-      return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
 
     // Build the set of path hashes still claimed by a library track.
@@ -16774,6 +16760,7 @@ app.whenReady().then(async () => {
   // WebContentsView mount + the download-router events.
   const libraryRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   registerBandcampIntegration({
+    ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
@@ -16783,6 +16770,7 @@ app.whenReady().then(async () => {
   // squid/lucida/dab). Shells out to the `rip` CLI and imports the result
   // through the same pipeline Bandcamp uses, tagged source='streamrip'.
   registerStreamripStore({
+    ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
   })
@@ -16791,6 +16779,7 @@ app.whenReady().then(async () => {
   // one-of-one exhibit, never part of the music library. askClaude wraps
   // claudeCall so the module stays free of the Anthropic SDK types.
   registerScotusArchive({
+    ipc,
     askClaude: async (callKey, system, userText, maxTokens) => {
       const reply = await claudeCall(callKey, {
         model: 'claude-sonnet-4-6',

@@ -18,11 +18,14 @@
 //    scotus:amicus       — the legal guide (plain-English explain / ask)
 // ════════════════════════════════════════════════════════════════════════
 
-import { ipcMain, app } from 'electron'
+import { app } from 'electron'
+import type { IpcRegistrar } from '../ipc-register.ts'
+import { REFUSED_SENDER } from '../ipc-register.ts'
 import { join } from 'path'
 import { readFile } from 'fs/promises'
 
 export interface ScotusDeps {
+  ipc: IpcRegistrar
   /** Bound in index.ts to claudeCall; string in → answer text out, so this
    *  module stays free of the Anthropic SDK types. */
   askClaude: (callKey: string, system: string, userText: string, maxTokens: number) => Promise<string>
@@ -320,7 +323,8 @@ LENGTH: a tight 3–4 sentences. Every sentence earns its place — charismatic,
 FORMAT (critical): your words are READ ALOUD by a text-to-speech voice. Write plain spoken prose ONLY. Never use asterisks, markdown, bullet points, headings, or any emphasis symbols — they get vocalized as garbled noise. Convey emphasis through word choice and rhythm, not punctuation.`
 
 export function registerScotusArchive(deps: ScotusDeps): void {
-  ipcMain.handle('scotus:get-archive', async () => {
+  const { ipc } = deps
+  ipc.handle('scotus:get-archive', async () => {
     try {
       // Audio presence is the gate — without the recording there's no exhibit.
       await readFile(join(vaultDir(), 'argument.mp3')).then(() => {}, () => { throw new Error('no audio') }).catch(() => { throw new Error('no audio') })
@@ -329,21 +333,21 @@ export function registerScotusArchive(deps: ScotusDeps): void {
     } catch {
       return { ok: true, exists: false }
     }
-  })
+  }, { public: true })
 
-  ipcMain.handle('scotus:get-audio', async () => {
+  ipc.handle('scotus:get-audio', async () => {
     try {
       const buf = await readFile(join(vaultDir(), 'argument.mp3'))
       return { ok: true, bytes: buf }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } catch {
+      return { ok: false, error: 'io-failed' }
     }
-  })
+  }, { public: true })
 
   // Amicus — explain the moment at `time`, or answer a free-form question.
   // `history` is the visible chat thread (renderer-truncated), so follow-ups
   // like "what does that mean?" resolve against what Amicus already said.
-  ipcMain.handle('scotus:amicus', async (_e, input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) => {
+  ipc.handle('scotus:amicus', async (_e, input: { mode: 'explain' | 'ask'; time?: number; question?: string; history?: Array<{ role: string; text: string }> }) => {
     try {
       const segments = await loadSegments()
       const t = typeof input?.time === 'number' ? input.time : 0
@@ -390,10 +394,10 @@ export function registerScotusArchive(deps: ScotusDeps): void {
       // "gibberish/stroke" artifact. (Belt-and-suspenders with the prompt.)
       const answer = lines.join('\n').replace(/[*`#_]+/g, '').replace(/[ \t]{2,}/g, ' ').trim()
       return { ok: true, answer, cues, speaker: window.length ? window[window.length - 1].speaker : '' }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } catch {
+      return { ok: false, error: 'api-failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 }
 
 function fmtTime(s: number): string {
