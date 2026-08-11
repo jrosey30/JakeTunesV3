@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jaketunes.boom</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__VENV__/bin/python</string>
+    <string>-m</string>
+    <string>boom</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--port</string>
+    <string>3001</string>
+    <string>--db</string>
+    <string>__DB_DIR__/library.sqlite</string>
+    <string>--import-library</string>
+    <string>__IMPORT__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__BOOM_ROOT__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>__BOOM_ROOT__</string>
+    <key>BOOM_MUSIC_ROOT</key>
+    <string>__HOME__/Music/JakeTunesLibrary</string>
+    <key>PATH</key>
+    <string>__VENV__/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/jaketunes-boom.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/jaketunes-boom.err.log</string>
+</dict>
+</plist>

@@ -226,67 +226,22 @@ When a client can't reach the server:
 
 ---
 
-## Open questions (need decisions before coding)
+## Open questions — DECIDED 2026-08-11
 
-1. **SSE or WebSocket?** Recommendation: SSE. Lighter, fits the
-   one-way push model, browser-native reconnect. Approve / push back.
-2. **Server stack: Node + Express, or Python + FastAPI?**
-   The existing `core/` code is Python. The renderer is TS. Two
-   options:
-   - **(a)** New Node + Express server in `core/server/`, calls into
-     Python `db_reader.py` via subprocess for legacy paths. TS-typed
-     end-to-end.
-   - **(b)** Python FastAPI server. Reuses existing Python helpers
-     directly. SSE-native. Requires `uvicorn` + a venv on the Mini PC.
-   - Recommendation: **(b) FastAPI.** Reuses existing Python investment
-     (db_reader, sync, tag_reader, external API proxies). The renderer
-     calling JSON-over-HTTP doesn't care about server language.
-3. **Database for the canonical library:** stay on JSON files (single-
-   writer is fine since server is the only writer) or move to SQLite?
-   - Recommendation: **SQLite.** Atomic transactions, easy concurrent
-     reads, query support for smart-playlist evaluation, ~10MB for
-     5000-track library. JSON load times become noticeable past ~3000
-     tracks.
-4. **Audio streaming: NAS mount on every client, or HTTP stream from
-   server?**
-   - NAS mount: zero server CPU, direct file read, requires SMB/AFP
-     on every client (works on Mac, sucks on iOS).
-   - HTTP stream: server handles range requests, works on every
-     platform, costs server CPU for transcode (if needed) and bandwidth.
-   - Recommendation: **HTTP stream via `/api/audio/:id`.** Server
-     reads from NAS internally, streams to client. Single code path,
-     works on iOS, supports future remote access (off-LAN) without
-     VPN. Local Macs on same LAN get gigabit speeds anyway.
-5. **Migration strategy from `library.json` to server-canonical:**
-   one-shot import on first server startup (server reads laptop's
-   `library.json` + audio files, populates SQLite + NAS), or
-   gradual? Recommendation: **one-shot.** Stop-the-world for ~30 min,
-   cleaner than running both side-by-side.
-
----
-
-## What this doc does NOT decide
-
-- Specific HTTP framework version, library choices beyond stack picks
-- UI changes in JakeTunes (Phase 4 covers this — the renderer adopting
-  the API client)
-- Auth flow specifics (Phase 6 — when we add multi-listener)
-- Bandsintown / news / external API proxying (Phase 2 includes them
-  but the proxy logic is straightforward, doesn't need design lock-in)
-
----
+1. **SSE or WebSocket?** → **SSE.**
+2. **Server stack?** → **Python FastAPI** (`server/boom/`).
+3. **Database?** → **SQLite.**
+4. **Audio streaming?** → **HTTP stream via `/api/audio/:id`.**
+5. **Migration?** → **One-shot** (`POST /api/import` / `BOOM_IMPORT_LIBRARY` / desktop seed).
 
 ## Sign-off
 
-When you've reviewed:
+- [x] Architectural commitments 1-4 match what you want
+- [x] Entity catalog covers tracks + playlists for this slice (settings /
+      persona / picks deferred)
+- [x] Conflict resolution policy (LWW + field-level) is acceptable
+- [x] Open questions 1-5 decided (recommendations accepted)
+- [x] Implementation started — see `server/boom/` + `src/main/boom/`
 
-- [ ] Architectural commitments 1-4 match what you want
-- [ ] Entity catalog covers everything (or you've told me what's missing)
-- [ ] Conflict resolution policy (LWW + field-level) is acceptable
-- [ ] Open questions 1-5 have your decision
-- [ ] Implementation can proceed
-
-Then we kick off Phase 2 implementation. Estimated: 3-5 days for the
-server + 2-3 days for the Phase 4 client cutover.
-
-Until then, the doc is the contract.
+First ship: server + opt-in Electron dual-write/SSE bridge. Full renderer
+SoT cutover and rsync retirement are follow-ups.
