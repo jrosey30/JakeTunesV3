@@ -13,10 +13,11 @@
 //  _archive/; see Brief 036 v4 §4 Phase A.
 // ════════════════════════════════════════════════════════════════════════
 
-import { ipcMain, WebContentsView, BrowserWindow } from 'electron'
+import { ipcMain, WebContentsView, BrowserWindow, shell } from 'electron'
 import { BANDCAMP_PARTITION } from './partition'
 import { bandcampSession } from './acquisition/auth'
 import { attachDownloadRouter, ImportedTrackRecord, BatchSummary } from './acquisition/download-router'
+import { isAllowedBandcampNavUrl } from '../url-safety'
 
 export interface BandcampDeps {
   getMainWindow: () => BrowserWindow | null
@@ -105,14 +106,27 @@ function ensureView(deps?: BandcampDeps): WebContentsView {
   // challenge (and for any target=_blank links). Electron's default
   // handler spawns a fresh BrowserWindow with no UA override + no
   // visual containment — exactly the "separate popup outside JakeTunes"
-  // bug the user reported. Override: deny the popup, redirect the URL
-  // into THIS view's webContents so everything stays inside the app +
-  // benefits from the same UA + the same cookie jar.
+  // bug the user reported. Override: deny the popup, redirect ONLY
+  // allowlisted URLs into THIS view (Bandcamp + captcha hosts). Other
+  // https links go to the system browser so a hostile page can't
+  // navigate the embedded store to an attacker origin.
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (view && !view.webContents.isDestroyed()) {
-      void view.webContents.loadURL(url)
+    if (isAllowedBandcampNavUrl(url)) {
+      if (view && !view.webContents.isDestroyed()) {
+        void view.webContents.loadURL(url)
+      }
+    } else if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url).catch(() => {})
     }
     return { action: 'deny' }
+  })
+
+  // Same allowlist on in-view navigations (form redirects, location.assign).
+  view.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedBandcampNavUrl(url)) {
+      event.preventDefault()
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url).catch(() => {})
+    }
   })
 
   // 4.5: emit library-context updates on every navigation so the

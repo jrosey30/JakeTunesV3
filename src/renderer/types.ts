@@ -452,13 +452,12 @@ export interface AppSettings {
     musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
     claudeDailyCeiling: number      // mirrored to claude-stats.json on save
     aiHost: 'mm' | 'megan'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
-    /** 4.5: Exa.ai API key. When set, searchWeb augments the per-track
-     *  artist-facts block fed to every Music Man / Megan / Stephen /
-     *  chat call with semantic results from Exa's music-journalism
-     *  index. Empty string = disabled, behavior reverts to Wikipedia +
-     *  MusicBrainz only. Persisted to app-settings.json + mirrored to
-     *  userData/.env for main-process pickup. */
+    /** Draft-only: typed key to save. Never returned by load-app-settings. */
     exaApiKey?: string
+    /** True when main has an Exa key in env / prior settings (secret not exposed). */
+    exaConfigured?: boolean
+    /** When true on save, clears the stored Exa key. */
+    clearExaKey?: boolean
   }
   eq: EqSettings   // 10-band parametric EQ (4.0 §6.5)
   // 4.4.13 — Inbox auto-import. Main-side chokidar watches `path` and
@@ -508,7 +507,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
   library: { defaultImportFormat: 'aac-256' },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
-  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm', exaApiKey: '' },
+  ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm', exaApiKey: '', exaConfigured: false },
   eq: {
     enabled: false,
     preamp: 0,

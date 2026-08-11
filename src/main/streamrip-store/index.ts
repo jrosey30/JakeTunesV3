@@ -24,6 +24,8 @@ import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
+import { refuseIfNotMainWindow } from '../ipc-guard'
+import { isAllowedStreamripUrl } from '../url-safety'
 
 export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
@@ -549,18 +551,29 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
   // Download a picked search result by its streamrip id.
   ipcMain.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string): Promise<DownloadResult> => {
+    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:download-id', { ok: false, error: 'refused-sender' } as const)
+    if (refused) return refused
     if (!source || !mediaType || !id) return { ok: false, error: 'Nothing selected to download.' }
+    // IDs from search results are opaque store ids — reject path-like junk.
+    if (/[\/\\\0]/.test(String(id)) || String(id).length > 128) {
+      return { ok: false, error: 'Invalid download id.' }
+    }
+    if (!/^(qobuz|tidal|deezer|youtube)$/i.test(String(source))) {
+      return { ok: false, error: 'Unsupported source.' }
+    }
+    if (!/^(track|album|playlist|artist)$/i.test(String(mediaType))) {
+      return { ok: false, error: 'Unsupported media type.' }
+    }
     return runDownload(['id', source, mediaType, id])
   })
 
   // Download a pasted streaming link directly.
   ipcMain.handle('streamrip:download', async (_e, url: string): Promise<DownloadResult> => {
+    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:download', { ok: false, error: 'refused-sender' } as const)
+    if (refused) return refused
     const link = (url || '').trim()
-    if (!/^https?:\/\//i.test(link)) {
-      return { ok: false, error: 'Paste a full http(s) link — a Qobuz, Tidal, Deezer, or YouTube URL.' }
-    }
-    if (/soundcloud\.com/i.test(link)) {   // 4.5: SoundCloud eliminated
-      return { ok: false, error: 'SoundCloud isn’t supported — use Qobuz, Tidal, Deezer, or YouTube.' }
+    if (!isAllowedStreamripUrl(link)) {
+      return { ok: false, error: 'Paste a Qobuz, Tidal, Deezer, or YouTube https link.' }
     }
     return runDownload(['url', link])
   })
@@ -581,6 +594,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // email + hash into config.toml. use_auth_token forced false (email+password
   // mode). Plaintext password is used only to compute the hash, never stored.
   ipcMain.handle('streamrip:set-qobuz', async (_e, email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
+    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:set-qobuz', { ok: false, error: 'refused-sender' } as const)
+    if (refused) return refused
     const e = (email || '').trim()
     const p = password || ''
     if (!e || !p) return { ok: false, error: 'Enter both your Qobuz email and password.' }
@@ -591,8 +606,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const next = writeQobuzFields(cfg, { use_auth_token: 'false', email_or_userid: e, password_or_token: md5 })
       await writeFile(path, next, 'utf-8')
       return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } catch {
+      return { ok: false, error: 'Could not save Qobuz credentials.' }
     }
   })
 
@@ -601,6 +616,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // use_auth_token=true mode → user_id + token). The token IS the credential,
   // stored as-is; nothing to hash.
   ipcMain.handle('streamrip:set-qobuz-token', async (_e, userId: string, token: string): Promise<{ ok: boolean; error?: string }> => {
+    const refused = refuseIfNotMainWindow(_e, deps.getMainWindow(), 'streamrip:set-qobuz-token', { ok: false, error: 'refused-sender' } as const)
+    if (refused) return refused
     const u = (userId || '').trim()
     const t = (token || '').trim()
     if (!u || !t) return { ok: false, error: 'Enter both your Qobuz user ID and auth token.' }
@@ -610,8 +627,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const next = writeQobuzFields(cfg, { use_auth_token: 'true', email_or_userid: u, password_or_token: t })
       await writeFile(path, next, 'utf-8')
       return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } catch {
+      return { ok: false, error: 'Could not save Qobuz token.' }
     }
   })
 }
