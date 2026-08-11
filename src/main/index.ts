@@ -3975,35 +3975,49 @@ async function fetchAudioFromHomemini(
   // AVPlayer decodes ALAC natively and keeps the untouched raw path.
   wantFlac = false,
 ): Promise<Response | null> {
-  try {
-    const reqHeaders: Record<string, string> = {}
-    // homemini transcodes to a CACHED file and serves it through its normal
-    // range-capable path, so seeking works on FLAC exactly like anything else.
-    // (The first cut of this piped ffmpeg live, which could not answer ranges;
-    // Chromium then never got a duration and the player sat in 'loading'.)
-    if (rangeHeader) reqHeaders['Range'] = rangeHeader
-    const qs = wantFlac ? '?fmt=flac' : ''
-    // Jake, 2026-08-11: AbortSignal.timeout(8000) aborted the BODY after
-    // headers — long/cold FLAC transfers died mid-stream and needed a
-    // relaunch. Header deadline only; body streams until Chromium is done.
-    const res = await fetchHeadersWithin(
-      `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${qs}`,
-      { headers: reqHeaders },
-      8000,
-    )
-    if (!res.ok && res.status !== 206) return null
-    if (!res.body) return null
-    const out: Record<string, string> = {
-      'Accept-Ranges': 'bytes',
-      'X-JT-Audio-Source': wantFlac ? 'homemini-flac' : 'homemini',
+  // Cold ALAC→FLAC on homemini can take >8s before the first header when the
+  // transcode cache is empty. A short header budget then looks like "music
+  // doesn't play" until relaunch warms the cache. Give headers room; the body
+  // is never aborted by this timer (fetchHeadersWithin).
+  const headerBudgetMs = wantFlac ? 25_000 : 12_000
+  const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${wantFlac ? '?fmt=flac' : ''}`
+
+  const once = async (): Promise<Response | null> => {
+    try {
+      const reqHeaders: Record<string, string> = {}
+      // homemini transcodes to a CACHED file and serves it through its normal
+      // range-capable path, so seeking works on FLAC exactly like anything else.
+      if (rangeHeader) reqHeaders['Range'] = rangeHeader
+      const res = await fetchHeadersWithin(url, { headers: reqHeaders }, headerBudgetMs)
+      if (!res.ok && res.status !== 206) {
+        console.warn(`[stream] homemini ${res.status} for id=${id} flac=${wantFlac}`)
+        return null
+      }
+      if (!res.body) return null
+      const out: Record<string, string> = {
+        'Accept-Ranges': 'bytes',
+        'X-JT-Audio-Source': wantFlac ? 'homemini-flac' : 'homemini',
+      }
+      const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
+      const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
+      const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
+      return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
+    } catch (err) {
+      console.warn(
+        `[stream] homemini fetch failed id=${id} flac=${wantFlac}:`,
+        err instanceof Error ? err.message : err,
+      )
+      return null
     }
-    const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
-    const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
-    const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
-    return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
-  } catch {
-    return null
   }
+
+  // One retry — Tailscale blips and a cold first-byte regularly look like a
+  // permanent miss; a second try after 400ms recovers most "won't play" cases
+  // without a full app restart.
+  const first = await once()
+  if (first) return first
+  await new Promise((r) => setTimeout(r, 400))
+  return once()
 }
 
 /** True when Chromium needs homemini's FLAC transcode (no native ALAC). */
@@ -15667,12 +15681,23 @@ app.whenReady().then(async () => {
     // the LOCAL disk. Nothing here can touch the NAS.
     if (homeminiClient) {
       const streamId = await trackIdForAbsPath(rawPath)
-      if (streamId != null) {
+      if (streamId == null) {
+        console.warn('[ipod-audio] streaming client but no library id for', rawPath.slice(0, 120))
+      } else {
         const wantsFlac = wantsHomeminiFlac(rawPath)
         const early = await fetchAudioFromHomemini(
           streamId, request.headers.get('range'), wantsFlac,
         )
         if (early) return early
+        // Homemini miss on FLAC: one more try as raw (AAC .m4a wrongly routed
+        // to ?fmt=flac, or homemini flac cache wedged). Raw ALAC still won't
+        // decode in Chromium — but AAC will, and that recovers "won't play".
+        if (wantsFlac) {
+          const rawTry = await fetchAudioFromHomemini(
+            streamId, request.headers.get('range'), false,
+          )
+          if (rawTry) return rawTry
+        }
       }
 
       // Homemini missed. Serve ONLY a real local (non-symlink) file.
