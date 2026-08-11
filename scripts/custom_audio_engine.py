@@ -11,6 +11,8 @@ Usage:
   python3 scripts/custom_audio_engine.py --nightly-only    # compile master prompt and exit
   python3 scripts/custom_audio_engine.py --render tracks.json out.flac
   python3 scripts/custom_audio_engine.py --context /path/live.flac 1900.5
+  python3 scripts/custom_audio_engine.py --swing-loop c0.flac c1.flac c2.flac \\
+      --bpm 90 --swing 58 --swing-out remix_loop.flac
 
 Env:
   JT_STATE_DIR / JT_UD     state directory (DB + inbox default under here)
@@ -766,6 +768,36 @@ def run_watcher(watch_dir: Path, db: MusicEngineDatabase, harmonizer: MetadataHa
     observer.join()
 
 
+# =====================================================================
+# ALGORITHMIC GROOVE SEQUENCER WITH SWING
+# ⚠️ TWIN: scripts/ai_sampler_engine.py — canonical GrooveSequencer +
+#          mpc_step_delay_seconds live there. This module re-exports so
+#          the NAS custom_audio_engine entrypoint can bounce swung loops
+#          without a second math implementation.
+# =====================================================================
+
+def _load_groove_sequencer():
+    """Import GrooveSequencer from ai_sampler_engine (same scripts/ dir)."""
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from ai_sampler_engine import (  # type: ignore
+        DEFAULT_SWING_PERCENT,
+        GrooveSequencer,
+        clamp_swing_percent,
+        mpc_step_delay_seconds,
+        swing_offset_seconds,
+    )
+
+    return (
+        GrooveSequencer,
+        DEFAULT_SWING_PERCENT,
+        clamp_swing_percent,
+        mpc_step_delay_seconds,
+        swing_offset_seconds,
+    )
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="JakeTunes custom audio engine")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -780,6 +812,25 @@ def main(argv: Optional[list[str]] = None) -> int:
         metavar=("MASTER", "TITLE", "ARTIST", "START", "END"),
     )
     parser.add_argument("--log-play", nargs=6, metavar=("ID", "ISRC", "ARTIST", "TITLE", "PLAY_SEC", "TOTAL_SEC"))
+    parser.add_argument(
+        "--swing-loop",
+        nargs="+",
+        metavar="CHOP",
+        help="Ordered chop files to stitch with MPC swing (requires --bpm)",
+    )
+    parser.add_argument("--bpm", type=float, default=None, help="Target BPM for --swing-loop")
+    parser.add_argument(
+        "--swing",
+        type=float,
+        default=58.0,
+        help="MPC swing percent for --swing-loop (50=straight, 58=head-nod)",
+    )
+    parser.add_argument(
+        "--swing-out",
+        type=Path,
+        default=None,
+        help="Output path for --swing-loop (default: ./nas/samples_vault/remix_loop.flac)",
+    )
     args = parser.parse_args(argv)
 
     audd_token = _env_token("AUDD_API_TOKEN", "AUDD_TOKEN") or "mock_audd_token"
@@ -810,6 +861,35 @@ def main(argv: Optional[list[str]] = None) -> int:
         track_list = json.loads(Path(manifest_path).read_text())
         ok = MixtapeRenderer.render_mixtape(track_list, output)
         return 0 if ok else 1
+
+    if args.swing_loop:
+        if args.bpm is None or args.bpm <= 0:
+            log.error("--swing-loop requires --bpm > 0")
+            return 2
+        GrooveSequencer, _default_swing, clamp_swing, *_rest = _load_groove_sequencer()
+        out_path = args.swing_out or Path("./nas/samples_vault/remix_loop.flac")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        seq = GrooveSequencer(out_path.parent)
+        rendered = seq.compile_swing_loop(
+            list(args.swing_loop),
+            target_bpm=args.bpm,
+            swing_percent=args.swing,
+            output_filename=out_path.name,
+        )
+        if rendered is None:
+            return 1
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "render_path": str(rendered),
+                    "swing_percent": clamp_swing(args.swing),
+                    "bpm": args.bpm,
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     if args.nightly_only:
         evaluator = NightlyLoopEvaluator(args.db)
