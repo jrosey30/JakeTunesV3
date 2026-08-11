@@ -1,7 +1,7 @@
-/* 4.5 — Library-ownership header strip above the embedded Bandcamp /
- * squid WebContentsView. Thin, cream-toned, sits flush above the
- * native browser area so the user sees library status in the same
- * eye-line as the page they're shopping. */
+/* 4.5 — Library-ownership header strip above the embedded store's
+ * WebContentsView. Thin, cream-toned, sits flush above the native
+ * browser area so the user sees library status in the same eye-line
+ * as the page they're shopping. */
 
 .store-view-root {
   width: 100%;

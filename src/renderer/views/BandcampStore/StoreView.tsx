@@ -216,7 +216,8 @@ export default function StoreView() {
           >›</button>
           {/* Store switcher. The embedded view is just a browser whose
               downloads land in the library, so it can point at any store on
-              the main-process allow-list — squid.wtf is back on it. */}
+              the main-process allow-list. Labels come from the main process —
+              never hardcode a store here, or the list and the allow-list drift. */}
           <span className="store-library-header__dests">
             {destinations.map((d) => (
               <button

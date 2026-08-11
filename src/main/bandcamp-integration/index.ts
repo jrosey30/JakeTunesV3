@@ -33,21 +33,26 @@ export interface BandcampDeps {
 const BANDCAMP_HOME = 'https://bandcamp.com'
 
 // ── Store destinations ────────────────────────────────────────────────
-// Jake, 2026-08-10: "just do the squid.wtf re-integration."
+// Where the embedded browser pane is allowed to go. Deliberately a URL list
+// and not a scraper: Jake drives each site's own UI exactly as he would in a
+// browser, and the app supplies the window and files whatever he downloads
+// through the normal import pipeline. Sessions are per-partition, so switching
+// destination never disturbs a signed-in session on the other.
 //
-// The embedded stores (squid, lucida, dab) were torn out in 7aa1519 because
-// squid was 502ing and the others sat behind bot walls. squid is answering
-// again, and this view is already the thing that made them work: a browser
-// pane whose downloads route into the library through the normal import
-// pipeline. It only ever needed somewhere else to go.
+// ⚠️ Read the site before adding it here. squid.wtf shipped in this list on
+// 2026-08-10 on the strength of an HTTP 200 and nothing else. It answers, but
+// it is no longer the Qobuz/Tidal front-end it was before June — the domain
+// now hosts a set of utilities (Debrid, KHInsider, JioSaavn at AAC 320, a
+// spectrum analyser, CD-rip log tools) and offers no lossless source better
+// than what Jake already has. "The host is up" is not "the store sells music."
 //
-// Deliberately just a URL list, not a scraper. Jake drives the site's own UI
-// exactly as he would in a browser; the app supplies the window and files what
-// he downloads. The Bandcamp session/cookies are per-partition, so switching
-// destination does not disturb a signed-in Bandcamp session.
+// Qobuz replaces it because Jake already pays for Qobuz, its store sells
+// 24-bit purchases outright, and the credentials are already on this machine
+// for streamrip. x-frame-options: deny on qobuz.com is irrelevant here — a
+// WebContentsView is a real top-level browser view, not an iframe.
 export const STORE_DESTINATIONS: Array<{ id: string; label: string; url: string }> = [
   { id: 'bandcamp', label: 'Bandcamp', url: BANDCAMP_HOME },
-  { id: 'squid', label: 'squid.wtf', url: 'https://squid.wtf' },
+  { id: 'qobuz', label: 'Qobuz', url: 'https://www.qobuz.com/us-en/shop' },
 ]
 
 // Electron's default UA includes "Electron/X.X JakeTunes/X.X" tokens that
