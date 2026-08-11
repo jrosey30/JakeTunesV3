@@ -50,6 +50,13 @@ jobs:
         # want (silent drift is how "works on my machine" bugs ship).
         run: npm ci
 
+      - name: Unit tests (main process)
+        # HARD GATE. Locks the music signal path, workmini streaming routing,
+        # path-safety, and other regressions the postmortems keep flagging.
+        # A red ❌ here means the PR changed a load-bearing invariant — update
+        # the allow-list in the same commit only after deciding on purpose.
+        run: npm test
+
       - name: Build (electron-vite)
         # PRIMARY GATE. Catches: missing imports, broken JSX, undefined
         # exports, vite config issues. Doesn't run electron-builder
