@@ -57,13 +57,17 @@ export default function ImportConvertModal({ onClose }: Props) {
     e.stopPropagation()
     setDropHere(false)
     const fileList = Array.from(e.dataTransfer.files)
-    const dropped = fileList.map(f => (f as unknown as { path?: string }).path).filter((p): p is string => !!p)
-    if (dropped.length === 0) return
-    setPaths(prev => {
-      const seen = new Set(prev)
-      for (const p of dropped) seen.add(p)
-      return Array.from(seen)
-    })
+    if (fileList.length === 0) return
+    void (async () => {
+      const granted = await window.electronAPI.allowDroppedImportPaths(fileList).catch(() => null)
+      const dropped = granted?.ok && granted.paths ? granted.paths : []
+      if (dropped.length === 0) return
+      setPaths(prev => {
+        const seen = new Set(prev)
+        for (const p of dropped) seen.add(p)
+        return Array.from(seen)
+      })
+    })()
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {

@@ -43,6 +43,12 @@ import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-pla
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { refuseIfNotMainWindow } from './ipc-guard'
+import { createIpcRegistrar } from './ipc-register.ts'
+import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
+import { registerBackupIpc } from './ipc/backup-ipc.ts'
+import { registerSettingsIpc } from './ipc/settings-ipc.ts'
+import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
+import { allowImportPaths, isImportPathAllowed } from './import-allowlist.ts'
 import { isAllowedCaptureUrl, allowWithinRateLimit, isPrivateOrLocalHostname } from './url-safety'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
@@ -69,7 +75,7 @@ import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
-import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
+import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
 import type { TrackLike } from './taste-model'
@@ -161,14 +167,11 @@ import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
   stopInboxWatcher,
-  deleteInboxSource,
-  getDefaultInboxPath,
   type InboxConfig,
 } from './inbox-watcher'
 import {
   startSyncOrchestrator,
   triggerSync,
-  getLastSyncSnapshot,
 } from './sync-orchestrator'
 // Brief 023: removed imports from ./library-snapshot and
 // ./library-overrides — both modules are deleted along with this
@@ -904,6 +907,21 @@ function kickAudioAnalysisWorker(): void {
 
 let mainWindow: BrowserWindow | null = null
 
+// AI host preference — written by settings IPC, read by prompt builders.
+// Declared above registerSettingsIpc so the setter closure is valid.
+let cachedActiveHost: 'mm' | 'megan' = 'mm'
+
+// IPC registration helper — defaults to refuseIfNotMainWindow. Domain
+// modules (ipc/*.ts) register through this; opt out with { public: true }
+// only for intentionally public / read-only channels.
+const ipc = createIpcRegistrar(() => mainWindow)
+registerUiStateIpc(ipc)
+registerBackupIpc(ipc, { getMainWindow: () => mainWindow })
+registerSettingsIpc(ipc, {
+  setCachedActiveHost: (host) => { cachedActiveHost = host },
+})
+registerImportIpc(ipc)
+
 // 4.4.85: codec hint for the ipod-audio:// protocol handler so it can
 // skip the ~200-500 ms ffprobe call on every first-play. Populated from
 // library.json at app startup (loadCodecMapFromLibrary) and updated
@@ -999,142 +1017,17 @@ async function saveWindowState(win: BrowserWindow): Promise<void> {
   await writeFile(windowStatePath(), JSON.stringify(state), 'utf-8')
 }
 
-// ── UI state persistence ──
-function uiStatePath(): string {
-  return join(app.getPath('userData'), 'ui-state.json')
-}
+// ── UI state + backup + app-settings IPC ──────────────────────────────
+// Registered via createIpcRegistrar domain modules:
+//   ipc/ui-state-ipc.ts, ipc/backup-ipc.ts, ipc/settings-ipc.ts
+// (see register* calls next to `let mainWindow`).
 
-ipcMain.handle('load-ui-state', async () => {
-  const path = uiStatePath()
-  let data: string
-  try {
-    data = await readFile(path, 'utf-8')
-  } catch {
-    return { ok: false, state: null }   // no file yet — first run
-  }
-  try {
-    return { ok: true, state: JSON.parse(data) }
-  } catch (err) {
-    // A corrupt ui-state used to fail SILENTLY here: every launch fell back to
-    // defaults, so Jake's Songs columns (bpm + camelotKey are in columnOrder
-    // and not hidden) vanished on every restart and it read as the column
-    // feature being broken. Found 2026-08-02 with 22 trailing bytes of an
-    // older, longer write stuck on the end — see the save handler.
-    //
-    // Salvage the leading object if there is one: the real state is usually
-    // intact and only the tail is garbage, so this restores the user's layout
-    // instead of resetting it. Keep the bad file for diagnosis either way.
-    console.warn('[ui-state] unparseable —', err instanceof Error ? err.message : err)
-    // Parse the longest valid JSON prefix (a raw_decode equivalent). The
-    // corruption seen in the wild is a good object with junk appended, so the
-    // prefix carries the real layout.
-    let recovered: unknown = null
-    for (let end = data.length; end > 1; end--) {
-      if (data[end - 1] !== '}') continue
-      try { recovered = JSON.parse(data.slice(0, end)); break } catch { /* keep shrinking */ }
-    }
-    try {
-      const { rename: renameFS } = await import('fs/promises')
-      await renameFS(path, `${path}.corrupt-${Date.now()}`)
-    } catch { /* best effort */ }
-    if (recovered && typeof recovered === 'object') {
-      console.warn('[ui-state] recovered the leading object — layout preserved')
-      return { ok: true, state: recovered as Record<string, unknown> }
-    }
-    return { ok: false, state: null }
-  }
-})
-
-// Serializes save-ui-state so its read-modify-write can't interleave. Without
-// this, two concurrent saves each read the same `current`, and whichever
-// renames last wins — silently dropping the other's fields. That is the same
-// class of loss the deep-merge below was added to prevent, just from
-// concurrency rather than from a caller's partial.
-let uiStateWriteChain: Promise<unknown> = Promise.resolve()
-
-ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => {
-  const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
-  uiStateWriteChain = run.catch(() => {})
-  return run
-})
-
-async function saveUiStateSerialized(uiState: Record<string, unknown>): Promise<{ ok: boolean }> {
-  // Bug #3: this used to be a full-overwrite write. Callers all do a
-  // load-spread-save pattern in the renderer, but when `loadUiState`
-  // returned null/empty (transient parse failure during atomic rename,
-  // file briefly missing, etc.) they'd spread `{}` and the resulting
-  // save would clobber every persisted field that wasn't in the caller's
-  // partial. That's how `optConvertBitrate` evaporated mid-session —
-  // some caller saved its 7 fields, the convert toggle wasn't one of
-  // them, so it disappeared.
-  //
-  // Defense-in-depth: read current disk state, deep-merge the incoming
-  // partial on top, then atomically write. Even if every renderer
-  // caller is buggy, persisted fields survive.
-  const path = uiStatePath()
-  try {
-    let current: Record<string, unknown> = {}
-    try {
-      const raw = await readFile(path, 'utf-8')
-      current = JSON.parse(raw) as Record<string, unknown>
-      if (typeof current !== 'object' || current === null) current = {}
-    } catch { /* no file yet or parse fail — start fresh */ }
-    const merged = { ...current, ...uiState }
-    // UNIQUE tmp name, and every save serialized on uiStateWriteChain.
-    //
-    // The tmp path used to be the fixed `path + '.partial.json'`, so two saves
-    // in flight at once both wrote THAT file. Interleave a shorter payload over
-    // a longer one and the tail of the long write survives past the end of the
-    // short one — then rename() atomically installs the garbage. That is
-    // exactly what was on disk on 2026-08-02: a valid 656-char object with 22
-    // trailing bytes of an older write. JSON.parse threw on every launch, the
-    // app silently fell back to defaults, and Jake's bpm/camelotKey columns
-    // disappeared every restart even though they were correctly persisted.
-    //
-    // Atomic rename only protects readers from a HALF-WRITTEN file; it does
-    // nothing when two writers share the staging file. JsonFileCache already
-    // gets this right (pid + time + random) — same idiom here.
-    const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    await writeFile(tmp, JSON.stringify(merged), 'utf-8')
-    const { rename: renameFS } = await import('fs/promises')
-    await renameFS(tmp, path)
-    return { ok: true }
-  } catch {
-    return { ok: false }
-  }
-}
-
-// User-preference settings (4.0 §6.7). Distinct from ui-state.json which
-// tracks transient UI position (sidebar width, current view, etc.). This
-// file holds preferences that persist across app upgrades and that the
-// user explicitly sets via the Settings modal — currently just crossfade.
+// User-preference settings path (4.0 §6.7). Distinct from ui-state.json.
+// Still used by readAppSettingsAsync and other main-process readers;
+// the load/save IPC handlers live in ipc/settings-ipc.ts.
 function appSettingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
 }
-
-// 4.5: settings UI reads this to display "Last backup: 3 min ago — Imports"
-// in the Sync tab. Pulled on tab open (and periodically while visible)
-// so the user gets the current state without subscribing to push events.
-ipcMain.handle('get-last-library-sync', async () => {
-  return getLastSyncSnapshot()
-})
-
-// 4.5.0-117 — library backup/restore (Phase 0). Logic in src/main/backup.ts.
-ipcMain.handle('list-backups', async () => {
-  return { ok: true, backups: await listBackups() }
-})
-ipcMain.handle('create-backup', async () => {
-  const info = await snapshotLibrary('manual')
-  return info ? { ok: true, backup: info } : { ok: false, error: 'Nothing to back up (library empty or unreadable).' }
-})
-ipcMain.handle('restore-backup', async (_e, file: string) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'restore-backup', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
-  const res = await restoreBackup(file)
-  // On success, library.json was rewritten — tell the renderer to reload.
-  if (res.ok) mainWindow?.webContents.send('library-external-change')
-  return res
-})
 
 // ── Artist aliases (metadata hierarchy) — user/AI grouping map. ──────
 // artist-aliases.json: { "<raw artist tag>": "<canonical artist>" }. The
@@ -1992,115 +1885,7 @@ ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
   }
 })
 
-ipcMain.handle('load-app-settings', async () => {
-  try {
-    const data = await readFile(appSettingsPath(), 'utf-8')
-    const settings = JSON.parse(data) as Record<string, unknown>
-    // Never round-trip the Exa secret into the renderer. Report configured
-    // status only; a new key can still be typed in Preferences and saved.
-    const ai = (settings.ai && typeof settings.ai === 'object' && !Array.isArray(settings.ai))
-      ? { ...(settings.ai as Record<string, unknown>) }
-      : {}
-    const fromSettings = typeof ai.exaApiKey === 'string' && ai.exaApiKey.trim().length > 0
-    const fromEnv = !!(process.env.EXA_API_KEY && process.env.EXA_API_KEY.trim())
-    delete ai.exaApiKey
-    ai.exaConfigured = fromSettings || fromEnv
-    settings.ai = ai
-    return { ok: true, settings }
-  } catch {
-    return { ok: true, settings: null }   // missing file is fine — renderer applies defaults
-  }
-})
-
-ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'save-app-settings', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
-  try {
-    await mkdir(app.getPath('userData'), { recursive: true })
-    // Refresh the cached host preference so subsequent prompt builds
-    // pick up the new value without an app restart.
-    const aiIn = (settings.ai as { aiHost?: 'mm' | 'megan'; exaApiKey?: string; clearExaKey?: boolean } | undefined)
-    cachedActiveHost = aiIn?.aiHost === 'megan' ? 'megan' : 'mm'
-    // 4.5: live-apply EXA_API_KEY into process.env so the next searchWeb
-    // call picks it up without an app restart. Same value also written
-    // to userData/.env so it survives restarts via the existing
-    // env-load fallback at the top of this file.
-    // Only update when the renderer sent a non-empty key (or explicit clear).
-    // An empty string after redacted load must NOT wipe a configured key.
-    if (typeof aiIn?.exaApiKey === 'string' && aiIn.exaApiKey.trim()) {
-      const key = aiIn.exaApiKey.trim()
-      process.env.EXA_API_KEY = key
-      try {
-        const envPath = join(app.getPath('userData'), '.env')
-        let existing = ''
-        try { existing = await readFile(envPath, 'utf-8') } catch { /* fresh file */ }
-        const lines = existing.split('\n').filter(l => !l.startsWith('EXA_API_KEY='))
-        lines.push(`EXA_API_KEY=${key}`)
-        await writeFile(envPath, lines.filter(l => l.trim()).join('\n') + '\n', 'utf-8')
-      } catch (err) {
-        console.warn('[save-app-settings] EXA_API_KEY .env write failed:', err)
-      }
-    } else if (aiIn?.clearExaKey === true) {
-      delete process.env.EXA_API_KEY
-      try {
-        const envPath = join(app.getPath('userData'), '.env')
-        let existing = ''
-        try { existing = await readFile(envPath, 'utf-8') } catch { /* none */ }
-        const lines = existing.split('\n').filter(l => !l.startsWith('EXA_API_KEY='))
-        await writeFile(envPath, lines.filter(l => l.trim()).join('\n') + (lines.some(l => l.trim()) ? '\n' : ''), 'utf-8')
-      } catch (err) {
-        console.warn('[save-app-settings] EXA_API_KEY .env clear failed:', err)
-      }
-    }
-    // Persist settings WITHOUT the secret — .env is the source of truth.
-    const toWrite: Record<string, unknown> = { ...settings }
-    if (toWrite.ai && typeof toWrite.ai === 'object' && !Array.isArray(toWrite.ai)) {
-      const aiOut = { ...(toWrite.ai as Record<string, unknown>) }
-      delete aiOut.exaApiKey
-      delete aiOut.exaConfigured
-      delete aiOut.clearExaKey
-      toWrite.ai = aiOut
-    }
-    await writeFile(appSettingsPath(), JSON.stringify(toWrite, null, 2), 'utf-8')
-    // 4.4.13: reconfigure the inbox watcher on every save. Idempotent
-    // when nothing changed; instant pickup of toggle/path edits without
-    // an app restart. Errors are non-fatal — the save itself succeeded,
-    // so we return ok regardless and log the reconfigure failure.
-    try {
-      const inboxRaw = settings.inbox as { enabled?: boolean; path?: string } | undefined
-      const inboxConfig: InboxConfig = {
-        enabled: inboxRaw?.enabled !== false,         // default ON
-        path: typeof inboxRaw?.path === 'string' ? inboxRaw.path : '',
-      }
-      const result = await startOrReconfigureInboxWatcher(inboxConfig)
-      if (!result.ok) {
-        console.warn('[save-app-settings] inbox watcher reconfigure failed:', result.error)
-      }
-    } catch (err) {
-      console.warn('[save-app-settings] inbox watcher reconfigure threw:', err)
-    }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
-
-// 4.4.13 — Renderer's import queue calls this after a successful (or
-// dupe-skipped) import of a file that came from the inbox auto-import.
-// The watcher module path-gates the delete to its own watched directory
-// — even a corrupted/spoofed renderer can't ask main to rm an arbitrary file.
-ipcMain.handle('delete-inbox-source', async (_e, filePath: string) => {
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'delete-inbox-source', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
-  return deleteInboxSource(filePath)
-})
-
-// SettingsModal queries this to populate the placeholder for the inbox
-// path input — so users see the resolved ~/Music2/_inbox path even when
-// they haven't picked a custom location yet.
-ipcMain.handle('get-default-inbox-path', async () => {
-  return { ok: true, path: getDefaultInboxPath() }
-})
+// App-settings + inbox IPC registered in ipc/settings-ipc.ts
 
 // 4.4.32 — Tour dates per Bandsintown for the user's top library
 // artists. Picks top 60 artists by aggregate playCount (with a +1
@@ -2414,7 +2199,7 @@ async function readAppSettingsAsync(): Promise<Record<string, unknown> | null> {
 // (which is called inside synchronous prompt-building paths). Refreshed
 // when settings are saved via the save-app-settings IPC, and bootstrapped
 // from disk on app whenReady. Default 'mm' until the first read lands.
-let cachedActiveHost: 'mm' | 'megan' = 'mm'
+// (Binding declared near mainWindow + settings IPC registration above.)
 async function refreshActiveHostFromSettings(): Promise<void> {
   const s = await readAppSettingsAsync()
   const ai = (s?.ai as { aiHost?: 'mm' | 'megan' } | undefined)
@@ -6633,42 +6418,8 @@ async function candidateMusicMounts(): Promise<string[]> {
   return out
 }
 
-const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
-
-// Recursively find audio files in directories
-async function resolveAudioPaths(paths: string[]): Promise<string[]> {
-  const { readdir: readdirFS, stat: statFS } = await import('fs/promises')
-  const results: string[] = []
-  // Dedupe by absolute path so a drag that contains the same file twice
-  // (e.g. user lassos overlapping selections) doesn't double-enqueue.
-  const seen = new Set<string>()
-  for (const p of paths) {
-    try {
-      const s = await statFS(p)
-      if (s.isDirectory()) {
-        const entries = await readdirFS(p, { withFileTypes: true })
-        const childPaths = entries.map(e => join(p, e.name))
-        const nested = await resolveAudioPaths(childPaths)
-        for (const n of nested) {
-          if (!seen.has(n)) { seen.add(n); results.push(n) }
-        }
-      } else {
-        const base = p.substring(p.lastIndexOf('/') + 1)
-        // Skip dotfiles: .DS_Store has no audio extension and was already
-        // filtered, but AppleDouble metadata forks (._01 Track.m4a, born
-        // when a macOS-created zip is unpacked on another OS) DO have
-        // audio extensions and would otherwise enter the queue, fail at
-        // import, and pad the visible total.
-        if (base.startsWith('.')) continue
-        const ext = p.substring(p.lastIndexOf('.')).toLowerCase()
-        if (AUDIO_EXTS.has(ext) && !seen.has(p)) {
-          seen.add(p); results.push(p)
-        }
-      }
-    } catch { /* skip inaccessible */ }
-  }
-  return results
-}
+// resolveAudioPaths lives in ipc/import-ipc.ts (shared with the
+// import-resolve-paths handler + session allowlist grants).
 
 // ── Per-file import primitive ──
 // Pulled out of the batch loop so the renderer-side queue can call it
@@ -7372,6 +7123,12 @@ async function importOneFile(
 ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
   const refused = refuseIfNotMainWindow(_e, mainWindow, 'import-track', { ok: false, error: 'refused-sender' } as const)
   if (refused) return refused
+  // Session allowlist — path must have come from the file picker, a
+  // drag-drop grant (webUtils), inbox emission, or folder expand.
+  if (!isImportPathAllowed(srcPath)) {
+    console.warn('[import-track] refused non-allowlisted path')
+    return { ok: false, error: 'path-not-allowed' }
+  }
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   // 4.0 Settings: when caller doesn't specify a format, fall back to the
   // user's preferred default from app-settings.json (Library tab).
@@ -7536,23 +7293,20 @@ ipcMain.handle('audio-analysis:clear-queue', async () => {
   return { ok: true }
 })
 
-// Resolve folders + filter to audio extensions for the renderer queue.
-// Splits a single drop into its constituent files so the queue can show
-// progress per-file rather than per-folder.
-ipcMain.handle('import-resolve-paths', async (_e, paths: string[]) => {
-  try {
-    const resolved = await resolveAudioPaths(paths)
-    return { ok: true, paths: resolved }
-  } catch (err) {
-    return { ok: false, error: String(err) }
-  }
-})
+// import-resolve-paths + import-pick-files + import-allow-dropped-paths
+// registered in ipc/import-ipc.ts (session allowlist grants).
 
 ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
   const refused = refuseIfNotMainWindow(_e, mainWindow, 'import-tracks', { ok: false, error: 'refused-sender' } as const)
   if (refused) return refused
-  // Resolve folders into individual audio files
+  if (!Array.isArray(filePaths) || filePaths.some((p) => !isImportPathAllowed(p))) {
+    console.warn('[import-tracks] refused non-allowlisted path(s)')
+    return { ok: false, error: 'path-not-allowed' }
+  }
+  // Resolve folders into individual audio files; grant children so a
+  // future per-file retry via import-track still passes the allowlist.
   const resolvedPaths = await resolveAudioPaths(filePaths)
+  allowImportPaths(resolvedPaths)
   const imported: Array<Record<string, unknown>> = []
   const skippedDupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> = []
   // 4.4.12: artwork records returned to the renderer so it can dispatch
@@ -11600,22 +11354,7 @@ ipcMain.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mime
   }
 })
 
-// Pick audio files/folders for the File > Import and Convert flow.
-// Returns absolute paths; mirrors the drag-drop entry point so
-// import-tracks can consume either indistinguishably.
-ipcMain.handle('import-pick-files', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Import and Convert',
-    properties: ['openFile', 'openDirectory', 'multiSelections', 'treatPackageAsDirectory'],
-    filters: [
-      { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'flac', 'alac', 'wav', 'aiff', 'aif', 'ogg'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-    defaultPath: process.env.HOME || undefined,
-  })
-  if (result.canceled) return { ok: false, canceled: true }
-  return { ok: true, paths: result.filePaths }
-})
+// import-pick-files registered in ipc/import-ipc.ts
 
 ipcMain.handle('restore-xml-pick-file', async () => {
   const result = await dialog.showOpenDialog({

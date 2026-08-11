@@ -1686,7 +1686,11 @@ function AppInner() {
     setDropActive(false)
 
     const files = Array.from(e.dataTransfer.files)
-    const droppedPaths = files.map(f => f.path).filter(Boolean)
+    if (files.length === 0) return
+    // Session allowlist grant via webUtils (preload) — raw File.path
+    // strings are no longer enough to import.
+    const granted = await window.electronAPI.allowDroppedImportPaths(files).catch(() => null)
+    const droppedPaths = granted?.ok && granted.paths ? granted.paths : []
     if (droppedPaths.length === 0) return
 
     // Honor the user's persisted import format (ALAC / AAC 256 / etc).
