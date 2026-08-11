@@ -43,6 +43,7 @@ import { unlink, mkdir, stat } from 'fs/promises'
 import type { BrowserWindow } from 'electron'
 
 import chokidar, { type FSWatcher } from 'chokidar'
+import { allowImportPaths } from './import-allowlist.ts'
 
 export interface InboxConfig {
   enabled: boolean
@@ -134,6 +135,9 @@ function flushBatch(): void {
     return
   }
   try {
+    // Trusted main-process source → session-allowlist before the
+    // renderer can call import-track / import-resolve-paths.
+    allowImportPaths(paths)
     win.webContents.send('inbox-files-detected', paths)
     console.log(`[inbox-watcher] notified renderer of ${paths.length} file(s)`)
   } catch (err) {

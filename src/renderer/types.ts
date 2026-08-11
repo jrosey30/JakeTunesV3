@@ -808,6 +808,7 @@ declare global {
       onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => () => void
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
+      allowDroppedImportPaths: (files: File[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
       syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean }) => Promise<{
