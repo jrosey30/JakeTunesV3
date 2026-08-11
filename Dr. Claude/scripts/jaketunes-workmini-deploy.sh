@@ -75,10 +75,13 @@ ENV_SRC="$USERDATA/.env"
 ART_SRC="$USERDATA/artwork/"           # album covers (md5(artist|||album).jpg)
 ARTIST_IMG_SRC="$USERDATA/artist-images/"  # artist portraits ({slug}.jpg)
 
-# Streaming mode (workmini NAS streaming, set up 2026-06-08). When workmini
-# streams music from the JakeShared NAS mount instead of holding a local
-# copy, skip the 157 GB music rsync AND don't re-pin musicRoot to the local
-# path (the LaunchAgent-mounted NAS path must win). Toggle with the marker:
+# Streaming mode (workmini, set up 2026-06-08, corrected 2026-08-10/11).
+# When the marker exists: skip the 157 GB music rsync, keep a local cache-
+# farm under ~/JakeTunesLib (real files + NAS symlinks), and play through
+# homemini's HTTP audio server — the same path the phone uses. The SMB
+# mount (~/JakeShareNAS) is ONLY a fallback / cache source; reading it on
+# the playback hot path is what made workmini hang (203s readdir, libuv
+# threadpool starvation, Howler XHR silence). Toggle with the marker:
 # create it to stream, remove it to return to local-copy mode.
 STREAM_MARKER="$HOME/.config/jaketunes/workmini-streaming"
 STREAMING=false
@@ -252,8 +255,8 @@ RC=$?
 # Note: if the transfer is network-throttled, copying to an external
 # drive and walking it over is far faster than any rsync tuning.
 if $STREAMING; then
-  say "[3/5] Music library — SKIPPED (workmini streams from the NAS)"
-  echo "  • streaming mode: music served from the JakeShared mount, not copied locally"
+  say "[3/5] Music library — SKIPPED (workmini streams via homemini)"
+  echo "  • streaming mode: audio comes from homemini:3000; local cache-farm + NAS mount are fallback only"
 else
 say "[3/5] Syncing music library (~73 GB — first run is long; resumable)"
 ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Music/JakeTunesLibrary'"
@@ -399,13 +402,59 @@ ssh $SSH_OPTS "$REMOTE" "mv '${WM_LIBJSON}.tmp' '${WM_LIBJSON}'" \
 LIBJSON_TRACKS="$(python3 -c "import json; d=json.load(open('$LIBJSON_SRC')); k='tracks' if 'tracks' in d else 'songs'; print(len(d.get(k,[])))" 2>/dev/null || echo '?')"
 echo "  ✓ library.json copied ($LIBJSON_TRACKS tracks)"
 
-# ── 4.5. Pin library.musicRoot in app-settings.json (Brief 011b) ────
+# ── 4.5. Pin library.* in app-settings.json (Brief 011b + Aug 10 fix) ────
 # Without this, JakeTunes falls back to the auto-detect heuristic. The
 # heuristic is pretty good, but it CAN still pick the wrong root if a
 # user manually creates F-directories under a stale ~/Music2/ folder
 # in the future. Explicit setting bypasses the heuristic entirely.
+#
+# Streaming mode MUST also pin streamSource=homemini. That flag is what
+# makes ipod-audio:// fetch from homemini BEFORE any filesystem call.
+# It was set by hand on 2026-08-10 ("app-settings, not code") — a redeploy
+# or a wiped settings file silently dropped back to SMB-over-Tailscale,
+# which is the exact path that made every song hang. Pin it every deploy.
 if $STREAMING; then
-  say "[4.5/5] musicRoot pin — SKIPPED (streaming; the NAS mount path must win)"
+  say "[4.5/5] Pinning streaming library settings (musicRoot + streamRoot + streamSource)"
+  ssh $SSH_OPTS "$REMOTE" "bash -s" <<'REMOTE_SETTINGS'
+set -e
+SETTINGS_DIR="$HOME/Library/Application Support/JakeTunes"
+SETTINGS_PATH="$SETTINGS_DIR/app-settings.json"
+# Local cache-farm (real files + NAS symlinks). Matches cache-manager.py DST.
+MUSIC_ROOT="$HOME/JakeTunesLib/JakeTunesLibrary"
+# LaunchAgent-mounted Synology share. Fallback / cache source only.
+STREAM_ROOT="$HOME/JakeShareNAS/JakeTunesLibrary"
+
+mkdir -p "$SETTINGS_DIR"
+if [ ! -f "$SETTINGS_PATH" ]; then
+  echo '{}' > "$SETTINGS_PATH"
+fi
+
+python3 <<PYEOF
+import json, os
+settings_path = "$SETTINGS_PATH"
+try:
+    with open(settings_path) as f:
+        settings = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    settings = {}
+if not isinstance(settings, dict):
+    settings = {}
+if "library" not in settings or not isinstance(settings.get("library"), dict):
+    settings["library"] = {}
+settings["library"]["musicRoot"] = "$MUSIC_ROOT"
+settings["library"]["streamRoot"] = "$STREAM_ROOT"
+settings["library"]["streamSource"] = "homemini"
+tmp_path = settings_path + ".tmp"
+with open(tmp_path, "w") as f:
+    json.dump(settings, f, indent=2)
+os.replace(tmp_path, settings_path)
+print(f"  ✓ library.musicRoot    = $MUSIC_ROOT")
+print(f"  ✓ library.streamRoot   = $STREAM_ROOT")
+print(f"  ✓ library.streamSource = homemini")
+PYEOF
+REMOTE_SETTINGS
+  RC=$?
+  [[ $RC -eq 0 ]] || die "Failed to write streaming library settings (exit $RC)."
 else
 say "[4.5/5] Pinning library.musicRoot in app-settings.json"
 ssh $SSH_OPTS "$REMOTE" "bash -s" <<'REMOTE_SETTINGS'
