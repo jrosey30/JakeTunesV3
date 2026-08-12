@@ -38,6 +38,10 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, 
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
+import {
+  phonePlaylistSidecarsNeverPushFromDesktop,
+  assertNoDesktopBluntPush,
+} from './sidecar-contracts.ts'
 import { fetchHeadersWithin } from './fetch-headers'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
@@ -3514,7 +3518,11 @@ const mobileMetadataOverridesCache = new JsonFileCache<Record<string, { fp?: str
   'mobile-metadata-overrides',
 )
 const PHONE_AUTHORED_FILES = [
-  'mobile-playlists.json', 'mobile-stars.json', 'mobile-plays.json', 'playlist-additions.json',
+  // Phone playlist sidecars — names from @jaketunes/contracts
+  // (sidecars.phonePlaylistSidecarsNeverPushFromDesktop). Pull/mirror only;
+  // never blunt-push. See assertNoDesktopBluntPush(STATE_FILE_NAMES).
+  ...phonePlaylistSidecarsNeverPushFromDesktop,
+  'mobile-stars.json', 'mobile-plays.json',
   // Missing from this list until 2026-08-07 — phone song-info edits landed on
   // the NAS and simply never came down (Jake: "why arent the song info
   // updates appearing from my phone?? SEAMLESS SYNCING!!!").
@@ -3675,16 +3683,18 @@ const STATE_FILE_NAMES = [
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',
-  // mobile-playlists.json + playlist-additions.json are deliberately ABSENT
-  // (2026-08-12): same single-writer contract as recommendations.json. The iOS
-  // backend on homemini owns both files. V3 only mirrors them read-only
-  // (Brief 121 + refreshPhoneAuthoredMirrors). A reconcile / auto-backup
-  // LOCAL→NAS push of a stale MacBook mirror is the whole-file clobber that
-  // made phone "Add to Playlist" look completely broken.
-  // recommendations.json is deliberately ABSENT (Brief 125): the mobile backend
-  // on homemini is the SINGLE writer of the shared recommendations files. V3
-  // mutates only through its HTTP API — a reconcile push of V3's local copy is
-  // exactly the whole-file clobber that resurrected phone-deleted recos.
+  // Phone playlist sidecars (sidecars.phonePlaylistSidecarsNeverPushFromDesktop
+  // in @jaketunes/contracts) are deliberately ABSENT (2026-08-12): same
+  // single-writer contract as recommendations.json. The iOS backend on homemini
+  // owns both files. V3 only mirrors them read-only (Brief 121 +
+  // refreshPhoneAuthoredMirrors). A reconcile / auto-backup LOCAL→NAS push of
+  // a stale MacBook mirror is the whole-file clobber that made phone "Add to
+  // Playlist" look completely broken. Locked by assertNoDesktopBluntPush below.
+  // recommendations.json is deliberately ABSENT (Brief 125 / contracts notes
+  // recommendationsSingleWriter): the mobile backend on homemini is the SINGLE
+  // writer of the shared recommendations files. V3 mutates only through its
+  // HTTP API — a reconcile push of V3's local copy is exactly the whole-file
+  // clobber that resurrected phone-deleted recos.
   'play-events.jsonl',
   'embeddings.bin',
   // The vibe brain rides to the NAS like embeddings.bin so the homemini
@@ -3696,6 +3706,7 @@ const STATE_FILE_NAMES = [
   // Single-writer (the desktop app), so no clobber risk like recommendations.json.
   'live-sets.json',
 ] as const
+assertNoDesktopBluntPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
 interface StateConflict {
   file: string
   localMtimeMs: number

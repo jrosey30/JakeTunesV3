@@ -1,0 +1,39 @@
+{
+  "name": "@jaketunes/contracts",
+  "version": "0.1.0",
+  "sidecars": {
+    "desktopOwned": [
+      "library.json",
+      "metadata-overrides.json",
+      "lyrics.json",
+      "discovery-feedback.json",
+      "friends.json",
+      "playlists.json",
+      "play-events.jsonl",
+      "listening-log.jsonl",
+      "live-sets.json",
+      "listener-profile.json",
+      "musicman-memory.json",
+      "musicman-interactions.jsonl",
+      "picks-cache.json"
+    ],
+    "mobileWritable": [
+      "mobile-playlists.json",
+      "playlist-additions.json",
+      "mobile-stars.json",
+      "mobile-plays.json",
+      "mobile-metadata-overrides.json",
+      "mobile-imports.json",
+      "mobile-listening-log.jsonl",
+      "recommendations.json",
+      "recommendations-deleted.json"
+    ],
+    "phonePlaylistSidecarsNeverPushFromDesktop": [
+      "mobile-playlists.json",
+      "playlist-additions.json"
+    ]
+  },
+  "notes": {
+    "recommendationsSingleWriter": "The homemini mobile backend is the SINGLE writer of recommendations.json and recommendations-deleted.json. Desktop V3 must never blunt-push those files via SYNC_FILES, STATE_FILE_NAMES, or reconcile/auto-backup. Mutations go through the backend HTTP API; when homemini is unreachable they queue in the V3-private recommendations-outbox.json and replay later."
+  }
+}

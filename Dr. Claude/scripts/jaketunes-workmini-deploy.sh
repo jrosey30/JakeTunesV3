@@ -340,6 +340,8 @@ SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadat
 # Phone-authored playlist sidecars: NAS is fresher than a possibly-stale
 # MacBook userData mirror (iOS backend writes via homemini → NAS). Prefer NAS
 # for those two so workmini doesn't inherit an empty/stale clobber copy.
+# ⚠️ TWIN: vendor/jaketunes-contracts/contracts.json phonePlaylistSidecarsNeverPushFromDesktop
+# (rewritten by npm run sync:contracts — do not hand-edit).
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 is_phone_playlist_sidecar() {
   local x
