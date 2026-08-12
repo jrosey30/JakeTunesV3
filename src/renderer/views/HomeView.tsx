@@ -793,6 +793,7 @@ export default function HomeView() {
               <span className="home-shelf-label">Songs</span>
               <span className="home-shelf-count">{formatShelfCount(shelfCounts.songs, 'song', 'songs')}</span>
             </span>
+            <span className="home-shelf-go" aria-hidden="true">›</span>
           </button>
           <button type="button" className="home-shelf" onClick={() => goView('albums')}>
             <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="albums" /></span>
@@ -800,6 +801,7 @@ export default function HomeView() {
               <span className="home-shelf-label">Albums</span>
               <span className="home-shelf-count">{formatShelfCount(shelfCounts.albums, 'album', 'albums')}</span>
             </span>
+            <span className="home-shelf-go" aria-hidden="true">›</span>
           </button>
           <button type="button" className="home-shelf" onClick={() => goView('artists')}>
             <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="artists" /></span>
@@ -807,6 +809,7 @@ export default function HomeView() {
               <span className="home-shelf-label">Artists</span>
               <span className="home-shelf-count">{formatShelfCount(shelfCounts.artists, 'artist', 'artists')}</span>
             </span>
+            <span className="home-shelf-go" aria-hidden="true">›</span>
           </button>
           <button type="button" className="home-shelf home-shelf--shop" onClick={() => goView('discovery')}>
             <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="shop" /></span>
@@ -814,6 +817,7 @@ export default function HomeView() {
               <span className="home-shelf-label">Record Shop</span>
               <span className="home-shelf-count">Find records</span>
             </span>
+            <span className="home-shelf-go" aria-hidden="true">›</span>
           </button>
           {!libraryEmpty && (
             <button
@@ -826,6 +830,7 @@ export default function HomeView() {
                 <span className="home-shelf-label">Recently Added</span>
                 <span className="home-shelf-count">New arrivals</span>
               </span>
+              <span className="home-shelf-go" aria-hidden="true">›</span>
             </button>
           )}
         </nav>
