@@ -78,8 +78,9 @@ export async function removeDownloadPaths(paths: string[]): Promise<void> {
     try {
       const r = await window.electronAPI?.removeDownload?.(p)
       if (r?.ok) pinned.delete(p)
-    } catch {
-      /* keep pinned on failure */
+      else console.warn('[remove-download] failed', p, r?.error)
+    } catch (err) {
+      console.warn('[remove-download] failed', p, err)
     }
   }
   emit()

@@ -176,3 +176,81 @@ describe('workmini deploy pins streamSource', () => {
     )
   })
 })
+
+/** Body of an ipc.handle('name', ...) callback — skip the Promise<{...}> type. */
+function ipcHandleBody(name: string): string {
+  const start = index.indexOf(`ipc.handle('${name}'`)
+  assert.notEqual(start, -1, `ipc.handle('${name}' missing`)
+  const arrow = index.indexOf('=>', start)
+  assert.ok(arrow !== -1 && arrow < start + 400, `=> missing after ipc.handle('${name}'`)
+  const open = index.indexOf('{', arrow)
+  let depth = 0
+  for (let i = open; i < index.length; i++) {
+    if (index[i] === '{') depth++
+    else if (index[i] === '}' && --depth === 0) return index.slice(open, i + 1)
+  }
+  assert.fail(`unbalanced braces in ipc.handle('${name}')`)
+}
+
+describe('download / remove-download never touch the NAS (workmini hang + silent stuck badge)', () => {
+  // Jake, 2026-08-12: "Remove Download" on a just-imported track did nothing.
+  // workmini has streamRoot set and streamSource unset, so both handlers took
+  // the "copy/symlink via NAS" branch. streamRoot pointed at a stale empty
+  // /Volumes/JakeShared (live share is JakeShared-1), stat() failed, the
+  // renderer swallowed the error, orange badge stuck. Same SMB shape as the
+  // Aug 10 playback hang — pin/unpin must use the homemini-client gate.
+
+  test('download-track uses the shared homemini-client gate, not streamSource-only', () => {
+    const body = ipcHandleBody('download-track')
+    assert.match(
+      body,
+      /isHomeminiPlaybackClientCached\(\)/,
+      'download-track no longer uses isHomeminiPlaybackClientCached — streamRoot machines fall back to NAS copy',
+    )
+    assert.doesNotMatch(
+      body,
+      /copyFile\(target/,
+      'download-track still copies from a symlink NAS target — that is the hang',
+    )
+    assert.doesNotMatch(
+      body,
+      /readStreamSource\(\)\) === 'homemini'/,
+      'download-track is back on a streamSource-only gate — workmini (streamRoot, no streamSource) misses homemini',
+    )
+  })
+
+  test('remove-download unpins even when convert-to-streamed cannot run', () => {
+    const body = ipcHandleBody('remove-download')
+    assert.match(
+      body,
+      /isHomeminiPlaybackClientCached\(\)/,
+      'remove-download no longer uses isHomeminiPlaybackClientCached — streamRoot machines hit NAS stat',
+    )
+    assert.match(
+      body,
+      /writePins/,
+      'remove-download no longer writes pins — the orange badge cannot clear',
+    )
+    // The pin drop must not sit behind `if (!r.ok) return r`. A brand-new
+    // import has no remote master yet; convert fails; the badge must still go.
+    const convertFail = body.search(/if \(!r\.ok\)/)
+    const writePins = body.search(/writePins/)
+    assert.notEqual(writePins, -1)
+    if (convertFail !== -1) {
+      assert.ok(
+        writePins > convertFail,
+        'writePins runs before the convert failure check — a failed convert still returns without unpinning',
+      )
+      assert.doesNotMatch(
+        body.slice(convertFail, writePins),
+        /return r/,
+        'remove-download still returns early on convert failure — badge stays stuck on new imports',
+      )
+    }
+    assert.doesNotMatch(
+      body,
+      /await stat\(target\)/,
+      'remove-download still stats the NAS master — stale streamRoot makes Remove Download a silent no-op',
+    )
+  })
+})

@@ -4077,7 +4077,12 @@ async function homeminiServesMatchingBytes(id: string | number, storedFingerprin
     if (!res.ok && res.status !== 206) return false
     const buf = Buffer.from(await res.arrayBuffer())
     if (buf.length <= 0) return false
-    const got = createHash('sha1').update(buf).digest('hex').slice(0, 16)
+    // Slice to the fingerprint window even if homemini ignored Range and
+    // sent the whole file (200 instead of 206). Hashing the full body
+    // would never match computeAudioFingerprint's first-256KB hash, and
+    // Remove Download would silently refuse forever.
+    const window = buf.subarray(0, 256 * 1024)
+    const got = createHash('sha1').update(window).digest('hex').slice(0, 16)
     return got === wantHash
   } catch { return false }
 }
@@ -4222,22 +4227,12 @@ ipcMain.handle('load-downloads-state', async (): Promise<{ pinned: string[]; str
 
 ipc.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
-    if ((await readStreamSource()) === 'homemini') {
-      // Laptop homemini mode: pull the real bytes over HTTP from homemini.
+    // streamRoot machines (workmini) are homemini clients even when
+    // streamSource is unset. Copying from the symlink's NAS target is the
+    // Aug 10 hang — same rule as playback. See 2026-08-11-workmini-playback-smb.
+    if (await isHomeminiPlaybackClientCached()) {
       const r = await pinStreamedTrackFromHomemini(ipodPath)
       if (!r.ok) return r
-    } else {
-      // Workmini NAS cache-farm mode: copy from the symlink's NAS target.
-      const fp = trackFarmPath(ipodPath)
-      const st = await lstat(fp)
-      if (st.isSymbolicLink()) {
-        const target = await readlink(fp)
-        await stat(target)                       // NAS source must be reachable
-        const tmp = fp + '.dl.tmp'
-        await unlink(tmp).catch(() => {})
-        await copyFile(target, tmp)              // pull the real bytes local
-        await rename(tmp, fp)                    // atomic: symlink → real file
-      }
     }
     const pins = await readPins()
     if (!pins.includes(ipodPath)) { pins.push(ipodPath); await writePins(pins) }
@@ -4249,25 +4244,16 @@ ipc.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean
 
 ipc.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
-    if ((await readStreamSource()) === 'homemini') {
-      // Laptop homemini mode: re-stream. convertTrackToStreamed hash-verifies
-      // homemini serves the exact bytes before dropping the local file, so this
-      // can never orphan a track.
+    // "Remove Download" always drops the pin (that's the orange badge).
+    // Reverting the file to a stream-link is best-effort and must never
+    // gate the unpin: a brand-new import has no NAS master at streamRoot
+    // (and workmini's streamRoot can be a stale /Volumes/JakeShared while
+    // the live share is JakeShared-1), so stat(NAS) used to fail silently
+    // and leave the badge stuck. Homemini HTTP, never SMB.
+    if (await isHomeminiPlaybackClientCached()) {
       const r = await convertTrackToStreamed(ipodPath, await fingerprintForIpodPath(ipodPath))
-      if (!r.ok) return r
-    } else {
-      // Workmini NAS cache-farm mode: symlink back to the NAS master.
-      const root = await readStreamRoot()
-      if (!root) return { ok: false, error: 'This library is fully local — nothing to un-download.' }
-      const fp = trackFarmPath(ipodPath)
-      const target = join(root, ipodPath.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
-      await stat(target)                         // never orphan: NAS must have it first
-      const st = await lstat(fp)
-      if (!st.isSymbolicLink()) {
-        const tmp = fp + '.rm.tmp'
-        await unlink(tmp).catch(() => {})
-        await symlink(target, tmp)
-        await rename(tmp, fp)                     // atomic: real file → symlink
+      if (!r.ok) {
+        console.warn(`[remove-download] kept local bytes (${r.error}): ${ipodPath}`)
       }
     }
     await writePins((await readPins()).filter((p) => p !== ipodPath))
