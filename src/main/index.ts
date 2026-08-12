@@ -5215,6 +5215,33 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
     }
 
+    // Activity wipe+rebuild cannot ship streamed (NAS symlink) tracks — the
+    // copy loop silently skips them, then remount-verify drops them from the
+    // catalog, and you land short (e.g. 482/500) with no useful reason.
+    // Refuse up front so the set is rebuilt/pinned before anything is wiped.
+    if (syncOpts?.wipeFirst) {
+      const streamed: string[] = []
+      for (const t of tracks) {
+        const colon = String(t.path || '')
+        if (!colon) continue
+        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+        if (await isStreamedTrackFile(abs)) {
+          streamed.push(`${String(t.title || '')} — ${String(t.artist || '')}`)
+        }
+      }
+      if (streamed.length > 0) {
+        console.error(`sync-to-ipod: REFUSING activity set — ${streamed.length}/${tracks.length} are streamed (not downloaded locally)`)
+        for (const s of streamed.slice(0, 20)) console.error('   •', s)
+        return {
+          ok: false,
+          copied: 0,
+          error: `Activity sync refused — ${streamed.length} of ${tracks.length} songs are streamed off the NAS (not downloaded locally). Pin/download them first, or rebuild the set from local files only. Nothing was wiped.`,
+          streamed: streamed.length,
+          target: tracks.length,
+        }
+      }
+    }
+
     // Manifest: exactly what this sync contains, and the delta from last time.
     try {
       const manifestPath = join(STATE_DIR, 'last-sync-manifest.json')
@@ -5554,9 +5581,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // Activity wipe+rebuild: remount-verify every N songs so the fskit cache
   // never accumulates hundreds of "successful" writes the card then drops.
   // Without this, each sync lands a random subset (103 / 421 / 238 of 500).
-  // Chunk of 10 (not 20): smaller dirty-cache windows = fewer mid-flush drops
-  // on Jake's iFlash card — the count variance was non-deterministic for a reason.
-  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 10 : 0
+  // Chunk of 5: Jake still saw 482/500 with chunks of 10 — tighter windows
+  // leave less for the card to drop mid-flush.
+  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 5 : 0
   let chunkPending: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
   const flushCopyChunk = async (force = false) => {
     if (COPY_VERIFY_CHUNK <= 0) return
@@ -5570,7 +5597,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     })
     await flushCardCaches()
     const r = await remountVerifyEntries(IPOD_MOUNT, batch, {
-      maxPasses: 6,
+      maxPasses: 8,
       label: 'chunk',
       isCancelled: () => syncCancelRequested,
     })
@@ -5859,6 +5886,66 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
     }
     if (verifyRan) {
+      // Gap-fill (2026-08-12): Jake hit 482/500 — remount-verify was honest,
+      // but batch recopies of the missing set still dumped into the cache and
+      // lost again. For wipe-first activity sync, finish the last few ONE AT A
+      // TIME: copy → fsync → remount → size-check, before accepting shortfall.
+      if (syncOpts?.wipeFirst && landedIds.size < verify.length && !syncCancelRequested) {
+        const missing = verify.filter((e) => !landedIds.has(e.id))
+        console.warn(`sync-to-ipod: GAP-FILL — ${missing.length} still missing after final verify; remounting per song`)
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'verify', current: landedIds.size, total: syncTarget,
+          title: `Finishing the last ${missing.length} song(s) — one at a time…`,
+        })
+        let gapRecovered = 0
+        for (let i = 0; i < missing.length; i++) {
+          if (syncCancelRequested) break
+          const e = missing[i]
+          let stuck = false
+          for (let attempt = 1; attempt <= 5 && !stuck; attempt++) {
+            if (syncCancelRequested) break
+            try {
+              const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
+              if (dir) await mkdir(dir, { recursive: true })
+              await copyFile(e.localFile, e.dstPath)
+              const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
+              if (!conf.ok) {
+                console.warn(`sync-to-ipod: gap-fill copy not confirmed for ${e.id} (try ${attempt}): ${conf.reason}`)
+                continue
+              }
+              await flushCardCaches()
+              const rm = await remountVolume(IPOD_MOUNT)
+              if (!rm.ok) {
+                console.warn(`sync-to-ipod: gap-fill remount failed for ${e.id}: ${rm.error}`)
+                continue
+              }
+              const sz = (await stat(e.dstPath).catch(() => null))?.size ?? -1
+              if (sz === e.expectedSize) {
+                landedIds.add(e.id)
+                writtenById.set(e.id, { srcPath: e.localFile, dstPath: e.dstPath, expectedSize: e.expectedSize })
+                gapRecovered++
+                stuck = true
+                console.log(`sync-to-ipod: gap-fill recovered track ${e.id} on try ${attempt} (${landedIds.size}/${syncTarget})`)
+              } else {
+                console.warn(`sync-to-ipod: gap-fill size mismatch for ${e.id}: got ${sz}, want ${e.expectedSize}`)
+              }
+            } catch (err) {
+              console.warn(`sync-to-ipod: gap-fill failed for ${e.id}:`, err)
+            }
+          }
+          mainWindow?.webContents.send('sync-progress', {
+            phase: 'verify', current: landedIds.size, total: syncTarget,
+            title: stuck
+              ? `Recovered ${gapRecovered} of ${missing.length} missing…`
+              : `Still missing after retries (${i + 1}/${missing.length})…`,
+          })
+        }
+        verifyAttempts += missing.length
+        if (gapRecovered > 0) {
+          console.log(`sync-to-ipod: GAP-FILL recovered ${gapRecovered}/${missing.length}; now ${landedIds.size}/${syncTarget}`)
+        }
+      }
+
       const before = tracks.length
       const failedNow = tracks
         .filter((t) => !landedIds.has(t.id as number))
