@@ -142,6 +142,17 @@ describe('silent-until-volume-nudge cannot return', () => {
     assert.match(useAudio, /if \(next\.playing\(\)\)/,
       'sample-accurate promote no longer handles an already-playing prewarmed Howl — it stays at volume 0')
   })
+
+  test('gapless promote clears outgoing-faded so the incoming Howl can snap audible', () => {
+    // Sticky gaplessOutgoingFaded=true after handoff made ensureHowlAudible
+    // a no-op for the whole next track — silent until volume nudge at every
+    // natural-end seam.
+    const handoff = useAudio.indexOf('Detach gapless state')
+    assert.notEqual(handoff, -1, 'gapless promote handoff marker missing')
+    const slice = useAudio.slice(handoff, handoff + 800)
+    assert.match(slice, /gaplessOutgoingFaded\s*=\s*false/,
+      'promote no longer clears gaplessOutgoingFaded — seam snap stays disabled and the next song goes silent')
+  })
 })
 
 describe('libuv threadpool is raised before any fs import side effects', () => {
