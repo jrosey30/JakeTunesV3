@@ -10,10 +10,12 @@
   will-change: scroll-position;
 }
 
-/* Welcome band — greeting, what to do next, library shelves. */
+/* Welcome band — greeting + invite, then the library shelf grid.
+   Shelves live in this band so they read as the shop directory under
+   the sign, not a second sidebar or a leftover chip row. */
 .home-header {
-  padding: 28px 28px 22px 28px;
-  margin-bottom: 8px;
+  padding: 28px 28px 20px 28px;
+  margin-bottom: 0;
   background:
     linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.55) 0%, rgba(var(--brand-cream-rgb), 0) 100%);
 }
@@ -88,43 +90,110 @@
   color: var(--text-secondary, #555049);
 }
 
-.home-entries {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+/* Library shelves — equal bays, icon + label + count. One row at
+   desktop width (4 empty / 5 populated); wrap to even grids, never a
+   leftover chip. */
+.home-shelves {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(85, 78, 64, 0.09);
 }
 
-.home-entry {
-  display: inline-flex;
+.home-shelves--5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.home-shelf {
+  display: flex;
   align-items: center;
-  height: var(--control-h-sm, 28px);
-  padding: 0 12px;
+  gap: 12px;
+  min-height: 64px;
+  min-width: 0;
+  padding: 10px 12px;
+  text-align: left;
   font-family: inherit;
-  font-size: var(--font-12, 12px);
-  font-weight: var(--fw-semibold, 600);
-  color: var(--text-primary, #161312);
-  background: rgba(255, 255, 255, 0.55);
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface-raised, #fcfbf8);
   border: 1px solid var(--border-warm, rgba(120, 90, 50, 0.14));
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-lg, 8px);
   box-shadow: var(--shadow-1, 0 1px 2px rgba(70, 55, 40, 0.06));
   cursor: pointer;
-  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms ease;
 }
 
-.home-entry:hover {
+.home-shelf-icon {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md, 6px);
+  background: rgba(85, 78, 64, 0.07);
+  color: #6a6156;
+}
+
+.home-shelf--shop .home-shelf-icon {
+  background: rgba(184, 115, 51, 0.14);
+  color: #b87333;
+}
+
+.home-shelf-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-shelf-label {
+  font-size: var(--font-13, 13px);
+  font-weight: var(--fw-semibold, 600);
+  letter-spacing: var(--track-tight, -0.01em);
+  color: var(--text-primary, #161312);
+  line-height: var(--lh-snug, 1.2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.home-shelf-count {
+  font-size: var(--font-11, 11px);
+  font-weight: var(--fw-medium, 500);
+  color: var(--text-dim, #8a8378);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-shelf:hover {
   background: #fff;
-  border-color: rgba(var(--brand-orange-rgb), 0.35);
+  border-color: rgba(var(--brand-orange-rgb), 0.32);
+  box-shadow: var(--shadow-2);
 }
 
-.home-entry:active {
-  transform: scale(0.98);
+.home-shelf:active {
+  transform: scale(0.985);
+}
+
+.home-shelf:focus-visible {
+  outline: 2px solid var(--brand-orange);
+  outline-offset: 2px;
 }
 
 .home-welcome-empty {
-  margin: 4px 28px 28px 28px;
+  margin: 8px 28px 28px 28px;
   padding: 44px 32px;
-  min-height: 260px;
+  min-height: 220px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -175,7 +244,7 @@
 
 /* ── 4.4.33: Featured Album hero ─────────────────────────────────────── */
 .home-featured {
-  margin: 0 28px 36px 28px;
+  margin: 8px 28px 28px 28px;
   padding: 22px;
   display: flex;
   gap: 24px;
@@ -378,7 +447,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 0;
-  margin: 0 28px 32px 28px;
+  margin: 0 28px 28px 28px;
   background: rgba(85, 78, 64, 0.045);
   border: 1px solid rgba(85, 78, 64, 0.10);
   border-radius: 10px;
@@ -1197,7 +1266,8 @@
    LED. Keep ticket stubs, range dates, and venue marks. ── */
 
 .home-mixes {
-  margin: 0 0 8px;
+  /* Chapter rhythm comes from .home-section (44px). Don't collapse it
+     to 8px — that glued mixes to the stats strip. */
   padding: 0;
 }
 .home-mixes .home-mixes-row,
@@ -1207,7 +1277,7 @@
 }
 
 .home-section-more:focus-visible,
-.home-entry:focus-visible,
+.home-shelf:focus-visible,
 .home-mixes-vibe-btn:focus-visible {
   outline: 2px solid var(--brand-orange);
   outline-offset: 2px;
@@ -1248,8 +1318,10 @@
 .home-tour-card--known .home-tour-date { background: linear-gradient(180deg, #f7ead6, #efdcbe); }
 
 @media (max-width: 860px) {
-  .home-header { padding: 22px 20px 18px 20px; }
+  .home-header { padding: 22px 20px 16px 20px; }
   .home-title { font-size: 26px; }
+  .home-shelves,
+  .home-shelves--5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-featured {
     margin-left: 20px;
     margin-right: 20px;
