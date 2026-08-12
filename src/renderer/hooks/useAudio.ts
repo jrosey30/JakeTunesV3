@@ -270,7 +270,12 @@ const GAPLESS_SEAM_FADE_MS = GAPLESS_FADE_OUT_DURATION_MS
 // sliding the volume bar calls volume() and "wakes" the song. Snap after
 // the fade window so a stuck fade can't leave the track silent.
 function ensureHowlAudible(howl: Howl | null, target: number): void {
-  if (!howl || crossfading || gaplessOutgoingFaded) return
+  // Skip while the OUTGOING track is fading to zero (sharedHowl still
+  // that track). Must not skip after promote — gaplessOutgoingFaded is
+  // cleared on handoff; if it weren't, every seam snap would no-op and
+  // the next song would sit silent until the volume bar.
+  if (!howl || crossfading) return
+  if (gaplessOutgoingFaded && howl === sharedHowl) return
   if (!(target > 0.02)) return
   try {
     const cur = howl.volume() as number
@@ -1466,6 +1471,10 @@ export function useAudio(opts?: { primary?: boolean }) {
         gaplessNextQueue = null
         gaplessNextIdx = -1
         gaplessNextPrewarmed = false
+        // Outgoing fade-to-zero is done. Clear so fadeInHowl's audible
+        // snap + heartbeat can wake the incoming Howl. Leaving this true
+        // was the "silent until volume nudge at every track change" bug.
+        gaplessOutgoingFaded = false
         // Wire up the preloaded Howl's lifecycle (it was created without
         // these handlers in the preload step).
         const nextEndedHolder = { v: false }
