@@ -183,6 +183,64 @@ describe('homemini fetch must not AbortSignal.timeout the body', () => {
   })
 })
 
+describe('workmini-index-sync teaches homemini before workmini can race', () => {
+  const syncScript = readFileSync(
+    join(MAIN, '../../Dr. Claude/scripts/jaketunes-workmini-index-sync.sh'),
+    'utf-8',
+  )
+
+  test('has an independent homemini stamp (heals workmini-already-current mornings)', () => {
+    // Aug 12: early-exit keyed only on workmini size/mtime left homemini
+    // never kickstarted after a partial overnight run — new songs stayed 404.
+    assert.match(
+      syncScript,
+      /HM_STAMP=/,
+      'index-sync must stamp successful homemini teaches separately from workmini',
+    )
+    assert.match(
+      syncScript,
+      /NEED_HM=/,
+      'index-sync must decide homemini teach independently of the workmini push',
+    )
+  })
+
+  test('kickstarts homemini and waits for healthz before pushing workmini', () => {
+    assert.match(
+      syncScript,
+      /launchctl kickstart -k/,
+      'index-sync must kickstart the stream backend so new ids enter the in-memory map',
+    )
+    assert.match(
+      syncScript,
+      /healthz/,
+      'index-sync must wait for healthz — kickstart returns before the id map is ready',
+    )
+    const teachFn = syncScript.indexOf('teach_homemini()')
+    const wmPush = syncScript.indexOf('pushed index → workmini')
+    assert.notEqual(teachFn, -1, 'teach_homemini function missing')
+    assert.notEqual(wmPush, -1, 'workmini push log missing')
+    assert.ok(
+      teachFn < wmPush,
+      'homemini teach must be defined/run before the workmini push — otherwise the UI races ahead of the id map',
+    )
+    assert.match(
+      syncScript,
+      /deferring workmini push/,
+      'index-sync must refuse to push workmini when homemini did not learn the ids',
+    )
+  })
+
+  test('cache-farm link pass never exists()/stat-follows into JakeShareNAS', () => {
+    // os.path.exists on a farm→SMB path hangs the SSH tick when the mount wedges.
+    const linkPass = syncScript.slice(syncScript.indexOf('Cache-farm links'))
+    assert.doesNotMatch(
+      linkPass,
+      /os\.path\.exists\s*\(/,
+      'link pass must not os.path.exists into the NAS mount — that is the SMB hang',
+    )
+  })
+})
+
 describe('workmini must not sync-probe SMB on the main thread', () => {
   test('loadDupeFingerprintsFromLibrary uses lstat, never existsSync', () => {
     const start = index.indexOf('async function loadDupeFingerprintsFromLibrary')

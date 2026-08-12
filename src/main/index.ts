@@ -4011,12 +4011,17 @@ async function fetchAudioFromHomemini(
     }
   }
 
-  // One retry — Tailscale blips and a cold first-byte regularly look like a
-  // permanent miss; a second try after 400ms recovers most "won't play" cases
-  // without a full app restart.
+  // Retries — Tailscale blips and a cold first-byte regularly look like a
+  // permanent miss; a second try after 400ms recovers most. A third try after
+  // 2s rides out an in-flight homemini kickstart (index-sync reloads the id
+  // map — brand-new imports 404 for a few seconds while launchd brings :3000
+  // back). Without that window, workmini marks today's songs dead until relaunch.
   const first = await once()
   if (first) return first
   await new Promise((r) => setTimeout(r, 400))
+  const second = await once()
+  if (second) return second
+  await new Promise((r) => setTimeout(r, 2000))
   return once()
 }
 
