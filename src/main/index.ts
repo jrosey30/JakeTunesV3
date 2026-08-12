@@ -5578,12 +5578,12 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   const trackByLocal = new Map<string, Record<string, unknown>>()
   for (const c of candidates) trackByLocal.set(c.localFile, c.track)
 
-  // Activity wipe+rebuild: remount-verify every N songs so the fskit cache
-  // never accumulates hundreds of "successful" writes the card then drops.
-  // Without this, each sync lands a random subset (103 / 421 / 238 of 500).
-  // Chunk of 5: Jake still saw 482/500 with chunks of 10 — tighter windows
-  // leave less for the card to drop mid-flush.
-  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 5 : 0
+  // Activity wipe+rebuild: remount-verify EVERY song. Jake still saw 489/500
+  // with chunks of 5 — the card drops writes inside any multi-file dirty
+  // window. One copy → fsync → remount → size check per track is slow on USB
+  // 2.0, and it's the only pattern that has a chance of "500 means 500" on
+  // this iFlash/FAT32 Mini (roulette: 8 / 108 / 272 / 482 / 489).
+  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 1 : 0
   let chunkPending: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
   const flushCopyChunk = async (force = false) => {
     if (COPY_VERIFY_CHUNK <= 0) return
@@ -5593,7 +5593,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     chunkPending = []
     mainWindow?.webContents.send('sync-progress', {
       phase: 'verify', current: copied, total: Math.max(totalToCopy, 1),
-      title: `Confirming ${batch.length} song(s) actually stuck on the card…`,
+      title: `Confirming song ${copied} actually stuck on the card…`,
     })
     await flushCardCaches()
     const r = await remountVerifyEntries(IPOD_MOUNT, batch, {
@@ -6294,6 +6294,20 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             return
           }
           console.log(`sync-to-ipod: readback verified — ${onDevice} catalog records, all ${onDiskFiles.length} files present on disk`)
+          // Activity wipe+rebuild: catalog matching the partial landed set is
+          // still a FAILED sync if it's under the pick (489 of 500).
+          if (syncOpts?.wipeFirst && onDevice < syncTarget) {
+            resolve({
+              ok: false,
+              error: `Only ${onDevice} of ${syncTarget} songs stuck on the iPod — the card is still dropping writes (roulette). Catalog matches what landed. Sync again, or reformat the card if this keeps happening.`,
+              copied, copyErrors,
+              target: syncTarget,
+              landed: onDevice,
+              shortfall: syncTarget - onDevice,
+              verifyAttempts,
+            })
+            return
+          }
           // Retire the firmware's session scratch (2026-07-21: Jake's device
           // indexed the SAME perfect 1000-track DB as 854, then 892 after a
           // hard reset — boot-time merges of stale Play Counts / On-The-Go
