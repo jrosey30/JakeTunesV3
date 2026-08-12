@@ -14,7 +14,9 @@
 // speak-blurb / cancel-speech remain Phase-0 stubs; Phase 2 wires them
 // to the ElevenLabs TTS bridge + the duck pattern.
 
-import { ipcMain, BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
+import type { IpcRegistrar } from '../ipc-register.ts'
+import { REFUSED_SENDER } from '../ipc-register.ts'
 import { RecordStoreCache } from './cache'
 import type { Blurb, Persona, ShelfBundle } from './types'
 import type { CandTrack } from './candidate-pool'
@@ -30,7 +32,19 @@ import { buildItemRelationship, generateBlurb } from './blurb-generator'
 
 // ── Public registration surface ──────────────────────────────────────
 
+/** Empty wall returned when a non-main-window sender is refused. */
+const REFUSED_SHELVES: ShelfBundle = {
+  date: '',
+  generatedAt: 0,
+  validUntil: 0,
+  theme: { date: '', theme: '', rationale: '', source: 'mood' },
+  shelves: [],
+  source: 'cached',
+}
+
 export interface RecordStoreDeps {
+  /** Default-deny registrar — LLM spend + TTS stubs are main-window only. */
+  ipc: IpcRegistrar
   /** Absolute path of the JakeTunes user-data dir (where the cache
    *  lives). Pass app.getPath('userData'). */
   userDataDir: string
@@ -56,34 +70,38 @@ export function registerRecordStoreIntegration(deps: RecordStoreDeps): void {
   registered = true
 
   const cache = new RecordStoreCache(deps.userDataDir)
+  const { ipc } = deps
 
   // record-store:get-shelves — first-open-of-day generation (§2 D1).
   // Cached 24h per local-calendar-date so the wall is stable all day.
-  ipcMain.handle('record-store:get-shelves', (_e, opts?: { forceRefresh?: boolean }) =>
+  // LLM spend — main-window only.
+  ipc.handle('record-store:get-shelves', (_e, opts?: { forceRefresh?: boolean }) =>
     resolveShelves(cache, deps, opts),
-  )
+  { refuse: REFUSED_SHELVES })
 
   // record-store:get-blurb — lazy, relationship-aware, cached forever
   // per (itemId, persona). Returns null when the LLM is unreachable —
   // no blurb, never an error, never a fabricated take (§8).
-  ipcMain.handle('record-store:get-blurb', (_e, args: { itemId: string; persona: Persona }) =>
+  ipc.handle('record-store:get-blurb', (_e, args: { itemId: string; persona: Persona }) =>
     resolveBlurb(cache, deps, args),
-  )
+  { refuse: null })
 
   // record-store:speak-blurb — Phase 0 stub. Phase 2 wires this to the
   // existing ElevenLabs TTS bridge + the duck pattern from Radio Mode.
-  ipcMain.handle(
+  ipc.handle(
     'record-store:speak-blurb',
-    async (_e, _args: { blurb: Blurb }): Promise<{ ok: true; audioId: string }> => {
+    async (_e, _args: { blurb: Blurb }): Promise<{ ok: boolean; audioId?: string; error?: string }> => {
       return { ok: true, audioId: `phase0-stub-${Date.now()}` }
     },
+    { refuse: REFUSED_SENDER },
   )
 
-  ipcMain.handle(
+  ipc.handle(
     'record-store:cancel-speech',
-    async (_e, _args: { audioId: string }): Promise<{ ok: true }> => {
+    async (_e, _args: { audioId: string }): Promise<{ ok: boolean; error?: string }> => {
       return { ok: true }
     },
+    { refuse: REFUSED_SENDER },
   )
 }
 

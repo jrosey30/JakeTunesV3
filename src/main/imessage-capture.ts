@@ -29,8 +29,9 @@
  * Pure parsing/classification lives in imessage-capture-core.ts (tested).
  */
 
-import { ipcMain } from 'electron'
 import { readFile, writeFile, rename } from 'fs/promises'
+import type { IpcRegistrar } from './ipc-register.ts'
+import { safeIpcError } from './safe-ipc-error.ts'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { execFile } from 'child_process'
@@ -227,7 +228,7 @@ async function notifyFdaRegression(): Promise<void> {
   }
 }
 
-export function startImessageCapture(host: ImessageCaptureHost): void {
+export function startImessageCapture(ipc: IpcRegistrar, host: ImessageCaptureHost): void {
   const scan = async (): Promise<void> => {
     if (scanning) return
     scanning = true
@@ -240,11 +241,14 @@ export function startImessageCapture(host: ImessageCaptureHost): void {
     }
   }
 
-  ipcMain.handle('imessage-capture-status', async () => {
+  ipc.handle('imessage-capture-status', async () => {
     const state = await loadState(host.stateFile)
     return { ok: true, ...lastStatus, lastRowId: state.lastRowId, pending: state.pending.length, recent: state.captures.slice(-20).reverse() }
-  })
-  ipcMain.handle('imessage-capture-scan', async () => { await scan(); return { ok: true, ...lastStatus } })
+  }, { public: true })
+  ipc.handle('imessage-capture-scan', async () => {
+    await scan()
+    return { ok: true, ...lastStatus }
+  }, { refuse: { ok: false, access: 'unknown' as const, error: 'refused-sender' } })
 
   setTimeout(() => { void scan() }, FIRST_SCAN_DELAY_MS)
   setInterval(() => { void scan() }, SCAN_EVERY_MS)
@@ -256,7 +260,7 @@ async function scanOnce(host: ImessageCaptureHost): Promise<void> {
   // Probe + cursor init in one query.
   const probe = await queryDb('SELECT MAX(ROWID) AS rowid, NULL AS guid, NULL AS text, NULL AS body_hex, NULL AS sender, 0 AS date FROM message')
   if (!probe.ok) {
-    lastStatus = { access: probe.denied ? 'denied' : 'unknown', error: probe.denied ? undefined : probe.error.slice(0, 200) }
+    lastStatus = { access: probe.denied ? 'denied' : 'unknown', error: probe.denied ? undefined : safeIpcError(probe.error, 'io-failed') }
     // ── LOUD failure on REGRESSION (2026-08-07, Jake: "this cant happen
     // again") ─────────────────────────────────────────────────────────────
     // Full Disk Access is tied to the app's code signature, so replacing the
@@ -293,7 +297,7 @@ async function scanOnce(host: ImessageCaptureHost): Promise<void> {
        WHERE ${where} AND m.is_from_me = 0
          AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
        ORDER BY m.ROWID ASC LIMIT ${PAGE_SIZE}`)
-    if (!q.ok) { lastStatus = { access: q.denied ? 'denied' : 'unknown', error: q.error.slice(0, 200) }; return }
+    if (!q.ok) { lastStatus = { access: q.denied ? 'denied' : 'unknown', error: safeIpcError(q.error, 'io-failed') }; return }
     for (const row of q.rows) {
       cursor = Math.max(cursor, Number(row.rowid))
       const text = row.text || (row.body_hex ? decodeAttributedBodyHex(row.body_hex) : '')

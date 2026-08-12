@@ -23,8 +23,8 @@
  *
  * ⚠️ This is a READ. It never modifies audio files.
  */
-import { ipcMain } from 'electron'
 import { execFile } from 'child_process'
+import type { IpcRegistrar } from './ipc-register.ts'
 import { promisify } from 'util'
 import { lstat, stat } from 'fs/promises'
 
@@ -110,9 +110,12 @@ export async function readGaplessTrim(absPath: string): Promise<GaplessTrim | nu
   return value
 }
 
-export function registerGaplessTrimIpc(): void {
-  ipcMain.handle('gapless-trim', async (_e, absPath: string) => {
+export function registerGaplessTrimIpc(ipc: IpcRegistrar): void {
+  // Path-based ffprobe — main-window only. Guest frames must not probe
+  // arbitrary files. Refuse with null (same as "no trim") so the player
+  // degrades to today's untrimmed seam rather than throwing.
+  ipc.handle('gapless-trim', async (_e, absPath: string) => {
     if (!absPath || typeof absPath !== 'string') return null
     return readGaplessTrim(absPath)
-  })
+  }, { refuse: null })
 }

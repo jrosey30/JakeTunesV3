@@ -10,6 +10,7 @@ import { join } from 'path'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
+import { safeIpcError } from '../safe-ipc-error.ts'
 import {
   startOrReconfigureInboxWatcher,
   deleteInboxSource,
@@ -114,7 +115,7 @@ export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): v
       }
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 

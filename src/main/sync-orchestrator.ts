@@ -38,6 +38,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process'
+import { safeIpcError } from './safe-ipc-error.ts'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -223,7 +224,7 @@ function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string;
       currentChild = null
       const durationMs = Date.now() - startedAt
       console.warn('[sync-orchestrator] spawn error:', err)
-      resolve({ ok: false, error: String(err), durationMs })
+      resolve({ ok: false, error: safeIpcError(err, 'tool-failed'), durationMs })
     })
   })
 }

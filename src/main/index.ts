@@ -609,7 +609,7 @@ function runAudioAnalysisScript(absPath: string): Promise<AudioAnalysisResult> {
       }
       const trimmed = stdout.trim()
       if (!trimmed) {
-        resolve({ ok: false, error: stderr.trim().split('\n').pop() || 'no output from audio_analysis.py' })
+        resolve({ ok: false, error: safeIpcError(stderr.trim().split('\n').pop() || 'no output from audio_analysis.py', 'tool-failed') })
         return
       }
       try {
@@ -1105,11 +1105,12 @@ async function saveWindowState(win: BrowserWindow): Promise<void> {
 }
 
 // ── UI state + backup + app-settings + domain IPC ─────────────────────
-// Registered via createIpcRegistrar domain modules:
+// Registered via createIpcRegistrar (default-deny). Domain modules:
 //   ipc/ui-state-ipc.ts, ipc/backup-ipc.ts, ipc/settings-ipc.ts,
 //   ipc/import-ipc.ts, ipc/library-ipc.ts, ipc/ipod-ipc.ts,
 //   ipc/sync-ipc.ts, ipc/ai-ipc.ts, ipc/cynthia-ipc.ts
-// (see register* calls next to `let mainWindow`).
+// Remaining index.ts channels, record-store, imessage-capture, and
+// gapless-trim also register through `ipc` — no raw ipcMain.handle.
 
 // User-preference settings path (4.0 §6.7). Distinct from ui-state.json.
 // Still used by readAppSettingsAsync and other main-process readers;
@@ -1124,7 +1125,7 @@ function appSettingsPath(): string {
 // the renderer cross-references which are in the library.
 const relatedArtistsCache = new Map<string, { related: RelatedArtist[]; at: number }>()
 const RELATED_TTL_MS = 24 * 60 * 60 * 1000
-ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }> => {
+ipc.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }> => {
   const name = String(artist || '').trim()
   if (!name) return { ok: true, related: [] }
   const key = name.toLowerCase()
@@ -1145,18 +1146,18 @@ ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: 
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5.0-118 — Discovery Brain Phase 1: the taste fingerprint (taste-model.ts).
 // Pure compute over the current library; Phase 2's radar grounds + ranks with it.
-ipcMain.handle('get-taste-fingerprint', async () => {
+ipc.handle('get-taste-fingerprint', async () => {
   try {
     const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
     return { ok: true, fingerprint: computeTasteFingerprint(Array.isArray(lib.tracks) ? lib.tracks : []) }
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { public: true })
 
 // 4.5.0-118 — Discovery Brain Phase 2: the new-music radar. Taste fingerprint
 // → live Exa search per top spine → Music Man extracts named releases from the
@@ -1178,7 +1179,7 @@ function normArtistKey(sname: string): string {
 }
 
 // ── Listen to the List v2: friends ledger + capture-anything resolver ──
-ipcMain.handle('get-friends', async () => {
+ipc.handle('get-friends', async () => {
   const f = await friendsCache.get()
   // Rank by what Jake actually IMPORTED (2026-07-19: "just because they
   // send me a song doesnt mean ill like it"), then hit-rate, then volume.
@@ -1188,7 +1189,7 @@ ipcMain.handle('get-friends', async () => {
     (b.got / Math.max(1, b.got + b.tossed)) - (a.got / Math.max(1, a.got + a.tossed)) ||
     b.adds - a.adds)
   return { ok: true, friends }
-})
+}, { public: true })
 ipc.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
   const key = String(name || '').trim().toLowerCase()
   if (!key) return { ok: false }
@@ -1209,7 +1210,7 @@ ipc.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed'
 // cached for the session. Denied/unavailable -> ok:false, the field still
 // accepts free-typed names. Names only — no numbers/emails ever leave Contacts.
 let contactsCache: { at: number; names: string[] } | null = null
-ipcMain.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] }> => {
+ipc.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] }> => {
   if (contactsCache && Date.now() - contactsCache.at < 3600_000) return { ok: true, names: contactsCache.names }
   try {
     const { execFile } = await import('child_process')
@@ -1221,7 +1222,7 @@ ipcMain.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] 
   } catch {
     return { ok: false, names: [] }
   }
-})
+}, { refuse: { ok: false, names: [] as string[] } })
 
 // Resolve a pasted link (Spotify / YouTube / TikTok) into a best-guess
 // song + artist. GROUNDED: this only extracts what the page itself says —
@@ -1285,7 +1286,7 @@ ipc.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boo
  * are actually learning my tastes or not based on what is recommended."
  * Answering that honestly needs the volume, not just the conclusions.
  */
-ipcMain.handle('discovery-learned', async () => {
+ipc.handle('discovery-learned', async () => {
   try {
     let rows: LedgerRow[] = []
     try {
@@ -1308,7 +1309,7 @@ ipcMain.handle('discovery-learned', async () => {
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { public: true })
 
 /**
  * "Not for me" — and what that actually means.
@@ -1708,7 +1709,7 @@ async function backfillDiscoverArt(): Promise<void> {
   }
 }
 
-ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
+ipc.handle('get-discover-feed', async (_e, force?: boolean) => {
   const isFresh = (at: number) => Date.now() - at < DISCOVER_TTL_MS
   const currentVer = (c: FeedCacheShape | null) => (c?.ver ?? 0) === FEED_GEN_VERSION
   if (!discoverFeedMem) {
@@ -1726,7 +1727,7 @@ ipcMain.handle('get-discover-feed', async (_e, force?: boolean) => {
     return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true, stale: !isFresh(discoverFeedMem.at) }
   }
   return generateDiscoverFeed()
-})
+}, { refuse: REFUSED_SENDER })
 
 // Boot warmer: if the persisted feed is stale/empty, regenerate quietly ~25s
 // after launch so the tab is ready before Jake ever opens it.
@@ -1746,7 +1747,7 @@ app.whenReady().then(() => {
   }, 25000)
 })
 
-ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
+ipc.handle('get-new-music-radar', async (_e, force?: boolean) => {
   if (!force && radarCache && Date.now() - radarCache.generatedAt < RADAR_TTL_MS) {
     return { ok: true, candidates: radarCache.candidates, generatedAt: radarCache.generatedAt, cached: true, fingerprintSummary: radarCache.fingerprintSummary, anchors: radarCache.anchors }
   }
@@ -1840,7 +1841,7 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Rediscover (Brain) — owned-but-overlooked library picks + Music Man's pitch.
 // Where the radar finds NEW external music, this mines what Jake already OWNS but
@@ -1877,7 +1878,7 @@ async function addMusicManRediscoveryPitches(picks: RediscoveryPick[]): Promise<
   })
 }
 
-ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
+ipc.handle('get-rediscovery', async (_e, force?: boolean) => {
   if (!force && rediscoveryCache && Date.now() - rediscoveryCache.at < REDISCOVERY_TTL_MS) {
     return { ok: true, picks: rediscoveryCache.picks }
   }
@@ -1896,7 +1897,7 @@ ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // App-settings + inbox IPC registered in ipc/settings-ipc.ts
 
@@ -1911,7 +1912,7 @@ ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
 // library artists as the tour-dates query. MusicBrainz batched-OR
 // queries (3 reqs total for 60 artists) so this resolves in a few
 // seconds even on cold cache; aggregate result cached 24h.
-ipcMain.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean; items: UpcomingRelease[] }> => {
+ipc.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean; items: UpcomingRelease[] }> => {
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
     if (!raw) return { ok: true, items: [] }
@@ -1933,9 +1934,9 @@ ipcMain.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean
     console.warn('[get-upcoming-releases-personal] failed:', err)
     return { ok: true, items: [] }
   }
-})
+}, { refuse: { ok: false, items: [] } })
 
-ipcMain.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDate[] }> => {
+ipc.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDate[] }> => {
   try {
     const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
     if (!raw) return { ok: true, dates: [] }
@@ -1957,14 +1958,14 @@ ipcMain.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDat
     console.warn('[get-tour-dates] failed:', err)
     return { ok: true, dates: [] }
   }
-})
+}, { refuse: { ok: false, dates: [] } })
 
 // 2026-08-08 — "At Your Venues": what's coming to Jake's Brooklyn rooms
 // REGARDLESS of whether the artist is in his library. Bandsintown's free tier
 // can't answer that question (artist-scoped only), so venues.ts asks the rooms
 // directly. Shows whose artist IS in the library are flagged `known` so the
 // renderer can mark them; the rest is the discovery half Jake asked for.
-ipcMain.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueShow[] }> => {
+ipc.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueShow[] }> => {
   try {
     const shows = await getVenueShows()
     const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
@@ -1981,14 +1982,14 @@ ipcMain.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueS
     console.warn('[get-venue-shows] failed:', err)
     return { ok: true, shows: [] }
   }
-})
+}, { refuse: { ok: false, shows: [] } })
 
 // 4.4.40 — Per-artist photo fetch for the Artists view. Single artist
 // per call; the renderer batches at 6 concurrent. Disk cache is 30 days
 // (hit + miss tombstone), single-flight per slug, all handled inside
 // getArtistImage. Always succeeds (returns slug: null on failure) so the
 // renderer doesn't need try/catch on every call.
-ipcMain.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boolean; slug: string | null }> => {
+ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boolean; slug: string | null }> => {
   try {
     const slug = await getArtistImage(artist)
     return { ok: true, slug }
@@ -1996,7 +1997,7 @@ ipcMain.handle('get-artist-image', async (_event, artist: string): Promise<{ ok:
     console.warn('[get-artist-image] failed for', artist, err)
     return { ok: true, slug: null }
   }
-})
+}, { refuse: { ok: false, slug: null } })
 
 // 4.5: Wikipedia summary for the artist detail page. Hits the public
 // REST summary endpoint (en.wikipedia.org/api/rest_v1/page/summary/<title>),
@@ -2118,17 +2119,17 @@ async function fetchWikiSummary(artist: string): Promise<{ extract: string | nul
   await writeFile(cachePath, JSON.stringify(out)).catch(() => {})
   return out
 }
-ipcMain.handle('get-artist-wiki', async (_event, artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> => {
+ipc.handle('get-artist-wiki', async (_event, artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> => {
   if (!artist || typeof artist !== 'string') return { ok: false, extract: null, pageUrl: null }
   const r = await fetchWikiSummary(artist)
   return { ok: true, ...r }
-})
+}, { refuse: { ok: false, extract: null, pageUrl: null } })
 
 // 4.4.29 — Brooklyn weather for the Home header greeting. Cached
 // 10 min in external.ts (already there for the Music Man prompt).
 // Returns null if no API key is set; renderer should render the
 // header without weather in that case.
-ipcMain.handle('get-brooklyn-weather', async (): Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }> => {
+ipc.handle('get-brooklyn-weather', async (): Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }> => {
   try {
     const w = await getBrooklynWeather()
     return { ok: true, weather: w }
@@ -2136,14 +2137,14 @@ ipcMain.handle('get-brooklyn-weather', async (): Promise<{ ok: boolean; weather:
     console.warn('[get-brooklyn-weather] failed:', err)
     return { ok: true, weather: null }
   }
-})
+}, { refuse: { ok: false, weather: null } })
 
 // 4.4.28 — Home view: music news + notable releases.
 // Both back-ends are in src/main/external.ts and share a single
 // one-hour parsed cache across all 5 RSS feeds (4.4.29 swap), so
 // even though HomeView calls both handlers, there's only ONE
 // network round-trip per hour.
-ipcMain.handle('get-music-news', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
+ipc.handle('get-music-news', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
   try {
     const items = await getMusicNews()
     return { ok: true, items }
@@ -2151,8 +2152,8 @@ ipcMain.handle('get-music-news', async (): Promise<{ ok: boolean; items: MusicNe
     console.warn('[get-music-news] failed:', err)
     return { ok: true, items: [] }
   }
-})
-ipcMain.handle('get-notable-releases', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
+}, { refuse: { ok: false, items: [] } })
+ipc.handle('get-notable-releases', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
   try {
     const items = await getNotableReleases()
     return { ok: true, items }
@@ -2160,7 +2161,7 @@ ipcMain.handle('get-notable-releases', async (): Promise<{ ok: boolean; items: M
     console.warn('[get-notable-releases] failed:', err)
     return { ok: true, items: [] }
   }
-})
+}, { refuse: { ok: false, items: [] } })
 
 // 4.4.28 — Open an http(s) URL in the user's default browser.
 // Required because <a target="_blank"> inside Electron renders inside
@@ -2189,14 +2190,14 @@ ipc.handle('open-external-url', async (_e, url: string): Promise<{ ok: boolean; 
 
 // The iMessage-capture setup chip's button. Fixed target, zero renderer
 // input — the http(s)-only rule above stays intact for everything else.
-ipcMain.handle('open-full-disk-access-settings', async (): Promise<{ ok: boolean }> => {
+ipc.handle('open-full-disk-access-settings', async (): Promise<{ ok: boolean }> => {
   try {
     await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')
     return { ok: true }
   } catch {
     return { ok: false }
   }
-})
+}, { refuse: { ok: false } })
 
 // Async read used by handlers that need to gate behavior on a setting
 // (musicman-speak, sync-to-ipod, import-track, etc.). Returns null on
@@ -3086,12 +3087,12 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
   }
 }
 
-ipcMain.handle('get-artist-discography', async (_e, artist: string) => {
+ipc.handle('get-artist-discography', async (_e, artist: string) => {
   if (!artist || typeof artist !== 'string') return { ok: false, error: 'No artist' }
   const result = await fetchArtistDiscography(artist)
   if (!result) return { ok: false, error: 'Discography unavailable' }
   return { ok: true, albums: result.albums }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Combined multi-source search for artist info
 // 4.5: Exa.ai added as a third source. Runs in parallel with Wikipedia
@@ -3585,7 +3586,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
 // Renderer pulls the phone-download sidecar AFTER its library loads —
 // deterministic ordering, no boot race. Refreshes the NAS mirror first so
 // a just-restarted app absorbs rows adopted while it was closed.
-ipcMain.handle('get-mobile-imports', async () => {
+ipc.handle('get-mobile-imports', async () => {
   await refreshPhoneAuthoredMirrors().catch(() => {})
   let overrides: Record<string, { fp?: string; fields?: Record<string, string> }> = {}
   try { overrides = await mobileMetadataOverridesCache.get() } catch { /* none yet */ }
@@ -3596,7 +3597,7 @@ ipcMain.handle('get-mobile-imports', async () => {
   } catch {
     return { tracks: [], overrides }
   }
-})
+}, { public: true })
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
 setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
 
@@ -3887,9 +3888,9 @@ async function autoBackupStateToNas(): Promise<void> {
   }
 }
 
-ipcMain.handle('get-music-library-path', () => {
+ipc.handle('get-music-library-path', () => {
   return MUSIC_DIR.replace(/\/iPod_Control\/Music$/, '')
-})
+}, { refuse: '' })
 
 // ── "Download" (offline pin) — Spotify-style, streaming/cache machines only ──
 // On a streaming machine (e.g. workmini) the library is a "cache farm": each
@@ -4249,17 +4250,17 @@ function ensureStreamConvertWorker(): void {
   streamConvertTimer = setInterval(() => { void runStreamConvertPass(Date.now()) }, 90 * 1000)
 }
 
-ipcMain.handle('track-local-state', async (_e, ipodPath: string): Promise<'local' | 'streamed' | 'unknown'> => {
+ipc.handle('track-local-state', async (_e, ipodPath: string): Promise<'local' | 'streamed' | 'unknown'> => {
   try {
     const st = await lstat(trackFarmPath(ipodPath))
     return st.isSymbolicLink() ? 'streamed' : 'local'
   } catch { return 'unknown' }
-})
+}, { refuse: 'unknown' as const })
 
-ipcMain.handle('load-downloads-state', async (): Promise<{ pinned: string[]; streaming: boolean }> => {
+ipc.handle('load-downloads-state', async (): Promise<{ pinned: string[]; streaming: boolean }> => {
   const streaming = (await readStreamRoot()) !== null || (await readStreamSource()) === 'homemini'
   return { pinned: await readPins(), streaming }
-})
+}, { public: true })
 
 ipc.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
@@ -4347,7 +4348,7 @@ async function loadCodecMapFromLibrary(): Promise<void> {
 // Renderer pulls this once at startup so version-display surfaces don't
 // drift from the actual installed build (the way the About dialog
 // hardcoded "4.0.5" did across 4.0.6 → 4.1.2).
-ipcMain.handle('get-app-version', () => app.getVersion())
+ipc.handle('get-app-version', () => app.getVersion(), { public: true })
 
 // Load the JakeTunes master library (independent of iPod).
 //
@@ -4356,7 +4357,7 @@ ipcMain.handle('get-app-version', () => app.getVersion())
 // that flag to refuse auto-saving the empty state back to disk, so a
 // cold-start with the iPod not yet detected can't silently wipe the
 // library file.
-ipcMain.handle('load-tracks', async () => {
+ipc.handle('load-tracks', async () => {
   // Self-heal any failed prior save before we read. If the previous
   // app session crashed (or was killed, or hit an SMB Resource-busy
   // rename) mid-atomic-save, a `library.json.partial.json` sidecar
@@ -4438,7 +4439,7 @@ ipcMain.handle('load-tracks', async () => {
     console.error('Failed to read iPod database:', err)
     return { tracks: [], playlists: [], noDataSource: true }
   }
-})
+}, { public: true })
 
 // (4.1: removed `schedulePrewarmFromLibrary`. The launch-time prewarm
 // scanner used to fire on every load-tracks, scan the entire library,
@@ -4816,7 +4817,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
       preservedOrphanCount,
     }
   } catch (err) {
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
 }
 
@@ -4908,7 +4909,7 @@ async function handleSyncIpodFromDevice(existingIds: number[]): Promise<unknown>
     }
     return { ok: true, newTracks, playlists: ipodData.playlists, totalIpod: ipodData.tracks.length }
   } catch (err) {
-    return { ok: false, error: String(err), newTracks: [], playlists: [], totalIpod: 0 }
+    return { ok: false, error: safeIpcError(err, 'io-failed'), newTracks: [], playlists: [], totalIpod: 0 }
   }
 }
 
@@ -4920,7 +4921,7 @@ async function handleSyncIpodFromDevice(existingIds: number[]): Promise<unknown>
 // ── The Music Man's wall: what the brain actually knows (Jake asked
 // "how is progress?" — this makes the answer a glance, not an audit).
 // Pure reads; every number is a real file, every stamp a real mtime.
-ipcMain.handle('brain-status', async () => {
+ipc.handle('brain-status', async () => {
   const ud = app.getPath('userData')
   const out: Record<string, unknown> = {}
   try {
@@ -4953,7 +4954,7 @@ ipcMain.handle('brain-status', async () => {
     out.lastSync = hist[0]?.syncedAt || null
   } catch { /* none yet */ }
   return { ok: true, ...out }
-})
+}, { public: true })
 // ── Sync library TO iPod ──
 //
 // Content-safety invariant: this handler will REFUSE to commit the
@@ -6175,7 +6176,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         resolve({ ok: false, error: PYTHON_INSTALL_HINT, copied, copyErrors })
       } else {
-        resolve({ ok: false, error: String(err), copied, copyErrors })
+        resolve({ ok: false, error: safeIpcError(err, 'tool-failed'), copied, copyErrors })
       }
     })
     // EPIPE-safe stdin write. User hit a main-process crash on 4.1.3
@@ -6183,13 +6184,13 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     // post-sync child died with no listener on stdin's 'error', so the
     // EPIPE escalated to an Uncaught Exception. Same pattern below.
     py.stdin.on('error', (err) => {
-      resolve({ ok: false, error: `stdin write failed: ${String(err)}`, copied, copyErrors })
+      resolve({ ok: false, error: `stdin write failed: ${safeIpcError(err, 'tool-failed')}`, copied, copyErrors })
     })
     try {
       py.stdin.write(input)
       py.stdin.end()
     } catch (err) {
-      resolve({ ok: false, error: `stdin write threw: ${String(err)}`, copied, copyErrors })
+      resolve({ ok: false, error: `stdin write threw: ${safeIpcError(err, 'tool-failed')}`, copied, copyErrors })
     }
 
     let stderr = ''
@@ -6399,11 +6400,11 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           verificationUpdates,
         })
       } else {
-        resolve({ ok: false, error: `DB write failed (code ${code}): ${stderr}`, copied, copyErrors })
+        resolve({ ok: false, error: safeIpcError(`DB write failed (code ${code}): ${stderr}`, 'tool-failed'), copied, copyErrors })
       }
     })
     py.on('error', (err: Error) => {
-      resolve({ ok: false, error: String(err), copied, copyErrors })
+      resolve({ ok: false, error: safeIpcError(err, 'tool-failed'), copied, copyErrors })
     })
   })
 }
@@ -6420,7 +6421,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
 // timestamped library.json.bak-repair-* backup the script writes is
 // always recoverable. iTunes/iPod never had a verify step; we shouldn't
 // either. The CLI script stays on disk for future opt-in debugging.)
-ipcMain.handle('alac-compat-scan', async () => {
+ipc.handle('alac-compat-scan', async () => {
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
   return await new Promise<{ ok: boolean; count?: number; samples?: unknown[]; error?: string }>((resolve) => {
     const py = spawn(PYTHON_CMD ?? 'python3', [script])
@@ -6428,9 +6429,9 @@ ipcMain.handle('alac-compat-scan', async () => {
     let stderr = ''
     py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    py.on('error', (err) => resolve({ ok: false, error: String(err) }))
+    py.on('error', (err) => resolve({ ok: false, error: safeIpcError(err, 'tool-failed') }))
     py.on('close', async (code) => {
-      if (code !== 0) { resolve({ ok: false, error: stderr }); return }
+      if (code !== 0) { resolve({ ok: false, error: safeIpcError(stderr, 'tool-failed') }); return }
       try {
         const rJson = await readFile('/tmp/jaketunes-alac-compat-report.json', 'utf-8')
         const r = JSON.parse(rJson) as { incompatible: number; samples: unknown[] }
@@ -6440,7 +6441,7 @@ ipcMain.handle('alac-compat-scan', async () => {
       }
     })
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 ipc.handle('alac-compat-fix', async () => {
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
@@ -6460,7 +6461,7 @@ ipc.handle('alac-compat-fix', async () => {
       }
     })
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    py.on('error', (err) => resolve({ ok: false, error: String(err) }))
+    py.on('error', (err) => resolve({ ok: false, error: safeIpcError(err, 'tool-failed') }))
     py.on('close', async (code) => {
       if (code === 0) {
         // (4.1: removed schedulePrewarmFromLibrary call here. The user
@@ -6470,7 +6471,7 @@ ipc.handle('alac-compat-fix', async () => {
         // ffmpeg jobs the user didn't ask for.)
         resolve({ ok: true, summary: stdout.slice(-3000) })
       } else {
-        resolve({ ok: false, error: stderr || `python exit ${code}` })
+        resolve({ ok: false, error: safeIpcError(stderr || `python exit ${code}`, 'tool-failed') })
       }
     })
   })
@@ -7311,7 +7312,7 @@ async function importOneFile(
     return { ok: true, track, ...(artwork ? { artwork } : {}) }
   } catch (err) {
     console.error(`Failed to import ${srcPath}:`, err)
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
 }
 
@@ -7475,14 +7476,14 @@ ipc.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: numb
   return { ok: true, enqueued, totalQueued: audioAnalysisQueue.length }
 }, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('audio-analysis:status', async () => {
+ipc.handle('audio-analysis:status', async () => {
   return {
     ok: true,
     queueLength: audioAnalysisQueue.length,
     workerRunning: audioAnalysisRunning,
     isPlaybackActive: playbackActive,
   }
-})
+}, { public: true })
 
 ipc.handle('audio-analysis:clear-queue', async () => {
   audioAnalysisQueue.length = 0
@@ -9201,7 +9202,7 @@ async function musicBrainzAlbumLookup(artist: string, album: string): Promise<st
       })),
     })
   } catch (err: unknown) {
-    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+    return JSON.stringify({ error: safeIpcError(err, 'api-failed') })
   }
 }
 
@@ -9241,7 +9242,7 @@ async function readEmbeddedTagsForCynthia(trackIds: number[]): Promise<string> {
     const arr = JSON.parse(read) as Array<{ path: string; [k: string]: unknown }>
     return JSON.stringify(arr.map(entry => ({ trackId: wanted.get(entry.path), ...entry, path: undefined })))
   } catch (err) {
-    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+    return JSON.stringify({ error: safeIpcError(err, 'api-failed') })
   }
 }
 
@@ -10649,7 +10650,7 @@ registerWorkoutSyncIpc({
 })
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
-registerGaplessTrimIpc()
+registerGaplessTrimIpc(ipc)
 registerPlaylistCoverIpc(ipc, () => mainWindow)
 registerMixtapesIpc({
   ipc,
@@ -10733,7 +10734,7 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         resolve({ ok: false, error: 'Python 3 is not installed.' })
       } else {
-        resolve({ ok: false, error: String(err) })
+        resolve({ ok: false, error: safeIpcError(err, 'tool-failed') })
       }
     })
     py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
@@ -10741,24 +10742,24 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
     if (stdinData !== undefined) {
       // EPIPE-safe stdin write — see scheduleDbRebuild for why
       py.stdin.on('error', (err) => {
-        resolve({ ok: false, error: `stdin write failed: ${String(err)}` })
+        resolve({ ok: false, error: `stdin write failed: ${safeIpcError(err, 'tool-failed')}` })
       })
       try {
         py.stdin.write(stdinData)
         py.stdin.end()
       } catch (err) {
-        resolve({ ok: false, error: `stdin write threw: ${String(err)}` })
+        resolve({ ok: false, error: `stdin write threw: ${safeIpcError(err, 'tool-failed')}` })
       }
     }
     py.on('close', (code: number) => {
       if (code !== 0) {
-        resolve({ ok: false, error: `restore_from_xml.py exited with code ${code}: ${stderr}` })
+        resolve({ ok: false, error: safeIpcError(`restore_from_xml.py exited with code ${code}: ${stderr}`, 'tool-failed') })
         return
       }
       try {
         resolve({ ok: true, data: JSON.parse(stdout) })
       } catch {
-        resolve({ ok: false, error: `Invalid JSON from restore_from_xml.py: ${stdout.slice(0, 200)}` })
+        resolve({ ok: false, error: safeIpcError(`Invalid JSON from restore_from_xml.py: ${stdout.slice(0, 200)}`, 'tool-failed') })
       }
     })
   })
@@ -10844,7 +10845,7 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
 // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
 // regardless of artist. The renderer then filters for freshness (new artists,
 // no same-album) + diversity. We return a generous pool so ↻ has real variety.
-ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
+ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
   try {
     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
     const m = await ragGetEmbeddingsMap()
@@ -10919,7 +10920,7 @@ ipcMain.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 
     console.warn('[playlist-similar] failed:', err instanceof Error ? err.message : err)
     return { ok: false, hits: [], clusterSeeds: [] }
   }
-})
+}, { public: true })
 
 // Settings → Library tab polls this on open. Without caching it re-reads
 // library.json + loads the full embeddings.bin map every time — beach ball.
@@ -10932,7 +10933,7 @@ function invalidateEmbeddingStatusCache(): void {
   embeddingStatusCache = null
 }
 
-ipcMain.handle('embedding-status', async (): Promise<{
+ipc.handle('embedding-status', async (): Promise<{
   configured: boolean; count: number; total: number; stale: number;
 }> => {
   const now = Date.now()
@@ -10955,7 +10956,7 @@ ipcMain.handle('embedding-status', async (): Promise<{
   const value = { configured: ragIsConfigured(), count: indexed, total: tracks.length, stale }
   embeddingStatusCache = { at: now, value }
   return value
-})
+}, { public: true })
 
 ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
   if (!ragIsConfigured()) {
@@ -11222,7 +11223,7 @@ async function appendPlayEvent(trackId: number, ts: number): Promise<void> {
     console.warn('[play-events] append failed:', err instanceof Error ? err.message : err)
   }
 }
-ipcMain.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
+ipc.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
   try {
     const cutoff = Date.now() - Math.max(0, windowMs)
     const raw = await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')
@@ -11244,7 +11245,7 @@ ipcMain.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise
     console.warn('[play-events] read failed:', err)
     return { ok: false, counts: {} }
   }
-})
+}, { public: true })
 // 4.5.0-106 Phase 2.5: now backed by mobileStarsCache. The legacy
 // "writeMobileStarSidecar -> readFile NAS / rename" chain was a per-star
 // SMB round-trip; the cache makes the read free, the mutate synchronous,
@@ -11296,18 +11297,18 @@ async function mergeIncomingMobileStars(): Promise<number> {
   return added
 }
 
-ipcMain.handle('load-mobile-stars', async (): Promise<{ ok: boolean; trackIds: string[] }> => {
+ipc.handle('load-mobile-stars', async (): Promise<{ ok: boolean; trackIds: string[] }> => {
   await mergeIncomingMobileStars()   // fold in any phone stars the last sync staged
   const set = await readMobileStarsSet()
   return { ok: true, trackIds: Array.from(set) }
-})
+}, { public: true })
 
 // Brief 121 — read iOS-created playlists. Schema on disk:
 //   { playlists: [{ id: "mobile:UUID", name, trackIds: string[], createdAt, source: "mobile" }] }
 // Always returns ok:true with an empty list on missing/torn file — the
 // JsonFileCache fallback path already handles that, and the renderer
 // merges whatever it gets into the sidebar playlist list.
-ipcMain.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: MobilePlaylistRecord[] }> => {
+ipc.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: MobilePlaylistRecord[] }> => {
   try {
     const data = await mobilePlaylistsCache.get()
     const playlists = Array.isArray(data?.playlists) ? data.playlists : []
@@ -11315,7 +11316,7 @@ ipcMain.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlis
   } catch {
     return { ok: true, playlists: [] }
   }
-})
+}, { public: true })
 
 // 4.5: "Your Mixes" — pull the SAME daily mixes the iOS app shows, from the
 // mobile backend on homemini (single source of truth so desktop ↔ mobile match
@@ -11324,7 +11325,7 @@ ipcMain.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlis
 // Track objects for playback. Any failure (backend down / off-tailnet) → ok:false
 // and the Home section quietly hides. See JakeTunesMobile backend/src/routes/mixes.ts.
 const MOBILE_MIXES_BACKEND = 'http://homemini:3000'
-ipcMain.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
+ipc.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
   try {
     const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, { signal: AbortSignal.timeout(20000) })
     if (!res.ok) return { ok: false, error: `backend ${res.status}` }
@@ -11337,10 +11338,10 @@ ipcMain.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: strin
     })).filter(m => m.trackIds.length > 0)
     return { ok: true, date: body.date, mixes }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'mobile backend unreachable' }
+    return { ok: false, error: safeIpcError(e, 'api-failed') }
   }
-})
-ipcMain.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> => {
+}, { refuse: REFUSED_SENDER })
+ipc.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> => {
   try {
     const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes/vibe`, {
       method: 'POST',
@@ -11360,14 +11361,14 @@ ipcMain.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: bo
       trackIds: (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n)),
     } }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'mobile backend unreachable' }
+    return { ok: false, error: safeIpcError(e, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 121 — read iOS-side additions to V3-owned playlists. Schema:
 //   { [v3PlaylistId: string]: trackId[] }   (trackIds as strings)
 // Same error tolerance as mobile-playlists.
-ipcMain.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions: Record<string, string[]> }> => {
+ipc.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions: Record<string, string[]> }> => {
   try {
     const data = await playlistAdditionsCache.get()
     const additions: Record<string, string[]> = {}
@@ -11380,7 +11381,7 @@ ipcMain.handle('read-playlist-additions', async (): Promise<{ ok: boolean; addit
   } catch {
     return { ok: true, additions: {} }
   }
-})
+}, { public: true })
 
 // Brief 122 — "Listen to the List". recommendations.json is a bare JSON
 // array of Recommendation objects. The Mini backend (homemini) is the
@@ -11661,7 +11662,7 @@ async function fetchCaaArtwork(artist: string, title: string): Promise<string | 
 // the artist MUST match and an album match is preferred — junk hits
 // (a Henze symphony for a metal query) get filtered, and an honest miss
 // beats a wrong song.
-ipcMain.handle('lookup-album-preview', async (_event, input: { artist?: string; album?: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => {
+ipc.handle('lookup-album-preview', async (_event, input: { artist?: string; album?: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => {
   const artist = (input?.artist || '').trim()
   const album = (input?.album || '').trim()
   if (artist.length < 2 || album.length < 1) return {}
@@ -11681,9 +11682,9 @@ ipcMain.handle('lookup-album-preview', async (_event, input: { artist?: string; 
     }
   } catch { /* no preview to be had */ }
   return {}
-})
+}, { refuse: {} })
 
-ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> => {
+ipc.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> => {
   const artist = (input?.artist || '').trim()
   const title = (input?.title || '').trim()
   if (artist.length < 2 || title.length < 1) return {}
@@ -11706,7 +11707,7 @@ ipcMain.handle('lookup-reco-artwork', async (_event, input: { artist?: string; t
   } catch {
     return {}
   }
-})
+}, { refuse: {} })
 
 /** Recommendations for suggest — reuse sync TTL so navigation does not re-pull homemini/NAS every time. */
 async function recommendationsForSuggest(): Promise<RecommendationRecord[]> {
@@ -12129,7 +12130,7 @@ async function runRecoResetV2IfNeeded(): Promise<void> {
 type ReadRecosResult = { ok: boolean; recommendations: RecommendationRecord[]; meta: RecoSyncMeta }
 let readRecoInflight: Promise<ReadRecosResult> | null = null
 
-ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }): Promise<ReadRecosResult> => {
+ipc.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }): Promise<ReadRecosResult> => {
   if (!opts?.forceSync && readRecoInflight) return readRecoInflight
   readRecoInflight = (async (): Promise<ReadRecosResult> => {
     try {
@@ -12159,7 +12160,7 @@ ipcMain.handle('read-recommendations', async (_event, opts?: { forceSync?: boole
     }
   })()
   return readRecoInflight
-})
+}, { public: true })
 
 // Shared by the renderer's omnibox AND the iMessage watcher — one add path,
 // so attribution, friends-ledger ticks, identity dedupe, and outbox replay
@@ -12309,7 +12310,7 @@ ipc.handle('add-recommendation', (_event, input: Parameters<typeof addRecommenda
 // every capture gets the same dedupe/attribution/outbox treatment as a
 // hand-typed jot. State is V3-local (userData) — the laptop is the only
 // machine signed into Messages.
-startImessageCapture({
+startImessageCapture(ipc, {
   stateFile: join(app.getPath('userData'), 'imessage-capture.json'),
   addRecommendation: (input) => addRecommendationCore(input),
 })
@@ -12430,7 +12431,7 @@ ipc.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
 // Per-playlist blend weights the nightly learner writes; the suggestion
 // strip multiplies its blend components by these. mtime-cached.
 let tasteWeightsCache: { at: number; mtime: number; weights: Record<string, unknown> } | null = null
-ipcMain.handle('get-taste-weights', async () => {
+ipc.handle('get-taste-weights', async () => {
   try {
     const p = TASTE_WEIGHTS_PATH()
     const st = await stat(p).catch(() => null)
@@ -12444,9 +12445,9 @@ ipcMain.handle('get-taste-weights', async () => {
   } catch {
     return { ok: true, weights: {} }
   }
-})
+}, { public: true })
 
-ipcMain.handle('get-friend-standings', async () => {
+ipc.handle('get-friend-standings', async () => {
   try {
     const ledger = await friendsCache.get()
     const store = await friendCreditsCache.get()
@@ -12480,7 +12481,7 @@ ipcMain.handle('get-friend-standings', async () => {
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { public: true })
 ipc.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }), { refuse: REFUSED_SENDER })
 setTimeout(() => { void sweepFriendImports() }, 30_000)
 setInterval(() => { void sweepFriendImports() }, 5 * 60_000)
@@ -12759,7 +12760,7 @@ async function fetchMusicBrainzAlbumCredits(artist: string, album: string): Prom
   } catch { return null }
 }
 
-ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
+ipc.handle('get-album-info', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
   if (!album) return { ok: true, credits: {} }
   const tagYear = tagYearStr(year)
   const key = `${albumCacheKey(artist, album)}|y:${tagYear || '?'}`
@@ -12780,7 +12781,7 @@ ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 /** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
  *  boundary, so a field added on one side and not the other is silently
  *  dropped rather than caught — change both together. */
@@ -12852,7 +12853,7 @@ async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestion[] | n
   } catch { return null }
 }
 
-ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
+ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
   try {
@@ -13078,14 +13079,14 @@ ipcMain.handle('search-itunes', async (_event, query: string): Promise<{ ok: boo
   } catch {
     return { ok: false, results: [] }
   }
-})
+}, { refuse: { ok: false, results: [] } })
 
 // Full tracklist for an album, by iTunes collection id. Powers the Download
 // view's "expand the album → see every track" (2026-07-23): the search only
 // returns the handful of songs that matched, so an album's real contents were
 // invisible. lookup?entity=song returns the collection record first, then every
 // track in order.
-ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }> => {
+ipc.handle('itunes-album-tracks', async (_event, collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }> => {
   const id = Number(collectionId)
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
   try {
@@ -13129,9 +13130,9 @@ ipcMain.handle('itunes-album-tracks', async (_event, collectionId: number): Prom
   } catch {
     return { ok: false, tracks: [] }
   }
-})
+}, { refuse: { ok: false, tracks: [] } })
 
-ipcMain.handle('load-metadata-overrides', async () => {
+ipc.handle('load-metadata-overrides', async () => {
   // 4.5.0-106: served from in-memory cache after first load (≤1ms vs the
   // 50-500ms NAS round-trip pre-cache). Cache is the source of truth from
   // the moment writeOverridesSerialized's synchronous mutate returns.
@@ -13157,7 +13158,7 @@ ipcMain.handle('load-metadata-overrides', async () => {
     }
   } catch { /* phone overlay is best-effort; desktop overrides still serve */ }
   return { ok: true, overrides: merged }
-})
+}, { public: true })
 
 // Save a metadata override for a single track.
 //
@@ -13532,7 +13533,7 @@ ipc.handle('apply-overrides-batch', async (event) => {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: safeIpcError(err, 'io-failed'),
     }
   }
 }, { refuse: REFUSED_SENDER })
@@ -13615,7 +13616,7 @@ async function refreshLibraryFileSizes(
 // for one-shot retrofit of pre-existing drift (the 29.7% scan finding
 // from Brief 016's diagnostic phase — likely from a historical "Fix
 // iPod Compatibility" re-encode pass that cut ~515KB per track).
-ipcMain.handle('refresh-file-sizes', async (event) => {
+ipc.handle('refresh-file-sizes', async (event) => {
   try {
     const refreshed = await refreshLibraryFileSizes(
       () => true,
@@ -13627,7 +13628,7 @@ ipcMain.handle('refresh-file-sizes', async (event) => {
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Normalize an artist/album string for strict matching: drop edition
 // parens/brackets, a leading "the", and collapse whitespace.
@@ -13675,7 +13676,7 @@ async function searchDeezerArt(query: string, artistLower: string, albumLower: s
 }
 
 // Album artwork
-ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, force?: boolean) => {
+ipc.handle('fetch-album-art', async (_event, artist: string, album: string, force?: boolean) => {
   const dir = getArtworkDir()
   await mkdir(dir, { recursive: true })
   const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
@@ -13740,18 +13741,18 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
     const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5.0-79 — verification IPC. Returns the count of user-locked
 // covers so renderer / About panel can display "N covers locked."
-ipcMain.handle('get-artwork-lock-count', async (): Promise<{ ok: boolean; count: number }> => {
+ipc.handle('get-artwork-lock-count', async (): Promise<{ ok: boolean; count: number }> => {
   try {
     const locks = await loadArtworkLocks()
     return { ok: true, count: locks.size }
   } catch {
     return { ok: false, count: 0 }
   }
-})
+}, { public: true })
 
 ipc.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
   try {
@@ -13812,7 +13813,7 @@ ipc.handle('set-custom-artwork', async (_event, artist: string, album: string, i
     }
     return { ok: true, key, hash: versionedHash }
   } catch (err) {
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
 }, { refuse: REFUSED_SENDER })
 
@@ -13839,11 +13840,11 @@ function getArtworkBackfillMarkerPath(): string {
 async function markerExists(p: string): Promise<boolean> {
   try { await stat(p); return true } catch { return false }
 }
-ipcMain.handle('artwork-backfill-status', async () => {
+ipc.handle('artwork-backfill-status', async () => {
   // "done" once the one-shot pre-4.4.12 embedded backfill has run.
   const done = await markerExists(getArtworkBackfillMarkerPath())
   return { ok: true, done }
-})
+}, { public: true })
 ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
   // resolve iPod-style colon paths to absolute file paths
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
@@ -13915,7 +13916,7 @@ ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: str
       await writeMarker(getArtworkBackfillMarkerPath())
     }
   } catch (err) {
-    return { ok: false, error: String(err), artwork: results }
+    return { ok: false, error: safeIpcError(err, 'io-failed'), artwork: results }
   }
 
   mainWindow?.webContents.send('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
@@ -13956,11 +13957,11 @@ ipc.handle('remove-artwork', async (_event, artist: string, album: string, force
     await setArtworkLock(key, false)
     return { ok: true, key }
   } catch (err) {
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
 }, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('choose-artwork-file', async () => {
+ipc.handle('choose-artwork-file', async () => {
   if (!mainWindow) return { ok: false }
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose Album Artwork',
@@ -13969,14 +13970,14 @@ ipcMain.handle('choose-artwork-file', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return { ok: false }
   return { ok: true, path: result.filePaths[0] }
-})
+}, { refuse: { ok: false } })
 
 // Read-only: return the grounded lyrics for a track from the lyrics.json
 // sidecar (fetched by scripts/lyrics-fetch.mjs). Get Info's Lyrics section
 // self-fetches through this so the modal's props interface stays untouched
 // (one of its 7 call sites is the do-not-touch GenresView). A genuine miss /
 // instrumental / not-yet-fetched all return no text — the UI shows "No lyrics".
-ipcMain.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> => {
+ipc.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> => {
   try {
     const store = await lyricsCache.get()
     const rec = store[String(trackId)]
@@ -13985,9 +13986,9 @@ ipcMain.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: bo
   } catch {
     return { ok: true }
   }
-})
+}, { public: true })
 
-ipcMain.handle('load-artwork-map', async () => {
+ipc.handle('load-artwork-map', async () => {
   const index = await loadArtworkIndex()
   // Self-heal from synced .meta.json sidecars so custom art (concert posters,
   // user covers) that arrived via a deploy/sync resolves even though index.json
@@ -13998,7 +13999,7 @@ ipcMain.handle('load-artwork-map', async () => {
     scheduleArtworkLookupRebuild(index)
   }
   return { ok: true, map: index }
-})
+}, { public: true })
 
 // ─────────────────────────────────────────────────────────────────────
 // V5 Live Concert Mode — merge a declared live album into one gapless
@@ -14012,10 +14013,10 @@ function liveSetScratchDir(): string {
   return join(STATE_DIR, 'live-set-scratch')
 }
 
-ipcMain.handle('load-live-sets', async () => {
+ipc.handle('load-live-sets', async () => {
   const sets = await liveSetsCache.get()
   return { ok: true, sets }
-})
+}, { public: true })
 
 ipc.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
   if (!albumKey || !entry || typeof entry.mergedTrackId !== 'number' || !Array.isArray(entry.cues)) {
@@ -14038,22 +14039,22 @@ ipc.handle('remove-live-set', async (_e, albumKey: string) => {
 // extracted from the show's own between-song gap. Stored per merged-track-id in
 // userData/concert-crowd/<id>.m4a. Returns base64 (renderer makes a Blob URL) or
 // null when a show has no clip — the crowd layer then simply does nothing.
-ipcMain.handle('get-concert-crowd', async (_e, mergedTrackId: number): Promise<string | null> => {
+ipc.handle('get-concert-crowd', async (_e, mergedTrackId: number): Promise<string | null> => {
   try {
     const p = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
     const buf = await readFile(p)
     return buf.toString('base64')
   } catch { return null }
-})
+}, { public: true })
 // Crowd tuning knobs (level / rise / tail) — persisted so the user's by-ear dial-in sticks.
 function crowdTuningPath(): string { return join(app.getPath('userData'), 'concert-crowd-tuning.json') }
-ipcMain.handle('save-crowd-tuning', async (_e, t: Record<string, number>): Promise<{ ok: boolean }> => {
+ipc.handle('save-crowd-tuning', async (_e, t: Record<string, number>): Promise<{ ok: boolean }> => {
   try { await writeFile(crowdTuningPath(), JSON.stringify(t, null, 2), 'utf-8') } catch { /* best effort */ }
   return { ok: true }
-})
-ipcMain.handle('load-crowd-tuning', async (): Promise<Record<string, number> | null> => {
+}, { refuse: { ok: false } })
+ipc.handle('load-crowd-tuning', async (): Promise<Record<string, number> | null> => {
   try { return JSON.parse(await readFile(crowdTuningPath(), 'utf-8')) } catch { return null }
-})
+}, { public: true })
 
 ipc.handle('live-set-merge', async (
   event,
@@ -14131,7 +14132,7 @@ async function fileExists(absPath: string): Promise<boolean> {
   try { await stat(absPath); return true } catch { return false }
 }
 
-ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized' }> => {
+ipc.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized' }> => {
   if (!artist || !album) return { ok: true, hash: null }
   const resolveKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
   if (resolveArtworkCache.has(resolveKey)) {
@@ -14196,7 +14197,7 @@ ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string):
 
   resolveArtworkCache.set(resolveKey, null)
   return { ok: true, hash: null }
-})
+}, { public: true })
 
 /**
  * 4.5.0-51 — Get Info migration. When the user changes a track's artist
@@ -14204,7 +14205,7 @@ ipcMain.handle('resolve-artwork', async (_event, artist: string, album: string):
  * key so the cover follows the track. We COPY (don't move) so other
  * tracks under the original key keep their art too.
  */
-ipcMain.handle('migrate-artwork-key', async (_event, oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => {
+ipc.handle('migrate-artwork-key', async (_event, oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => {
   if (!oldArtist || !oldAlbum || !newArtist || !newAlbum) return { ok: false }
   const oldKey = `${oldArtist.toLowerCase().trim()}|||${oldAlbum.toLowerCase().trim()}`
   const newKey = `${newArtist.toLowerCase().trim()}|||${newAlbum.toLowerCase().trim()}`
@@ -14215,7 +14216,7 @@ ipcMain.handle('migrate-artwork-key', async (_event, oldArtist: string, oldAlbum
   index[newKey] = index[oldKey]
   await saveArtworkIndex(index)
   return { ok: true, migrated: true, hash: index[newKey] }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── CD Drive Detection & Import ──
 
@@ -14266,11 +14267,11 @@ async function detectAudioCD(): Promise<{ hasCd: boolean; volumeName?: string; v
   }
 }
 
-ipcMain.handle('check-cd-drive', async () => {
+ipc.handle('check-cd-drive', async () => {
   return detectAudioCD()
-})
+}, { public: true })
 
-ipcMain.handle('get-cd-info', async () => {
+ipc.handle('get-cd-info', async () => {
   const cd = await detectAudioCD()
   if (!cd.hasCd || !cd.volumePath) {
     return { ok: false, error: 'No audio CD found' }
@@ -14382,9 +14383,9 @@ ipcMain.handle('get-cd-info', async () => {
 
     return { ok: true, volumeName: cd.volumeName, volumePath: cd.volumePath, artist, album, year, genre, tracks }
   } catch (err) {
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
-})
+}, { public: true })
 
 // Stage a CDDA track to local disk with LARGE sequential reads before
 // converting. cddafs punishes small reads — measured on a real slow disc
@@ -14544,7 +14545,7 @@ ipc.handle('rip-cd-tracks', async (_e,
         total: cdTracks.length,
         trackNumber: cdTrack.number,
         trackTitle: cdTrack.title,
-        error: String(err),
+        error: safeIpcError(err, 'io-failed'),
       })
     } finally {
       await unlink(stagedPath).catch(() => {})
@@ -14583,16 +14584,16 @@ ipc.handle('rip-cd-tracks', async (_e,
   return { ok: true, tracks: imported }
 }, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('eject-cd', async () => {
+ipc.handle('eject-cd', async () => {
   try {
     await ejectOpticalMedia()
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('open-sound-settings', async () => {
+ipc.handle('open-sound-settings', async () => {
   const { exec } = await import('child_process')
   if (IS_MAC) {
     exec('open "x-apple.systempreferences:com.apple.Sound-Settings.extension?output"')
@@ -14600,9 +14601,9 @@ ipcMain.handle('open-sound-settings', async () => {
     // ms-settings:sound is the deep link to Windows 10/11 Sound settings.
     exec('start ms-settings:sound')
   }
-})
+}, { refuse: undefined })
 
-ipcMain.handle('list-audio-devices', async () => {
+ipc.handle('list-audio-devices', async () => {
   const relPath = audioHelperRelPath()
   if (!relPath) {
     // No native helper on this platform — fall back to empty list so UI
@@ -14621,11 +14622,11 @@ ipcMain.handle('list-audio-devices', async () => {
     return { ok: true, devices: JSON.parse(stdout) }
   } catch (err) {
     console.error('[AudioHelper] list failed:', err)
-    return { ok: false, devices: [], error: String(err) }
+    return { ok: false, devices: [], error: safeIpcError(err, 'tool-failed') }
   }
-})
+}, { public: true })
 
-ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
+ipc.handle('set-audio-device', async (_e, deviceId: number) => {
   const relPath = audioHelperRelPath()
   if (!relPath) {
     return { ok: false, error: 'Audio device selection is not supported on this platform yet.' }
@@ -14642,9 +14643,9 @@ ipcMain.handle('set-audio-device', async (_e, deviceId: number) => {
     return JSON.parse(stdout)
   } catch (err) {
     console.error('[AudioHelper] set failed:', err)
-    return { ok: false, error: String(err) }
+    return { ok: false, error: safeIpcError(err, 'tool-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Bandcamp Store: download → library bridge ──
 // Reuses importOneFile() (dedupe / convert / tag-embed / hashed-folder
@@ -14795,7 +14796,7 @@ async function pollMicStatus(): Promise<void> {
   }
 }
 
-ipcMain.handle('set-call-watch', (_e, armed: boolean) => {
+ipc.handle('set-call-watch', (_e, armed: boolean) => {
   if (armed) {
     if (callWatchTimer) return { ok: true }
     lastMicActive = null               // re-baseline on (re)arm
@@ -14806,7 +14807,7 @@ ipcMain.handle('set-call-watch', (_e, armed: boolean) => {
     lastMicActive = null
   }
   return { ok: true }
-})
+}, { refuse: { ok: false } })
 
 app.whenReady().then(async () => {
   // Brief 011b: resolve MUSIC_DIR before anything else. IPC handlers and
@@ -15414,7 +15415,7 @@ app.whenReady().then(async () => {
   let prepareCacheCancelled = false
   ipcMain.on('cancel-alac-cache', () => { prepareCacheCancelled = true })
 
-  ipcMain.handle('prepare-alac-cache', async (event) => {
+  ipc.handle('prepare-alac-cache', async (event) => {
     prepareCacheCancelled = false
     const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
     const pathSep = IS_WINDOWS ? '\\' : '/'
@@ -15487,9 +15488,9 @@ app.whenReady().then(async () => {
       total,
       cancelled: prepareCacheCancelled,
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
-  ipcMain.handle('scan-dead-tracks', async () => {
+  ipc.handle('scan-dead-tracks', async () => {
     try {
       let lib: { tracks?: Array<Record<string, unknown>> }
       lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
@@ -15518,7 +15519,7 @@ app.whenReady().then(async () => {
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'unknown') }
     }
-  })
+  }, { public: true })
 
   ipc.handle('remove-dead-tracks', async (_e) => {
     try {
@@ -15589,7 +15590,7 @@ app.whenReady().then(async () => {
     }
   }, { refuse: REFUSED_SENDER })
 
-  ipcMain.handle('prune-alac-cache', async () => {
+  ipc.handle('prune-alac-cache', async () => {
     // Delete cache entries whose hashed source path doesn't match any
     // current library track. After 4.0.x rounds of import / dedup /
     // path-collision-cleanup, the cache typically has hundreds of
@@ -15650,7 +15651,7 @@ app.whenReady().then(async () => {
       pruned++
     }
     return { ok: true, pruned, bytesFreed }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // Streaming migration helpers (trackIdForAbsPath / fetchAudioFromHomemini /
   // HOMEMINI_AUDIO_BASE) were hoisted to module scope (near trackFarmPath) so
@@ -16036,6 +16037,7 @@ app.whenReady().then(async () => {
       return block && block.type === 'text' ? block.text : ''
     }
     registerRecordStoreIntegration({
+      ipc,
       userDataDir: app.getPath('userData'),
       getMainWindow: () => mainWindow,
       getTracks: async () => {

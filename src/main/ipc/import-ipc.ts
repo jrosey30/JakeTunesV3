@@ -11,6 +11,7 @@ import { join } from 'path'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { allowImportPaths, isImportPathAllowed } from '../import-allowlist.ts'
+import { safeIpcError } from '../safe-ipc-error.ts'
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
 
@@ -103,7 +104,7 @@ export function registerImportIpc(ipc: IpcRegistrar): void {
       allowImportPaths(resolved)
       return { ok: true, paths: resolved }
     } catch (err) {
-      return { ok: false, error: String(err) }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 }

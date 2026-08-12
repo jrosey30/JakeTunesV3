@@ -31,6 +31,7 @@
 import { readFile, writeFile, appendFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory.ts'
+import { safeIpcError } from './safe-ipc-error.ts'
 // NOTE: nothing here may import electron, directly or transitively. That is
 // what keeps buildTasteProfile reachable from `node --test`, and it is easy to
 // break by accident — activity-context.ts imports electron, which is why the
@@ -214,7 +215,7 @@ export async function getListeningMemory(): Promise<unknown> {
       observations: p.observations.slice(-5).reverse(),
     }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
 }
 

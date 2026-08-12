@@ -26,6 +26,7 @@
 import { dialog, BrowserWindow, app, protocol, net } from 'electron'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
+import { safeIpcError } from './safe-ipc-error.ts'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { mkdir, unlink, copyFile, stat, readdir, readFile, writeFile, rename } from 'fs/promises'
@@ -113,7 +114,7 @@ export function registerPlaylistCoverIpc(
       await rename(tmp, NOTES_FILE())
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'could not save' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -178,7 +179,7 @@ export function registerPlaylistCoverIpc(
       // without this the renderer would keep showing the old picture.
       return { ok: true, path: dest, stamp: st.mtimeMs }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'could not save that cover' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -209,7 +210,7 @@ export function registerPlaylistCoverIpc(
       await copyFile(src, join(COVERS_DIR(), `${b}.jpg`))
       return { ok: true, copied: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'copy failed' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 

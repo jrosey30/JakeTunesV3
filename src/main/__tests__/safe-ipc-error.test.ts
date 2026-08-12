@@ -27,6 +27,20 @@ test('strips filesystem paths to stable codes', () => {
     safeIpcError('restore_from_xml.py exited with code 1: Traceback… /tmp/foo'),
     'tool-failed',
   )
+  assert.equal(
+    safeIpcError('DB write failed (code 1): /Volumes/JACOBROSENB/iPod_Control/iTunes/iTunesDB'),
+    'io-failed',
+  )
+  assert.equal(
+    safeIpcError('spawn python3 ENOENT /opt/homebrew/bin/python3'),
+    'io-failed',
+  )
+})
+
+test('passes through newly allowlisted tooling phrases', () => {
+  assert.equal(safeIpcError('Python 3 is not installed.'), 'Python 3 is not installed.')
+  assert.equal(safeIpcError('No iPod detected'), 'No iPod detected')
+  assert.equal(safeIpcError('mobile backend unreachable'), 'mobile backend unreachable')
 })
 
 test('classifies API / rate-limit failures', () => {
