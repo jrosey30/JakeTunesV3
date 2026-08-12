@@ -3666,8 +3666,12 @@ const STATE_FILE_NAMES = [
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',
-  'mobile-playlists.json',
-  'playlist-additions.json',
+  // mobile-playlists.json + playlist-additions.json are deliberately ABSENT
+  // (2026-08-12): same single-writer contract as recommendations.json. The iOS
+  // backend on homemini owns both files. V3 only mirrors them read-only
+  // (Brief 121 + refreshPhoneAuthoredMirrors). A reconcile / auto-backup
+  // LOCAL→NAS push of a stale MacBook mirror is the whole-file clobber that
+  // made phone "Add to Playlist" look completely broken.
   // recommendations.json is deliberately ABSENT (Brief 125): the mobile backend
   // on homemini is the SINGLE writer of the shared recommendations files. V3
   // mutates only through its HTTP API — a reconcile push of V3's local copy is

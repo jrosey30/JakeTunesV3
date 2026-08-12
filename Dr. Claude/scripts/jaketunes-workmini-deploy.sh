@@ -332,13 +332,30 @@ fi
 say "[4/5] Bootstrapping library.json + sidecars"
 ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
 SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json)
+# Phone-authored playlist sidecars: NAS is fresher than a possibly-stale
+# MacBook userData mirror (iOS backend writes via homemini → NAS). Prefer NAS
+# for those two so workmini doesn't inherit an empty/stale clobber copy.
+PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
+is_phone_playlist_sidecar() {
+  local x
+  for x in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+    [[ "$1" == "$x" ]] && return 0
+  done
+  return 1
+}
 for f in "${SIDECARS[@]}"; do
-  # Sidecars prefer LOCAL userData (post 4.5.0-114, same reasoning as
-  # library.json above). Fall back to NAS only if local is missing.
-  # Validate JSON before pushing so a torn-write NAS file can't poison
-  # workmini.
+  # Desktop-authored sidecars prefer LOCAL userData (post 4.5.0-114).
+  # Phone playlist sidecars prefer NAS (see above). Validate JSON before
+  # pushing so a torn-write file can't poison workmini.
   src=""
-  if [[ -f "$USERDATA/$f" ]] && validate_json "$USERDATA/$f"; then
+  if is_phone_playlist_sidecar "$f"; then
+    if [[ -f "$NAS_STATE/$f" ]] && validate_json "$NAS_STATE/$f"; then
+      src="$NAS_STATE/$f"
+    elif [[ -f "$USERDATA/$f" ]] && validate_json "$USERDATA/$f"; then
+      src="$USERDATA/$f"
+      echo "  ⚠ $f sourced from local (NAS missing/corrupt)"
+    fi
+  elif [[ -f "$USERDATA/$f" ]] && validate_json "$USERDATA/$f"; then
     src="$USERDATA/$f"
   elif [[ -f "$NAS_STATE/$f" ]] && validate_json "$NAS_STATE/$f"; then
     src="$NAS_STATE/$f"
