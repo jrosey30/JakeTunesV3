@@ -1,6 +1,15 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { planReconcile, partitionLanded, sizeVerified, type IntendedTrack, type DeviceCatalogEntry } from '../ipod-reconcile.ts'
+import {
+  planReconcile,
+  partitionLanded,
+  sizeVerified,
+  estimateIpodBytes,
+  looksLossless,
+  packTracksToCapacity,
+  type IntendedTrack,
+  type DeviceCatalogEntry,
+} from '../ipod-reconcile.ts'
 
 describe('sizeVerified', () => {
   it('passes only on an exact positive match', () => {
@@ -89,5 +98,62 @@ describe('partitionLanded — honest post-copy split', () => {
     const pass2 = partitionLanded(intended, new Map([[1, 100], [2, 200]]))
     assert.deepEqual(pass2.landed, [1, 2])
     assert.deepEqual(pass2.failed, [])
+  })
+
+  it('the convert bug: AAC-on-card must be checked against AAC size, not the ALAC master', () => {
+    // 500-song activity sync on a Mini: convert wrote ~3MB AAC, verify used to
+    // expect the ~30MB ALAC master → every track "failed" → recopy filled the
+    // card with ALACs → only ~100 songs stuck. Correct expected size lands.
+    const alacMaster = 30_000_000
+    const aacOnCard = 3_000_000
+    const wrong = partitionLanded(
+      [{ id: 1, expectedSize: alacMaster }],
+      new Map([[1, aacOnCard]]),
+    )
+    assert.deepEqual(wrong.failed, [1], 'ALAC expected vs AAC on card = false failure')
+    const right = partitionLanded(
+      [{ id: 1, expectedSize: aacOnCard }],
+      new Map([[1, aacOnCard]]),
+    )
+    assert.deepEqual(right.landed, [1])
+  })
+})
+
+describe('estimateIpodBytes / looksLossless / packTracksToCapacity', () => {
+  it('estimates AAC size from duration when converting lossless', () => {
+    // 4 minutes at 128 kbps ≈ 3_840_000 bytes
+    const n = estimateIpodBytes({
+      fileSize: 30_000_000,
+      durationMs: 240_000,
+      convertEnabled: true,
+      targetKbps: 128,
+      isLossless: true,
+    })
+    assert.equal(n, Math.ceil(240 * 128 * 1000 / 8))
+  })
+
+  it('uses the master size when convert is off', () => {
+    assert.equal(estimateIpodBytes({ fileSize: 30_000_000, convertEnabled: false, isLossless: true }), 30_000_000)
+  })
+
+  it('recognizes ALAC / FLAC codecs and extensions', () => {
+    assert.equal(looksLossless('alac', ':F00:x.m4a'), true)
+    assert.equal(looksLossless('aac', ':F00:x.m4a'), false)
+    assert.equal(looksLossless('', ':F00:x.flac'), true)
+  })
+
+  it('packs until the budget is full — the Mini capacity gate', () => {
+    const tracks = [
+      { id: 1, bytes: 100 },
+      { id: 2, bytes: 100 },
+      { id: 3, bytes: 100 },
+      { id: 4, bytes: 100 },
+    ]
+    // 250 free, 50 reserve → budget 200 → first two fit
+    const r = packTracksToCapacity(tracks, 250, 50)
+    assert.deepEqual(r.packed.map((t) => t.id), [1, 2])
+    assert.deepEqual(r.dropped.map((t) => t.id), [3, 4])
+    assert.equal(r.usedBytes, 200)
+    assert.equal(r.budgetBytes, 200)
   })
 })

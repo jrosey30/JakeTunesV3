@@ -477,18 +477,23 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     extra_mhods:     raw bytes of mhod types NOT in REBUILT_MHOD_TYPES, to preserve from existing DB.
     is_new:          True if this track is not in the existing DB (needs codec/timestamp init).
 
-    ⚠️ TWIN: This function carries TWO load-bearing offsets that the iPod
-    firmware uses as silent track-filter inputs. Both have caused
+    ⚠️ TWIN: This function carries load-bearing offsets that the iPod
+    firmware uses as silent track-filter / dedupe inputs. All have caused
     user-visible "Music > Songs" undercounts before:
-      • 0x64  — mediaKind classifier (must be 1; see comment at the
-                struct.pack_into('<I', hdr, 0x64, 1) line below).
-                Postmortem: docs/postmortems/2026-04-26-ipod-songcount-counter.md
-      • 0x6C  — 64-bit persistent dbid (must be UNIQUE per track; see
-                the persistent-dbid block below).
-                Diagnosis: 2026-04-26 — every track was inheriting the
-                first existing mhit's persistent ID via template_header,
-                causing the firmware browse cache to dedupe ~140 tracks
-                into duplicates.
+      • 0x64  — mediaKind classifier (must be 1 on THIS device; see the
+                pack_into at 0x64 below). Postmortem:
+                docs/postmortems/2026-04-26-ipod-songcount-counter.md
+                Do NOT set this to 0 on libgpod's authority — 12f0370
+                recorded a live 250→118 regression from that change.
+      • 0x6C / 0x94 — 64-bit persistent dbid (must be UNIQUE per track).
+                Diagnosis: 2026-04-26 — every track inherited the first
+                mhit's persistent ID via template_header; firmware
+                browse-cache deduped ~140 tracks. Do NOT also pack an
+                8-byte value at 0x70 (overlaps 0x6C+4 and corrupts this
+                pair); 12f0370 recorded a 250→118 regression from
+                switching to the libgpod-only 0x70/0xA8 pair.
+      • 0xD0  — mediatype (1 = audio/music) on headers long enough to
+                carry it; set on new tracks.
     If you find a NEW field that turns out to be a silent firmware
     filter, add it to this list so the next editor knows to check it.
     """
@@ -497,28 +502,35 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     struct.pack_into('<I', hdr, 0x10, dbid)
     struct.pack_into('<I', hdr, 0x14, 1)  # visible
 
-    # Persistent 64-bit dbid (offset 0x6C) + backup (offset 0x94).
+    # Persistent 64-bit dbid at the empirical pair (0x6C / 0x94).
     #
     # NOT the same as the 32-bit unique_id at 0x10. The iPod firmware's
     # browse cache de-duplicates by this 64-bit value when building
     # internal indexes (Songs view, Artist > Album drill-downs). Pre-fix,
     # build_mhit_record copied the template's bytes wholesale and never
     # overwrote 0x6C/0x94, so every newly-built mhit inherited the FIRST
-    # existing mhit's persistent ID (4556 tracks all sharing the value
-    # 0x4310e86a00000000). The hardware then collapsed near-duplicates
-    # and "Music > Songs" undercounted by ~140.
+    # existing mhit's persistent ID. The hardware then collapsed near-
+    # duplicates and "Music > Songs" undercounted by ~140.
     #
-    # Derive deterministically from (audioFingerprint | path) so re-syncs
-    # are idempotent: same content → same persistent ID → the iPod treats
-    # it as the same track across syncs, preserving its own play counts /
-    # last-played state. High bit set to match iTunes' convention (real
-    # iTunes persistent IDs always have MSB=1).
+    # ⚠️ Do NOT also pack an 8-byte value at 0x70 — it OVERLAPS 0x6C+4..0x6C+7
+    # and corrupts the empirical id (libgpod's layout puts a 4-byte bookmark
+    # at 0x6C and the 8-byte dbid at 0x70; this device wants the empirical
+    # 8-byte pair at 0x6C/0x94 — 12f0370 recorded a 250→118 regression from
+    # switching to the libgpod-only pair). Mirror at 0xA8 when the header is
+    # long enough; that slot does not overlap.
+    #
+    # Derive deterministically from (audioFingerprint | path) so re-syncs are
+    # idempotent. High bit set to match iTunes' convention (MSB=1).
     pdbid_seed = (str(track.get('audioFingerprint') or '') + '|' +
                   str(track.get('path') or '')).encode('utf-8')
     pdbid = int.from_bytes(hashlib.sha1(pdbid_seed).digest()[:8], 'little')
     pdbid |= 0x8000000000000000
+    if len(hdr) < 0xD4:
+        hdr.extend(b'\x00' * (0xD4 - len(hdr)))
+        struct.pack_into('<I', hdr, 4, len(hdr))
     struct.pack_into('<Q', hdr, 0x6C, pdbid)
     struct.pack_into('<Q', hdr, 0x94, pdbid)
+    struct.pack_into('<Q', hdr, 0xA8, pdbid)
 
     # File size — only overwrite if we have a value (don't zero-out existing header data)
     fs = _safe_int(track.get('fileSize', 0))
@@ -564,9 +576,15 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     # not part of the filter we just diagnosed). A separate brief is
     # warranted to find the actual disc-info offsets and restore that
     # display.
+    #
+    # Do NOT "correct" 0x64 back to 0 on libgpod's authority — 12f0370
+    # recorded a live regression (250→118) from that change on this device.
     struct.pack_into('<I', hdr, 0x64, 1)
 
-    # For new tracks: set filetype marker and timestamps (template has wrong values)
+    # For new tracks: set filetype marker, timestamps, and audio facts the
+    # firmware reads. A synthesized template leaves sample rate / bitrate at 0;
+    # inheriting the first mhit's values is fine for those, but a true empty
+    # template must not ship zeros.
     path = str(track.get('path', ''))
     ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
     if is_new:
@@ -582,6 +600,15 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
         struct.pack_into('<I', hdr, 0x20, now_mac)   # date created
         struct.pack_into('<I', hdr, 0x58, now_mac)   # date modified
         struct.pack_into('<I', hdr, 0x68, now_mac)   # date added
+        # Bitrate (kbps) at 0x38; sample rate as (Hz << 16) at 0x3C.
+        sr = _safe_int(track.get('sampleRate', 0)) or 44100
+        br = _safe_int(track.get('bitRate', 0)) or _safe_int(track.get('bitrate', 0))
+        if br <= 0 and fs > 0 and dur > 0:
+            br = max(1, int(fs * 8 / (dur / 1000.0) / 1000))  # rough kbps from size
+        if br > 0:
+            struct.pack_into('<I', hdr, 0x38, br)
+        struct.pack_into('<I', hdr, 0x3C, (sr << 16) & 0xFFFFFFFF)
+        struct.pack_into('<I', hdr, 0xD0, 1)
 
     # Build standard mhod children: title(1), path(2), album(3), artist(4), genre(5), filetype(6), sort-artist(22)
     ft = 'AAC audio file' if ext in ('m4a', 'aac', 'alac') else 'MPEG audio file'
@@ -790,11 +817,11 @@ def write_itunesdb(tracks, playlists, template_path, output_path):
     # with the old catalog and the sync stuck at "Writing iTunesDB...".
     # This is exactly the state a wiped/fresh card is in, so a single empty
     # sync used to brick every subsequent sync until a valid DB reappeared.
-    # Fall back to a zeroed header of the Mini-era mhit size (0x9C — the
-    # highest offset build_mhit_record writes is 0x94+8 = 0x9C, and every
-    # field it does not write is a benign zero default). 'mhit' magic and
-    # header length are set so downstream size arithmetic stays honest.
-    MHIT_HLEN_DEFAULT = 0x9C
+    # Fall back to a zeroed header large enough for every offset
+    # build_mhit_record writes (persistent dbid pairs through 0xA8+8, and
+    # mediatype at 0xD0). A short 0x9C template made unique-ifying 0x70/0xA8
+    # a no-op and recreated the 500→~100 Songs collapse on activity sync.
+    MHIT_HLEN_DEFAULT = 0xD4
     if existing_track_count == 0 or first_mhit + 8 > len(existing):
         template_mhit = bytearray(MHIT_HLEN_DEFAULT)
         struct.pack_into('<4s', template_mhit, 0, b'mhit')

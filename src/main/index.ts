@@ -152,7 +152,10 @@ import {
   resolveImportFormat,
   type AudioFormat,
 } from './platform'
-import { partitionLanded, type IntendedTrack } from './ipod-reconcile'
+import {
+  partitionLanded,
+  type IntendedTrack,
+} from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
@@ -5065,6 +5068,70 @@ const flushCardCaches = (): Promise<void> => new Promise((resolve) => {
   } catch { resolve() }
 })
 
+/**
+ * Remount-evict the mount cache, then confirm every entry's bytes are on the
+ * card — recopying whatever the fskit cache lied about. Returns the set of
+ * ids that verifiably landed.
+ *
+ * This is the only reliable check on Jake's iFlash/FAT32 Mini: without the
+ * remount, macOS reports files present that the card never kept, and the
+ * Mini's Songs count jumps to a random subset every sync (103 / 421 / 238…).
+ */
+async function remountVerifyEntries(
+  mountPoint: string,
+  entries: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }>,
+  opts: { maxPasses: number; label?: string; isCancelled?: () => boolean } = { maxPasses: 4 },
+): Promise<{ ok: boolean; landedIds: Set<number>; attempts: number; remountFailed: boolean }> {
+  const landedIds = new Set<number>()
+  if (entries.length === 0) return { ok: true, landedIds, attempts: 0, remountFailed: false }
+  const intended: IntendedTrack[] = entries.map((e) => ({ id: e.id, expectedSize: e.expectedSize }))
+  const byId = new Map(entries.map((e) => [e.id, e]))
+  let attempts = 0
+  let remountFailed = false
+  for (let pass = 1; pass <= opts.maxPasses; pass++) {
+    attempts = pass
+    if (opts.isCancelled?.()) break
+    const rm = await remountVolume(mountPoint)
+    if (!rm.ok) {
+      console.warn(`sync-to-ipod: ${opts.label || 'verify'} remount failed (pass ${pass}): ${rm.error}`)
+      remountFailed = true
+      if (pass === 1) break
+      break
+    }
+    remountFailed = false
+    const landedSizeById = new Map<number, number>()
+    for (const e of entries) {
+      try { landedSizeById.set(e.id, (await stat(e.dstPath)).size) } catch { /* missing */ }
+    }
+    const { landed, failed } = partitionLanded(intended, landedSizeById)
+    landedIds.clear()
+    for (const id of landed) landedIds.add(id)
+    console.log(`sync-to-ipod: ${opts.label || 'verify'} pass ${pass} — ${landed.length}/${entries.length} on card, ${failed.length} missing`)
+    if (failed.length === 0) return { ok: true, landedIds, attempts, remountFailed: false }
+    if (pass === opts.maxPasses) break
+    if (opts.isCancelled?.()) break
+    let recopied = 0
+    for (const id of failed) {
+      if (opts.isCancelled?.()) break
+      const e = byId.get(id)
+      if (!e) continue
+      try {
+        const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
+        if (dir) await mkdir(dir, { recursive: true })
+        await copyFile(e.localFile, e.dstPath)
+        const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
+        if (!conf.ok) { console.warn(`sync-to-ipod: recopy NOT confirmed for track ${id} — ${conf.reason}`); continue }
+        recopied++
+      } catch (err) {
+        console.warn(`sync-to-ipod: recopy failed for track ${id}:`, err)
+      }
+    }
+    await flushCardCaches()
+    console.log(`sync-to-ipod: ${opts.label || 'verify'} pass ${pass} — recopied ${recopied} missing file(s)`)
+  }
+  return { ok: landedIds.size === entries.length, landedIds, attempts, remountFailed }
+}
+
 const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
 async function writeSyncJournal(phase: string | null): Promise<void> {
   try {
@@ -5145,6 +5212,33 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         ok: false,
         copied: 0,
         error: `Sync refused — ${parts.join(' and ')} in the ${tracks.length}-song set. Nothing was sent. These have to be fixed (or dropped) before this set can sync cleanly.`,
+      }
+    }
+
+    // Activity wipe+rebuild cannot ship streamed (NAS symlink) tracks — the
+    // copy loop silently skips them, then remount-verify drops them from the
+    // catalog, and you land short (e.g. 482/500) with no useful reason.
+    // Refuse up front so the set is rebuilt/pinned before anything is wiped.
+    if (syncOpts?.wipeFirst) {
+      const streamed: string[] = []
+      for (const t of tracks) {
+        const colon = String(t.path || '')
+        if (!colon) continue
+        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+        if (await isStreamedTrackFile(abs)) {
+          streamed.push(`${String(t.title || '')} — ${String(t.artist || '')}`)
+        }
+      }
+      if (streamed.length > 0) {
+        console.error(`sync-to-ipod: REFUSING activity set — ${streamed.length}/${tracks.length} are streamed (not downloaded locally)`)
+        for (const s of streamed.slice(0, 20)) console.error('   •', s)
+        return {
+          ok: false,
+          copied: 0,
+          error: `Activity sync refused — ${streamed.length} of ${tracks.length} songs are streamed off the NAS (not downloaded locally). Pin/download them first, or rebuild the set from local files only. Nothing was wiped.`,
+          streamed: streamed.length,
+          target: tracks.length,
+        }
       }
     }
 
@@ -5394,8 +5488,20 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     }
   }
 
-  const toCopy: Array<{ local: string; ipod: string; title: string }> = []
+  const toCopy: Array<{ local: string; ipod: string; title: string; trackId: number }> = []
   const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  // Exact bytes that landed (or were confirmed already present) per track.
+  // Verify/recopy MUST use these — never the library master — or a convert
+  // sync compares AAC-on-card to ALAC-in-library, "fails" every song, and
+  // recopies full-size masters until the Mini fills (~100 of 500).
+  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+  const rememberWritten = async (trackId: number | undefined, srcPath: string, dstPath: string) => {
+    if (trackId == null) return
+    try {
+      const sz = (await stat(srcPath)).size
+      writtenById.set(trackId, { srcPath, dstPath, expectedSize: sz })
+    } catch { /* non-fatal — verify will treat as missing */ }
+  }
   let rewritesVetoed = 0
   for (const c of candidates) {
     if (c.altIpodPath) {
@@ -5419,6 +5525,24 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           oldPath: c.colonPath,
           newPath: altColonPath,
         })
+        // Already on the device at altIpodPath — record on-card size as the
+        // verify target. Recopy source prefers the AAC mirror when convert is
+        // on so a recovery pass doesn't shove the ALAC master back onto a Mini.
+        try {
+          const onCard = (await stat(c.altIpodPath)).size
+          let srcPath = c.localFile
+          if (convertOptions?.enabled) {
+            try {
+              const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps)
+              if (mirror) srcPath = mirror
+            } catch { /* keep library master as recopy source */ }
+          }
+          writtenById.set(c.track.id as number, {
+            srcPath,
+            dstPath: c.altIpodPath,
+            expectedSize: onCard,
+          })
+        } catch { /* verify will notice */ }
         continue
       }
       // Tags didn't match — don't silently re-link. Copy the real file.
@@ -5429,6 +5553,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       local: c.localFile,
       ipod: c.ipodFile,
       title: String(c.track.title || c.baseName),
+      trackId: c.track.id as number,
     })
   }
   if (rewritesVetoed > 0) {
@@ -5453,7 +5578,44 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   const trackByLocal = new Map<string, Record<string, unknown>>()
   for (const c of candidates) trackByLocal.set(c.localFile, c.track)
 
-  for (const { local, ipod, title } of toCopy) {
+  // Activity wipe+rebuild: remount-verify every N songs so the fskit cache
+  // never accumulates hundreds of "successful" writes the card then drops.
+  // Without this, each sync lands a random subset (103 / 421 / 238 of 500).
+  // Chunk of 5: Jake still saw 482/500 with chunks of 10 — tighter windows
+  // leave less for the card to drop mid-flush.
+  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 5 : 0
+  let chunkPending: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
+  const flushCopyChunk = async (force = false) => {
+    if (COPY_VERIFY_CHUNK <= 0) return
+    if (!force && chunkPending.length < COPY_VERIFY_CHUNK) return
+    if (chunkPending.length === 0) return
+    const batch = chunkPending
+    chunkPending = []
+    mainWindow?.webContents.send('sync-progress', {
+      phase: 'verify', current: copied, total: Math.max(totalToCopy, 1),
+      title: `Confirming ${batch.length} song(s) actually stuck on the card…`,
+    })
+    await flushCardCaches()
+    const r = await remountVerifyEntries(IPOD_MOUNT, batch, {
+      maxPasses: 8,
+      label: 'chunk',
+      isCancelled: () => syncCancelRequested,
+    })
+    if (r.remountFailed && r.landedIds.size === 0) {
+      console.warn('sync-to-ipod: chunk remount failed — continuing; final verify will catch drops')
+      return
+    }
+    // Drop write-records for songs that still didn't stick after chunk retries
+    // so the final DB/verify pass cannot treat them as landed.
+    for (const e of batch) {
+      if (!r.landedIds.has(e.id)) {
+        writtenById.delete(e.id)
+        console.warn(`sync-to-ipod: chunk verify — track ${e.id} did not stick; will retry in final pass`)
+      }
+    }
+  }
+
+  for (const { local, ipod, title, trackId } of toCopy) {
     // 4.5.0-109: cancellation check at the file boundary. Per-file is the
     // right granularity — fine enough that a Cancel click is felt within
     // seconds, coarse enough that we don't shred a half-written copy
@@ -5542,6 +5704,17 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       const srcStat = await stat(srcToCopy)
       const dstStat = await stat(dstToCopy).catch(() => null)
       if (dstStat && dstStat.size === srcStat.size) {
+        const tr = trackByLocal.get(local)
+        await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
+        if (trackId != null && Number.isFinite(trackId)) {
+          chunkPending.push({
+            id: trackId,
+            dstPath: dstToCopy,
+            localFile: srcToCopy,
+            expectedSize: srcStat.size,
+          })
+          await flushCopyChunk()
+        }
         copied++
         mainWindow?.webContents.send('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
@@ -5563,6 +5736,20 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           title: `✗ did not stick: ${title}`,
         })
         continue
+      }
+      {
+        const tr = trackByLocal.get(local)
+        await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
+        try {
+          const sz = (await stat(srcToCopy)).size
+          chunkPending.push({
+            id: trackId,
+            dstPath: dstToCopy,
+            localFile: srcToCopy,
+            expectedSize: sz,
+          })
+          await flushCopyChunk()
+        } catch { /* final verify still runs */ }
       }
       if (++sinceFlush >= 8) { await flushCardCaches(); sinceFlush = 0 }
       copied++
@@ -5588,6 +5775,8 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
     })
   }
+  // Flush any leftover chunk before the final full-set verify.
+  await flushCopyChunk(true)
   // One last filesystem-wide flush so the DB write and the eject start from
   // a clean slate — nothing of the audio left in the page cache to lose.
   await flushCardCaches()
@@ -5613,90 +5802,82 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // 500 means 500, 1000 means 1000"). The iFlash/FAT32 iPod on macOS fskit
   // accepts writes into the MOUNT CACHE and reports them present while only a
   // subset physically commits to the card — so copyFile "succeeds", the cache
-  // says 500, but the device shows 299. Every read through the live mount is
-  // fooled (including the readback below and every probe). The only reliable
-  // check is to EVICT the cache (unmount + remount) and re-read from the card,
-  // recopy whatever didn't survive, and loop until the true committed count hits
-  // the target. Then reduce `tracks` to what verifiably landed so the iTunesDB
-  // built below can never claim more than the card holds. macOS-only; other
-  // platforms keep the prior behaviour (verifyRan stays false).
+  // says 500, but the device shows a RANDOM count every sync (103 / 421 / 238…).
+  // Remount-evict + recopy until the true committed count hits the target, then
+  // build the iTunesDB from ONLY what landed. Activity wipe+rebuild refuses to
+  // report success on a shortfall — 500 means 500, or the sync failed.
   const syncTarget = tracks.length
   let verifiedLanded = syncTarget
   let verifyAttempts = 0
   let verifyRan = false
+  let activityShortfall = false
   if (IS_MAC && tracks.length > 0) {
-    // Intended set = every track that should have a real file on the device.
-    // Exclude streamed tracks (intentionally not copied) and any with no local
-    // source to verify/recopy from (those fall through to the old readback).
     const verify: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
     for (const t of tracks) {
+      const id = t.id as number
+      const remembered = writtenById.get(id)
+      if (remembered) {
+        verify.push({
+          id,
+          dstPath: remembered.dstPath,
+          localFile: remembered.srcPath,
+          expectedSize: remembered.expectedSize,
+        })
+        continue
+      }
       const colonPath = String(t.path || '')
       if (!colonPath) continue
       const relPath = colonPath.replace(/:/g, pathSep)
-      const localFile = join(LOCAL_MOUNT, relPath)
+      const libraryFile = join(LOCAL_MOUNT, relPath)
       try {
-        if (await isStreamedTrackFile(localFile)) continue
-        const sz = (await stat(localFile)).size
-        verify.push({ id: t.id as number, dstPath: join(IPOD_MOUNT, relPath), localFile, expectedSize: sz })
-      } catch { /* no local source — can't verify/recopy; leave to the old readback */ }
+        if (await isStreamedTrackFile(libraryFile)) continue
+        let srcForVerify = libraryFile
+        if (convertOptions?.enabled) {
+          const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps)
+          if (mirror) srcForVerify = mirror
+        }
+        const sz = (await stat(srcForVerify)).size
+        verify.push({
+          id,
+          dstPath: join(IPOD_MOUNT, relPath),
+          localFile: srcForVerify,
+          expectedSize: sz,
+        })
+      } catch { /* no local source */ }
     }
-    const MAX_VERIFY_PASSES = 4
+    // Activity sync: more passes — random short counts were us giving up too early
+    // while the card was still dropping mid-flush writes.
+    const MAX_VERIFY_PASSES = syncOpts?.wipeFirst ? 16 : 4
     let landedIds = new Set<number>()
     if (verify.length > 0) {
-      const intended: IntendedTrack[] = verify.map((v) => ({ id: v.id, expectedSize: v.expectedSize }))
-      for (let pass = 1; pass <= MAX_VERIFY_PASSES; pass++) {
-        verifyAttempts = pass
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'verify', current: pass, total: MAX_VERIFY_PASSES,
-          title: `Verifying what actually landed on the iPod (pass ${pass})…`,
-        })
-        const rm = await remountVolume(IPOD_MOUNT)
-        if (!rm.ok) {
-          console.warn(`sync-to-ipod: verify remount failed (pass ${pass}): ${rm.error}`)
-          if (pass === 1) { verifyRan = false; break }  // couldn't verify at all → fall back to old path
-          break                                          // keep the last good landed set
+      mainWindow?.webContents.send('sync-progress', {
+        phase: 'verify', current: 1, total: MAX_VERIFY_PASSES,
+        title: `Verifying all ${verify.length} songs actually landed on the iPod…`,
+      })
+      const r = await remountVerifyEntries(IPOD_MOUNT, verify, {
+        maxPasses: MAX_VERIFY_PASSES,
+        label: 'final',
+        isCancelled: () => syncCancelRequested,
+      })
+      verifyAttempts = r.attempts
+      landedIds = r.landedIds
+      if (r.remountFailed && landedIds.size === 0) {
+        verifyRan = false
+        if (syncOpts?.wipeFirst) {
+          // Do NOT fall through and write a catalog from the mount cache — that
+          // is exactly how the Mini ends up indexing a random partial Songs list.
+          await writeSyncJournal(null)
+          return {
+            ok: false,
+            error: `Could not verify the iPod (remount failed after writing). The mount cache lies on this card — sync again without unplugging. Nothing was committed as "done".`,
+            copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, verifyAttempts,
+          }
         }
+      } else {
         verifyRan = true
-        // Re-read TRUE sizes from the card (cache evicted by the remount).
-        const landedSizeById = new Map<number, number>()
-        for (const v of verify) {
-          try { landedSizeById.set(v.id, (await stat(v.dstPath)).size) } catch { /* missing on the card */ }
-        }
-        const { landed, failed } = partitionLanded(intended, landedSizeById)
-        landedIds = new Set(landed)
-        console.log(`sync-to-ipod: verify pass ${pass} — ${landed.length}/${verify.length} truly on the card, ${failed.length} missing`)
-        if (failed.length === 0) break
-        if (pass === MAX_VERIFY_PASSES) break
-        if (syncCancelRequested) break
-        // Recopy only the ones that didn't survive; the NEXT pass's remount
-        // flushes them to the card and re-verifies.
-        const failedSet = new Set(failed)
-        let recopied = 0
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'verify', current: pass, total: MAX_VERIFY_PASSES,
-          title: `Re-copying ${failed.length} song(s) that didn't stick…`,
-        })
-        for (const v of verify) {
-          if (!failedSet.has(v.id)) continue
-          if (syncCancelRequested) break
-          try {
-            const dir = v.dstPath.substring(0, v.dstPath.lastIndexOf(pathSep))
-            await mkdir(dir, { recursive: true })
-            await copyFile(v.localFile, v.dstPath)
-            // Same per-song confirmation as the main loop — a recopy that only
-            // reached the page cache is exactly what the next remount pass
-            // would find missing again.
-            const conf = await confirmWriteOnCard(v.localFile, v.dstPath)
-            if (!conf.ok) { console.warn(`sync-to-ipod: recopy NOT confirmed for track ${v.id} — ${conf.reason}`); continue }
-            recopied++
-          } catch (e) { console.warn(`sync-to-ipod: recopy failed for track ${v.id}:`, e) }
-        }
-        console.log(`sync-to-ipod: verify pass ${pass} — recopied ${recopied} missing file(s)`)
       }
     }
     if (verifyRan && landedIds.size === 0 && verify.length > 0) {
-      // Nothing committed to the card at all — never write an empty catalog over
-      // a working one. Report the honest zero and stop.
       await writeSyncJournal(null)
       return {
         ok: false,
@@ -5705,16 +5886,132 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
     }
     if (verifyRan) {
-      // Keep only verifiably-landed tracks so the iTunesDB matches the card. Any
-      // track excluded from the verify set (streamed / no local source) is dropped
-      // too — it has no file on the device and would only inflate the count.
+      // Gap-fill (2026-08-12): Jake hit 482/500 — remount-verify was honest,
+      // but batch recopies of the missing set still dumped into the cache and
+      // lost again. For wipe-first activity sync, finish the last few ONE AT A
+      // TIME: copy → fsync → remount → size-check, before accepting shortfall.
+      const gapFillMissing = async (missing: typeof verify, label: string) => {
+        if (missing.length === 0 || syncCancelRequested) return 0
+        console.warn(`sync-to-ipod: ${label} — ${missing.length} missing; remounting per song`)
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'verify', current: landedIds.size, total: syncTarget,
+          title: `Finishing the last ${missing.length} song(s) — one at a time…`,
+        })
+        let recovered = 0
+        for (let i = 0; i < missing.length; i++) {
+          if (syncCancelRequested) break
+          const e = missing[i]
+          let stuck = false
+          for (let attempt = 1; attempt <= 5 && !stuck; attempt++) {
+            if (syncCancelRequested) break
+            try {
+              const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
+              if (dir) await mkdir(dir, { recursive: true })
+              await copyFile(e.localFile, e.dstPath)
+              const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
+              if (!conf.ok) {
+                console.warn(`sync-to-ipod: ${label} copy not confirmed for ${e.id} (try ${attempt}): ${conf.reason}`)
+                continue
+              }
+              await flushCardCaches()
+              const rm = await remountVolume(IPOD_MOUNT)
+              if (!rm.ok) {
+                console.warn(`sync-to-ipod: ${label} remount failed for ${e.id}: ${rm.error}`)
+                continue
+              }
+              const sz = (await stat(e.dstPath).catch(() => null))?.size ?? -1
+              if (sz === e.expectedSize) {
+                landedIds.add(e.id)
+                writtenById.set(e.id, { srcPath: e.localFile, dstPath: e.dstPath, expectedSize: e.expectedSize })
+                recovered++
+                stuck = true
+                console.log(`sync-to-ipod: ${label} recovered track ${e.id} on try ${attempt} (${landedIds.size}/${syncTarget})`)
+              } else {
+                console.warn(`sync-to-ipod: ${label} size mismatch for ${e.id}: got ${sz}, want ${e.expectedSize}`)
+              }
+            } catch (err) {
+              console.warn(`sync-to-ipod: ${label} failed for ${e.id}:`, err)
+            }
+          }
+          mainWindow?.webContents.send('sync-progress', {
+            phase: 'verify', current: landedIds.size, total: syncTarget,
+            title: stuck
+              ? `Recovered ${recovered} of ${missing.length} missing…`
+              : `Still missing after retries (${i + 1}/${missing.length})…`,
+          })
+        }
+        verifyAttempts += missing.length
+        return recovered
+      }
+
+      if (syncOpts?.wipeFirst && landedIds.size < verify.length) {
+        await gapFillMissing(verify.filter((e) => !landedIds.has(e.id)), 'GAP-FILL')
+      }
+
+      // ── ROULETTE PROOF (2026-08-12) ────────────────────────────────────
+      // Jake: "it jumps to 482 but may drop down to 8 or 108… roulette."
+      // One remount can still catch the card mid-flush and report a lucky
+      // high count; the next boot shows the real subset. For activity sync,
+      // require TWO consecutive cold remounts that agree on the FULL target
+      // before we treat the set as landed. If a remount loses songs,
+      // gap-fill again and reset the streak — never celebrate a lucky read.
+      if (syncOpts?.wipeFirst && verify.length > 0 && !syncCancelRequested) {
+        const PROOF_ROUNDS = 4
+        let consecutiveFull = 0
+        for (let round = 1; round <= PROOF_ROUNDS; round++) {
+          if (syncCancelRequested) break
+          mainWindow?.webContents.send('sync-progress', {
+            phase: 'verify', current: landedIds.size, total: syncTarget,
+            title: `Double-checking the card (proof ${round}/${PROOF_ROUNDS}) — no cache lies…`,
+          })
+          await flushCardCaches()
+          const proof = await remountVerifyEntries(IPOD_MOUNT, verify, {
+            maxPasses: 1,
+            label: `proof-${round}`,
+            isCancelled: () => syncCancelRequested,
+          })
+          verifyAttempts += proof.attempts
+          if (proof.remountFailed) {
+            console.warn(`sync-to-ipod: proof ${round} remount failed — treating as not proven`)
+            landedIds = new Set()
+            consecutiveFull = 0
+            break
+          }
+          const lost = [...landedIds].filter((id) => !proof.landedIds.has(id))
+          landedIds = proof.landedIds
+          if (lost.length > 0) {
+            console.error(`sync-to-ipod: ROULETTE — proof ${round} lost ${lost.length} song(s) that a prior remount claimed (now ${landedIds.size}/${syncTarget})`)
+          }
+          if (landedIds.size >= syncTarget && proof.landedIds.size >= verify.length) {
+            consecutiveFull++
+            console.log(`sync-to-ipod: proof ${round} full (${consecutiveFull} consecutive) — ${landedIds.size}/${syncTarget}`)
+            if (consecutiveFull >= 2) {
+              console.log(`sync-to-ipod: ROULETTE PROOF passed — ${landedIds.size}/${syncTarget} held across two remounts`)
+              break
+            }
+            continue
+          }
+          consecutiveFull = 0
+          const stillMissing = verify.filter((e) => !landedIds.has(e.id))
+          if (stillMissing.length === 0) break
+          await gapFillMissing(stillMissing, `GAP-FILL-proof-${round}`)
+        }
+        if (consecutiveFull < 2 && landedIds.size >= syncTarget) {
+          // Claimed full once but never twice — do not trust it.
+          console.error(`sync-to-ipod: ROULETTE — had ${landedIds.size}/${syncTarget} but never held across two remounts; refusing success`)
+          // Re-stat once more cold; use whatever that says.
+          await flushCardCaches()
+          const last = await remountVerifyEntries(IPOD_MOUNT, verify, {
+            maxPasses: 1,
+            label: 'proof-final',
+            isCancelled: () => syncCancelRequested,
+          })
+          if (!last.remountFailed) landedIds = last.landedIds
+          verifyAttempts += last.attempts
+        }
+      }
+
       const before = tracks.length
-      // Capture WHO failed before the filter throws them away. Until now the
-      // only record of a short sync was a console line in a stdout nobody
-      // captures: Jake could see "250 asked, 235 arrived" and there was no way
-      // to answer the question that decides everything — are the SAME tracks
-      // failing every time (a file problem, fixable) or DIFFERENT ones (the
-      // card dropping writes, which means hardware). Persist it.
       const failedNow = tracks
         .filter((t) => !landedIds.has(t.id as number))
         .map((t) => ({
@@ -5736,7 +6033,59 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       tracks = tracks.filter((t) => landedIds.has(t.id as number))
       verifiedLanded = tracks.length
       console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
+      if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
+        activityShortfall = true
+        console.error(`sync-to-ipod: ACTIVITY SHORTFALL — asked for ${syncTarget}, card kept ${verifiedLanded}. Will write the honest catalog and report failure (500 means 500).`)
+      }
+    } else if (syncOpts?.wipeFirst) {
+      // Activity sync on Mac MUST remount-verify. A cache-only "all present"
+      // read is exactly how 500 → 103 / 421 / 238 happened with a green check.
+      await writeSyncJournal(null)
+      return {
+        ok: false,
+        error: `Could not remount-verify the activity set — refusing to trust the mount cache. Sync again without unplugging.`,
+        copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, verifyAttempts,
+      }
     }
+  }
+
+  // Belt-and-suspenders (2026-08-11): even when remount-verify couldn't run
+  // (or on non-Mac), never write an iTunesDB entry for a file that isn't
+  // actually on the card. Activity sync is ALAC on a 120GB Mini — capacity
+  // is fine; the lie is claiming 500 songs while the firmware only sees the
+  // files that physically committed. Stat each destination; keep only those
+  // present with a positive size. Prefer writtenById's expected size when we
+  // have one.
+  {
+    const present: typeof tracks = []
+    for (const t of tracks) {
+      const id = t.id as number
+      const remembered = writtenById.get(id)
+      const colonPath = String(t.path || '')
+      if (!colonPath && !remembered) continue
+      const dst = remembered?.dstPath
+        || join(IPOD_MOUNT, colonPath.replace(/:/g, pathSep))
+      try {
+        const sz = (await stat(dst)).size
+        if (sz <= 0) continue
+        if (remembered && remembered.expectedSize > 0 && sz !== remembered.expectedSize) continue
+        present.push(t)
+      } catch { /* missing on card */ }
+    }
+    if (present.length !== tracks.length) {
+      console.warn(`sync-to-ipod: on-disk gate — keeping ${present.length}/${tracks.length} with real files on the card before DB write`)
+      tracks = present
+      verifiedLanded = tracks.length
+    }
+  }
+
+  // Last word for activity wipe+rebuild: ANY path that ends below the picked
+  // count (remount verify, on-disk gate, streamed skips, copy errors) is a
+  // failed sync. Without this, the on-disk gate could shrink 500→238 and still
+  // return ok:true — which is the "random Songs count every time" Jake sees.
+  if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
+    activityShortfall = true
+    console.error(`sync-to-ipod: ACTIVITY SHORTFALL (pre-DB) — asked for ${syncTarget}, have ${verifiedLanded} verified files`)
   }
 
   // The full-library tag-verification preflight that used to live here
@@ -5964,16 +6313,21 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         }
 
         resolve({
-          ok: true,
+          ok: !activityShortfall,
           copied, copyErrors,
           totalTracks: tracks.length,
           // Verified-count truth (2026-07-24): what the user picked vs what
           // actually committed to the card. shortfall>0 → the renderer shows an
-          // honest banner instead of a false success.
+          // honest banner instead of a false success. Activity wipe+rebuild
+          // sets ok:false on shortfall so we never commit "500 on the iPod"
+          // when the card kept a random subset (103 / 421 / 238…).
           target: syncTarget,
           landed: verifiedLanded,
           shortfall: Math.max(0, syncTarget - verifiedLanded),
           verifyAttempts,
+          error: activityShortfall
+            ? `Only ${verifiedLanded} of ${syncTarget} songs actually stuck on the iPod after ${verifyAttempts} tries — the card keeps dropping writes. The catalog matches what landed; sync again (or reformat the card) to reach ${syncTarget}.`
+            : undefined,
           ipodOrphansDeleted,
           // Return the path rewrites so the renderer can update
           // library.json to match what actually ended up on the iPod.
