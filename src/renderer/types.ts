@@ -280,6 +280,27 @@ export interface ItunesSuggestion {
   /** Track length in seconds (from the album-tracks lookup). */
   durationSecs?: number
 }
+
+/** First-class album from an artist catalogue lookup (not inferred from songs).
+ *  ⚠️ TWIN: src/common/itunes-artist-albums.ts (ItunesAlbumHit). */
+export interface ItunesAlbumHit {
+  album: string
+  artist: string
+  artworkUrl?: string
+  collectionId: number
+  releaseYear?: number
+  trackCount?: number
+  genre?: string
+  explicitness?: string
+}
+
+export interface ItunesSearchResult {
+  ok: boolean
+  results: ItunesSuggestion[]
+  /** Present when the query resolved to an artist name — their real shelf. */
+  albums?: ItunesAlbumHit[]
+  artistMatch?: { name: string; id: number }
+}
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
@@ -660,7 +681,7 @@ declare global {
       addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; savedLocally?: boolean; deduped?: boolean }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
-      searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
+      searchItunes: (query: string) => Promise<ItunesSearchResult>
       itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
