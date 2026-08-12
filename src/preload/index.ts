@@ -597,7 +597,7 @@ const electronAPI = {
     ipcRenderer.invoke('playlist-cover-copy', fromId, toId),
   clearPlaylistCover: (playlistId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('playlist-cover-clear', playlistId),
-  gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null> =>
+  gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number } | null> =>
     ipcRenderer.invoke('gapless-trim', absPath),
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('save-mixtape-intro', data, voiceId),
