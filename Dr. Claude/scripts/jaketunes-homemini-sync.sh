@@ -176,8 +176,12 @@ ensure_jakeshared() {
 # save-playlists / 10-min safety-net tick — Jake: "I can't add songs to
 # playlists. At all." They are PULLED homemini→local (and NAS) in step 5
 # instead; see PHONE_PLAYLIST_SIDECARS below.
+# Names are @jaketunes/contracts sidecars.phonePlaylistSidecarsNeverPushFromDesktop
+# (vendored at vendor/jaketunes-contracts/). Do not hand-edit the array —
+# npm run sync:contracts rewrites it. Tests lock SYNC_FILES against that list.
 SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json)
 # Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
+# ⚠️ TWIN: vendor/jaketunes-contracts/contracts.json phonePlaylistSidecarsNeverPushFromDesktop
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 
 log() {
