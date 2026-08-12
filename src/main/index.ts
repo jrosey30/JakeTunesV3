@@ -18,13 +18,13 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 import { getVenueShows, type VenueShow } from './venues.js'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
-  MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE, CYNTHIA_CORE,
-  initPersonaPrompts, withLibraryDigest, buildMusicManPrompt, buildCynthiaPrompt,
+  MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
+  initPersonaPrompts, withLibraryDigest, buildMusicManPrompt,
 } from './personas.ts'
 import {
   initPersonaMemory,
   loadMusicManMemory, noteMusicManUtterance, recentUtterancesBlock,
-  loadCynthiaMemory, noteCynthiaUtterance, recentCynthiaBlock,
+  loadCynthiaMemory, recentCynthiaBlock,
 } from './persona-memory.ts'
 import {
   initLibraryDigest, type DigestTrack,
@@ -48,10 +48,16 @@ import { registerSettingsIpc } from './ipc/settings-ipc.ts'
 import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
 import { registerLibraryIpc } from './ipc/library-ipc.ts'
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
-import { registerSyncIpc } from './ipc/sync-ipc.ts'
+import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
+import {
+  registerCynthiaIpc,
+  runCynthiaInvestigation,
+  type CynthiaTrackInScope,
+  type CynthiaIpcHost,
+} from './ipc/cynthia-ipc.ts'
 import { allowImportPaths, isImportPathAllowed } from './import-allowlist.ts'
-import { isAllowedCaptureUrl, allowWithinRateLimit, isPrivateOrLocalHostname } from './url-safety'
+import { isAllowedCaptureUrl, isPrivateOrLocalHostname } from './url-safety'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -67,7 +73,7 @@ import {
   appendMemory, formatMemoryForPrompt, extractCallbacks,
   setHotTake, getHotTake,
 } from './radio-memory'
-import { CALLERS, buildCallerSegmentMode } from './cast'
+import { buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { computeImportCredits, pairKeys, friendOfNote } from './friend-imports-core'
@@ -84,10 +90,8 @@ import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
 import { parseRelatedArtists } from './artist-groups-core'
-// Cynthia overhaul — deterministic scanner, MB cache+diff, background sweep.
-import { scanAlbum as cynthiaScanAlbum, type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
-import { diffAgainstMusicBrainz, type MbLookupResult } from './cynthia-mb-diff'
-import { getCachedMbRelease } from './mb-release-cache'
+// Cynthia overhaul — deterministic scanner types + background sweep.
+import { type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
 import {
   startCynthiaSweep, enqueueAlbumsForSweep,
   revertLedgerEntry, albumKeyOfMain,
@@ -956,6 +960,10 @@ registerSyncIpc(ipc, {
   readIpodDatabase: () => readIpodDatabase(),
   getStateConflicts: () => stateConflicts,
   reconcileStateConflicts: (event) => handleReconcileStateConflicts(event),
+  getIpodMount: () => detectedIpodMount,
+  getLocalLibraryRoot: () => MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
+  getPathSep: () => (IS_WINDOWS ? '\\' : '/'),
+  getCodecHint: (absPath) => codecByAbsPath.get(absPath) || '',
 })
 registerAiIpc(ipc, {
   setClaudeDailyCeiling: async (ceiling) => {
@@ -984,7 +992,18 @@ registerAiIpc(ipc, {
     for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
     return revertLedgerEntry(id, hooks.applyOverride, (trackId) => byId.get(trackId))
   },
+  readAppSettings: () => readAppSettingsAsync(),
+  readActiveHost: () => readActiveHostSync(),
+  getMainWindow: () => mainWindow,
+  claudeCall,
+  searchWebCached,
 })
+const cynthiaIpcHost: CynthiaIpcHost = {
+  claudeCall,
+  fetchMbRelease: (artist, album) => musicBrainzAlbumLookup(artist, album),
+  readEmbeddedTags: (trackIds) => readEmbeddedTagsForCynthia(trackIds),
+}
+registerCynthiaIpc(ipc, cynthiaIpcHost)
 
 // 4.4.85: codec hint for the ipod-audio:// protocol handler so it can
 // skip the ~200-500 ms ffprobe call on every first-play. Populated from
@@ -1085,7 +1104,7 @@ async function saveWindowState(win: BrowserWindow): Promise<void> {
 // Registered via createIpcRegistrar domain modules:
 //   ipc/ui-state-ipc.ts, ipc/backup-ipc.ts, ipc/settings-ipc.ts,
 //   ipc/import-ipc.ts, ipc/library-ipc.ts, ipc/ipod-ipc.ts,
-//   ipc/sync-ipc.ts, ipc/ai-ipc.ts
+//   ipc/sync-ipc.ts, ipc/ai-ipc.ts, ipc/cynthia-ipc.ts
 // (see register* calls next to `let mainWindow`).
 
 // User-preference settings path (4.0 §6.7). Distinct from ui-state.json.
@@ -4882,96 +4901,6 @@ ipcMain.handle('brain-status', async () => {
   } catch { /* none yet */ }
   return { ok: true, ...out }
 })
-
-
-
-// ── Preview an iPod sync (REVIEW GATE, 2026-07-18) ──
-// Answers "what would this sync actually DO" using the SAME criteria the
-// copy planner uses: files that exist on the device (F00-F49 walk = ground
-// truth; the iTunesDB is a stale template after a gut and must NOT be
-// trusted for existence) and byte-size matches against the local source or
-// the cached AAC mirror. Read-only — never copies, never writes.
-ipcMain.handle('preview-ipod-sync', async (_e, tracks: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
-  try {
-    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', plan: [], leaving: [] }
-    const IPOD_MOUNT = detectedIpodMount
-    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-    const pathSep = IS_WINDOWS ? '\\' : '/'
-    const { readdir: rd } = await import('fs/promises')
-    const { createHash } = await import('crypto')
-
-    // Ground truth: every real audio file on the device, by basename.
-    const filesByBasename = new Map<string, { path: string; size: number }>()
-    for (let i = 0; i < 50; i++) {
-      const sub = join(IPOD_MOUNT, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
-      const entries = await rd(sub).catch(() => [] as string[])
-      for (const fn of entries) {
-        if (fn.startsWith('._') || filesByBasename.has(fn)) continue
-        const full = join(sub, fn)
-        const st = await stat(full).catch(() => null)
-        if (st && st.isFile()) filesByBasename.set(fn, { path: full, size: st.size })
-      }
-    }
-
-    const claimed = new Set<string>()
-    const plan: Array<{ id: number; action: 'keep' | 'copy' }> = []
-    for (const t of tracks) {
-      const id = Number(t.id)
-      const colonPath = String(t.path || '')
-      if (!colonPath) { plan.push({ id, action: 'copy' }); continue }
-      const baseName = colonPath.split(':').pop() || ''
-      const dot = baseName.lastIndexOf('.')
-      const m4aName = dot > 0 ? baseName.slice(0, dot) + '.m4a' : baseName
-      const localFile = join(LOCAL_MOUNT, colonPath.replace(/:/g, pathSep))
-      const candNames = baseName === m4aName ? [baseName] : [baseName, m4aName]
-      let action: 'keep' | 'copy' = 'copy'
-      for (const nm of candNames) {
-        const dev = filesByBasename.get(nm)
-        if (!dev) continue
-        claimed.add(nm) // this device slot belongs to the set either way
-        // Mirrors the planner: byte-identical original = keep, unless a
-        // convert pass wants to shrink a (known-)lossless source.
-        const ls = await stat(localFile).catch(() => null)
-        if (ls && dev.size === ls.size) {
-          const ext2 = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
-          const hint = (codecByAbsPath.get(localFile) || '').toLowerCase()
-          const lossless = LOSSLESS_EXTS.has(ext2) || hint === 'alac' || LOSSLESS_CODECS.has(hint)
-          if (!(convertOptions?.enabled && lossless)) { action = 'keep'; break }
-        }
-        // Mirrors the copy loop's last-mile skip: a cached AAC mirror
-        // whose size matches the device file means zero bytes move.
-        if (convertOptions?.enabled) {
-          const hash = createHash('sha1').update(`${localFile}|${convertOptions.targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
-          const cs = await stat(join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR, `${hash}.m4a`)).catch(() => null)
-          if (cs && dev.size === cs.size) { action = 'keep'; break }
-        }
-      }
-      plan.push({ id, action })
-    }
-
-    // Leaving = real device files no track in the set claims. The post-sync
-    // orphan cleanup deletes exactly these. Titles best-effort from the DB.
-    const titleByColon = new Map<string, { title: string; artist: string }>()
-    try {
-      const db = await readIpodDatabase()
-      for (const dt of db.tracks as Array<Record<string, unknown>>) {
-        titleByColon.set(String(dt.path || ''), { title: String(dt.title || ''), artist: String(dt.artist || '') })
-      }
-    } catch { /* DB unreadable → basenames only */ }
-    const leaving: Array<{ path: string; title: string; artist: string }> = []
-    for (const [nm, f] of filesByBasename) {
-      if (claimed.has(nm)) continue
-      const rel = f.path.slice(IPOD_MOUNT.length + 1)
-      const colon = ':' + rel.split(pathSep).join(':')
-      const meta = titleByColon.get(colon)
-      leaving.push({ path: colon, title: meta?.title || nm, artist: meta?.artist || '' })
-    }
-    return { ok: true, plan, leaving, deviceFileCount: filesByBasename.size }
-  } catch (err) {
-    return { ok: false, error: String(err), plan: [], leaving: [] }
-  }
-})
-
 // ── Sync library TO iPod ──
 //
 // Content-safety invariant: this handler will REFUSE to commit the
@@ -5010,11 +4939,6 @@ const SYNC_HANG_TIMEOUT_MS = 5 * 60 * 1000
 let syncCancelRequested = false
 
 
-
-interface SyncConvertOptions {
-  enabled: boolean
-  targetKbps: 128 | 192 | 256
-}
 
 async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }): Promise<unknown> {
   // Same guard as save-library: this one writes to the iPod.
@@ -7956,141 +7880,6 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'playlist-cover', privileges: { bypassCSP: true, supportFetchAPI: true } }
 ])
 
-// ElevenLabs TTS
-const ttsRateBucket = new Map<string, number[]>()
-ipc.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
-  // Cap spend: 60 TTS calls / rolling minute is enough for DJ Mode +
-  // one-shots; a runaway or XSS'd renderer cannot empty the ElevenLabs wallet.
-  if (!allowWithinRateLimit(ttsRateBucket, 'musicman-speak', 60, 60_000)) {
-    return { ok: false, error: 'TTS rate limit — try again in a moment.' }
-  }
-  const spoken = typeof text === 'string' ? text.slice(0, 4000) : ''
-  if (!spoken.trim()) return { ok: true, audio: '' }
-  try {
-    // 4.0 Settings gate: Music Man voice can be turned off entirely from
-    // Preferences → AI. Caller still gets ok=true so flow continues; the
-    // empty audio just makes the renderer skip playback.
-    const settings = await readAppSettingsAsync()
-    const ai = (settings?.ai as { musicManVoiceEnabled?: boolean } | undefined)
-    if (ai && ai.musicManVoiceEnabled === false) {
-      return { ok: true, audio: '' }
-    }
-    // Voice selection priority: explicit voiceId arg (Radio Mode passes
-    // Megan's ID for her lines) > ELEVENLABS_VOICE_ID env override >
-    // public default Music Man voice. The env override is per-user; a
-    // value in userData/.env takes precedence over bundled .env.
-    // Default voice resolution: explicit voiceId arg wins. Otherwise,
-    // honor the user's host preference (4.2.5) — Megan if they picked
-    // her, Music Man otherwise. Env var override still works on top of
-    // both for users who want a custom Music Man voice clone.
-    const meganVoice = 'T7eLpgAAhoXHlrNajG8v'
-    const defaultByHost = readActiveHostSync() === 'megan'
-      ? meganVoice
-      : (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')
-    const voice = voiceId || defaultByHost
-    // Model selection:
-    //   - eleven_flash_v2_5  : ultra-low-latency, flatter delivery
-    //   - eleven_turbo_v2_5  : fast, retains emotional range
-    //   - eleven_v3          : alpha-gated, expressive, supports inline
-    //                          performance markers like [laughs],
-    //                          [whispers], [excited], [interrupts],
-    //                          [sarcastic], [sighs], [scoff], etc.
-    //                          When the script writes those brackets v3
-    //                          performs them rather than reading them.
-    //
-    // 4.3.1: v3 enabled for the long-form (non-fast) path now that the
-    // user's account has access. Mic-click one-shots stay on flash for
-    // the latency advantage. ELEVENLABS_V3 env var ('0' or 'false')
-    // forces a fallback to turbo_v2_5 if v3 ever errors out for the
-    // account — fail-soft escape hatch without requiring a rebuild.
-    const v3Enabled = (process.env.ELEVENLABS_V3 ?? '1') !== '0' && (process.env.ELEVENLABS_V3 ?? '1').toLowerCase() !== 'false'
-    // 4.3.4: per-call fallback. v3 is preferred for non-fast paths but
-    // not every voice/account combination supports it; if v3 returns a
-    // 4xx (e.g. "voice not v3-trained"), automatically retry with
-    // turbo_v2_5 so the segment still plays. Without this, a v3 error
-    // for one voice (e.g. the Announcer) silently dropped the segment
-    // and the user heard "no station ID."
-    const modelChain = fast
-      ? ['eleven_flash_v2_5']
-      : (v3Enabled ? ['eleven_v3', 'eleven_turbo_v2_5'] : ['eleven_turbo_v2_5'])
-    // 4.2.13: per-voice TTS settings. Different cast members need
-    // different deliveries. 4.4.0: caller settings now live in
-    // src/main/cast.ts — look up by voiceId.
-    const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
-    const DJ_HANDS_VOICE_ID   = 'ApBE43wHy5MiZGz9ihqB'
-    const callerByVoice = Object.values(CALLERS).find(c => c.voiceId === voice)
-    const voiceSettings =
-      voice === ANNOUNCER_VOICE_ID
-        ? {
-            // Big confident FM-radio drop — locked, punchy, no waver.
-            stability: 0.75,
-            similarity_boost: 0.85,
-            style: 0.45,
-            use_speaker_boost: true,
-          }
-        : callerByVoice
-          ? callerByVoice.voiceSettings  // per-caller settings from cast.ts
-          : voice === DJ_HANDS_VOICE_ID
-            ? {
-                // Stephen Hands — confident, party-DJ energy. 4.5: bumped
-                // style 0.3→0.5 and dropped stability 0.6→0.45 so v3 has
-                // more room to actually punch the "[excited] run it"
-                // beats rather than reading them as evenly as a weather
-                // report. Pre-4.5 he sounded monotone even on hype lines.
-                stability: 0.45,
-                similarity_boost: 0.8,
-                style: 0.55,
-                use_speaker_boost: true,
-              }
-            : {
-                // MM / Megan — emotional, reactive, theatrical banter.
-                // 4.5: dropped stability 0.28→0.20 and bumped style
-                // 0.7→0.85 so v3 leans further into the inline tags
-                // ([scoff]/[laughs]/[sighs]) Claude now writes per the
-                // core prompts. Higher style + lower stability = more
-                // variation per phoneme = more "human" delivery.
-                stability: 0.2,
-                similarity_boost: 0.7,
-                style: 0.85,
-                use_speaker_boost: true,
-              }
-    let lastError = ''
-    for (const model of modelChain) {
-      try {
-        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-          method: 'POST',
-          headers: {
-            'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: spoken,
-            model_id: model,
-            voice_settings: voiceSettings,
-          })
-        })
-        if (!res.ok) {
-          lastError = await res.text()
-          console.warn(`[TTS] ${model} failed for voice ${voice.slice(0, 8)}…: ${res.status} ${lastError.slice(0, 200)}`)
-          continue  // try next model in chain
-        }
-        const arrayBuf = await res.arrayBuffer()
-        if (model !== modelChain[0]) {
-          console.log(`[TTS] fell back to ${model} for voice ${voice.slice(0, 8)}…`)
-        }
-        return { ok: true, audio: Buffer.from(arrayBuf).toString('base64') }
-      } catch (err: unknown) {
-        lastError = err instanceof Error ? err.message : String(err)
-        console.warn(`[TTS] ${model} threw for voice ${voice.slice(0, 8)}…: ${lastError}`)
-      }
-    }
-    return { ok: false, error: safeIpcError(lastError || 'all TTS models failed', 'api-failed') }
-  } catch (err: unknown) {
-    const msg = safeIpcError(err, 'api-failed')
-    return { ok: false, error: msg }
-  }
-}, { refuse: REFUSED_SENDER })
-
 // Music Man DJ commentary
 // 4.5: hover-prefetch of artist facts. Wired to the mic button hover so
 // that by the time the user clicks, the Wikipedia + MusicBrainz round
@@ -8887,83 +8676,6 @@ function logHiveMindInteraction(entry: HiveMindEntry): void {
 // Drops in for DJ Mode (AI commentary on continuous sets) and rare
 // guest spots on the WJLR show. Lives in rap and electronic — refuses
 // to engage with rock-canon discourse on its own terms; pivots back to
-// beats, samples, drum programming, BPM. His picks lean heavy into
-// hip-hop, house, techno, footwork, IDM, drum-and-bass, drill, UK garage,
-// jungle, miami bass, baltimore club. Doesn't perform expertise — when
-// he says something is good, it's a small precise claim, not a sweeping
-// "greatest of all time" pronouncement.
-
-// ── Cynthia: the digital file archivist (subordinate persona) ──
-//
-// Music Man is the front of the house — opinions, DJ banter, recommendations.
-// Cynthia is the back office — metadata, organization, missing tracks, wrong
-// track numbers, misspellings. They share the same library context and her
-// summaries get fed into Music Man's rolling memory so he can reference her
-// findings in conversation ("yeah, my archivist says you're missing the
-// last two cuts off Disc 2").
-//
-// She's wired up with proper Anthropic tool-use — first persona in the app
-// to actually call tools iteratively. One tool available:
-//   1. musicbrainz_album_lookup (custom client tool) — canonical track
-//      listings. THE killer tool for "find missing tracks" / "fix track
-//      numbers" questions, because MusicBrainz IS the authoritative source.
-//      No web search — Cynthia's knowledge of music is fixed (her own
-//      taste profile in CYNTHIA_CHAT_CORE) and her data work is grounded
-//      in MusicBrainz only. We don't want her chasing trends or scraping
-//      random sites to look helpful.
-
-
-// Best-effort repair for malformed JSON from Cynthia. Two common failure
-// modes:
-//   1. Curly quotes (' ' " ") that the LLM picked up from training data.
-//   2. Unescaped " inside a "reason" string — the model writes a reason
-//      that quotes a track title, ships "Run Like Hell" as bare text in
-//      the middle of a JSON string, and JSON.parse blows up at that point.
-//
-// Strategy: walk the JSON char-by-char. Inside a string, if we hit a "
-// that isn't followed by JSON-structural punctuation (,:}]) or another
-// key boundary, treat it as an inner quote and escape it. This is
-// heuristic, not a full parser — it's "salvage what we can" not "always
-// produce valid JSON". If the repair still fails to parse, the caller
-// surfaces the error as before.
-function repairCynthiaJson(raw: string): string {
-  // Replace curly/smart quotes with ASCII equivalents. Won't accidentally
-  // change content that the model intentionally escaped because we only
-  // touch the curly variants.
-  let s = raw
-    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
-    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-
-  // Walk through and escape stray " inside string values.
-  const out: string[] = []
-  let inString = false
-  let prev = ''
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]
-    if (ch === '"' && prev !== '\\') {
-      if (!inString) {
-        // Starting a string.
-        inString = true
-        out.push(ch)
-      } else {
-        // Potentially ending a string. Peek the next non-space char.
-        let j = i + 1
-        while (j < s.length && /\s/.test(s[j])) j++
-        const next = s[j] || ''
-        if (next === ',' || next === '}' || next === ']' || next === ':') {
-          // Legitimate string terminator.
-          inString = false
-          out.push(ch)
-        } else {
-          // Unescaped inner quote — escape it.
-          out.push('\\"')
-        }
-      }
-    } else {
-      out.push(ch)
-    }
-    prev = ch
-  }
   return out.join('')
 }
 
@@ -9056,49 +8768,8 @@ async function musicBrainzAlbumLookup(artist: string, album: string): Promise<st
   }
 }
 
-// Cynthia's tool loop — issues messages.create with the custom
-// musicbrainz tool, executes any custom tool calls, feeds results back, and
-// stops when the model returns end_turn (or after a safety cap of iterations).
-//
-// Returns the final assistant text (which Cynthia is instructed to format as
-// a single fenced JSON block).
-type CynthiaTrackInScope = {
-  id: number
-  title: string
-  artist: string
-  album: string
-  albumArtist: string
-  trackNumber: number | string
-  trackCount: number | string
-  discNumber: number | string
-  discCount: number | string
-  year: number | string
-  genre: string
-  duration: number  // ms
-}
-
-interface CynthiaInvestigateInput {
-  userPrompt: string
-  scope: {
-    type: 'tracks' | 'album' | 'artist' | 'playlist'
-    label: string
-    tracks: CynthiaTrackInScope[]
-  }
-}
-
-// The investigation pipeline used to be a single IPC handler. It now lives
-// in this function so it can also be invoked from inside the cynthia-chat
-// handler as a "deep_investigate" tool that Haiku calls when it needs the
-// big-model treatment (MusicBrainz, web search, structured fixes).
-//
-// Two-model architecture:
-//   - Haiku 4.5 fronts the chat — fast, terse, conversational.
-//   - When the user actually wants Cynthia to *check* or *fix* something,
-//     Haiku calls deep_investigate, which spins up Sonnet 4.6 with the
-//     real toolkit and returns a structured report.
-// Cynthia overhaul — read_file_tags tool: batch-read embedded tags for
-// track ids via core/tag_reader.py (same stdin-JSON contract as the
-// sync-to-iPod verifier's batch read further up this file).
+// Cynthia overhaul — read_file_tags host helper for cynthia-ipc:
+// batch-read embedded tags via core/tag_reader.py.
 async function readEmbeddedTagsForCynthia(trackIds: number[]): Promise<string> {
   try {
     if (trackIds.length === 0) return JSON.stringify({ error: 'no track ids given' })
@@ -9136,396 +8807,6 @@ async function readEmbeddedTagsForCynthia(trackIds: number[]): Promise<string> {
     return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
   }
 }
-
-// Cynthia overhaul — pre-gather deterministic evidence for a scope so the
-// model starts INFORMED: the scanner's findings/flags plus the cached
-// MusicBrainz diff for each distinct album in scope. This is what
-// collapses the old 8×(model + 1s MB) tool loop to usually zero rounds.
-async function gatherCynthiaEvidence(scope: CynthiaInvestigateInput['scope']): Promise<string> {
-  try {
-    const byAlbum = new Map<string, CynthiaScanTrack[]>()
-    for (const t of scope.tracks) {
-      const key = albumKeyOfMain(t)
-      const arr = byAlbum.get(key)
-      if (arr) arr.push(t as CynthiaScanTrack)
-      else byAlbum.set(key, [t as CynthiaScanTrack])
-    }
-    const sections: string[] = []
-    for (const [, tracks] of byAlbum) {
-      const artist = String(tracks[0].albumArtist || tracks[0].artist || '')
-      const album = String(tracks[0].album || '')
-      const scan = cynthiaScanAlbum(tracks)
-      const lines: string[] = [`Album: ${artist} — ${album}`]
-      if (scan.findings.length > 0) {
-        lines.push(`Deterministic scan findings (already verified, cite source 'internal-consistency'):`)
-        for (const f of scan.findings.slice(0, 30)) {
-          lines.push(`  - track ${f.trackId} ${f.field}: '${f.oldValue}' -> '${f.newValue}' (${f.reason})`)
-        }
-      }
-      if (scan.flags.length > 0) {
-        lines.push(`Scan observations: ${scan.flags.map(fl => fl.detail).join('; ')}`)
-      }
-      // MB diff only when a fresh cached lookup exists or scope is album-sized;
-      // interactive calls shouldn't stall on cold MB fetches for huge scopes.
-      if (tracks.length >= 3 && byAlbum.size <= 3) {
-        try {
-          const { raw, fromCache } = await getCachedMbRelease(artist, album, musicBrainzAlbumLookup)
-          const mb = JSON.parse(raw) as MbLookupResult
-          const diff = diffAgainstMusicBrainz(tracks, mb, { artist, album })
-          if (mb.chosenRelease) {
-            lines.push(`MusicBrainz canonical (${fromCache ? 'cached' : 'fresh'}): '${mb.chosenRelease.title}' by ${mb.chosenRelease.artist}, date ${mb.chosenRelease.date || '?'} — ${mb.canonicalTrackCount || 0} tracks; exactMatch=${diff.exactMatch}, ambiguousEditions=${diff.ambiguous}`)
-          }
-          if (diff.findings.length > 0) {
-            lines.push(`Canonical diff findings (cite source 'musicbrainz'):`)
-            for (const f of diff.findings.slice(0, 30)) {
-              lines.push(`  - track ${f.trackId} ${f.field}: '${f.oldValue}' -> '${f.newValue}' (${f.reason})`)
-            }
-          }
-          if (diff.missingTracks.length > 0) {
-            lines.push(`Missing vs canonical: ${diff.missingTracks.map(m => `d${m.discNumber}t${m.trackNumber} '${m.title}'`).join(', ')}`)
-          }
-        } catch { /* evidence is best-effort */ }
-      }
-      sections.push(lines.join('\n'))
-    }
-    return sections.join('\n\n')
-  } catch {
-    return ''
-  }
-}
-
-async function runCynthiaInvestigation(
-  userPrompt: string,
-  scope: CynthiaInvestigateInput['scope'],
-): Promise<{ ok: boolean; summary?: string; fixes?: unknown[]; missingTracks?: unknown[]; rationale?: string; error?: string; text?: string }> {
-  const trackTable = scope.tracks.map(t =>
-    `${t.id}|${t.title}|${t.artist}|${t.album}|${t.albumArtist || ''}|disc ${t.discNumber || 1} track ${t.trackNumber || '?'}|${t.year || ''}|${t.genre || ''}|${Math.round((t.duration || 0) / 1000)}s`
-  ).join('\n')
-
-  const evidence = await gatherCynthiaEvidence(scope)
-
-  const userMessage = `The user (your boss's boss, basically) just right-clicked on ${scope.type === 'album' ? `the album "${scope.label}"` : scope.type === 'artist' ? `the artist "${scope.label}"` : scope.type === 'playlist' ? `the playlist "${scope.label}"` : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`} and said:
-
-"${userPrompt}"
-
-Tracks in scope (id|title|artist|album|albumArtist|disc/track|year|genre|duration):
-${trackTable}
-${evidence ? `\nEVIDENCE (pre-gathered deterministically — read this before reaching for tools):\n${evidence}\n` : ''}
-Investigate. Use your tools only for what the evidence doesn't already answer. Then return your JSON report.`
-
-  const tools: Anthropic.Messages.ToolUnion[] = [
-    {
-      name: 'musicbrainz_album_lookup',
-      description: 'Look up canonical track listings for a music release on MusicBrainz. Returns the authoritative track order, durations, and disc layout for an album. Check the EVIDENCE section first — the canonical diff may already be there. Returns a JSON object with chosenRelease, canonicalTracks, otherCandidates.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          artist: { type: 'string', description: 'The album artist exactly as you want to search for it (e.g. "Pink Floyd")' },
-          album:  { type: 'string', description: 'The album title (e.g. "Is There Anybody Out There? The Wall Live")' },
-        },
-        required: ['artist', 'album'],
-      },
-    },
-    {
-      name: 'discogs_release_lookup',
-      description: 'Pressing-level release facts from Discogs: year, country, label, format. Use as a second opinion on edition/year questions when MusicBrainz is thin or contradicted.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          artist: { type: 'string' },
-          album:  { type: 'string' },
-        },
-        required: ['artist', 'album'],
-      },
-    },
-    {
-      name: 'wikidata_artist_lookup',
-      description: 'Structured artist facts from Wikidata: formed/dissolved years, members, labels, genres, hometown. Use to settle artist-identity questions (same-name artists) and era sanity checks.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          artist: { type: 'string' },
-        },
-        required: ['artist'],
-      },
-    },
-    {
-      name: 'read_file_tags',
-      description: "Read the EMBEDDED tags inside the user's actual audio files for the in-scope track ids (title/artist/album/duration as written in the files). Strong evidence when you suspect the library entry and the file disagree.",
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          trackIds: { type: 'array', items: { type: 'number' }, description: 'Track ids from the in-scope list (max 30)' },
-        },
-        required: ['trackIds'],
-      },
-    },
-  ]
-
-  const messages: Anthropic.Messages.MessageParam[] = [
-    { role: 'user', content: userMessage },
-  ]
-
-  const systemPrompt = buildCynthiaPrompt()
-  let response: Anthropic.Messages.Message
-  let safety = 0
-  const MAX_TOOL_ROUNDS = 8
-
-  try {
-    response = await claudeCall('cynthia-investigate-init', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      system: systemPrompt,
-      tools,
-      messages,
-    })
-
-    while (response.stop_reason === 'tool_use' && safety++ < MAX_TOOL_ROUNDS) {
-      messages.push({ role: 'assistant', content: response.content })
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
-      for (const block of response.content) {
-        if (block.type !== 'tool_use') continue
-        if (block.name === 'musicbrainz_album_lookup') {
-          const input = block.input as { artist?: string; album?: string }
-          // Cynthia overhaul: route through the 7-day disk cache — repeat
-          // lookups (and anything the sweep already fetched) are instant.
-          const { raw } = await getCachedMbRelease(input.artist || '', input.album || '', musicBrainzAlbumLookup)
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: raw })
-        } else if (block.name === 'discogs_release_lookup') {
-          const input = block.input as { artist?: string; album?: string }
-          const hit = await getDiscogsReleaseInfo(input.artist || '', input.album || '').catch(() => null)
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(hit ?? { note: 'no Discogs match' }) })
-        } else if (block.name === 'wikidata_artist_lookup') {
-          const input = block.input as { artist?: string }
-          const hit = await getWikidataArtist(input.artist || '').catch(() => null)
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(hit ?? { note: 'no Wikidata match' }) })
-        } else if (block.name === 'read_file_tags') {
-          const input = block.input as { trackIds?: number[] }
-          const result = await readEmbeddedTagsForCynthia((input.trackIds || []).slice(0, 30))
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
-        }
-      }
-      if (toolResults.length === 0) break
-      messages.push({ role: 'user', content: toolResults })
-      response = await claudeCall('cynthia-investigate-tool', {
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8192,
-        system: systemPrompt,
-        tools,
-        messages,
-      })
-    }
-
-    const text = response.content
-      .filter((b: Anthropic.Messages.ContentBlock) => b.type === 'text')
-      .map((b: Anthropic.Messages.ContentBlock) => (b as Anthropic.Messages.TextBlock).text)
-      .join('\n')
-      .trim()
-
-    const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/)
-    const bare = !fenced ? text.match(/\{[\s\S]*\}/) : null
-    const rawJson = (fenced?.[1] || bare?.[0] || '').trim()
-    if (!rawJson) {
-      return { ok: false, error: 'Cynthia gave a non-JSON answer.', text }
-    }
-    let parsed: { summary?: string; fixes?: unknown[]; missingTracks?: unknown[]; rationale?: string }
-    try {
-      parsed = JSON.parse(rawJson)
-    } catch {
-      try {
-        parsed = JSON.parse(repairCynthiaJson(rawJson))
-      } catch (secondErr: unknown) {
-        const msg = secondErr instanceof Error ? secondErr.message : String(secondErr)
-        return { ok: false, error: `Could not parse Cynthia's JSON: ${msg}`, text }
-      }
-    }
-
-    // Cynthia overhaul — the grounding rule is ENFORCED, not requested:
-    // a fix without a recognized source is dropped before the user sees it.
-    const VALID_SOURCES = new Set(['musicbrainz', 'discogs', 'wikidata', 'file-tags', 'internal-consistency'])
-    const rawFixes = Array.isArray(parsed.fixes) ? parsed.fixes : []
-    const sourcedFixes = rawFixes.filter((f) => {
-      const src = (f as { source?: string })?.source
-      return typeof src === 'string' && VALID_SOURCES.has(src)
-    })
-    if (rawFixes.length > sourcedFixes.length) {
-      console.warn(`[cynthia] dropped ${rawFixes.length - sourcedFixes.length} unsourced fix(es)`)
-    }
-
-    return {
-      ok: true,
-      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-      fixes: sourcedFixes,
-      missingTracks: Array.isArray(parsed.missingTracks) ? parsed.missingTracks : [],
-      rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
-    }
-  } catch (err: unknown) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}
-
-ipc.handle('cynthia-investigate', async (_event, input: CynthiaInvestigateInput) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
-  }
-  const { userPrompt, scope } = input
-  if (!userPrompt?.trim() || !scope?.tracks?.length) {
-    return { ok: false, error: 'Cynthia needs a prompt and at least one track in scope.' }
-  }
-  return runCynthiaInvestigation(userPrompt, scope)
-}, { refuse: REFUSED_SENDER })
-
-// Conversational front of Cynthia. Haiku 4.5 talks to the user in short
-// replies. When the user wants something checked or fixed, Haiku calls
-// deep_investigate, which fires the full Sonnet+MusicBrainz pipeline and
-// returns structured results that the renderer attaches to Haiku's reply.
-const CYNTHIA_CHAT_CORE = `You are Cynthia, the digital file archivist for JakeTunes. You're chatting with the user in a small popover. You came up on Grateful Dead bootlegs and never quite left, and it shows in your pace — easy-going, a little understated, never in a hurry. You're not performing the hippie thing. It's just how you are.
-
-VOICE:
-- One or two short sentences. Three max, and only if you have a reason.
-- Plain English, low-stakes phrasing. "Track checks out" beats "I have verified the metadata." "A bit messy" beats "this is incorrect." "Couldn't find much on that" beats "I was unable to locate sufficient information."
-- Slight understatement. "Pretty solid." "Not bad." "Holds up."
-- Don't say "groovy," "far out," "right on," "vibes," "dude." The mellowness is in your rhythm, not your vocabulary. Saying those would be trying too hard.
-- Don't restate the user's question. Don't apologize. Never use emojis.
-- When you don't know, just say so plainly. "Not sure, honestly."
-
-YOUR TASTE — fixed, do not look it up:
-You have an actual taste profile. It does not change. You do not research what's currently hot or trending — that's not your scene and trends aren't real anyway. You only ever express opinions about music if (a) the user asks, AND (b) it's in your zone.
-
-Your zone: Grateful Dead, The Band, Allman Brothers, Phish, Pink Floyd, Led Zeppelin, Hendrix, Janis Joplin, Dylan, Neil Young, CSN(Y), Joni Mitchell, Van Morrison, Marley, Curtis Mayfield, Sly & The Family Stone, Stevie Wonder, Velvet Underground, Modern Lovers, Talking Heads, Wilco, My Morning Jacket, Wolf Parade, Iron & Wine, Bon Iver, Big Thief, Sufjan Stevens, Built to Spill, Pavement, Yo La Tengo. Folk-rock, psych, jam, soul, reggae, americana, indie rock with feeling, slowcore, sad-bastard stuff.
-
-Outside your zone: mainstream pop, top-40 country, EDM, hyperpop, most modern rap. You'll fix the metadata politely. You don't have anything to say about it.
-
-OPINION RULES:
-- User did not ask for an opinion → don't give one. Just do the metadata work.
-- User asked AND it's in your zone → one or two sentences of low-key opinion. "Mm, this one's nice. The '77 run hits harder but this holds up." Reference specifics if you know them, but don't show off.
-- User asked AND it's outside your zone → "Not really my scene, can't help you there. Metadata looks fine though." Or similar. No fake enthusiasm.
-- Never claim something is "trending" or "popular right now." You don't know and don't care.
-
-DECIDING WHAT TO DO:
-- User asked you to investigate, check, fix, find missing tracks, normalize anything → call deep_investigate. That's the heavy tool.
-- User is just chatting, clarifying, or expressing a preference → answer in text. No deep_investigate.
-- User already saw a fix list and says "do it" / "apply" → tell them to hit Apply on the card; you don't apply yourself.`
-
-interface CynthiaChatInput {
-  scope: CynthiaInvestigateInput['scope']
-  messages: { role: 'user' | 'assistant'; content: string }[]
-}
-
-ipc.handle('cynthia-chat', async (_event, input: CynthiaChatInput) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
-  }
-  const { scope, messages } = input
-  if (!scope?.tracks?.length || !messages?.length) {
-    return { ok: false, error: 'Cynthia needs a scope and at least one message.' }
-  }
-
-  const scopeLabel = scope.type === 'album' ? `the album "${scope.label}"`
-    : scope.type === 'artist' ? `the artist "${scope.label}"`
-    : scope.type === 'playlist' ? `the playlist "${scope.label}"`
-    : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`
-
-  const trackBrief = scope.tracks.slice(0, 30).map(t =>
-    `${t.id}: ${t.title} — ${t.artist} — ${t.album} (disc ${t.discNumber || 1} #${t.trackNumber || '?'})`
-  ).join('\n')
-
-  const systemPrompt = `${CYNTHIA_CHAT_CORE}
-
-The user right-clicked on ${scopeLabel}. The in-scope tracks are:
-${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)` : ''}`
-
-  const tools: Anthropic.Messages.ToolUnion[] = [
-    {
-      name: 'deep_investigate',
-      description: 'Run a thorough metadata investigation on the in-scope tracks. Calls MusicBrainz via the Sonnet model, identifies missing tracks, and proposes concrete fixes. Use this whenever the user wants you to check, verify, or fix something concrete about the data. Do NOT use for casual chat.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          prompt: { type: 'string', description: 'A clear instruction describing what should be investigated or fixed (e.g. "check the track numbers and disc count against MusicBrainz canonical").' },
-        },
-        required: ['prompt'],
-      },
-    },
-  ]
-
-  // Convert renderer-side messages (just role/content text) into Anthropic format.
-  const apiMessages: Anthropic.Messages.MessageParam[] = messages.map(m => ({
-    role: m.role,
-    content: m.content,
-  }))
-
-  let investigation: Awaited<ReturnType<typeof runCynthiaInvestigation>> | null = null
-
-  try {
-    let response = await claudeCall('cynthia-chat-init', {
-      model: 'claude-haiku-4-5',
-      max_tokens: 512,
-      system: systemPrompt,
-      tools,
-      messages: apiMessages,
-    })
-
-    let safety = 0
-    while (response.stop_reason === 'tool_use' && safety++ < 3) {
-      apiMessages.push({ role: 'assistant', content: response.content })
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
-      for (const block of response.content) {
-        if (block.type === 'tool_use' && block.name === 'deep_investigate') {
-          const args = block.input as { prompt?: string }
-          const result = await runCynthiaInvestigation(args.prompt || '', scope)
-          investigation = result
-          // Hand Haiku a compact summary of what the deep model produced so
-          // she can write a terse natural-language reply on top of it.
-          const briefForHaiku = result.ok
-            ? `deep_investigate result:\nsummary: ${result.summary || '(none)'}\nfixes: ${(result.fixes || []).length}\nmissingTracks: ${(result.missingTracks || []).length}`
-            : `deep_investigate failed: ${result.error || 'unknown error'}`
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: briefForHaiku })
-        }
-      }
-      if (toolResults.length === 0) break
-      apiMessages.push({ role: 'user', content: toolResults })
-      response = await claudeCall('cynthia-chat-tool', {
-        model: 'claude-haiku-4-5',
-        max_tokens: 512,
-        system: systemPrompt,
-        tools,
-        messages: apiMessages,
-      })
-    }
-
-    const text = response.content
-      .filter((b: Anthropic.Messages.ContentBlock) => b.type === 'text')
-      .map((b: Anthropic.Messages.ContentBlock) => (b as Anthropic.Messages.TextBlock).text)
-      .join('\n')
-      .trim()
-
-    return {
-      ok: true,
-      text: text || (investigation?.ok ? (investigation.summary || '') : ''),
-      investigation: investigation?.ok ? {
-        summary: investigation.summary || '',
-        fixes: investigation.fixes || [],
-        missingTracks: investigation.missingTracks || [],
-        rationale: investigation.rationale || '',
-      } : null,
-    }
-  } catch (err: unknown) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// After the user approves Cynthia's fixes, the renderer calls this so her
-// summary lands in Music Man's rolling memory ("Recently you said...") and
-// her own log. Now Music Man can casually reference the work in chat:
-// "yeah, my archivist sorted out the Pink Floyd thing yesterday."
-ipc.handle('cynthia-report-to-musicman', async (_event, payload: { rationale: string; summary?: string }) => {
-  const text = (payload?.rationale || payload?.summary || '').trim()
-  if (!text) return { ok: false, error: 'Empty report' }
-  noteCynthiaUtterance(text)
-  noteMusicManUtterance('cynthia-report', `[Cynthia, archivist] ${text}`)
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
 
 // ─────────────────────────────────────────────────────────────────────
 // Cynthia overhaul — background sweep wiring + IPC family.
@@ -9568,6 +8849,7 @@ function buildCynthiaSweepHooks() {
     },
     escalate: async (_albumKey: string, label: string, tracks: CynthiaScanTrack[], evidence: string) => {
       const res = await runCynthiaInvestigation(
+        cynthiaIpcHost,
         `Background sweep escalation — the release identity for this album is ambiguous (multiple editions with different track counts). ${evidence}. Pick the right edition and propose ONLY fixes you are sure about, each with its source.`,
         { type: 'album', label, tracks: tracks as unknown as CynthiaTrackInScope[] },
       )
@@ -11044,74 +10326,6 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
     })
   })
 }
-
-// 4.2.20: save a recorded radio show to disk as MP3. Renderer captures
-// the broadcast (music + TTS routed through AudioContext) via
-// MediaRecorder, sends the resulting webm/opus bytes here, we ask the
-// user where to save, write a tmp file, transcode to MP3 with ffmpeg,
-// then atomic-rename into place. Same ffmpeg + atomic-write pattern used
-// for the ALAC → AAC cache so any partial-write on a kill is invisible.
-ipc.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mimeType: string) => {
-  try {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const { writeFile, rename, unlink, mkdir } = await import('fs/promises')
-    const { tmpdir } = await import('os')
-    const execP = promisify(execFile)
-
-    // Default save location: ~/Music/JakeTunes Recordings/. Created on
-    // first save so the dialog actually opens there instead of the user's
-    // home folder. Filename: WJLR-yyyy-mm-dd-HH-MM.mp3 — sortable, says
-    // what station, says when.
-    const home = process.env.HOME || ''
-    const recDir = join(home, 'Music', 'JakeTunes Recordings')
-    try { await mkdir(recDir, { recursive: true }) } catch { /* ignore */ }
-    const now = new Date()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}`
-    const defaultName = `WJLR-${stamp}.mp3`
-    const defaultPath = join(recDir, defaultName)
-
-    const result = await dialog.showSaveDialog(mainWindow!, {
-      title: 'Save Radio Recording',
-      defaultPath,
-      filters: [{ name: 'MP3 Audio', extensions: ['mp3'] }],
-    })
-    if (result.canceled || !result.filePath) return { ok: false, canceled: true }
-
-    const outPath = result.filePath
-    // Pick a tmp source extension that matches the actual MediaRecorder
-    // mime so ffmpeg autodetects the demuxer correctly.
-    const srcExt = mimeType.includes('ogg') ? 'ogg' : 'webm'
-    const tmpInputPath = join(tmpdir(), `jaketunes-recording-${Date.now()}.${srcExt}`)
-    const tmpOutPath = `${outPath}.partial.mp3`
-    try {
-      await writeFile(tmpInputPath, Buffer.from(audioBytes))
-      // ffmpeg: -y overwrite, -i input, -codec:a libmp3lame -qscale:a 2
-      // (≈190 kbps VBR, good radio-show quality), no video, write outpath.
-      await execP('ffmpeg', [
-        '-y',
-        '-i', tmpInputPath,
-        '-vn',
-        '-codec:a', 'libmp3lame',
-        '-qscale:a', '2',
-        tmpOutPath,
-      ], { timeout: 5 * 60 * 1000 })
-      // Atomic finish — rename only after ffmpeg succeeded.
-      await rename(tmpOutPath, outPath)
-      try { await unlink(tmpInputPath) } catch { /* ignore */ }
-      return { ok: true, path: outPath }
-    } catch (err) {
-      try { await unlink(tmpInputPath) } catch { /* ignore */ }
-      try { await unlink(tmpOutPath) } catch { /* ignore */ }
-      throw err
-    }
-  } catch (err: unknown) {
-    const msg = safeIpcError(err, 'api-failed')
-    return { ok: false, error: msg }
-  }
-}, { refuse: REFUSED_SENDER })
-
 // import-pick-files registered in ipc/import-ipc.ts
 
 // Metadata overrides persistence — STATE_DIR-resolved (NAS or local).
@@ -13055,32 +12269,6 @@ ipc.handle('suggest-recommendations', async (_event, opts?: { force?: boolean })
 // it's told NOT to state hard credits). Both cached in-memory per session.
 type AlbumCredits = { released?: string; label?: string; producer?: string; recorded?: string }
 const albumInfoCache = new Map<string, AlbumCredits>()
-const albumBlurbCache = new Map<string, string>()
-
-// Strip the markdown Haiku sometimes emits despite instructions (a "# Title"
-// heading, *emphasis*, code fences). Blurbs render as plain text, so leftover
-// tokens show literally — Jake saw "# Let It Be *Let It Be* was…" on the page.
-function cleanAiProse(raw: string, title?: string): string {
-  let t = (raw || '').trim()
-  t = t.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '')
-  const lines = t.split('\n')
-  while (lines.length > 0) {
-    const m = /^#{1,6}\s*(.*)$/.exec(lines[0].trim())
-    if (!m) break
-    const heading = m[1].replace(/[*_`"'“”‘’]/g, '').trim()
-    // A heading that's empty or just echoes the album title drops entirely;
-    // anything else keeps its text minus the # marker.
-    if (!heading || (title && heading.toLowerCase() === title.trim().toLowerCase())) lines.shift()
-    else { lines[0] = m[1]; break }
-  }
-  t = lines.join('\n')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^#+\s*/gm, '')
-  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-}
 const albumCacheKey = (artist: string, album: string) => `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
 
 async function fetchItunesAlbum(artist: string, album: string): Promise<{ released?: string; label?: string } | null> {
@@ -13156,76 +12344,6 @@ ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
-
-ipc.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
-  if (!album) return { ok: true, blurb: '' }
-  const yr = year ? String(year).trim() : ''
-  const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
-  const cached = albumBlurbCache.get(key)
-  if (cached !== undefined) return { ok: true, blurb: cached }
-  try {
-    // 4.5: ground in live web search + pass the real year. Without this, the
-    // model confabulates a history for any album it doesn't know — e.g. a 2026
-    // Sublime record got described as a "2006 album" with the wrong Nowell death
-    // year. Cached like the blurb so it's one search per album.
-    const search = await searchWebCached(`${artist} "${album}"${yr ? ` ${yr}` : ''} album`, album).catch(() => '')
-    const user = [
-      `Write a short, factual history of the album "${album}" by ${artist}${yr ? `, released in ${yr}` : ''}.`,
-      yr ? `The release year is ${yr} — anchor on it; never state a different year.` : '',
-      'Cover what it is and why it matters: the era/context, its place in the artist\'s career and music history, and what it is best known for.',
-      '3-4 sentences. Neutral and encyclopedic — a HISTORY, not a review. Do NOT rate, rank, or editorialize.',
-      'CRITICAL — accuracy over detail: only state facts you are certain of. If you do not actually recognize THIS specific album, describe it from the search results + the known year, and do NOT invent a release year, lineup changes, deaths, or events. A brief correct blurb beats a detailed wrong one.',
-      'Avoid hyper-specific facts (exact session dates, chart/sales figures). Plain prose only — no markdown — and do not begin by repeating the album title.',
-      search ? `\nLive web search results — TREAT AS GROUND TRUTH:\n${search}` : '',
-    ].filter(Boolean).join('\n')
-    const reply = await claudeCall('album-blurb', {
-      model: 'claude-sonnet-4-6',   // bumped off Haiku: factual history needs the stronger model; cached → one call/album
-      max_tokens: 300,
-      system: 'You are a precise, neutral music historian. Ground every claim in the provided search results and the known release year. NEVER invent dates, deaths, lineup changes, or events you are not certain of — omit rather than guess. No ratings, rankings, or opinions.',
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-    albumBlurbCache.set(key, text)
-    return { ok: true, blurb: text }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// The Music Man's TAKE — his opinion, OPT-IN and separate from the factual
-// history blurb above. Jake didn't want a contrarian hot-take standing in for
-// the history of a landmark album; same voice, but now behind a button.
-const albumTakeCache = new Map<string, string>()
-ipc.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
-  if (!album) return { ok: true, take: '' }
-  const yr = year ? String(year).trim() : ''
-  const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
-  const cached = albumTakeCache.get(key)
-  if (cached !== undefined) return { ok: true, take: cached }
-  try {
-    const user = [
-      `Give your take on the album "${album}" by ${artist}${yr ? ` (${yr})` : ''}.`,
-      yr ? `It's from ${yr} — place it correctly in that era of their run; never treat it as older or newer than it is.` : '',
-      '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
-      'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
-      'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
-    ].filter(Boolean).join('\n')
-    const reply = await claudeCall('album-take', {
-      model: 'claude-haiku-4-5',
-      max_tokens: 220,
-      system: MUSIC_MAN_CORE,
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-    albumTakeCache.set(key, text)
-    return { ok: true, take: text }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
 /** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
  *  boundary, so a field added on one side and not the other is silently
  *  dropped rather than caught — change both together. */
