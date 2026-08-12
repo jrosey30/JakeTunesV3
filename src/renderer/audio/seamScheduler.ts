@@ -283,6 +283,14 @@ export function promoteBufferSourceToHowl(
     howl.volume(0)
     howl.fade(0, scheduled.targetVolume, fadeMs)
   } catch { /* ignore */ }
+  // Howler html5 fade can stay queued under playLock and never run —
+  // snap to target so the Howl isn't left silent after BufferSource stops.
+  window.setTimeout(() => {
+    try {
+      const cur = howl.volume() as number
+      if (scheduled.targetVolume > 0.02 && (!cur || cur < 0.02)) howl.volume(scheduled.targetVolume)
+    } catch { /* ignore */ }
+  }, fadeMs + 40)
   // Stop + disconnect the BufferSource right after the crossfade.
   window.setTimeout(() => scheduled.stop(), fadeMs + 20)
 }

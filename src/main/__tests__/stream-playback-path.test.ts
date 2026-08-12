@@ -127,6 +127,23 @@ describe('renderer Howls stay on html5 (no Web Audio XHR death)', () => {
   })
 })
 
+describe('silent-until-volume-nudge cannot return', () => {
+  test('fade-in snaps Howl volume if Howler queued the fade under playLock', () => {
+    assert.match(useAudio, /function fadeInHowl\(/,
+      'fadeInHowl missing — html5 fade can stay queued and leave the Howl at volume 0')
+    assert.match(useAudio, /function ensureHowlAudible\(/,
+      'ensureHowlAudible missing — heartbeat/fade-in have nothing to snap a stuck-at-0 Howl')
+    assert.match(useAudio, /ensureHowlAudible\(h, stateRef\.current\.volume\)/,
+      'heartbeat no longer snaps a Howl stuck at volume 0 — the volume-bar wake-up is back')
+  })
+
+  test('gapless sample-accurate promote does not wait for a second play event', () => {
+    // Prewarm already called play(); Howler will not emit 'play' again.
+    assert.match(useAudio, /if \(next\.playing\(\)\)/,
+      'sample-accurate promote no longer handles an already-playing prewarmed Howl — it stays at volume 0')
+  })
+})
+
 describe('libuv threadpool is raised before any fs import side effects', () => {
   test('UV_THREADPOOL_SIZE is set at the top of main', () => {
     // Default 4 threads + hung SMB readdir = permanent playback freeze until
