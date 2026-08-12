@@ -1,9 +1,9 @@
 /**
  * Home / Dashboard — the desktop launch page (first view after splash).
  *
- * Hierarchy: greeting → what to do next → library shelves, then the
- * featured pick and the existing rails (mixes, recents, artists, news).
- * Empty libraries get a proper welcome instead of a sparse italic line.
+ * Hierarchy: greeting + invite → library shelves (catalog cards with
+ * counts), then the featured pick (or empty-library welcome) and the
+ * existing rails (mixes, recents, artists, news).
  *
  * Aggregation runs in useMemo against lib.tracks — same source as
  * AlbumsView/ArtistsView, no separate state.
@@ -106,6 +106,59 @@ function WeatherGlyph({ condition }: { condition: string }) {
       <path d="M4.5 11.2h7.2a2.6 2.6 0 0 0 .3-5.2 3.4 3.4 0 0 0-6.4-1.1A2.5 2.5 0 0 0 4.5 11.2z" />
     </svg>
   )
+}
+
+type ShelfKind = 'songs' | 'albums' | 'artists' | 'shop' | 'recent'
+
+/** Line glyphs for the library shelf cards — 20×20 in a 36×36 well.
+ *  Warm currentColor, not the sidebar's 12px category fills, so the
+ *  row reads as shop bays rather than a second LIBRARY menu. */
+function ShelfGlyph({ kind }: { kind: ShelfKind }) {
+  const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (kind === 'songs') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" {...stroke}>
+        <path d="M7.5 16.2a2.4 2.4 0 1 1-2.4-2.4V6.1L16 4.2v7.8" />
+        <circle cx="13.6" cy="14.4" r="2.4" />
+      </svg>
+    )
+  }
+  if (kind === 'albums') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" {...stroke}>
+        <circle cx="10" cy="10" r="7.2" />
+        <circle cx="10" cy="10" r="2.1" />
+      </svg>
+    )
+  }
+  if (kind === 'artists') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" {...stroke}>
+        <circle cx="10" cy="7" r="3" />
+        <path d="M4.4 16.2c.6-3 2.7-4.6 5.6-4.6s5 1.6 5.6 4.6" />
+      </svg>
+    )
+  }
+  if (kind === 'shop') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" {...stroke}>
+        <path d="M3.4 8.6h13.2v8.2H3.4z" />
+        <path d="M3.4 11.6h13.2" />
+        <path d="M6.2 8.6V6.4a3.8 2.2 0 0 1 7.6 0v2.2" />
+      </svg>
+    )
+  }
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" {...stroke}>
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M10 6.2V10l2.8 1.8" />
+    </svg>
+  )
+}
+
+function formatShelfCount(n: number, singular: string, plural: string): string {
+  if (n <= 0) return 'Empty'
+  return `${n.toLocaleString()} ${n === 1 ? singular : plural}`
 }
 
 export default function HomeView() {
@@ -598,6 +651,20 @@ export default function HomeView() {
     return { totalPlays, hoursLabel, topArtist, topGenre }
   }, [lib.tracks])
 
+  // Shelf inventory — same regular-library projection Songs/Albums/Artists
+  // use, so the counts match the views the cards open. One pass.
+  const shelfCounts = useMemo(() => {
+    const albums = new Set<string>()
+    const artists = new Set<string>()
+    for (const t of regularTracks) {
+      const artist = (t.albumArtist || t.artist || '').toLowerCase().trim()
+      const album = (t.album || '').toLowerCase().trim()
+      if (artist && artist !== 'unknown artist') artists.add(artist)
+      if (album) albums.add(`${artist}|||${album}`)
+    }
+    return { songs: regularTracks.length, albums: albums.size, artists: artists.size }
+  }, [regularTracks])
+
   // ── Top Artists: aggregate by artist, sort by total play count ────────
   const topArtists = useMemo((): ArtistCard[] => {
     const map = new Map<string, ArtistCard>()
@@ -679,7 +746,7 @@ export default function HomeView() {
   const invite = libraryEmpty
     ? 'Your library is waiting. Import a folder, or browse the Record Shop.'
     : featuredAlbum
-      ? `Today’s pick is ${featuredAlbum.album} — play it, or open a shelf below.`
+      ? `Today’s pick is ${featuredAlbum.album} — play it, or open a shelf.`
       : 'Pick a shelf and start listening.'
 
   // One paint for the whole page (or the 2.5s cap for cold network sections).
@@ -716,18 +783,49 @@ export default function HomeView() {
           </div>
           <p className="home-invite">{invite}</p>
         </div>
-        <nav className="home-entries" aria-label="Library shelves">
-          <button type="button" className="home-entry" onClick={() => goView('songs')}>Songs</button>
-          <button type="button" className="home-entry" onClick={() => goView('albums')}>Albums</button>
-          <button type="button" className="home-entry" onClick={() => goView('artists')}>Artists</button>
-          <button type="button" className="home-entry" onClick={() => goView('discovery')}>Record Shop</button>
+        <nav
+          className={`home-shelves${libraryEmpty ? '' : ' home-shelves--5'}`}
+          aria-label="Library shelves"
+        >
+          <button type="button" className="home-shelf" onClick={() => goView('songs')}>
+            <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="songs" /></span>
+            <span className="home-shelf-copy">
+              <span className="home-shelf-label">Songs</span>
+              <span className="home-shelf-count">{formatShelfCount(shelfCounts.songs, 'song', 'songs')}</span>
+            </span>
+          </button>
+          <button type="button" className="home-shelf" onClick={() => goView('albums')}>
+            <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="albums" /></span>
+            <span className="home-shelf-copy">
+              <span className="home-shelf-label">Albums</span>
+              <span className="home-shelf-count">{formatShelfCount(shelfCounts.albums, 'album', 'albums')}</span>
+            </span>
+          </button>
+          <button type="button" className="home-shelf" onClick={() => goView('artists')}>
+            <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="artists" /></span>
+            <span className="home-shelf-copy">
+              <span className="home-shelf-label">Artists</span>
+              <span className="home-shelf-count">{formatShelfCount(shelfCounts.artists, 'artist', 'artists')}</span>
+            </span>
+          </button>
+          <button type="button" className="home-shelf home-shelf--shop" onClick={() => goView('discovery')}>
+            <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="shop" /></span>
+            <span className="home-shelf-copy">
+              <span className="home-shelf-label">Record Shop</span>
+              <span className="home-shelf-count">Find records</span>
+            </span>
+          </button>
           {!libraryEmpty && (
             <button
               type="button"
-              className="home-entry"
+              className="home-shelf"
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
             >
-              Recently Added
+              <span className="home-shelf-icon" aria-hidden="true"><ShelfGlyph kind="recent" /></span>
+              <span className="home-shelf-copy">
+                <span className="home-shelf-label">Recently Added</span>
+                <span className="home-shelf-count">New arrivals</span>
+              </span>
             </button>
           )}
         </nav>
