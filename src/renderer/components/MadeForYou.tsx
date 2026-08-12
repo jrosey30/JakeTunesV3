@@ -90,12 +90,16 @@ export default function MadeForYou() {
   }, [building, resolve, playMix])
 
   if (lib.tracks.length === 0) return null
+  // Don't leave a hollow "Your Mixes" chapter when the backend is down
+  // or the day's mixes haven't arrived — the header with nothing under
+  // it made Home look unfinished.
+  if (!loading && mixes.length === 0) return null
 
   return (
-    <section className="home-mixes">
-      <div className="home-mixes-head">
-        <span className="home-mixes-label">YOUR MIXES</span>
-        <button className="home-mixes-vibe-btn" onClick={() => setSheetOpen(true)} disabled={building}>
+    <section className="home-section home-mixes">
+      <div className="home-section-header">
+        <h2 className="home-section-title">Your Mixes</h2>
+        <button type="button" className="home-mixes-vibe-btn" onClick={() => setSheetOpen(true)} disabled={building}>
           <span className="home-mixes-spark" aria-hidden="true">✦</span> Make me a vibe
         </button>
       </div>

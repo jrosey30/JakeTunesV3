@@ -5,62 +5,166 @@
 .home-view {
   height: 100%;
   overflow-y: auto;
-  padding: 24px 0 32px 0;
-  /* 4.5 polish: warm cream canvas so the card panels (hero, stat tiles, memory)
-     lift off it. Pre-fix the page was --white and the panels were ALSO --white,
-     separated only by a 6% hairline — so nothing read as a card. */
-  background: var(--home-canvas, #f2f0eb);
-  /* 4.4.35 smoother scroll: hint the compositor that this element
-     is scrolled often, so it gets its own GPU layer and each scroll
-     frame doesn't repaint the page-level background or trigger
-     parent reflow. */
+  padding: 0 0 40px 0;
+  background: var(--surface-canvas, #f0ebe1);
   will-change: scroll-position;
 }
 
-/* 4.4.29: welcoming header — bigger title, subtle gradient backdrop,
-   date + weather row, library stats. Replaces the bare "JakeTunes ·
-   N tracks" line that felt like a debug printout. */
+/* Welcome band — greeting, what to do next, library shelves. */
 .home-header {
-  padding: 36px 28px 26px 28px;
-  border-bottom: 1px solid rgba(85, 78, 64, 0.10);
-  margin-bottom: 28px;
-  /* 4.5 polish: warmer welcome band — a soft cream wash (was a barely-there 18%)
-     that fades down into the canvas, so the greeting feels like a header, not a line. */
-  background: linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.32) 0%, rgba(var(--brand-cream-rgb), 0) 100%);
+  padding: 28px 28px 22px 28px;
+  margin-bottom: 8px;
+  background:
+    linear-gradient(180deg, rgba(var(--brand-cream-rgb), 0.55) 0%, rgba(var(--brand-cream-rgb), 0) 100%);
+}
+
+.home-header-copy {
+  max-width: 720px;
+}
+
+.home-kicker {
+  margin: 0 0 8px 0;
+  font-size: var(--font-10, 10px);
+  font-weight: var(--fw-heavy, 800);
+  letter-spacing: var(--track-eyebrow, 0.12em);
+  text-transform: uppercase;
+  color: var(--brand-orange);
 }
 
 .home-title {
-  font-size: 34px;
-  font-weight: 600;
-  margin: 0 0 8px 0;
-  color: var(--text-primary, #1a1a1a);
-  letter-spacing: -0.025em;
-  line-height: 1.1;
+  font-family: var(--font-display, -apple-system, sans-serif);
+  font-size: var(--font-30, 30px);
+  font-weight: var(--fw-semibold, 600);
+  margin: 0 0 10px 0;
+  color: var(--text-primary, #161312);
+  letter-spacing: var(--track-display, -0.02em);
+  line-height: var(--lh-tight, 1.05);
 }
 
 .home-meta {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 6px;
-  font-size: 13px;
-  color: var(--text-primary, #2a2a2a);
+  flex-wrap: wrap;
+  gap: 0;
+  margin-bottom: 10px;
+  font-size: var(--font-13, 13px);
+  color: var(--text-secondary, #555049);
 }
 
 .home-meta-date {
   font-weight: 500;
+  color: var(--text-primary, #161312);
 }
 
 .home-meta-weather {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary, #555049);
 }
 
 .home-meta-weather-icon {
-  font-size: 14px;
-  color: var(--brand-orange);   /* matches the Home icon orange in the sidebar */
+  display: inline-flex;
+  color: var(--brand-orange);
+}
+
+.home-meta-count {
+  color: var(--text-dim, #8a8378);
+}
+
+.home-meta-count::before,
+.home-meta-weather::before {
+  content: '·';
+  margin: 0 10px;
+  color: rgba(85, 78, 64, 0.4);
+  font-weight: 600;
+}
+
+.home-invite {
+  margin: 0;
+  max-width: 38em;
+  font-size: var(--font-14, 14px);
+  line-height: var(--lh-normal, 1.45);
+  color: var(--text-secondary, #555049);
+}
+
+.home-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.home-entry {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-sm, 28px);
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: var(--font-12, 12px);
+  font-weight: var(--fw-semibold, 600);
+  color: var(--text-primary, #161312);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--border-warm, rgba(120, 90, 50, 0.14));
+  border-radius: var(--radius-pill, 999px);
+  box-shadow: var(--shadow-1, 0 1px 2px rgba(70, 55, 40, 0.06));
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+
+.home-entry:hover {
+  background: #fff;
+  border-color: rgba(var(--brand-orange-rgb), 0.35);
+}
+
+.home-entry:active {
+  transform: scale(0.98);
+}
+
+.home-welcome-empty {
+  margin: 4px 28px 28px 28px;
+  padding: 44px 32px;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: var(--surface-raised, #fcfbf8);
+  border: 1px solid var(--border-warm, rgba(120, 90, 50, 0.14));
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-2);
+}
+
+.home-welcome-empty-mark {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+  color: var(--brand-orange);
+  opacity: 0.85;
+}
+
+.home-welcome-empty-title {
+  margin: 0 0 8px 0;
+  font-size: var(--font-20, 20px);
+  font-weight: var(--fw-semibold, 600);
+  letter-spacing: var(--track-tight, -0.01em);
+  color: var(--text-primary, #161312);
+}
+
+.home-welcome-empty-body {
+  margin: 0 auto 20px auto;
+  max-width: 28em;
+  font-size: var(--font-13, 13px);
+  line-height: var(--lh-normal, 1.45);
+  color: var(--text-secondary, #555049);
+}
+
+.home-welcome-empty-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .home-subtitle {
@@ -257,6 +361,14 @@
 .home-featured-btn--primary:hover {
   filter: brightness(1.12);
 }
+.home-featured-btn:focus-visible {
+  outline: 2px solid var(--brand-orange);
+  outline-offset: 2px;
+}
+.home-featured-art:focus-visible {
+  outline: 2px solid var(--brand-orange);
+  outline-offset: 3px;
+}
 
 /* ── V6: Quick Stats — ONE recessed instrument strip, not four floating
    SaaS tiles. A quiet inset well (like iTunes' status bar) with hairline
@@ -336,7 +448,7 @@
 
 .home-section-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin: 0 28px;
@@ -838,7 +950,7 @@
   animation: home-card-in 280ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
 }
 .home-news-card:hover {
-  background: rgba(74, 144, 217, 0.07);
+  background: rgba(var(--brand-orange-rgb), 0.07);
   transform: translateY(-1px);
 }
 .home-news-card:active {
@@ -1081,195 +1193,40 @@
 .home-release-card .home-release-play--none { opacity: 0.35; cursor: default; }
 .home-release-card:hover .home-release-play--none { opacity: 0.35; }
 
-/* ═══ 2026-08-08: INSTRUMENTED HOME (Jake picked "left" — the iTunes-10
-   bones with retro-future instrumentation; spec render at
-   brand/home-spec-2026.png). Display-only: no markup moved. ═══ */
+/* ── Calm shop pass: drop the LCD glass, copper ticks, and hardware-key
+   LED. Keep ticket stubs, range dates, and venue marks. ── */
 
-/* Listening Memory stats → a cluster of backlit olive LCD windows,
-   the same glass the toolbar pill wears. */
-.home-stats--memory {
-  background: none;
-  border: none;
-  box-shadow: none;
-  gap: 10px;
-  overflow: visible;
+.home-mixes {
+  margin: 0 0 8px;
+  padding: 0;
 }
-.home-stats--memory .home-stat {
-  position: relative;
-  border-left: none;
-  border: 1px solid var(--pill-border);
-  border-radius: 4px;
-  background: linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
-  box-shadow:
-    inset 0 0 16px rgba(246, 244, 198, 0.5),
-    inset 0 1px 2px rgba(0,0,0,0.16),
-    0 1px 0 rgba(255,255,255,0.5);
-  overflow: hidden;
-}
-.home-stats--memory .home-stat::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(180deg, rgba(50, 46, 18, 0.05) 0px, rgba(50, 46, 18, 0.05) 1px, transparent 1px, transparent 3px);
-  pointer-events: none;
-}
-.home-stats--memory .home-stat-value {
-  color: #302d16;
-  text-shadow: 0 1px 0 rgba(246, 244, 205, 0.5);
-}
-.home-stats--memory .home-stat-label {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 9.25px;
-  color: #5c573c;
-}
-.home-stats--memory .home-stat-sub { color: #6f6a4e; }
-
-/* Play Album → an orange hardware KEY with a live indicator dot. */
-.home-featured-btn--primary {
-  border-radius: 3px;
-  border: 1px solid #96380a;
-  background: linear-gradient(180deg, #d0570f 0%, var(--brand-orange, #FC5501) 55%, #a03a06 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.35),
-    inset 0 -2px 3px rgba(0,0,0,0.18),
-    0 1px 2px rgba(0,0,0,0.25);
-  position: relative;
-  padding-left: 22px;
-}
-.home-featured-btn--primary::before {
-  content: '';
-  position: absolute;
-  left: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #ffd28a;
-  box-shadow: 0 0 4px rgba(255, 210, 138, 0.9);
-}
-.home-featured-btn--primary:active {
-  transform: translateY(0.5px);
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+.home-mixes .home-mixes-row,
+.home-mixes .home-mixes-loading {
+  padding-left: 28px;
+  padding-right: 28px;
 }
 
-/* Section rails: copper hairline with measurement ticks. */
-.home-section-header {
-  border-top: none;
-  position: relative;
-  padding-top: 20px;
-}
-.home-section-header::before {
-  content: '';
-  position: absolute;
-  top: 8px;
-  left: 0;
-  right: 0;
-  height: 5px;
-  background:
-    repeating-linear-gradient(90deg, rgba(184, 115, 51, 0.45) 0 1px, transparent 1px 14px) top left / 100% 3px no-repeat,
-    linear-gradient(rgba(184, 115, 51, 0.55), rgba(184, 115, 51, 0.55)) bottom left / 100% 1px no-repeat;
-}
-.home-section-title {
-  color: #4a453a;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+.home-section-more:focus-visible,
+.home-entry:focus-visible,
+.home-mixes-vibe-btn:focus-visible {
+  outline: 2px solid var(--brand-orange);
+  outline-offset: 2px;
 }
 
-/* Hero → brushed cream faceplate; the art reads as a mounted display. */
-.home-featured {
-  border: 1px solid rgba(140, 120, 90, 0.35);
-  border-radius: 5px;
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.6),
-    inset 0 -1px 0 rgba(0,0,0,0.05),
-    0 1px 3px rgba(0,0,0,0.08);
-}
-.home-featured-art {
-  border: 1px solid rgba(90, 75, 55, 0.4);
-  box-shadow: inset 0 0 6px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.12);
-  border-radius: 3px;
+.home-album-card:focus-visible,
+.home-artist-card:focus-visible,
+.home-tour-card:focus-visible,
+.home-news-card:focus-visible,
+.home-release-card:focus-visible,
+.home-upcoming-card:focus-visible,
+.home-rediscover-card:focus-visible,
+.home-rediscover-art:focus-visible,
+.home-mix-card:focus-visible {
+  outline: 2px solid var(--brand-orange);
+  outline-offset: 3px;
 }
 
-
-/* ═══ 2026-08-08 — HOME, operationally + aesthetically (Jake: "its a mess!!!")
-   The instrumented iTunes-10 direction he picked ("left"), now applied to the
-   whole page instead of just the stat cluster. Nothing moved; materials only. */
-
-/* The page itself: warmer, with tooth. */
-.home-view {
-  background:
-    repeating-linear-gradient(0deg, rgba(120, 96, 64, 0.012) 0 1px, transparent 1px 3px),
-    var(--white, #fdfdfd);
-}
-
-/* Every rail header wears the copper measurement rail (was only on some,
-   which is half of why the page read as inconsistent). */
-.home-section-header::before {
-  content: '';
-  position: absolute;
-  top: 8px; left: 0; right: 0;
-  height: 5px;
-  background:
-    repeating-linear-gradient(90deg, rgba(184, 115, 51, 0.40) 0 1px, transparent 1px 14px) top left / 100% 3px no-repeat,
-    linear-gradient(rgba(184, 115, 51, 0.50), rgba(184, 115, 51, 0.50)) bottom left / 100% 1px no-repeat;
-}
-.home-section-header { position: relative; padding-top: 20px; border-top: none; }
-.home-section-title {
-  color: #43403a;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
-  letter-spacing: 0.01em;
-}
-.home-section-source {
-  font-size: 9.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: rgba(120, 100, 75, 0.75);
-}
-
-/* The headerless quick-stats strip gets the same LCD glass as Listening
-   Memory, so the two stat blocks read as one instrument family. */
-.home-stats:not(.home-stats--memory) {
-  background: linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
-  border: 1px solid var(--pill-border);
-  border-radius: 4px;
-  box-shadow:
-    inset 0 0 18px rgba(246, 244, 198, 0.45),
-    inset 0 1px 2px rgba(0,0,0,0.14),
-    0 1px 0 rgba(255,255,255,0.5);
-}
-.home-stats:not(.home-stats--memory) .home-stat { border-left-color: rgba(90, 84, 50, 0.18); }
-.home-stats:not(.home-stats--memory) .home-stat-value { color: #302d16; }
-.home-stats:not(.home-stats--memory) .home-stat-label {
-  text-transform: uppercase; letter-spacing: 0.08em; color: #5c573c;
-}
-
-/* Cards become objects: hairline + real edge, squared to the V6 geometry. */
-.home-card, .home-news-card, .home-release-card, .home-tour-card,
-.home-upcoming-card, .home-mix-card {
-  border-radius: 3px;
-  border: 1px solid rgba(130, 112, 84, 0.22);
-  box-shadow: 0 1px 2px rgba(60, 45, 25, 0.07);
-  transition: box-shadow 120ms ease, transform 120ms ease;
-}
-.home-card:hover, .home-news-card:hover, .home-release-card:hover,
-.home-tour-card:hover, .home-upcoming-card:hover, .home-mix-card:hover {
-  box-shadow: 0 2px 6px rgba(60, 45, 25, 0.14);
-  transform: translateY(-1px);
-}
-
-/* Tour cards: the date block reads as a stamped ticket stub. */
-.home-tour-date {
-  background: linear-gradient(180deg, #f3ede0, #e6dcc8);
-  border-right: 1px dashed rgba(150, 120, 80, 0.45);
-}
-.home-tour-date-month {
-  text-transform: uppercase; letter-spacing: 0.1em;
-  color: var(--brand-orange, #FC5501);
-}
-/* Multi-night residencies: the RANGE must never wrap (Jake: "dont like how
-   this looks at all" — "14–18" was breaking across two lines). The stub grows
-   for a range and the run label sits under the date, off the artist line. */
+/* Multi-night residencies: the RANGE must never wrap. */
 .home-tour-date { flex: 0 0 auto; min-width: 64px; }
 .home-tour-date-day { white-space: nowrap; }
 .home-tour-date-day--range {
@@ -1287,18 +1244,48 @@
   white-space: nowrap;
 }
 
-/* Rediscover blurbs were clipping mid-sentence. Give them a clean clamp
-   and the shelf-talker treatment the Record Shop already uses. */
-.home-rediscover-why, .home-card-why {
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  overflow: hidden;
-  background: #fdf9ee;
-  border: 1px solid rgba(140, 115, 80, 0.20);
-  border-radius: 2px;
-  padding: 4px 6px;
-}
-
-/* At Your Venues — same ticket-stub card as Live Near You; a library artist
-   gets the orange star so the "don't miss" signal survives the discovery lane. */
 .home-venue-known { color: var(--brand-orange, #FC5501); font-size: 10px; }
 .home-tour-card--known .home-tour-date { background: linear-gradient(180deg, #f7ead6, #efdcbe); }
+
+@media (max-width: 860px) {
+  .home-header { padding: 22px 20px 18px 20px; }
+  .home-title { font-size: 26px; }
+  .home-featured {
+    margin-left: 20px;
+    margin-right: 20px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+  }
+  .home-featured-bleed { width: 100%; height: 42%; top: auto; }
+  .home-featured-art { flex: 0 0 180px; width: 180px; height: 180px; }
+  .home-stats { margin-left: 20px; margin-right: 20px; }
+  .home-section-header { margin-left: 20px; margin-right: 20px; }
+  .home-card-row { padding-left: 20px; padding-right: 20px; }
+  .home-mixes .home-mixes-row,
+  .home-mixes .home-mixes-loading { padding-left: 20px; padding-right: 20px; }
+  .home-welcome-empty { margin-left: 20px; margin-right: 20px; padding: 28px 20px; }
+  .home-memory-obs { margin-left: 20px; margin-right: 20px; }
+}
+
+@media (max-width: 560px) {
+  .home-title { font-size: 22px; }
+  .home-featured-title { font-size: 20px; }
+  .home-featured-art { flex: 0 0 148px; width: 148px; height: 148px; }
+  .home-stats { grid-template-columns: 1fr 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-section,
+  .home-stats,
+  .home-mixes,
+  .home-featured,
+  .home-album-card,
+  .home-artist-card,
+  .home-tour-card,
+  .home-news-card,
+  .home-release-card,
+  .home-upcoming-card {
+    animation: none;
+  }
+}

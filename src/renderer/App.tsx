@@ -1008,6 +1008,9 @@ function AppInner() {
           // no sidebar entry to navigate away from.
           const restoredView = ui.currentView === 'recordstore' ? 'songs' : ui.currentView
           dispatch({ type: 'SET_VIEW', view: restoredView as import('./types').ViewName })
+        } else {
+          // First open (no saved view): land on Home, the welcome dashboard.
+          dispatch({ type: 'SET_VIEW', view: 'home' })
         }
         if (typeof ui.activePlaylistId === 'string') {
           dispatch({ type: 'VIEW_PLAYLIST', id: ui.activePlaylistId })
@@ -1044,6 +1047,8 @@ function AppInner() {
             detail: { colWidthMap: ui.colWidthMap, hiddenCols: ui.hiddenCols, columnOrder: ui.columnOrder, colsV: ui.colsV }
           }))
         }
+      } else {
+        dispatch({ type: 'SET_VIEW', view: 'home' })
       }
       setUiReady(true)
       // Load artwork map, then auto-fetch any missing album art in background
