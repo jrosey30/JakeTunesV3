@@ -1,16 +1,15 @@
 /**
  * Sync IPC: cancel, journal readout, iPod DB read, sync-to-ipod entry,
- * state-conflict reconcile surface.
+ * preview-ipod-sync planner, state-conflict reconcile surface.
  *
- * The ~900-line `runSyncToIpod` engine and `preview-ipod-sync` planner
- * stay in main/index.ts for this slice — they share mount/codec/convert
- * closures with the copy loop. Registration moves here so new sync
- * channels default-deny via createIpcRegistrar; host methods keep the
- * engine wiring in one place.
+ * The ~900-line `runSyncToIpod` engine stays in main/index.ts — it shares
+ * mount/codec/convert closures with the copy loop. Preview registration
+ * + planner body live here behind a small host for mount / codec hint /
+ * readIpodDatabase so new sync channels default-deny via createIpcRegistrar.
  */
 import { app } from 'electron'
 import { join } from 'path'
-import { readFile } from 'fs/promises'
+import { readFile, stat } from 'fs/promises'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
@@ -29,6 +28,11 @@ export interface SyncConvertOptions {
   enabled: boolean
   targetKbps: 128 | 192 | 256
 }
+
+/** Lossless extension / codec sets shared with the sync convert cache. */
+const LOSSLESS_EXTS = new Set(['.alac', '.flac', '.wav', '.wave', '.aiff', '.aif'])
+const LOSSLESS_CODECS = new Set(['alac', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_s16be', 'pcm_s24be'])
+const SYNC_CONVERT_CACHE_SUBDIR = 'sync-convert-cache'
 
 export interface SyncIpcHost {
   /** Flip cancel flag; returns whether a sync was in flight. */
@@ -53,10 +57,117 @@ export interface SyncIpcHost {
   reconcileStateConflicts: (
     event: IpcMainInvokeEvent,
   ) => Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }>
+  /** Current iPod mount path, or null if none detected. */
+  getIpodMount: () => string | null
+  /**
+   * Local library root with the trailing iPod_Control/Music segment
+   * already stripped (same as MUSIC_DIR.replace(...)).
+   */
+  getLocalLibraryRoot: () => string
+  /** Path separator for the host OS (Windows vs POSIX). */
+  getPathSep: () => string
+  /** Codec hint from the abs-path map (empty string if unknown). */
+  getCodecHint: (absPath: string) => string
 }
 
 function ipodSyncJournalPath(): string {
   return join(app.getPath('userData'), 'ipod-sync-journal.json')
+}
+
+/**
+ * Read-only sync preview — same keep/copy planner the copy loop uses.
+ * Files that exist on the device (F00–F49 walk) and byte-size match local
+ * or the cached AAC mirror → keep; else copy. Leaving = unclaimed device files.
+ */
+async function previewIpodSync(
+  host: SyncIpcHost,
+  tracks: Array<Record<string, unknown>>,
+  convertOptions?: SyncConvertOptions,
+): Promise<{
+  ok: boolean
+  error?: string
+  plan: Array<{ id: number; action: 'keep' | 'copy' }>
+  leaving: Array<{ path: string; title: string; artist: string }>
+  deviceFileCount?: number
+}> {
+  try {
+    const IPOD_MOUNT = host.getIpodMount()
+    if (!IPOD_MOUNT) return { ok: false, error: 'No iPod detected', plan: [], leaving: [] }
+    const LOCAL_MOUNT = host.getLocalLibraryRoot()
+    const pathSep = host.getPathSep()
+    const { readdir: rd } = await import('fs/promises')
+    const { createHash } = await import('crypto')
+
+    // Ground truth: every real audio file on the device, by basename.
+    const filesByBasename = new Map<string, { path: string; size: number }>()
+    for (let i = 0; i < 50; i++) {
+      const sub = join(IPOD_MOUNT, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
+      const entries = await rd(sub).catch(() => [] as string[])
+      for (const fn of entries) {
+        if (fn.startsWith('._') || filesByBasename.has(fn)) continue
+        const full = join(sub, fn)
+        const st = await stat(full).catch(() => null)
+        if (st && st.isFile()) filesByBasename.set(fn, { path: full, size: st.size })
+      }
+    }
+
+    const claimed = new Set<string>()
+    const plan: Array<{ id: number; action: 'keep' | 'copy' }> = []
+    for (const t of tracks) {
+      const id = Number(t.id)
+      const colonPath = String(t.path || '')
+      if (!colonPath) { plan.push({ id, action: 'copy' }); continue }
+      const baseName = colonPath.split(':').pop() || ''
+      const dot = baseName.lastIndexOf('.')
+      const m4aName = dot > 0 ? baseName.slice(0, dot) + '.m4a' : baseName
+      const localFile = join(LOCAL_MOUNT, colonPath.replace(/:/g, pathSep))
+      const candNames = baseName === m4aName ? [baseName] : [baseName, m4aName]
+      let action: 'keep' | 'copy' = 'copy'
+      for (const nm of candNames) {
+        const dev = filesByBasename.get(nm)
+        if (!dev) continue
+        claimed.add(nm) // this device slot belongs to the set either way
+        // Mirrors the planner: byte-identical original = keep, unless a
+        // convert pass wants to shrink a (known-)lossless source.
+        const ls = await stat(localFile).catch(() => null)
+        if (ls && dev.size === ls.size) {
+          const ext2 = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
+          const hint = (host.getCodecHint(localFile) || '').toLowerCase()
+          const lossless = LOSSLESS_EXTS.has(ext2) || hint === 'alac' || LOSSLESS_CODECS.has(hint)
+          if (!(convertOptions?.enabled && lossless)) { action = 'keep'; break }
+        }
+        // Mirrors the copy loop's last-mile skip: a cached AAC mirror
+        // whose size matches the device file means zero bytes move.
+        if (convertOptions?.enabled) {
+          const hash = createHash('sha1').update(`${localFile}|${convertOptions.targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
+          const cs = await stat(join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR, `${hash}.m4a`)).catch(() => null)
+          if (cs && dev.size === cs.size) { action = 'keep'; break }
+        }
+      }
+      plan.push({ id, action })
+    }
+
+    // Leaving = real device files no track in the set claims. The post-sync
+    // orphan cleanup deletes exactly these. Titles best-effort from the DB.
+    const titleByColon = new Map<string, { title: string; artist: string }>()
+    try {
+      const db = await host.readIpodDatabase()
+      for (const dt of db.tracks as Array<Record<string, unknown>>) {
+        titleByColon.set(String(dt.path || ''), { title: String(dt.title || ''), artist: String(dt.artist || '') })
+      }
+    } catch { /* DB unreadable → basenames only */ }
+    const leaving: Array<{ path: string; title: string; artist: string }> = []
+    for (const [nm, f] of filesByBasename) {
+      if (claimed.has(nm)) continue
+      const rel = f.path.slice(IPOD_MOUNT.length + 1)
+      const colon = ':' + rel.split(pathSep).join(':')
+      const meta = titleByColon.get(colon)
+      leaving.push({ path: colon, title: meta?.title || nm, artist: meta?.artist || '' })
+    }
+    return { ok: true, plan, leaving, deviceFileCount: filesByBasename.size }
+  } catch (err) {
+    return { ok: false, error: String(err), plan: [], leaving: [] }
+  }
 }
 
 export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
@@ -91,6 +202,11 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
   ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
     return host.syncToIpod(tracks, playlists, convertOptions, syncOpts)
   }, { refuse: { ok: false, copied: 0, error: 'refused-sender' } as const })
+
+  // Read-only preview of the keep/copy plan — same planner as the copy loop.
+  ipc.handle('preview-ipod-sync', async (_e, tracks: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
+    return previewIpodSync(host, tracks, convertOptions)
+  }, { public: true })
 
   ipc.handle('get-state-conflicts', (): {
     mode: 'NAS' | 'local-primary'; nasDir: string; localDir: string; nasMounted: boolean; conflicts: StateConflict[];
