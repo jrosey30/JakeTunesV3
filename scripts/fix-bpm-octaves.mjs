@@ -1,28 +1,22 @@
 #!/usr/bin/env node
 /**
- * BPM octave repair.
+ * BPM octave repair (LEGACY genre heuristic — prefer re-analysis).
  *
- * The audio analyser folds every tempo into a ~72-152 window: zero tracks in
- * the library sit below 70 or above 160, which no real record collection does.
- * That's classic beat-tracker octave folding — a 180 BPM hardcore track is
- * reported as 90, a 70 BPM dub track as 140. Measured against genres with
- * settled tempo conventions: punk/hardcore 778 tracks, only 5% plausible and
- * 44% sitting at exactly half. Reggae shows the mirror error.
+ * Prefer Music Man → "Re-measure tempos". That re-runs core/audio_analysis.py
+ * with the onset-strength octave arbiter and writes fingerprint-gated
+ * metadata-overrides.json — the same layer the app actually reads. This
+ * script's genre half/double guess is a weaker offline cousin (⚠️ TWIN of the
+ * arbiter in core/audio_analysis.py::_arbitrate_bpm_octave) and must not
+ * invent a third truth.
  *
- * This matters beyond the BPM column — the brain's tempo/key encoding is built
- * on these numbers, so a 180 BPM hardcore track is currently described to the
- * embedding as "slow, spacious, downtempo... good for winding down". Wrong
- * information, not missing information.
- *
- * APPROACH: only correct where the genre has a settled tempo range AND the
- * detected value is out of it while exactly half or double lands inside. That
- * is deterministic and auditable — no audio re-analysis, no guessing. Genres
- * with wide or meaningless ranges (Rock, Pop, Alternative) are left ALONE:
- * a wrong correction is worse than an uncorrected value.
+ * Historical context: the analyser used to fold every tempo into ~70–160.
+ * Punk/hardcore sat at half; reggae mirrored. Genre ranges below catch the
+ * unambiguous cases when you cannot re-decode audio.
  *
  * Usage:
  *   node scripts/fix-bpm-octaves.mjs            # dry run, prints the plan
  *   node scripts/fix-bpm-octaves.mjs --apply    # writes library.json
+ *     (avoid --apply while the app is running; overrides are safer)
  */
 import { readFileSync, writeFileSync, copyFileSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'

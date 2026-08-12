@@ -4,6 +4,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { setNotice } from '../activity'
 import { ChatConversation } from '../types'
+import ConfirmDialog from '../components/ConfirmDialog'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
 
@@ -95,6 +96,9 @@ export default function MusicManView() {
   // library), so it can't go stale on remount.
   const [analysisRunning, setAnalysisRunning] = useState(false)
   const [analysisStatus, setAnalysisStatus] = useState<string | null>(null)
+  // Confirm before force-remeasuring tempos that already have a BPM — the
+  // backfill button alone skips those, which left the post-clamp library stuck.
+  const [remeasureConfirmOpen, setRemeasureConfirmOpen] = useState(false)
   const analysisTotalRef = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -257,13 +261,17 @@ export default function MusicManView() {
   }
 
   // ── Audio analysis backfill (BPM + key) ────────────────────────────────
-  // Enqueue all unanalyzed tracks once; the main worker drains the queue with
-  // subprocess isolation + 5s playback debounce. The filter excludes tracks
-  // with both a timestamp AND a bpm; failed-but-timestamped tracks resurface so
-  // they can be retried.
-  const runAudioAnalysisBackfill = useCallback(async () => {
+  // Enqueue unanalyzed tracks (or, with force, every track with a path). The
+  // main worker drains the queue with subprocess isolation + 5s playback
+  // debounce. Default filter excludes tracks with both a timestamp AND a bpm;
+  // failed-but-timestamped tracks resurface so they can be retried. Force is
+  // how the post-clamp / Essentia-double library gets healed — without it
+  // "All tracks already analyzed" was a lie about accuracy.
+  const enqueueAudioAnalysis = useCallback(async (force: boolean) => {
     if (analysisRunning) return
-    const tracksToAnalyze = libState.tracks.filter(t => t.path && (!t.audioAnalysisAt || !t.bpm))
+    const tracksToAnalyze = libState.tracks.filter(t =>
+      t.path && (force || !t.audioAnalysisAt || !t.bpm),
+    )
     if (tracksToAnalyze.length === 0) {
       setAnalysisStatus('All tracks already analyzed.')
       setTimeout(() => setAnalysisStatus(null), 4000)
@@ -276,7 +284,7 @@ export default function MusicManView() {
     }))
     analysisTotalRef.current = jobs.length
     setAnalysisRunning(true)
-    setAnalysisStatus(null)
+    setAnalysisStatus(force ? `Re-measuring ${jobs.length.toLocaleString()} tempos…` : null)
     try {
       await window.electronAPI.audioAnalysisEnqueueMany(jobs)
     } catch (err) {
@@ -284,6 +292,15 @@ export default function MusicManView() {
       setNotice(err instanceof Error ? err.message : 'Could not start audio analysis.', { kind: 'error' })
     }
   }, [analysisRunning, libState.tracks])
+
+  const runAudioAnalysisBackfill = useCallback(() => {
+    void enqueueAudioAnalysis(false)
+  }, [enqueueAudioAnalysis])
+
+  const confirmRemeasureTempos = useCallback(() => {
+    setRemeasureConfirmOpen(false)
+    void enqueueAudioAnalysis(true)
+  }, [enqueueAudioAnalysis])
 
   const cancelAudioAnalysisBackfill = useCallback(async () => {
     await window.electronAPI.audioAnalysisClearQueue()
@@ -507,6 +524,7 @@ export default function MusicManView() {
                 <div className="musicman-org-bar-fill" style={{ width: `${(audioAnalysisCounts.analyzed / Math.max(audioAnalysisCounts.total, 1)) * 100}%` }} />
               </div>
               <button className="musicman-org-action-btn" onClick={cancelAudioAnalysisBackfill}>Cancel</button>
+              {analysisStatus && <span className="musicman-analysis-status">{analysisStatus}</span>}
             </div>
           ) : (
             <div className="musicman-analysis-controls">
@@ -519,10 +537,29 @@ export default function MusicManView() {
                   ? 'All tracks analyzed'
                   : `Analyze ${audioAnalysisCounts.remaining.toLocaleString()} remaining`}
               </button>
+              <button
+                className="musicman-org-action-btn"
+                onClick={() => setRemeasureConfirmOpen(true)}
+                disabled={audioAnalysisCounts.total === 0}
+                title="Re-run BPM/key analysis on every track — fixes half/double tempo errors from older analysis"
+              >
+                Re-measure tempos
+              </button>
               {analysisStatus && <span className="musicman-analysis-status">{analysisStatus}</span>}
             </div>
           )}
         </div>
+        {remeasureConfirmOpen && (
+          <ConfirmDialog
+            message={`Re-measure BPM and key on all ${audioAnalysisCounts.total.toLocaleString()} tracks?`}
+            detail="Runs the newer tempo arbiter on every file. Wrong half/double BPMs get corrected into metadata overrides. Playback pauses analysis automatically — leave the app idle while it works."
+            confirmLabel="Re-measure"
+            cancelLabel="Cancel"
+            destructive={false}
+            onConfirm={confirmRemeasureTempos}
+            onCancel={() => setRemeasureConfirmOpen(false)}
+          />
+        )}
       </div>
     </div>
   )
