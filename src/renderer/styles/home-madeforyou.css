@@ -23,7 +23,10 @@
   font-size: 12px; font-weight: 600; color: rgb(var(--brand-orange-rgb));
   transition: opacity 140ms ease; white-space: nowrap;
 }
-.home-mixes-vibe-btn:hover:not(:disabled) { opacity: 0.75; }
+.home-mixes-vibe-btn:focus-visible {
+  outline: 2px solid rgb(var(--brand-orange-rgb));
+  outline-offset: 2px;
+}
 .home-mixes-vibe-btn:disabled { opacity: 0.4; cursor: default; }
 .home-mixes-spark { font-size: 11px; }
 

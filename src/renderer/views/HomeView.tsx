@@ -1,25 +1,12 @@
 /**
- * 4.4.19: Home / Dashboard view.
+ * Home / Dashboard — the desktop launch page (first view after splash).
  *
- * The iTunes 8 era had a Music sidebar that dumped you straight into
- * Songs. Pleasant, but flat — no surface for "what's new in my library
- * this week" or "who am I actually listening to." Phase E of the design
- * plan calls for a Home/Dashboard that aggregates these surfaces.
+ * Hierarchy: greeting → what to do next → library shelves, then the
+ * featured pick and the existing rails (mixes, recents, artists, news).
+ * Empty libraries get a proper welcome instead of a sparse italic line.
  *
- * First ship (this version) covers two sections:
- *
- *   - **Recently Added** — top 12 albums sorted by max track dateAdded,
- *     horizontal card row. Click drills into Albums view.
- *   - **Top Artists** — top 10 artists by aggregate playCount, smaller
- *     horizontal card row. Click drills into Artists view.
- *
- * Future ships add: Listening Stats, Picks aggregator, Music News,
- * Bandsintown integration. Sections are independent React components
- * inside this file so future additions are local edits.
- *
- * The aggregation work runs in useMemo against the same lib.tracks
- * that AlbumsView/ArtistsView consume — single source of truth, no
- * separate state.
+ * Aggregation runs in useMemo against lib.tracks — same source as
+ * AlbumsView/ArtistsView, no separate state.
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
@@ -61,6 +48,64 @@ interface ArtistCard {
   trackCount: number
   /** First album we can find that has artwork, for the card image. */
   firstAlbumKey: string | null
+}
+
+/** Enter/Space on role=button cards — mouse click already works. */
+function activateOnKey(action: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      action()
+    }
+  }
+}
+
+/** Small weather marks — SVG, not emoji (emojis fight the iTunes-8 type). */
+function WeatherGlyph({ condition }: { condition: string }) {
+  const c = (condition || '').toLowerCase()
+  const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (c.includes('clear')) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" {...stroke}>
+        <circle cx="8" cy="8" r="2.8" />
+        <path d="M8 1.6v1.4M8 13v1.4M1.6 8h1.4M13 8h1.4M3.3 3.3l1 1M11.7 11.7l1 1M3.3 12.7l1-1M11.7 4.3l1-1" />
+      </svg>
+    )
+  }
+  if (c.includes('rain') || c.includes('drizzle')) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" {...stroke}>
+        <path d="M4.6 9.2h6.8A2.4 2.4 0 0 0 11.6 4.6 3.2 3.2 0 0 0 5.6 3.6 2.3 2.3 0 0 0 4.6 9.2z" />
+        <path d="M6 11.2v2.2M8 11.6v2.2M10 11.2v2.2" />
+      </svg>
+    )
+  }
+  if (c.includes('snow')) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" {...stroke}>
+        <path d="M8 2v12M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6" />
+      </svg>
+    )
+  }
+  if (c.includes('thunder')) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" {...stroke}>
+        <path d="M9.2 1.8 4.6 9h3.2L6.6 14.2 12 7.2H8.6z" />
+      </svg>
+    )
+  }
+  if (c.includes('mist') || c.includes('fog') || c.includes('haze')) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" {...stroke}>
+        <path d="M2.5 6h11M3.5 8.5h9M4.5 11h7" />
+      </svg>
+    )
+  }
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" {...stroke}>
+      <path d="M4.5 11.2h7.2a2.6 2.6 0 0 0 .3-5.2 3.4 3.4 0 0 0-6.4-1.1A2.5 2.5 0 0 0 4.5 11.2z" />
+    </svg>
+  )
 }
 
 export default function HomeView() {
@@ -421,19 +466,13 @@ export default function HomeView() {
     })
   }, [])
 
-  // A weather glyph that fits the iTunes-era aesthetic — small SVG icon,
-  // not an emoji (emojis feel out of place in the iTunes 8 look).
-  const weatherIcon = useMemo(() => {
-    if (!weather) return null
-    const cond = (weather.condition || '').toLowerCase()
-    if (cond.includes('clear')) return '☀'
-    if (cond.includes('cloud')) return '☁'
-    if (cond.includes('rain') || cond.includes('drizzle')) return '☂'
-    if (cond.includes('snow')) return '❄'
-    if (cond.includes('thunder')) return '⚡'
-    if (cond.includes('mist') || cond.includes('fog') || cond.includes('haze')) return '≋'
-    return '·'
-  }, [weather])
+  const openImport = useCallback(() => {
+    window.dispatchEvent(new Event('jaketunes-import-files'))
+  }, [])
+
+  const goView = useCallback((view: 'songs' | 'albums' | 'artists' | 'discovery') => {
+    dispatch({ type: 'SET_VIEW', view })
+  }, [dispatch])
 
   // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
   const recentAlbums = useMemo((): AlbumCard[] => {
@@ -636,6 +675,13 @@ export default function HomeView() {
     playTrack(card.tracks[0], card.tracks, 0, undefined, true)
   }
 
+  const libraryEmpty = lib.tracks.length === 0
+  const invite = libraryEmpty
+    ? 'Your library is waiting. Import a folder, or browse the Record Shop.'
+    : featuredAlbum
+      ? `Today’s pick is ${featuredAlbum.album} — play it, or open a shelf below.`
+      : 'Pick a shelf and start listening.'
+
   // One paint for the whole page (or the 2.5s cap for cold network sections).
   if (!pageReady) {
     return (
@@ -648,18 +694,69 @@ export default function HomeView() {
   return (
     <div className="home-view" ref={rootRef}>
       <ScrollTopButton targetRef={rootRef} />
-      <div className="home-header">
-        <h1 className="home-title">{greeting}, Jake.</h1>
-        <div className="home-meta">
-          <span className="home-meta-date">{todayPretty}</span>
-          {weather && (
-            <span className="home-meta-weather" title={weather.description}>
-              <span className="home-meta-weather-icon" aria-hidden="true">{weatherIcon}</span>
-              {Math.round(weather.tempF)}°{' '}{weather.description.replace(/^\w/, c => c.toUpperCase())}
-            </span>
-          )}
+      <header className="home-header">
+        <div className="home-header-copy">
+          <p className="home-kicker">Welcome</p>
+          <h1 className="home-title">{greeting}, Jake.</h1>
+          <div className="home-meta">
+            <span className="home-meta-date">{todayPretty}</span>
+            {weather && (
+              <span className="home-meta-weather" title={weather.description}>
+                <span className="home-meta-weather-icon" aria-hidden="true">
+                  <WeatherGlyph condition={weather.condition} />
+                </span>
+                {Math.round(weather.tempF)}°{' '}{weather.description.replace(/^\w/, c => c.toUpperCase())}
+              </span>
+            )}
+            {!libraryEmpty && (
+              <span className="home-meta-count">
+                {lib.tracks.length.toLocaleString()} track{lib.tracks.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+          <p className="home-invite">{invite}</p>
         </div>
-      </div>
+        <nav className="home-entries" aria-label="Library shelves">
+          <button type="button" className="home-entry" onClick={() => goView('songs')}>Songs</button>
+          <button type="button" className="home-entry" onClick={() => goView('albums')}>Albums</button>
+          <button type="button" className="home-entry" onClick={() => goView('artists')}>Artists</button>
+          <button type="button" className="home-entry" onClick={() => goView('discovery')}>Record Shop</button>
+          {!libraryEmpty && (
+            <button
+              type="button"
+              className="home-entry"
+              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
+            >
+              Recently Added
+            </button>
+          )}
+        </nav>
+      </header>
+
+      {libraryEmpty && (
+        <section className="home-welcome-empty" aria-label="Start your library">
+          <div className="home-welcome-empty-mark" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="18" stroke="currentColor" strokeWidth="1.4" />
+              <circle cx="20" cy="20" r="6" stroke="currentColor" strokeWidth="1.4" />
+              <circle cx="20" cy="20" r="2" fill="currentColor" />
+            </svg>
+          </div>
+          <h2 className="home-welcome-empty-title">The shelves are empty</h2>
+          <p className="home-welcome-empty-body">
+            Drop a folder of music onto this window, or import files to start a library.
+            JakeTunes will take it from there.
+          </p>
+          <div className="home-welcome-empty-actions">
+            <button type="button" className="home-featured-btn home-featured-btn--primary" onClick={openImport}>
+              Import music…
+            </button>
+            <button type="button" className="home-featured-btn" onClick={() => goView('discovery')}>
+              Browse the Record Shop
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
       {featuredAlbum && (
@@ -673,8 +770,10 @@ export default function HomeView() {
           <div
             className="home-featured-art"
             onClick={playFeatured}
+            onKeyDown={activateOnKey(playFeatured)}
             role="button"
             tabIndex={0}
+            aria-label={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
             title={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
           >
             {artHashForKey(featuredAlbum.key) ? (
@@ -709,11 +808,12 @@ export default function HomeView() {
               {featuredAlbum.totalPlays > 0 && <> · {featuredAlbum.totalPlays.toLocaleString()} play{featuredAlbum.totalPlays === 1 ? '' : 's'}</>}
             </div>
             <div className="home-featured-actions">
-              <button className="home-featured-btn home-featured-btn--primary" onClick={playFeatured}>
-                <svg width="12" height="12" viewBox="0 0 32 32" fill="currentColor"><path d="M10 7v18l16-9z" /></svg>
+              <button type="button" className="home-featured-btn home-featured-btn--primary" onClick={playFeatured}>
+                <svg width="12" height="12" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M10 7v18l16-9z" /></svg>
                 Play Album
               </button>
               <button
+                type="button"
                 className="home-featured-btn"
                 onClick={() => {
                   requestDrillIn('artist', featuredAlbum.artist)
@@ -837,7 +937,7 @@ export default function HomeView() {
                   role="listitem"
                   title={`${pick.artist}${pick.album ? ` — ${pick.album}` : ''}\nYou own ${pick.ownedTracks}, played ${pick.plays}× here`}
                 >
-                  <div className="home-rediscover-art" onClick={() => playRediscovery(pick)} title="Play">
+                  <div className="home-rediscover-art" onClick={() => playRediscovery(pick)} onKeyDown={activateOnKey(() => playRediscovery(pick))} role="button" tabIndex={0} title="Play" aria-label={`Play ${pick.artist}`}>
                     {hash ? (
                       <AlbumArtImage hash={hash} alt={pick.artist} size={320} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} />
                     ) : (
@@ -846,6 +946,7 @@ export default function HomeView() {
                     <div className="home-rediscover-play" aria-hidden="true">▶</div>
                   </div>
                   <button
+                    type="button"
                     className="home-rediscover-artist"
                     onClick={() => { requestDrillIn('artist', pick.artist); dispatch({ type: 'SET_VIEW', view: 'artists' }) }}
                   >{pick.artist}</button>
@@ -858,31 +959,31 @@ export default function HomeView() {
       )}
 
       {/* ── Recently Added ───────────────────────────────────────────────── */}
+      {recentAlbums.length > 0 && (
       <section className="home-section">
         <div className="home-section-header">
           <h2 className="home-section-title">Recently Added</h2>
-          {recentAlbums.length > 0 && (
-            <button
-              className="home-section-more"
-              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
-            >
-              See All
-            </button>
-          )}
+          <button
+            type="button"
+            className="home-section-more"
+            onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
+          >
+            See All
+          </button>
         </div>
-        {recentAlbums.length === 0 ? (
-          <div className="home-empty">No tracks imported yet. Drop a folder onto JakeTunes to start.</div>
-        ) : (
           <div className="home-card-row" role="list" ref={recentRowRef}>
             {recentAlbums.map((card) => {
               const hash = artHashForKey(card.key)
               const flashing = flashedKey === card.key
+              const openAlbum = () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })
               return (
                 <div
                   key={card.key}
                   className={`home-album-card${flashing ? ' is-playing-flash' : ''}`}
                   role="listitem"
-                  onClick={() => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })}
+                  tabIndex={0}
+                  onClick={openAlbum}
+                  onKeyDown={activateOnKey(openAlbum)}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     playAlbum(card)
@@ -914,8 +1015,8 @@ export default function HomeView() {
               )
             })}
           </div>
-        )}
       </section>
+      )}
 
       {/* ── Top Artists ──────────────────────────────────────────────────── */}
       {topArtists.length > 0 && (
@@ -923,6 +1024,7 @@ export default function HomeView() {
           <div className="home-section-header">
             <h2 className="home-section-title">Top Artists</h2>
             <button
+              type="button"
               className="home-section-more"
               onClick={() => dispatch({ type: 'SET_VIEW', view: 'artists' })}
             >
@@ -937,13 +1039,15 @@ export default function HomeView() {
                   key={card.nameFolded}
                   className="home-artist-card"
                   role="listitem"
+                  tabIndex={0}
                   onClick={() => {
-                    // 4.4.27: drill into THIS artist, not the generic
-                    // Artists view. ArtistsView consumes the request
-                    // on mount and expands + scrolls to the artist.
                     requestDrillIn('artist', card.name)
                     dispatch({ type: 'SET_VIEW', view: 'artists' })
                   }}
+                  onKeyDown={activateOnKey(() => {
+                    requestDrillIn('artist', card.name)
+                    dispatch({ type: 'SET_VIEW', view: 'artists' })
+                  })}
                   title={`${card.name}\n${card.totalPlays.toLocaleString()} plays across ${card.trackCount} track${card.trackCount === 1 ? '' : 's'}`}
                 >
                   <div className="home-artist-art">
@@ -986,7 +1090,9 @@ export default function HomeView() {
                   key={`${ev.url}-${i}`}
                   className="home-tour-card"
                   role="listitem"
+                  tabIndex={0}
                   onClick={() => ev.url && openLink(ev.url)}
+                  onKeyDown={activateOnKey(() => { if (ev.url) openLink(ev.url) })}
                   title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${nights > 1 && lastDate
                     ? `${nights} nights: ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ${new Date(lastDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
                     : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
@@ -1028,7 +1134,9 @@ export default function HomeView() {
                   key={`${s.venueKey}-${s.date}-${i}`}
                   className={`home-tour-card${s.known ? ' home-tour-card--known' : ''}`}
                   role="listitem"
+                  tabIndex={0}
                   onClick={() => s.url && openLink(s.url)}
+                  onKeyDown={activateOnKey(() => { if (s.url) openLink(s.url) })}
                   title={`${s.artist} — ${s.venue}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${s.known ? '\nIn your library' : ''}`}
                 >
                   <div className="home-tour-date">
@@ -1063,7 +1171,9 @@ export default function HomeView() {
                 key={`${item.mbid}-${i}`}
                 className="home-upcoming-card"
                 role="listitem"
+                tabIndex={0}
                 onClick={() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`)}
+                onKeyDown={activateOnKey(() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`))}
                 title={`${item.title} — ${item.artist}\nReleases ${formatUpcomingDate(item.releaseDate)}\nOpen on MusicBrainz`}
               >
                 <div className="home-upcoming-art">
@@ -1104,7 +1214,9 @@ export default function HomeView() {
                 key={item.link}
                 className="home-release-card"
                 role="listitem"
+                tabIndex={0}
                 onClick={() => openLink(item.link)}
+                onKeyDown={activateOnKey(() => openLink(item.link))}
                 title={`${item.title}\nOpen review in browser`}
               >
                 <div className="home-release-art">
@@ -1168,7 +1280,9 @@ export default function HomeView() {
                 key={item.link}
                 className="home-news-card"
                 role="listitem"
+                tabIndex={0}
                 onClick={() => openLink(item.link)}
+                onKeyDown={activateOnKey(() => openLink(item.link))}
                 title={`${item.title}\nOpen in browser`}
               >
                 {item.imageUrl && (

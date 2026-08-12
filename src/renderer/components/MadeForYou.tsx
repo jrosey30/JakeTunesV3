@@ -92,10 +92,10 @@ export default function MadeForYou() {
   if (lib.tracks.length === 0) return null
 
   return (
-    <section className="home-mixes">
-      <div className="home-mixes-head">
-        <span className="home-mixes-label">YOUR MIXES</span>
-        <button className="home-mixes-vibe-btn" onClick={() => setSheetOpen(true)} disabled={building}>
+    <section className="home-section home-mixes">
+      <div className="home-section-header">
+        <h2 className="home-section-title">Your Mixes</h2>
+        <button type="button" className="home-mixes-vibe-btn" onClick={() => setSheetOpen(true)} disabled={building}>
           <span className="home-mixes-spark" aria-hidden="true">✦</span> Make me a vibe
         </button>
       </div>
