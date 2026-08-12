@@ -86,8 +86,10 @@ async function appendSyncHistory(entry: SyncHistoryEntry): Promise<void> {
   const json = JSON.stringify(next, null, 2)
   await writeFile(HISTORY_FILE(), json)
   try {
-    const { existsSync } = await import('fs')
-    if (existsSync('/Volumes/JakeShared/JakeTunesState')) {
+    // Never existsSync on JakeShared — sync SMB probe beachballs the main
+    // process on workmini. Circuit breaker decides; write is best-effort.
+    const { nasAvailable } = await import('./state-dir')
+    if (await nasAvailable()) {
       await writeFile(HISTORY_NAS_MIRROR, json)
     }
   } catch { /* NAS asleep — local copy is the source of truth */ }

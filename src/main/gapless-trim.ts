@@ -26,7 +26,7 @@
 import { ipcMain } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { stat } from 'fs/promises'
+import { lstat, stat } from 'fs/promises'
 
 const execP = promisify(execFile)
 
@@ -62,6 +62,12 @@ function parseSMPB(raw: string): { delaySamples: number; paddingSamples: number 
 }
 
 export async function readGaplessTrim(absPath: string): Promise<GaplessTrim | null> {
+  // Skip farm symlinks — ffprobe/stat follow into SMB and pinwheel workmini
+  // on every gapless decode. Priming trim is a polish; silence beats a hang.
+  try {
+    if ((await lstat(absPath)).isSymbolicLink()) return null
+  } catch { return null }
+
   const st = await stat(absPath).catch(() => null)
   if (!st) return null
   const hit = cache.get(absPath)

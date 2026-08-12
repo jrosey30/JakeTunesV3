@@ -159,3 +159,137 @@ describe('workmini deploy pins streamSource', () => {
     )
   })
 })
+
+describe('homemini fetch must not AbortSignal.timeout the body', () => {
+  test('fetchAudioFromHomemini uses fetchHeadersWithin, not AbortSignal.timeout', () => {
+    // AbortSignal.timeout(8000) on fetch() kills the body 8s after the
+    // request starts — even after headers have returned. That is the
+    // "certain songs need a restart" leftover (cold FLAC / long tracks).
+    const start = index.indexOf('async function fetchAudioFromHomemini')
+    assert.notEqual(start, -1, 'fetchAudioFromHomemini missing')
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    assert.match(body, /fetchHeadersWithin\s*\(/,
+      'fetchAudioFromHomemini must use fetchHeadersWithin (header-only deadline)')
+    // Match a real call site, not the comment that documents why we removed it.
+    assert.doesNotMatch(body, /signal:\s*AbortSignal\.timeout\s*\(/,
+      'AbortSignal.timeout is back on the fetch signal — it will cut mid-stream bodies again')
+  })
+})
+
+describe('workmini-index-sync teaches homemini before workmini can race', () => {
+  const syncScript = readFileSync(
+    join(MAIN, '../../Dr. Claude/scripts/jaketunes-workmini-index-sync.sh'),
+    'utf-8',
+  )
+
+  test('has an independent homemini stamp (heals workmini-already-current mornings)', () => {
+    // Aug 12: early-exit keyed only on workmini size/mtime left homemini
+    // never kickstarted after a partial overnight run — new songs stayed 404.
+    assert.match(
+      syncScript,
+      /HM_STAMP=/,
+      'index-sync must stamp successful homemini teaches separately from workmini',
+    )
+    assert.match(
+      syncScript,
+      /NEED_HM=/,
+      'index-sync must decide homemini teach independently of the workmini push',
+    )
+  })
+
+  test('kickstarts homemini and waits for healthz before pushing workmini', () => {
+    assert.match(
+      syncScript,
+      /launchctl kickstart -k/,
+      'index-sync must kickstart the stream backend so new ids enter the in-memory map',
+    )
+    assert.match(
+      syncScript,
+      /healthz/,
+      'index-sync must wait for healthz — kickstart returns before the id map is ready',
+    )
+    const teachFn = syncScript.indexOf('teach_homemini()')
+    const wmPush = syncScript.indexOf('pushed index → workmini')
+    assert.notEqual(teachFn, -1, 'teach_homemini function missing')
+    assert.notEqual(wmPush, -1, 'workmini push log missing')
+    assert.ok(
+      teachFn < wmPush,
+      'homemini teach must be defined/run before the workmini push — otherwise the UI races ahead of the id map',
+    )
+    assert.match(
+      syncScript,
+      /deferring workmini push/,
+      'index-sync must refuse to push workmini when homemini did not learn the ids',
+    )
+  })
+
+  test('cache-farm link pass never exists()/stat-follows into JakeShareNAS', () => {
+    // os.path.exists on a farm→SMB path hangs the SSH tick when the mount wedges.
+    const linkPass = syncScript.slice(syncScript.indexOf('Cache-farm links'))
+    assert.doesNotMatch(
+      linkPass,
+      /os\.path\.exists\s*\(/,
+      'link pass must not os.path.exists into the NAS mount — that is the SMB hang',
+    )
+  })
+})
+
+describe('workmini must not sync-probe SMB on the main thread', () => {
+  test('loadDupeFingerprintsFromLibrary uses lstat, never existsSync', () => {
+    const start = index.indexOf('async function loadDupeFingerprintsFromLibrary')
+    assert.notEqual(start, -1)
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    assert.match(body, /lstat\s*\(/, 'dupe scan must lstat local farm entries')
+    assert.doesNotMatch(body, /existsSync\s*\(/,
+      'existsSync is back in the dupe scan — that follows farm symlinks into SMB on the main thread and beachballs workmini')
+  })
+
+  test('resolveTrackAbsPath lstats before any follow', () => {
+    const start = index.indexOf('async function resolveTrackAbsPath')
+    assert.notEqual(start, -1)
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    const lstatIdx = body.search(/await lstat\s*\(/)
+    const statIdx = body.search(/await stat\s*\(/)
+    assert.notEqual(lstatIdx, -1, 'resolveTrackAbsPath must lstat')
+    assert.ok(statIdx === -1 || lstatIdx < statIdx,
+      'resolveTrackAbsPath must not stat()-follow before lstat — that hangs on farm symlinks')
+  })
+
+  test('candidateMusicMounts does not existsSync and skips streamRoot on streaming clients', () => {
+    const start = index.indexOf('async function candidateMusicMounts')
+    assert.notEqual(start, -1)
+    const open = index.indexOf('{', start)
+    let depth = 0
+    let end = open
+    for (let i = open; i < index.length; i++) {
+      if (index[i] === '{') depth++
+      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    }
+    const body = index.slice(open, end + 1)
+    assert.doesNotMatch(body, /existsSync\s*\(/,
+      'existsSync is back in candidateMusicMounts — sync SMB probe beachballs the UI')
+    assert.match(body, /isHomeminiPlaybackClientCached/,
+      'candidateMusicMounts must gate streamRoot out on streaming/cache-farm machines')
+  })
+})
