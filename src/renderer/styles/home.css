@@ -123,7 +123,12 @@
 
 .home-welcome-empty {
   margin: 4px 28px 28px 28px;
-  padding: 36px 32px;
+  padding: 44px 32px;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   background: var(--surface-raised, #fcfbf8);
   border: 1px solid var(--border-warm, rgba(120, 90, 50, 0.14));

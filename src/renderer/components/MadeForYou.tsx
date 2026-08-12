@@ -90,6 +90,10 @@ export default function MadeForYou() {
   }, [building, resolve, playMix])
 
   if (lib.tracks.length === 0) return null
+  // Don't leave a hollow "Your Mixes" chapter when the backend is down
+  // or the day's mixes haven't arrived — the header with nothing under
+  // it made Home look unfinished.
+  if (!loading && mixes.length === 0) return null
 
   return (
     <section className="home-section home-mixes">
