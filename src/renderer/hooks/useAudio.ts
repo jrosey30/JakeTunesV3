@@ -3,7 +3,7 @@ import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
-import { attachHowlToEq, detachHowlFromEq } from '../audio/eq'
+import { attachHowlToEq, detachHowlFromEq, resumeEqContext } from '../audio/eq'
 import {
   scheduleAbsoluteFadeOut,
   scheduleAbsoluteStart,
@@ -262,6 +262,28 @@ const GAPLESS_FADE_IN_MS = 20            // incoming fade-in duration
 // Legacy name kept so any other reader of this module sees the canonical
 // "seam fade" value — equals the duration, not the trigger.
 const GAPLESS_SEAM_FADE_MS = GAPLESS_FADE_OUT_DURATION_MS
+
+// Howls start at volume 0 and fade up (pop suppression). Howler's fade()
+// is queued while `_playLock` is set (the HTMLAudioElement.play() promise),
+// and that queued fade is never drained — `_loadQueue('play')` only pops
+// tasks whose event is 'play'. Result: Howl stays at 0, UI shows playing,
+// sliding the volume bar calls volume() and "wakes" the song. Snap after
+// the fade window so a stuck fade can't leave the track silent.
+function ensureHowlAudible(howl: Howl | null, target: number): void {
+  if (!howl || crossfading || gaplessOutgoingFaded) return
+  if (!(target > 0.02)) return
+  try {
+    const cur = howl.volume() as number
+    if (!cur || cur < 0.02) howl.volume(target)
+  } catch { /* ignore */ }
+}
+function fadeInHowl(howl: Howl, target: number, ms: number): void {
+  try { howl.fade(0, target, ms) } catch {
+    try { howl.volume(target) } catch { /* ignore */ }
+    return
+  }
+  window.setTimeout(() => ensureHowlAudible(howl, target), ms + 40)
+}
 function cleanupGaplessPreload() {
   if (gaplessNextHowl) {
     try { gaplessNextHowl.stop() } catch { /* ignore */ }
@@ -480,11 +502,16 @@ export function useAudio(opts?: { primary?: boolean }) {
         const node = h?._sounds?.[0]?._node
         const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
 
-        // 1. Auto-resume AudioContext if suspended. Cheap, idempotent.
-        if (ctx && ctx.state === 'suspended') {
+        // 1. Auto-resume AudioContext if suspended OR interrupted.
+        // html5 Howls are routed through this ctx (MediaElementSource);
+        // Howler will not auto-resume them. Also snap volume if a fade-in
+        // got stuck at 0 — that's the "slide the volume bar to wake it" bug.
+        if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') {
           void ctx.resume().catch(() => { /* ignore */ })
-          logAudioEvent('heartbeat.ctx.resume')
+          logAudioEvent('heartbeat.ctx.resume', { state: ctx.state })
         }
+        resumeEqContext()
+        ensureHowlAudible(h, stateRef.current.volume)
 
         // 4.5.0-77 — UI-safe position recovery. The rAF loop is what
         // normally pushes SET_POSITION to React state at ~10 Hz. If
@@ -1064,7 +1091,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       const targetVol = stateRef.current.volume
       promoted.once('play', () => {
         logAudioEvent('howl.onplay', { title: track.title, src: 'prefetch-promote' })
-        try { promoted.fade(0, targetVol, 25) } catch { /* ignore */ }
+        fadeInHowl(promoted, targetVol, 25)
         dispatchRef.current({ type: 'SET_DURATION', duration: promoted.duration() })
         sharedRaf = requestAnimationFrame(updatePosition)
       })
@@ -1155,7 +1182,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         // Pop suppression: ramp from silent up to user volume over
         // ~25ms. Pairs with the outgoing-Howl fade-out above to avoid
         // the speaker-cone click on track change.
-        try { howl.fade(0, stateRef.current.volume, 25) } catch { /* ignore */ }
+        fadeInHowl(howl, stateRef.current.volume, 25)
         dispatchRef.current({ type: 'SET_DURATION', duration: howl.duration() })
         dx('raf.reschedule', { site: 'howl.onplay', title: track.title, isPaused })
         sharedRaf = requestAnimationFrame(updatePosition)
@@ -1490,13 +1517,21 @@ export function useAudio(opts?: { primary?: boolean }) {
           // start at volume 0; the promote helper crossfades them.
           try { next.volume(0) } catch { /* ignore */ }
           try { next.seek(Math.max(0, playedSec)) } catch { /* ignore */ }
-          next.once('play', () => {
+          const finishPromote = () => {
             attachHowlToEq(next)
             dx('raf.reschedule', { site: 'sample-accurate-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
             if (ctx) promoteBufferSourceToHowl(handle, ctx, next, 50)
-          })
-          try { next.play() } catch { /* ignore */ }
+          }
+          // Prewarm already called play() — Howler will not emit 'play'
+          // again, so waiting on once('play') leaves the Howl at volume 0
+          // forever (slide-the-volume-bar to wake it).
+          if (next.playing()) {
+            finishPromote()
+          } else {
+            next.once('play', finishPromote)
+            try { next.play() } catch { /* ignore */ }
+          }
           const nextDur = next.duration() || 0
           dx('playtrack.dispatch', {
             site: 'sample-accurate-promote',
@@ -1522,7 +1557,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           // mid-waveform; a hard volume(s.volume) flips the speaker
           // cone from silent to whatever sample is current, producing
           // the click users heard at every gapless seam.
-          try { next.fade(0, s.volume, 25) } catch { /* ignore */ }
+          fadeInHowl(next, s.volume, 25)
           attachHowlToEq(next)
           // Brief 012: atomic dispatch — duration travels INSIDE the
           // PLAY_TRACK action so the reducer can't clobber it back to
@@ -1563,7 +1598,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           })
           try { next.volume(0) } catch { /* ignore */ }
           next.play()
-          try { next.fade(0, s.volume, GAPLESS_FADE_IN_MS) } catch { /* fallback to hard set */ try { next.volume(s.volume) } catch { /* ignore */ } }
+          fadeInHowl(next, s.volume, GAPLESS_FADE_IN_MS)
           // Brief 012: pass duration through PLAY_TRACK atomically.
           // If the howl isn't fully loaded here next.duration() may
           // return 0 — the load-handler SET_DURATION around line 600
@@ -1745,6 +1780,7 @@ export function useAudio(opts?: { primary?: boolean }) {
   }, [])
 
   const setVolume = useCallback((v: number) => {
+    resumeEqContext()
     if (sharedHowl) sharedHowl.volume(v)
     dispatchRef.current({ type: 'SET_VOLUME', volume: v })
   }, [])

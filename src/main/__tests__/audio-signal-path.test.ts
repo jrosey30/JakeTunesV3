@@ -76,6 +76,15 @@ describe('the music signal path', () => {
       'EQ band gains are no longer gated on currentSettings.enabled.')
   })
 
+  test('Howler must not auto-suspend the context that carries html5 music', () => {
+    // html5 Howls are MediaElementSource-tapped into this ctx. Howler's
+    // auto-suspend only counts html5:false Howls, so it will mute every
+    // song 30s after boot. Sliding the volume bar was the user-facing
+    // "wake" because a click can resume the ctx.
+    assert.match(eq, /Howler\.autoSuspend = false/,
+      'Howler.autoSuspend is not pinned false — html5 music will go silent when Howler suspends the shared context')
+  })
+
   test('broadcast FX reach the announcer only, never music', () => {
     // ensureBroadcastFx builds the convolver + a hard compressor for Radio
     // Mode station IDs. One caller, and it takes an HTMLAudioElement — if it

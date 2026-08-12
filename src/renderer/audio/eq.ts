@@ -20,6 +20,14 @@
 import { Howl, Howler } from 'howler'
 import { logAudioEvent } from '../hooks/useAudio'
 
+// html5 Howls are captured into this context via createMediaElementSource
+// (attachHowlToEq — even with EQ off, so the visualizer has a tap). Howler's
+// auto-suspend only looks at html5:false Howls, so 30s after boot it will
+// suspend THIS context while music is still playing through it. Result:
+// the song keeps advancing, speakers go silent, sliding the volume bar
+// "wakes" it (a click can resume the ctx). Never auto-suspend.
+Howler.autoSuspend = false
+
 export const EQ_BAND_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] as const
 export const EQ_BAND_COUNT = EQ_BAND_FREQUENCIES.length
 
@@ -316,6 +324,19 @@ export function ensureVisualizerChain(): void {
   tapHowlerMaster()
 }
 
+/** Resume the graph that actually reaches the speakers.
+ *  html5 Howls are captured via createMediaElementSource, so a suspended
+ *  OR interrupted context = silence while the <audio> element keeps
+ *  advancing (UI looks like it's playing). Howler's own auto-resume only
+ *  runs for html5:false Howls. */
+export function resumeEqContext(): void {
+  const ctx = audioContext ?? (Howler as unknown as { ctx?: AudioContext }).ctx ?? null
+  if (!ctx) return
+  if (ctx.state !== 'running' && ctx.state !== 'closed') {
+    void ctx.resume().catch(() => { /* ignore */ })
+  }
+}
+
 function applySettings(): void {
   if (!audioContext || !preampNode || filterNodes.length === 0) return
   // Preamp: convert dB to linear gain (10^(dB/20)).
@@ -457,18 +478,14 @@ export function attachHowlToEq(howl: Howl | null | undefined): void {
   const existing = boundSources.get(audioEl)
   if (existing) {
     try { existing.connect(preampNode) } catch { /* already connected, ignore */ }
-    if (audioContext.state === 'suspended') {
-      void audioContext.resume()
-    }
+    resumeEqContext()
     return
   }
   try {
     const src = audioContext.createMediaElementSource(audioEl)
     src.connect(preampNode)
     boundSources.set(audioEl, src)
-    if (audioContext.state === 'suspended') {
-      void audioContext.resume()
-    }
+    resumeEqContext()
   } catch (err) {
     // createMediaElementSource throws if the element is already bound
     // to a different context, or some browsers throw on cross-origin
