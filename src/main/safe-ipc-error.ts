@@ -28,6 +28,14 @@ const SAFE_PHRASES = [
   'TTS rate limit — try again in a moment.',
   'Nothing to search for.',
   'Library is empty — nothing to sync.',
+  'Python 3 is not installed.',
+  'mobile backend unreachable',
+  'No iPod detected',
+  'Eject failed',
+  'No audio CD found',
+  'Audio device selection is not supported on this platform yet.',
+  'This library is fully local — nothing to un-download.',
+  'no output from audio_analysis.py',
 ]
 
 const PATH_LEAK = /(?:\/(?:Users|home|tmp|var|private|Volumes|opt|Applications)\/|[A-Za-z]:\\|ENOENT|EACCES|EPERM|Traceback|stderr)/i
@@ -94,7 +102,13 @@ export function safeIpcError(
   const msg = raw.trim()
   if (!msg) return fallback
   if (looksLikeSafePhrase(msg) && !PATH_LEAK.test(msg)) return msg
-  if (PATH_LEAK.test(msg)) return fallback === 'unknown' ? classifyMessage(msg) : fallback
+  if (PATH_LEAK.test(msg)) {
+    if (fallback !== 'unknown') return fallback
+    const classified = classifyMessage(msg)
+    // Path-bearing text with no more specific class still must not
+    // round-trip — collapse to io-failed rather than 'unknown'.
+    return classified === 'unknown' ? 'io-failed' : classified
+  }
   // Longer free-form messages that don't look like paths still get
   // classified — Anthropic / ElevenLabs bodies must not round-trip.
   if (msg.length > 80 || /[{[]/.test(msg) || /\n/.test(msg)) {

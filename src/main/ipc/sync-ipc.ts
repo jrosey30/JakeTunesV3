@@ -13,6 +13,7 @@ import { readFile, stat } from 'fs/promises'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
+import { safeIpcError } from '../safe-ipc-error.ts'
 import { STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
 
 export interface StateConflict {
@@ -166,7 +167,7 @@ async function previewIpodSync(
     }
     return { ok: true, plan, leaving, deviceFileCount: filesByBasename.size }
   } catch (err) {
-    return { ok: false, error: String(err), plan: [], leaving: [] }
+    return { ok: false, error: safeIpcError(err, 'io-failed'), plan: [], leaving: [] }
   }
 }
 
@@ -190,7 +191,7 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
       const ipodData = await host.readIpodDatabase()
       return { ok: true, tracks: ipodData.tracks, playlists: ipodData.playlists, total: ipodData.tracks.length }
     } catch (err) {
-      return { ok: false, error: String(err), tracks: [], playlists: [], total: 0 }
+      return { ok: false, error: safeIpcError(err, 'io-failed'), tracks: [], playlists: [], total: 0 }
     }
   }, { public: true })
 

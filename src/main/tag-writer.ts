@@ -24,6 +24,7 @@ import { stat, readFile, writeFile, access } from 'fs/promises'
 import { spawn } from 'child_process'
 import { app } from 'electron'
 import { PYTHON_CMD, IS_WINDOWS } from './platform'
+import { safeIpcError } from './safe-ipc-error.ts'
 
 // Fields safe to propagate to embedded file tags. Anything not in this
 // set is JakeTunes-internal (analysis results, listener stats, ratings)
@@ -137,20 +138,20 @@ function runPythonTagWriter(audioFilePath: string, payload: Record<string, strin
       // EPIPE on stdin if the python process dies before we finish
       // writing — same defense-in-depth as every other spawn site
       // since the 4.1.x EPIPE-Uncaught-Exception crash class.
-      resolve({ ok: false, error: `stdin: ${err.message}` })
+      resolve({ ok: false, error: safeIpcError(`stdin: ${err.message}`, 'tool-failed') })
     })
     py.on('error', (err) => {
-      resolve({ ok: false, error: `spawn: ${err.message}` })
+      resolve({ ok: false, error: safeIpcError(`spawn: ${err.message}`, 'tool-failed') })
     })
     py.on('close', (code) => {
       if (code === 0) resolve({ ok: true })
-      else resolve({ ok: false, error: stderr.trim() || `exit ${code}` })
+      else resolve({ ok: false, error: safeIpcError(stderr.trim() || `exit ${code}`, 'tool-failed') })
     })
     try {
       py.stdin.write(JSON.stringify(payload))
       py.stdin.end()
     } catch (err) {
-      resolve({ ok: false, error: `stdin-write: ${err instanceof Error ? err.message : String(err)}` })
+      resolve({ ok: false, error: safeIpcError(`stdin-write: ${err instanceof Error ? err.message : String(err)}`, 'tool-failed') })
     }
   })
 }

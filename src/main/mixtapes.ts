@@ -18,6 +18,7 @@
 import { app, shell } from 'electron'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
+import { safeIpcError } from './safe-ipc-error.ts'
 import { readFile, writeFile, mkdir, unlink, stat, rename } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -563,7 +564,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       await saveMixtapes(all)
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'save failed' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -583,7 +584,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       // library audio.
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'delete failed' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -680,7 +681,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       return { ok: true, outputs, dir: outDir }
     } catch (err) {
       console.warn('[mixtapes] dub failed:', err)
-      return { ok: false, error: err instanceof Error ? err.message : 'dub failed' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -712,7 +713,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       return { ok: true, path: outPath }
     } catch (err) {
       console.warn('[mixtapes] intro processing failed:', err)
-      return { ok: false, error: err instanceof Error ? err.message : 'intro processing failed' }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     } finally {
       await unlink(rawPath).catch(() => {})
       if (stsPath) await unlink(stsPath).catch(() => {})

@@ -11,6 +11,7 @@ import { dialog } from 'electron'
 import { join } from 'path'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
+import { safeIpcError } from '../safe-ipc-error.ts'
 import { findIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
 
 export interface IpodMountSnapshot {
@@ -64,7 +65,7 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       }
       return { ok: true, totalBytes, freeBytes, mount, fsName }
     } catch (err) {
-      return { ok: false, error: String(err) }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { public: true })
 
