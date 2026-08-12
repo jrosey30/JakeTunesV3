@@ -169,7 +169,16 @@ ensure_jakeshared() {
 # embeddings.bin to the NAS or it would clobber the mini's enriched brain —
 # single-writer. The laptop still authors metadata-overrides.json (Cynthia +
 # taxonomy) which the mini's brain-trainer READS to fold subgenres.
-SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json mobile-playlists.json playlist-additions.json)
+# 2026-08-12 — REMOVED mobile-playlists.json + playlist-additions.json from the
+# PUSH list (same single-writer rule as recommendations.json). The iOS backend
+# on homemini owns those files. Blunt macbook→homemini rsync was overwriting
+# live phone "Add to Playlist" writes with a stale MacBook mirror on every
+# save-playlists / 10-min safety-net tick — Jake: "I can't add songs to
+# playlists. At all." They are PULLED homemini→local (and NAS) in step 5
+# instead; see PHONE_PLAYLIST_SIDECARS below.
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json)
+# Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
+PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
@@ -592,6 +601,18 @@ if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
     "$JT_DATA_LOCAL/mobile-plays.json" "$HOMEMINI:$JT_DATA_REMOTE/mobile-plays.json" >> "$LOG" 2>&1 || true
 fi
+
+# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
+# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS comment above.
+# Desktop V3 reads these as Brief 121 mirrors; the iOS backend is the writer.
+log "pulling phone playlist sidecars (homemini → local) …"
+for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+  rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$JT_DATA_LOCAL/$f" || \
+    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
+  if [ -d "$MOUNT/JakeTunesState" ]; then
+    rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$MOUNT/JakeTunesState/$f" || true
+  fi
+done
 
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
 #

@@ -43,6 +43,7 @@ import { unlink, mkdir, stat } from 'fs/promises'
 import type { BrowserWindow } from 'electron'
 
 import chokidar, { type FSWatcher } from 'chokidar'
+import { allowImportPaths } from './import-allowlist.ts'
 
 export interface InboxConfig {
   enabled: boolean
@@ -51,6 +52,35 @@ export interface InboxConfig {
 }
 
 const DEFAULT_INBOX_PATH = join(homedir(), 'Music2', '_inbox')
+
+/**
+ * Inbox roots the user is allowed to point the watcher at. Without this,
+ * save-app-settings could set inbox.path to `$HOME` (or `/`) and
+ * delete-inbox-source would then delete anything underneath — the
+ * containment check would still "pass".
+ *
+ * Allowed: default inbox, and any directory under the user's Music,
+ * Music2, Downloads, Desktop, or Documents trees (not those roots
+ * themselves — too broad for mass-delete).
+ */
+export function isAllowedInboxPath(absPath: string): boolean {
+  const target = normalize(absPath)
+  if (!target || target === '/' || target === normalize(homedir())) return false
+  if (target === normalize(DEFAULT_INBOX_PATH)) return true
+  const home = normalize(homedir())
+  const parents = [
+    join(home, 'Music'),
+    join(home, 'Music2'),
+    join(home, 'Downloads'),
+    join(home, 'Desktop'),
+    join(home, 'Documents'),
+  ].map(normalize)
+  for (const p of parents) {
+    // Must be a child of the parent, not the parent itself.
+    if (target.startsWith(p + sep) && target.length > p.length + 1) return true
+  }
+  return false
+}
 
 // Audio extensions we care about. Matched against the part AFTER the
 // final dot. Lowercased on compare. Anything else dropped into the
@@ -105,6 +135,9 @@ function flushBatch(): void {
     return
   }
   try {
+    // Trusted main-process source → session-allowlist before the
+    // renderer can call import-track / import-resolve-paths.
+    allowImportPaths(paths)
     win.webContents.send('inbox-files-detected', paths)
     console.log(`[inbox-watcher] notified renderer of ${paths.length} file(s)`)
   } catch (err) {
@@ -125,6 +158,11 @@ export function getDefaultInboxPath(): string {
  * Resolve a user-supplied path. Empty / "~" → default. "~/..." expands
  * to homedir. Absolute paths pass through. Always returns a normalized
  * absolute path.
+ *
+ * Does NOT enforce the allowlist — callers that configure the watcher
+ * must also call `isAllowedInboxPath` (startOrReconfigureInboxWatcher
+ * does). Resolution alone stays pure so the Settings placeholder can
+ * still display a typed path before validation.
  */
 export function resolveInboxPath(raw?: string): string {
   const trimmed = (raw || '').trim()
@@ -167,6 +205,14 @@ export async function startOrReconfigureInboxWatcher(
 ): Promise<{ ok: boolean; error?: string; path: string }> {
   const resolvedPath = resolveInboxPath(config.path)
 
+  if (!isAllowedInboxPath(resolvedPath)) {
+    return {
+      ok: false,
+      path: resolvedPath,
+      error: 'Inbox path must be a folder under Music, Music2, Downloads, Desktop, or Documents (not the home directory itself).',
+    }
+  }
+
   if (currentEnabled === config.enabled && currentPath === resolvedPath) {
     return { ok: true, path: resolvedPath }
   }
@@ -181,11 +227,11 @@ export async function startOrReconfigureInboxWatcher(
 
   try {
     await mkdir(resolvedPath, { recursive: true })
-  } catch (err) {
+  } catch {
     return {
       ok: false,
       path: resolvedPath,
-      error: `Could not create inbox folder: ${err instanceof Error ? err.message : String(err)}`,
+      error: 'Could not create inbox folder',
     }
   }
 
@@ -227,18 +273,21 @@ export async function startOrReconfigureInboxWatcher(
  */
 export async function deleteInboxSource(filePath: string): Promise<{ ok: boolean; error?: string }> {
   if (!currentPath) return { ok: false, error: 'No inbox configured' }
+  if (!isAllowedInboxPath(currentPath)) {
+    return { ok: false, error: 'Inbox path is not in the allowed set' }
+  }
   const normTarget = normalize(filePath)
   const normInbox = normalize(currentPath)
   // Containment check: target must be inside (or equal to) inbox path.
   // The trailing separator on inbox prevents a sibling like
   // `_inbox_archive` from matching when inbox is `_inbox`.
   if (normTarget !== normInbox && !normTarget.startsWith(normInbox + sep)) {
-    return { ok: false, error: `Refusing to delete path outside inbox: ${filePath}` }
+    return { ok: false, error: 'Refusing to delete path outside inbox' }
   }
   try {
     await unlink(normTarget)
     return { ok: true }
-  } catch (err) {
+  } catch {
     // Already gone? Fine — treat as success so the queue doesn't
     // surface a phantom failure to the user.
     try {
@@ -246,7 +295,7 @@ export async function deleteInboxSource(filePath: string): Promise<{ ok: boolean
     } catch {
       return { ok: true }
     }
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: 'Could not delete inbox source' }
   }
 }
 

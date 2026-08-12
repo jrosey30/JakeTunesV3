@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -525,6 +525,22 @@ const electronAPI = {
     ipcRenderer.invoke('import-resolve-paths', paths),
   importPickFiles: (): Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }> =>
     ipcRenderer.invoke('import-pick-files'),
+  /**
+   * Grant drag-dropped File objects onto the session import allowlist.
+   * Uses Electron's webUtils.getPathForFile so synthetic File objects
+   * (no native path) cannot mint arbitrary filesystem grants. Paths
+   * then flow through the same enqueue/import pipeline as the picker.
+   */
+  allowDroppedImportPaths: (files: File[]): Promise<{ ok: boolean; paths?: string[]; error?: string }> => {
+    const paths: string[] = []
+    for (const f of files) {
+      try {
+        const p = webUtils.getPathForFile(f)
+        if (p) paths.push(p)
+      } catch { /* skip non-native File */ }
+    }
+    return ipcRenderer.invoke('import-allow-dropped-paths', paths)
+  },
   saveLibrary: (tracks: unknown[], playlists?: unknown[]): Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }> =>
     ipcRenderer.invoke('save-library', tracks, playlists),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>

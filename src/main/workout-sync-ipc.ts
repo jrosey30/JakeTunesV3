@@ -3,7 +3,8 @@
  * Persists activity context for the Music Man brain.
  */
 
-import { ipcMain } from 'electron'
+import type { IpcRegistrar } from './ipc-register.ts'
+import { REFUSED_SENDER } from './ipc-register.ts'
 import { readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { app } from 'electron'
@@ -34,6 +35,7 @@ import { getEmbeddingsMap, embedTexts } from './ai/embeddings.ts'
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
 
 export interface WorkoutSyncHost {
+  ipc: IpcRegistrar
   claudeCall: ClaudeCall
   musicManCore: string
   /** Track ids that can NEVER land on the iPod (full-concert-owned — the
@@ -219,7 +221,8 @@ async function askActivityVibe(
 }
 
 export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
-  ipcMain.handle('build-workout-sync-set', async (
+  const { ipc } = host
+  ipc.handle('build-workout-sync-set', async (
     _e,
     tracks: WorkoutTrack[],
     opts?: { target?: number; brief?: ActivityBrief; saveProfile?: boolean },
@@ -360,14 +363,14 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         brief,
       }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'workout sync failed' }
+      return { ok: false, error: 'api-failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   // REVIEW GATE: called by the renderer AFTER a confirmed sync lands.
   // State written here is the ground truth "last set on the iPod" that
   // plug-in auto-sync repairs and the next build rotates away from.
-  ipcMain.handle('commit-workout-sync-set', async (
+  ipc.handle('commit-workout-sync-set', async (
     _e,
     payload: {
       trackIds: number[]; name: string; commentary: string; alacCount: number
@@ -429,33 +432,33 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       })
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'commit failed' }
+      return { ok: false, error: 'io-failed' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
-  ipcMain.handle('get-workout-sync-state', async () => {
+  ipc.handle('get-workout-sync-state', async () => {
     const s = await loadState()
     return { ok: true, state: s }
-  })
+  }, { public: true })
 
-  ipcMain.handle('get-activity-profiles', async () => {
+  ipc.handle('get-activity-profiles', async () => {
     const profiles = await loadActivityProfiles()
     return { ok: true, profiles }
-  })
+  }, { public: true })
 
-  ipcMain.handle('get-activity-brain-context', async () => {
+  ipc.handle('get-activity-brain-context', async () => {
     const ctx = await loadActivityBrainContext()
     return {
       ok: true,
       context: ctx,
       promptBlock: formatActivityContextForPrompt(ctx),
     }
-  })
+  }, { public: true })
 
-  ipcMain.handle('preview-place-weather', async (_e, place: string) => {
+  ipc.handle('preview-place-weather', async (_e, place: string) => {
     const wx = await getWeatherForPlace(place || 'Brooklyn')
     return { ok: true, weather: wx }
-  })
+  }, { public: true })
 }
 
 /** Sync helper for Music Man prompt injection (read from disk/memory). */

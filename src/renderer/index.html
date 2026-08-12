@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    Defense-in-depth for the privileged renderer. Custom media/art schemes
+    are allowlisted explicitly; remote script is not. 'unsafe-inline' on
+    style covers the existing inline style attributes across the UI.
+    'unsafe-eval' is required for Vite HMR in electron-vite dev only —
+    production builds are pure modules and do not need it, but Chromium
+    still accepts the directive harmlessly when unused.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: album-art: artist-image: playlist-cover: https:; media-src 'self' blob: ipod-audio: mediastream:; connect-src 'self' https: ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none';" />
   <title>JakeTunes V3</title>
 </head>
 <body>

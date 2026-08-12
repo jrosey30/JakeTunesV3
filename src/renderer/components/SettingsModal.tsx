@@ -1058,26 +1058,41 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               {/* 4.5: Exa.ai key. Powers semantic music-journalism
                   search that augments every character call's facts
                   block. Optional — empty string disables the feature
-                  and behavior reverts to Wikipedia + MusicBrainz only. */}
+                  and behavior reverts to Wikipedia + MusicBrainz only.
+                  The raw key is never returned by load-app-settings;
+                  exaConfigured tells us one is already stored in main. */}
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
                 Exa.ai API key (optional — augments artist facts)
               </label>
               <input
                 type="password"
-                placeholder="sk-…"
+                placeholder={draft.ai.exaConfigured ? '•••• configured — paste a new key to replace' : 'sk-…'}
                 value={draft.ai.exaApiKey || ''}
                 onChange={(e) => setDraft({
                   ...draft,
-                  ai: { ...draft.ai, exaApiKey: e.target.value },
+                  ai: { ...draft.ai, exaApiKey: e.target.value, clearExaKey: false },
                 })}
                 style={{ width: '100%', padding: 6, fontSize: 12, fontFamily: 'monospace', marginBottom: 6 }}
               />
+              {draft.ai.exaConfigured && (
+                <button
+                  type="button"
+                  className="imp-btn"
+                  style={{ marginBottom: 8, fontSize: 12 }}
+                  onClick={() => setDraft({
+                    ...draft,
+                    ai: { ...draft.ai, exaApiKey: '', exaConfigured: false, clearExaKey: true },
+                  })}
+                >
+                  Clear stored Exa key
+                </button>
+              )}
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
                 When set, Music Man / Megan / Stephen / chat all get
                 richer per-track facts via Exa semantic search (Pitchfork,
                 Stereogum, AllMusic, music press generally). 7-day cache,
-                ~$0.005 per artist lookup. Edit the query templates in
-                <code>src/main/exa.ts</code> to tune what Exa retrieves.
+                ~$0.005 per artist lookup. The key stays in the main
+                process (.env) — it is not kept in renderer settings JSON.
               </p>
 
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
@@ -1086,17 +1101,17 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <input
                 type="number"
                 min={1}
-                max={10000}
+                max={2000}
                 step={10}
                 value={draft.ai.claudeDailyCeiling}
                 onChange={(e) => setDraft({
                   ...draft,
-                  ai: { ...draft.ai, claudeDailyCeiling: Math.max(1, Math.min(10000, Number(e.target.value) || DEFAULT_APP_SETTINGS.ai.claudeDailyCeiling)) },
+                  ai: { ...draft.ai, claudeDailyCeiling: Math.max(1, Math.min(2000, Number(e.target.value) || DEFAULT_APP_SETTINGS.ai.claudeDailyCeiling)) },
                 })}
                 style={{ width: 120, padding: 6, fontSize: 13 }}
               />
               <p className="imp-help" style={{ marginTop: 10 }}>
-                Hard cap on how many Claude calls JakeTunes makes per day. After hitting the ceiling, fallback uses the most recent cached response.
+                Hard cap on how many Claude calls JakeTunes makes per day (max 2000). After hitting the ceiling, fallback uses the most recent cached response.
               </p>
             </>
           )}

@@ -18,22 +18,20 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 import { getVenueShows, type VenueShow } from './venues.js'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
-  MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE, CYNTHIA_CORE,
-  initPersonaPrompts, withLibraryDigest, buildMusicManPrompt, buildCynthiaPrompt,
+  MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
+  initPersonaPrompts, withLibraryDigest, buildMusicManPrompt,
 } from './personas.ts'
 import {
   initPersonaMemory,
   loadMusicManMemory, noteMusicManUtterance, recentUtterancesBlock,
-  loadCynthiaMemory, noteCynthiaUtterance, recentCynthiaBlock,
+  loadCynthiaMemory, recentCynthiaBlock,
 } from './persona-memory.ts'
 import {
   initLibraryDigest, type DigestTrack,
   refreshLibraryDigest, getLibraryDigest, scheduleLibraryDigestRefresh,
-  setLibraryContext, getLibraryContext,
 } from './library-digest.ts'
 import {
   initListenerProfile, loadListenerProfile, saveListenerProfile, appendListeningEvent,
-  recordPlay, recordSkip, recordRating, getListeningMemory,
   addObservation, getListenerProfile, buildTasteProfile, type ListenerProfile,
 } from './listener-profile.ts'
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
@@ -42,7 +40,24 @@ import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safet
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
-import { refuseIfNotMainWindow } from './ipc-guard'
+import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
+import { safeIpcError } from './safe-ipc-error.ts'
+import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
+import { registerBackupIpc } from './ipc/backup-ipc.ts'
+import { registerSettingsIpc } from './ipc/settings-ipc.ts'
+import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
+import { registerLibraryIpc } from './ipc/library-ipc.ts'
+import { registerIpodIpc } from './ipc/ipod-ipc.ts'
+import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
+import { registerAiIpc } from './ipc/ai-ipc.ts'
+import {
+  registerCynthiaIpc,
+  runCynthiaInvestigation,
+  type CynthiaTrackInScope,
+  type CynthiaIpcHost,
+} from './ipc/cynthia-ipc.ts'
+import { allowImportPaths, isImportPathAllowed } from './import-allowlist.ts'
+import { isAllowedCaptureUrl, isPrivateOrLocalHostname } from './url-safety'
 import {
   getBrooklynWeather, formatWeatherForPrompt,
   getLastFmNyChart, getLastFmSimilarArtists, formatLastFmChartForPrompt,
@@ -55,11 +70,10 @@ import {
   getUpcomingReleasesForArtists, type UpcomingRelease,
 } from './external'
 import {
-  appendMemory, formatMemoryForPrompt, extractCallbacks, clearMemory,
+  appendMemory, formatMemoryForPrompt, extractCallbacks,
   setHotTake, getHotTake,
-  setShowPlan, clearShowPlan, formatPlanForPrompt, getShowPlan,
 } from './radio-memory'
-import { CALLERS, buildCallerSegmentMode, RADIO_CAST } from './cast'
+import { buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { computeImportCredits, pairKeys, friendOfNote } from './friend-imports-core'
@@ -68,23 +82,21 @@ import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
-import { snapshotLibrary, maybeAutoSnapshot, listBackups, restoreBackup } from './backup'
+import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
 import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
-import { computeArtistCandidates, parseGroupingResponse, parseRelatedArtists } from './artist-groups-core'
-// Cynthia overhaul — deterministic scanner, MB cache+diff, background sweep.
-import { scanAlbum as cynthiaScanAlbum, type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
-import { diffAgainstMusicBrainz, type MbLookupResult } from './cynthia-mb-diff'
-import { getCachedMbRelease } from './mb-release-cache'
+import { parseRelatedArtists } from './artist-groups-core'
+// Cynthia overhaul — deterministic scanner types + background sweep.
+import { type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
 import {
-  startCynthiaSweep, enqueueAlbumsForSweep, getFindingsFor, dismissFinding,
-  getLedger, revertLedgerEntry, sweepStatus, albumKeyOfMain,
+  startCynthiaSweep, enqueueAlbumsForSweep,
+  revertLedgerEntry, albumKeyOfMain,
 } from './cynthia-sweep'
-import type { GroupingProposal, RelatedArtist } from './artist-groups-core'
+import type { RelatedArtist } from './artist-groups-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -163,14 +175,11 @@ import {
   configureInboxWatcher,
   startOrReconfigureInboxWatcher,
   stopInboxWatcher,
-  deleteInboxSource,
-  getDefaultInboxPath,
   type InboxConfig,
 } from './inbox-watcher'
 import {
   startSyncOrchestrator,
   triggerSync,
-  getLastSyncSnapshot,
 } from './sync-orchestrator'
 // Brief 023: removed imports from ./library-snapshot and
 // ./library-overrides — both modules are deleted along with this
@@ -906,6 +915,99 @@ function kickAudioAnalysisWorker(): void {
 
 let mainWindow: BrowserWindow | null = null
 
+// AI host preference — written by settings IPC, read by prompt builders.
+// Declared above registerSettingsIpc so the setter closure is valid.
+let cachedActiveHost: 'mm' | 'megan' = 'mm'
+
+// IPC registration helper — defaults to refuseIfNotMainWindow. Domain
+// modules (ipc/*.ts) register through this; opt out with { public: true }
+// only for intentionally public / read-only channels.
+const ipc = createIpcRegistrar(() => mainWindow)
+registerUiStateIpc(ipc)
+registerBackupIpc(ipc, { getMainWindow: () => mainWindow })
+registerSettingsIpc(ipc, {
+  setCachedActiveHost: (host) => { cachedActiveHost = host },
+})
+registerImportIpc(ipc)
+registerLibraryIpc(ipc, {
+  getLibraryTracks: async () => {
+    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
+    return Array.isArray(lib.tracks) ? lib.tracks : []
+  },
+  claudeCall,
+  getPlaylists: () => playlistsCache.get(),
+  setPlaylists: (playlists) => { playlistsCache.set(playlists) },
+  isSaveLocked,
+  triggerSync,
+  scanLibraryOrphans: () => scanLibraryOrphans(),
+  purgeLibraryOrphans: () => purgeLibraryOrphans(),
+})
+registerIpodIpc(ipc, {
+  getMount: () => ({ mount: detectedIpodMount, volume: detectedIpodVolume, missStreak: ipodMissStreak }),
+  setMount: (next) => {
+    if ('mount' in next) detectedIpodMount = next.mount ?? null
+    if ('volume' in next) detectedIpodVolume = next.volume ?? null
+    if ('missStreak' in next && typeof next.missStreak === 'number') ipodMissStreak = next.missStreak
+  },
+  runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
+})
+registerSyncIpc(ipc, {
+  requestSyncCancel: () => {
+    if (!syncInFlight) return { wasRunning: false }
+    syncCancelRequested = true
+    return { wasRunning: true }
+  },
+  syncToIpod: (tracks, playlists, convertOptions, syncOpts) =>
+    handleSyncToIpod(tracks, playlists, convertOptions, syncOpts),
+  syncIpodFromDevice: (existingIds) => handleSyncIpodFromDevice(existingIds),
+  readIpodDatabase: () => readIpodDatabase(),
+  getStateConflicts: () => stateConflicts,
+  reconcileStateConflicts: (event) => handleReconcileStateConflicts(event),
+  getIpodMount: () => detectedIpodMount,
+  getLocalLibraryRoot: () => MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
+  getPathSep: () => (IS_WINDOWS ? '\\' : '/'),
+  getCodecHint: (absPath) => codecByAbsPath.get(absPath) || '',
+})
+registerAiIpc(ipc, {
+  setClaudeDailyCeiling: async (ceiling) => {
+    await loadClaudeStats()
+    const safe = Math.max(1, Math.min(2000, Number(ceiling) || 200))
+    claudeStats.dailyCeiling = safe
+    await saveClaudeStats()
+    return { ok: true, dailyCeiling: safe }
+  },
+  getClaudeStats: async () => {
+    await loadClaudeStats()
+    rolloverIfNewDay()
+    return {
+      ok: true,
+      sessionCallCount,
+      callsToday: claudeStats.callsToday,
+      dailyCeiling: claudeStats.dailyCeiling,
+      lastResetDate: claudeStats.lastResetDate,
+      cachedKeys: Object.keys(claudeStats.lastResponses),
+    }
+  },
+  revertCynthiaLedgerEntry: async (id) => {
+    const hooks = buildCynthiaSweepHooks()
+    const albums = cynthiaGetAlbumsSnapshot()
+    const byId = new Map<number, CynthiaScanTrack>()
+    for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
+    return revertLedgerEntry(id, hooks.applyOverride, (trackId) => byId.get(trackId))
+  },
+  readAppSettings: () => readAppSettingsAsync(),
+  readActiveHost: () => readActiveHostSync(),
+  getMainWindow: () => mainWindow,
+  claudeCall,
+  searchWebCached,
+})
+const cynthiaIpcHost: CynthiaIpcHost = {
+  claudeCall,
+  fetchMbRelease: (artist, album) => musicBrainzAlbumLookup(artist, album),
+  readEmbeddedTags: (trackIds) => readEmbeddedTagsForCynthia(trackIds),
+}
+registerCynthiaIpc(ipc, cynthiaIpcHost)
+
 // 4.4.85: codec hint for the ipod-audio:// protocol handler so it can
 // skip the ~200-500 ms ffprobe call on every first-play. Populated from
 // library.json at app startup (loadCodecMapFromLibrary) and updated
@@ -1001,216 +1103,19 @@ async function saveWindowState(win: BrowserWindow): Promise<void> {
   await writeFile(windowStatePath(), JSON.stringify(state), 'utf-8')
 }
 
-// ── UI state persistence ──
-function uiStatePath(): string {
-  return join(app.getPath('userData'), 'ui-state.json')
-}
+// ── UI state + backup + app-settings + domain IPC ─────────────────────
+// Registered via createIpcRegistrar domain modules:
+//   ipc/ui-state-ipc.ts, ipc/backup-ipc.ts, ipc/settings-ipc.ts,
+//   ipc/import-ipc.ts, ipc/library-ipc.ts, ipc/ipod-ipc.ts,
+//   ipc/sync-ipc.ts, ipc/ai-ipc.ts, ipc/cynthia-ipc.ts
+// (see register* calls next to `let mainWindow`).
 
-ipcMain.handle('load-ui-state', async () => {
-  const path = uiStatePath()
-  let data: string
-  try {
-    data = await readFile(path, 'utf-8')
-  } catch {
-    return { ok: false, state: null }   // no file yet — first run
-  }
-  try {
-    return { ok: true, state: JSON.parse(data) }
-  } catch (err) {
-    // A corrupt ui-state used to fail SILENTLY here: every launch fell back to
-    // defaults, so Jake's Songs columns (bpm + camelotKey are in columnOrder
-    // and not hidden) vanished on every restart and it read as the column
-    // feature being broken. Found 2026-08-02 with 22 trailing bytes of an
-    // older, longer write stuck on the end — see the save handler.
-    //
-    // Salvage the leading object if there is one: the real state is usually
-    // intact and only the tail is garbage, so this restores the user's layout
-    // instead of resetting it. Keep the bad file for diagnosis either way.
-    console.warn('[ui-state] unparseable —', err instanceof Error ? err.message : err)
-    // Parse the longest valid JSON prefix (a raw_decode equivalent). The
-    // corruption seen in the wild is a good object with junk appended, so the
-    // prefix carries the real layout.
-    let recovered: unknown = null
-    for (let end = data.length; end > 1; end--) {
-      if (data[end - 1] !== '}') continue
-      try { recovered = JSON.parse(data.slice(0, end)); break } catch { /* keep shrinking */ }
-    }
-    try {
-      const { rename: renameFS } = await import('fs/promises')
-      await renameFS(path, `${path}.corrupt-${Date.now()}`)
-    } catch { /* best effort */ }
-    if (recovered && typeof recovered === 'object') {
-      console.warn('[ui-state] recovered the leading object — layout preserved')
-      return { ok: true, state: recovered as Record<string, unknown> }
-    }
-    return { ok: false, state: null }
-  }
-})
-
-// Serializes save-ui-state so its read-modify-write can't interleave. Without
-// this, two concurrent saves each read the same `current`, and whichever
-// renames last wins — silently dropping the other's fields. That is the same
-// class of loss the deep-merge below was added to prevent, just from
-// concurrency rather than from a caller's partial.
-let uiStateWriteChain: Promise<unknown> = Promise.resolve()
-
-ipcMain.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => {
-  const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
-  uiStateWriteChain = run.catch(() => {})
-  return run
-})
-
-async function saveUiStateSerialized(uiState: Record<string, unknown>): Promise<{ ok: boolean }> {
-  // Bug #3: this used to be a full-overwrite write. Callers all do a
-  // load-spread-save pattern in the renderer, but when `loadUiState`
-  // returned null/empty (transient parse failure during atomic rename,
-  // file briefly missing, etc.) they'd spread `{}` and the resulting
-  // save would clobber every persisted field that wasn't in the caller's
-  // partial. That's how `optConvertBitrate` evaporated mid-session —
-  // some caller saved its 7 fields, the convert toggle wasn't one of
-  // them, so it disappeared.
-  //
-  // Defense-in-depth: read current disk state, deep-merge the incoming
-  // partial on top, then atomically write. Even if every renderer
-  // caller is buggy, persisted fields survive.
-  const path = uiStatePath()
-  try {
-    let current: Record<string, unknown> = {}
-    try {
-      const raw = await readFile(path, 'utf-8')
-      current = JSON.parse(raw) as Record<string, unknown>
-      if (typeof current !== 'object' || current === null) current = {}
-    } catch { /* no file yet or parse fail — start fresh */ }
-    const merged = { ...current, ...uiState }
-    // UNIQUE tmp name, and every save serialized on uiStateWriteChain.
-    //
-    // The tmp path used to be the fixed `path + '.partial.json'`, so two saves
-    // in flight at once both wrote THAT file. Interleave a shorter payload over
-    // a longer one and the tail of the long write survives past the end of the
-    // short one — then rename() atomically installs the garbage. That is
-    // exactly what was on disk on 2026-08-02: a valid 656-char object with 22
-    // trailing bytes of an older write. JSON.parse threw on every launch, the
-    // app silently fell back to defaults, and Jake's bpm/camelotKey columns
-    // disappeared every restart even though they were correctly persisted.
-    //
-    // Atomic rename only protects readers from a HALF-WRITTEN file; it does
-    // nothing when two writers share the staging file. JsonFileCache already
-    // gets this right (pid + time + random) — same idiom here.
-    const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    await writeFile(tmp, JSON.stringify(merged), 'utf-8')
-    const { rename: renameFS } = await import('fs/promises')
-    await renameFS(tmp, path)
-    return { ok: true }
-  } catch {
-    return { ok: false }
-  }
-}
-
-// User-preference settings (4.0 §6.7). Distinct from ui-state.json which
-// tracks transient UI position (sidebar width, current view, etc.). This
-// file holds preferences that persist across app upgrades and that the
-// user explicitly sets via the Settings modal — currently just crossfade.
+// User-preference settings path (4.0 §6.7). Distinct from ui-state.json.
+// Still used by readAppSettingsAsync and other main-process readers;
+// the load/save IPC handlers live in ipc/settings-ipc.ts.
 function appSettingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
 }
-
-// 4.5: settings UI reads this to display "Last backup: 3 min ago — Imports"
-// in the Sync tab. Pulled on tab open (and periodically while visible)
-// so the user gets the current state without subscribing to push events.
-ipcMain.handle('get-last-library-sync', async () => {
-  return getLastSyncSnapshot()
-})
-
-// 4.5.0-117 — library backup/restore (Phase 0). Logic in src/main/backup.ts.
-ipcMain.handle('list-backups', async () => {
-  return { ok: true, backups: await listBackups() }
-})
-ipcMain.handle('create-backup', async () => {
-  const info = await snapshotLibrary('manual')
-  return info ? { ok: true, backup: info } : { ok: false, error: 'Nothing to back up (library empty or unreadable).' }
-})
-ipcMain.handle('restore-backup', async (_e, file: string) => {
-  const res = await restoreBackup(file)
-  // On success, library.json was rewritten — tell the renderer to reload.
-  if (res.ok) mainWindow?.webContents.send('library-external-change')
-  return res
-})
-
-// ── Artist aliases (metadata hierarchy) — user/AI grouping map. ──────
-// artist-aliases.json: { "<raw artist tag>": "<canonical artist>" }. The
-// renderer's canonicalArtist() consults it OVER the curated baseline, so Wings,
-// Paul & Linda McCartney, etc. roll up to a primary. Written by the AI-grouping
-// review + manual "Same as…". Small user data; atomic tmp+rename like the rest.
-function artistAliasesPath(): string {
-  return join(STATE_DIR, 'artist-aliases.json')
-}
-ipcMain.handle('load-artist-aliases', async (): Promise<{ ok: boolean; aliases: Record<string, string> }> => {
-  try {
-    const parsed = JSON.parse(await readFile(artistAliasesPath(), 'utf-8'))
-    const aliases = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed as Record<string, string> : {}
-    return { ok: true, aliases }
-  } catch {
-    return { ok: true, aliases: {} }   // missing/torn → empty map (no grouping overrides)
-  }
-})
-ipcMain.handle('save-artist-aliases', async (_e, aliases: Record<string, string>): Promise<{ ok: boolean; error?: string }> => {
-  try {
-    const clean: Record<string, string> = {}
-    for (const [k, v] of Object.entries(aliases || {})) {
-      const key = String(k).trim(); const val = String(v ?? '').trim()
-      if (key && val) clean[key] = val   // identity maps allowed (they override/undo a baseline grouping)
-    }
-    await mkdir(STATE_DIR, { recursive: true })
-    const path = artistAliasesPath()
-    const tmp = `${path}.tmp.json`
-    await writeFile(tmp, JSON.stringify(clean, null, 2), 'utf-8')
-    const { rename: renameFS } = await import('fs/promises')
-    await renameFS(tmp, path)
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'save failed' }
-  }
-})
-
-// Metadata hierarchy Phase 2 — AI-assisted artist grouping. Claude classifies
-// the library's marker tags ("X & Y") as persona / collaboration / standalone
-// and names the canonical primary for personas. Nothing is applied here — the
-// renderer shows the proposals for the user to approve, then writes the
-// approved personas to artist-aliases.json. Conservative system prompt: prefer
-// "standalone"/"collaboration" over a wrong merge.
-ipcMain.handle('classify-artist-groups', async (): Promise<{ ok: boolean; proposals?: GroupingProposal[]; candidateCount?: number; error?: string }> => {
-  try {
-    const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
-    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
-    const { candidates, primaries } = computeArtistCandidates(tracks, { maxCandidates: 150, maxPrimaries: 400 })
-    if (candidates.length === 0) return { ok: true, proposals: [], candidateCount: 0 }
-    const user = [
-      'Below are artist tags from a personal music library that contain a join marker ("&", "and", "/", "feat", "with", a comma, etc.). Each is exactly ONE of:',
-      '  • "persona" — the SAME act/musician as a primary artist (their band, alias, "X & His Band", a spouse duo). e.g. Wings → Paul McCartney; Paul & Linda McCartney → Paul McCartney; Bruce Springsteen & The E Street Band → Bruce Springsteen.',
-      '  • "collaboration" — distinct artists who collaborated; the track belongs to each but the tag is not one act. e.g. Paul McCartney & Stevie Wonder; "Rihanna, Kanye West, and Paul McCartney".',
-      '  • "standalone" — the tag IS a single artist/band whose NAME merely contains those words; do NOT merge. e.g. Hall & Oates; King Gizzard & The Lizard Wizard; AC/DC; Simon & Garfunkel; Earth, Wind & Fire; Polo & Pan.',
-      '',
-      'For a "persona", set "canonical" to the primary. PREFER an exact name from this list of existing primary artists when one fits:',
-      primaries.join(' | ') || '(none)',
-      '',
-      'Tags to classify (with track counts):',
-      candidates.map((c) => `- ${c.tag} (${c.count})`).join('\n'),
-      '',
-      'Return ONLY JSON — an array of {"tag","type","canonical","contributors","why"}: "canonical" only for persona, "contributors" (array) only for collaboration, "why" = one short sentence. No prose, no code fence.',
-    ].join('\n')
-    const reply = await claudeCall('artist-groups:classify', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 6000,
-      system: 'You are a meticulous music-metadata expert. You know artist relationships precisely — a musician\'s bands/aliases/side-projects vs. one-off collaborations vs. standalone groups whose name simply contains "&"/"and"/"/". Be conservative: when unsure whether two tags are the SAME act, prefer "standalone" or "collaboration" over a wrong merge.',
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = block && block.type === 'text' ? block.text : ''
-    return { ok: true, proposals: parseGroupingResponse(text), candidateCount: candidates.length }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'classify failed' }
-  }
-})
 
 // Metadata hierarchy — related-artists graph (associate, don't merge). On-demand
 // per artist page, cached a day (band lineups don't change). Claude (Haiku —
@@ -1237,7 +1142,7 @@ ipcMain.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: 
     relatedArtistsCache.set(key, { related, at: Date.now() })
     return { ok: true, related }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'related-artists failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1248,7 +1153,7 @@ ipcMain.handle('get-taste-fingerprint', async () => {
     const lib = (await libraryCache.get()) as { tracks?: TrackLike[] }
     return { ok: true, fingerprint: computeTasteFingerprint(Array.isArray(lib.tracks) ? lib.tracks : []) }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'taste failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1283,7 +1188,7 @@ ipcMain.handle('get-friends', async () => {
     b.adds - a.adds)
   return { ok: true, friends }
 })
-ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
+ipc.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tossed') => {
   const key = String(name || '').trim().toLowerCase()
   if (!key) return { ok: false }
   await friendsCache.update((cur) => {
@@ -1296,7 +1201,7 @@ ipcMain.handle('friend-event', async (_e, name: string, ev: 'add' | 'got' | 'tos
     return cur
   })
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // macOS Contacts names for the "From" typeahead. One osascript JXA call
 // (triggers the system's one-time Automation permission prompt for Contacts);
@@ -1317,13 +1222,15 @@ ipcMain.handle('get-contacts', async (): Promise<{ ok: boolean; names: string[] 
   }
 })
 
-// Resolve a pasted link (Spotify / YouTube / TikTok / anything with OG tags)
-// into a best-guess song + artist. GROUNDED: this only extracts what the
-// page itself says — the renderer always verifies against iTunes Search and
-// the USER picks the candidate; nothing is auto-added from a guess.
-ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => {
+// Resolve a pasted link (Spotify / YouTube / TikTok) into a best-guess
+// song + artist. GROUNDED: this only extracts what the page itself says —
+// the renderer always verifies against iTunes Search and the USER picks
+// the candidate; nothing is auto-added from a guess.
+// Host allowlist + private-IP deny: a compromised renderer must not turn
+// this into LAN SSRF (homemini, routers, metadata services).
+ipc.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boolean; kind?: string; title?: string; artist?: string; raw?: string }> => {
   const u = String(rawUrl || '').trim()
-  if (!/^https?:\/\//i.test(u)) return { ok: false }
+  if (!isAllowedCaptureUrl(u)) return { ok: false }
   const get = async (url: string): Promise<string | null> => {
     try {
       const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh) JakeTunes/1.0' }, signal: AbortSignal.timeout(8000) })
@@ -1361,15 +1268,13 @@ ipcMain.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok:
       // as raw context; the user types/edits what they hear.
       return { ok: true, kind: 'tiktok', raw: j.title || undefined }
     }
-    // Generic: og:title (entity-decoded — raw HTML attributes are escaped)
-    const html = await get(u)
-    const og = html?.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]
-      || html?.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
-    return { ok: true, kind: 'link', raw: og ? decodeHtmlEntities(og) : undefined }
+    // Unknown host that somehow passed the allowlist — refuse rather than
+    // fetch arbitrary OG tags (that was the SSRF footgun).
+    return { ok: false }
   } catch {
     return { ok: false }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Jake's thumbs-down: suppress this artist from Discovery permanently and
 // drop them from the current cache so the card vanishes on next read.
@@ -1400,7 +1305,7 @@ ipcMain.handle('discovery-learned', async () => {
 
     return { ok: true, summary: summariseLearning(rows, notForMe, weightsAt, Date.now()) }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'could not read the ledger' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1426,7 +1331,7 @@ ipcMain.handle('discovery-learned', async () => {
  * The renderer passes the card key so the rest can be precise; without one it
  * falls back to resting nothing rather than banning an artist you own.
  */
-ipcMain.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) => {
+ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
 
@@ -1451,15 +1356,15 @@ ipcMain.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: stri
     radarCache.candidates = radarCache.candidates.filter((c: { artist: string }) => normArtistKey(c.artist) !== key)
   }
   return { ok: true, scope: owned ? 'card' : 'artist' }
-})
+}, { refuse: REFUSED_SENDER })
 
 /** Un-suppress an artist — the undo that never existed. */
-ipcMain.handle('discovery-allow-again', async (_e, artist: string) => {
+ipc.handle('discovery-allow-again', async (_e, artist: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
   await discoveryFeedbackCache.update((cur) => { delete cur.notForMe[key]; return cur })
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Discover feed v2 — typed, multi-lane (song/album/artist × new/old). ──
 // See src/main/discover-feed.ts for the grounding rules. Replaces the
@@ -1740,7 +1645,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     }
     return { ok: true, lanes, generatedAt: nowMs }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'discover failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   } finally {
     discoverGenInFlight = false
   }
@@ -1932,7 +1837,7 @@ ipcMain.handle('get-new-music-radar', async (_e, force?: boolean) => {
     radarCache = { candidates, generatedAt: Date.now(), fingerprintSummary: fp.summary, anchors }
     return { ok: true, candidates, generatedAt: radarCache.generatedAt, fingerprintSummary: fp.summary, anchors }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'radar failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -1988,87 +1893,11 @@ ipcMain.handle('get-rediscovery', async (_e, force?: boolean) => {
     rediscoveryCache = { at: Date.now(), picks: pitched }
     return { ok: true, picks: pitched }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'rediscovery failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
-ipcMain.handle('load-app-settings', async () => {
-  try {
-    const data = await readFile(appSettingsPath(), 'utf-8')
-    return { ok: true, settings: JSON.parse(data) }
-  } catch {
-    return { ok: true, settings: null }   // missing file is fine — renderer applies defaults
-  }
-})
-
-ipcMain.handle('save-app-settings', async (_e, settings: Record<string, unknown>) => {
-  try {
-    await mkdir(app.getPath('userData'), { recursive: true })
-    await writeFile(appSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
-    // Refresh the cached host preference so subsequent prompt builds
-    // pick up the new value without an app restart.
-    const ai = (settings.ai as { aiHost?: 'mm' | 'megan'; exaApiKey?: string } | undefined)
-    cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
-    // 4.5: live-apply EXA_API_KEY into process.env so the next searchWeb
-    // call picks it up without an app restart. Same value also written
-    // to userData/.env so it survives restarts via the existing
-    // env-load fallback at the top of this file.
-    if (typeof ai?.exaApiKey === 'string') {
-      const key = ai.exaApiKey.trim()
-      if (key) {
-        process.env.EXA_API_KEY = key
-      } else {
-        delete process.env.EXA_API_KEY
-      }
-      // Mirror to userData/.env (idempotent rewrite of the EXA_API_KEY line)
-      try {
-        const envPath = join(app.getPath('userData'), '.env')
-        let existing = ''
-        try { existing = await readFile(envPath, 'utf-8') } catch { /* fresh file */ }
-        const lines = existing.split('\n').filter(l => !l.startsWith('EXA_API_KEY='))
-        if (key) lines.push(`EXA_API_KEY=${key}`)
-        await writeFile(envPath, lines.filter(l => l.trim()).join('\n') + '\n', 'utf-8')
-      } catch (err) {
-        console.warn('[save-app-settings] EXA_API_KEY .env write failed:', err)
-      }
-    }
-    // 4.4.13: reconfigure the inbox watcher on every save. Idempotent
-    // when nothing changed; instant pickup of toggle/path edits without
-    // an app restart. Errors are non-fatal — the save itself succeeded,
-    // so we return ok regardless and log the reconfigure failure.
-    try {
-      const inboxRaw = settings.inbox as { enabled?: boolean; path?: string } | undefined
-      const inboxConfig: InboxConfig = {
-        enabled: inboxRaw?.enabled !== false,         // default ON
-        path: typeof inboxRaw?.path === 'string' ? inboxRaw.path : '',
-      }
-      const result = await startOrReconfigureInboxWatcher(inboxConfig)
-      if (!result.ok) {
-        console.warn('[save-app-settings] inbox watcher reconfigure failed:', result.error)
-      }
-    } catch (err) {
-      console.warn('[save-app-settings] inbox watcher reconfigure threw:', err)
-    }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
-
-// 4.4.13 — Renderer's import queue calls this after a successful (or
-// dupe-skipped) import of a file that came from the inbox auto-import.
-// The watcher module path-gates the delete to its own watched directory
-// — even a corrupted/spoofed renderer can't ask main to rm an arbitrary file.
-ipcMain.handle('delete-inbox-source', async (_e, filePath: string) => {
-  return deleteInboxSource(filePath)
-})
-
-// SettingsModal queries this to populate the placeholder for the inbox
-// path input — so users see the resolved ~/Music2/_inbox path even when
-// they haven't picked a custom location yet.
-ipcMain.handle('get-default-inbox-path', async () => {
-  return { ok: true, path: getDefaultInboxPath() }
-})
+// App-settings + inbox IPC registered in ipc/settings-ipc.ts
 
 // 4.4.32 — Tour dates per Bandsintown for the user's top library
 // artists. Picks top 60 artists by aggregate playCount (with a +1
@@ -2337,16 +2166,25 @@ ipcMain.handle('get-notable-releases', async (): Promise<{ ok: boolean; items: M
 // the same window otherwise. Allowlisted to http/https schemes so a
 // corrupted renderer can't ask main to `open` arbitrary file:// or
 // custom-scheme URLs.
-ipcMain.handle('open-external-url', async (_e, url: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('open-external-url', async (_e, url: string): Promise<{ ok: boolean; error?: string }> => {
   if (typeof url !== 'string') return { ok: false, error: 'invalid url' }
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'only http(s) urls allowed' }
   try {
+    const parsed = new URL(url)
+    // Soft SSRF guard: don't open LAN / loopback from the privileged process.
+    if (isPrivateOrLocalHostname(parsed.hostname)) {
+      return { ok: false, error: 'local network urls are not allowed' }
+    }
+  } catch {
+    return { ok: false, error: 'invalid url' }
+  }
+  try {
     await shell.openExternal(url)
     return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  } catch {
+    return { ok: false, error: 'failed to open url' }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // The iMessage-capture setup chip's button. Fixed target, zero renderer
 // input — the http(s)-only rule above stays intact for everything else.
@@ -2373,7 +2211,7 @@ async function readAppSettingsAsync(): Promise<Record<string, unknown> | null> {
 // (which is called inside synchronous prompt-building paths). Refreshed
 // when settings are saved via the save-app-settings IPC, and bootstrapped
 // from disk on app whenReady. Default 'mm' until the first read lands.
-let cachedActiveHost: 'mm' | 'megan' = 'mm'
+// (Binding declared near mainWindow + settings IPC registration above.)
 async function refreshActiveHostFromSettings(): Promise<void> {
   const s = await readAppSettingsAsync()
   const ai = (s?.ai as { aiHost?: 'mm' | 'megan' } | undefined)
@@ -2387,7 +2225,7 @@ function readActiveHostSync(): 'mm' | 'megan' {
 // bubble can attribute a mic-button comment to the RIGHT persona — the
 // mic button routes through buildMusicManPrompt(), which swaps to
 // Megan when she's the chosen host, so the bubble must follow.
-ipcMain.handle('get-active-host', () => readActiveHostSync())
+ipc.handle('get-active-host', () => readActiveHostSync(), { public: true })
 
 // ── Persistent audio log ──────────────────────────────────────────────
 // Every diagnosis of the "it just sits at 0:00" failure needed a debugger
@@ -2408,17 +2246,6 @@ ipcMain.on('audio-log', (_e, line: string) => {
 // Suppliers, not values: activeHost changes when Jake switches host, and the
 // taste profile changes as he listens. Reading them at call time keeps both live.
 initPersonaPrompts({ activeHost: readActiveHostSync, tasteProfile: () => buildTasteProfile() })
-
-// Update the Claude daily ceiling immediately (mirrors what's saved in
-// app-settings.json). The wrapper at top of file reads claudeStats so
-// we update that in-memory and on disk.
-ipcMain.handle('set-claude-daily-ceiling', async (_e, ceiling: number) => {
-  await loadClaudeStats()
-  const safe = Math.max(1, Math.min(10000, Number(ceiling) || 200))
-  claudeStats.dailyCeiling = safe
-  await saveClaudeStats()
-  return { ok: true, dailyCeiling: safe }
-})
 
 async function createWindow(): Promise<void> {
   const saved = await loadWindowState()
@@ -2442,8 +2269,18 @@ async function createWindow(): Promise<void> {
     backgroundColor: '#f4f0e4',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      webSecurity: false,
+      // Explicit Electron secure defaults. webSecurity was historically
+      // false (custom-protocol CORS workaround); privileged schemes now
+      // cover ipod-audio / album-art / etc., so SOP stays on.
+      nodeIntegration: false,
+      contextIsolation: true,
+      // Preload only imports electron APIs (contextBridge, ipcRenderer,
+      // webUtils) — all available under Chromium sandbox. Verified against
+      // Electron 30 sandbox docs + this preload's import surface; no bare
+      // Node builtins (fs/path/child_process) in preload.
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       // Don't throttle the renderer when JakeTunes loses focus or the
       // window is hidden. Without this, Chromium's tab-throttling caps
       // JS execution at ~once/second when backgrounded, which crawls
@@ -2454,6 +2291,20 @@ async function createWindow(): Promise<void> {
   })
 
   if (saved?.isMaximized) mainWindow.maximize()
+
+  // Privileged window: never navigate to remote content or spawn child
+  // windows with the preload API. Dev Vite URL is the only non-file allow.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devUrl = isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+    const allowed =
+      (devUrl && url.startsWith(devUrl)) ||
+      url.startsWith('file://')
+    if (!allowed) event.preventDefault()
+  })
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(false)
+  })
 
   // Save window state on move/resize (debounced)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -3440,7 +3291,6 @@ let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "
 // believe it's really gone, and re-stat the last-known iTunesDB directly
 // (that read survives a /Volumes readdir hiccup) before counting a miss.
 let ipodMissStreak = 0
-const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
 
 // Wired up by the ipod-audio protocol handler inside app.whenReady().
 // Call with a list of absolute source-file paths to kick off background
@@ -3453,102 +3303,6 @@ let prewarmAlacCache: (paths: string[]) => Promise<void> = async () => { /* not 
 // bypass ffprobe entirely on the next access. Wired up alongside
 // prewarmAlacCache when the audio protocol handler initialises.
 let registerKnownCodec: (path: string, mtime: number, codec: string) => void = () => {}
-
-// Report the iPod's actual storage capacity by statting the mounted
-// volume. Previously the renderer hardcoded 64GB, which misreports
-// modded iPods (SD card swaps, etc.) as the wrong size.
-ipcMain.handle('get-ipod-capacity', async () => {
-  try {
-    if (!detectedIpodMount) {
-      detectedIpodMount = await findIpodMount()
-      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
-    }
-    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
-    const { statfs } = await import('fs/promises')
-    const s = await statfs(detectedIpodMount)
-    const totalBytes = Number(s.blocks) * Number(s.bsize)
-    const freeBytes = Number(s.bavail) * Number(s.bsize)
-    // Report the REAL filesystem. DeviceView hard-coded "Mac OS Extended
-    // (Journaled)" — flatly wrong for Jake's iFlash-modded Mini, which is
-    // FAT32/msdos. That matters beyond cosmetics: FAT32 vs HFS+ changes what a
-    // sync can assume (cluster geometry, the flapping fskit mount, cache
-    // behaviour), and the panel was asserting the opposite of reality.
-    let fsName: string | undefined
-    if (IS_MAC) {
-      try {
-        const { execFile: xf } = await import('child_process')
-        const { promisify: pf } = await import('util')
-        const { stdout } = await pf(xf)('/sbin/mount', [], { timeout: 5000 })
-        const line = stdout.split('\n').find((l: string) => l.includes(` on ${detectedIpodMount} `))
-        const m = line?.match(/\(([a-z0-9_]+)[,)]/i)
-        const raw = m?.[1]?.toLowerCase()
-        fsName = raw === 'msdos' ? 'MS-DOS (FAT32)'
-          : raw === 'hfs' ? 'Mac OS Extended (HFS+)'
-          : raw === 'apfs' ? 'APFS'
-          : raw === 'exfat' ? 'ExFAT'
-          : raw
-      } catch { /* leave undefined — the UI falls back to "Unknown" */ }
-    }
-    return { ok: true, totalBytes, freeBytes, mount: detectedIpodMount, fsName }
-  } catch (err) {
-    return { ok: false, error: String(err) }
-  }
-})
-
-ipcMain.handle('check-ipod-mounted', async () => {
-  try {
-    let mount = await findIpodMount()
-    // findIpodMount scans /Volumes, which can transiently miss a flapping
-    // fskit mount even while it's fully readable — re-stat the last-known
-    // iTunesDB directly before believing it's gone.
-    if (!mount && detectedIpodMount) {
-      try {
-        const { stat } = await import('fs/promises')
-        await stat(join(detectedIpodMount, 'iPod_Control', 'iTunes', 'iTunesDB'))
-        mount = detectedIpodMount
-      } catch { /* genuinely absent this poll */ }
-    }
-    if (mount) {
-      ipodMissStreak = 0
-      detectedIpodMount = mount
-      detectedIpodVolume = volumeNameFromMount(mount)
-      return { mounted: true, name: detectedIpodVolume }
-    }
-    // No mount this poll. If we recently had one, ride out a brief flap
-    // rather than yanking the iPod from the UI — only give up after a few
-    // consecutive misses (a real unplug clears within ~7.5s).
-    if (detectedIpodMount && ipodMissStreak < IPOD_MISS_THRESHOLD) {
-      ipodMissStreak++
-      return { mounted: true, name: detectedIpodVolume }
-    }
-    ipodMissStreak = 0
-    detectedIpodMount = null
-    detectedIpodVolume = null
-    return { mounted: false, name: null }
-  } catch {
-    return { mounted: false, name: null }
-  }
-})
-
-ipcMain.handle('eject-ipod', async () => {
-  try {
-    // Probe disk if module-level state is stale. Other handlers
-    // (readIpodDatabase, check-ipod-mounted) already do this. Without
-    // the probe, eject silently refused any time state desynced from
-    // disk reality — e.g. after sleep/wake or a sync remount.
-    if (!detectedIpodMount) {
-      detectedIpodMount = await findIpodMount()
-      detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
-    }
-    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected' }
-    await ejectVolume(detectedIpodMount)
-    detectedIpodMount = null
-    detectedIpodVolume = null
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: String(err) }
-  }
-})
 
 // Read directly from iPod database (used for sync only).
 // If the mount hasn't been detected yet (e.g. load-tracks fires before
@@ -3915,8 +3669,12 @@ const STATE_FILE_NAMES = [
   'playlists.json',
   'mobile-stars.json',
   'mobile-plays.json',
-  'mobile-playlists.json',
-  'playlist-additions.json',
+  // mobile-playlists.json + playlist-additions.json are deliberately ABSENT
+  // (2026-08-12): same single-writer contract as recommendations.json. The iOS
+  // backend on homemini owns both files. V3 only mirrors them read-only
+  // (Brief 121 + refreshPhoneAuthoredMirrors). A reconcile / auto-backup
+  // LOCAL→NAS push of a stale MacBook mirror is the whole-file clobber that
+  // made phone "Add to Playlist" look completely broken.
   // recommendations.json is deliberately ABSENT (Brief 125): the mobile backend
   // on homemini is the SINGLE writer of the shared recommendations files. V3
   // mutates only through its HTTP API — a reconcile push of V3's local copy is
@@ -4029,18 +3787,7 @@ async function stageCopyToTmp(srcPath: string, tmpPath: string): Promise<void> {
   } catch { /* fsync/open unsupported on this share — rename still makes it atomic */ }
 }
 
-ipcMain.handle('get-state-conflicts', (): {
-  mode: 'NAS' | 'local-primary'; nasDir: string; localDir: string; nasMounted: boolean; conflicts: StateConflict[];
-} => {
-  return {
-    mode: STATE_IS_NAS ? 'NAS' : 'local-primary',
-    nasDir: NAS_STATE_DIR_PATH,
-    localDir: app.getPath('userData'),
-    nasMounted: isNasMounted(),
-    conflicts: stateConflicts,
-  }
-})
-ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> => {
+async function handleReconcileStateConflicts(event: import('electron').IpcMainInvokeEvent): Promise<{ ok: boolean; pushed: number; backups: string[]; error?: string }> {
   if (!(await nasAvailable())) {
     return { ok: false, pushed: 0, backups: [], error: 'Synology not mounted or not responding — connect /Volumes/JakeShared and retry.' }
   }
@@ -4087,7 +3834,7 @@ ipcMain.handle('reconcile-state-conflicts', async (event): Promise<{ ok: boolean
   sendProgress('verify', '', total)
   await detectStateConflicts()
   return { ok: true, pushed, backups }
-})
+}
 
 // 4.5: automatic, silent NAS backup. Jake doesn't want a "local is ahead, go
 // click a button" banner — the backup should just happen. This pushes any
@@ -4367,7 +4114,7 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     await rename(tmp, fp)                                  // atomic: real file → symlink
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
 // Pull a streamed track's real bytes down from homemini into a local file (the
@@ -4390,7 +4137,7 @@ async function pinStreamedTrackFromHomemini(ipodPath: string): Promise<{ ok: boo
     await rename(tmp, fp)                                  // atomic: symlink → real file
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
 
@@ -4473,7 +4220,7 @@ ipcMain.handle('load-downloads-state', async (): Promise<{ pinned: string[]; str
   return { pinned: await readPins(), streaming }
 })
 
-ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
     if ((await readStreamSource()) === 'homemini') {
       // Laptop homemini mode: pull the real bytes over HTTP from homemini.
@@ -4496,11 +4243,11 @@ ipcMain.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boo
     if (!pins.includes(ipodPath)) { pins.push(ipodPath); await writePins(pins) }
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
     if ((await readStreamSource()) === 'homemini') {
       // Laptop homemini mode: re-stream. convertTrackToStreamed hash-verifies
@@ -4526,9 +4273,9 @@ ipcMain.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: bo
     await writePins((await readPins()).filter((p) => p !== ipodPath))
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.4.85: at app boot, read library.json and seed the codecByAbsPath map
 // from every track that has a `codec` field. Imports made before this
@@ -4808,19 +4555,17 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
 // overlap: an 8.6 MB pretty-printed write to SMB can outlast the next debounce.
 let librarySaveChain: Promise<unknown> = Promise.resolve()
 
-ipcMain.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+ipc.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
   // Only our own top-level window may rewrite the library. `ipcMain.handle`
   // answers any frame in the app, and the Bandcamp store runs a remote page
   // in a <webview> in this session.
-  const refused = refuseIfNotMainWindow(_e, mainWindow, 'save-library', { ok: false, error: 'refused-sender' } as const)
-  if (refused) return refused
   const run = librarySaveChain.then(
     () => saveLibraryImpl(tracks, playlists, force),
     () => saveLibraryImpl(tracks, playlists, force),
   )
   librarySaveChain = run.catch(() => {})
   return run
-})
+}, { refuse: REFUSED_SENDER })
 
 async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?: boolean) {
   // Bug #1 guard: if we booted in local-fallback mode and NAS later
@@ -5094,7 +4839,7 @@ function startLibraryWatcher() {
 }
 
 // Sync: read iPod DB and return NEW tracks/playlists not already in the library
-ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
+async function handleSyncIpodFromDevice(existingIds: number[]): Promise<unknown> {
   try {
     const ipodData = await readIpodDatabase()
     const knownIds = new Set(existingIds)
@@ -5119,7 +4864,7 @@ ipcMain.handle('sync-ipod', async (_e, existingIds: number[]) => {
   } catch (err) {
     return { ok: false, error: String(err), newTracks: [], playlists: [], totalIpod: 0 }
   }
-})
+}
 
 // Read the iPod's actual iTunesDB and return the full track + playlist
 // set. This is what iTunes used to call "On This iPod" — it's what the
@@ -5163,103 +4908,6 @@ ipcMain.handle('brain-status', async () => {
   } catch { /* none yet */ }
   return { ok: true, ...out }
 })
-
-ipcMain.handle('get-ipod-db-tracks', async () => {
-  try {
-    const ipodData = await readIpodDatabase()
-    return { ok: true, tracks: ipodData.tracks, playlists: ipodData.playlists, total: ipodData.tracks.length }
-  } catch (err) {
-    return { ok: false, error: String(err), tracks: [], playlists: [], total: 0 }
-  }
-})
-
-// ── Preview an iPod sync (REVIEW GATE, 2026-07-18) ──
-// Answers "what would this sync actually DO" using the SAME criteria the
-// copy planner uses: files that exist on the device (F00-F49 walk = ground
-// truth; the iTunesDB is a stale template after a gut and must NOT be
-// trusted for existence) and byte-size matches against the local source or
-// the cached AAC mirror. Read-only — never copies, never writes.
-ipcMain.handle('preview-ipod-sync', async (_e, tracks: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions) => {
-  try {
-    if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', plan: [], leaving: [] }
-    const IPOD_MOUNT = detectedIpodMount
-    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-    const pathSep = IS_WINDOWS ? '\\' : '/'
-    const { readdir: rd } = await import('fs/promises')
-    const { createHash } = await import('crypto')
-
-    // Ground truth: every real audio file on the device, by basename.
-    const filesByBasename = new Map<string, { path: string; size: number }>()
-    for (let i = 0; i < 50; i++) {
-      const sub = join(IPOD_MOUNT, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
-      const entries = await rd(sub).catch(() => [] as string[])
-      for (const fn of entries) {
-        if (fn.startsWith('._') || filesByBasename.has(fn)) continue
-        const full = join(sub, fn)
-        const st = await stat(full).catch(() => null)
-        if (st && st.isFile()) filesByBasename.set(fn, { path: full, size: st.size })
-      }
-    }
-
-    const claimed = new Set<string>()
-    const plan: Array<{ id: number; action: 'keep' | 'copy' }> = []
-    for (const t of tracks) {
-      const id = Number(t.id)
-      const colonPath = String(t.path || '')
-      if (!colonPath) { plan.push({ id, action: 'copy' }); continue }
-      const baseName = colonPath.split(':').pop() || ''
-      const dot = baseName.lastIndexOf('.')
-      const m4aName = dot > 0 ? baseName.slice(0, dot) + '.m4a' : baseName
-      const localFile = join(LOCAL_MOUNT, colonPath.replace(/:/g, pathSep))
-      const candNames = baseName === m4aName ? [baseName] : [baseName, m4aName]
-      let action: 'keep' | 'copy' = 'copy'
-      for (const nm of candNames) {
-        const dev = filesByBasename.get(nm)
-        if (!dev) continue
-        claimed.add(nm) // this device slot belongs to the set either way
-        // Mirrors the planner: byte-identical original = keep, unless a
-        // convert pass wants to shrink a (known-)lossless source.
-        const ls = await stat(localFile).catch(() => null)
-        if (ls && dev.size === ls.size) {
-          const ext2 = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
-          const hint = (codecByAbsPath.get(localFile) || '').toLowerCase()
-          const lossless = LOSSLESS_EXTS.has(ext2) || hint === 'alac' || LOSSLESS_CODECS.has(hint)
-          if (!(convertOptions?.enabled && lossless)) { action = 'keep'; break }
-        }
-        // Mirrors the copy loop's last-mile skip: a cached AAC mirror
-        // whose size matches the device file means zero bytes move.
-        if (convertOptions?.enabled) {
-          const hash = createHash('sha1').update(`${localFile}|${convertOptions.targetKbps}|afenc-cbr-44100-2-v3`).digest('hex').slice(0, 16)
-          const cs = await stat(join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR, `${hash}.m4a`)).catch(() => null)
-          if (cs && dev.size === cs.size) { action = 'keep'; break }
-        }
-      }
-      plan.push({ id, action })
-    }
-
-    // Leaving = real device files no track in the set claims. The post-sync
-    // orphan cleanup deletes exactly these. Titles best-effort from the DB.
-    const titleByColon = new Map<string, { title: string; artist: string }>()
-    try {
-      const db = await readIpodDatabase()
-      for (const dt of db.tracks as Array<Record<string, unknown>>) {
-        titleByColon.set(String(dt.path || ''), { title: String(dt.title || ''), artist: String(dt.artist || '') })
-      }
-    } catch { /* DB unreadable → basenames only */ }
-    const leaving: Array<{ path: string; title: string; artist: string }> = []
-    for (const [nm, f] of filesByBasename) {
-      if (claimed.has(nm)) continue
-      const rel = f.path.slice(IPOD_MOUNT.length + 1)
-      const colon = ':' + rel.split(pathSep).join(':')
-      const meta = titleByColon.get(colon)
-      leaving.push({ path: colon, title: meta?.title || nm, artist: meta?.artist || '' })
-    }
-    return { ok: true, plan, leaving, deviceFileCount: filesByBasename.size }
-  } catch (err) {
-    return { ok: false, error: String(err), plan: [], leaving: [] }
-  }
-})
-
 // ── Sync library TO iPod ──
 //
 // Content-safety invariant: this handler will REFUSE to commit the
@@ -5297,21 +4945,10 @@ const SYNC_HANG_TIMEOUT_MS = 5 * 60 * 1000
 // Reset to false at the top of every new runSyncToIpod call.
 let syncCancelRequested = false
 
-ipcMain.handle('cancel-sync', async () => {
-  if (!syncInFlight) return { ok: true, wasRunning: false }
-  syncCancelRequested = true
-  return { ok: true, wasRunning: true }
-})
 
-interface SyncConvertOptions {
-  enabled: boolean
-  targetKbps: 128 | 192 | 256
-}
 
-ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
+async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }): Promise<unknown> {
   // Same guard as save-library: this one writes to the iPod.
-  const refusedSync = refuseIfNotMainWindow(_e, mainWindow, 'sync-to-ipod', { ok: false, copied: 0, error: 'refused-sender' } as const)
-  if (refusedSync) return refusedSync
   // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
   // for full concerts). Drop the merged concert track AND any of its constituent
   // songs not individually reimported (promoted). A promoted song is a normal
@@ -5361,7 +4998,7 @@ ipcMain.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>
     syncInFlight = false
     syncStartedAt = 0
   }
-})
+}
 
 interface SyncReport {
   syncedAt: string
@@ -5507,12 +5144,7 @@ async function writeSyncJournal(phase: string | null): Promise<void> {
 }
 // Pull side (authoritative — no boot race): the renderer asks once its
 // UI is actually mounted.
-ipcMain.handle('get-ipod-sync-journal', async (): Promise<{ phase: string; at?: string } | null> => {
-  try {
-    const j = JSON.parse(await readFile(IPOD_SYNC_JOURNAL_FILE(), 'utf-8')) as { phase?: string; at?: string }
-    return j?.phase ? { phase: j.phase, at: j.at } : null
-  } catch { return null }
-})
+
 // Boot check: an un-cleared journal means the last sync never finished —
 // the iPod's database is stale and the device will misbehave until the
 // user syncs again. Nag every boot until a successful sync clears it.
@@ -6598,7 +6230,7 @@ ipcMain.handle('alac-compat-scan', async () => {
   })
 })
 
-ipcMain.handle('alac-compat-fix', async () => {
+ipc.handle('alac-compat-fix', async () => {
   const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/alac_compat_fix.py')
   return await new Promise<{ ok: boolean; error?: string; summary?: string }>((resolve) => {
     const py = spawn(PYTHON_CMD ?? 'python3', [script, '--apply'])
@@ -6630,7 +6262,7 @@ ipcMain.handle('alac-compat-fix', async () => {
       }
     })
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Import tracks from dropped files ──
 // Music library storage — Brief 011b three-tier resolution:
@@ -6765,42 +6397,8 @@ async function candidateMusicMounts(): Promise<string[]> {
   return out
 }
 
-const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.flac', '.alac', '.wav', '.aiff', '.aif', '.ogg'])
-
-// Recursively find audio files in directories
-async function resolveAudioPaths(paths: string[]): Promise<string[]> {
-  const { readdir: readdirFS, stat: statFS } = await import('fs/promises')
-  const results: string[] = []
-  // Dedupe by absolute path so a drag that contains the same file twice
-  // (e.g. user lassos overlapping selections) doesn't double-enqueue.
-  const seen = new Set<string>()
-  for (const p of paths) {
-    try {
-      const s = await statFS(p)
-      if (s.isDirectory()) {
-        const entries = await readdirFS(p, { withFileTypes: true })
-        const childPaths = entries.map(e => join(p, e.name))
-        const nested = await resolveAudioPaths(childPaths)
-        for (const n of nested) {
-          if (!seen.has(n)) { seen.add(n); results.push(n) }
-        }
-      } else {
-        const base = p.substring(p.lastIndexOf('/') + 1)
-        // Skip dotfiles: .DS_Store has no audio extension and was already
-        // filtered, but AppleDouble metadata forks (._01 Track.m4a, born
-        // when a macOS-created zip is unpacked on another OS) DO have
-        // audio extensions and would otherwise enter the queue, fail at
-        // import, and pad the visible total.
-        if (base.startsWith('.')) continue
-        const ext = p.substring(p.lastIndexOf('.')).toLowerCase()
-        if (AUDIO_EXTS.has(ext) && !seen.has(p)) {
-          seen.add(p); results.push(p)
-        }
-      }
-    } catch { /* skip inaccessible */ }
-  }
-  return results
-}
+// resolveAudioPaths lives in ipc/import-ipc.ts (shared with the
+// import-resolve-paths handler + session allowlist grants).
 
 // ── Per-file import primitive ──
 // Pulled out of the batch loop so the renderer-side queue can call it
@@ -7501,7 +7099,13 @@ async function importOneFile(
 // this once per item, in series, with retry on failure. Folders are
 // resolved before enqueuing in the renderer so this only ever sees
 // individual audio files.
-ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
+ipc.handle('import-track', async (_e, srcPath: string, id: number, preferredFormat?: string) => {
+  // Session allowlist — path must have come from the file picker, a
+  // drag-drop grant (webUtils), inbox emission, or folder expand.
+  if (!isImportPathAllowed(srcPath)) {
+    console.warn('[import-track] refused non-allowlisted path')
+    return { ok: false, error: 'path-not-allowed' }
+  }
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   // 4.0 Settings: when caller doesn't specify a format, fall back to the
   // user's preferred default from app-settings.json (Library tab).
@@ -7584,7 +7188,7 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
   }
 
   return r
-})
+}, { refuse: REFUSED_SENDER })
 
 // One-shot audio analysis for a single track. Used by §2.4b's backfill
 // scan UI (renderer drives the loop) and for any future on-demand
@@ -7594,7 +7198,7 @@ ipcMain.handle('import-track', async (_e, srcPath: string, id: number, preferred
 // Takes the track's colon-format path (the on-disk format used in
 // library.json); main resolves to an absolute path because renderer
 // doesn't know LOCAL_MOUNT.
-ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, fingerprint: string) => {
+ipc.handle('analyze-track', async (_e, trackId: number, colonPath: string, fingerprint: string) => {
   // Brief 010b: same null guard as processAudioAnalysisJob — skip
   // entirely (no sentinel write) when no librosa-equipped Python was
   // found at startup, so the failure is surfaced loud and the track
@@ -7620,10 +7224,10 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
   try {
     await persistOverrideFields(trackId, fields, fingerprint)
   } catch (err) {
-    return { ok: false, error: `persist failed: ${err instanceof Error ? err.message : err}` }
+    return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
   return result
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 010 Phase 4: queue-based audio analysis IPCs. The renderer
 // backfill button uses these instead of calling analyze-track per-track
@@ -7631,7 +7235,7 @@ ipcMain.handle('analyze-track', async (_e, trackId: number, colonPath: string, f
 // persistent queue (Phase 2) then handle pause/resume + survive-restart
 // for free. Renderer sends colon-path; main resolves to absolute path
 // using the same logic the analyze-track handler uses.
-ipcMain.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
+ipc.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: number; colonPath: string; fingerprint: string }>) => {
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
   // Dedupe against a Set instead of re-scanning the array per job, and persist
@@ -7649,7 +7253,7 @@ ipcMain.handle('audio-analysis:enqueue-many', async (_e, jobs: Array<{ trackId: 
   await persistQueue()
   kickAudioAnalysisWorker()
   return { ok: true, enqueued, totalQueued: audioAnalysisQueue.length }
-})
+}, { refuse: REFUSED_SENDER })
 
 ipcMain.handle('audio-analysis:status', async () => {
   return {
@@ -7660,27 +7264,24 @@ ipcMain.handle('audio-analysis:status', async () => {
   }
 })
 
-ipcMain.handle('audio-analysis:clear-queue', async () => {
+ipc.handle('audio-analysis:clear-queue', async () => {
   audioAnalysisQueue.length = 0
   await persistQueue()
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
-// Resolve folders + filter to audio extensions for the renderer queue.
-// Splits a single drop into its constituent files so the queue can show
-// progress per-file rather than per-folder.
-ipcMain.handle('import-resolve-paths', async (_e, paths: string[]) => {
-  try {
-    const resolved = await resolveAudioPaths(paths)
-    return { ok: true, paths: resolved }
-  } catch (err) {
-    return { ok: false, error: String(err) }
+// import-resolve-paths + import-pick-files + import-allow-dropped-paths
+// registered in ipc/import-ipc.ts (session allowlist grants).
+
+ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
+  if (!Array.isArray(filePaths) || filePaths.some((p) => !isImportPathAllowed(p))) {
+    console.warn('[import-tracks] refused non-allowlisted path(s)')
+    return { ok: false, error: 'path-not-allowed' }
   }
-})
-
-ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, preferredFormat?: string) => {
-  // Resolve folders into individual audio files
+  // Resolve folders into individual audio files; grant children so a
+  // future per-file retry via import-track still passes the allowlist.
   const resolvedPaths = await resolveAudioPaths(filePaths)
+  allowImportPaths(resolvedPaths)
   const imported: Array<Record<string, unknown>> = []
   const skippedDupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> = []
   // 4.4.12: artwork records returned to the renderer so it can dispatch
@@ -7785,7 +7386,7 @@ ipcMain.handle('import-tracks', async (_e, filePaths: string[], nextId: number, 
   }
 
   return { ok: true, tracks: imported, skippedDupes, artwork }
-})
+}, { refuse: REFUSED_SENDER })
 
 const MIME_TYPES: Record<string, string> = {
   '.mp3': 'audio/mpeg',
@@ -8485,133 +8086,6 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'playlist-cover', privileges: { bypassCSP: true, supportFetchAPI: true } }
 ])
 
-// ElevenLabs TTS
-ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
-  try {
-    // 4.0 Settings gate: Music Man voice can be turned off entirely from
-    // Preferences → AI. Caller still gets ok=true so flow continues; the
-    // empty audio just makes the renderer skip playback.
-    const settings = await readAppSettingsAsync()
-    const ai = (settings?.ai as { musicManVoiceEnabled?: boolean } | undefined)
-    if (ai && ai.musicManVoiceEnabled === false) {
-      return { ok: true, audio: '' }
-    }
-    // Voice selection priority: explicit voiceId arg (Radio Mode passes
-    // Megan's ID for her lines) > ELEVENLABS_VOICE_ID env override >
-    // public default Music Man voice. The env override is per-user; a
-    // value in userData/.env takes precedence over bundled .env.
-    // Default voice resolution: explicit voiceId arg wins. Otherwise,
-    // honor the user's host preference (4.2.5) — Megan if they picked
-    // her, Music Man otherwise. Env var override still works on top of
-    // both for users who want a custom Music Man voice clone.
-    const meganVoice = 'T7eLpgAAhoXHlrNajG8v'
-    const defaultByHost = readActiveHostSync() === 'megan'
-      ? meganVoice
-      : (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')
-    const voice = voiceId || defaultByHost
-    // Model selection:
-    //   - eleven_flash_v2_5  : ultra-low-latency, flatter delivery
-    //   - eleven_turbo_v2_5  : fast, retains emotional range
-    //   - eleven_v3          : alpha-gated, expressive, supports inline
-    //                          performance markers like [laughs],
-    //                          [whispers], [excited], [interrupts],
-    //                          [sarcastic], [sighs], [scoff], etc.
-    //                          When the script writes those brackets v3
-    //                          performs them rather than reading them.
-    //
-    // 4.3.1: v3 enabled for the long-form (non-fast) path now that the
-    // user's account has access. Mic-click one-shots stay on flash for
-    // the latency advantage. ELEVENLABS_V3 env var ('0' or 'false')
-    // forces a fallback to turbo_v2_5 if v3 ever errors out for the
-    // account — fail-soft escape hatch without requiring a rebuild.
-    const v3Enabled = (process.env.ELEVENLABS_V3 ?? '1') !== '0' && (process.env.ELEVENLABS_V3 ?? '1').toLowerCase() !== 'false'
-    // 4.3.4: per-call fallback. v3 is preferred for non-fast paths but
-    // not every voice/account combination supports it; if v3 returns a
-    // 4xx (e.g. "voice not v3-trained"), automatically retry with
-    // turbo_v2_5 so the segment still plays. Without this, a v3 error
-    // for one voice (e.g. the Announcer) silently dropped the segment
-    // and the user heard "no station ID."
-    const modelChain = fast
-      ? ['eleven_flash_v2_5']
-      : (v3Enabled ? ['eleven_v3', 'eleven_turbo_v2_5'] : ['eleven_turbo_v2_5'])
-    // 4.2.13: per-voice TTS settings. Different cast members need
-    // different deliveries. 4.4.0: caller settings now live in
-    // src/main/cast.ts — look up by voiceId.
-    const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
-    const DJ_HANDS_VOICE_ID   = 'ApBE43wHy5MiZGz9ihqB'
-    const callerByVoice = Object.values(CALLERS).find(c => c.voiceId === voice)
-    const voiceSettings =
-      voice === ANNOUNCER_VOICE_ID
-        ? {
-            // Big confident FM-radio drop — locked, punchy, no waver.
-            stability: 0.75,
-            similarity_boost: 0.85,
-            style: 0.45,
-            use_speaker_boost: true,
-          }
-        : callerByVoice
-          ? callerByVoice.voiceSettings  // per-caller settings from cast.ts
-          : voice === DJ_HANDS_VOICE_ID
-            ? {
-                // Stephen Hands — confident, party-DJ energy. 4.5: bumped
-                // style 0.3→0.5 and dropped stability 0.6→0.45 so v3 has
-                // more room to actually punch the "[excited] run it"
-                // beats rather than reading them as evenly as a weather
-                // report. Pre-4.5 he sounded monotone even on hype lines.
-                stability: 0.45,
-                similarity_boost: 0.8,
-                style: 0.55,
-                use_speaker_boost: true,
-              }
-            : {
-                // MM / Megan — emotional, reactive, theatrical banter.
-                // 4.5: dropped stability 0.28→0.20 and bumped style
-                // 0.7→0.85 so v3 leans further into the inline tags
-                // ([scoff]/[laughs]/[sighs]) Claude now writes per the
-                // core prompts. Higher style + lower stability = more
-                // variation per phoneme = more "human" delivery.
-                stability: 0.2,
-                similarity_boost: 0.7,
-                style: 0.85,
-                use_speaker_boost: true,
-              }
-    let lastError = ''
-    for (const model of modelChain) {
-      try {
-        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-          method: 'POST',
-          headers: {
-            'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text,
-            model_id: model,
-            voice_settings: voiceSettings,
-          })
-        })
-        if (!res.ok) {
-          lastError = await res.text()
-          console.warn(`[TTS] ${model} failed for voice ${voice.slice(0, 8)}…: ${res.status} ${lastError.slice(0, 200)}`)
-          continue  // try next model in chain
-        }
-        const arrayBuf = await res.arrayBuffer()
-        if (model !== modelChain[0]) {
-          console.log(`[TTS] fell back to ${model} for voice ${voice.slice(0, 8)}…`)
-        }
-        return { ok: true, audio: Buffer.from(arrayBuf).toString('base64') }
-      } catch (err: unknown) {
-        lastError = err instanceof Error ? err.message : String(err)
-        console.warn(`[TTS] ${model} threw for voice ${voice.slice(0, 8)}…: ${lastError}`)
-      }
-    }
-    return { ok: false, error: lastError || 'all TTS models failed' }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, error: msg }
-  }
-})
-
 // Music Man DJ commentary
 // 4.5: hover-prefetch of artist facts. Wired to the mic button hover so
 // that by the time the user clicks, the Wikipedia + MusicBrainz round
@@ -8619,14 +8093,14 @@ ipcMain.handle('musicman-speak', async (_event, text: string, fast?: boolean, vo
 // 1500 ms sooner. Fire-and-forget — the handler returns immediately
 // (resolving once the lookup either hits cache or completes), and the
 // renderer never depends on the return value.
-ipcMain.handle('musicman-prefetch-facts', async (_event, track: { artist: string; album: string }) => {
+ipc.handle('musicman-prefetch-facts', async (_event, track: { artist: string; album: string }) => {
   try {
     await searchWebCached(`${track.artist} musician`, track.album)
     return { ok: true }
   } catch {
     return { ok: false }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5: streaming variant of musicman-dj for the mic button. Same prompt
 // + persona logic as the non-streaming handler above, but emits each
@@ -8636,7 +8110,7 @@ ipcMain.handle('musicman-prefetch-facts', async (_event, track: { artist: string
 // (Stephen-only) so the renderer can fire TTS and audio playback on the
 // completed string. Non-streaming handler stays for DJ Mode transitions
 // where the auto-DJ doesn't need the typing UX.
-ipcMain.handle('musicman-dj-streaming', async (event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
+ipc.handle('musicman-dj-streaming', async (event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
   const isStephen = persona === 'stephen'
   const djInstructions = isStephen
     ? `A track is on. Give a Stephen Hands DJ comment. Pure Stephen voice — short, hyped, party-first. Usually one beat is the whole comment; two beats if the second one earns it. NEVER pad to hit a meter; never explain a banger.`
@@ -8702,12 +8176,12 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for f
     return { ok: true, text }
   } catch (err: unknown) {
     void saveClaudeStats()
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
+ipc.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
   // 4.4.0: persona override. The mic button (one-shot commentary on the
   // current track) keeps Music Man as the host. DJ Mode (continuous
   // AI-DJ between-track commentary) routes through Stephen Hands —
@@ -8788,10 +8262,10 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
     }
     return { ok: true, text, transition }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}` }
+    const msg = safeIpcError(err, 'api-failed')
+    return { ok: false, text: msg, error: msg }
   }
-})
+}, { refuse: { ok: false, text: '', error: 'refused-sender' } as const })
 
 // Music Man Radio Mode — between-song commentary in classic FM-radio
 // style (call sign, station ID, back-announce, hype-up). Distinct from
@@ -8802,7 +8276,7 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
 // `opener=true` flips the prompt into "welcome to the show" mode for
 // the very first segment when the user clicks Radio on. Without this
 // the show feels like it starts mid-sentence.
-ipcMain.handle('musicman-radio', async (_event,
+ipc.handle('musicman-radio', async (_event,
   track: { title: string; artist: string; album: string; genre: string; year: string | number },
   nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number },
   opener?: boolean,
@@ -9154,25 +8628,14 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     }
     return { ok: true, text }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}` }
+    const msg = safeIpcError(err, 'api-failed')
+    return { ok: false, text: msg, error: msg }
   }
-})
+}, { refuse: { ok: false, text: '', error: 'refused-sender' } as const })
 
-// 4.3.2: clear radio memory — wired up to the user's "stop Radio Mode"
-// gesture. Without this the show carries memory across sessions, which
-// can be a feature OR can feel stale if the user wants a fresh start.
-ipcMain.handle('clear-radio-memory', async () => {
-  try {
-    await clearMemory()
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
 
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
-ipcMain.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
+ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
   // 4.5.0-88 — RAG candidate pool for DJ-set. No user mood string
   // here (the IPC just says "pick a set"), so seed with a generic
   // danceable-vibe query to bias retrieval toward party-flow tracks
@@ -9237,10 +8700,10 @@ Rules:
     }
     return { ok: false, error: 'Could not parse DJ set' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Discogs Collection — Music Man knows your vinyl/CD collection ──
 const DISCOGS_CACHE_PATH = join(app.getPath('userData'), 'discogs-collection.json')
@@ -9315,17 +8778,6 @@ async function fetchDiscogsCollection() {
     console.error('Discogs fetch error:', err)
   }
 }
-
-ipcMain.handle('get-listening-memory', async () => getListeningMemory())
-
-// Called when a song finishes playing (not skipped)
-ipcMain.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) => recordPlay(track))
-
-// Called when a song is skipped (next button pressed before song finishes)
-ipcMain.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) => recordSkip(track))
-
-// Called when user rates a track highly (4-5 stars)
-ipcMain.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) => recordRating(track))
 
 
 // Periodically generate new Music Man observations (called after every ~20 plays)
@@ -9440,75 +8892,9 @@ function logHiveMindInteraction(entry: HiveMindEntry): void {
 //
 // Music Man is the front of the house — opinions, DJ banter, recommendations.
 // Cynthia is the back office — metadata, organization, missing tracks, wrong
-// track numbers, misspellings. They share the same library context and her
-// summaries get fed into Music Man's rolling memory so he can reference her
-// findings in conversation ("yeah, my archivist says you're missing the
-// last two cuts off Disc 2").
-//
-// She's wired up with proper Anthropic tool-use — first persona in the app
-// to actually call tools iteratively. One tool available:
-//   1. musicbrainz_album_lookup (custom client tool) — canonical track
-//      listings. THE killer tool for "find missing tracks" / "fix track
-//      numbers" questions, because MusicBrainz IS the authoritative source.
-//      No web search — Cynthia's knowledge of music is fixed (her own
-//      taste profile in CYNTHIA_CHAT_CORE) and her data work is grounded
-//      in MusicBrainz only. We don't want her chasing trends or scraping
-//      random sites to look helpful.
-
-
-// Best-effort repair for malformed JSON from Cynthia. Two common failure
-// modes:
-//   1. Curly quotes (' ' " ") that the LLM picked up from training data.
-//   2. Unescaped " inside a "reason" string — the model writes a reason
-//      that quotes a track title, ships "Run Like Hell" as bare text in
-//      the middle of a JSON string, and JSON.parse blows up at that point.
-//
-// Strategy: walk the JSON char-by-char. Inside a string, if we hit a "
-// that isn't followed by JSON-structural punctuation (,:}]) or another
-// key boundary, treat it as an inner quote and escape it. This is
-// heuristic, not a full parser — it's "salvage what we can" not "always
-// produce valid JSON". If the repair still fails to parse, the caller
-// surfaces the error as before.
-function repairCynthiaJson(raw: string): string {
-  // Replace curly/smart quotes with ASCII equivalents. Won't accidentally
-  // change content that the model intentionally escaped because we only
-  // touch the curly variants.
-  let s = raw
-    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
-    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-
-  // Walk through and escape stray " inside string values.
-  const out: string[] = []
-  let inString = false
-  let prev = ''
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]
-    if (ch === '"' && prev !== '\\') {
-      if (!inString) {
-        // Starting a string.
-        inString = true
-        out.push(ch)
-      } else {
-        // Potentially ending a string. Peek the next non-space char.
-        let j = i + 1
-        while (j < s.length && /\s/.test(s[j])) j++
-        const next = s[j] || ''
-        if (next === ',' || next === '}' || next === ']' || next === ':') {
-          // Legitimate string terminator.
-          inString = false
-          out.push(ch)
-        } else {
-          // Unescaped inner quote — escape it.
-          out.push('\\"')
-        }
-      }
-    } else {
-      out.push(ch)
-    }
-    prev = ch
-  }
-  return out.join('')
-}
+// track numbers, misspellings. Investigate/chat/report IPC lives in
+// ipc/cynthia-ipc.ts; MB lookup + embedded-tag reads stay here for the
+// sweep hooks and CynthiaIpcHost.
 
 
 // MusicBrainz album lookup with full track listings (the killer tool for
@@ -9599,49 +8985,8 @@ async function musicBrainzAlbumLookup(artist: string, album: string): Promise<st
   }
 }
 
-// Cynthia's tool loop — issues messages.create with the custom
-// musicbrainz tool, executes any custom tool calls, feeds results back, and
-// stops when the model returns end_turn (or after a safety cap of iterations).
-//
-// Returns the final assistant text (which Cynthia is instructed to format as
-// a single fenced JSON block).
-type CynthiaTrackInScope = {
-  id: number
-  title: string
-  artist: string
-  album: string
-  albumArtist: string
-  trackNumber: number | string
-  trackCount: number | string
-  discNumber: number | string
-  discCount: number | string
-  year: number | string
-  genre: string
-  duration: number  // ms
-}
-
-interface CynthiaInvestigateInput {
-  userPrompt: string
-  scope: {
-    type: 'tracks' | 'album' | 'artist' | 'playlist'
-    label: string
-    tracks: CynthiaTrackInScope[]
-  }
-}
-
-// The investigation pipeline used to be a single IPC handler. It now lives
-// in this function so it can also be invoked from inside the cynthia-chat
-// handler as a "deep_investigate" tool that Haiku calls when it needs the
-// big-model treatment (MusicBrainz, web search, structured fixes).
-//
-// Two-model architecture:
-//   - Haiku 4.5 fronts the chat — fast, terse, conversational.
-//   - When the user actually wants Cynthia to *check* or *fix* something,
-//     Haiku calls deep_investigate, which spins up Sonnet 4.6 with the
-//     real toolkit and returns a structured report.
-// Cynthia overhaul — read_file_tags tool: batch-read embedded tags for
-// track ids via core/tag_reader.py (same stdin-JSON contract as the
-// sync-to-iPod verifier's batch read further up this file).
+// Cynthia overhaul — read_file_tags host helper for cynthia-ipc:
+// batch-read embedded tags via core/tag_reader.py.
 async function readEmbeddedTagsForCynthia(trackIds: number[]): Promise<string> {
   try {
     if (trackIds.length === 0) return JSON.stringify({ error: 'no track ids given' })
@@ -9679,396 +9024,6 @@ async function readEmbeddedTagsForCynthia(trackIds: number[]): Promise<string> {
     return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
   }
 }
-
-// Cynthia overhaul — pre-gather deterministic evidence for a scope so the
-// model starts INFORMED: the scanner's findings/flags plus the cached
-// MusicBrainz diff for each distinct album in scope. This is what
-// collapses the old 8×(model + 1s MB) tool loop to usually zero rounds.
-async function gatherCynthiaEvidence(scope: CynthiaInvestigateInput['scope']): Promise<string> {
-  try {
-    const byAlbum = new Map<string, CynthiaScanTrack[]>()
-    for (const t of scope.tracks) {
-      const key = albumKeyOfMain(t)
-      const arr = byAlbum.get(key)
-      if (arr) arr.push(t as CynthiaScanTrack)
-      else byAlbum.set(key, [t as CynthiaScanTrack])
-    }
-    const sections: string[] = []
-    for (const [, tracks] of byAlbum) {
-      const artist = String(tracks[0].albumArtist || tracks[0].artist || '')
-      const album = String(tracks[0].album || '')
-      const scan = cynthiaScanAlbum(tracks)
-      const lines: string[] = [`Album: ${artist} — ${album}`]
-      if (scan.findings.length > 0) {
-        lines.push(`Deterministic scan findings (already verified, cite source 'internal-consistency'):`)
-        for (const f of scan.findings.slice(0, 30)) {
-          lines.push(`  - track ${f.trackId} ${f.field}: '${f.oldValue}' -> '${f.newValue}' (${f.reason})`)
-        }
-      }
-      if (scan.flags.length > 0) {
-        lines.push(`Scan observations: ${scan.flags.map(fl => fl.detail).join('; ')}`)
-      }
-      // MB diff only when a fresh cached lookup exists or scope is album-sized;
-      // interactive calls shouldn't stall on cold MB fetches for huge scopes.
-      if (tracks.length >= 3 && byAlbum.size <= 3) {
-        try {
-          const { raw, fromCache } = await getCachedMbRelease(artist, album, musicBrainzAlbumLookup)
-          const mb = JSON.parse(raw) as MbLookupResult
-          const diff = diffAgainstMusicBrainz(tracks, mb, { artist, album })
-          if (mb.chosenRelease) {
-            lines.push(`MusicBrainz canonical (${fromCache ? 'cached' : 'fresh'}): '${mb.chosenRelease.title}' by ${mb.chosenRelease.artist}, date ${mb.chosenRelease.date || '?'} — ${mb.canonicalTrackCount || 0} tracks; exactMatch=${diff.exactMatch}, ambiguousEditions=${diff.ambiguous}`)
-          }
-          if (diff.findings.length > 0) {
-            lines.push(`Canonical diff findings (cite source 'musicbrainz'):`)
-            for (const f of diff.findings.slice(0, 30)) {
-              lines.push(`  - track ${f.trackId} ${f.field}: '${f.oldValue}' -> '${f.newValue}' (${f.reason})`)
-            }
-          }
-          if (diff.missingTracks.length > 0) {
-            lines.push(`Missing vs canonical: ${diff.missingTracks.map(m => `d${m.discNumber}t${m.trackNumber} '${m.title}'`).join(', ')}`)
-          }
-        } catch { /* evidence is best-effort */ }
-      }
-      sections.push(lines.join('\n'))
-    }
-    return sections.join('\n\n')
-  } catch {
-    return ''
-  }
-}
-
-async function runCynthiaInvestigation(
-  userPrompt: string,
-  scope: CynthiaInvestigateInput['scope'],
-): Promise<{ ok: boolean; summary?: string; fixes?: unknown[]; missingTracks?: unknown[]; rationale?: string; error?: string; text?: string }> {
-  const trackTable = scope.tracks.map(t =>
-    `${t.id}|${t.title}|${t.artist}|${t.album}|${t.albumArtist || ''}|disc ${t.discNumber || 1} track ${t.trackNumber || '?'}|${t.year || ''}|${t.genre || ''}|${Math.round((t.duration || 0) / 1000)}s`
-  ).join('\n')
-
-  const evidence = await gatherCynthiaEvidence(scope)
-
-  const userMessage = `The user (your boss's boss, basically) just right-clicked on ${scope.type === 'album' ? `the album "${scope.label}"` : scope.type === 'artist' ? `the artist "${scope.label}"` : scope.type === 'playlist' ? `the playlist "${scope.label}"` : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`} and said:
-
-"${userPrompt}"
-
-Tracks in scope (id|title|artist|album|albumArtist|disc/track|year|genre|duration):
-${trackTable}
-${evidence ? `\nEVIDENCE (pre-gathered deterministically — read this before reaching for tools):\n${evidence}\n` : ''}
-Investigate. Use your tools only for what the evidence doesn't already answer. Then return your JSON report.`
-
-  const tools: Anthropic.Messages.ToolUnion[] = [
-    {
-      name: 'musicbrainz_album_lookup',
-      description: 'Look up canonical track listings for a music release on MusicBrainz. Returns the authoritative track order, durations, and disc layout for an album. Check the EVIDENCE section first — the canonical diff may already be there. Returns a JSON object with chosenRelease, canonicalTracks, otherCandidates.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          artist: { type: 'string', description: 'The album artist exactly as you want to search for it (e.g. "Pink Floyd")' },
-          album:  { type: 'string', description: 'The album title (e.g. "Is There Anybody Out There? The Wall Live")' },
-        },
-        required: ['artist', 'album'],
-      },
-    },
-    {
-      name: 'discogs_release_lookup',
-      description: 'Pressing-level release facts from Discogs: year, country, label, format. Use as a second opinion on edition/year questions when MusicBrainz is thin or contradicted.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          artist: { type: 'string' },
-          album:  { type: 'string' },
-        },
-        required: ['artist', 'album'],
-      },
-    },
-    {
-      name: 'wikidata_artist_lookup',
-      description: 'Structured artist facts from Wikidata: formed/dissolved years, members, labels, genres, hometown. Use to settle artist-identity questions (same-name artists) and era sanity checks.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          artist: { type: 'string' },
-        },
-        required: ['artist'],
-      },
-    },
-    {
-      name: 'read_file_tags',
-      description: "Read the EMBEDDED tags inside the user's actual audio files for the in-scope track ids (title/artist/album/duration as written in the files). Strong evidence when you suspect the library entry and the file disagree.",
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          trackIds: { type: 'array', items: { type: 'number' }, description: 'Track ids from the in-scope list (max 30)' },
-        },
-        required: ['trackIds'],
-      },
-    },
-  ]
-
-  const messages: Anthropic.Messages.MessageParam[] = [
-    { role: 'user', content: userMessage },
-  ]
-
-  const systemPrompt = buildCynthiaPrompt()
-  let response: Anthropic.Messages.Message
-  let safety = 0
-  const MAX_TOOL_ROUNDS = 8
-
-  try {
-    response = await claudeCall('cynthia-investigate-init', {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      system: systemPrompt,
-      tools,
-      messages,
-    })
-
-    while (response.stop_reason === 'tool_use' && safety++ < MAX_TOOL_ROUNDS) {
-      messages.push({ role: 'assistant', content: response.content })
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
-      for (const block of response.content) {
-        if (block.type !== 'tool_use') continue
-        if (block.name === 'musicbrainz_album_lookup') {
-          const input = block.input as { artist?: string; album?: string }
-          // Cynthia overhaul: route through the 7-day disk cache — repeat
-          // lookups (and anything the sweep already fetched) are instant.
-          const { raw } = await getCachedMbRelease(input.artist || '', input.album || '', musicBrainzAlbumLookup)
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: raw })
-        } else if (block.name === 'discogs_release_lookup') {
-          const input = block.input as { artist?: string; album?: string }
-          const hit = await getDiscogsReleaseInfo(input.artist || '', input.album || '').catch(() => null)
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(hit ?? { note: 'no Discogs match' }) })
-        } else if (block.name === 'wikidata_artist_lookup') {
-          const input = block.input as { artist?: string }
-          const hit = await getWikidataArtist(input.artist || '').catch(() => null)
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(hit ?? { note: 'no Wikidata match' }) })
-        } else if (block.name === 'read_file_tags') {
-          const input = block.input as { trackIds?: number[] }
-          const result = await readEmbeddedTagsForCynthia((input.trackIds || []).slice(0, 30))
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
-        }
-      }
-      if (toolResults.length === 0) break
-      messages.push({ role: 'user', content: toolResults })
-      response = await claudeCall('cynthia-investigate-tool', {
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8192,
-        system: systemPrompt,
-        tools,
-        messages,
-      })
-    }
-
-    const text = response.content
-      .filter((b: Anthropic.Messages.ContentBlock) => b.type === 'text')
-      .map((b: Anthropic.Messages.ContentBlock) => (b as Anthropic.Messages.TextBlock).text)
-      .join('\n')
-      .trim()
-
-    const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/)
-    const bare = !fenced ? text.match(/\{[\s\S]*\}/) : null
-    const rawJson = (fenced?.[1] || bare?.[0] || '').trim()
-    if (!rawJson) {
-      return { ok: false, error: 'Cynthia gave a non-JSON answer.', text }
-    }
-    let parsed: { summary?: string; fixes?: unknown[]; missingTracks?: unknown[]; rationale?: string }
-    try {
-      parsed = JSON.parse(rawJson)
-    } catch {
-      try {
-        parsed = JSON.parse(repairCynthiaJson(rawJson))
-      } catch (secondErr: unknown) {
-        const msg = secondErr instanceof Error ? secondErr.message : String(secondErr)
-        return { ok: false, error: `Could not parse Cynthia's JSON: ${msg}`, text }
-      }
-    }
-
-    // Cynthia overhaul — the grounding rule is ENFORCED, not requested:
-    // a fix without a recognized source is dropped before the user sees it.
-    const VALID_SOURCES = new Set(['musicbrainz', 'discogs', 'wikidata', 'file-tags', 'internal-consistency'])
-    const rawFixes = Array.isArray(parsed.fixes) ? parsed.fixes : []
-    const sourcedFixes = rawFixes.filter((f) => {
-      const src = (f as { source?: string })?.source
-      return typeof src === 'string' && VALID_SOURCES.has(src)
-    })
-    if (rawFixes.length > sourcedFixes.length) {
-      console.warn(`[cynthia] dropped ${rawFixes.length - sourcedFixes.length} unsourced fix(es)`)
-    }
-
-    return {
-      ok: true,
-      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-      fixes: sourcedFixes,
-      missingTracks: Array.isArray(parsed.missingTracks) ? parsed.missingTracks : [],
-      rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
-    }
-  } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-}
-
-ipcMain.handle('cynthia-investigate', async (_event, input: CynthiaInvestigateInput) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
-  }
-  const { userPrompt, scope } = input
-  if (!userPrompt?.trim() || !scope?.tracks?.length) {
-    return { ok: false, error: 'Cynthia needs a prompt and at least one track in scope.' }
-  }
-  return runCynthiaInvestigation(userPrompt, scope)
-})
-
-// Conversational front of Cynthia. Haiku 4.5 talks to the user in short
-// replies. When the user wants something checked or fixed, Haiku calls
-// deep_investigate, which fires the full Sonnet+MusicBrainz pipeline and
-// returns structured results that the renderer attaches to Haiku's reply.
-const CYNTHIA_CHAT_CORE = `You are Cynthia, the digital file archivist for JakeTunes. You're chatting with the user in a small popover. You came up on Grateful Dead bootlegs and never quite left, and it shows in your pace — easy-going, a little understated, never in a hurry. You're not performing the hippie thing. It's just how you are.
-
-VOICE:
-- One or two short sentences. Three max, and only if you have a reason.
-- Plain English, low-stakes phrasing. "Track checks out" beats "I have verified the metadata." "A bit messy" beats "this is incorrect." "Couldn't find much on that" beats "I was unable to locate sufficient information."
-- Slight understatement. "Pretty solid." "Not bad." "Holds up."
-- Don't say "groovy," "far out," "right on," "vibes," "dude." The mellowness is in your rhythm, not your vocabulary. Saying those would be trying too hard.
-- Don't restate the user's question. Don't apologize. Never use emojis.
-- When you don't know, just say so plainly. "Not sure, honestly."
-
-YOUR TASTE — fixed, do not look it up:
-You have an actual taste profile. It does not change. You do not research what's currently hot or trending — that's not your scene and trends aren't real anyway. You only ever express opinions about music if (a) the user asks, AND (b) it's in your zone.
-
-Your zone: Grateful Dead, The Band, Allman Brothers, Phish, Pink Floyd, Led Zeppelin, Hendrix, Janis Joplin, Dylan, Neil Young, CSN(Y), Joni Mitchell, Van Morrison, Marley, Curtis Mayfield, Sly & The Family Stone, Stevie Wonder, Velvet Underground, Modern Lovers, Talking Heads, Wilco, My Morning Jacket, Wolf Parade, Iron & Wine, Bon Iver, Big Thief, Sufjan Stevens, Built to Spill, Pavement, Yo La Tengo. Folk-rock, psych, jam, soul, reggae, americana, indie rock with feeling, slowcore, sad-bastard stuff.
-
-Outside your zone: mainstream pop, top-40 country, EDM, hyperpop, most modern rap. You'll fix the metadata politely. You don't have anything to say about it.
-
-OPINION RULES:
-- User did not ask for an opinion → don't give one. Just do the metadata work.
-- User asked AND it's in your zone → one or two sentences of low-key opinion. "Mm, this one's nice. The '77 run hits harder but this holds up." Reference specifics if you know them, but don't show off.
-- User asked AND it's outside your zone → "Not really my scene, can't help you there. Metadata looks fine though." Or similar. No fake enthusiasm.
-- Never claim something is "trending" or "popular right now." You don't know and don't care.
-
-DECIDING WHAT TO DO:
-- User asked you to investigate, check, fix, find missing tracks, normalize anything → call deep_investigate. That's the heavy tool.
-- User is just chatting, clarifying, or expressing a preference → answer in text. No deep_investigate.
-- User already saw a fix list and says "do it" / "apply" → tell them to hit Apply on the card; you don't apply yourself.`
-
-interface CynthiaChatInput {
-  scope: CynthiaInvestigateInput['scope']
-  messages: { role: 'user' | 'assistant'; content: string }[]
-}
-
-ipcMain.handle('cynthia-chat', async (_event, input: CynthiaChatInput) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return { ok: false, error: 'ANTHROPIC_API_KEY missing — Cynthia is on break.' }
-  }
-  const { scope, messages } = input
-  if (!scope?.tracks?.length || !messages?.length) {
-    return { ok: false, error: 'Cynthia needs a scope and at least one message.' }
-  }
-
-  const scopeLabel = scope.type === 'album' ? `the album "${scope.label}"`
-    : scope.type === 'artist' ? `the artist "${scope.label}"`
-    : scope.type === 'playlist' ? `the playlist "${scope.label}"`
-    : `${scope.tracks.length} track${scope.tracks.length !== 1 ? 's' : ''}`
-
-  const trackBrief = scope.tracks.slice(0, 30).map(t =>
-    `${t.id}: ${t.title} — ${t.artist} — ${t.album} (disc ${t.discNumber || 1} #${t.trackNumber || '?'})`
-  ).join('\n')
-
-  const systemPrompt = `${CYNTHIA_CHAT_CORE}
-
-The user right-clicked on ${scopeLabel}. The in-scope tracks are:
-${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)` : ''}`
-
-  const tools: Anthropic.Messages.ToolUnion[] = [
-    {
-      name: 'deep_investigate',
-      description: 'Run a thorough metadata investigation on the in-scope tracks. Calls MusicBrainz via the Sonnet model, identifies missing tracks, and proposes concrete fixes. Use this whenever the user wants you to check, verify, or fix something concrete about the data. Do NOT use for casual chat.',
-      input_schema: {
-        type: 'object' as const,
-        properties: {
-          prompt: { type: 'string', description: 'A clear instruction describing what should be investigated or fixed (e.g. "check the track numbers and disc count against MusicBrainz canonical").' },
-        },
-        required: ['prompt'],
-      },
-    },
-  ]
-
-  // Convert renderer-side messages (just role/content text) into Anthropic format.
-  const apiMessages: Anthropic.Messages.MessageParam[] = messages.map(m => ({
-    role: m.role,
-    content: m.content,
-  }))
-
-  let investigation: Awaited<ReturnType<typeof runCynthiaInvestigation>> | null = null
-
-  try {
-    let response = await claudeCall('cynthia-chat-init', {
-      model: 'claude-haiku-4-5',
-      max_tokens: 512,
-      system: systemPrompt,
-      tools,
-      messages: apiMessages,
-    })
-
-    let safety = 0
-    while (response.stop_reason === 'tool_use' && safety++ < 3) {
-      apiMessages.push({ role: 'assistant', content: response.content })
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
-      for (const block of response.content) {
-        if (block.type === 'tool_use' && block.name === 'deep_investigate') {
-          const args = block.input as { prompt?: string }
-          const result = await runCynthiaInvestigation(args.prompt || '', scope)
-          investigation = result
-          // Hand Haiku a compact summary of what the deep model produced so
-          // she can write a terse natural-language reply on top of it.
-          const briefForHaiku = result.ok
-            ? `deep_investigate result:\nsummary: ${result.summary || '(none)'}\nfixes: ${(result.fixes || []).length}\nmissingTracks: ${(result.missingTracks || []).length}`
-            : `deep_investigate failed: ${result.error || 'unknown error'}`
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: briefForHaiku })
-        }
-      }
-      if (toolResults.length === 0) break
-      apiMessages.push({ role: 'user', content: toolResults })
-      response = await claudeCall('cynthia-chat-tool', {
-        model: 'claude-haiku-4-5',
-        max_tokens: 512,
-        system: systemPrompt,
-        tools,
-        messages: apiMessages,
-      })
-    }
-
-    const text = response.content
-      .filter((b: Anthropic.Messages.ContentBlock) => b.type === 'text')
-      .map((b: Anthropic.Messages.ContentBlock) => (b as Anthropic.Messages.TextBlock).text)
-      .join('\n')
-      .trim()
-
-    return {
-      ok: true,
-      text: text || (investigation?.ok ? (investigation.summary || '') : ''),
-      investigation: investigation?.ok ? {
-        summary: investigation.summary || '',
-        fixes: investigation.fixes || [],
-        missingTracks: investigation.missingTracks || [],
-        rationale: investigation.rationale || '',
-      } : null,
-    }
-  } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
-
-// After the user approves Cynthia's fixes, the renderer calls this so her
-// summary lands in Music Man's rolling memory ("Recently you said...") and
-// her own log. Now Music Man can casually reference the work in chat:
-// "yeah, my archivist sorted out the Pink Floyd thing yesterday."
-ipcMain.handle('cynthia-report-to-musicman', async (_event, payload: { rationale: string; summary?: string }) => {
-  const text = (payload?.rationale || payload?.summary || '').trim()
-  if (!text) return { ok: false, error: 'Empty report' }
-  noteCynthiaUtterance(text)
-  noteMusicManUtterance('cynthia-report', `[Cynthia, archivist] ${text}`)
-  return { ok: true }
-})
 
 // ─────────────────────────────────────────────────────────────────────
 // Cynthia overhaul — background sweep wiring + IPC family.
@@ -10111,6 +9066,7 @@ function buildCynthiaSweepHooks() {
     },
     escalate: async (_albumKey: string, label: string, tracks: CynthiaScanTrack[], evidence: string) => {
       const res = await runCynthiaInvestigation(
+        cynthiaIpcHost,
         `Background sweep escalation — the release identity for this album is ambiguous (multiple editions with different track counts). ${evidence}. Pick the right edition and propose ONLY fixes you are sure about, each with its source.`,
         { type: 'album', label, tracks: tracks as unknown as CynthiaTrackInScope[] },
       )
@@ -10133,34 +9089,6 @@ function buildCynthiaSweepHooks() {
   }
 }
 
-ipcMain.handle('cynthia-get-findings', async (_e, albumKeys: string[]) => {
-  const findings = await getFindingsFor(Array.isArray(albumKeys) ? albumKeys : [])
-  return { ok: true, findings }
-})
-
-ipcMain.handle('cynthia-dismiss-fix', async (_e, fix: { trackId: number; field: string; newValue: string }) => {
-  if (!fix || typeof fix.trackId !== 'number' || !fix.field) return { ok: false, error: 'invalid fix key' }
-  await dismissFinding(fix)
-  return { ok: true }
-})
-
-ipcMain.handle('cynthia-get-ledger', async (_e, limit?: number) => {
-  const entries = await getLedger(typeof limit === 'number' ? limit : 200)
-  return { ok: true, entries }
-})
-
-ipcMain.handle('cynthia-revert-ledger-entry', async (_e, id: string) => {
-  const hooks = buildCynthiaSweepHooks()
-  const albums = cynthiaGetAlbumsSnapshot()
-  const byId = new Map<number, CynthiaScanTrack>()
-  for (const { tracks } of albums.values()) for (const t of tracks) byId.set(t.id, t)
-  return revertLedgerEntry(String(id || ''), hooks.applyOverride, (trackId) => byId.get(trackId))
-})
-
-ipcMain.handle('cynthia-sweep-status', async () => {
-  const status = await sweepStatus()
-  return { ok: true, ...status }
-})
 
 /** Build a full system prompt by combining MUSIC_MAN_CORE with mode-
  *  specific instructions, library context, taste profile, and recent
@@ -10181,11 +9109,7 @@ ipcMain.handle('cynthia-sweep-status', async () => {
 
 
 // Music Man chat
-ipcMain.handle('set-library-context', (_event, ctx: string) => {
-  setLibraryContext(ctx)
-})
-
-ipcMain.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
+ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
   // 4.5.0-87 — RAG retrieval kicks off in parallel with web search so
   // both round trips overlap. The retrieval result is injected as a
@@ -10334,43 +9258,10 @@ This response is shown as text in a chat panel, but the user may click a speaker
     if (text) noteMusicManUtterance('chat', text)
     return { ok: true, text, textRaw, createdPlaylist }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, text: `Error: ${msg}`, textRaw: `Error: ${msg}` }
+    const msg = safeIpcError(err, 'api-failed')
+    return { ok: false, text: msg, textRaw: msg, error: msg }
   }
-})
-
-// Music Man playlist generator
-// 4.5: persist the show plan the Toolbar got back from the planner so
-// every per-segment musicman-radio call can inject "tonight's theme +
-// arc + track N of M" into the hosts' prompt. Clear on Radio off so a
-// stale plan never bleeds into the next session.
-ipcMain.handle('radio-set-show-plan', async (_e, plan: { theme: string; throughline: string; setList: { id: number; title: string; artist: string }[] }) => {
-  try {
-    await setShowPlan(plan)
-    return { ok: true }
-  } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
-
-// 4.5 radioV2: expose the unified cast registry to the renderer engine so it
-// resolves speaker → voice id + pill label from ONE source (no duplicated
-// renderer-side voice map). Returns the renderer-relevant subset only.
-ipcMain.handle('radio-get-cast', async () => {
-  return {
-    ok: true,
-    cast: RADIO_CAST.map((m) => ({ id: m.id, tag: m.tag, label: m.label, voiceId: m.voiceId, kind: m.kind })),
-  }
-})
-
-ipcMain.handle('radio-clear-show-plan', async () => {
-  try {
-    await clearShowPlan()
-    return { ok: true }
-  } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
+}, { refuse: { ok: false, text: '', textRaw: '', error: 'refused-sender' } as const })
 
 // 4.5: Radio Mode show planner. Before playback starts the hosts
 // generate a 12-15 track SET LIST with a theme + throughline — instead
@@ -10399,7 +9290,7 @@ ipcMain.handle('radio-clear-show-plan', async () => {
 // 87 tracks of jazz, 142 of hip-hop" so the show can lean into the
 // listener's actual collection shape rather than reading the prompt
 // list literally.
-ipcMain.handle('musicman-radio-plan', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => {
+ipc.handle('musicman-radio-plan', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[], recentPlayedIds: number[]) => {
   // ── Library digest ───────────────────────────────────────────────
   const recentSet = new Set(recentPlayedIds || [])
   const eligibleTracks = tracks.filter(t => !recentSet.has(t.id))
@@ -10537,12 +9428,12 @@ CRAFT RULES:
     }
     return { ok: true, theme: attempt.theme, throughline: attempt.throughline, trackIds: attempt.trackIds }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => {
+ipc.handle('musicman-playlist', async (_event, mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => {
   // 4.5: serialize each row with play signals so Claude can weight
   // picks by listening behaviour. Without these the model only sees
   // metadata and falls back to clustering by the first few artists
@@ -10839,10 +9730,10 @@ CRAFT RULES (for non-canon mood requests):
     if (attempt.commentary) noteMusicManUtterance('playlist', attempt.commentary)
     return { ok: true, name: attempt.name, commentary: attempt.commentary, trackIds: finalIds }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── 4.4.48: Weekly picks cache + variety enforcement ──────────────────
 //
@@ -11157,7 +10048,7 @@ Rules:
 
 // 4.4.48: thin handler — getOrGeneratePicks owns the weekly cache +
 // variety pass. `force` (from the Regenerate button) bypasses the cache.
-ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ipc.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
   return getOrGeneratePicks('mm', tracks, !!force, async () => {
     // 4.5.0-89 — RAG candidate pool. Seed query frames Music Man's
     // lane: deep-cut record-store-savant picks spanning genres and
@@ -11195,18 +10086,18 @@ ipcMain.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: bo
       }
       return { ok: false, error: 'Could not parse picks' }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = safeIpcError(err, 'api-failed')
       return { ok: false, error: msg }
     }
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 // Megan's weekly picks — same structure as MM picks but uses MEGAN_CORE
 // so her fixed contrarian opinions (Charli XCX overrated, Steely Dan
 // cold, LCD Soundsystem unimpressive, Phoebe Bridgers' Stranger in the
 // Alps over Punisher, etc.) shape what gets selected and how the
 // commentary reads. 25 tracks, weekly Friday-to-Friday rotation.
-ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ipc.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
   return getOrGeneratePicks('megan', tracks, !!force, async () => {
     // 4.5.0-89 — RAG pool biased toward Megan's lane: working-critic
     // perspective, newer / indie / contrarian / female-fronted. K=400
@@ -11242,15 +10133,15 @@ ipcMain.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boole
       }
       return { ok: false, error: 'Could not parse picks' }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = safeIpcError(err, 'api-failed')
       return { ok: false, error: msg }
     }
   })
-})
+}, { refuse: REFUSED_SENDER })
 
 // DJ Hands' weekly picks — beats / electronic / hip-hop forward. Same
 // 25-track Friday-to-Friday weekly rotation as MM and Megan.
-ipcMain.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+ipc.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
  return getOrGeneratePicks('djhands', tracks, !!force, async () => {
   // 4.5.0-89 — RAG pool biased toward Stephen Hands' DJ lane (dance,
   // hip-hop, electronic, funk/soul with groove). Matches the YOUR
@@ -11342,14 +10233,14 @@ Rules:
     }
     return { ok: false, error: 'Could not parse picks' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
  })
-})
+}, { refuse: REFUSED_SENDER })
 
 // Music Man recommendations
-ipcMain.handle('musicman-recommendations', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+ipc.handle('musicman-recommendations', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   // Build a compact library summary — top artists and genres, not every track
   const artistCounts = new Map<string, number>()
   const genreCounts = new Map<string, number>()
@@ -11509,10 +10400,10 @@ Their top genres: ${topGenres}`
     }
     return { ok: false, error: 'Could not parse recommendations' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Concert-owned track ids — unsyncable to the main iPod. ONE definition,
 // used by BOTH sync-to-ipod (copy-time drop) and the workout-sync picker
@@ -11531,6 +10422,7 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
 
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
+  ipc,
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
   getIneligibleTrackIds: getConcertOwnedTrackIds,
@@ -11538,8 +10430,9 @@ registerWorkoutSyncIpc({
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc()
-registerPlaylistCoverIpc(() => mainWindow)
+registerPlaylistCoverIpc(ipc, () => mainWindow)
 registerMixtapesIpc({
+  ipc,
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
   // Season tapes read the real listening record.
@@ -11552,7 +10445,7 @@ registerMixtapesIpc({
 })
 
 // Music Man metadata scanner
-ipcMain.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
+ipc.handle('musicman-scan-metadata', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => {
   const trackList = tracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
 
   const scanInstructions = `You've been asked to scan a music library for metadata issues. Analyze the track list and find ALL issues. Categories:
@@ -11604,10 +10497,10 @@ Rules:
     }
     return { ok: false, error: 'Could not parse scan results' }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // ── Restore iPod metadata from iTunes XML ──
 async function runPythonRestore(args: string[], stdinData?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
@@ -11650,116 +10543,7 @@ async function runPythonRestore(args: string[], stdinData?: string): Promise<{ o
     })
   })
 }
-
-// 4.2.20: save a recorded radio show to disk as MP3. Renderer captures
-// the broadcast (music + TTS routed through AudioContext) via
-// MediaRecorder, sends the resulting webm/opus bytes here, we ask the
-// user where to save, write a tmp file, transcode to MP3 with ffmpeg,
-// then atomic-rename into place. Same ffmpeg + atomic-write pattern used
-// for the ALAC → AAC cache so any partial-write on a kill is invisible.
-ipcMain.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mimeType: string) => {
-  try {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const { writeFile, rename, unlink, mkdir } = await import('fs/promises')
-    const { tmpdir } = await import('os')
-    const execP = promisify(execFile)
-
-    // Default save location: ~/Music/JakeTunes Recordings/. Created on
-    // first save so the dialog actually opens there instead of the user's
-    // home folder. Filename: WJLR-yyyy-mm-dd-HH-MM.mp3 — sortable, says
-    // what station, says when.
-    const home = process.env.HOME || ''
-    const recDir = join(home, 'Music', 'JakeTunes Recordings')
-    try { await mkdir(recDir, { recursive: true }) } catch { /* ignore */ }
-    const now = new Date()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}`
-    const defaultName = `WJLR-${stamp}.mp3`
-    const defaultPath = join(recDir, defaultName)
-
-    const result = await dialog.showSaveDialog(mainWindow!, {
-      title: 'Save Radio Recording',
-      defaultPath,
-      filters: [{ name: 'MP3 Audio', extensions: ['mp3'] }],
-    })
-    if (result.canceled || !result.filePath) return { ok: false, canceled: true }
-
-    const outPath = result.filePath
-    // Pick a tmp source extension that matches the actual MediaRecorder
-    // mime so ffmpeg autodetects the demuxer correctly.
-    const srcExt = mimeType.includes('ogg') ? 'ogg' : 'webm'
-    const tmpInputPath = join(tmpdir(), `jaketunes-recording-${Date.now()}.${srcExt}`)
-    const tmpOutPath = `${outPath}.partial.mp3`
-    try {
-      await writeFile(tmpInputPath, Buffer.from(audioBytes))
-      // ffmpeg: -y overwrite, -i input, -codec:a libmp3lame -qscale:a 2
-      // (≈190 kbps VBR, good radio-show quality), no video, write outpath.
-      await execP('ffmpeg', [
-        '-y',
-        '-i', tmpInputPath,
-        '-vn',
-        '-codec:a', 'libmp3lame',
-        '-qscale:a', '2',
-        tmpOutPath,
-      ], { timeout: 5 * 60 * 1000 })
-      // Atomic finish — rename only after ffmpeg succeeded.
-      await rename(tmpOutPath, outPath)
-      try { await unlink(tmpInputPath) } catch { /* ignore */ }
-      return { ok: true, path: outPath }
-    } catch (err) {
-      try { await unlink(tmpInputPath) } catch { /* ignore */ }
-      try { await unlink(tmpOutPath) } catch { /* ignore */ }
-      throw err
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, error: msg }
-  }
-})
-
-// Pick audio files/folders for the File > Import and Convert flow.
-// Returns absolute paths; mirrors the drag-drop entry point so
-// import-tracks can consume either indistinguishably.
-ipcMain.handle('import-pick-files', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Import and Convert',
-    properties: ['openFile', 'openDirectory', 'multiSelections', 'treatPackageAsDirectory'],
-    filters: [
-      { name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'flac', 'alac', 'wav', 'aiff', 'aif', 'ogg'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-    defaultPath: process.env.HOME || undefined,
-  })
-  if (result.canceled) return { ok: false, canceled: true }
-  return { ok: true, paths: result.filePaths }
-})
-
-ipcMain.handle('restore-xml-pick-file', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Choose your iTunes Library XML export',
-    properties: ['openFile'],
-    filters: [{ name: 'iTunes XML', extensions: ['xml'] }],
-    defaultPath: join(process.env.HOME || '', 'Desktop'),
-  })
-  if (result.canceled || result.filePaths.length === 0) {
-    return { ok: false, canceled: true }
-  }
-  return { ok: true, path: result.filePaths[0] }
-})
-
-ipcMain.handle('restore-xml-scan', async (_event, xmlPath: string) => {
-  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
-  const mount = `/Volumes/${detectedIpodVolume}`
-  return await runPythonRestore(['--scan', mount, xmlPath])
-})
-
-ipcMain.handle('restore-xml-apply', async (_event, xmlPath: string, approvedIds: number[]) => {
-  if (!detectedIpodVolume) return { ok: false, error: 'No iPod detected' }
-  const mount = `/Volumes/${detectedIpodVolume}`
-  const payload = JSON.stringify({ approvedIds })
-  return await runPythonRestore(['--apply', mount, xmlPath], payload)
-})
+// import-pick-files registered in ipc/import-ipc.ts
 
 // Metadata overrides persistence — STATE_DIR-resolved (NAS or local).
 function getOverridesPath(): string {
@@ -11953,7 +10737,7 @@ ipcMain.handle('embedding-status', async (): Promise<{
   return value
 })
 
-ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
+ipc.handle('embedding-backfill', async (event, opts?: { force?: boolean }): Promise<{ ok: boolean; embedded: number; total: number; error?: string }> => {
   if (!ragIsConfigured()) {
     return { ok: false, embedded: 0, total: 0, error: 'OPENAI_API_KEY not set. Add to .env to enable RAG.' }
   }
@@ -11998,9 +10782,9 @@ ipcMain.handle('embedding-backfill', async (event, opts?: { force?: boolean }): 
     invalidateEmbeddingStatusCache()
     return { ok: true, embedded: done, total }
   } catch (err) {
-    return { ok: false, embedded: 0, total: 0, error: String(err) }
+    return { ok: false, embedded: 0, total: 0, error: safeIpcError(err, 'api-failed') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.5: auto-index new songs into RAG. Jake wants EVERY imported track embedded
 // automatically — not only when the nightly brain-trainer runs. This embeds any
@@ -13294,10 +12078,10 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
     return { ok: true, recommendation: local, savedLocally: true }
   } catch (err) {
     console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
-    return { ok: false, error: err instanceof Error ? err.message : 'could not save recommendation' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
-ipcMain.handle('add-recommendation', (_event, input: Parameters<typeof addRecommendationCore>[0]) => addRecommendationCore(input))
+ipc.handle('add-recommendation', (_event, input: Parameters<typeof addRecommendationCore>[0]) => addRecommendationCore(input), { refuse: { ok: false, error: 'refused-sender' } as const })
 
 // ── iMessage capture (2026-07-19): Spotify / Apple Music links texted to
 // Jake land on the list automatically, credited "from <sender>". The
@@ -13409,7 +12193,7 @@ type TasteEvent = {
   key?: Record<string, unknown>
   ctx?: Record<string, unknown>
 }
-ipcMain.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
+ipc.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
   try {
     if (!Array.isArray(events) || events.length === 0) return { ok: true, appended: 0 }
     const lines = events
@@ -13420,9 +12204,9 @@ ipcMain.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
     await appendFile(TASTE_LEDGER_PATH(), lines.join('\n') + '\n', 'utf-8')
     return { ok: true, appended: lines.length }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 // Per-playlist blend weights the nightly learner writes; the suggestion
 // strip multiplies its blend components by these. mtime-cached.
 let tasteWeightsCache: { at: number; mtime: number; weights: Record<string, unknown> } | null = null
@@ -13474,14 +12258,14 @@ ipcMain.handle('get-friend-standings', async () => {
     const all = toMigrate.length > 0 ? (await friendCreditsCache.get()).credits : store.credits
     return { ok: true, standings: computeStandings(all, ledger, lib.tracks || []) }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
-ipcMain.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }))
+ipc.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }), { refuse: REFUSED_SENDER })
 setTimeout(() => { void sweepFriendImports() }, 30_000)
 setInterval(() => { void sweepFriendImports() }, 5 * 60_000)
 
-ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
+ipc.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
   // Identity-wide delete: removing a song removes EVERY copy of it (the list
   // once carried 14 copies of one track under different ids). The remote
   // removal routes through the backend API via the outbox — the backend
@@ -13519,7 +12303,7 @@ ipcMain.handle('delete-recommendation', async (_event, id: string): Promise<{ ok
   void replayRecommendationsOutbox().catch(() => {})
   scheduleRecoConvergeSync()
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
 // DISCOVERY only: artists/songs not already in the library or on the list.
@@ -13531,7 +12315,7 @@ let suggestResultCache: { at: number; suggestions: Array<{ song: string; artist:
 let suggestRecoInflight: Promise<SuggestRecoResult> | null = null
 const SUGGEST_RESULT_TTL_MS = 30 * 60 * 1000
 
-ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<SuggestRecoResult> => {
+ipc.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<SuggestRecoResult> => {
   const force = opts?.force === true
   const now = Date.now()
   if (!force && suggestResultCache && now - suggestResultCache.at < SUGGEST_RESULT_TTL_MS) {
@@ -13683,13 +12467,13 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
     return { ok: true, suggestions }
   } catch (err) {
     console.error('[reco] suggest failed:', err instanceof Error ? err.message : err)
-    return { ok: false, error: err instanceof Error ? err.message : 'suggest failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   } finally {
     suggestRecoInflight = null
   }
   })()
   return suggestRecoInflight
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
 // iTunes Search is public + key-less; hit it straight from the main process
@@ -13702,32 +12486,6 @@ ipcMain.handle('suggest-recommendations', async (_event, opts?: { force?: boolea
 // it's told NOT to state hard credits). Both cached in-memory per session.
 type AlbumCredits = { released?: string; label?: string; producer?: string; recorded?: string }
 const albumInfoCache = new Map<string, AlbumCredits>()
-const albumBlurbCache = new Map<string, string>()
-
-// Strip the markdown Haiku sometimes emits despite instructions (a "# Title"
-// heading, *emphasis*, code fences). Blurbs render as plain text, so leftover
-// tokens show literally — Jake saw "# Let It Be *Let It Be* was…" on the page.
-function cleanAiProse(raw: string, title?: string): string {
-  let t = (raw || '').trim()
-  t = t.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '')
-  const lines = t.split('\n')
-  while (lines.length > 0) {
-    const m = /^#{1,6}\s*(.*)$/.exec(lines[0].trim())
-    if (!m) break
-    const heading = m[1].replace(/[*_`"'“”‘’]/g, '').trim()
-    // A heading that's empty or just echoes the album title drops entirely;
-    // anything else keeps its text minus the # marker.
-    if (!heading || (title && heading.toLowerCase() === title.trim().toLowerCase())) lines.shift()
-    else { lines[0] = m[1]; break }
-  }
-  t = lines.join('\n')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^#+\s*/gm, '')
-  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-}
 const albumCacheKey = (artist: string, album: string) => `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
 
 async function fetchItunesAlbum(artist: string, album: string): Promise<{ released?: string; label?: string } | null> {
@@ -13800,79 +12558,9 @@ ipcMain.handle('get-album-info', async (_e, artist: string, album: string, year?
     albumInfoCache.set(key, sanitized)
     return { ok: true, credits: sanitized }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'album-info failed' }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
-
-ipcMain.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
-  if (!album) return { ok: true, blurb: '' }
-  const yr = year ? String(year).trim() : ''
-  const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
-  const cached = albumBlurbCache.get(key)
-  if (cached !== undefined) return { ok: true, blurb: cached }
-  try {
-    // 4.5: ground in live web search + pass the real year. Without this, the
-    // model confabulates a history for any album it doesn't know — e.g. a 2026
-    // Sublime record got described as a "2006 album" with the wrong Nowell death
-    // year. Cached like the blurb so it's one search per album.
-    const search = await searchWebCached(`${artist} "${album}"${yr ? ` ${yr}` : ''} album`, album).catch(() => '')
-    const user = [
-      `Write a short, factual history of the album "${album}" by ${artist}${yr ? `, released in ${yr}` : ''}.`,
-      yr ? `The release year is ${yr} — anchor on it; never state a different year.` : '',
-      'Cover what it is and why it matters: the era/context, its place in the artist\'s career and music history, and what it is best known for.',
-      '3-4 sentences. Neutral and encyclopedic — a HISTORY, not a review. Do NOT rate, rank, or editorialize.',
-      'CRITICAL — accuracy over detail: only state facts you are certain of. If you do not actually recognize THIS specific album, describe it from the search results + the known year, and do NOT invent a release year, lineup changes, deaths, or events. A brief correct blurb beats a detailed wrong one.',
-      'Avoid hyper-specific facts (exact session dates, chart/sales figures). Plain prose only — no markdown — and do not begin by repeating the album title.',
-      search ? `\nLive web search results — TREAT AS GROUND TRUTH:\n${search}` : '',
-    ].filter(Boolean).join('\n')
-    const reply = await claudeCall('album-blurb', {
-      model: 'claude-sonnet-4-6',   // bumped off Haiku: factual history needs the stronger model; cached → one call/album
-      max_tokens: 300,
-      system: 'You are a precise, neutral music historian. Ground every claim in the provided search results and the known release year. NEVER invent dates, deaths, lineup changes, or events you are not certain of — omit rather than guess. No ratings, rankings, or opinions.',
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-    albumBlurbCache.set(key, text)
-    return { ok: true, blurb: text }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'album-blurb failed' }
-  }
-})
-
-// The Music Man's TAKE — his opinion, OPT-IN and separate from the factual
-// history blurb above. Jake didn't want a contrarian hot-take standing in for
-// the history of a landmark album; same voice, but now behind a button.
-const albumTakeCache = new Map<string, string>()
-ipcMain.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
-  if (!album) return { ok: true, take: '' }
-  const yr = year ? String(year).trim() : ''
-  const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
-  const cached = albumTakeCache.get(key)
-  if (cached !== undefined) return { ok: true, take: cached }
-  try {
-    const user = [
-      `Give your take on the album "${album}" by ${artist}${yr ? ` (${yr})` : ''}.`,
-      yr ? `It's from ${yr} — place it correctly in that era of their run; never treat it as older or newer than it is.` : '',
-      '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
-      'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
-      'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
-    ].filter(Boolean).join('\n')
-    const reply = await claudeCall('album-take', {
-      model: 'claude-haiku-4-5',
-      max_tokens: 220,
-      system: MUSIC_MAN_CORE,
-      messages: [{ role: 'user', content: user }],
-    })
-    const block = reply.content[0]
-    const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-    albumTakeCache.set(key, text)
-    return { ok: true, take: text }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'album-take failed' }
-  }
-})
-
 /** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
  *  boundary, so a field added on one side and not the other is silently
  *  dropped rather than caught — change both together. */
@@ -14299,7 +12987,7 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
   })
 }
 
-ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
+ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
   const lockReason = isSaveLocked()
   if (lockReason) {
     console.warn(`[save-metadata-override] refused (saves locked): ${lockReason}`)
@@ -14503,7 +13191,7 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
   })
 
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 020: batch backfill — push every existing override's writable
 // fields into the corresponding audio files. Invoked from the
@@ -14521,7 +13209,7 @@ ipcMain.handle('save-metadata-override', async (_event, trackId: number, field: 
 //      'tag-writeback:progress' so the UI can show a live counter.
 //
 // Returns a summary the renderer can show in the result toast/dialog.
-ipcMain.handle('apply-overrides-batch', async (event) => {
+ipc.handle('apply-overrides-batch', async (event) => {
   try {
     // 4.5.0-106: cached reads.
     const lib = await libraryCache.get() as { tracks?: Array<Record<string, unknown>> }
@@ -14627,7 +13315,7 @@ ipcMain.handle('apply-overrides-batch', async (event) => {
       error: err instanceof Error ? err.message : String(err),
     }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Brief 016 commit 2: refresh `fileSize` in library.json by stat'ing
 // the on-disk file for every track whose absolute audio-file path
@@ -14717,71 +13405,7 @@ ipcMain.handle('refresh-file-sizes', async (event) => {
     )
     return { ok: true, refreshed }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
-  }
-})
-
-// Chat history persistence
-function getChatHistoryPath(): string {
-  return join(app.getPath('userData'), 'chat-history.json')
-}
-
-ipcMain.handle('load-chat-history', async () => {
-  try {
-    const data = await readFile(getChatHistoryPath(), 'utf-8')
-    return { ok: true, conversations: JSON.parse(data) }
-  } catch {
-    return { ok: true, conversations: [] }
-  }
-})
-
-ipcMain.handle('save-chat-history', async (_event, conversations: unknown[]) => {
-  await mkdir(join(app.getPath('userData')), { recursive: true })
-  await writeFile(getChatHistoryPath(), JSON.stringify(conversations, null, 2), 'utf-8')
-  return { ok: true }
-})
-
-// Playlist persistence — STATE_DIR-resolved (NAS or local).
-function getPlaylistsPath(): string {
-  return join(STATE_DIR, 'playlists.json')
-}
-
-ipcMain.handle('load-playlists', async () => {
-  // 4.5.0-106: served from cache.
-  return { ok: true, playlists: await playlistsCache.get() }
-})
-
-ipcMain.handle('save-playlists', async (_event, playlists: unknown[]) => {
-  const lockReason = isSaveLocked()
-  if (lockReason) {
-    console.warn(`[save-playlists] refused (saves locked): ${lockReason}`)
-    return { ok: false, error: 'state-save-locked', reason: lockReason }
-  }
-  // 4.5.0-106: cache update + background flush; IPC returns immediately.
-  playlistsCache.set(playlists)
-  // 4.4.18: playlist edits also propagate. library.json itself doesn't
-  // include playlists (separate file), but the sync script's safety-net
-  // restart of homemini's JakeTunes picks them up alongside any
-  // library.json change. If only playlists changed, the script no-ops
-  // on library.json (mtime-based) and just runs the music rsync —
-  // which is also a near no-op when nothing in audio files changed.
-  triggerSync('playlist')
-  return { ok: true }
-})
-
-// Claude API stats — exposed for dev/diagnostic surfaces. Renderer can poll
-// or display this in a hidden corner during development. lastResponses is
-// excluded from the wire format (large payloads, not useful in UI).
-ipcMain.handle('get-claude-stats', async () => {
-  await loadClaudeStats()
-  rolloverIfNewDay()
-  return {
-    ok: true,
-    sessionCallCount,
-    callsToday: claudeStats.callsToday,
-    dailyCeiling: claudeStats.dailyCeiling,
-    lastResetDate: claudeStats.lastResetDate,
-    cachedKeys: Object.keys(claudeStats.lastResponses),
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 })
 
@@ -14893,7 +13517,7 @@ ipcMain.handle('fetch-album-art', async (_event, artist: string, album: string, 
     await saveArtworkIndex(index)
     return { ok: true, key, hash: versionedHash }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = safeIpcError(err, 'api-failed')
     return { ok: false, error: msg }
   }
 })
@@ -14909,7 +13533,7 @@ ipcMain.handle('get-artwork-lock-count', async (): Promise<{ ok: boolean; count:
   }
 })
 
-ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
+ipc.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
   try {
     const dir = getArtworkDir()
     await mkdir(dir, { recursive: true })
@@ -14970,7 +13594,7 @@ ipcMain.handle('set-custom-artwork', async (_event, artist: string, album: strin
   } catch (err) {
     return { ok: false, error: String(err) }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // 4.4.12: one-shot embedded-art backfill. Recovers art for tracks the
 // user imported BEFORE the import-time extractor landed. Runs once per
@@ -15000,7 +13624,7 @@ ipcMain.handle('artwork-backfill-status', async () => {
   const done = await markerExists(getArtworkBackfillMarkerPath())
   return { ok: true, done }
 })
-ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
+ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
   // resolve iPod-style colon paths to absolute file paths
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   const pathSep = IS_WINDOWS ? '\\' : '/'
@@ -15076,9 +13700,9 @@ ipcMain.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path:
 
   mainWindow?.webContents.send('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
   return { ok: true, artwork: results }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('remove-artwork', async (_event, artist: string, album: string, force?: boolean) => {
+ipc.handle('remove-artwork', async (_event, artist: string, album: string, force?: boolean) => {
   try {
     const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
     // 4.5.0-80 — defense layer 4: refuse to silently nuke a user-
@@ -15114,7 +13738,7 @@ ipcMain.handle('remove-artwork', async (_event, artist: string, album: string, f
   } catch (err) {
     return { ok: false, error: String(err) }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 ipcMain.handle('choose-artwork-file', async () => {
   if (!mainWindow) return { ok: false }
@@ -15173,22 +13797,22 @@ ipcMain.handle('load-live-sets', async () => {
   return { ok: true, sets }
 })
 
-ipcMain.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
+ipc.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
   if (!albumKey || !entry || typeof entry.mergedTrackId !== 'number' || !Array.isArray(entry.cues)) {
     return { ok: false, error: 'invalid live-set entry' }
   }
   await liveSetsCache.update((sets) => ({ ...sets, [albumKey]: entry }))
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
-ipcMain.handle('remove-live-set', async (_e, albumKey: string) => {
+ipc.handle('remove-live-set', async (_e, albumKey: string) => {
   await liveSetsCache.update((sets) => {
     const next = { ...sets }
     delete next[albumKey]
     return next
   })
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Concert crowd ambience (LC-7): serve the short "that night's crowd" clip
 // extracted from the show's own between-song gap. Stored per merged-track-id in
@@ -15211,7 +13835,7 @@ ipcMain.handle('load-crowd-tuning', async (): Promise<Record<string, number> | n
   try { return JSON.parse(await readFile(crowdTuningPath(), 'utf-8')) } catch { return null }
 })
 
-ipcMain.handle('live-set-merge', async (
+ipc.handle('live-set-merge', async (
   event,
   tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,
   album: { name: string; artist: string; genre?: string; year?: string | number },
@@ -15247,14 +13871,14 @@ ipcMain.handle('live-set-merge', async (
     }
     return { ok: true, ...result }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: safeIpcError(err, 'unknown') }
   }
-})
+}, { refuse: REFUSED_SENDER })
 
 // Post-import cleanup of the merged source file. Identity-gated: only
 // paths inside OUR scratch dir are deletable — a confused caller can't
 // aim this at library audio.
-ipcMain.handle('live-set-cleanup', async (_e, absPath: string) => {
+ipc.handle('live-set-cleanup', async (_e, absPath: string) => {
   const scratch = liveSetScratchDir()
   const normalized = String(absPath || '')
   if (!normalized.startsWith(scratch + (IS_WINDOWS ? '\\' : '/'))) {
@@ -15263,7 +13887,7 @@ ipcMain.handle('live-set-cleanup', async (_e, absPath: string) => {
   const { rm } = await import('fs/promises')
   await rm(normalized, { force: true }).catch(() => {})
   return { ok: true }
-})
+}, { refuse: REFUSED_SENDER })
 
 /**
  * 4.5.0-51 — Authoritative artwork resolver.
@@ -15574,7 +14198,7 @@ async function stageCdTrackLocally(src: string, dest: string): Promise<void> {
   }
 }
 
-ipcMain.handle('rip-cd-tracks', async (_e,
+ipc.handle('rip-cd-tracks', async (_e,
   cdTracks: Array<{ number: number; title: string; duration: number; filePath: string }>,
   metadata: { artist: string; album: string; year: string; genre: string },
   nextId: number,
@@ -15737,7 +14361,7 @@ ipcMain.handle('rip-cd-tracks', async (_e,
   }
 
   return { ok: true, tracks: imported }
-})
+}, { refuse: REFUSED_SENDER })
 
 ipcMain.handle('eject-cd', async () => {
   try {
@@ -16579,7 +15203,7 @@ app.whenReady().then(async () => {
     try {
       lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
     } catch (err) {
-      return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
     const tracks = lib.tracks || []
     const total = tracks.length
@@ -16645,24 +15269,6 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('scan-library-orphans', async () => {
-    try {
-      const result = await scanLibraryOrphans()
-      return { ok: true, ...result }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle('purge-library-orphans', async () => {
-    try {
-      const { deleted, bytesFreed } = await purgeLibraryOrphans()
-      return { ok: true, deleted, bytesFreed }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
   ipcMain.handle('scan-dead-tracks', async () => {
     try {
       let lib: { tracks?: Array<Record<string, unknown>> }
@@ -16690,11 +15296,11 @@ app.whenReady().then(async () => {
         }))
       return { ok: true, count: deadTracks.length, tracks: deadTracks.slice(0, 20) }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'unknown') }
     }
   })
 
-  ipcMain.handle('remove-dead-tracks', async () => {
+  ipc.handle('remove-dead-tracks', async (_e) => {
     try {
       const lib: { tracks?: Array<Record<string, unknown>>; playlists?: unknown[] } =
         JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
@@ -16759,9 +15365,9 @@ app.whenReady().then(async () => {
       console.log(`[remove-dead-tracks] removed ${removed} dead track(s) (${prevCount}→${lib.tracks.length}); backup library.json.bak-dead-${stamp}`)
       return { ok: true, removed }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: safeIpcError(err, 'unknown') }
     }
-  })
+  }, { refuse: REFUSED_SENDER })
 
   ipcMain.handle('prune-alac-cache', async () => {
     // Delete cache entries whose hashed source path doesn't match any
@@ -16776,7 +15382,7 @@ app.whenReady().then(async () => {
     try {
       lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
     } catch (err) {
-      return { ok: false, error: `library.json read failed: ${err instanceof Error ? err.message : err}` }
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
 
     // Build the set of path hashes still claimed by a library track.
@@ -17099,8 +15705,11 @@ app.whenReady().then(async () => {
 
       if (rangeHeader) {
         const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-        const start = match ? parseInt(match[1]) : 0
-        const end = match && match[2] ? parseInt(match[2]) : total - 1
+        const start = match ? parseInt(match[1], 10) : 0
+        const end = match && match[2] ? parseInt(match[2], 10) : total - 1
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= total || end >= total || start > end) {
+          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+        }
         const chunkSize = end - start + 1
         const nodeStream = createReadStream(filePath, { start, end })
         const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
@@ -17144,6 +15753,7 @@ app.whenReady().then(async () => {
   // WebContentsView mount + the download-router events.
   const libraryRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
   registerBandcampIntegration({
+    ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
     pendingImportsDir: join(libraryRoot, '_pending-imports'),
@@ -17153,6 +15763,7 @@ app.whenReady().then(async () => {
   // squid/lucida/dab). Shells out to the `rip` CLI and imports the result
   // through the same pipeline Bandcamp uses, tagged source='streamrip'.
   registerStreamripStore({
+    ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
   })
@@ -17161,6 +15772,7 @@ app.whenReady().then(async () => {
   // one-of-one exhibit, never part of the music library. askClaude wraps
   // claudeCall so the module stays free of the Anthropic SDK types.
   registerScotusArchive({
+    ipc,
     askClaude: async (callKey, system, userText, maxTokens) => {
       const reply = await claudeCall(callKey, {
         model: 'claude-sonnet-4-6',
