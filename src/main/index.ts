@@ -8676,8 +8676,19 @@ function logHiveMindInteraction(entry: HiveMindEntry): void {
 // Drops in for DJ Mode (AI commentary on continuous sets) and rare
 // guest spots on the WJLR show. Lives in rap and electronic — refuses
 // to engage with rock-canon discourse on its own terms; pivots back to
-  return out.join('')
-}
+// beats, samples, drum programming, BPM. His picks lean heavy into
+// hip-hop, house, techno, footwork, IDM, drum-and-bass, drill, UK garage,
+// jungle, miami bass, baltimore club. Doesn't perform expertise — when
+// he says something is good, it's a small precise claim, not a sweeping
+// "greatest of all time" pronouncement.
+
+// ── Cynthia: the digital file archivist (subordinate persona) ──
+//
+// Music Man is the front of the house — opinions, DJ banter, recommendations.
+// Cynthia is the back office — metadata, organization, missing tracks, wrong
+// track numbers, misspellings. Investigate/chat/report IPC lives in
+// ipc/cynthia-ipc.ts; MB lookup + embedded-tag reads stay here for the
+// sweep hooks and CynthiaIpcHost.
 
 
 // MusicBrainz album lookup with full track listings (the killer tool for
