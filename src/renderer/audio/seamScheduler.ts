@@ -35,6 +35,11 @@
  */
 
 import { Howl } from 'howler'
+import {
+  USE_GAPLESS_TAIL_TRIM,
+  incomingPlayDurationSec,
+  trimSecsFromProbe,
+} from './gapless-timing'
 
 // ── Decode cache ────────────────────────────────────────────────────
 const decodeCache = new Map<string, AudioBuffer>()
@@ -56,13 +61,21 @@ const inFlightDecodes = new Map<string, Promise<AudioBuffer>>()
 //
 // So each decoded buffer remembers where its MUSIC starts, and the
 // scheduler starts there. The lookup rides along with decode (which
-// already owns the URL) rather than being threaded through the call site,
-// so useAudio.ts — do-not-touch — needs no changes.
+// already owns the URL) rather than being threaded through the call site.
 //
-// A file with no iTunSMPB, or one we can't read, gets 0 and behaves
-// exactly as before. Tail padding (4-23 ms) is NOT handled here: skipping
-// it means firing the seam earlier, and that timing lives in useAudio.
+// A file with no iTunSMPB / LAME tag, or one we can't read, gets 0 and
+// behaves exactly as before.
+//
+// Tail padding (4–23 ms): stored per-buffer AND per-URL. The incoming
+// BufferSource is given a play duration that stops before the pad.
+// The OUTGOING Howler's pad is subtracted from msUntilEnd in useAudio
+// via remainingMsUntilMusicEnd + tailTrimSecForUrl — a two-line call
+// site, not a useAudio rewrite. Prefetch the current track's trim when
+// the next track is decoded so album track 1 (never itself decoded)
+// still has a pad number by the 250 ms seam window.
 const headTrimSec = new WeakMap<AudioBuffer, number>()
+const tailTrimSec = new WeakMap<AudioBuffer, number>()
+const trimByUrl = new Map<string, { delaySec: number; paddingSec: number }>()
 
 /** `ipod-audio://<encoded abs path>` → the path ffprobe needs. */
 function fsPathFromAudioUrl(url: string): string | null {
@@ -74,6 +87,56 @@ function fsPathFromAudioUrl(url: string): string | null {
 /** How far into this buffer the actual music starts. 0 when unknown. */
 export function headTrimFor(buffer: AudioBuffer): number {
   return headTrimSec.get(buffer) ?? 0
+}
+
+/** Encoder padding at the end of this buffer, in seconds. 0 when unknown. */
+export function tailTrimFor(buffer: AudioBuffer): number {
+  return tailTrimSec.get(buffer) ?? 0
+}
+
+/** Cached tail pad for a previously probed `ipod-audio://` URL. */
+export function tailTrimSecForUrl(url: string | null | undefined): number {
+  if (!url) return 0
+  return trimByUrl.get(url)?.paddingSec ?? 0
+}
+
+function rememberTrim(url: string, buffer: AudioBuffer | null, delaySec: number, paddingSec: number): void {
+  // Always cache, including 0/0, so we don't re-probe tagless files every seam.
+  trimByUrl.set(url, { delaySec, paddingSec })
+  if (!buffer) return
+  if (delaySec > 0 && delaySec < buffer.duration / 2) headTrimSec.set(buffer, delaySec)
+  if (paddingSec > 0 && paddingSec < buffer.duration / 2) tailTrimSec.set(buffer, paddingSec)
+}
+
+async function probeTrim(url: string): Promise<{ delaySec: number; paddingSec: number } | null> {
+  const fsPath = fsPathFromAudioUrl(url)
+  if (!fsPath) return null
+  try {
+    const trim = await Promise.race([
+      window.electronAPI?.gaplessTrim?.(fsPath),
+      new Promise<null>((res) => setTimeout(() => res(null), 1500)),
+    ])
+    const secs = trimSecsFromProbe(trim)
+    if (secs.delaySec <= 0 && secs.paddingSec <= 0) return null
+    return secs
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fire-and-forget probe of the OUTGOING file so tail trim is cached
+ * before the 250 ms seam window. No-op when the flag is off, the URL
+ * is empty, or we already have a number for this URL.
+ */
+export function prefetchGaplessTrim(url: string | null | undefined): void {
+  if (!USE_GAPLESS_TAIL_TRIM) return
+  if (!url || trimByUrl.has(url)) return
+  void probeTrim(url).then((secs) => {
+    rememberTrim(url, null, secs?.delaySec ?? 0, secs?.paddingSec ?? 0)
+  }).catch(() => {
+    rememberTrim(url, null, 0, 0)
+  })
 }
 
 export async function decodeUrl(url: string, ctx: AudioContext): Promise<AudioBuffer> {
@@ -92,22 +155,14 @@ export async function decodeUrl(url: string, ctx: AudioContext): Promise<AudioBu
     if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`)
     const ab = await resp.arrayBuffer()
     const buf = await ctx.decodeAudioData(ab)
-    // Ask the file how much priming it carries. Best-effort and never
-    // fatal: no answer simply means no trim, i.e. today's behaviour.
-    const fsPath = fsPathFromAudioUrl(url)
-    if (fsPath) {
-      try {
-        // Raced with a short timeout: this runs inside the preload, and a
-        // slow or wedged probe must never delay the decode it rides on.
-        // Losing the race just means no trim for that track.
-        const trim = await Promise.race([
-          window.electronAPI?.gaplessTrim?.(fsPath),
-          new Promise<null>((res) => setTimeout(() => res(null), 1500)),
-        ])
-        if (trim && trim.delaySec > 0 && trim.delaySec < buf.duration / 2) {
-          headTrimSec.set(buf, trim.delaySec)
-        }
-      } catch { /* no trim */ }
+    // Ask the file how much priming + padding it carries. Best-effort
+    // and never fatal: no answer simply means no trim, i.e. today's behaviour.
+    const cached = trimByUrl.get(url)
+    if (cached) {
+      rememberTrim(url, buf, cached.delaySec, cached.paddingSec)
+    } else {
+      const secs = await probeTrim(url)
+      if (secs) rememberTrim(url, buf, secs.delaySec, secs.paddingSec)
     }
     decodeCache.set(url, buf)
     decodeCacheOrder.unshift(url)
@@ -229,8 +284,13 @@ export function scheduleAbsoluteStart(
   }
   // Start where the MUSIC starts, not where the file starts — skipping the
   // encoder priming that would otherwise play as ~48 ms of silence at the
-  // seam (2026-08-08). 0 for anything without a readable iTunSMPB.
-  source.start(absoluteStartTime, headTrimFor(buffer))
+  // seam (2026-08-08). 0 for anything without a readable iTunSMPB / LAME tag.
+  // Duration stops before encoder tail padding so the BufferSource's usable
+  // length matches what remainingMsUntilMusicEnd used on the outgoing side.
+  const offset = headTrimFor(buffer)
+  const playDur = incomingPlayDurationSec(buffer.duration, offset, tailTrimFor(buffer))
+  if (playDur > 0) source.start(absoluteStartTime, offset, playDur)
+  else source.start(absoluteStartTime, offset)
   const handle: ScheduledIncoming = {
     source,
     gain,

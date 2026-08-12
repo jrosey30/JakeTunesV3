@@ -9,8 +9,11 @@ import {
   scheduleAbsoluteStart,
   decodeUrl,
   promoteBufferSourceToHowl,
+  prefetchGaplessTrim,
+  tailTrimSecForUrl,
   type ScheduledIncoming,
 } from '../audio/seamScheduler'
+import { remainingMsUntilMusicEnd } from '../audio/gapless-timing'
 
 // 4.5.0-78 — sample-accurate seam scheduling. See seamScheduler.ts
 // header for the full rationale. Flag-gated so flipping to false
@@ -853,6 +856,12 @@ export function useAudio(opts?: { primary?: boolean }) {
                         seamIncomingBuffer = null
                       }
                     })
+                    // Tail trim needs the OUTGOING file's padding, and
+                    // album track 1 is never decoded (Howler html5).
+                    // Probe it now, ~10 s before the seam — same IPC
+                    // as decodeUrl, cached, never on the hot path.
+                    const outgoingPath = s.nowPlaying?.path
+                    if (outgoingPath) prefetchGaplessTrim(ipodPathToAudioURL(outgoingPath).url)
                   }
                 }
               }
@@ -911,7 +920,15 @@ export function useAudio(opts?: { primary?: boolean }) {
         const remaining = dur - pos
         if (remaining > 0 && remaining * 1000 <= 250) {
           gaplessOutgoingFaded = true
-          const msUntilEnd = remaining * 1000
+          // Tail trim: Howler remaining includes encoder padding at EOF.
+          // Subtract it so fade-out + incoming start land at music-end.
+          // Identity when the flag is off or the probe missed (0 pad).
+          const outgoingPath = stateRef.current.nowPlaying?.path
+          const outgoingUrl = outgoingPath ? ipodPathToAudioURL(outgoingPath).url : ''
+          const msUntilEnd = remainingMsUntilMusicEnd(
+            remaining * 1000,
+            tailTrimSecForUrl(outgoingUrl),
+          )
           const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
           if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => { /* ignore */ })
           // 4.5.0-78 — sample-accurate fade-out via Howler's own

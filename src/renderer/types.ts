@@ -863,7 +863,7 @@ declare global {
       pickPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }>
       copyPlaylistCover?: (fromId: string, toId: string) => Promise<{ ok: boolean; copied?: boolean; error?: string }>
       clearPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; error?: string }>
-      gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number } | null>
+      gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number } | null>
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
