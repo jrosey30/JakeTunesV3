@@ -146,6 +146,7 @@ import {
   listMountPoints,
   volumeNameFromMount,
   findIpodMount,
+  isIpodMount,
   ejectVolume,
   remountVolume,
   fullFsync,
@@ -5244,7 +5245,19 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // the orphan cleanup uses it to refuse to delete anything this sync
   // touched (2026-07-21 shrinking-iPod fix).
   const syncRunStartMs = Date.now()
-  if (!detectedIpodMount) return { ok: false, error: 'No iPod detected', copied: 0 }
+  // A cached device path is not authority. The capacity panel once held the
+  // NAS mount while displaying the iPod name (926.3 GiB instead of 119.2 GiB).
+  // Re-prove the canonical iPod layout before this path gains write authority.
+  if (detectedIpodMount && !(await isIpodMount(detectedIpodMount))) {
+    console.error(`sync-to-ipod: refusing stale/non-iPod mount ${detectedIpodMount}`)
+    detectedIpodMount = null
+    detectedIpodVolume = null
+  }
+  if (!detectedIpodMount) {
+    detectedIpodMount = await findIpodMount()
+    detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
+  }
+  if (!detectedIpodMount) return { ok: false, error: 'No verified iPod mount detected', copied: 0 }
   const IPOD_MOUNT = detectedIpodMount
   // Strip the trailing "iPod_Control/Music" segment whether it's / or \ delimited.
   const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')

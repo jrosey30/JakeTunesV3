@@ -12,7 +12,7 @@ import { join } from 'path'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
-import { findIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
+import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
 
 export interface IpodMountSnapshot {
   mount: string | null
@@ -43,6 +43,15 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
   ipc.handle('get-ipod-capacity', async () => {
     try {
       let { mount, volume } = host.getMount()
+      // Never stat a stale cached mount. Live failure, 2026-08-15: the panel
+      // labeled JAKETUNES but showed the exact 926.3 GiB / 22.8 GiB-free stats
+      // of /Volumes/JakeShared. More importantly, a stale mount must never
+      // become the write target for Sync. Re-prove the canonical iPod layout.
+      if (mount && !(await isIpodMount(mount))) {
+        host.setMount({ mount: null, volume: null, missStreak: 0 })
+        mount = null
+        volume = null
+      }
       if (!mount) {
         mount = await findIpodMount()
         volume = mount ? volumeNameFromMount(mount) : null
