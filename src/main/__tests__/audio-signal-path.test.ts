@@ -85,6 +85,22 @@ describe('the music signal path', () => {
       'Howler.autoSuspend is not pinned false — html5 music will go silent when Howler suspends the shared context')
   })
 
+  test('mix auto-advance cannot leave the HTMLAudioElement at volume 0', () => {
+    // Howler's volume()/fade() queue under _playLock and never drain.
+    // Mixes promote 24 times without a click. The snap must write the
+    // element directly, and Play must resume the graph under the gesture.
+    assert.match(eq, /export function snapHowlOutputVolume/,
+      'snapHowlOutputVolume missing — mix seams stay silent until the volume slider')
+    assert.match(eq, /export function primeAudioGraph/,
+      'primeAudioGraph missing — mix Play click never resumes the AudioContext')
+    assert.match(bodyOf(eq, 'snapHowlOutputVolume'), /node\.volume = vol/,
+      'snapHowlOutputVolume no longer writes HTMLAudioElement.volume')
+    assert.match(bodyOf(eq, 'snapHowlOutputVolume'), /!h\._playLock/,
+      'snapHowlOutputVolume calls howl.volume() during playLock — that poisons Howler\'s queue')
+    assert.match(bodyOf(eq, 'attachHowlToEq'), /audioEl\.volume = 0\.001/,
+      'attachHowlToEq binds MediaElementSource at volume 0 — Chromium sticks mute until a gesture')
+  })
+
   test('broadcast FX reach the announcer only, never music', () => {
     // ensureBroadcastFx builds the convolver + a hard compressor for Radio
     // Mode station IDs. One caller, and it takes an HTMLAudioElement — if it

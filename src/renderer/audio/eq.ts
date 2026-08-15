@@ -337,6 +337,60 @@ export function resumeEqContext(): void {
   }
 }
 
+/**
+ * Build + resume the speaker graph during a user gesture (Play click).
+ *
+ * Mixes auto-advance 24 times with no gesture. The first click has to
+ * leave the AudioContext running, or every later song is silence with
+ * a moving scrubber until the volume slider (a gesture) resumes it.
+ */
+export function primeAudioGraph(): void {
+  buildChain()
+  tapHowlerMaster()
+  resumeEqContext()
+}
+
+type HowlVolumeInternals = Howl & {
+  _sounds?: Array<{ _node?: HTMLAudioElement }>
+  _playLock?: boolean
+}
+
+/**
+ * Write volume onto the actual HTMLAudioElement, bypassing Howler's
+ * `_playLock` queue.
+ *
+ * howler.js queues `volume()` / `fade()` while play() is in-flight, and
+ * `_loadQueue('play')` only pops tasks whose event is `'play'`. Those
+ * volume tasks sit at the front of the queue forever. Mixes hit this
+ * on every natural-end promote: scrubber runs, speakers stay at 0,
+ * dragging the volume slider finally calls `volume()` with the lock
+ * clear and "wakes" it.
+ *
+ * Never call `howl.volume()` while `_playLock` is set — that poisons
+ * the queue. Write `node.volume` directly either way.
+ */
+export function snapHowlOutputVolume(howl: Howl | null | undefined, target: number): void {
+  if (!howl || !Number.isFinite(target)) return
+  const vol = Math.max(0, Math.min(1, target))
+  const h = howl as HowlVolumeInternals
+  if (!h._playLock) {
+    try { howl.volume(vol) } catch { /* ignore */ }
+  }
+  const sounds = h._sounds
+  if (sounds) {
+    for (const s of sounds) {
+      const node = s._node
+      if (node instanceof HTMLAudioElement) {
+        try {
+          node.muted = false
+          node.volume = vol
+        } catch { /* ignore */ }
+      }
+    }
+  }
+  resumeEqContext()
+}
+
 function applySettings(): void {
   if (!audioContext || !preampNode || filterNodes.length === 0) return
   // Preamp: convert dB to linear gain (10^(dB/20)).
@@ -471,6 +525,14 @@ export function attachHowlToEq(howl: Howl | null | undefined): void {
   buildChain()
   tapHowlerMaster()  // retry in case Howler.masterGain wasn't ready at first build
   if (!audioContext || !preampNode) return
+  // Chromium can stick a MediaElementSource silent if the element is
+  // muted or at volume 0 at bind time — programmatic volume changes
+  // then do nothing until a user gesture (the volume slider). Unmute
+  // and lift off literal zero BEFORE createMediaElementSource.
+  try {
+    audioEl.muted = false
+    if (audioEl.volume < 0.001) audioEl.volume = 0.001
+  } catch { /* ignore */ }
   // 4.4.9: handle the pool-reuse case. If the element was bound earlier
   // and detached on a previous track end, the source is sitting there
   // disconnected. We can't re-bind (createMediaElementSource throws on

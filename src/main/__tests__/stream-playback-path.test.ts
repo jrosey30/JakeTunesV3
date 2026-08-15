@@ -135,6 +135,8 @@ describe('silent-until-volume-nudge cannot return', () => {
       'ensureHowlAudible missing — heartbeat/fade-in have nothing to snap a stuck-at-0 Howl')
     assert.match(useAudio, /ensureHowlAudible\(h, stateRef\.current\.volume\)/,
       'heartbeat no longer snaps a Howl stuck at volume 0 — the volume-bar wake-up is back')
+    assert.match(useAudio, /snapHowlOutputVolume\(howl, target\)/,
+      'ensureHowlAudible must write the HTMLAudioElement, not only Howler.volume() — playLock queues volume() forever')
   })
 
   test('gapless sample-accurate promote does not wait for a second play event', () => {
@@ -152,6 +154,28 @@ describe('silent-until-volume-nudge cannot return', () => {
     const slice = useAudio.slice(handoff, handoff + 800)
     assert.match(slice, /gaplessOutgoingFaded\s*=\s*false/,
       'promote no longer clears gaplessOutgoingFaded — seam snap stays disabled and the next song goes silent')
+  })
+
+  test('gapless standard promote fades after play, not under playLock', () => {
+    // Mixes auto-advance this path. fadeInHowl in the same turn as play()
+    // queues event:'fade' which _loadQueue('play') never drains.
+    const marker = useAudio.indexOf('Fade MUST run in the play callback')
+    assert.notEqual(marker, -1, 'standard-promote playLock comment missing')
+    const slice = useAudio.slice(marker, marker + 1200)
+    assert.match(slice, /const startIncoming = \(\) => \{/,
+      'standard promote lost startIncoming — fade is probably back under playLock')
+    assert.match(slice, /fadeInHowl\(next, s\.volume, GAPLESS_FADE_IN_MS\)/,
+      'standard promote no longer fade-in on the incoming Howl')
+    assert.doesNotMatch(slice, /next\.play\(\)\s*\n\s*fadeInHowl\(next/,
+      'fadeInHowl is back immediately after next.play() — mix seams silent until volume slider')
+  })
+
+  test('Play click primes the audio graph under the user gesture', () => {
+    const play = useAudio.indexOf('const playTrack = useCallback')
+    assert.notEqual(play, -1, 'playTrack missing')
+    const slice = useAudio.slice(play, play + 600)
+    assert.match(slice, /primeAudioGraph\(\)/,
+      'playTrack no longer primes the AudioContext on click — mix auto-advance inherits a suspended ctx')
   })
 })
 

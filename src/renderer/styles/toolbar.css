@@ -661,9 +661,14 @@
 .scrubber-time {
   font-size: var(--font-timestamp);
   color: #6a6550;
-  min-width: 28px;
+  /* 8ch fits -H:MM:SS (-0:28:19). 28px was M:SS-only; flex-shrink let
+     1:03:37 collapse against -28:19 on hour-long mixes. 8ch is ~8× the
+     width of a zero in --font-timestamp (9.25px). */
+  min-width: 8ch;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* 4.5: scrubber refinement — recessed groove track + warmer-tinted

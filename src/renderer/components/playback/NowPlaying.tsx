@@ -10,6 +10,7 @@ import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, mergedTra
 import { subscribeMixtapes, getTapeSession } from '../../mixtapes'
 import { useLibrary } from '../../context/LibraryContext'
 import { getVisualizerWaveform } from '../../audio/eq'
+import { formatScrubberClock } from '../../../common/scrubber-clock'
 
 const HISTORY_LENGTH = 60   // pixels of scrolling loudness history
 const SAMPLE_FRAMES  = 256  // samples averaged per frame for RMS
@@ -104,20 +105,6 @@ function prettyImportName(raw: string): { title: string; artist: string } {
   if (parts.length >= 3) return { title: stripNo(parts[parts.length - 1]), artist: parts[0] }
   if (parts.length === 2) return { title: stripNo(parts[1]), artist: parts[0] }
   return { title: stripNo(noExt), artist: '' }
-}
-
-function formatTime(s: number): string {
-  if (!s || s < 0) return '0:00'
-  const total = Math.floor(s)
-  const secs = total % 60
-  const mins = Math.floor(total / 60) % 60
-  const hours = Math.floor(total / 3600)
-  // Roll over to H:MM:SS for hour-long tracks (full live concerts) so a
-  // 2½-hour show reads 1:30:00 / -1:30:00, not 155:59. Sub-hour tracks
-  // stay M:SS exactly as before — display only, no scrubber-math change.
-  return hours > 0
-    ? `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-    : `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 export default function NowPlaying() {
@@ -381,6 +368,11 @@ export default function NowPlaying() {
   //    small top-bar treatment as before.
   const radioElapsedSec = radio ? Math.floor(radio.elapsedMs / 1000) : 0
   const radioRemainingSec = radio ? Math.max(0, Math.floor((radio.capMs - radio.elapsedMs) / 1000)) : 0
+  // ⚠️ TWIN: src/common/scrubber-clock.ts
+  const previewClock = formatScrubberClock(preview.position, preview.duration)
+  const playClock = tapeOnAir
+    ? formatScrubberClock(tapeOnAir.elapsedMs / 1000, tapeOnAir.totalMs / 1000)
+    : formatScrubberClock(state.position, state.duration)
   const isPillEmpty = effectiveMode === null
   const radioStrip = radioActive && radio && !isPillEmpty ? (
     <div className="np-radio-strip" aria-live="polite">
@@ -441,12 +433,12 @@ export default function NowPlaying() {
             </div>
           </div>
           <div className="scrubber-row">
-            <span className="scrubber-time">{formatTime(Math.floor(preview.position))}</span>
+            <span className="scrubber-time">{previewClock.elapsed}</span>
             <div className="scrubber-track" ref={previewBarRef} onMouseDown={handlePreviewMouseDown}>
               <div className="scrubber-fill" style={{ width: `${previewProgress}%` }} />
               <div className="scrubber-knob" style={{ left: `${previewProgress}%` }} />
             </div>
-            <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(preview.duration) - Math.floor(preview.position)))}</span>
+            <span className="scrubber-time">-{previewClock.remaining}</span>
           </div>
         </>
       ) : effectiveMode === 'playing' && track ? (
@@ -488,40 +480,24 @@ export default function NowPlaying() {
             <span className="now-playing-tape-counter">{tapeOnAir.slot}/{tapeOnAir.of}</span>
           )}
           <div className="scrubber-row">
-            {/* Brief 025: floor position + duration ONCE, then compute
-                remaining as their integer difference, so the count-up and
-                countdown labels never drift apart by the ~half-second
-                rounding asymmetry. Pre-fix: formatTime(position) floored
-                position, formatTime(duration - position) floored AFTER
-                subtraction — e.g. position=4.6 / duration=75.4 produced
-                "0:04" + "-1:10" while the actual duration read as 1:15.
-                Fix keeps position + |remaining| === floor(duration) at
-                every render. Math.max(0, ...) clamps the countdown to
-                -0:00 when position briefly overshoots duration near
-                track end. Strictly read-only; the scrubber drag-logic
-                seam (handleMouseDown, barRef) on the next line is
-                untouched per the do-not-touch list. */}
+            {/* ⚠️ TWIN: src/common/scrubber-clock.ts — Brief 025 floor-once
+                pair, plus hour-long totals format BOTH sides as H:MM:SS.
+                The tape path used to floor remaining independently, so a
+                Daily Mix past 1:00:00 read 1:03:37 / -28:19. Scrubber
+                drag-logic (handleMouseDown, barRef) is untouched. */}
+            <span className="scrubber-time">{playClock.elapsed}</span>
             {tapeOnAir ? (
-              <>
-                {/* The tape's clock: whole-tape elapsed and remaining, and a
-                    bar that reports rather than accepts clicks. */}
-                <span className="scrubber-time">{formatTime(Math.floor(tapeOnAir.elapsedMs / 1000))}</span>
-                <div className="scrubber-track scrubber-track--tape" title="The whole tape — it plays start to finish">
-                  <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
-                  <div className="scrubber-knob" style={{ left: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
-                </div>
-                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor((tapeOnAir.totalMs - tapeOnAir.elapsedMs) / 1000)))}</span>
-              </>
+              <div className="scrubber-track scrubber-track--tape" title="The whole tape — it plays start to finish">
+                <div className="scrubber-fill scrubber-fill--tape" style={{ width: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
+                <div className="scrubber-knob" style={{ left: `${Math.min(100, (tapeOnAir.elapsedMs / Math.max(1, tapeOnAir.totalMs)) * 100)}%` }} />
+              </div>
             ) : (
-              <>
-                <span className="scrubber-time">{formatTime(Math.floor(state.position))}</span>
-                <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
-                  <div className="scrubber-fill" style={{ width: `${progress}%` }} />
-                  <div className="scrubber-knob" style={{ left: `${progress}%` }} />
-                </div>
-                <span className="scrubber-time">-{formatTime(Math.max(0, Math.floor(state.duration) - Math.floor(state.position)))}</span>
-              </>
+              <div className="scrubber-track" ref={barRef} onMouseDown={handleMouseDown}>
+                <div className="scrubber-fill" style={{ width: `${progress}%` }} />
+                <div className="scrubber-knob" style={{ left: `${progress}%` }} />
+              </div>
             )}
+            <span className="scrubber-time">-{playClock.remaining}</span>
           </div>
         </>
       ) : effectiveMode === 'sync' && syn ? (
