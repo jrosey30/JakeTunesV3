@@ -2253,9 +2253,28 @@ ipc.handle('get-active-host', () => readActiveHostSync(), { public: true })
 // it next fails, the answer is in a file — no restart, no debugger, no asking
 // Jake to describe what he sees.
 const AUDIO_LOG_PATH = () => join(app.getPath('userData'), 'audio-events.log')
+// The comment above has said "capped" since the night this shipped; the cap
+// itself was never written, and the file was at 1.5MB within days
+// (2026-08-15). Rotate at 2MB into a single .1 generation — worst case
+// ~4MB on disk, and the crash-forensics window (the recent past) is always
+// intact across the rotation boundary. Size is checked every 50th append so
+// the hot path stays one syscall; logging still must never break playback.
+const AUDIO_LOG_MAX_BYTES = 2 * 1024 * 1024
+let audioLogAppendsSinceCheck = 0
 ipcMain.on('audio-log', (_e, line: string) => {
   try {
-    void appendFile(AUDIO_LOG_PATH(), line + '\n', 'utf-8').catch(() => {})
+    void (async () => {
+      if (++audioLogAppendsSinceCheck >= 50) {
+        audioLogAppendsSinceCheck = 0
+        try {
+          const { size } = await stat(AUDIO_LOG_PATH())
+          if (size > AUDIO_LOG_MAX_BYTES) {
+            await rename(AUDIO_LOG_PATH(), AUDIO_LOG_PATH() + '.1')
+          }
+        } catch { /* absent file or busy rename — next check catches it */ }
+      }
+      await appendFile(AUDIO_LOG_PATH(), line + '\n', 'utf-8')
+    })().catch(() => {})
   } catch { /* logging must never break playback */ }
 })
 
@@ -13113,13 +13132,18 @@ async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestion[] | n
 // title-shaped queries harvest artistIds from their own results, artist-shaped
 // queries pass the resolved artist — so the two can never drift apart again
 // the way the original inline version did.
-async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number }>> {
-  const map = new Map<string, { id: number }>()
+async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number; trackCount?: number }>> {
+  const map = new Map<string, { id: number; trackCount?: number }>()
   if (artistIds.length === 0) return map
   await Promise.all(artistIds.map(async (artistId) => {
     try {
       const abRes = await fetch(
-        `https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=100`,
+        // 200 is the lookup endpoint's max, and it matters: Nicki Minaj's
+        // catalog holds 200+ collections, and at limit=100 the explicit
+        // "Roman Reloaded the Re-Up" simply wasn't in the page — so the
+        // rescue coin-flipped on big-catalog artists (measured 2026-08-15:
+        // limit=100 → 0 explicit Re-Up editions, limit=200 → 1).
+        `https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`,
         { signal: AbortSignal.timeout(6000) })
       if (!abRes.ok) return
       const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
@@ -13130,11 +13154,48 @@ async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, {
         if (!name || !c.collectionId) continue
         // First explicit wins: Apple lists deluxe/extended variants under
         // their own names, so a same-name hit is the album.
-        if (!map.has(name)) map.set(name, { id: Number(c.collectionId) })
+        if (!map.has(name)) {
+          map.set(name, {
+            id: Number(c.collectionId),
+            trackCount: typeof c.trackCount === 'number' ? c.trackCount : undefined,
+          })
+        }
       }
     } catch { /* one artist's lookup failing must not sink the others */ }
   }))
   return map
+}
+
+/**
+ * The lookup an individual row does against the explicit map. Exact folded
+ * name first; failing that, the PARENTHETICAL BRIDGE: Apple frequently
+ * censors "Album (Bonus Track Version)" while listing the explicit edition
+ * as plain "Album" — same record, differently subtitled. Stripping the
+ * trailing parenthetical is only trusted when the TRACK COUNTS MATCH:
+ * identical counts = the same record wearing two names; different counts
+ * (a real deluxe vs the standard album) = genuinely different editions, and
+ * repointing would silently change what Jake downloads — so the honest
+ * cleaned badge stays. Measured refusal that proves the gate's worth
+ * (2026-08-15): cleaned "…the Re-Up (Booklet Version)" is EIGHT tracks;
+ * explicit "…the Re-Up" is TWENTY-EIGHT. Same base name, different record —
+ * a name-only bridge would have silently swapped one for the other.
+ */
+function resolveExplicitEdition(
+  albumName: string,
+  rowTrackCount: number | undefined,
+  map: Map<string, { id: number; trackCount?: number }>,
+): { id: number } | undefined {
+  const folded = foldAccents(albumName).replace(/[^a-z0-9]/g, '')
+  if (!folded) return undefined
+  const exact = map.get(folded)
+  if (exact) return exact
+  const base = albumName.replace(/\s*[([][^)\]]*[)\]]\s*$/, '')
+  if (base === albumName) return undefined
+  const baseFolded = foldAccents(base).replace(/[^a-z0-9]/g, '')
+  const bridged = baseFolded ? map.get(baseFolded) : undefined
+  if (!bridged) return undefined
+  if (rowTrackCount === undefined || bridged.trackCount === undefined) return undefined
+  return rowTrackCount === bridged.trackCount ? bridged : undefined
 }
 
 ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
@@ -13179,8 +13240,10 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
         const explicitByAlbum = await fetchExplicitAlbumMap(cleanedArtistIds)
         raw = results
           .map((r) => {
-            const albumKey = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
-            const uncensored = albumKey ? explicitByAlbum.get(albumKey) : undefined
+            const uncensored = resolveExplicitEdition(
+              String(r.collectionName ?? ''),
+              typeof r.trackCount === 'number' ? r.trackCount : undefined,
+              explicitByAlbum)
             const rescued = uncensored !== undefined &&
               (r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
             return {
@@ -13285,8 +13348,8 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
                   previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
                   appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
                   collectionId: (() => {
-                    const nm = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
-                    const ex = nm ? explicitByAlbum.get(nm) : undefined
+                    const ex = resolveExplicitEdition(String(r.collectionName ?? ''),
+                      typeof r.trackCount === 'number' ? r.trackCount : undefined, explicitByAlbum)
                     return ex ? ex.id : (r.collectionId ? Number(r.collectionId) : undefined)
                   })(),
                   durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
@@ -13294,10 +13357,10 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
                   trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
                   genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
                   explicitness: (() => {
-                    const nm = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
                     // If an uncensored edition of this album exists, the row now
                     // points at it, so the badge must say so too.
-                    if (nm && explicitByAlbum.has(nm)) return 'explicit'
+                    if (resolveExplicitEdition(String(r.collectionName ?? ''),
+                      typeof r.trackCount === 'number' ? r.trackCount : undefined, explicitByAlbum)) return 'explicit'
                     return typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined
                   })(),
                 }))
