@@ -5923,6 +5923,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   let verifyAttempts = 0
   let verifyRan = false
   let activityShortfall = false
+  let failedForReport: SyncReport['failed'] = []
   if (IS_MAC && tracks.length > 0) {
     const verify: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
     for (const t of tracks) {
@@ -6124,16 +6125,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           artist: String((t as Record<string, unknown>).artist ?? ''),
           path: String((t as Record<string, unknown>).path ?? ''),
         }))
-      void writeSyncReport({
-        syncedAt: new Date().toISOString(),
-        target: syncTarget,
-        landed: landedIds.size,
-        shortfall: syncTarget - landedIds.size,
-        verifyPasses: verifyAttempts,
-        copied,
-        copyErrors,
-        failed: failedNow,
-      })
+      failedForReport = failedNow
       tracks = tracks.filter((t) => landedIds.has(t.id as number))
       verifiedLanded = tracks.length
       console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
@@ -6432,6 +6424,49 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             })
             return
           }
+
+          // ── FIRMWARE-SEMANTIC GATE ─────────────────────────────────────
+          // Counts + paths + byte sizes do NOT prove the Mini will expose a
+          // song. Firmware 1.4.1 silently filters mhit rows with invalid audio
+          // facts (observed live: 500 rows/files, but four rows carried
+          // bitrate=0, sampleRate=0, mediatype=0 and only 496 appeared).
+          // Run the independent validator against the cold-remounted DB before
+          // success. This checker deliberately shares no parser code with the
+          // writer, so a writer regression cannot validate itself.
+          const semanticScript = join(
+            app.isPackaged ? process.resourcesPath : app.getAppPath(),
+            'core/tools/itdb_verify.py',
+          )
+          const semantic = await new Promise<{ ok: boolean; output: string }>((done) => {
+            const check = spawn(PYTHON_CMD ?? 'python3', [
+              semanticScript,
+              ipodDb,
+              '--root', IPOD_MOUNT,
+              '--expect', String(syncTarget),
+            ])
+            let output = ''
+            check.stdout.on('data', (d: Buffer) => { output += d.toString() })
+            check.stderr.on('data', (d: Buffer) => { output += d.toString() })
+            check.on('error', (err: Error) => done({ ok: false, output: safeIpcError(err, 'tool-failed') }))
+            check.on('close', (checkCode: number) => done({ ok: checkCode === 0, output }))
+          })
+          if (!semantic.ok) {
+            console.error(`sync-to-ipod: FIRMWARE SEMANTIC VALIDATION FAILED:\n${semantic.output}`)
+            await writeSyncReport({
+              syncedAt: new Date().toISOString(), target: syncTarget,
+              landed: 0, shortfall: syncTarget, verifyPasses: verifyAttempts,
+              copied, copyErrors,
+              failed: [{ id: 0, title: 'iTunesDB semantic validation failed', artist: '', path: '' }],
+            })
+            resolve({
+              ok: false,
+              error: `The ${syncTarget} files are safely on the iPod, but its catalog contains firmware-invalid song records. JakeTunes refused to claim success. Sync again to rebuild the catalog; restarting the iPod cannot repair this.`,
+              copied, copyErrors, target: syncTarget, landed: 0,
+              shortfall: syncTarget, verifyAttempts,
+            })
+            return
+          }
+          console.log(`sync-to-ipod: firmware-semantic validation GREEN for all ${syncTarget} tracks`)
           console.log(`sync-to-ipod: readback verified — ${onDevice} catalog records, all ${onDiskFiles.length} files present on disk`)
           // Activity wipe+rebuild: catalog matching the partial landed set is
           // still a FAILED sync if it's under the pick (489 of 500).
@@ -6465,6 +6500,17 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           return
         }
 
+        const finalShortfall = Math.max(0, syncTarget - verifiedLanded)
+        await writeSyncReport({
+          syncedAt: new Date().toISOString(),
+          target: syncTarget,
+          landed: activityShortfall ? verifiedLanded : syncTarget,
+          shortfall: activityShortfall ? finalShortfall : 0,
+          verifyPasses: verifyAttempts,
+          copied,
+          copyErrors,
+          failed: activityShortfall ? failedForReport : [],
+        })
         resolve({
           ok: !activityShortfall,
           copied, copyErrors,
@@ -6476,7 +6522,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           // when the card kept a random subset (103 / 421 / 238…).
           target: syncTarget,
           landed: verifiedLanded,
-          shortfall: Math.max(0, syncTarget - verifiedLanded),
+          shortfall: finalShortfall,
           verifyAttempts,
           error: activityShortfall
             ? (verifiedLanded < syncTarget

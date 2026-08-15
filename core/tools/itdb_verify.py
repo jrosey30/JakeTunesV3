@@ -249,6 +249,12 @@ def verify(path, root=None, expect=None):
     bad = count_bad(lambda t: not (8 <= t['bitrate'] <= 2000))
     if bad:
         r.err(f"{len(bad)}/{n} track(s) have out-of-range bitrate")
+    bad = count_bad(lambda t: not (8000 <= t['srate'] <= 192000))
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) have invalid sample rate (firmware hides them)")
+    bad = count_bad(lambda t: t['mediatype'] != 1)
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) have mediatype != 1 (firmware hides them)")
     if len(set(t['bitrate'] for t in tracks)) == 1 and n > 5:
         r.warn(f"every track reports the SAME bitrate ({tracks[0]['bitrate']}) — inherited, not measured")
 
