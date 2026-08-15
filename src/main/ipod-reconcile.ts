@@ -126,6 +126,24 @@ export function activitySetProven(consecutiveFullProofs: number, landed: number,
 }
 
 /**
+ * Bytes the iTunesDB mhit 0x24 field must carry: the file ON THE CARD.
+ *
+ * ⚠️ TWIN: core/db_reader.py write_itunesdb restat from --write output path.
+ * add_file_sizes() is READ-only and stats the library mirror, not the USB
+ * volume. 2026-08-15 cold-plug: 500 files on the Mini, 55 mhit sizes from
+ * stale library.json (Foo Fighters "Beyond Me" 31,481,234 ALAC vs 7,549,180
+ * on card). Mini 1.4.1 skips or aborts Songs indexing on size mismatch —
+ * that's 79 / 111 / 340 with a green 500/500.
+ *
+ * Never fall back to library.json. No on-card stat → 0 (writer must not
+ * pack a lie into an old mhit header).
+ */
+export function fileSizeForItunesDb(onCardBytes: number | null | undefined): number {
+  const n = Number(onCardBytes)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+/**
  * Bytes we expect a track to occupy ON THE IPOD after sync.
  *
  * When convert-higher-bitrate is on, lossless sources land as AAC — often

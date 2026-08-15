@@ -5,6 +5,7 @@ import {
   partitionLanded,
   sizeVerified,
   activitySetProven,
+  fileSizeForItunesDb,
   estimateIpodBytes,
   looksLossless,
   packTracksToCapacity,
@@ -135,6 +136,20 @@ describe('activitySetProven — 500 means 500, never a lucky remount', () => {
     assert.equal(activitySetProven(4, 33, 500), false)
     assert.equal(activitySetProven(2, 499, 500), false)
     assert.equal(activitySetProven(2, 0, 500), false)
+  })
+})
+
+describe('fileSizeForItunesDb — catalog size is the card, never library.json', () => {
+  it('uses the on-card byte size (Beyond Me: 7.5MB on card, not 31MB ALAC in library.json)', () => {
+    assert.equal(fileSizeForItunesDb(7_549_180), 7_549_180)
+    assert.notEqual(fileSizeForItunesDb(7_549_180), 31_481_234)
+  })
+
+  it('refuses a missing or zero file — do not pack a stale library size into the mhit', () => {
+    assert.equal(fileSizeForItunesDb(0), 0)
+    assert.equal(fileSizeForItunesDb(null), 0)
+    assert.equal(fileSizeForItunesDb(undefined), 0)
+    assert.equal(fileSizeForItunesDb(-1), 0)
   })
 })
 

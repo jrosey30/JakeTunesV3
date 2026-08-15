@@ -321,7 +321,13 @@ def enrich_tracks(tracks, xml_path=ITUNES_XML_PATH):
 IPOD_MOUNT = _lib_root
 
 def add_file_sizes(tracks):
-    """Get actual file sizes from iPod filesystem (not iTunes XML source sizes)."""
+    """READ path only — stats the library mirror (IPOD_MOUNT), not a USB iPod.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb + write_itunesdb
+    restat from --write output_path. This function is not on the sync write
+    path. Using it for writes would stamp Music2 sizes; the Mini needs the
+    file on the card.
+    """
     sized = 0
     for t in tracks:
         path = t.get('path', '')
@@ -786,6 +792,26 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
 
 def write_itunesdb(tracks, playlists, template_path, output_path):
     """Rebuild the iPod iTunesDB from JakeTunes library data."""
+    # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
+    # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
+    # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
+    # 1.4.1 skips or aborts Songs indexing on mismatch. output_path is
+    # <mount>/iPod_Control/iTunes/iTunesDB — three dirnames up is the volume.
+    ipod_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(output_path))))
+    sized = 0
+    for t in tracks:
+        path = t.get('path') or ''
+        if not path:
+            continue
+        rel = path.replace(':', os.sep).lstrip('/' + os.sep)
+        fs_path = os.path.join(ipod_root, rel)
+        try:
+            t['fileSize'] = os.path.getsize(fs_path)
+            sized += 1
+        except OSError:
+            pass
+    print(f"write_itunesdb: restated {sized}/{len(tracks)} fileSize(s) from {ipod_root}", file=sys.stderr)
+
     with open(template_path, 'rb') as f:
         existing = f.read()
 

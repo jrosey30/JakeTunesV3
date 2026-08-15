@@ -161,6 +161,7 @@ import {
 import {
   partitionLanded,
   activitySetProven,
+  fileSizeForItunesDb,
   type IntendedTrack,
 } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
@@ -6121,6 +6122,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // have one.
   {
     const present: typeof tracks = []
+    let sizeRewrites = 0
     for (const t of tracks) {
       const id = t.id as number
       const remembered = writtenById.get(id)
@@ -6132,6 +6134,12 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         const sz = (await stat(dst)).size
         if (sz <= 0) continue
         if (remembered && remembered.expectedSize > 0 && sz !== remembered.expectedSize) continue
+        // Mini 1.4.1 indexes by mhit 0x24. library.json fileSize is often a
+        // stale ALAC length over an AAC/smart-matched file on the card
+        // (Beyond Me 31MB vs 7.5MB → Songs abort / roulette).
+        const libSize = Number(t.fileSize) || 0
+        t.fileSize = fileSizeForItunesDb(sz)
+        if (libSize !== t.fileSize) sizeRewrites++
         present.push(t)
       } catch { /* missing on card */ }
     }
@@ -6139,6 +6147,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       console.warn(`sync-to-ipod: on-disk gate — keeping ${present.length}/${tracks.length} with real files on the card before DB write`)
       tracks = present
       verifiedLanded = tracks.length
+    }
+    if (sizeRewrites > 0) {
+      console.log(`sync-to-ipod: stamped ${sizeRewrites} iTunesDB fileSize(s) from the card (not library.json)`)
     }
   }
 
