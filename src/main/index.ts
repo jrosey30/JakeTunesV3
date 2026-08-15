@@ -168,6 +168,7 @@ import {
   ACTIVITY_WIPE_MAX_PASSES,
   type IntendedTrack,
 } from './ipod-reconcile'
+import { ensureContiguousDb } from './ipod-db-contiguity'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
@@ -6261,6 +6262,27 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     py.on('close', async (code: number) => {
       console.log('sync-to-ipod stderr:', stderr)
       if (code === 0) {
+        // ── CATALOG LAYOUT PASS (2026-08-15, the 79-of-500 night) ─────────
+        // Every existing gate below verifies the catalog's CONTENT; none of
+        // them see its LAYOUT. The writer's output lands in whatever holes
+        // the activity churn left in the FAT — measured at NINE fragments —
+        // and the Mini's firmware walks the chain, dies partway, and shows
+        // a different count each sync (79/12/471). Rewrite the identical
+        // bytes as one contiguous run BEFORE the readback gates, so the
+        // artifact they verify is the artifact that ships. On verification
+        // failure the worker restores the writer's original and the sync
+        // FAILS here — a fragmented-but-correct catalog must never be
+        // silently replaced by a torn one.
+        const contig = await ensureContiguousDb(ipodDb, PYTHON_CMD ?? 'python3')
+        console.log(`sync-to-ipod: ${contig.summary}`)
+        if (!contig.ok) {
+          resolve({
+            ok: false,
+            error: `The catalog was written but could not be laid down as one piece and verified (${contig.error}). The previous catalog is untouched. Sync again.`,
+            copied, copyErrors,
+          })
+          return
+        }
         mainWindow?.webContents.send('sync-progress', {
           phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
         })
@@ -6468,6 +6490,43 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           }
           console.log(`sync-to-ipod: firmware-semantic validation GREEN for all ${syncTarget} tracks`)
           console.log(`sync-to-ipod: readback verified — ${onDevice} catalog records, all ${onDiskFiles.length} files present on disk`)
+          // ── DEBRIS REPORT (2026-08-15) — report-only, deletes NOTHING ──
+          // The raw FAT walk that night found ~431 unreferenced audio files
+          // plus .XXXXXX staging temps and a stray .flac accumulated on the
+          // card. That churn is what shreds free space, and shredded free
+          // space is where the next catalog gets fragmented. Deletion stays
+          // a deliberate act (per the destructive-ops rule) — this makes the
+          // pile VISIBLE on every sync instead of discoverable only by
+          // forensics at 3am. Identity source: the catalog just verified.
+          {
+            const referenced = new Set<string>()
+            for (const t of readback.tracks as Array<{ path?: string }>) {
+              const bn = (t.path || '').split(/[/:\\]/).pop() || ''
+              if (bn) referenced.add(bn.toLowerCase())
+            }
+            const debris = onDiskFiles.filter((f) => {
+              const bn = (f.split(/[/\\]/).pop() || '').toLowerCase()
+              return bn && !referenced.has(bn)
+            })
+            // Staging temps (.name.XXXXXX) are dotfiles with a non-audio
+            // final extension, so walkAudioFilesUnder never sees them —
+            // they need their own sweep or this count reads 0 forever.
+            let staging = 0
+            try {
+              const { readdir } = await import('fs/promises')
+              for (const fdir of await readdir(musicRoot, { withFileTypes: true })) {
+                if (!fdir.isDirectory()) continue
+                for (const name of await readdir(join(musicRoot, fdir.name))) {
+                  if (/^\..+\.[A-Za-z0-9]{6}$/.test(name)) staging++
+                }
+              }
+            } catch { /* report-only — never fail a sync over a count */ }
+            if (debris.length > 0 || staging > 0) {
+              console.warn(`sync-to-ipod: DEBRIS — ${debris.length} unreferenced audio file(s) + ${staging} staging temp(s) on the card. Examples: ${debris.slice(0, 3).map((f) => f.split('/').pop()).join(', ') || '(temps only)'}`)
+            } else {
+              console.log('sync-to-ipod: no debris — every file on the card is referenced by the catalog')
+            }
+          }
           // Activity wipe+rebuild: catalog matching the partial landed set is
           // still a FAILED sync if it's under the pick (489 of 500).
           if (syncOpts?.wipeFirst && onDevice < syncTarget) {
