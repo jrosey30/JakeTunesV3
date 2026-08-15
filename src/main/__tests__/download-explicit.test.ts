@@ -18,6 +18,8 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { explicitWins } from '../../common/explicit.ts'
 
 describe('explicit edition wins the row', () => {
@@ -71,5 +73,20 @@ describe('explicit edition wins the row', () => {
       if (explicitWins(row.explicitness, e.explicitness)) row = { ...e }
     }
     assert.equal(row.collectionId, 222, 'order must not decide which edition Jake gets')
+  })
+})
+
+describe('the rescue is WIRED, not just implemented', () => {
+  // 2026-08-15: Jake searched the song title "Shawty Is Da Sh*!" and got
+  // CLEAN-only releases. The Migos fix was intact as a FUNCTION — but the
+  // download search had been rebuilt since, and the title-query path shipped
+  // without the rescue. explicitWins's own tests kept passing the whole
+  // time, because they test the function, not the wiring. So this locks the
+  // wiring: fetchExplicitAlbumMap must be invoked from BOTH search paths.
+  test('fetchExplicitAlbumMap has at least two call sites in the search flow', () => {
+    const src = readFileSync(join(import.meta.dirname, '../index.ts'), 'utf-8')
+    const calls = (src.match(/await fetchExplicitAlbumMap\(/g) || []).length
+    assert.ok(calls >= 2,
+      `fetchExplicitAlbumMap called ${calls} time(s) — the title-search or artist-search path lost the explicit-edition rescue again`)
   })
 })

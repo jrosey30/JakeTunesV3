@@ -13105,6 +13105,38 @@ async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestion[] | n
   } catch { return null }
 }
 
+// The uncensored editions of every album a set of artists has, keyed by
+// folded album name. This is the heart of the Migos fix (3968c84): the song
+// SEARCH endpoint prefers cleaned editions, the artist LOOKUP endpoint has
+// both, so any row built from search results has to be repointed here before
+// its collectionId is worth expanding. Shared by BOTH search paths —
+// title-shaped queries harvest artistIds from their own results, artist-shaped
+// queries pass the resolved artist — so the two can never drift apart again
+// the way the original inline version did.
+async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number }>> {
+  const map = new Map<string, { id: number }>()
+  if (artistIds.length === 0) return map
+  await Promise.all(artistIds.map(async (artistId) => {
+    try {
+      const abRes = await fetch(
+        `https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=100`,
+        { signal: AbortSignal.timeout(6000) })
+      if (!abRes.ok) return
+      const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
+      for (const c of abData.results || []) {
+        if (c.wrapperType !== 'collection') continue
+        if (c.collectionExplicitness !== 'explicit') continue
+        const name = foldAccents(String(c.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+        if (!name || !c.collectionId) continue
+        // First explicit wins: Apple lists deluxe/extended variants under
+        // their own names, so a same-name hit is the album.
+        if (!map.has(name)) map.set(name, { id: Number(c.collectionId) })
+      }
+    } catch { /* one artist's lookup failing must not sink the others */ }
+  }))
+  return map
+}
+
 ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> => {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
@@ -13127,24 +13159,53 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
       }
       if (res.ok) {
         const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
-        raw = (data.results || [])
-          .map((r) => ({
-            song: String(r.trackName ?? ''),
-            artist: String(r.artistName ?? ''),
-            album: r.collectionName ? String(r.collectionName) : undefined,
-            // Bump the 100px thumb to 200px for a crisper suggestion row.
-            artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
-            previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
-            appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
-            collectionId: r.collectionId ? Number(r.collectionId) : undefined,
-            // Length of the EXACT version this row represents — the download
-            // path verifies the Qobuz file against it (wrong-version guard).
-            durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
-            releaseYear: itunesYear(r.releaseDate),
-            trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
-            genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
-            explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
-          }))
+        // Jake, 2026-08-15, searching the song title "Shawty Is Da Sh*!" and
+        // getting CLEAN-only releases: "WHY IS THE CLEAN VERSION ONLY
+        // SHOWING????????"
+        //
+        // The Migos fix only rescued queries that RESOLVE AS AN ARTIST — the
+        // rescue lived inside the musicArtist branch below. A song-title
+        // query never enters it, so its rows shipped whatever editions the
+        // search endpoint returned, and that endpoint prefers cleaned. The
+        // key was in our hands the whole time: every song result carries its
+        // artistId. Harvest the ids that own CLEANED rows (only they need
+        // rescuing — zero extra requests when nothing is censored) and
+        // repoint those rows at the uncensored editions of the same albums.
+        const results = data.results || []
+        const cleanedArtistIds = [...new Set(results
+          .filter((r) => r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
+          .map((r) => Number(r.artistId))
+          .filter((id) => Number.isFinite(id) && id > 0))].slice(0, 4)
+        const explicitByAlbum = await fetchExplicitAlbumMap(cleanedArtistIds)
+        raw = results
+          .map((r) => {
+            const albumKey = foldAccents(String(r.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+            const uncensored = albumKey ? explicitByAlbum.get(albumKey) : undefined
+            const rescued = uncensored !== undefined &&
+              (r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
+            return {
+              song: String(r.trackName ?? ''),
+              artist: String(r.artistName ?? ''),
+              album: r.collectionName ? String(r.collectionName) : undefined,
+              // Bump the 100px thumb to 200px for a crisper suggestion row.
+              artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+              previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+              appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+              // A rescued row points at the UNCENSORED edition — the
+              // collectionId is what the album expands by, so this is the
+              // difference between downloading the record and downloading
+              // the radio edit of it.
+              collectionId: rescued ? uncensored.id : (r.collectionId ? Number(r.collectionId) : undefined),
+              // Length of the EXACT version this row represents — the download
+              // path verifies the Qobuz file against it (wrong-version guard).
+              durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
+              releaseYear: itunesYear(r.releaseDate),
+              trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
+              genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
+              explicitness: rescued ? 'explicit'
+                : (typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined),
+            }
+          })
           .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
     } catch { raw = null }
@@ -13154,6 +13215,8 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
     // ── the artist's OWN catalogue ────────────────────────────────────────
     // Jake, 2026-08-09, searching "Jay z": every result was a Beyoncé or
     // Rihanna track that FEATURES him, and not one of his own records. That is
+    // (fetchExplicitAlbumMap — the explicit-edition rescue shared with the
+    // title-search path above — is defined just before this handler.)
     // Apple's ranking, not a bug we introduced — a song search sorts by
     // popularity, and a superstar's guest verses out-rank his own catalogue.
     //
@@ -13204,24 +13267,10 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
               //
               // So ask the endpoint that has both, and rewrite each track's
               // collection to the uncensored edition of the same album.
-              const explicitByAlbum = new Map<string, { id: number }>()
-              try {
-                const abRes = await fetch(
-                  `https://itunes.apple.com/lookup?id=${hit.artistId}&entity=album&limit=100`,
-                  { signal: AbortSignal.timeout(6000) })
-                if (abRes.ok) {
-                  const abData = await abRes.json() as { results?: Array<Record<string, unknown>> }
-                  for (const c of abData.results || []) {
-                    if (c.wrapperType !== 'collection') continue
-                    if (c.collectionExplicitness !== 'explicit') continue
-                    const name = foldAccents(String(c.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
-                    if (!name || !c.collectionId) continue
-                    // First explicit wins: Apple lists deluxe/extended variants
-                    // under their own names, so a same-name hit is the album.
-                    if (!explicitByAlbum.has(name)) explicitByAlbum.set(name, { id: Number(c.collectionId) })
-                  }
-                }
-              } catch { /* no album lookup - fall through with what we have */ }
+              // One implementation for both paths — see fetchExplicitAlbumMap
+              // above the handler. This used to be inline here, which is how
+              // the title-search path shipped without it.
+              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId)])
               const own = (lData.results || [])
                 .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
                 // PRIMARY artist only. The lookup also returns the guest spots
