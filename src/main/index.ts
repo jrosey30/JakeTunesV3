@@ -11117,7 +11117,7 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
 // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
 // regardless of artist. The renderer then filters for freshness (new artists,
 // no same-album) + diversity. We return a generous pool so ↻ has real variety.
-ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
+ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
   try {
     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
     const m = await ragGetEmbeddingsMap()

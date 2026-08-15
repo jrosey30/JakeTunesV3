@@ -43,7 +43,10 @@ export interface LibraryIpcHost {
   getPlaylists: () => Promise<unknown[]>
   setPlaylists: (playlists: unknown[]) => void
   isSaveLocked: () => string | null
-  triggerSync: (reason: string) => void
+  /** The one reason this module ever sends. Typed as the literal so the
+   *  host can keep its narrow SyncReason union — (reason: string) here
+   *  rejected every narrower host and caused one of the "73 errors". */
+  triggerSync: (reason: 'playlist') => void
   scanLibraryOrphans: () => Promise<{
     trackCount: number
     diskCount: number
