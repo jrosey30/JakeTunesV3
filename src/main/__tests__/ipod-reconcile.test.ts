@@ -4,6 +4,7 @@ import {
   planReconcile,
   partitionLanded,
   sizeVerified,
+  activitySetProven,
   estimateIpodBytes,
   looksLossless,
   packTracksToCapacity,
@@ -116,6 +117,24 @@ describe('partitionLanded — honest post-copy split', () => {
       new Map([[1, aacOnCard]]),
     )
     assert.deepEqual(right.landed, [1])
+  })
+})
+
+describe('activitySetProven — 500 means 500, never a lucky remount', () => {
+  it('refuses success on a single remount even when the count looks full', () => {
+    assert.equal(activitySetProven(1, 500, 500), false)
+    assert.equal(activitySetProven(0, 500, 500), false)
+  })
+
+  it('passes only after two consecutive full proofs at the target', () => {
+    assert.equal(activitySetProven(2, 500, 500), true)
+    assert.equal(activitySetProven(3, 250, 250), true)
+  })
+
+  it('a shortfall is never proven, no matter how many remounts agreed', () => {
+    assert.equal(activitySetProven(4, 33, 500), false)
+    assert.equal(activitySetProven(2, 499, 500), false)
+    assert.equal(activitySetProven(2, 0, 500), false)
   })
 })
 
