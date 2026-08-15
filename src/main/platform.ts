@@ -323,23 +323,48 @@ export async function resolveDeviceNode(mountPoint: string): Promise<string | nu
  * handles Apple_HFS). `unmount`+`mount` by node keeps the device enumerated and
  * diskutil restores it at the same /Volumes/NAME path.
  *
+ * ⚠️ allowForce defaults to false for sync verify. Jake's activity sync went
+ * from 489 → 33 after we remounted every song: when a clean unmount fails,
+ * `diskutil unmount force` discards dirty pages — including songs that already
+ * "stuck" on earlier remounts. Pass allowForce:true only for rare recovery
+ * paths that accept data loss to get the volume back.
+ *
  * Never throws. Returns { ok, mountPoint } on success (mountPoint is where it
  * came back — the same path in practice) or { ok:false, error }.
  */
-export async function remountVolume(mountPoint: string): Promise<{ ok: boolean; mountPoint?: string; error?: string }> {
+export async function remountVolume(
+  mountPoint: string,
+  opts: { allowForce?: boolean } = {},
+): Promise<{ ok: boolean; mountPoint?: string; error?: string }> {
   if (!IS_MAC) return { ok: false, error: 'remount is macOS-only' }
+  const allowForce = opts.allowForce === true
   const node = await resolveDeviceNode(mountPoint)
   if (!node) return { ok: false, error: `could not resolve device node for ${mountPoint}` }
-  // Flush all filesystems first so a clean unmount has the least left to write,
-  // and a forced-unmount fallback (below) can't drop already-synced bytes.
+  // Flush all filesystems first so a clean unmount has the least left to write.
   try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
-  // Unmount: clean by node, then by mount point, then forced — in that order, so
-  // we prefer a flushing unmount and only force if something still holds it.
+  // Prefer flushing unmounts. Force only when explicitly allowed — it can drop
+  // dirty FAT32 pages on Jake's iFlash card (activity sync 500 → 33).
   let unmounted = false
-  for (const args of [['unmount', node], ['unmount', mountPoint], ['unmount', 'force', node]]) {
+  const unmountAttempts: string[][] = [['unmount', node], ['unmount', mountPoint]]
+  if (allowForce) unmountAttempts.push(['unmount', 'force', node])
+  for (const args of unmountAttempts) {
     try { await execP('diskutil', args, { timeout: 30000 }); unmounted = true; break } catch { /* try next */ }
   }
-  if (!unmounted) return { ok: false, error: `unmount failed for ${node}` }
+  if (!unmounted) {
+    try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
+    await new Promise((r) => setTimeout(r, 1000))
+    for (const args of [['unmount', node], ['unmount', mountPoint]]) {
+      try { await execP('diskutil', args, { timeout: 30000 }); unmounted = true; break } catch { /* try next */ }
+    }
+  }
+  if (!unmounted) {
+    return {
+      ok: false,
+      error: allowForce
+        ? `unmount failed for ${node}`
+        : `clean unmount failed for ${node} (force disabled — refusing to discard dirty writes)`,
+    }
+  }
   // Remount by node — diskutil mount is synchronous and restores /Volumes/NAME.
   try {
     await execP('diskutil', ['mount', node], { timeout: 30000 })
