@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExte
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
@@ -147,6 +147,10 @@ export function releaseKind(name: string, trackCount?: number): ReleaseKind {
   return 'ALBUM'
 }
 export function displayAlbumTitle(name: string): string {
+  // ⚠️ TWIN: src/main/streamrip-match.ts searchTitle — same Apple
+  // " - Single" / " - EP" suffix. Display strips it so the shelf doesn't
+  // read "It's Nearly Over - Single · ALBUM"; search strips it so Qobuz
+  // is asked for the name it actually uses.
   return name.replace(/\s[-–—]\s*(EP|Single)$/i, '').trim() || name
 }
 
@@ -161,15 +165,18 @@ const songQ = (r: SongRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'track',
   id: `q|track|${norm(r.artist)}|${norm(r.title)}`,
   desc: `${r.title} — ${r.artist}`,
-  artist: r.artist, title: r.title, album: r.album,
+  artist: r.artist, title: r.title, album: r.album ? displayAlbumTitle(r.album) : r.album,
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
   cleanedSource: r.explicitness === 'cleaned',
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
   id: `q|album|${norm(r.artist)}|${norm(r.album)}`,
-  desc: `${r.album} — ${r.artist} (album)`,
-  artist: r.artist, album: r.album,
+  desc: `${displayAlbumTitle(r.album)} — ${r.artist} (album)`,
+  artist: r.artist,
+  // Search Qobuz without Apple's " - Single"/" - EP" stamp. Identity (id)
+  // keeps the raw iTunes name so two editions don't collapse.
+  album: displayAlbumTitle(r.album) || r.album,
 })
 
 export default function DownloadView() {
@@ -822,6 +829,8 @@ export default function DownloadView() {
   }
 
   const active = getQueue().find((q) => q.status === 'downloading')
+  const failedItems = getQueue().filter((q) => q.status === 'failed')
+  const failedHint = failedItems.map((f) => `${f.result.desc}: ${f.error || 'Download failed.'}`).join('\n')
   const hasResults = !!(ranked.hero || ranked.songs.length || ranked.albums.length)
 
   return (
@@ -878,15 +887,22 @@ export default function DownloadView() {
               <span className="dl-queue-bar" aria-hidden="true"><i /></span>
               <span className="dl-queue-meta">{mmss(active.startedAt ? Math.floor((Date.now() - active.startedAt) / 1000) : 0)}</span>
             </>
+          ) : failedItems[0] ? (
+            <span className="dl-queue-name dl-queue-name--err" title={failedHint}>
+              {failedItems[0].error || 'Download failed.'}
+            </span>
           ) : (
             <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
           )}
           <span className="dl-queue-counts">
             {summary.queued > 0 && <span className="dq-part">{summary.queued} queued</span>}
             {summary.done > 0 && <span className="dq-part dq-done">{summary.done} in your library</span>}
-            {summary.failed > 0 && <span className="dq-part dq-failed">{summary.failed} failed</span>}
+            {summary.failed > 0 && <span className="dq-part dq-failed" title={failedHint}>{summary.failed} failed</span>}
           </span>
           {active && <button className="download-cancel" onClick={() => void cancel(active.key)}>Cancel</button>}
+          {summary.active === 0 && summary.queued === 0 && summary.failed > 0 && (
+            <button className="download-retry" onClick={() => retryFailed()} title={failedHint}>Retry</button>
+          )}
           {summary.active === 0 && summary.queued === 0 && (summary.done + summary.failed) > 0 && (
             <button className="download-link-btn" onClick={() => clearFinished()}>Clear</button>
           )}

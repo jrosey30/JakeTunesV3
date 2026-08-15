@@ -136,6 +136,24 @@ describe('searchTitle — edition metadata is not the song’s name', () => {
     assert.equal(searchTitle('Layla (Acoustic)'), 'Layla (Acoustic)')
   })
 
+  it('strips Apple’s “- Single” / “- EP” catalog suffix (Love Fiend 2026-08-14)', () => {
+    // iTunes names the 1-track release "It's Nearly Over - Single"; Qobuz
+    // catalogs it as "It's Nearly Over". Searching the Apple name returned
+    // zero album hits and stacked failed Gets on a track that was on Qobuz.
+    assert.equal(searchTitle("It's Nearly Over - Single"), "It's Nearly Over")
+    assert.equal(searchTitle('Sundowning - EP'), 'Sundowning')
+    assert.equal(searchTitle('Bags – Single'), 'Bags')
+    // A title that merely CONTAINS the word must not be gutted.
+    assert.equal(searchTitle('Single Ladies'), 'Single Ladies')
+  })
+
+  it('matches the Qobuz album after stripping Apple’s Single suffix', () => {
+    const want = searchTitle("It's Nearly Over - Single")
+    const results = [{ source: 'qobuz', mediaType: 'album', id: 'wvbojl9ouvcv3', desc: "It's Nearly Over by Love Fiend" }]
+    assert.equal(pickBestStreamripMatch(want, 'Love Fiend', results, 'album')?.id, 'wvbojl9ouvcv3')
+    assert.equal(want, "It's Nearly Over")
+  })
+
   it('leaves ordinary titles untouched', () => {
     assert.equal(searchTitle('Hypnotize'), 'Hypnotize')
     assert.equal(searchTitle('Nothing Compares 2 U'), 'Nothing Compares 2 U')

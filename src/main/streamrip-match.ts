@@ -141,8 +141,14 @@ export function searchTitle(raw: string): string {
       return EDITION_GROUP.test(body) ? '' : whole
     })
   }
-  // Trailing " - Amended" / " - 2014 Remaster" style stamps.
-  out = out.replace(/\s+[-–—]\s*(?:amended\w*|explicit|clean(?:ed)?|censored|edited|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?)\s*$/i, '')
+  // Trailing " - Amended" / " - 2014 Remaster" / Apple's " - Single" / " - EP".
+  // ⚠️ TWIN: src/renderer/views/DownloadStore/DownloadView.tsx displayAlbumTitle
+  // (display-only strip of the same Apple suffix). 2026-08-14: Get on Love
+  // Fiend's "It's Nearly Over - Single" searched Qobuz for that exact name and
+  // returned nothing; Qobuz catalogs it as "It's Nearly Over". Asking for the
+  // Apple suffix is why the album tile stacked failed downloads on a track
+  // that was sitting on Qobuz the whole time.
+  out = out.replace(/\s+[-–—]\s*(?:amended\w*|explicit|clean(?:ed)?|censored|edited|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|EP|Single)\s*$/i, '')
   out = out.replace(/\s{2,}/g, ' ').trim()
   return out || String(raw || '').trim()
 }

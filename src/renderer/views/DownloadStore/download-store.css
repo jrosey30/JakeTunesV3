@@ -780,6 +780,7 @@
 .dl-queue-art { width: 22px; height: 22px; border-radius: 3px; flex: none; object-fit: cover; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
 .dl-queue-name { font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
 .dl-queue-name--idle { color: var(--text-dim); font-weight: var(--fw-normal); }
+.dl-queue-name--err { color: var(--color-danger); font-weight: var(--fw-medium); max-width: 420px; }
 .dl-queue-bar { flex: 1; max-width: 200px; height: 4px; border-radius: 2px; background: rgba(0,0,0,0.11); overflow: hidden; }
 /* Indeterminate on purpose: streamrip reports no byte progress, so a filling
    bar would be a lie. This travels to say "working", and nothing more. */

@@ -112,6 +112,23 @@ export function retry(key: string): void {
   void pump()
 }
 
+/** Re-arm every failed/canceled item. The queue bar's Retry uses this so
+ *  three stacked misses aren't a click-each-one scavenger hunt. */
+export function retryFailed(): void {
+  let any = false
+  for (const it of queue) {
+    if (it.status !== 'failed' && it.status !== 'canceled') continue
+    it.status = 'queued'
+    it.error = undefined
+    it.imported = undefined
+    it.dupes = undefined
+    any = true
+  }
+  if (!any) return
+  emit()
+  void pump()
+}
+
 /** Drop the done/failed items — a "clear finished" affordance. */
 export function clearFinished(): void {
   queue = queue.filter((q) => q.status === 'queued' || q.status === 'downloading')
