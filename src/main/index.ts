@@ -130,6 +130,7 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { foldAccents } from '../common/fold-text.ts'
+import { explicitWins } from '../common/explicit.ts'
 import { summariseLearning, type LedgerRow } from './discovery-learned.ts'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
@@ -13396,7 +13397,11 @@ ipc.handle('search-itunes', async (_event, query: string): Promise<{ ok: boolean
                 const k = `${foldAccents(o.song)}|${foldAccents(o.artist)}`
                 const at = byKey.get(k)
                 if (at === undefined) { byKey.set(k, raw.length); raw.push(o); continue }
-                if (raw[at].explicitness === 'cleaned' && o.explicitness === 'explicit') raw[at] = o
+                // explicitWins is the TESTED doctrine (common/explicit.ts):
+                  // explicit takes over a cleaned row, notExplicit never loses
+                  // its seat. This line was an inline twin of it for months —
+                  // identical today, one refactor away from drifting.
+                  if (explicitWins(raw[at].explicitness, o.explicitness)) raw[at] = o
               }
             }
           }
