@@ -3,7 +3,7 @@ import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import { Track } from '../types'
-import { attachHowlToEq, detachHowlFromEq, resumeEqContext } from '../audio/eq'
+import { attachHowlToEq, detachHowlFromEq, resumeEqContext, snapHowlOutputVolume, primeAudioGraph } from '../audio/eq'
 import {
   scheduleAbsoluteFadeOut,
   scheduleAbsoluteStart,
@@ -267,8 +267,13 @@ const GAPLESS_SEAM_FADE_MS = GAPLESS_FADE_OUT_DURATION_MS
 // is queued while `_playLock` is set (the HTMLAudioElement.play() promise),
 // and that queued fade is never drained — `_loadQueue('play')` only pops
 // tasks whose event is 'play'. Result: Howl stays at 0, UI shows playing,
-// sliding the volume bar calls volume() and "wakes" the song. Snap after
-// the fade window so a stuck fade can't leave the track silent.
+// sliding the volume bar calls volume() and "wakes" the song.
+//
+// Mixes hit this on every auto-advance: fadeInHowl used to run in the
+// same turn as play(), while the lock was set. Click-to-play was fine
+// (onplay fires after the lock clears). Snap the HTMLAudioElement
+// itself — Howler's getter can already read as the target while the
+// node is still at 0.
 function ensureHowlAudible(howl: Howl | null, target: number): void {
   // Skip while the OUTGOING track is fading to zero (sharedHowl still
   // that track). Must not skip after promote — gaplessOutgoingFaded is
@@ -277,14 +282,14 @@ function ensureHowlAudible(howl: Howl | null, target: number): void {
   if (!howl || crossfading) return
   if (gaplessOutgoingFaded && howl === sharedHowl) return
   if (!(target > 0.02)) return
-  try {
-    const cur = howl.volume() as number
-    if (!cur || cur < 0.02) howl.volume(target)
-  } catch { /* ignore */ }
+  snapHowlOutputVolume(howl, target)
 }
 function fadeInHowl(howl: Howl, target: number, ms: number): void {
-  try { howl.fade(0, target, ms) } catch {
-    try { howl.volume(target) } catch { /* ignore */ }
+  // Never fade FROM 0 after MediaElementSource bind — Chromium can
+  // stick mute at literal zero. 0.001 is inaudible and keeps the
+  // source alive; the timeout snap lands on the real target.
+  try { howl.fade(0.001, target, ms) } catch {
+    snapHowlOutputVolume(howl, target)
     return
   }
   window.setTimeout(() => ensureHowlAudible(howl, target), ms + 40)
@@ -1096,6 +1101,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       const targetVol = stateRef.current.volume
       promoted.once('play', () => {
         logAudioEvent('howl.onplay', { title: track.title, src: 'prefetch-promote' })
+        attachHowlToEq(promoted)
         fadeInHowl(promoted, targetVol, 25)
         dispatchRef.current({ type: 'SET_DURATION', duration: promoted.duration() })
         sharedRaf = requestAnimationFrame(updatePosition)
@@ -1600,14 +1606,24 @@ export function useAudio(opts?: { primary?: boolean }) {
           // not register as a perceived "fade" but long enough for the
           // ear to read the onset as smooth. See block comment near
           // GAPLESS_FADE_IN_MS for the full rationale.
-          next.once('play', () => {
+          // Fade MUST run in the play callback. Calling fadeInHowl in
+          // the same turn as play() hits Howler's _playLock; the fade
+          // is queued with event:'fade' and never drained. Mixes auto-
+          // advance this path 24 times — that's "scrubber moving, no
+          // sound until the volume slider."
+          const startIncoming = () => {
             attachHowlToEq(next)
+            fadeInHowl(next, s.volume, GAPLESS_FADE_IN_MS)
             dx('raf.reschedule', { site: 'standard-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
-          })
+          }
           try { next.volume(0) } catch { /* ignore */ }
-          next.play()
-          fadeInHowl(next, s.volume, GAPLESS_FADE_IN_MS)
+          if (next.playing()) {
+            startIncoming()
+          } else {
+            next.once('play', startIncoming)
+            next.play()
+          }
           // Brief 012: pass duration through PLAY_TRACK atomically.
           // If the howl isn't fully loaded here next.duration() may
           // return 0 — the load-handler SET_DURATION around line 600
@@ -1650,6 +1666,9 @@ export function useAudio(opts?: { primary?: boolean }) {
   }, [loadAndPlay])
 
   const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => {
+    // User gesture — resume the graph HERE, before Howl construction,
+    // so mix auto-advance later inherits a running context.
+    primeAudioGraph()
     if (autoDjMode && !djTransition) {
       window.dispatchEvent(new Event('musicman-dj-cancel'))
     }
@@ -1702,6 +1721,8 @@ export function useAudio(opts?: { primary?: boolean }) {
       dispatchRef.current({ type: 'PAUSE' })
     } else if (stateRef.current.nowPlaying) {
       isPaused = false
+      primeAudioGraph()
+      snapHowlOutputVolume(sharedHowl, stateRef.current.volume)
       sharedHowl?.play()
       dispatchRef.current({ type: 'RESUME' })
     }
@@ -1789,13 +1810,12 @@ export function useAudio(opts?: { primary?: boolean }) {
   }, [])
 
   const setVolume = useCallback((v: number) => {
-    resumeEqContext()
-    if (sharedHowl) sharedHowl.volume(v)
+    snapHowlOutputVolume(sharedHowl, v)
     dispatchRef.current({ type: 'SET_VOLUME', volume: v })
   }, [])
 
   useEffect(() => {
-    if (sharedHowl) sharedHowl.volume(state.volume)
+    snapHowlOutputVolume(sharedHowl, state.volume)
   }, [state.volume])
 
   // Hard stop — unloads the audio source AND clears playback state.
