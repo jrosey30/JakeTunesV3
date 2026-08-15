@@ -3108,13 +3108,19 @@ ipc.handle('get-artist-discography', async (_e, artist: string) => {
 // EXA_API_KEY is missing — Wikipedia + MusicBrainz still ground the
 // facts. Query templates live in src/main/exa.ts — edit those to tune
 // what Exa actually retrieves.
-async function searchWeb(query: string, album?: string): Promise<string> {
-  const { exaArtistFacts, exaArtistAlbum } = await import('./exa')
+async function searchWeb(query: string, album?: string, mode: 'artist' | 'chat' = 'artist'): Promise<string> {
+  const { exaArtistFacts, exaArtistAlbum, exaChatContext } = await import('./exa')
   const artist = query.replace(/\s*(musician|band|artist|music)\s*/gi, '').trim()
+  // 'chat': the query is a whole user message, not an artist name. Before
+  // this mode existed it went through the artistFacts template, so "what
+  // should I spin tonight" became a hunt for an artist by that name.
+  const exaPromise = mode === 'chat'
+    ? exaChatContext(query)
+    : album ? exaArtistAlbum(artist, album) : exaArtistFacts(artist)
   const [wiki, mb, exa] = await Promise.all([
     searchWikipedia(query),
     searchMusicBrainz(artist, album),
-    album ? exaArtistAlbum(artist, album) : exaArtistFacts(artist),
+    exaPromise,
   ])
   const parts = []
   if (mb) parts.push(`[MusicBrainz] ${mb}`)
@@ -8755,9 +8761,16 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   // outgoing and incoming artists, Discogs pressing detail, and Last.fm
   // similar artists. All cached, all fail-soft. The prompt picks
   // selectively from this firehose; we don't dump it all.
+  // 2026-08-15: the first two slots used to be full searchWeb() calls whose
+  // results radioV2 stopped injecting ("reading a Wikipedia page" feel) —
+  // but the FETCHES stayed, so every segment paid Wikipedia + MusicBrainz +
+  // Exa for two artists and discarded all of it. Replaced with the
+  // exaRecentNews template (day-cached, livecrawled), which radioV2's
+  // philosophy actually wants: news is reaction bait, not encyclopedia.
+  const { exaRecentNews } = await import('./exa')
   const [
-    artistFacts,
-    nextArtistFacts,
+    newsCurrent,
+    newsNext,
     weather,
     chart,
     reviews,
@@ -8768,8 +8781,8 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
     similarCurrent,
     memoryBlock,
   ] = await Promise.all([
-    searchWeb(`${track.artist} musician`, track.album),
-    nextTrack && nextTrack.artist !== track.artist ? searchWeb(`${nextTrack.artist} musician`, nextTrack.album) : Promise.resolve(''),
+    exaRecentNews(track.artist),
+    nextTrack && nextTrack.artist !== track.artist ? exaRecentNews(nextTrack.artist) : Promise.resolve(''),
     getBrooklynWeather(),
     getLastFmNyChart(),
     getRecentReviews(),
@@ -8812,6 +8825,14 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   if (weatherLine) userMessage += `\n\n${weatherLine}`
   if (chartLine) userMessage += `\n${chartLine}`
   if (reviewsBlock) userMessage += `\n\n${reviewsBlock}`
+  // Artist news: the one kind of researched context radioV2 wants — hosts
+  // reacting to something that HAPPENED, not reciting a bio. Absent block
+  // = no news; the instruction line keeps them from inventing any.
+  if (newsCurrent || newsNext) {
+    userMessage += `\n\nARTIST NEWS (react like DJs who saw the story this morning — one beat, never a report; if it's not here, there IS no news):`
+    if (newsCurrent) userMessage += `\n${newsCurrent}`
+    if (newsNext) userMessage += `\n${newsNext}`
+  }
   // 4.3.2: persistent radio memory — recent angles + callback fuel.
   if (memoryBlock) userMessage += `\n\n${memoryBlock}`
 
@@ -9385,7 +9406,7 @@ ipc.handle('musicman-chat', async (_event, messages: { role: string; content: st
       ])
     : Promise.resolve('')
   const [searchResults, retrievedTracksBlock] = await Promise.all([
-    searchWeb(lastUserMsg),
+    searchWeb(lastUserMsg, undefined, 'chat'),
     retrievalWithTimeout,
   ])
 
@@ -10539,6 +10560,20 @@ ipc.handle('musicman-recommendations', async (_event, tracks: { id: number; titl
   ]
   const lens = LENSES[Math.floor(Math.random() * LENSES.length)]
 
+  // 2026-08-15: critical lineage from Exa for two of this round's sampled
+  // artists. The "one hop away" lens used to run on model memory alone;
+  // journalism that explicitly names who the press compares to whom gives
+  // the picks a real lineage to cite. Seeds rotate with the shuffle and
+  // each artist is 7-day cached, so a lineage map of the library's heavy
+  // rotation builds itself over a few weeks of use.
+  const { exaSimilarArtists } = await import('./exa')
+  const lineageSeeds = shuffle(Array.from(artistCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 30))
+    .slice(0, 2).map(([a]) => a)
+  const lineageBlocks = (await Promise.all(lineageSeeds.map(a => exaSimilarArtists(a)))).filter(Boolean)
+  const lineageBlock = lineageBlocks.length
+    ? `\n\nCritical lineage notes from music journalism (who the press actually links to whom — mine these for connections, especially "one hop away" picks; never recite them):\n${lineageBlocks.join('\n\n')}`
+    : ''
+
   const recsInstructions = `You've been asked to recommend albums that are NOT already in the user's library.
 
 CRITICAL RULES:
@@ -10555,7 +10590,7 @@ Return ONLY a JSON array (no markdown, no code fences):
 THIS ROUND, lean toward: ${lens}. Vary your picks from what you'd reflexively reach for — the user has seen the obvious recommendations before and is tired of the same handful of albums. Surprise them.
 
 The user's top artists (a rotating sample of their library, not the full list): ${topArtists}
-Their top genres: ${topGenres}`
+Their top genres: ${topGenres}${lineageBlock}`
 
   const systemPrompt = buildMusicManPrompt(recsInstructions)
 

@@ -23,6 +23,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFile, writeFile, mkdir } from 'fs/promises'
+import { formatExaResults } from './exa-format.ts'
 
 // ── QUERY TEMPLATES — TUNE THESE TO IMPROVE RESULT QUALITY ──────────
 // Each template takes ({ artist, album }) and returns the natural-
@@ -95,6 +96,7 @@ interface ExaSearchResult {
   title: string
   url: string
   highlights?: string[]
+  summary?: string
   publishedDate?: string
 }
 
@@ -110,6 +112,18 @@ interface ExaSearchOpts {
   /** Override the default TTL for our own disk cache. News uses 1 day,
    *  evergreen artist facts use 7 days. */
   diskCacheTtlMs?: number
+  /** Directed per-result summary (contents.summary.query). This is the
+   *  2026-08-15 quality fix: bare `highlights: true` on review pages
+   *  returns navigation crumbs ("Release Date:", a bare year, the page
+   *  title again), so the personas were reading boilerplate. A summary
+   *  query tells Exa's summarizer what to extract from EACH page, and
+   *  what comes back is dense critical prose. ~$1/1k pages on top of the
+   *  search — the same lookup went from ~34KB of junk to ~5KB of usable
+   *  text, so it pays for itself in prompt tokens alone. */
+  summaryQuery?: string
+  /** Header line for the formatted block. Lets news announce itself as
+   *  time-sensitive so the model doesn't cite a 2019 tour as current. */
+  header?: string
 }
 
 /**
@@ -135,7 +149,12 @@ export async function exaSearch(query: string, opts?: ExaSearchOpts): Promise<st
   const category = opts?.category
   const maxAgeHours = opts?.maxAgeHours
   const diskTtl = opts?.diskCacheTtlMs ?? EXA_CACHE_TTL_MS
-  const cacheKey = `${query}|n=${numResults}|c=${category || ''}|m=${maxAgeHours ?? ''}`
+  const summaryQuery = opts?.summaryQuery
+  const header = opts?.header ?? '[Exa music journalism]'
+  // v2: format changed (summaries + junk filter + size caps). The version
+  // marker retires every v1 entry at once — serving cached boilerplate
+  // after the fix would make the fix invisible until the TTLs rolled over.
+  const cacheKey = `v2|${query}|n=${numResults}|c=${category || ''}|m=${maxAgeHours ?? ''}|s=${summaryQuery || ''}|h=${header}`
 
   // Memory cache (per-session, fast)
   const mem = exaMemCache.get(cacheKey)
@@ -159,7 +178,10 @@ export async function exaSearch(query: string, opts?: ExaSearchOpts): Promise<st
       type: 'auto',
       numResults,
       contents: {
+        // Highlights stay on as the fallback for pages the summarizer
+        // returns nothing for; formatExaResults filters their junk lines.
         highlights: true,
+        ...(summaryQuery ? { summary: { query: summaryQuery } } : {}),
         ...(maxAgeHours !== undefined ? { maxAgeHours } : {}),
       },
     }
@@ -183,21 +205,10 @@ export async function exaSearch(query: string, opts?: ExaSearchOpts): Promise<st
     const results = data.results || []
     if (results.length === 0) return ''
 
-    // Format as one block per result. Title + source + date + joined
-    // highlights. The source URL gives Claude a way to attribute
-    // without hallucinating one.
-    const formatted = results
-      .map(r => {
-        const title = r.title?.trim() || 'Untitled'
-        const url = r.url || ''
-        const date = r.publishedDate ? ` (${r.publishedDate.slice(0, 10)})` : ''
-        const hl = (r.highlights || []).map(h => h.trim()).filter(Boolean)
-        const excerpt = hl.length ? hl.join(' … ') : ''
-        return `• ${title}${date}\n  ${url}\n  ${excerpt}`
-      })
-      .join('\n\n')
-
-    const block = `[Exa music journalism]\n${formatted}`
+    // Summary-first formatting + junk filter + size caps live in
+    // exa-format.ts, where node --test can reach them.
+    const block = formatExaResults(results, header)
+    if (!block) return ''
     const entry: ExaCacheEntry = { text: block, expiresAt: Date.now() + diskTtl }
     exaMemCache.set(cacheKey, entry)
     try {
@@ -213,14 +224,22 @@ export async function exaSearch(query: string, opts?: ExaSearchOpts): Promise<st
 
 // Convenience wrappers around the templates. Most call sites should
 // use these instead of building queries inline — keeps template edits
-// centralized.
+// centralized. Each passes a DIRECTED summary query — the instruction to
+// Exa's per-page summarizer about what to extract. The search query finds
+// the right pages; the summary query decides what the personas read.
 
 export function exaArtistFacts(artist: string): Promise<string> {
-  return exaSearch(EXA_QUERY_TEMPLATES.artistFacts({ artist }))
+  return exaSearch(EXA_QUERY_TEMPLATES.artistFacts({ artist }), {
+    numResults: 4,
+    summaryQuery: `Concrete facts and critical takes about ${artist}: their sound and influences, scene and era, key records with years, how critics' views shifted over time, collaborators, and any direct critic quotes worth repeating.`,
+  })
 }
 
 export function exaArtistAlbum(artist: string, album: string): Promise<string> {
-  return exaSearch(EXA_QUERY_TEMPLATES.artistAlbum({ artist, album }))
+  return exaSearch(EXA_QUERY_TEMPLATES.artistAlbum({ artist, album }), {
+    numResults: 4,
+    summaryQuery: `What this source says about the album "${album}" by ${artist}: the critical verdict with any score, production and personnel details, standout tracks versus filler, where it sits in the catalog, and direct quotes worth repeating.`,
+  })
 }
 
 /** News-category search with daily disk cache + always-livecrawl on
@@ -230,11 +249,27 @@ export function exaRecentNews(artist: string): Promise<string> {
     category: 'news',
     maxAgeHours: 0,
     diskCacheTtlMs: EXA_NEWS_TTL_MS,
+    header: '[Exa music news — time-sensitive, dates matter]',
+    summaryQuery: `The news event involving ${artist}: what happened, when it happened, who said what, and why it matters. Time-sensitive items only — skip evergreen biography.`,
   })
 }
 
 export function exaSimilarArtists(artist: string): Promise<string> {
-  return exaSearch(EXA_QUERY_TEMPLATES.similarArtists({ artist }))
+  return exaSearch(EXA_QUERY_TEMPLATES.similarArtists({ artist }), {
+    summaryQuery: `Which artists this source compares, groups, or links to ${artist}, and the specific reason the comparison holds (scene, label, lineage, sound).`,
+  })
+}
+
+/** Free-form grounding for the chat panel. The user's message goes to Exa
+ *  as-is — before this, chat messages were being squeezed through the
+ *  artistFacts template, so "what should I spin tonight" became a search
+ *  for an artist literally named that. */
+export function exaChatContext(message: string): Promise<string> {
+  const m = message.trim().slice(0, 300)
+  if (!m) return Promise.resolve('')
+  return exaSearch(`Music journalism and factual context relevant to: ${m}`, {
+    summaryQuery: `Whatever this source says that bears on: "${m}". Specific names, records, dates, and critical takes — not generalities.`,
+  })
 }
 
 /** New-music discovery for a scene/genre, fresh (livecrawl) + day-cached. */
@@ -243,6 +278,7 @@ export function exaNewMusic(scene: string, year: string): Promise<string> {
     maxAgeHours: 0,
     diskCacheTtlMs: EXA_NEWS_TTL_MS,
     numResults: 6,
+    summaryQuery: `Specific ${scene} releases named in this source from ${year}: artist — title, what kind of release it is, and what is said about each. Names and titles verbatim; no generalities.`,
   })
 }
 
@@ -253,5 +289,6 @@ export function exaNewMusicForFans(artists: string[], year: string): Promise<str
     maxAgeHours: 0,
     diskCacheTtlMs: EXA_NEWS_TTL_MS,
     numResults: 8,
+    summaryQuery: `Specific ${year} releases named in this source that fans of ${artists.slice(0, 4).join(', ')} would care about: artist — title, and why it connects. Names and titles verbatim.`,
   })
 }
