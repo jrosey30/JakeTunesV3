@@ -161,6 +161,11 @@ import {
 import {
   partitionLanded,
   activitySetProven,
+  fileSizeForItunesDb,
+  sampleRateForItunesDb,
+  activityWipeEmptyStreak,
+  activityWipeProvenEmpty,
+  ACTIVITY_WIPE_MAX_PASSES,
   type IntendedTrack,
 } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
@@ -5407,11 +5412,42 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     let wiped = 0
     try {
       const { readdir: rdw } = await import('fs/promises')
-      for (let i = 0; i < 50; i++) {
-        const sub = join(wipeMusicRoot, `F${String(i).padStart(2, '0')}`)
-        const entries = await rdw(sub).catch(() => [] as string[])
-        for (const fn of entries) {
-          try { await unlink(join(sub, fn)); wiped++ } catch { /* leave what won't delete */ }
+      const listMusicFiles = async (): Promise<string[]> => {
+        const found: string[] = []
+        for (let i = 0; i < 50; i++) {
+          const sub = join(wipeMusicRoot, `F${String(i).padStart(2, '0')}`)
+          const entries = await rdw(sub).catch(() => [] as string[])
+          for (const fn of entries) {
+            if (fn === '.' || fn === '..') continue
+            found.push(join(sub, fn))
+          }
+        }
+        return found
+      }
+      // fskit returns PARTIAL directory listings. One pass that deleted
+      // "everything it saw" left 153 leftover 4-letter m4a files on the
+      // Mini (2026-08-15) while the catalog claimed a clean 500. Require
+      // two consecutive empty readdirs before believing the card is empty.
+      let emptyStreak = 0
+      let remaining = 0
+      for (let pass = 0; pass < ACTIVITY_WIPE_MAX_PASSES; pass++) {
+        const listed = await listMusicFiles()
+        for (const p of listed) {
+          try { await unlink(p); wiped++ } catch { /* retry on the next listing */ }
+        }
+        const after = await listMusicFiles()
+        remaining = after.length
+        emptyStreak = activityWipeEmptyStreak(remaining, emptyStreak)
+        console.log(`sync-to-ipod: WIPE-FIRST pass ${pass + 1}/${ACTIVITY_WIPE_MAX_PASSES} deleted-this-listing=${listed.length} remaining=${remaining} emptyStreak=${emptyStreak}`)
+        if (activityWipeProvenEmpty(emptyStreak)) break
+        await new Promise(r => setTimeout(r, 250))
+      }
+      if (!activityWipeProvenEmpty(emptyStreak)) {
+        console.error(`sync-to-ipod: WIPE-FIRST could not empty Music (${remaining} file(s) still listed after ${ACTIVITY_WIPE_MAX_PASSES} passes)`)
+        return {
+          ok: false,
+          copied: 0,
+          error: `Activity wipe could not empty the iPod (${remaining} leftover file${remaining === 1 ? '' : 's'}). macOS is not listing the card consistently. Reseat the cable and sync again — nothing new was copied.`,
         }
       }
       // Drop the firmware's play-count / on-the-go scratch so a clean rebuild
@@ -5419,9 +5455,14 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       for (const scratch of ['Play Counts', 'OTGPlaylistInfo', 'OTGPlaylistInfo_DND']) {
         try { await unlink(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', scratch)) } catch { /* absent = fine */ }
       }
-      console.log(`sync-to-ipod: WIPE-FIRST deleted ${wiped} existing audio file(s) — rebuilding clean to ${tracks.length}`)
+      console.log(`sync-to-ipod: WIPE-FIRST deleted ${wiped} existing file(s) — rebuilding clean to ${tracks.length}`)
     } catch (e) {
-      console.warn('sync-to-ipod: wipe-first failed (continuing with incremental sync):', e)
+      console.error('sync-to-ipod: wipe-first failed — refusing to copy onto a dirty card:', e)
+      return {
+        ok: false,
+        copied: 0,
+        error: `Activity wipe failed (${e instanceof Error ? e.message : String(e)}). Nothing was copied.`,
+      }
     }
   }
 
@@ -6121,6 +6162,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // have one.
   {
     const present: typeof tracks = []
+    let sizeRewrites = 0
     for (const t of tracks) {
       const id = t.id as number
       const remembered = writtenById.get(id)
@@ -6132,6 +6174,13 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         const sz = (await stat(dst)).size
         if (sz <= 0) continue
         if (remembered && remembered.expectedSize > 0 && sz !== remembered.expectedSize) continue
+        // Mini 1.4.1 indexes by mhit 0x24. library.json fileSize is often a
+        // stale ALAC length over an AAC/smart-matched file on the card
+        // (Beyond Me 31MB vs 7.5MB → Songs abort / roulette).
+        const libSize = Number(t.fileSize) || 0
+        t.fileSize = fileSizeForItunesDb(sz)
+        if (libSize !== t.fileSize) sizeRewrites++
+        t.sampleRate = sampleRateForItunesDb(t.sampleRate as number | undefined)
         present.push(t)
       } catch { /* missing on card */ }
     }
@@ -6139,6 +6188,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       console.warn(`sync-to-ipod: on-disk gate — keeping ${present.length}/${tracks.length} with real files on the card before DB write`)
       tracks = present
       verifiedLanded = tracks.length
+    }
+    if (sizeRewrites > 0) {
+      console.log(`sync-to-ipod: stamped ${sizeRewrites} iTunesDB fileSize(s) from the card (not library.json)`)
     }
   }
 
@@ -7104,7 +7156,18 @@ async function cleanOrphansOnMusicRoot(
   protectMtimeAfterMs = 0,
 ): Promise<{ deleted: number; bytesFreed: number; protected: number }> {
   const indexed = indexedBasenamesFromTracks(tracks)
-  const files = await walkAudioFilesUnder(musicRoot)
+  let files = await walkAudioFilesUnder(musicRoot)
+  // fskit hides files across readdirs — one walk left 153 orphans on the Mini
+  // after a "successful" wipe (2026-08-15). Re-walk until two listings agree
+  // or we cap out.
+  for (let pass = 0; pass < 4; pass++) {
+    const again = await walkAudioFilesUnder(musicRoot)
+    if (again.length === files.length) {
+      const prev = new Set(files)
+      if (again.every((p) => prev.has(p))) break
+    }
+    files = again
+  }
   let deleted = 0
   let bytesFreed = 0
   let protectedCount = 0

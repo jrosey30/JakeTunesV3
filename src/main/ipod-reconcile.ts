@@ -126,6 +126,61 @@ export function activitySetProven(consecutiveFullProofs: number, landed: number,
 }
 
 /**
+ * Bytes the iTunesDB mhit 0x24 field must carry: the file ON THE CARD.
+ *
+ * ⚠️ TWIN: core/db_reader.py write_itunesdb restat from --write output path.
+ * add_file_sizes() is READ-only and stats the library mirror, not the USB
+ * volume. 2026-08-15 cold-plug: 500 files on the Mini, 55 mhit sizes from
+ * stale library.json (Foo Fighters "Beyond Me" 31,481,234 ALAC vs 7,549,180
+ * on card). Mini 1.4.1 skips or aborts Songs indexing on size mismatch —
+ * that's 79 / 111 / 340 with a green 500/500.
+ *
+ * Never fall back to library.json. No on-card stat → 0 (writer must not
+ * pack a lie into an old mhit header).
+ */
+export function fileSizeForItunesDb(onCardBytes: number | null | undefined): number {
+  const n = Number(onCardBytes)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+/**
+ * mhit 0x3C sample rate (Hz). Firmware 1.4.1 skips or aborts Songs on 0.
+ *
+ * ⚠️ TWIN: core/db_reader.py sample_rate_for_itunesdb
+ * 2026-08-15: 4 of 500 activity tracks shipped sampleRate=0 / mediatype=0
+ * because build_mhit_record only packed those fields when is_new. The files
+ * were fine (AAC 44.1k). Never pack 0.
+ */
+export function sampleRateForItunesDb(hz: number | null | undefined): number {
+  const n = Math.floor(Number(hz) || 0)
+  return n >= 8000 && n <= 192000 ? n : 44100
+}
+
+/**
+ * mhit 0xD0 mediatype. 1 = audio/music.
+ *
+ * ⚠️ TWIN: core/db_reader.py packs 0xD0 = 1 on every mhit, not only is_new.
+ */
+export function mediaTypeForItunesDb(): 1 {
+  return 1
+}
+
+/** Two consecutive empty readdirs — one empty listing is a fskit lie. */
+export const ACTIVITY_WIPE_EMPTY_STREAK = 2
+export const ACTIVITY_WIPE_MAX_PASSES = 8
+
+/** After deleting whatever this readdir returned, how many empty listings in a row? */
+export function activityWipeEmptyStreak(listedAfterPass: number, prevStreak: number): number {
+  const n = Math.max(0, Math.floor(Number(listedAfterPass) || 0))
+  const prev = Math.max(0, Math.floor(Number(prevStreak) || 0))
+  return n === 0 ? prev + 1 : 0
+}
+
+export function activityWipeProvenEmpty(emptyStreak: number): boolean {
+  return emptyStreak >= ACTIVITY_WIPE_EMPTY_STREAK
+}
+
+/**
  * Bytes we expect a track to occupy ON THE IPOD after sync.
  *
  * When convert-higher-bitrate is on, lossless sources land as AAC — often

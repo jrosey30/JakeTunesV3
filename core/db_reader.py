@@ -321,7 +321,13 @@ def enrich_tracks(tracks, xml_path=ITUNES_XML_PATH):
 IPOD_MOUNT = _lib_root
 
 def add_file_sizes(tracks):
-    """Get actual file sizes from iPod filesystem (not iTunes XML source sizes)."""
+    """READ path only — stats the library mirror (IPOD_MOUNT), not a USB iPod.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb + write_itunesdb
+    restat from --write output_path. This function is not on the sync write
+    path. Using it for writes would stamp Music2 sizes; the Mini needs the
+    file on the card.
+    """
     sized = 0
     for t in tracks:
         path = t.get('path', '')
@@ -456,6 +462,15 @@ def _safe_int(val, default=0):
         return default
 
 
+def sample_rate_for_itunesdb(hz):
+    """mhit 0x3C Hz. Never 0 — Mini 1.4.1 Songs-aborts on a zero rate.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts sampleRateForItunesDb
+    """
+    n = _safe_int(hz, 0)
+    return n if 8000 <= n <= 192000 else 44100
+
+
 # Filetype markers in mhit header (offset 0x18) — ASCII codec identifiers
 CODEC_MARKERS = {
     'm4a': b'M4A ', 'aac': b'M4A ', 'alac': b'M4A ',
@@ -492,8 +507,12 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
                 8-byte value at 0x70 (overlaps 0x6C+4 and corrupts this
                 pair); 12f0370 recorded a 250→118 regression from
                 switching to the libgpod-only 0x70/0xA8 pair.
-      • 0xD0  — mediatype (1 = audio/music) on headers long enough to
-                carry it; set on new tracks.
+      • 0xD0  — mediatype (1 = audio/music). Pack on EVERY mhit, not
+                only is_new — 2026-08-15: 4 activity tracks inherited
+                0 from a template and shipped mediatype=0 / sampleRate=0.
+      • 0x3C  — sample rate (Hz << 16). Same as 0xD0: always pack;
+                never leave 0. ⚠️ TWIN: sampleRateForItunesDb /
+                mediaTypeForItunesDb in src/main/ipod-reconcile.ts.
     If you find a NEW field that turns out to be a silent firmware
     filter, add it to this list so the next editor knows to check it.
     """
@@ -581,10 +600,10 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     # recorded a live regression (250→118) from that change on this device.
     struct.pack_into('<I', hdr, 0x64, 1)
 
-    # For new tracks: set filetype marker, timestamps, and audio facts the
-    # firmware reads. A synthesized template leaves sample rate / bitrate at 0;
-    # inheriting the first mhit's values is fine for those, but a true empty
-    # template must not ship zeros.
+    # For new tracks: set filetype marker and timestamps. Audio facts the
+    # firmware filters on (sample rate, mediatype) are packed for EVERY
+    # track below — a reused mhit template can carry zeros, and Mini 1.4.1
+    # Songs-aborts on sampleRate=0 / mediatype=0.
     path = str(track.get('path', ''))
     ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
     if is_new:
@@ -600,14 +619,17 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
         struct.pack_into('<I', hdr, 0x20, now_mac)   # date created
         struct.pack_into('<I', hdr, 0x58, now_mac)   # date modified
         struct.pack_into('<I', hdr, 0x68, now_mac)   # date added
-        # Bitrate (kbps) at 0x38; sample rate as (Hz << 16) at 0x3C.
-        sr = _safe_int(track.get('sampleRate', 0)) or 44100
-        br = _safe_int(track.get('bitRate', 0)) or _safe_int(track.get('bitrate', 0))
-        if br <= 0 and fs > 0 and dur > 0:
-            br = max(1, int(fs * 8 / (dur / 1000.0) / 1000))  # rough kbps from size
-        if br > 0:
-            struct.pack_into('<I', hdr, 0x38, br)
-        struct.pack_into('<I', hdr, 0x3C, (sr << 16) & 0xFFFFFFFF)
+
+    # Bitrate (kbps) at 0x38; sample rate as (Hz << 16) at 0x3C; mediatype 0xD0.
+    # ⚠️ TWIN: sampleRateForItunesDb / mediaTypeForItunesDb in ipod-reconcile.ts
+    sr = sample_rate_for_itunesdb(track.get('sampleRate', 0))
+    br = _safe_int(track.get('bitRate', 0)) or _safe_int(track.get('bitrate', 0))
+    if br <= 0 and fs > 0 and dur > 0:
+        br = max(1, int(fs * 8 / (dur / 1000.0) / 1000))  # rough kbps from size
+    if br > 0:
+        struct.pack_into('<I', hdr, 0x38, br)
+    struct.pack_into('<I', hdr, 0x3C, (sr << 16) & 0xFFFFFFFF)
+    if len(hdr) >= 0xD4:
         struct.pack_into('<I', hdr, 0xD0, 1)
 
     # Build standard mhod children: title(1), path(2), album(3), artist(4), genre(5), filetype(6), sort-artist(22)
@@ -786,6 +808,26 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
 
 def write_itunesdb(tracks, playlists, template_path, output_path):
     """Rebuild the iPod iTunesDB from JakeTunes library data."""
+    # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
+    # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
+    # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
+    # 1.4.1 skips or aborts Songs indexing on mismatch. output_path is
+    # <mount>/iPod_Control/iTunes/iTunesDB — three dirnames up is the volume.
+    ipod_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(output_path))))
+    sized = 0
+    for t in tracks:
+        path = t.get('path') or ''
+        if not path:
+            continue
+        rel = path.replace(':', os.sep).lstrip('/' + os.sep)
+        fs_path = os.path.join(ipod_root, rel)
+        try:
+            t['fileSize'] = os.path.getsize(fs_path)
+            sized += 1
+        except OSError:
+            pass
+    print(f"write_itunesdb: restated {sized}/{len(tracks)} fileSize(s) from {ipod_root}", file=sys.stderr)
+
     with open(template_path, 'rb') as f:
         existing = f.read()
 
