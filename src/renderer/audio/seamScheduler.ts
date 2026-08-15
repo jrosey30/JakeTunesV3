@@ -337,18 +337,22 @@ export function promoteBufferSourceToHowl(
     scheduled.gain.gain.setValueAtTime(scheduled.gain.gain.value, now)
     scheduled.gain.gain.linearRampToValueAtTime(0, now + fadeMs / 1000)
   } catch { /* ignore */ }
-  // Howl fade-in. Howler's fade() is sample-accurate via the same gain
-  // primitive on the Howl side.
+  // Howl fade-in. Always snap the HTMLAudioElement after the window —
+  // Howler's getter can already read as the target while the node is
+  // still at 0 (volume-slider wake on mix seams).
   try {
     howl.volume(0)
     howl.fade(0, scheduled.targetVolume, fadeMs)
   } catch { /* ignore */ }
-  // Howler html5 fade can stay queued under playLock and never run —
-  // snap to target so the Howl isn't left silent after BufferSource stops.
   window.setTimeout(() => {
     try {
-      const cur = howl.volume() as number
-      if (scheduled.targetVolume > 0.02 && (!cur || cur < 0.02)) howl.volume(scheduled.targetVolume)
+      const internals = howl as Howl & { _sounds?: Array<{ _node?: HTMLAudioElement }>; _playLock?: boolean }
+      if (!internals._playLock) howl.volume(scheduled.targetVolume)
+      const node = internals._sounds?.[0]?._node
+      if (node instanceof HTMLAudioElement) {
+        node.muted = false
+        node.volume = scheduled.targetVolume
+      }
     } catch { /* ignore */ }
   }, fadeMs + 40)
   // Stop + disconnect the BufferSource right after the crossfade.
