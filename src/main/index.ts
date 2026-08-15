@@ -148,6 +148,7 @@ import {
   findIpodMount,
   ejectVolume,
   remountVolume,
+  fullFsync,
   hasOpticalMedia,
   ejectOpticalMedia,
   audioHelperRelPath,
@@ -159,6 +160,7 @@ import {
 } from './platform'
 import {
   partitionLanded,
+  activitySetProven,
   type IntendedTrack,
 } from './ipod-reconcile'
 import { registerBandcampIntegration } from './bandcamp-integration'
@@ -955,6 +957,7 @@ registerIpodIpc(ipc, {
     if ('missStreak' in next && typeof next.missStreak === 'number') ipodMissStreak = next.missStreak
   },
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
+  isSyncInFlight: () => syncInFlight,
 })
 registerSyncIpc(ipc, {
   requestSyncCancel: () => {
@@ -4988,14 +4991,19 @@ ipc.handle('brain-status', async () => {
 // counter running up to ~1600/4530 then jumping back to 0/4530, plus
 // random write failures from two writers stomping the same iTunesDB.
 // 4.5: also tracks WHEN the sync started so a hung sync auto-clears
-// after 5 minutes. Pre-fix, a sync that hung (network volume gone,
-// disk full, panic) left the flag permanently set; every subsequent
-// Sync click failed with "A sync is already in progress" until the
-// app was relaunched. Now the watchdog releases the flag so the user
-// can retry without restarting.
+// after SYNC_HANG_TIMEOUT_MS (2 hours). Pre-fix, a sync that hung
+// (network volume gone, disk full, panic) left the flag permanently
+// set; every subsequent Sync click failed with "A sync is already in
+// progress" until the app was relaunched. The watchdog still exists
+// as a last resort — but 5 minutes was too short for a 500-song
+// activity sync and released the lock while the first writer was live.
 let syncInFlight = false
 let syncStartedAt = 0
-const SYNC_HANG_TIMEOUT_MS = 5 * 60 * 1000
+// 2 hours, not 5 minutes. A 500-song activity sync (copy + convert + two
+// cold remounts) routinely runs past 5 minutes. The old watchdog released
+// the lock mid-copy, auto-repair started a second writer, and the Mini
+// indexed a random subset (33 / 111 / 340…). Cancel is the user abort.
+const SYNC_HANG_TIMEOUT_MS = 2 * 60 * 60 * 1000
 // 4.5.0-109: cancellation flag. Set by the cancel-sync IPC handler;
 // checked by the copy loop between each file. The renderer's Cancel
 // button calls cancel-sync, which flips this on; runSyncToIpod bails
@@ -5108,8 +5116,7 @@ async function writeSyncReport(r: SyncReport): Promise<void> {
  */
 async function confirmWriteOnCard(src: string, dst: string): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const fh = await open(dst, 'r+')
-    try { await fh.sync() } finally { await fh.close() }
+    await fullFsync(dst)
     const [sSt, dSt] = await Promise.all([stat(src), stat(dst)])
     if (sSt.size !== dSt.size) return { ok: false, reason: `on-card size ${dSt.size} != source ${sSt.size}` }
     return { ok: true }
@@ -5636,12 +5643,12 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   const trackByLocal = new Map<string, Record<string, unknown>>()
   for (const c of candidates) trackByLocal.set(c.localFile, c.track)
 
-  // Activity wipe+rebuild: remount-verify EVERY song. Jake still saw 489/500
-  // with chunks of 5 — the card drops writes inside any multi-file dirty
-  // window. One copy → fsync → remount → size check per track is slow on USB
-  // 2.0, and it's the only pattern that has a chance of "500 means 500" on
-  // this iFlash/FAT32 Mini (roulette: 8 / 108 / 272 / 482 / 489).
-  const COPY_VERIFY_CHUNK = syncOpts?.wipeFirst ? 1 : 0
+  // Do NOT remount per song. Each remount was a chance to `unmount force`
+  // (busy volume from the sidebar poll) and discard dirty FAT32 pages for
+  // songs already "verified" — that's 500/500 in JakeTunes and 33 on the
+  // Mini after eject. Copy + F_FULLFSYNC here; one clean remount-verify of
+  // the whole set after the loop is the proof.
+  const COPY_VERIFY_CHUNK = 0
   let chunkPending: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
   const flushCopyChunk = async (force = false) => {
     if (COPY_VERIFY_CHUNK <= 0) return
@@ -5924,7 +5931,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         if (syncOpts?.wipeFirst) {
           // Do NOT fall through and write a catalog from the mount cache — that
           // is exactly how the Mini ends up indexing a random partial Songs list.
-          await writeSyncJournal(null)
+          // Leave the journal: only a completed ok:true sync may clear it.
           return {
             ok: false,
             error: `Could not verify the iPod (remount failed after writing). The mount cache lies on this card — sync again without unplugging. Nothing was committed as "done".`,
@@ -5936,7 +5943,6 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
     }
     if (verifyRan && landedIds.size === 0 && verify.length > 0) {
-      await writeSyncJournal(null)
       return {
         ok: false,
         error: `Sync failed: none of the ${syncTarget} songs committed to the iPod's card — the card is dropping every write. A reformat is needed.`,
@@ -5950,7 +5956,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       // TIME: copy → fsync → remount → size-check, before accepting shortfall.
       const gapFillMissing = async (missing: typeof verify, label: string) => {
         if (missing.length === 0 || syncCancelRequested) return 0
-        console.warn(`sync-to-ipod: ${label} — ${missing.length} missing; remounting per song`)
+        console.warn(`sync-to-ipod: ${label} — ${missing.length} missing; copy + F_FULLFSYNC + clean remount per song (never force)`)
         mainWindow?.webContents.send('sync-progress', {
           phase: 'verify', current: landedIds.size, total: syncTarget,
           title: `Finishing the last ${missing.length} song(s) — one at a time…`,
@@ -6013,9 +6019,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       // require TWO consecutive cold remounts that agree on the FULL target
       // before we treat the set as landed. If a remount loses songs,
       // gap-fill again and reset the streak — never celebrate a lucky read.
+      let consecutiveFull = 0
       if (syncOpts?.wipeFirst && verify.length > 0 && !syncCancelRequested) {
         const PROOF_ROUNDS = 4
-        let consecutiveFull = 0
         for (let round = 1; round <= PROOF_ROUNDS; round++) {
           if (syncCancelRequested) break
           mainWindow?.webContents.send('sync-progress', {
@@ -6030,9 +6036,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           })
           verifyAttempts += proof.attempts
           if (proof.remountFailed) {
-            console.warn(`sync-to-ipod: proof ${round} remount failed — treating as not proven`)
-            landedIds = new Set()
+            console.warn(`sync-to-ipod: proof ${round} remount failed — treating as not proven (keeping last landed set, not wiping the catalog to 0)`)
             consecutiveFull = 0
+            activityShortfall = true
             break
           }
           const lost = [...landedIds].filter((id) => !proof.landedIds.has(id))
@@ -6054,19 +6060,12 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           if (stillMissing.length === 0) break
           await gapFillMissing(stillMissing, `GAP-FILL-proof-${round}`)
         }
-        if (consecutiveFull < 2 && landedIds.size >= syncTarget) {
-          // Claimed full once but never twice — do not trust it.
-          console.error(`sync-to-ipod: ROULETTE — had ${landedIds.size}/${syncTarget} but never held across two remounts; refusing success`)
-          // Re-stat once more cold; use whatever that says.
-          await flushCardCaches()
-          const last = await remountVerifyEntries(IPOD_MOUNT, verify, {
-            maxPasses: 1,
-            label: 'proof-final',
-            isCancelled: () => syncCancelRequested,
-          })
-          if (!last.remountFailed) landedIds = last.landedIds
-          verifyAttempts += last.attempts
-        }
+      }
+      // A single remount that says 500 is the cache lie. Skipping the proof
+      // loop (cancel, empty verify) must not green a 500/500 either.
+      if (syncOpts?.wipeFirst && !activitySetProven(consecutiveFull, landedIds.size, syncTarget)) {
+        activityShortfall = true
+        console.error(`sync-to-ipod: ROULETTE — ${landedIds.size}/${syncTarget} after ${consecutiveFull} consecutive full proof(s); refusing success (500 means 500)`)
       }
 
       const before = tracks.length
@@ -6098,7 +6097,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     } else if (syncOpts?.wipeFirst) {
       // Activity sync on Mac MUST remount-verify. A cache-only "all present"
       // read is exactly how 500 → 103 / 421 / 238 happened with a green check.
-      await writeSyncJournal(null)
+      // Leave the journal so boot still nags until a proven sync lands.
       return {
         ok: false,
         error: `Could not remount-verify the activity set — refusing to trust the mount cache. Sync again without unplugging.`,
@@ -6299,9 +6298,33 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         mainWindow?.webContents.send('sync-progress', { phase: 'db', current: 1, total: 1, title: 'Finishing — flushing everything to the iPod…' })
         try {
           const flush = await remountVolume(IPOD_MOUNT)
-          if (!flush.ok) console.warn(`sync-to-ipod: pre-"done" flush/remount failed (readback may read cache): ${flush.error}`)
-          else console.log('sync-to-ipod: flushed + remounted before verify — reading the card, not the cache')
-        } catch (fe) { console.warn('sync-to-ipod: pre-"done" flush threw:', fe) }
+          if (!flush.ok) {
+            console.error(`sync-to-ipod: pre-"done" remount failed — refusing to read the mount cache: ${flush.error}`)
+            resolve({
+              ok: false,
+              error: `The songs may be on the card, but we could not remount to prove the catalog stuck (${flush.error}). Do not unplug — sync again. A cache read here is how 500/500 became 33 on the Mini.`,
+              copied, copyErrors,
+              target: syncTarget,
+              landed: verifiedLanded,
+              shortfall: Math.max(0, syncTarget - verifiedLanded),
+              verifyAttempts,
+            })
+            return
+          }
+          console.log('sync-to-ipod: flushed + remounted before verify — reading the card, not the cache')
+        } catch (fe) {
+          console.error('sync-to-ipod: pre-"done" remount threw:', fe)
+          resolve({
+            ok: false,
+            error: `Could not remount the iPod to prove the catalog (${fe instanceof Error ? fe.message : String(fe)}). Do not unplug — sync again.`,
+            copied, copyErrors,
+            target: syncTarget,
+            landed: verifiedLanded,
+            shortfall: Math.max(0, syncTarget - verifiedLanded),
+            verifyAttempts,
+          })
+          return
+        }
 
         // ── DEVICE-TRUTH READBACK (2026-07-20, Jake: "my ipod had 6
         // songs"). A sync that reported success once left a 6-entry
@@ -6398,7 +6421,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           shortfall: Math.max(0, syncTarget - verifiedLanded),
           verifyAttempts,
           error: activityShortfall
-            ? `Only ${verifiedLanded} of ${syncTarget} songs actually stuck on the iPod after ${verifyAttempts} tries — the card keeps dropping writes. The catalog matches what landed; sync again (or reformat the card) to reach ${syncTarget}.`
+            ? (verifiedLanded < syncTarget
+              ? `Only ${verifiedLanded} of ${syncTarget} songs actually stuck on the iPod after ${verifyAttempts} tries — the card keeps dropping writes. The catalog matches what landed; sync again (or reformat the card) to reach ${syncTarget}.`
+              : `${verifiedLanded} files looked present but did not hold across two remounts — that is the 500/500 → 33 roulette. Not calling this a success. Sync again without unplugging.`)
             : undefined,
           ipodOrphansDeleted,
           // Return the path rewrites so the renderer can update

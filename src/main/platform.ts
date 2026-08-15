@@ -3,9 +3,12 @@
 // has one call like findIpodVolume() instead of an if/else tree.
 
 import { join } from 'path'
-import { readdir, stat } from 'fs/promises'
+import { open, readdir, stat } from 'fs/promises'
 import { execFile, execSync } from 'child_process'
 import { promisify } from 'util'
+import { remountUnmountArgSets } from './remount-unmount-args.ts'
+
+export { remountUnmountArgSets } from './remount-unmount-args.ts'
 
 const execP = promisify(execFile)
 
@@ -285,6 +288,10 @@ export async function findIpodMount(): Promise<string | null> {
  */
 export async function ejectVolume(mountPoint: string): Promise<void> {
   if (IS_MAC) {
+    // Drain dirty FAT32 pages before the eject command. A sync that just
+    // finished can still have catalog bytes in the page cache; ejecting
+    // without this is how a 500/500 report became 33 songs on the Mini.
+    try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
     await execP('diskutil', ['eject', mountPoint])
     return
   }
@@ -312,6 +319,34 @@ export async function resolveDeviceNode(mountPoint: string): Promise<string | nu
 }
 
 /**
+ * macOS fsync() does not wait for the media. USB FAT32 needs F_FULLFSYNC or
+ * the next remount/eject still drops the file (copyFile "succeeded", Mini
+ * shows 33). Best-effort: POSIX fsync first, then Darwin F_FULLFSYNC via
+ * Python's fcntl — no native addon.
+ */
+export async function fullFsync(filePath: string): Promise<void> {
+  const fh = await open(filePath, 'r+')
+  try { await fh.sync() } finally { await fh.close() }
+  if (!IS_MAC) return
+  const py = PYTHON_CMD ?? 'python3'
+  try {
+    await execP(py, [
+      '-c',
+      'import fcntl,os,sys; fd=os.open(sys.argv[1], os.O_RDWR); fcntl.fcntl(fd, fcntl.F_FULLFSYNC); os.close(fd)',
+      filePath,
+    ], { timeout: 20000 })
+  } catch { /* fsync already ran */ }
+}
+
+export interface RemountVolumeOpts {
+  /**
+   * Permit `diskutil unmount force`. Default false. Sync must never pass true:
+   * force-unmount is how a verified 500-song set became 33 on the card.
+   */
+  allowForce?: boolean
+}
+
+/**
  * Flush, then unmount + remount a volume to EVICT the macOS mount cache so
  * subsequent reads come from the physical device, not cached pages. This is the
  * only reliable way to see what truly committed on an fskit/FAT32 iPod whose
@@ -326,20 +361,43 @@ export async function resolveDeviceNode(mountPoint: string): Promise<string | nu
  * Never throws. Returns { ok, mountPoint } on success (mountPoint is where it
  * came back — the same path in practice) or { ok:false, error }.
  */
-export async function remountVolume(mountPoint: string): Promise<{ ok: boolean; mountPoint?: string; error?: string }> {
+export async function remountVolume(mountPoint: string, opts: RemountVolumeOpts = {}): Promise<{ ok: boolean; mountPoint?: string; error?: string }> {
   if (!IS_MAC) return { ok: false, error: 'remount is macOS-only' }
   const node = await resolveDeviceNode(mountPoint)
   if (!node) return { ok: false, error: `could not resolve device node for ${mountPoint}` }
-  // Flush all filesystems first so a clean unmount has the least left to write,
-  // and a forced-unmount fallback (below) can't drop already-synced bytes.
-  try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
-  // Unmount: clean by node, then by mount point, then forced — in that order, so
-  // we prefer a flushing unmount and only force if something still holds it.
+  const allowForce = opts.allowForce === true
+  const CLEAN_TRIES = 10
   let unmounted = false
-  for (const args of [['unmount', node], ['unmount', mountPoint], ['unmount', 'force', node]]) {
-    try { await execP('diskutil', args, { timeout: 30000 }); unmounted = true; break } catch { /* try next */ }
+  let lastErr = ''
+  for (let tryN = 1; tryN <= CLEAN_TRIES && !unmounted; tryN++) {
+    try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
+    for (const args of remountUnmountArgSets(node, mountPoint, false)) {
+      try {
+        await execP('diskutil', args, { timeout: 30000 })
+        unmounted = true
+        break
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e)
+      }
+    }
+    if (!unmounted && tryN < CLEAN_TRIES) {
+      await new Promise((r) => setTimeout(r, 1000))
+    }
   }
-  if (!unmounted) return { ok: false, error: `unmount failed for ${node}` }
+  if (!unmounted && allowForce) {
+    try {
+      await execP('diskutil', ['unmount', 'force', node], { timeout: 30000 })
+      unmounted = true
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e)
+    }
+  }
+  if (!unmounted) {
+    return {
+      ok: false,
+      error: `clean unmount failed for ${node} (refusing force — force unmount discards dirty FAT32 pages and is the 500→33 roulette). ${lastErr}`.trim(),
+    }
+  }
   // Remount by node — diskutil mount is synchronous and restores /Volumes/NAME.
   try {
     await execP('diskutil', ['mount', node], { timeout: 30000 })

@@ -718,7 +718,11 @@ function AppInner() {
           }
           const playlists = assembleSyncPlaylists(setTracks, lib.playlists || [], prev.state.name)
           console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertToUse)
-          await window.electronAPI.syncToIpod(setTracks, playlists, convertToUse)
+          const repair = await window.electronAPI.syncToIpod(setTracks, playlists, convertToUse)
+          if (repair?.alreadyRunning) {
+            console.log('[auto-sync] skipped — a sync is already running (remount during activity sync is not a fresh plug-in)')
+            return
+          }
         } catch (err) {
           console.warn('[auto-sync] failed:', err)
         }

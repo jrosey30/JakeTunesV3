@@ -113,6 +113,19 @@ export function partitionLanded(
 }
 
 /**
+ * Activity wipe+rebuild may only report success after TWO consecutive cold
+ * remounts that both showed the full target.
+ *
+ * A single lucky remount is the 500/500 → 33 roulette: macOS fskit still
+ * reports the mount-cache set, JakeTunes greens the sync, eject shows what
+ * the card actually kept, and the Mini's Songs count jumps around as the
+ * firmware indexes a catalog of missing files.
+ */
+export function activitySetProven(consecutiveFullProofs: number, landed: number, target: number): boolean {
+  return target > 0 && landed >= target && consecutiveFullProofs >= 2
+}
+
+/**
  * Bytes we expect a track to occupy ON THE IPOD after sync.
  *
  * When convert-higher-bitrate is on, lossless sources land as AAC — often

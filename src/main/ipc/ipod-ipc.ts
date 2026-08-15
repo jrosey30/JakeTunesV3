@@ -28,6 +28,12 @@ export interface IpodIpcHost {
     args: string[],
     stdinData?: string,
   ) => Promise<{ ok: boolean; data?: unknown; error?: string }>
+  /**
+   * True while sync-to-ipod holds the device. Mount polls must not treat a
+   * verify remount as an unplug — that false→true edge fires auto-repair
+   * and used to start a second writer mid-copy (roulette).
+   */
+  isSyncInFlight?: () => boolean
 }
 
 const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
@@ -72,6 +78,13 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
   ipc.handle('check-ipod-mounted', async () => {
     try {
       let state = host.getMount()
+      // Hold the last-known mount while a sync remounts the volume. A miss
+      // here used to flip the sidebar to "ejected" then back, which fired
+      // jaketunes-ipod-mounted and started auto-repair on top of the live
+      // writer (two syncs, random Songs counts).
+      if (host.isSyncInFlight?.() && state.mount) {
+        return { mounted: true, name: state.volume }
+      }
       let mount = await findIpodMount()
       // findIpodMount scans /Volumes, which can transiently miss a flapping
       // fskit mount even while it's fully readable — re-stat the last-known
