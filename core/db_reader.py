@@ -462,6 +462,15 @@ def _safe_int(val, default=0):
         return default
 
 
+def sample_rate_for_itunesdb(hz):
+    """mhit 0x3C Hz. Never 0 — Mini 1.4.1 Songs-aborts on a zero rate.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts sampleRateForItunesDb
+    """
+    n = _safe_int(hz, 0)
+    return n if 8000 <= n <= 192000 else 44100
+
+
 # Filetype markers in mhit header (offset 0x18) — ASCII codec identifiers
 CODEC_MARKERS = {
     'm4a': b'M4A ', 'aac': b'M4A ', 'alac': b'M4A ',
@@ -498,8 +507,12 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
                 8-byte value at 0x70 (overlaps 0x6C+4 and corrupts this
                 pair); 12f0370 recorded a 250→118 regression from
                 switching to the libgpod-only 0x70/0xA8 pair.
-      • 0xD0  — mediatype (1 = audio/music) on headers long enough to
-                carry it; set on new tracks.
+      • 0xD0  — mediatype (1 = audio/music). Pack on EVERY mhit, not
+                only is_new — 2026-08-15: 4 activity tracks inherited
+                0 from a template and shipped mediatype=0 / sampleRate=0.
+      • 0x3C  — sample rate (Hz << 16). Same as 0xD0: always pack;
+                never leave 0. ⚠️ TWIN: sampleRateForItunesDb /
+                mediaTypeForItunesDb in src/main/ipod-reconcile.ts.
     If you find a NEW field that turns out to be a silent firmware
     filter, add it to this list so the next editor knows to check it.
     """
@@ -587,10 +600,10 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     # recorded a live regression (250→118) from that change on this device.
     struct.pack_into('<I', hdr, 0x64, 1)
 
-    # For new tracks: set filetype marker, timestamps, and audio facts the
-    # firmware reads. A synthesized template leaves sample rate / bitrate at 0;
-    # inheriting the first mhit's values is fine for those, but a true empty
-    # template must not ship zeros.
+    # For new tracks: set filetype marker and timestamps. Audio facts the
+    # firmware filters on (sample rate, mediatype) are packed for EVERY
+    # track below — a reused mhit template can carry zeros, and Mini 1.4.1
+    # Songs-aborts on sampleRate=0 / mediatype=0.
     path = str(track.get('path', ''))
     ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
     if is_new:
@@ -606,14 +619,17 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
         struct.pack_into('<I', hdr, 0x20, now_mac)   # date created
         struct.pack_into('<I', hdr, 0x58, now_mac)   # date modified
         struct.pack_into('<I', hdr, 0x68, now_mac)   # date added
-        # Bitrate (kbps) at 0x38; sample rate as (Hz << 16) at 0x3C.
-        sr = _safe_int(track.get('sampleRate', 0)) or 44100
-        br = _safe_int(track.get('bitRate', 0)) or _safe_int(track.get('bitrate', 0))
-        if br <= 0 and fs > 0 and dur > 0:
-            br = max(1, int(fs * 8 / (dur / 1000.0) / 1000))  # rough kbps from size
-        if br > 0:
-            struct.pack_into('<I', hdr, 0x38, br)
-        struct.pack_into('<I', hdr, 0x3C, (sr << 16) & 0xFFFFFFFF)
+
+    # Bitrate (kbps) at 0x38; sample rate as (Hz << 16) at 0x3C; mediatype 0xD0.
+    # ⚠️ TWIN: sampleRateForItunesDb / mediaTypeForItunesDb in ipod-reconcile.ts
+    sr = sample_rate_for_itunesdb(track.get('sampleRate', 0))
+    br = _safe_int(track.get('bitRate', 0)) or _safe_int(track.get('bitrate', 0))
+    if br <= 0 and fs > 0 and dur > 0:
+        br = max(1, int(fs * 8 / (dur / 1000.0) / 1000))  # rough kbps from size
+    if br > 0:
+        struct.pack_into('<I', hdr, 0x38, br)
+    struct.pack_into('<I', hdr, 0x3C, (sr << 16) & 0xFFFFFFFF)
+    if len(hdr) >= 0xD4:
         struct.pack_into('<I', hdr, 0xD0, 1)
 
     # Build standard mhod children: title(1), path(2), album(3), artist(4), genre(5), filetype(6), sort-artist(22)
