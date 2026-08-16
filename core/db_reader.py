@@ -856,27 +856,32 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
     return bytes(hdr) + bytes(mhods) + bytes(items)
 
 
-def write_itunesdb(tracks, playlists, template_path, output_path):
+def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None):
     """Rebuild the iPod iTunesDB from JakeTunes library data."""
     # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
     # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
     # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
-    # 1.4.1 skips or aborts Songs indexing on mismatch. output_path is
-    # <mount>/iPod_Control/iTunes/iTunesDB — three dirnames up is the volume.
-    ipod_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(output_path))))
+    # 1.4.1 skips or aborts Songs indexing on mismatch.
+    # 2026-08-16: output_path is a LOCAL file (Mac temp). Deriving the
+    # volume from output_path would restat the wrong disk and the 500-row
+    # catalog would never be the file on the CF. Pass ipod_root = the mount.
+    if ipod_root:
+        root = os.path.abspath(ipod_root)
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(output_path))))
     sized = 0
     for t in tracks:
         path = t.get('path') or ''
         if not path:
             continue
         rel = path.replace(':', os.sep).lstrip('/' + os.sep)
-        fs_path = os.path.join(ipod_root, rel)
+        fs_path = os.path.join(root, rel)
         try:
             t['fileSize'] = os.path.getsize(fs_path)
             sized += 1
         except OSError:
             pass
-    print(f"write_itunesdb: restated {sized}/{len(tracks)} fileSize(s) from {ipod_root}", file=sys.stderr)
+    print(f"write_itunesdb: restated {sized}/{len(tracks)} fileSize(s) from {root}", file=sys.stderr)
 
     with open(template_path, 'rb') as f:
         existing = f.read()
@@ -1294,13 +1299,23 @@ if __name__ == "__main__":
         idx = sys.argv.index('--write')
         db_path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
         if not db_path:
-            print("Usage: db_reader.py --write <ipod_itunesdb_path>", file=sys.stderr)
+            print("Usage: db_reader.py --write <output_path> [--template <itunesdb>] [--ipod-root <mount>]", file=sys.stderr)
             sys.exit(1)
+        template = db_path
+        if '--template' in sys.argv:
+            tidx = sys.argv.index('--template')
+            template = sys.argv[tidx + 1] if tidx + 1 < len(sys.argv) else db_path
+        root = None
+        if '--ipod-root' in sys.argv:
+            ridx = sys.argv.index('--ipod-root')
+            root = sys.argv[ridx + 1] if ridx + 1 < len(sys.argv) else None
         input_data = json.load(sys.stdin)
         count = write_itunesdb(
             input_data['tracks'],
             input_data.get('playlists', []),
-            db_path, db_path
+            template,
+            db_path,
+            ipod_root=root,
         )
         json.dump({'ok': True, 'count': count}, sys.stdout)
         sys.exit(0)

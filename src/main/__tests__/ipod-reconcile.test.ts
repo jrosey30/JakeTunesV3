@@ -5,6 +5,8 @@ import {
   partitionLanded,
   sizeVerified,
   activitySetProven,
+  catalogBytesMatch,
+  catalogOnCardProven,
   fileSizeForItunesDb,
   estimateIpodBytes,
   looksLossless,
@@ -17,6 +19,8 @@ import {
   ipodFirmwareWillList,
   foldForIpod,
   needsIpodAlacTranscode,
+  isIpodFirmwareScratchName,
+  IPOD_FIRMWARE_SCRATCH_NAMES,
   type IntendedTrack,
   type DeviceCatalogEntry,
 } from '../ipod-reconcile.ts'
@@ -154,6 +158,32 @@ describe('activitySetProven — N means N, never a lucky remount', () => {
   })
 })
 
+describe('catalogOnCardProven — the 500-row iTunesDB must be on the CF', () => {
+  const full = {
+    onCardBytes: 400000, localBytes: 400000,
+    onCardMd5: 'abc', localMd5: 'abc',
+    trackCount: 500, target: 500,
+  }
+  it('one remount that looks like 500 is still cache', () => {
+    assert.equal(catalogBytesMatch(full), true)
+    assert.equal(catalogOnCardProven(1, true), false)
+    assert.equal(catalogOnCardProven(0, true), false)
+  })
+  it('two remounts with matching bytes, hash, and N tracks is on the card', () => {
+    for (const n of [100, 250, 500, 1000]) {
+      const m = catalogBytesMatch({ ...full, trackCount: n, target: n })
+      assert.equal(m, true)
+      assert.equal(catalogOnCardProven(2, m), true)
+    }
+  })
+  it('450 tracks, or a hash mismatch, is never the catalog we wrote', () => {
+    assert.equal(catalogBytesMatch({ ...full, trackCount: 450 }), false)
+    assert.equal(catalogOnCardProven(4, catalogBytesMatch({ ...full, trackCount: 450 })), false)
+    assert.equal(catalogBytesMatch({ ...full, onCardMd5: 'nope' }), false)
+    assert.equal(catalogBytesMatch({ ...full, onCardBytes: 1 }), false)
+  })
+})
+
 describe('fileSizeForItunesDb — catalog size is the card, never library.json', () => {
   it('uses the on-card byte size (Beyond Me: 7.5MB on card, not 31MB ALAC in library.json)', () => {
     assert.equal(fileSizeForItunesDb(7_549_180), 7_549_180)
@@ -288,5 +318,22 @@ describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 7
       title: "B’s On The Table", artist: 'Drake',
       path: ':iPod_Control:Music:F00:x.m4a',
     }), true)
+  })
+})
+
+describe('isIpodFirmwareScratchName — leftover Play Counts is a 450 abort', () => {
+  it('matches every name iTunes and libgpod retire on write', () => {
+    for (const n of IPOD_FIRMWARE_SCRATCH_NAMES) {
+      assert.equal(isIpodFirmwareScratchName(n), true, n)
+    }
+    assert.equal(isIpodFirmwareScratchName('OTGPlaylist_1'), true)
+    assert.equal(isIpodFirmwareScratchName('OTGPlaylist2'), true)
+    assert.equal(isIpodFirmwareScratchName('Play Counts.bak'), true)
+  })
+
+  it('does not treat iTunesDB or audio as scratch', () => {
+    assert.equal(isIpodFirmwareScratchName('iTunesDB'), false)
+    assert.equal(isIpodFirmwareScratchName('iTunesPrefs'), false)
+    assert.equal(isIpodFirmwareScratchName('song.m4a'), false)
   })
 })

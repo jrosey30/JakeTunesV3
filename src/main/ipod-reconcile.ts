@@ -126,9 +126,47 @@ export function activitySetProven(consecutiveFullProofs: number, landed: number,
 }
 
 /**
+ * The iTunesDB file itself must be on the CF, not in the Mac mount cache.
+ *
+ * 2026-08-16: Jake — "the catalog of 500 was never ever on the card."
+ * Audio already requires two remounts. The catalog was written straight
+ * onto /Volumes/JAKETUNES, "verified" with F_NOCACHE (a no-op on fskit),
+ * then parsed as 500 rows from cache. Mini Songs was 450: firmware walked
+ * whatever file was actually on the CF. Same rule as activitySetProven —
+ * two consecutive cold remounts, byte+hash+track-count match, or it is
+ * not on the card.
+ */
+export function catalogBytesMatch(opts: {
+  onCardBytes: number
+  localBytes: number
+  onCardMd5: string
+  localMd5: string
+  trackCount: number
+  target: number
+}): boolean {
+  const target = Math.max(0, Math.floor(opts.target))
+  const tracks = Math.max(0, Math.floor(opts.trackCount))
+  const onBytes = Math.max(0, Math.floor(opts.onCardBytes))
+  const localBytes = Math.max(0, Math.floor(opts.localBytes))
+  const onMd5 = String(opts.onCardMd5 || '')
+  const localMd5 = String(opts.localMd5 || '')
+  return target > 0
+    && tracks === target
+    && onBytes > 0
+    && onBytes === localBytes
+    && localMd5.length > 0
+    && onMd5 === localMd5
+}
+
+export function catalogOnCardProven(consecutiveFullProofs: number, match: boolean): boolean {
+  return match && consecutiveFullProofs >= 2
+}
+
+/**
  * Bytes the iTunesDB mhit 0x24 field must carry: the file ON THE CARD.
  *
- * ⚠️ TWIN: core/db_reader.py write_itunesdb restat from --write output path.
+ * ⚠️ TWIN: core/db_reader.py write_itunesdb restat from --ipod-root (the
+ * mount), never from the local temp output path.
  * add_file_sizes() is READ-only and stats the library mirror, not the USB
  * volume. 2026-08-15 cold-plug: 500 files on the Mini, 55 mhit sizes from
  * stale library.json (Foo Fighters "Beyond Me" 31,481,234 ALAC vs 7,549,180
@@ -178,6 +216,38 @@ export function activityWipeEmptyStreak(listedAfterPass: number, prevStreak: num
 
 export function activityWipeProvenEmpty(emptyStreak: number): boolean {
   return emptyStreak >= ACTIVITY_WIPE_EMPTY_STREAK
+}
+
+/**
+ * Session files iTunes and libgpod retire on every iTunesDB write.
+ *
+ * ipodlinux: Play Counts is erased after autosync so the iPod cannot
+ * duplicate/merge it; OTG playlists "cannot survive changing the contents
+ * of the iPod." libgpod itdb_write / itdb_rename_files rename Play Counts
+ * to .bak and unlink OTGPlaylistInfo.
+ *
+ * 2026-08-16: catalog 500, file-readback said 4 missing, we returned
+ * ok:false WITHOUT deleting scratch. Mini Songs went to 450 — firmware
+ * merged a partial-index Play Counts into the new catalog and aborted.
+ * These names must be gone before the Mini boots onto a new iTunesDB,
+ * including on a failed verify.
+ */
+export const IPOD_FIRMWARE_SCRATCH_NAMES = [
+  'Play Counts',
+  'Play Counts.bak',
+  'OTGPlaylistInfo',
+  'OTGPlaylistInfo_DND',
+  'OTGPlaylist',
+] as const
+
+export function isIpodFirmwareScratchName(name: string): boolean {
+  const n = String(name || '')
+  if (!n) return false
+  if ((IPOD_FIRMWARE_SCRATCH_NAMES as readonly string[]).includes(n)) return true
+  if (/^OTGPlaylist(\d+|_\d+|_DND)?$/i.test(n)) return true
+  if (/^OTGPlaylistInfo/i.test(n)) return true
+  if (/^Play Counts/i.test(n)) return true
+  return false
 }
 
 /**

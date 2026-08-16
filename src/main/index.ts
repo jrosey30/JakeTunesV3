@@ -163,6 +163,8 @@ import {
 import {
   partitionLanded,
   activitySetProven,
+  catalogBytesMatch,
+  catalogOnCardProven,
   fileSizeForItunesDb,
   sampleRateForItunesDb,
   activityWipeEmptyStreak,
@@ -171,6 +173,8 @@ import {
   ipodPlayableDestPath,
   ipodFirmwareWillList,
   needsIpodAlacTranscode,
+  isIpodFirmwareScratchName,
+  IPOD_FIRMWARE_SCRATCH_NAMES,
   type IntendedTrack,
 } from './ipod-reconcile'
 import {
@@ -5295,6 +5299,30 @@ async function writeLastSyncManifest(payload: Record<string, unknown>): Promise<
   await writeFile(tmp, JSON.stringify(payload, null, 1), 'utf-8')
   await rename(tmp, manifestPath)
 }
+
+/**
+ * iTunes/libgpod doctrine: after writing iTunesDB, Play Counts and OTG
+ * must not be on the card when the Mini next boots. A leftover Play Counts
+ * from a partial index is how a 500-row catalog became Songs 450.
+ */
+async function retireIpodFirmwareScratch(mount: string): Promise<number> {
+  const itunes = join(mount, 'iPod_Control', 'iTunes')
+  const names = new Set<string>(IPOD_FIRMWARE_SCRATCH_NAMES)
+  try {
+    for (const n of await readdir(itunes)) {
+      if (isIpodFirmwareScratchName(n)) names.add(n)
+    }
+  } catch { /* iTunes dir missing — nothing to retire */ }
+  let retired = 0
+  for (const name of names) {
+    try {
+      await unlink(join(itunes, name))
+      retired++
+    } catch { /* already absent */ }
+  }
+  console.log(`sync-to-ipod: firmware scratch retired (${retired} file(s) gone) — Mini cannot merge Play Counts into this catalog`)
+  return retired
+}
 async function writeSyncJournal(phase: string | null): Promise<void> {
   try {
     if (phase === null) {
@@ -5587,11 +5615,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           error: `Activity wipe could not empty the iPod (${remaining} leftover file${remaining === 1 ? '' : 's'}). macOS is not listing the card consistently. Reseat the cable and sync again — nothing new was copied.`,
         }
       }
-      // Drop the firmware's play-count / on-the-go scratch so a clean rebuild
-      // isn't merged against stale session state.
-      for (const scratch of ['Play Counts', 'OTGPlaylistInfo', 'OTGPlaylistInfo_DND']) {
-        try { await unlink(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', scratch)) } catch { /* absent = fine */ }
-      }
+      await retireIpodFirmwareScratch(IPOD_MOUNT)
       console.log(`sync-to-ipod: WIPE-FIRST deleted ${wiped} existing file(s) — rebuilding clean to ${tracks.length}`)
     } catch (e) {
       console.error('sync-to-ipod: wipe-first failed — refusing to copy onto a dirty card:', e)
@@ -6473,7 +6497,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
   })
 
-  // Backup existing iTunesDB
+  // Backup existing iTunesDB on the card (template + recovery).
   const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
   try {
     await copyFile(ipodDb, ipodDb + '.bak')
@@ -6481,11 +6505,17 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     console.error('Backup iTunesDB failed:', err)
   }
 
-  // Rebuild iTunesDB using Python
+  // Build the catalog on the Mac, then copy it to the CF the same way as
+  // audio. Writing Python straight onto /Volumes/JAKETUNES is how a
+  // "500-row catalog" lived in the mount cache and never on the card
+  // (Jake 2026-08-16). Mini Songs was 450.
+  const localDb = join(app.getPath('temp'), `jaketunes-itunesdb-${process.pid}`)
   const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
   return await new Promise((resolve) => {
     const input = JSON.stringify({ tracks, playlists })
-    const py = spawn(PYTHON_CMD ?? 'python3', [scriptPath, '--write', ipodDb])
+    const py = spawn(PYTHON_CMD ?? 'python3', [
+      scriptPath, '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT,
+    ])
     py.on('error', (err: Error) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         resolve({ ok: false, error: PYTHON_INSTALL_HINT, copied, copyErrors })
@@ -6526,9 +6556,11 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         // failure the worker restores the writer's original and the sync
         // FAILS here — a fragmented-but-correct catalog must never be
         // silently replaced by a torn one.
-        const contig = await ensureContiguousDb(ipodDb, PYTHON_CMD ?? 'python3')
+        const contig = await ensureContiguousDb(localDb, PYTHON_CMD ?? 'python3')
         console.log(`sync-to-ipod: ${contig.summary}`)
         if (!contig.ok) {
+          await retireIpodFirmwareScratch(IPOD_MOUNT)
+          try { await unlink(localDb) } catch { /* temp */ }
           resolve({
             ok: false,
             error: `The catalog was written but could not be laid down as one piece and verified (${contig.error}). The previous catalog is untouched. Sync again.`,
@@ -6619,65 +6651,95 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           console.log('sync-to-ipod: TSA — skipping post-catalog orphan deletes on activity rebuild (the wipe was the cleanup)')
         }
 
-        // ── FLUSH TO CARD BEFORE "DONE" (2026-07-24, Jake: "the sync progress
-        // tracker is not accurate at all... maybe it isnt done"). The fskit/FAT32
-        // iPod holds the just-written iTunesDB in the Mac's WRITE CACHE; firing
-        // "done" here declared success before it was physically on the card, so
-        // the device kept counting UP for a while after (377 → 402 → …) as the
-        // cache drained. Force a full flush + remount so (a) the DB is truly
-        // committed to the card and it's safe to unplug at "done", and (b) the
-        // readback below reads the CARD, not the cache.
-        mainWindow?.webContents.send('sync-progress', { phase: 'db', current: 1, total: 1, title: 'Finishing — flushing everything to the iPod…' })
-        try {
+        // Copy the local catalog onto the CF and prove it the same way as
+        // audio: F_FULLFSYNC + two cold remounts. A parse of 500 from the
+        // mount cache is not the Mini.
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'db', current: 1, total: 1,
+          title: `Putting the ${syncTarget}-song catalog on the card…`,
+        })
+        const localMd5 = contig.md5
+        const localBytes = contig.bytes
+        let catalogConsecutive = 0
+        let readback: { tracks: Array<Record<string, unknown>>; playlists?: unknown[] } | null = null
+        const CATALOG_PROOF_ROUNDS = syncOpts?.wipeFirst ? 4 : 2
+        for (let round = 1; round <= CATALOG_PROOF_ROUNDS; round++) {
+          if (catalogConsecutive === 0) {
+            try {
+              await copyFile(localDb, ipodDb)
+              const conf = await confirmWriteOnCard(localDb, ipodDb)
+              if (!conf.ok) {
+                console.error(`sync-to-ipod: catalog copy not confirmed (${conf.reason})`)
+                continue
+              }
+            } catch (copyErr) {
+              console.error('sync-to-ipod: catalog copy onto the card failed:', copyErr)
+              continue
+            }
+          }
+          await retireIpodFirmwareScratch(IPOD_MOUNT)
           const flush = await remountVolume(IPOD_MOUNT)
           if (!flush.ok) {
-            console.error(`sync-to-ipod: pre-"done" remount failed — refusing to read the mount cache: ${flush.error}`)
+            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            try { await unlink(localDb) } catch { /* temp */ }
             resolve({
               ok: false,
-              error: `The songs may be on the card, but we could not remount to prove the catalog stuck (${flush.error}). Do not unplug — sync again. A cache read here is how 500/500 became 33 on the Mini.`,
-              copied, copyErrors,
-              target: syncTarget,
-              landed: verifiedLanded,
-              shortfall: Math.max(0, syncTarget - verifiedLanded),
-              verifyAttempts,
+              error: `The catalog file never made it onto the card — remount failed (${flush.error}). The Mini does not have ${syncTarget} songs. Do not unplug — sync again.`,
+              copied, copyErrors, target: syncTarget, landed: 0, shortfall: syncTarget, verifyAttempts,
             })
             return
           }
-          console.log('sync-to-ipod: flushed + remounted before verify — reading the card, not the cache')
-        } catch (fe) {
-          console.error('sync-to-ipod: pre-"done" remount threw:', fe)
+          await retireIpodFirmwareScratch(IPOD_MOUNT)
+          let onCard: Buffer
+          try {
+            onCard = await readFile(ipodDb)
+          } catch {
+            catalogConsecutive = 0
+            continue
+          }
+          const cardMd5 = createHash('md5').update(onCard).digest('hex')
+          try {
+            readback = await readIpodDatabase() as { tracks: Array<Record<string, unknown>>; playlists?: unknown[] }
+          } catch {
+            catalogConsecutive = 0
+            continue
+          }
+          const match = catalogBytesMatch({
+            onCardBytes: onCard.length,
+            localBytes,
+            onCardMd5: cardMd5,
+            localMd5,
+            trackCount: readback.tracks.length,
+            target: syncTarget,
+          })
+          console.log(`sync-to-ipod: catalog proof ${round}/${CATALOG_PROOF_ROUNDS} — card ${onCard.length}b md5 ${cardMd5.slice(0, 8)} tracks=${readback.tracks.length} vs local ${localBytes}b md5 ${localMd5.slice(0, 8)} target=${syncTarget} match=${match}`)
+          if (match) {
+            catalogConsecutive++
+            if (catalogOnCardProven(catalogConsecutive, match)) {
+              console.log(`sync-to-ipod: catalog ON CARD — ${syncTarget} tracks, ${localBytes} bytes, held across two remounts`)
+              break
+            }
+          } else {
+            catalogConsecutive = 0
+          }
+        }
+        try { await unlink(localDb) } catch { /* temp */ }
+        if (!readback || !catalogOnCardProven(catalogConsecutive, catalogConsecutive >= 2)) {
           resolve({
             ok: false,
-            error: `Could not remount the iPod to prove the catalog (${fe instanceof Error ? fe.message : String(fe)}). Do not unplug — sync again.`,
-            copied, copyErrors,
-            target: syncTarget,
-            landed: verifiedLanded,
-            shortfall: Math.max(0, syncTarget - verifiedLanded),
-            verifyAttempts,
+            error: `The ${syncTarget}-song catalog never committed to the card. Mac cache is not the Mini — that is how Songs became 450. Not calling this done. Sync again without unplugging.`,
+            copied, copyErrors, target: syncTarget, landed: 0, shortfall: syncTarget, verifyAttempts,
           })
           return
         }
 
-        // ── DEVICE-TRUTH READBACK (2026-07-20, Jake: "my ipod had 6
-        // songs"). A sync that reported success once left a 6-entry
-        // catalog on the device. Never trust the writer's exit code
-        // alone: read the iTunesDB BACK off the device and compare.
-        // Wrote N, device must answer N — anything else is a FAILED
-        // sync (ok:false keeps the repair journal + boot nag alive).
+        // ── DEVICE-TRUTH READBACK — catalog bytes already proven on the CF.
         try {
-          const readback = await readIpodDatabase()
           const onDevice = readback.tracks.length
           if (onDevice !== tracks.length) {
             console.error(`sync-to-ipod: READBACK MISMATCH — wrote ${tracks.length} tracks, device catalog answers ${onDevice}`)
             resolve({
               ok: false,
-              // Name the LAYER. This fires when the catalog (one file, the
-              // iPod's table of contents) doesn't match what we sent — which
-              // reads as "everything failed" even when every song is verified
-              // on the card. Jake hit exactly that: 250 songs safe, catalog
-              // write crashed, banner said "sync failed" with no hint that the
-              // music was fine. Say what is actually at risk (nothing) and
-              // what the fix is (resync rewrites just the catalog).
               error: `Your songs are fine — ${verifiedLanded || copied} of ${tracks.length} are verified on the iPod. What failed is the CATALOG (the iPod's table of contents): it lists ${onDevice}. Sync again to rewrite it — no music needs re-copying.`,
               copied, copyErrors,
             })
@@ -6685,27 +6747,52 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           }
           // 2026-07-21: the catalog is NOT enough — Jake's device kept
           // showing fewer songs than a 1000-record catalog because the
-          // FILES were being deleted out from under it. Count every
-          // catalog entry's actual file on disk. A catalog entry with no
-          // file is a song the firmware will drop → the real cause of
-          // "846 songs". Wrote N records, ALL N files must exist.
-          const musicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
-          const onDiskFiles = await walkAudioFilesUnder(musicRoot)
-          const onDiskBasenames = new Set(onDiskFiles.map((f) => f.split(/[/\\]/).pop() || ''))
-          let missingFiles = 0
-          for (const t of readback.tracks as Array<{ path?: string }>) {
-            const bn = colonPathBasename(String(t.path || ''))
-            if (bn && !onDiskBasenames.has(bn)) missingFiles++
+          // FILES were being deleted out from under it.
+          // 2026-08-16: do NOT prove existence with readdir. fskit returns
+          // partial listings; 4 hidden names became "device will show 496",
+          // then Mini Songs was 450 because firmware aborts the index on
+          // ghosts + leftover Play Counts — it does not subtract 4.
+          // Stat each catalog dest the way copy-verify does.
+          const missingRows: Array<{ title: string; artist: string; path: string }> = []
+          for (const t of readback.tracks as Array<{ path?: string; title?: string; artist?: string }>) {
+            const colon = String(t.path || '')
+            const abs = colon ? join(IPOD_MOUNT, tsaRelFromColon(colon, pathSep)) : ''
+            try {
+              if (!colon) throw new Error('no-path')
+              const sz = (await stat(abs)).size
+              if (sz <= 0) throw new Error('empty')
+            } catch {
+              missingRows.push({
+                title: String(t.title || ''),
+                artist: String(t.artist || ''),
+                path: colon,
+              })
+            }
           }
-          if (missingFiles > 0) {
-            console.error(`sync-to-ipod: FILE READBACK MISMATCH — catalog lists ${onDevice} songs but ${missingFiles} have NO file on the device`)
+          if (missingRows.length > 0) {
+            const sample = missingRows.slice(0, 8)
+              .map((r) => `${r.artist} — ${r.title} (${r.path})`)
+              .join('; ')
+            console.error(`sync-to-ipod: FILE READBACK — ${missingRows.length}/${onDevice} catalog dests failed stat: ${sample}`)
+            await writeSyncReport({
+              syncedAt: new Date().toISOString(), target: syncTarget,
+              landed: onDevice - missingRows.length, shortfall: missingRows.length,
+              verifyPasses: verifyAttempts, copied, copyErrors,
+              failed: missingRows.slice(0, 40).map((r, i) => ({
+                id: i, title: r.title, artist: r.artist, path: r.path,
+              })),
+            })
             resolve({
               ok: false,
-              error: `Sync verify failed: the iPod's catalog lists ${onDevice} songs but ${missingFiles} of them have no audio file on the device — the device will show ${onDevice - missingFiles}. Sync again.`,
-              copied, copyErrors,
+              error: `Sync verify failed: ${missingRows.length} of ${onDevice} catalog songs are not on the card at the path the Mini will open. Firmware 1.4.1 aborts Songs (450 of 500), it does not skip ${missingRows.length}. ${sample}`,
+              copied, copyErrors, target: syncTarget,
+              landed: onDevice - missingRows.length,
+              shortfall: missingRows.length, verifyAttempts,
             })
             return
           }
+          const musicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
+          const onDiskFiles = await walkAudioFilesUnder(musicRoot)
 
           // ── FIRMWARE-SEMANTIC GATE ─────────────────────────────────────
           // Counts + paths + byte sizes do NOT prove the Mini will expose a
@@ -6920,16 +7007,12 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
               return
             }
           }
-          // Retire the firmware's session scratch (2026-07-21: Jake's device
-          // indexed the SAME perfect 1000-track DB as 854, then 892 after a
-          // hard reset — boot-time merges of stale Play Counts / On-The-Go
-          // state are the standing suspect, and real iTunes deletes these
-          // every sync so the firmware regenerates them against the new DB).
-          for (const scratch of ['Play Counts', 'OTGPlaylistInfo', 'OTGPlaylistInfo_DND']) {
-            try { await unlink(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', scratch)) } catch { /* absent = fine */ }
-          }
+          // Third pass: Mini may have rewritten Play Counts during this
+          // readback window. iTunes deletes these every sync.
+          await retireIpodFirmwareScratch(IPOD_MOUNT)
         } catch (rbErr) {
           console.warn('sync-to-ipod: readback failed (treating as sync failure):', rbErr)
+          await retireIpodFirmwareScratch(IPOD_MOUNT)
           resolve({
             ok: false,
             error: `Sync verify failed: could not read the iPod's catalog back (${rbErr instanceof Error ? rbErr.message : String(rbErr)}). Sync again before unplugging.`,

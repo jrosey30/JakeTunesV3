@@ -59,3 +59,24 @@ test('activity sync runs TSA by identity and does not auto-delete after the cata
   assert.match(syncIpc, /tsaRelFromColon/)
   assert.doesNotMatch(syncIpc, /join\(mount, p\.destPath\.replace/)
 })
+
+test('after writing iTunesDB, Play Counts is retired before the Mini can boot onto the catalog', () => {
+  const written = index.indexOf("title: 'iTunesDB written'")
+  const scratch = index.indexOf('retireIpodFirmwareScratch', written)
+  const remount = index.indexOf('remountVolume(IPOD_MOUNT)', scratch)
+  assert.ok(written >= 0, 'catalog write no longer announces iTunesDB written')
+  assert.ok(scratch > written, 'Play Counts must be retired after the catalog write')
+  assert.ok(remount > scratch, 'flush remount must not run while Play Counts is still on the card')
+  assert.match(index, /firmware scratch retired/)
+  assert.doesNotMatch(index, /the device will show \$\{onDevice - missingFiles\}/)
+})
+
+test('the iTunesDB is built locally and proven on the CF across two remounts', () => {
+  assert.match(index, /--ipod-root/)
+  assert.match(index, /--template/)
+  assert.match(index, /copyFile\(localDb, ipodDb\)/)
+  assert.match(index, /catalogOnCardProven/)
+  assert.match(index, /catalogBytesMatch/)
+  assert.match(index, /ensureContiguousDb\(localDb/)
+  assert.doesNotMatch(index, /ensureContiguousDb\(ipodDb/)
+})

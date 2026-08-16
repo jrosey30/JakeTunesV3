@@ -14,13 +14,11 @@
  * wherever it died. A different layout every sync = a different count every
  * sync = "roulette".
  *
- * So: immediately after the Python writer produces iTunesDB, this module
- * rewrites it as a freshly-allocated contiguous file and byte-verifies the
- * result, so every downstream gate validates the artifact that actually
- * ships. Node has no fcntl, and the calls that matter (F_PREALLOCATE with
- * F_ALLOCATECONTIG, F_NOCACHE readback, F_FULLFSYNC) are fcntl-only — the
- * work happens in an embedded Python worker, same runtime the DB writer
- * already requires.
+ * So: the Python writer produces iTunesDB on a LOCAL file (Mac temp).
+ * This module rewrites that local file as one contiguous run. The sync
+ * engine then copyFile + F_FULLFSYNC onto the CF and remount-proves the
+ * bytes. Running this pass on the fskit mount was the 450: F_NOCACHE is
+ * a no-op there, so "verified 500 rows" was the Mac cache, never the card.
  *
  * Failure policy: if the rewritten file cannot be VERIFIED byte-identical,
  * the worker swaps the original back and reports failure — a fragmented
