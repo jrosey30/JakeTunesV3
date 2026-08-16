@@ -126,7 +126,12 @@ export interface ActivitySyncResult {
 }
 
 function fail(partial: Omit<ActivitySyncResult, 'ok'> & { error: string }): ActivitySyncResult {
-  return { ok: false, copied: partial.copied ?? 0, ...partial }
+  // copied is REQUIRED on ActivitySyncResult and partial carries it, so the
+  // explicit key was dead (overwritten by the spread) and the ?? 0 was
+  // unreachable. Diagnosed by the mobile session, landed here 2026-08-16
+  // to clear the repo-wide type gate. NOT a behaviour change — and do not
+  // reorder a default AFTER the spread; that WOULD be one.
+  return { ok: false, ...partial }
 }
 
 async function spawnJson(cmd: string, args: string[], stdin: string): Promise<{ code: number; stdout: string; stderr: string; err?: Error }> {
