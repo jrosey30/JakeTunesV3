@@ -176,6 +176,7 @@ def verify(path, root=None, expect=None):
         t['album_id'] = u32(d, p + MHIT_ALBUM_ID) if hl >= MHIT_ALBUM_ID + 4 else None
         t['backref'] = u64(d, p + MHIT_MHBD_BACKREF) if hl >= MHIT_MHBD_BACKREF + 8 else None
         t['artist_id'] = u32(d, p + MHIT_ARTIST_ID) if hl >= MHIT_ARTIST_ID + 4 else None
+        t['filetype'] = d[p + 0x18:p + 0x1C] if hl >= 0x1C else b''
 
         # children
         q = p + hl
@@ -202,6 +203,7 @@ def verify(path, root=None, expect=None):
         t['mtypes'] = mtypes
         t['title'] = strs.get(1, '')
         t['path'] = strs.get(2, '')
+        t['artist'] = strs.get(4, '')
         tracks.append(t)
         uids.append(t['uid'])
         dbids.append(t['dbid'])
@@ -308,16 +310,48 @@ def verify(path, root=None, expect=None):
     if stray:
         r.warn(f"mhod types beyond the era-safe set present: {sorted(stray)}")
 
-    # Typographic Unicode the 2005 firmware silently rejects (found 2026-07-25:
-    # a 250-track sync landed 247, and the exact 3 missing tracks were the only
-    # ones carrying U+2019). Latin-1 accents are fine — the device renders them.
+    # Typographic punctuation Mini 1.4.1 silently drops (found 2026-07-25:
+    # 250 → 247; the 3 missing titles were the only ones with U+2019).
+    # Do NOT treat every codepoint >U+2000 as fatal — Hebrew is U+05xx and
+    # must remain (blanking it was a 2026-08-15 skip). Independent copy of
+    # the fold map; this file must not import db_reader.
+    TYPOGRAPHIC_SKIPS = set('‘’‚‛“”„‟–—‒―…′″')
     hot = []
     for t in tracks:
-        for s in (t.get('title', ''),):
-            if any(ord(c) > 0x2000 for c in s):
-                hot.append(t.get('title', '')[:40])
+        blob = (t.get('title') or '') + (t.get('artist') or '')
+        if any(c in TYPOGRAPHIC_SKIPS for c in blob):
+            hot.append((t.get('title') or '')[:40])
     if hot:
-        r.err(f"{len(hot)} track(s) carry typographic Unicode >U+2000 — this device DROPS them: {hot[:4]}")
+        r.err(f"{len(hot)} track(s) carry typographic Unicode this device DROPS: {hot[:4]}")
+
+    PLAYABLE_EXTS = {'.m4a', '.mp3', '.mp4', '.aac', '.wav', '.wave', '.aiff', '.aif'}
+    KNOWN_MARKERS = {b'M4A ', b'MP3 ', b'WAV ', b'AIFF'}
+
+    def path_ext(p):
+        base = (p or '').replace(':', '/').rsplit('/', 1)[-1]
+        i = base.rfind('.')
+        return base[i:].lower() if i >= 0 else ''
+
+    bad = count_bad(lambda t: not (t.get('title') or '').strip())
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) have a blank title (firmware may skip them)")
+    bad = count_bad(lambda t: not (t.get('artist') or '').strip())
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) have a blank artist (firmware may skip them)")
+    bad = count_bad(lambda t: path_ext(t.get('path')) not in PLAYABLE_EXTS)
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) have an unplayable path extension "
+              f"(Mini Songs skip — 500→497 class): {[path_ext(t.get('path')) for t in bad[:4]]}")
+    bad = count_bad(lambda t: t.get('filetype') not in KNOWN_MARKERS)
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) have a codec marker the Mini will not list: "
+              f"{[t.get('filetype') for t in bad[:4]]}")
+    bad = count_bad(lambda t: path_ext(t.get('path')) in ('.m4a', '.mp4', '.aac')
+                    and t.get('filetype') not in (None, b'', b'M4A '))
+    if bad:
+        r.err(f"{len(bad)}/{n} track(s) are .m4a/.mp4 but stamped {bad[0].get('filetype')!r} "
+              f"(ALAC-as-MP3 is the 497-of-500 skip)")
+
     if 32 in all_mtypes:
         # DEVICE TRUTH: the spec calls type 32 binary/video-only, but this
         # firmware drops tracks that LACK it (2026-07-21: 72 tracks lost).

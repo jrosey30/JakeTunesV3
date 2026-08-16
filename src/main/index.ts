@@ -168,6 +168,9 @@ import {
   activityWipeEmptyStreak,
   activityWipeProvenEmpty,
   ACTIVITY_WIPE_MAX_PASSES,
+  ipodPlayableDestPath,
+  ipodFirmwareWillList,
+  needsIpodAlacTranscode,
   type IntendedTrack,
 } from './ipod-reconcile'
 import { ensureContiguousDb } from './ipod-db-contiguity'
@@ -3323,6 +3326,36 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
   }
 }
 
+/**
+ * FLAC (and only FLAC) → 16-bit / 44.1 kHz ALAC .m4a for the Mini.
+ * Activity sync is ALAC-on-purpose — do not route this through AAC.
+ * Mini 1.4.1 cannot index .flac; 2026-08-15 left Cassius "Feeling for You"
+ * on the card as FLAC and that row is the same skip class as 497.
+ */
+async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> {
+  const srcStat = await stat(srcPath).catch(() => null)
+  if (!srcStat) return null
+  const cacheDir = join(app.getPath('userData'), SYNC_CONVERT_CACHE_SUBDIR)
+  await mkdir(cacheDir, { recursive: true }).catch(() => {})
+  const { createHash } = await import('crypto')
+  const hash = createHash('sha1').update(`${srcPath}|ipod-alac-16-44100-v1`).digest('hex').slice(0, 16)
+  const cached = join(cacheDir, `${hash}.m4a`)
+  try {
+    const cStat = await stat(cached)
+    if (cStat.mtimeMs >= srcStat.mtimeMs && cStat.size > 0) return cached
+  } catch { /* miss */ }
+  const tmp = cached + '.partial.m4a'
+  try {
+    await convertAudio(srcPath, tmp, 'alac')
+    await rename(tmp, cached)
+    return cached
+  } catch (err) {
+    try { await unlink(tmp) } catch { /* already gone */ }
+    console.warn(`[sync-alac] FLAC→ALAC failed for ${srcPath}:`, err)
+    return null
+  }
+}
+
 // ── Auto-detect iPod (cross-platform: scans /Volumes/ on macOS, drive letters on Windows) ──
 let detectedIpodMount: string | null = null  // Full mount path: "/Volumes/JACOBROSENB" or "E:\\"
 let detectedIpodVolume: string | null = null // Display name: "JACOBROSENB" or "E:"
@@ -5532,13 +5565,25 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     altIpodPath?: string    // candidate for smart-match rewrite
   }
   const candidates: Candidate[] = []
+  const playablePathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
+  const alreadyOnDevice: Array<{ id: number; srcPath: string; dstPath: string; expectedSize: number }> = []
   for (const track of tracks) {
-    const colonPath = String(track.path || '')
-    if (!colonPath) continue
+    const rawColon = String(track.path || '')
+    if (!rawColon) continue
+    // Mini 1.4.1 will not list .flac or FAT temp names (.0i4zLU). Copy
+    // to a real audio extension; the DB writer stamps M4A from that path.
+    // 2026-08-15: 500 catalog → Songs 497 from three ALAC files named
+    // as staging temps and stamped MP3.
+    const colonPath = ipodPlayableDestPath(rawColon)
+    if (colonPath !== rawColon && typeof track.id === 'number') {
+      playablePathRewrites.push({ id: track.id, oldPath: rawColon, newPath: colonPath })
+    }
+    const rawRel = rawColon.replace(/:/g, pathSep)
     const relPath = colonPath.replace(/:/g, pathSep)
     const ipodFile = join(IPOD_MOUNT, relPath)
-    const localFile = join(LOCAL_MOUNT, relPath)
-    const baseName = colonPath.split(':').pop() || ''
+    const localFile = join(LOCAL_MOUNT, rawRel)
+    const baseName = rawColon.split(':').pop() || ''
+    const needsAlac = needsIpodAlacTranscode(rawColon)
 
     // Does the iPod already have this file? If yes, only skip the
     // copy if the on-disk local file hasn't changed. We compare size —
@@ -5547,6 +5592,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     // iPod instead of the stale one. Without this, sync would see the
     // iPod still has "something" at the path and refuse to overwrite,
     // so fixes made locally never reach the device.
+    //
+    // Playable-dest rewrite: existence is the NEW .m4a, not the stale
+    // .0i4zLU / .flac. A size match on the garbage name must not skip.
     let exists = false
     let ipodSize = 0
     try {
@@ -5555,6 +5603,14 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       ipodSize = s.size
     } catch { /* not at expected path */ }
     if (exists) {
+      if (needsAlac) {
+        // Dest is already .m4a from a prior FLAC→ALAC land. Don't
+        // recopy just because the local FLAC is a different size.
+        if (typeof track.id === 'number' && ipodSize > 0) {
+          alreadyOnDevice.push({ id: track.id, srcPath: ipodFile, dstPath: ipodFile, expectedSize: ipodSize })
+        }
+        continue
+      }
       try {
         const ls = await stat(localFile)
         if (ls.size === ipodSize) {
@@ -5579,6 +5635,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           const hintSaysLossless = hint === 'alac' || LOSSLESS_CODECS.has(hint)
           const isLossless = LOSSLESS_EXTS.has(localExt) || hintSaysLossless
           if (!(convertOptions?.enabled && isLossless)) {
+            if (typeof track.id === 'number' && ipodSize > 0) {
+              alreadyOnDevice.push({ id: track.id, srcPath: localFile, dstPath: ipodFile, expectedSize: ipodSize })
+            }
             continue   // byte-identical and no re-encode needed
           }
           // fall through — queue this for conversion
@@ -5589,13 +5648,16 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       } catch {
         // Local file missing but iPod has one — keep iPod's copy,
         // nothing we can do anyway.
+        if (typeof track.id === 'number' && ipodSize > 0) {
+          alreadyOnDevice.push({ id: track.id, srcPath: ipodFile, dstPath: ipodFile, expectedSize: ipodSize })
+        }
         continue
       }
     }
 
     const altIpodPath = baseName ? basenameToIpodPath.get(baseName) : undefined
     candidates.push({
-      track, colonPath, ipodFile, localFile, baseName,
+      track, colonPath: rawColon, ipodFile, localFile, baseName,
       altIpodPath: altIpodPath && altIpodPath !== ipodFile ? altIpodPath : undefined,
     })
   }
@@ -5641,6 +5703,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // sync compares AAC-on-card to ALAC-in-library, "fails" every song, and
   // recopies full-size masters until the Mini fills (~100 of 500).
   const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+  for (const e of alreadyOnDevice) writtenById.set(e.id, e)
   const rememberWritten = async (trackId: number | undefined, srcPath: string, dstPath: string) => {
     if (trackId == null) return
     try {
@@ -5664,35 +5727,41 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       const artistOk = libArtist && fileArtist && (libArtist === fileArtist || libArtist.includes(fileArtist) || fileArtist.includes(libArtist))
 
       if (titleOk && artistOk) {
-        const altRel = c.altIpodPath.slice(IPOD_MOUNT.length + 1)
-        const altColonPath = ':' + altRel.split(pathSep).join(':')
-        pathRewrites.push({
-          id: c.track.id as number,
-          oldPath: c.colonPath,
-          newPath: altColonPath,
-        })
-        // Already on the device at altIpodPath — record on-card size as the
-        // verify target. Recopy source prefers the AAC mirror when convert is
-        // on so a recovery pass doesn't shove the ALAC master back onto a Mini.
-        try {
-          const onCard = (await stat(c.altIpodPath)).size
-          let srcPath = c.localFile
-          if (convertOptions?.enabled) {
-            try {
-              const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps)
-              if (mirror) srcPath = mirror
-            } catch { /* keep library master as recopy source */ }
-          }
-          writtenById.set(c.track.id as number, {
-            srcPath,
-            dstPath: c.altIpodPath,
-            expectedSize: onCard,
+        // Don't re-link onto a FAT temp / .flac — Mini 1.4.1 will skip it.
+        if (ipodPlayableDestPath(c.altIpodPath) !== c.altIpodPath) {
+          rewritesVetoed += 1
+        } else {
+          const altRel = c.altIpodPath.slice(IPOD_MOUNT.length + 1)
+          const altColonPath = ':' + altRel.split(pathSep).join(':')
+          pathRewrites.push({
+            id: c.track.id as number,
+            oldPath: c.colonPath,
+            newPath: altColonPath,
           })
-        } catch { /* verify will notice */ }
-        continue
+          // Already on the device at altIpodPath — record on-card size as the
+          // verify target. Recopy source prefers the AAC mirror when convert is
+          // on so a recovery pass doesn't shove the ALAC master back onto a Mini.
+          try {
+            const onCard = (await stat(c.altIpodPath)).size
+            let srcPath = c.localFile
+            if (convertOptions?.enabled) {
+              try {
+                const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps)
+                if (mirror) srcPath = mirror
+              } catch { /* keep library master as recopy source */ }
+            }
+            writtenById.set(c.track.id as number, {
+              srcPath,
+              dstPath: c.altIpodPath,
+              expectedSize: onCard,
+            })
+          } catch { /* verify will notice */ }
+          continue
+        }
+      } else {
+        // Tags didn't match — don't silently re-link. Copy the real file.
+        rewritesVetoed += 1
       }
-      // Tags didn't match — don't silently re-link. Copy the real file.
-      rewritesVetoed += 1
     }
 
     toCopy.push({
@@ -5837,6 +5906,38 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         console.warn(`[sync-convert] mirror build failed for ${local}, copying original:`, err)
       }
     }
+    // Mini cannot index FLAC. If we are still pointing at a .flac (convert
+    // off, or AAC mirror failed), transcode to ipod-safe ALAC .m4a. Never
+    // copy the FLAC bytes onto the card — that's a Songs skip.
+    if (needsIpodAlacTranscode(srcToCopy)) {
+      try {
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'copy', current: copied + copyErrors, total: totalToCopy,
+          title: `Converting → ALAC: ${title}`,
+        })
+        const mirror = await buildIpodSafeAlacMirror(local)
+        if (!mirror) {
+          console.error(`sync-to-ipod: refusing to copy FLAC onto the Mini: ${title}`)
+          copyErrors++
+          mainWindow?.webContents.send('sync-progress', {
+            phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+          })
+          continue
+        }
+        srcToCopy = mirror
+        dstToCopy = ipodPlayableDestPath(dstToCopy)
+        const tr = trackByLocal.get(local)
+        if (tr) tr.codec = 'alac'
+      } catch (err) {
+        console.error(`sync-to-ipod: FLAC→ALAC failed, not copying original: ${title}`, err)
+        copyErrors++
+        mainWindow?.webContents.send('sync-progress', {
+          phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+        })
+        continue
+      }
+    }
+    dstToCopy = ipodPlayableDestPath(dstToCopy)
     // Last-mile byte-identical skip. When the source was converted to an
     // AAC mirror (or matches the iPod copy for any other reason), check
     // the destination size first — if it already matches the source we
@@ -5932,6 +6033,10 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     pathRewrites.push(...convertedPathRewrites)
     console.log(`sync-to-ipod: converted ${convertedPathRewrites.length} lossless files to AAC; rewriting their iTunesDB paths`)
   }
+  if (playablePathRewrites.length > 0) {
+    pathRewrites.push(...playablePathRewrites)
+    console.log(`sync-to-ipod: rewrote ${playablePathRewrites.length} dest path(s) to a Mini-listable extension (.m4a)`)
+  }
   // Apply smart-match path rewrites to the in-flight tracks array so
   // the Python DB writer (which reads this JSON) gets the correct
   // (already-on-iPod) paths, not the stale ones from library.json.
@@ -5942,6 +6047,16 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       if (nv) t.path = nv
     }
     console.log(`sync-to-ipod: smart-match rewrote ${pathRewrites.length} track paths (saved that many redundant copies)`)
+  }
+  // Drop leftover FAT-temp / .flac names now that the playable dest exists.
+  for (const r of playablePathRewrites) {
+    const stale = join(IPOD_MOUNT, r.oldPath.replace(/:/g, pathSep))
+    const fresh = join(IPOD_MOUNT, r.newPath.replace(/:/g, pathSep))
+    if (stale === fresh) continue
+    try {
+      await stat(fresh)
+      await unlink(stale)
+    } catch { /* fresh missing or stale already gone */ }
   }
 
   // ── VERIFIED-COUNT LOOP (2026-07-24, Jake: "100 means 100, 250 means 250,
@@ -6227,6 +6342,39 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
     activityShortfall = true
     console.error(`sync-to-ipod: ACTIVITY SHORTFALL (pre-DB) — asked for ${syncTarget}, have ${verifiedLanded} verified files`)
+  }
+
+  // Firmware listability: catalog N with Songs N-3 is the 497 class.
+  // Fill empty title/artist so the writer cannot emit blank mhods; then
+  // refuse success if any remaining row would not list.
+  {
+    for (const t of tracks) {
+      if (!String(t.title || '').trim()) {
+        const base = String(t.path || '').split(':').pop() || 'Unknown'
+        t.title = base.replace(/\.[^.]+$/, '') || 'Unknown'
+      }
+      if (!String(t.artist || '').trim()) {
+        t.artist = String(t.albumArtist || t.album || 'Unknown Artist')
+      }
+    }
+    const unlistable = tracks.filter((t) => !ipodFirmwareWillList(t))
+    if (unlistable.length > 0) {
+      console.error(
+        `sync-to-ipod: ${unlistable.length} track(s) Mini 1.4.1 will not list (497-of-500 class):`,
+        unlistable.slice(0, 8).map((t) => `${t.artist} — ${t.title} (${t.path})`),
+      )
+      if (syncOpts?.wipeFirst) {
+        activityShortfall = true
+        for (const t of unlistable) {
+          failedForReport.push({
+            id: t.id as number,
+            title: String(t.title ?? ''),
+            artist: String(t.artist ?? ''),
+            path: String(t.path ?? ''),
+          })
+        }
+      }
+    }
   }
 
   // The full-library tag-verification preflight that used to live here

@@ -71,8 +71,12 @@ def test_char_fold():
     check("keeps Latin-1 accents (device renders them)", f('Café Tacvba') == 'Café Tacvba')
     check("keeps ó / í", f('Sigur Rós Höppipolla')[:9] == 'Sigur Rós')
 
-    # Anything still exotic must not survive as >U+00FF.
-    check("transliterates CJK/exotic away", all(ord(c) <= 0xFF for c in f('東京 トラック')))
+    # Hebrew has no Latin NFKD form. Blanking it (2026-08-15) is how a
+    # listable title becomes a skip. Keep the original when the map
+    # would leave only whitespace.
+    check("Hebrew is not blanked", f('דג').strip() == 'דג')
+    check("Hebrew title stays non-empty", f('בלו בלו בלו').strip() != '')
+    check("CJK is not blanked", f('東京 トラック').strip() != '')
     check("empty/None safe", f('') == '' and f(None) == '')
 
 
@@ -166,6 +170,34 @@ def test_empirical_device_fields():
     check("title/path/album/artist mhods present", {1, 2, 3, 4} <= set(types), f"types={types}")
 
 
+def test_codec_marker_never_defaults_to_mp3():
+    print("\ncodec marker — unknown ext / FLAC / leftover MP3 template")
+    MHIT_HLEN = 0x270
+    template = bytearray(MHIT_HLEN)
+    struct.pack_into('<4s', template, 0, b'mhit')
+    struct.pack_into('<I', template, 4, MHIT_HLEN)
+    struct.pack_into('<4s', template, 0x18, b'MP3 ')  # poisoned template
+
+    def marker_of(path, codec, is_new):
+        rec = db_reader.build_mhit_record(
+            {'id': 1, 'title': 'x', 'artist': 'y', 'album': 'z', 'genre': 'g',
+             'path': path, 'codec': codec, 'audioFingerprint': path,
+             'fileSize': 1000, 'duration': 200000},
+            55, bytes(template), is_new=is_new)
+        return rec[0x18:0x1C]
+
+    check("unknown FAT temp + ALAC → M4A (not MP3)",
+          marker_of(':F00:x.0i4zLU', 'alac', True) == b'M4A ')
+    check("existing mhit with leftover MP3 template still rewritten to M4A",
+          marker_of(':F00:x.m4a', 'alac', False) == b'M4A ')
+    check("FLAC path is never stamped FLAC",
+          marker_of(':F10:imported_9860.flac', 'flac', True) == b'M4A ')
+    check("real mp3 still MP3",
+          marker_of(':F00:x.mp3', 'mp3', True) == b'MP3 ')
+    check("codec_marker_for_track default is M4A",
+          db_reader.codec_marker_for_track({'path': ':F00:x.fQMz7S', 'codec': 'alac'}) == b'M4A ')
+
+
 def main():
     print("iPod iTunesDB field regression guard")
     print("=" * 62)
@@ -173,6 +205,7 @@ def main():
     test_string_mhod_folding()
     test_playlist_ordinal()
     test_empirical_device_fields()
+    test_codec_marker_never_defaults_to_mp3()
     print("=" * 62)
     if FAILURES:
         print(f"FAILED {len(FAILURES)}/{CHECKS[0]}: {FAILURES}")

@@ -13,6 +13,10 @@ import {
   mediaTypeForItunesDb,
   activityWipeEmptyStreak,
   activityWipeProvenEmpty,
+  ipodPlayableDestPath,
+  ipodFirmwareWillList,
+  foldForIpod,
+  needsIpodAlacTranscode,
   type IntendedTrack,
   type DeviceCatalogEntry,
 } from '../ipod-reconcile.ts'
@@ -229,5 +233,53 @@ describe('estimateIpodBytes / looksLossless / packTracksToCapacity', () => {
     assert.deepEqual(r.dropped.map((t) => t.id), [3, 4])
     assert.equal(r.usedBytes, 200)
     assert.equal(r.budgetBytes, 200)
+  })
+})
+
+describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 79', () => {
+  it('rewrites FAT temp names and FLAC to .m4a', () => {
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F00:x.0i4zLU'),
+      ':iPod_Control:Music:F00:x.m4a',
+    )
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F10:imported_9860.flac'),
+      ':iPod_Control:Music:F10:imported_9860.m4a',
+    )
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F00:ok.m4a'),
+      ':iPod_Control:Music:F00:ok.m4a',
+    )
+    assert.equal(needsIpodAlacTranscode(':F10:imported_9860.flac'), true)
+    assert.equal(needsIpodAlacTranscode(':F00:ok.m4a'), false)
+  })
+
+  it('folds curly apostrophes but does not blank Hebrew', () => {
+    assert.equal(foldForIpod("B’s On The Table"), "B's On The Table")
+    assert.equal(foldForIpod('דג').trim(), 'דג')
+    assert.ok(foldForIpod('בלו בלו בלו').trim().length > 0)
+  })
+
+  it('rejects the three 497-of-500 shapes and accepts a real ALAC row', () => {
+    assert.equal(ipodFirmwareWillList({
+      title: 'The Brighter The Light', artist: 'The Juan Maclean',
+      path: ':iPod_Control:Music:F00:x.0i4zLU', codec: 'alac',
+    }), false)
+    assert.equal(ipodFirmwareWillList({
+      title: 'Feeling for You', artist: 'Cassius',
+      path: ':iPod_Control:Music:F10:imported_9860.flac', codec: 'flac',
+    }), false)
+    assert.equal(ipodFirmwareWillList({
+      title: '  ', artist: 'דג',
+      path: ':iPod_Control:Music:F00:x.m4a', codec: 'alac',
+    }), false)
+    assert.equal(ipodFirmwareWillList({
+      title: 'בלו בלו בלו', artist: 'דג',
+      path: ':iPod_Control:Music:F00:imported_5828.m4a', codec: 'alac',
+    }), true)
+    assert.equal(ipodFirmwareWillList({
+      title: "B’s On The Table", artist: 'Drake',
+      path: ':iPod_Control:Music:F00:x.m4a',
+    }), true)
   })
 })

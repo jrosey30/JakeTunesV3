@@ -30,4 +30,12 @@ test('validator rejects every firmware field implicated in the 500-to-496 failur
   assert.match(verifier, /8 <= t\['bitrate'\] <= 2000/)
   assert.match(verifier, /8000 <= t\['srate'\] <= 192000/)
   assert.match(verifier, /t\['mediatype'\] != 1/)
+  assert.match(verifier, /unplayable path extension/)
+  assert.match(verifier, /ALAC-as-MP3 is the 497-of-500 skip/)
+})
+
+test('activity sync refuses success when a catalog row would not list on the Mini', () => {
+  assert.match(index, /ipodFirmwareWillList/)
+  assert.match(index, /needsIpodAlacTranscode/)
+  assert.match(index, /ipodPlayableDestPath/)
 })

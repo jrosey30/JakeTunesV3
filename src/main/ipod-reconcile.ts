@@ -242,3 +242,104 @@ export function packTracksToCapacity<T extends { bytes: number }>(
   }
   return { packed, dropped, budgetBytes: budget, usedBytes: used }
 }
+
+/**
+ * Extensions Mini 1.4.1 will actually put in Music > Songs.
+ * .flac is NOT here — the Mini cannot index FLAC. .alac as a filename
+ * isn't either; ALAC belongs in an .m4a. Garbage FAT temps (.0i4zLU)
+ * are not here — 2026-08-15 Activity 500 → Songs 497: three ALAC files
+ * named that way were stamped MP3 and skipped.
+ */
+export const IPOD_FIRMWARE_EXTS = new Set([
+  '.m4a', '.mp3', '.mp4', '.aac', '.wav', '.wave', '.aiff', '.aif',
+])
+
+/** ⚠️ TWIN: core/db_reader.py IPOD_CHAR_FOLD */
+const IPOD_CHAR_FOLD: Record<string, string> = {
+  '‘': "'", '’': "'",
+  '‚': "'", '‛': "'",
+  '“': '"', '”': '"',
+  '„': '"', '‟': '"',
+  '–': '-', '—': '-', '‒': '-', '―': '-',
+  '‐': '-', '‑': '-',
+  '…': '...',
+  '\u00a0': ' ', '\u2007': ' ', '\u202f': ' ', '\u2009': ' ',
+  '™': 'TM', '®': '(R)', '©': '(C)',
+  '′': "'", '″': '"',
+  '´': "'", '`': "'",
+}
+
+export function ipodPathExtension(pathOrExt: string): string {
+  const p = String(pathOrExt || '')
+  const i = p.lastIndexOf('.')
+  return i >= 0 ? p.slice(i).toLowerCase() : ''
+}
+
+/**
+ * Dest the Mini can index. Garbage FAT temps and .flac/.alac filenames
+ * become .m4a. Real audio extensions are left alone.
+ */
+export function ipodPlayableDestPath(colonOrFsPath: string): string {
+  const p = String(colonOrFsPath || '')
+  if (!p) return p
+  const ext = ipodPathExtension(p)
+  if (IPOD_FIRMWARE_EXTS.has(ext)) return p
+  const i = p.lastIndexOf('.')
+  return i >= 0 ? p.slice(0, i) + '.m4a' : p + '.m4a'
+}
+
+export function needsIpodAlacTranscode(pathOrExt?: string | null): boolean {
+  return ipodPathExtension(String(pathOrExt || '')) === '.flac'
+}
+
+/**
+ * Fold characters Mini 1.4.1 silently drops, without blanking a title
+ * that has no Latin equivalent (Hebrew "דג" must not become "").
+ *
+ * ⚠️ TWIN: core/db_reader.py fold_for_ipod
+ * 2026-07-25: 250 → 247 from three U+2019 titles.
+ * 2026-08-15: 500 → 497 also had Hebrew folded to whitespace — keep
+ * the original UTF-16 when the map would leave nothing to list.
+ */
+export function foldForIpod(text: string | null | undefined): string {
+  const s = String(text ?? '')
+  if (!s) return ''
+  let out = ''
+  for (const c of s) out += IPOD_CHAR_FOLD[c] ?? c
+  if ([...out].some((c) => (c.codePointAt(0) ?? 0) > 0xFF)) {
+    let folded = ''
+    for (const c of out) {
+      const cp = c.codePointAt(0) ?? 0
+      if (cp <= 0xFF) {
+        folded += c
+        continue
+      }
+      const dec = c.normalize('NFKD')
+      const ascii = [...dec]
+        .filter((x) => (x.codePointAt(0) ?? 0) <= 0xFF && !/\p{M}/u.test(x))
+        .join('')
+      folded += ascii
+    }
+    out = folded
+  }
+  if (!out.trim() && s.trim()) return s
+  return out
+}
+
+/**
+ * Would Mini 1.4.1 put this catalog row in Music > Songs?
+ *
+ * File-count 500 + catalog 500 with Songs 497 is this returning false
+ * for three rows. 79, 12, 33, 471, 497 are the same class.
+ */
+export function ipodFirmwareWillList(t: {
+  title?: unknown
+  artist?: unknown
+  path?: unknown
+  codec?: unknown
+}): boolean {
+  if (!foldForIpod(String(t.title ?? '')).trim()) return false
+  if (!foldForIpod(String(t.artist ?? '')).trim()) return false
+  const ext = ipodPathExtension(String(t.path ?? ''))
+  return IPOD_FIRMWARE_EXTS.has(ext)
+}
