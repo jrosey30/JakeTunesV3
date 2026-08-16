@@ -617,7 +617,7 @@ export function useAudio(opts?: { primary?: boolean }) {
   // playTrackRef lets the stuck-audio watchdog (inside updatePosition)
   // recover by re-loading the current track. updatePosition is defined
   // first, so this ref is the cycle-breaker.
-  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => void) | null>(null)
+  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean, preserveOrder?: boolean) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
     rafTickCount++
@@ -1682,7 +1682,7 @@ export function useAudio(opts?: { primary?: boolean }) {
     }
   }, [loadAndPlay])
 
-  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => {
+  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean, preserveOrder?: boolean) => {
     // User gesture — resume the graph HERE, before Howl construction,
     // so mix auto-advance later inherits a running context.
     primeAudioGraph()
@@ -1718,6 +1718,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       queue: q,
       queueIndex: qi,
       freshContext,
+      preserveOrder,
       duration: (track.duration || 0) / 1000,
     })
     loadAndPlay(track, q, qi)

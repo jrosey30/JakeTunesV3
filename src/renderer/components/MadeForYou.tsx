@@ -68,7 +68,7 @@ export default function MadeForYou() {
   const playMix = useCallback((m: Mix) => {
     if (!m.tracks.length) return
     setTapeSession({ mixtapeId: `mix:${m.id}`, tapeTrackIds: m.tracks.map((t) => t.id), cuts: [] })
-    playTrack(m.tracks[0], m.tracks, 0, undefined, true)
+    playTrack(m.tracks[0], m.tracks, 0, undefined, true, /* preserveOrder — a mix's arc IS the product */ true)
   }, [playTrack])
 
   const pickVibe = useCallback(async (vibe: string) => {
