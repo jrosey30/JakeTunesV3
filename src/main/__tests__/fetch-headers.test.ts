@@ -7,9 +7,14 @@ describe('fetchHeadersWithin — body must outlive the header deadline', () => {
     // Serve headers immediately, then drip the body for longer than the
     // header timeout. AbortSignal.timeout() would kill this body; our
     // helper must not.
-    const server = await startDripServer({ headerDelayMs: 20, bodyDurationMs: 250, chunkMs: 40 })
+    //
+    // headerDelayMs 0 — headers land instantly, so the header timer can
+    // never be what fires; this test is about the BODY outliving the
+    // deadline. The old 20ms-vs-80ms margin flaked under load and blocked
+    // the very first gated commit (2026-08-16).
+    const server = await startDripServer({ headerDelayMs: 0, bodyDurationMs: 300, chunkMs: 40 })
     try {
-      const res = await fetchHeadersWithin(server.url, undefined, 80)
+      const res = await fetchHeadersWithin(server.url, undefined, 150)
       assert.equal(res.status, 200)
       const text = await res.text()
       assert.ok(text.length > 0, 'body was empty — header timer likely aborted the stream')
@@ -20,7 +25,7 @@ describe('fetchHeadersWithin — body must outlive the header deadline', () => {
   })
 
   it('still aborts when headers themselves never arrive', async () => {
-    const server = await startDripServer({ headerDelayMs: 400, bodyDurationMs: 0, chunkMs: 0 })
+    const server = await startDripServer({ headerDelayMs: 600, bodyDurationMs: 0, chunkMs: 0 })
     try {
       await assert.rejects(
         () => fetchHeadersWithin(server.url, undefined, 80),
