@@ -98,9 +98,14 @@ export function isAllowedStreamripUrl(raw: string): boolean {
 }
 
 /**
- * Embedded Bandcamp view may navigate to Bandcamp itself, or to the captcha
- * hosts Fastly/Datadome open during bot challenges. Everything else is denied
- * (caller may openExternal https URLs instead).
+ * Embedded Bandcamp view may navigate to Bandcamp itself, Bandcamp's
+ * download CDN, or the captcha hosts Fastly/Datadome open during bot
+ * challenges. Everything else is denied (caller may openExternal https
+ * URLs instead).
+ *
+ * bcbits.com is load-bearing: post-purchase zips are served from
+ * `*.bcbits.com/download/...` (Brief 036). Omitting it sent Download
+ * clicks to Safari via openExternal — a second step Jake never asked for.
  */
 export function isAllowedBandcampNavUrl(raw: string): boolean {
   try {
@@ -108,6 +113,7 @@ export function isAllowedBandcampNavUrl(raw: string): boolean {
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return false
     const h = u.hostname.toLowerCase()
     if (h === 'bandcamp.com' || h.endsWith('.bandcamp.com')) return true
+    if (h === 'bcbits.com' || h.endsWith('.bcbits.com')) return true
     if (h === 'captcha-delivery.com' || h.endsWith('.captcha-delivery.com')) return true
     if (h === 'geo.captcha-delivery.com') return true
     // Google reCAPTCHA challenge frames Bandcamp occasionally opens.

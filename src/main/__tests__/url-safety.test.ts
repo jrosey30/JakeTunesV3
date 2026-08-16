@@ -43,9 +43,13 @@ test('streamrip download allowlist', () => {
 test('bandcamp embedded nav allowlist', () => {
   assert.equal(isAllowedBandcampNavUrl('https://bandcamp.com'), true)
   assert.equal(isAllowedBandcampNavUrl('https://artist.bandcamp.com/album/foo'), true)
+  assert.equal(isAllowedBandcampNavUrl('https://popplers5.bandcamp.com/download/album?enc=flac&id=1'), true)
+  assert.equal(isAllowedBandcampNavUrl('https://t4.bcbits.com/download/album?enc=flac&id=1&sig=abc'), true)
+  assert.equal(isAllowedBandcampNavUrl('https://f4.bcbits.com/img/a123_16.jpg'), true)
   assert.equal(isAllowedBandcampNavUrl('https://geo.captcha-delivery.com/captcha/?x=1'), true)
   assert.equal(isAllowedBandcampNavUrl('https://www.google.com/recaptcha/api2/anchor'), true)
   assert.equal(isAllowedBandcampNavUrl('https://evil.example/phish'), false)
+  assert.equal(isAllowedBandcampNavUrl('https://evil.bcbits.com.attacker.example/download'), false)
   assert.equal(isAllowedBandcampNavUrl('file:///tmp/x'), false)
   assert.equal(isAllowedBandcampNavUrl('javascript:alert(1)'), false)
 })
