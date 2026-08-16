@@ -206,25 +206,6 @@ function AppInner() {
     })
   }, [])
 
-  // 2026-07-20: the last iPod sync died partway (the sync journal was
-  // never cleared) — the device's catalog is stale and it will skip or
-  // misbehave until the next successful sync rewrites it. Loud, every
-  // boot, until healed.
-  useEffect(() => {
-    const warn = (info: { phase: string; at?: string }) => {
-      import('./activity').then(a => {
-        a.setNotice(
-          `Last iPod sync never finished (stopped while ${info.phase === 'db' ? 'writing the iPod database' : 'copying'}) — plug the iPod in and Sync again to repair it`,
-          { kind: 'error', durationMs: 20000 }
-        )
-      }).catch(() => {})
-    }
-    // Pull once the UI is actually mounted (the boot-time push can land
-    // before this component exists on a big library).
-    void window.electronAPI.getIpodSyncJournal?.().then((j) => { if (j) warn(j) })
-    return window.electronAPI.onIpodSyncIncomplete(warn)
-  }, [])
-
   // 4.5.0-46: surface Bandcamp per-file failures in the LCD pill so the
   // user sees the actual reason (codec, ENOENT, transcode failure) the
   // moment it happens — matches the drag-drop importQueue behavior.

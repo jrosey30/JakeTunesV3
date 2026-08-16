@@ -27,7 +27,31 @@ function appSettingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
 }
 
+/**
+ * The installed app still reads autoSyncOnConnect from disk. Forcing the
+ * flag false only in the load payload left the file true — restart of
+ * the old binary repaired the last set and Mini Songs went to 486.
+ * Rewrite the file so plug-in cannot start a writer.
+ */
+export async function persistRetiredIpodWriters(): Promise<void> {
+  const path = appSettingsPath()
+  try {
+    const raw = await readFile(path, 'utf-8')
+    const settings = JSON.parse(raw) as Record<string, unknown>
+    const sync = (settings.sync && typeof settings.sync === 'object' && !Array.isArray(settings.sync))
+      ? { ...(settings.sync as Record<string, unknown>) }
+      : {}
+    if (sync.autoSyncOnConnect === false && sync.autoRemoveDeletedFromIpod === false) return
+    sync.autoSyncOnConnect = false
+    sync.autoRemoveDeletedFromIpod = false
+    settings.sync = sync
+    await writeFile(path, JSON.stringify(settings, null, 2), 'utf-8')
+    console.log('[settings] retired iPod auto-sync / auto-remove — wrote false to disk so a restart cannot repair')
+  } catch { /* missing file is fine */ }
+}
+
 export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): void {
+  void persistRetiredIpodWriters()
   ipc.handle('load-app-settings', async () => {
     try {
       const data = await readFile(appSettingsPath(), 'utf-8')
@@ -51,6 +75,7 @@ export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): v
       syncIn.autoSyncOnConnect = false
       syncIn.autoRemoveDeletedFromIpod = false
       settings.sync = syncIn
+      void persistRetiredIpodWriters()
       return { ok: true, settings }
     } catch {
       return { ok: true, settings: null }   // missing file is fine — renderer applies defaults

@@ -150,7 +150,6 @@ import {
   isIpodMount,
   ejectVolume,
   remountVolume,
-  fullFsync,
   hasOpticalMedia,
   ejectOpticalMedia,
   audioHelperRelPath,
@@ -190,6 +189,14 @@ import {
   type TsaScreen,
 } from './ipod-sync-tsa'
 import { ensureContiguousDb } from './ipod-db-contiguity'
+import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from './ipod-sync-origin'
+import { runActivitySync } from './ipod-activity-engine'
+import {
+  confirmWriteOnCard,
+  flushCardCaches,
+  remountVerifyEntries,
+  retireIpodFirmwareScratch,
+} from './ipod-sync-card'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
@@ -5095,7 +5102,7 @@ let syncCancelRequested = false
 
 
 
-async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }): Promise<unknown> {
+async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: IpodSyncOpts): Promise<unknown> {
   // Same guard as save-library: this one writes to the iPod.
   // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
   // for full concerts). Drop the merged concert track AND any of its constituent
@@ -5112,6 +5119,11 @@ async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlist
       if (tracks.length !== before) console.log(`sync-to-ipod: kept ${before - tracks.length} full-concert track(s) OFF the iPod`)
     }
   } catch { /* no live sets → nothing to exclude */ }
+  const refused = refuseIpodSyncUnlessUserClick(syncOpts)
+  if (refused) {
+    console.error(`sync-to-ipod: REFUSED — ${refused.error}`)
+    return refused
+  }
   if (syncInFlight) {
     const ageMs = Date.now() - syncStartedAt
     if (ageMs > SYNC_HANG_TIMEOUT_MS) {
@@ -5179,105 +5191,8 @@ async function writeSyncReport(r: SyncReport): Promise<void> {
   } catch { /* diagnostics must never break a sync */ }
 }
 
-/**
- * Per-song write confirmation (Jake, 2026-08-05: "is there a way to confirm
- * after each song? it might take longer but still").
- *
- * copyFile() returning success only means macOS accepted the bytes into its
- * page cache. On this iPod's modded CF card the lie surfaces later: gigabytes
- * of dirty cache flush at eject, the card drops writes mid-flush, and files
- * that "copied fine" are missing afterwards (the 2026-06 flapping-mount
- * corruption, and the likely shape of 250-synced/235-landed). So after every
- * copy we force THIS file's pages to the device (fsync) and re-stat both
- * sides. Slower per song — Jake accepted that explicitly — and it converts
- * one giant fragile flush at eject into many small confirmed ones.
- *
- * The remount verify at the end of the sync remains the physical proof; this
- * catches failures at write time, names the exact song, and keeps the dirty
- * cache near zero so the eject flush has almost nothing left to lose.
- */
-async function confirmWriteOnCard(src: string, dst: string): Promise<{ ok: boolean; reason?: string }> {
-  try {
-    await fullFsync(dst)
-    const [sSt, dSt] = await Promise.all([stat(src), stat(dst)])
-    if (sSt.size !== dSt.size) return { ok: false, reason: `on-card size ${dSt.size} != source ${sSt.size}` }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
-  }
-}
-/** Filesystem-wide flush, awaited. Bounds how much the eject can drop. */
-const flushCardCaches = (): Promise<void> => new Promise((resolve) => {
-  try {
-    const p = spawn('/bin/sync')
-    p.on('close', () => resolve())
-    p.on('error', () => resolve())
-  } catch { resolve() }
-})
-
-/**
- * Remount-evict the mount cache, then confirm every entry's bytes are on the
- * card — recopying whatever the fskit cache lied about. Returns the set of
- * ids that verifiably landed.
- *
- * This is the only reliable check on Jake's iFlash/FAT32 Mini: without the
- * remount, macOS reports files present that the card never kept, and the
- * Mini's Songs count jumps to a random subset every sync (103 / 421 / 238…).
- */
-async function remountVerifyEntries(
-  mountPoint: string,
-  entries: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }>,
-  opts: { maxPasses: number; label?: string; isCancelled?: () => boolean } = { maxPasses: 4 },
-): Promise<{ ok: boolean; landedIds: Set<number>; attempts: number; remountFailed: boolean }> {
-  const landedIds = new Set<number>()
-  if (entries.length === 0) return { ok: true, landedIds, attempts: 0, remountFailed: false }
-  const intended: IntendedTrack[] = entries.map((e) => ({ id: e.id, expectedSize: e.expectedSize }))
-  const byId = new Map(entries.map((e) => [e.id, e]))
-  let attempts = 0
-  let remountFailed = false
-  for (let pass = 1; pass <= opts.maxPasses; pass++) {
-    attempts = pass
-    if (opts.isCancelled?.()) break
-    const rm = await remountVolume(mountPoint)
-    if (!rm.ok) {
-      console.warn(`sync-to-ipod: ${opts.label || 'verify'} remount failed (pass ${pass}): ${rm.error}`)
-      remountFailed = true
-      if (pass === 1) break
-      break
-    }
-    remountFailed = false
-    const landedSizeById = new Map<number, number>()
-    for (const e of entries) {
-      try { landedSizeById.set(e.id, (await stat(e.dstPath)).size) } catch { /* missing */ }
-    }
-    const { landed, failed } = partitionLanded(intended, landedSizeById)
-    landedIds.clear()
-    for (const id of landed) landedIds.add(id)
-    console.log(`sync-to-ipod: ${opts.label || 'verify'} pass ${pass} — ${landed.length}/${entries.length} on card, ${failed.length} missing`)
-    if (failed.length === 0) return { ok: true, landedIds, attempts, remountFailed: false }
-    if (pass === opts.maxPasses) break
-    if (opts.isCancelled?.()) break
-    let recopied = 0
-    for (const id of failed) {
-      if (opts.isCancelled?.()) break
-      const e = byId.get(id)
-      if (!e) continue
-      try {
-        const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
-        if (dir) await mkdir(dir, { recursive: true })
-        await copyFile(e.localFile, e.dstPath)
-        const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
-        if (!conf.ok) { console.warn(`sync-to-ipod: recopy NOT confirmed for track ${id} — ${conf.reason}`); continue }
-        recopied++
-      } catch (err) {
-        console.warn(`sync-to-ipod: recopy failed for track ${id}:`, err)
-      }
-    }
-    await flushCardCaches()
-    console.log(`sync-to-ipod: ${opts.label || 'verify'} pass ${pass} — recopied ${recopied} missing file(s)`)
-  }
-  return { ok: landedIds.size === entries.length, landedIds, attempts, remountFailed }
-}
+// confirmWriteOnCard / remountVerifyEntries / retireIpodFirmwareScratch live
+// in ipod-sync-card.ts (shared by activity rebuild and full-library sync).
 
 const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
 const IPOD_TSA_SEAL_FILE = () => join(app.getPath('userData'), 'ipod-activity-tsa-seal.json')
@@ -5300,29 +5215,6 @@ async function writeLastSyncManifest(payload: Record<string, unknown>): Promise<
   await rename(tmp, manifestPath)
 }
 
-/**
- * iTunes/libgpod doctrine: after writing iTunesDB, Play Counts and OTG
- * must not be on the card when the Mini next boots. A leftover Play Counts
- * from a partial index is how a 500-row catalog became Songs 450.
- */
-async function retireIpodFirmwareScratch(mount: string): Promise<number> {
-  const itunes = join(mount, 'iPod_Control', 'iTunes')
-  const names = new Set<string>(IPOD_FIRMWARE_SCRATCH_NAMES)
-  try {
-    for (const n of await readdir(itunes)) {
-      if (isIpodFirmwareScratchName(n)) names.add(n)
-    }
-  } catch { /* iTunes dir missing — nothing to retire */ }
-  let retired = 0
-  for (const name of names) {
-    try {
-      await unlink(join(itunes, name))
-      retired++
-    } catch { /* already absent */ }
-  }
-  console.log(`sync-to-ipod: firmware scratch retired (${retired} file(s) gone) — Mini cannot merge Play Counts into this catalog`)
-  return retired
-}
 async function writeSyncJournal(phase: string | null): Promise<void> {
   try {
     if (phase === null) {
@@ -5332,25 +5224,49 @@ async function writeSyncJournal(phase: string | null): Promise<void> {
     }
   } catch { /* best effort — never block a sync on the journal */ }
 }
-// Pull side (authoritative — no boot race): the renderer asks once its
-// UI is actually mounted.
+// Journal stays on disk for diagnostics. Do not replay it as a Notice
+// on every launch — that banner told Jake to "repair" by syncing, which
+// is how Songs went to 486, and it was still there the next morning.
 
-// Boot check: an un-cleared journal means the last sync never finished —
-// the iPod's database is stale and the device will misbehave until the
-// user syncs again. Nag every boot until a successful sync clears it.
-setTimeout(async () => {
-  try {
-    const j = JSON.parse(await readFile(IPOD_SYNC_JOURNAL_FILE(), 'utf-8')) as { phase?: string; at?: string }
-    if (j?.phase) {
-      console.warn(`[sync] previous iPod sync never finished (died in ${j.phase} phase, ${j.at})`)
-      for (const w of BrowserWindow.getAllWindows()) {
-        w.webContents.send('ipod-sync-incomplete', { phase: j.phase, at: j.at })
-      }
-    }
-  } catch { /* no journal = last sync finished clean */ }
-}, 9_000)
-
-async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }): Promise<unknown> {
+async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: IpodSyncOpts): Promise<unknown> {
+  const refused = refuseIpodSyncUnlessUserClick(syncOpts)
+  if (refused) {
+    console.error(`sync-to-ipod: REFUSED — ${refused.error}`)
+    return refused
+  }
+  syncCancelRequested = false
+  if (syncOpts?.origin === 'activity-click') {
+    return runActivitySync({
+      pythonCmd: PYTHON_CMD ?? 'python3',
+      pythonHint: PYTHON_INSTALL_HINT,
+      coreScript: (rel) => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), rel),
+      tempDir: app.getPath('temp'),
+      stateDir: STATE_DIR,
+      pid: process.pid,
+      musicDir: MUSIC_DIR,
+      pathSep: IS_WINDOWS ? '\\' : '/',
+      isMac: IS_MAC,
+      sendProgress: (p) => { mainWindow?.webContents.send('sync-progress', p) },
+      isCancelled: () => syncCancelRequested,
+      isStreamedTrackFile,
+      buildAacMirror,
+      buildIpodSafeAlacMirror,
+      readIpodDatabase,
+      writeJournal: writeSyncJournal,
+      writeManifest: writeLastSyncManifest,
+      writeSeal: writeTsaSealFile,
+      clearSeal: clearTsaSeal,
+      writeReport: writeSyncReport,
+      getDetectedMount: () => detectedIpodMount,
+      setDetectedMount: (m) => {
+        detectedIpodMount = m
+        detectedIpodVolume = m ? volumeNameFromMount(m) : null
+      },
+    }, { tracks, playlists, convertOptions })
+  }
+  if (syncOpts?.wipeFirst) {
+    return { ok: false, copied: 0, error: 'Activity Sync is the dedicated engine, not this copy loop.' }
+  }
   // 4.5.0-109: reset cancel flag at the top of every sync.
   syncCancelRequested = false
   // Everything copied/written from here on carries an mtime ≥ this stamp;
@@ -15490,6 +15406,10 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
   let id = await nextLibraryId()
   const tracks: Array<Record<string, unknown>> = []
   const alacAbsPaths: string[] = []
+  // Sources the library now fully owns (imported OR dupe — a dupe means the
+  // content is already in the library, so the download is equally redundant).
+  // Errors keep their source on disk for retry/diagnosis.
+  const cleanupSources: string[] = []
   const total = absPaths.length
   let done = 0
   let errors = 0
@@ -15524,6 +15444,7 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
           alacAbsPaths.push(join(LOCAL_MOUNT, colon.replace(/:/g, pathSep)))
         }
       }
+      cleanupSources.push(p)
     } else if (r.ok && r.dupe) {
       // 4.5.0-46: dupes are NOT failures — they're tracks Jake already
       // owns. Track them separately so the upstream download-router
@@ -15531,6 +15452,7 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
       // of "import produced no tracks (all duplicates?)" (error) when
       // the whole zip is a re-purchase.
       dupes += 1
+      cleanupSources.push(p)
     } else {
       errors += 1
       // 4.5.0-46: surface the actual failure reason in the LCD pill +
@@ -15565,6 +15487,19 @@ async function importDownloadedFiles(absPaths: string[], source?: string): Promi
     await prewarmAlacCache(alacAbsPaths).catch((err) => {
       console.warn(`[bandcamp] alac cache transcode failed:`, err)
     })
+  }
+  // ── Pass-through cleanup (2026-08-15, Jake: downloads must not pile up
+  // on this machine). importOneFile COPIES (or transcodes) the source into
+  // the library; the source in _pending-imports / staging is then a spent
+  // artifact. Trash — never unlink — so a mistaken import stays recoverable
+  // for 30 days by macOS's own rules. Only sources whose import SUCCEEDED
+  // (or deduped) go; failures keep their files for retry.
+  if (cleanupSources.length > 0) {
+    let cleaned = 0
+    for (const src of cleanupSources) {
+      try { await shell.trashItem(src); cleaned++ } catch { /* locked/gone — leave it */ }
+    }
+    if (cleaned > 0) console.log(`[import] trashed ${cleaned}/${cleanupSources.length} spent download source(s)`)
   }
   return { tracks, dupeCount: dupes, errorCount: errors }
 }
@@ -15632,6 +15567,7 @@ app.whenReady().then(async () => {
   // the time any handler runs. resolveMusicDir falls back to the default
   // if nothing matches — it never throws.
   MUSIC_DIR = await resolveMusicDir()
+
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
   // Streaming/cache-farm machines (workmini): fail loud at boot if homemini
   // is down, instead of discovering it as "stuck at 0:00" with no error.

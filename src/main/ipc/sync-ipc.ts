@@ -47,7 +47,7 @@ export interface SyncIpcHost {
     tracks: Array<Record<string, unknown>>,
     playlists: Array<Record<string, unknown>>,
     convertOptions?: SyncConvertOptions,
-    syncOpts?: { wipeFirst?: boolean },
+    syncOpts?: { wipeFirst?: boolean; origin?: string },
   ) => Promise<unknown>
   /** Pull new tracks from device DB not already in the library. */
   syncIpodFromDevice: (existingIds: number[]) => Promise<unknown>
@@ -245,7 +245,7 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
     return host.syncIpodFromDevice(existingIds)
   }, { public: true })
 
-  ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
+  ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean; origin?: string }) => {
     return host.syncToIpod(tracks, playlists, convertOptions, syncOpts)
   }, { refuse: { ok: false, copied: 0, error: 'refused-sender' } as const })
 

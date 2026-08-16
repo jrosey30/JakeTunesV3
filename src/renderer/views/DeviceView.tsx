@@ -362,7 +362,7 @@ export default function DeviceView() {
       const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists, {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
-      })
+      }, { origin: 'full-library-click' })
       if (result.alreadyRunning) return
       if (!result.ok) {
         const msg = result.error || 'Sync failed'
@@ -477,7 +477,7 @@ export default function DeviceView() {
       const result = await window.electronAPI.syncToIpod(finalTracks, playlists, {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
-      }, { wipeFirst: true })  // clean-slate rebuild every activity sync (Jake, 2026-07-24)
+      }, { wipeFirst: true, origin: 'activity-click' })  // dedicated activity engine; click-only
       if (result.alreadyRunning) {
         return
       }
