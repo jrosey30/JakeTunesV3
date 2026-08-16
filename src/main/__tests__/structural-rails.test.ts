@@ -74,7 +74,7 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // deliberate act instead of the path of least resistance. Small slack
   // (+150) so an ordinary fix isn't blocked mid-crisis; the direction is
   // what's enforced.
-  const INDEX_LINES_LOCKED = 16689
+  const INDEX_LINES_LOCKED = 16255
   test(`index.ts stays ≤ ${INDEX_LINES_LOCKED + 150} lines and the lock follows it down`, () => {
     const lines = readFileSync(join(SRC, 'main/index.ts'), 'utf-8').split('\n').length
     assert.ok(lines <= INDEX_LINES_LOCKED + 150,
@@ -115,10 +115,12 @@ describe('WIRING — the tested code is the live code', () => {
   // files — audio-signal-path, stream-playback-path, download-explicit;
   // this is the roster of load-bearing wires with no better home.)
   const WIRES: Array<{ fn: string; file: string; minCalls: number; why: string; literal?: boolean }> = [
-    { fn: 'explicitWins', file: 'main/index.ts', minCalls: 1, why: 'the dedupe merge must run on the TESTED doctrine (unwired 08/10-08/15)' },
+    { fn: 'explicitWins', file: 'main/download-search.ts', minCalls: 1, why: 'the dedupe merge must run on the TESTED doctrine (unwired 08/10-08/15; moved with P1C3)' },
     { fn: 'ensureContiguousDb', file: 'main/index.ts', minCalls: 1, why: 'the catalog layout pass — content gates cannot see fragmentation' },
     { fn: 'sweepOnce', file: 'main/index.ts', minCalls: 1, why: 'pass-through eviction — without the wire the laptop silently hoards again' },
     { fn: 'initPersonaPrompts', file: 'main/index.ts', minCalls: 1, why: 'supplier injection — a missing init freezes activeHost at boot value' },
+    { fn: 'searchItunesSuggestions', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module' },
+    { fn: 'itunesAlbumTracks', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module' },
     { fn: 'initImportPipeline', file: 'main/index.ts', minCalls: 1, why: 'P1C1 — the pipeline is dead weight without its world wired in' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.

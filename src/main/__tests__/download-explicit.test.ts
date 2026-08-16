@@ -84,7 +84,11 @@ describe('the rescue is WIRED, not just implemented', () => {
   // time, because they test the function, not the wiring. So this locks the
   // wiring: fetchExplicitAlbumMap must be invoked from BOTH search paths.
   test('fetchExplicitAlbumMap has at least two call sites in the search flow', () => {
-    const src = readFileSync(join(import.meta.dirname, '../index.ts'), 'utf-8')
+    // P1C3: the search machinery moved to download-search.ts; the lock
+    // moved with it and now also proves index kept no copy.
+    const idx = readFileSync(join(import.meta.dirname, '../index.ts'), 'utf-8')
+    assert.ok(!idx.includes('async function fetchExplicitAlbumMap'), 'no duplicate implementation in index.ts')
+    const src = readFileSync(join(import.meta.dirname, '../download-search.ts'), 'utf-8')
     const calls = (src.match(/await fetchExplicitAlbumMap\(/g) || []).length
     assert.ok(calls >= 2,
       `fetchExplicitAlbumMap called ${calls} time(s) — the title-search or artist-search path lost the explicit-edition rescue again`)
