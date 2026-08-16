@@ -197,6 +197,7 @@ import {
   remountVerifyEntries,
   retireIpodFirmwareScratch,
 } from './ipod-sync-card'
+import { sweepOnce, type SweepResult } from './library-eviction'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
@@ -15568,6 +15569,96 @@ app.whenReady().then(async () => {
   // if nothing matches — it never throws.
   MUSIC_DIR = await resolveMusicDir()
 
+  // ── Pass-through eviction (2026-08-15, Jake: "files i download are not
+  // stored here"). The laptop STAGES imports; homemini + the NAS keep them.
+  // Once homemini's copy of a file hashes byte-identical to ours (which
+  // proves both propagation hops — homemini can only have it by pulling
+  // from the NAS after our push), the local copy moves to Trash. Gates,
+  // tests and the full design rationale live in library-eviction.ts.
+  const runEvictionSweep = async (): Promise<SweepResult> => {
+    const { readdir: rd, stat: st, appendFile: af } = await import('fs/promises')
+    const result = await sweepOnce({
+      listLocalAudio: async () => {
+        const out: Array<{ abs: string; rel: string; mtimeMs: number; sizeBytes: number }> = []
+        let fdirs: string[] = []
+        try { fdirs = (await rd(MUSIC_DIR)).filter((d) => /^F\d\d$/.test(d)) } catch { return out }
+        for (const fd of fdirs) {
+          let names: string[] = []
+          try { names = await rd(join(MUSIC_DIR, fd)) } catch { continue }
+          for (const name of names) {
+            if (!/\.(m4a|mp3|aac|alac|aiff|aif|wav)$/i.test(name)) continue
+            const abs = join(MUSIC_DIR, fd, name)
+            try {
+              const info = await st(abs)
+              out.push({ abs, rel: `${fd}/${name}`, mtimeMs: info.mtimeMs, sizeBytes: info.size })
+            } catch { /* raced away — skip */ }
+          }
+        }
+        return out
+      },
+      libraryRelPaths: async () => {
+        const rels = new Set<string>()
+        try {
+          const raw = await readFile(LIBRARY_PATH, 'utf-8')
+          const lib = JSON.parse(raw) as { tracks?: Array<{ path?: string }> }
+          for (const t of lib.tracks || []) {
+            const cp = String(t.path || '')
+            // Colon-format library path → F##/file, the shape the walk emits.
+            const m = cp.match(/:iPod_Control:Music:(F\d\d):([^:]+)$/)
+            if (m) rels.add(`${m[1]}/${m[2]}`)
+          }
+        } catch { /* unreadable library = evict nothing this pass */ }
+        return rels
+      },
+      remoteMd5Batch: async (rels) => {
+        // One ssh for the whole batch. Filenames are app-generated
+        // (imported_N.ext) — no spaces, no shell hazards; the F-dir/name
+        // shape is validated by the walk above.
+        const base = 'Music/JakeTunesLibrary/iPod_Control/Music'
+        const list = rels.map((r) => `${base}/${r}`).join('\n')
+        const { execFile } = await import('child_process')
+        const out = await new Promise<string>((resolveP, rejectP) => {
+          const child = execFile('ssh',
+            ['-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', 'jakerosenbaumnas@homemini',
+              `while IFS= read -r p; do [ -f "$HOME/$p" ] && echo "$p|$(md5 -q "$HOME/$p")"; done`],
+            { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 },
+            (err, stdout) => err && !stdout ? rejectP(err) : resolveP(String(stdout)))
+          child.stdin?.write(list + '\n')
+          child.stdin?.end()
+        })
+        const map = new Map<string, string>()
+        for (const line of out.split('\n')) {
+          const bar = line.lastIndexOf('|')
+          if (bar < 0) continue
+          const remotePath = line.slice(0, bar)
+          const md5 = line.slice(bar + 1).trim()
+          if (remotePath.startsWith(base + '/') && /^[a-f0-9]{32}$/.test(md5)) {
+            map.set(remotePath.slice(base.length + 1), md5)
+          }
+        }
+        return map
+      },
+      trash: (abs) => shell.trashItem(abs),
+      journal: async (line) => {
+        const { appendFile: append } = await import('fs/promises')
+        await append(join(app.getPath('userData'), 'evictions.log'), line + '\n', 'utf-8')
+      },
+      now: () => Date.now(),
+    })
+    if (result.evicted > 0 || result.errors > 0) {
+      console.log(`[evict] examined=${result.examined} evicted=${result.evicted} (${(result.evictedBytes / 1e6).toFixed(1)}MB) young=${result.tooYoung} noLib=${result.notInLibrary} noRemote=${result.notOnHomemini} mismatch=${result.hashMismatch} errors=${result.errors}`)
+    }
+    void af
+    return result
+  }
+  // First sweep 5 minutes after boot (let the app settle), then hourly.
+  // Batches are bounded, so a large backlog drains gradually by design.
+  setTimeout(() => { void runEvictionSweep().catch(() => {}) }, 5 * 60 * 1000)
+  setInterval(() => { void runEvictionSweep().catch(() => {}) }, 60 * 60 * 1000)
+  ipc.handle('library-evict-sweep', async () => {
+    try { return { ok: true, result: await runEvictionSweep() } }
+    catch (err) { return { ok: false, error: safeIpcError(err, 'io-failed') } }
+  }, { refuse: REFUSED_SENDER })
   console.log(`[library] MUSIC_DIR resolved to: ${MUSIC_DIR}`)
   // Streaming/cache-farm machines (workmini): fail loud at boot if homemini
   // is down, instead of discovering it as "stuck at 0:00" with no error.
