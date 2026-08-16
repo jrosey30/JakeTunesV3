@@ -21,7 +21,8 @@
     "test:mobile": "node --test --experimental-strip-types mobile/src/__tests__/*.test.ts",
     "test:all": "npm test && npm run test:mobile",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "sync:contracts": "bash scripts/sync-jaketunes-contracts.sh"
+    "sync:contracts": "bash scripts/sync-jaketunes-contracts.sh",
+    "check": "npx tsc -p tsconfig.web.json --noEmit && npx tsc -p tsconfig.node.json --noEmit && npm test"
   },
   "build": {
     "appId": "com.jacobrosenbaum.jaketunes",

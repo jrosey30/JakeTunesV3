@@ -1,0 +1,47 @@
+#!/bin/bash
+# JakeTunes V3 pre-commit — the iron-clad gate (2026-08-16, Jake: "all code
+# rules need to be iron clad"). Everything here exists because its absence
+# already cost real nights. Bypass ONLY with an explicit override:
+#   PROTECTED_OK=1 git commit ...   (touching a Do-Not-Touch file)
+#   SKIP_CHECKS=1 git commit ...    (emergency escape hatch — leaves a mark)
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if [ "${SKIP_CHECKS:-}" = "1" ]; then
+  echo "pre-commit: SKIP_CHECKS=1 — gate bypassed. This commit is UNVERIFIED." >&2
+  exit 0
+fi
+
+# ── Do-Not-Touch guard (CLAUDE.md list; explicit permission = env override) ──
+PROTECTED='src/renderer/context/PlaybackContext.tsx
+src/renderer/context/LibraryContext.tsx
+src/renderer/hooks/useAudio.ts
+src/renderer/hooks/useVirtualScroll.ts
+src/renderer/components/playback/NowPlaying.tsx
+src/renderer/views/GenresView.tsx
+src/renderer/views/CDImportView.tsx
+src/renderer/views/DeviceView.tsx'
+STAGED=$(git diff --cached --name-only)
+if [ "${PROTECTED_OK:-}" != "1" ]; then
+  BLOCKED=""
+  while IFS= read -r f; do
+    echo "$STAGED" | grep -qx "$f" && BLOCKED="$BLOCKED $f"
+    case "$f" in core/*) : ;; esac
+  done <<< "$PROTECTED"
+  echo "$STAGED" | grep -q "^core/" && BLOCKED="$BLOCKED core/*"
+  if [ -n "$BLOCKED" ]; then
+    echo "pre-commit: BLOCKED — Do-Not-Touch file(s) staged:$BLOCKED" >&2
+    echo "These need Jake's explicit permission (CLAUDE.md). If you have it:" >&2
+    echo "  PROTECTED_OK=1 git commit ..." >&2
+    exit 1
+  fi
+fi
+
+# ── The full check: both tsconfigs at zero + every test incl. the rails ──
+echo "pre-commit: typecheck + tests (npm run check)…" >&2
+if ! npm run check >/tmp/jaketunes-precommit.log 2>&1; then
+  echo "pre-commit: BLOCKED — check failed. Tail:" >&2
+  tail -15 /tmp/jaketunes-precommit.log >&2
+  exit 1
+fi
+echo "pre-commit: gate passed." >&2

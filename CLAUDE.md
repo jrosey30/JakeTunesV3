@@ -8,6 +8,32 @@ as functionality.
 
 ---
 
+## Enforcement (2026-08-16 — rules are MACHINE-CHECKED now)
+
+Jake: "all code rules need to be iron clad." The rules below are no longer
+advisory prose — the load-bearing ones are enforced:
+
+- **`npm run check`** — both tsconfigs at ZERO errors + the full test
+  suite. This is the gate; run it before claiming anything works.
+- **`tools/pre-commit`** (install once per clone: `./tools/install-git-hooks.sh`)
+  blocks any commit that fails `npm run check`, and blocks staged
+  **Do-Not-Touch** files unless you commit with `PROTECTED_OK=1` — which
+  means you have Jake's explicit permission, not that you want to skip the
+  dialog. `SKIP_CHECKS=1` is the emergency hatch and prints a loud mark.
+- **`src/main/__tests__/structural-rails.test.ts`** — BANS (renderer
+  dialogs, raw `ipcMain.handle` outside the registrar), RATCHETS
+  (index.ts line count and silent-catch count are locked and may only
+  shrink), and WIRING locks (doctrine functions must have live call
+  sites). If a rail fails your build, the answer is almost never to edit
+  the rail.
+- The nightly auto-push robot commits without `--no-verify`, so its 23:00
+  push is gated by the same hook: a tree that fails checks stays local
+  and notifies instead of propagating breakage.
+
+New sessions: run `./tools/install-git-hooks.sh` before your first commit.
+
+---
+
 ## Diagnostic capture
 
 When a bug or issue needs investigation, run `./scripts/vern "brief context note"`
