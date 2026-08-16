@@ -39,8 +39,6 @@ import {
   getDupeCount,
 } from './importQueue'
 import { setImport } from './activity'
-import { buildSmartPlaylistsForSync } from './utils/smartPlaylists'
-import { assembleSyncPlaylists } from './utils/workoutIpodSync'
 import { setCrossfadeSettings, fadeAllForQuit } from './hooks/useAudio'
 import { lookupArtworkOneShot, queueArtworkResolutions } from './utils/artworkLookup'
 import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/eq'
@@ -132,7 +130,7 @@ function AppInner() {
         ...raw,
         crossfade: { ...DEFAULT_APP_SETTINGS.crossfade, ...(raw.crossfade || {}) },
         library:   { ...DEFAULT_APP_SETTINGS.library,   ...(raw.library || {}) },
-        sync:      { ...DEFAULT_APP_SETTINGS.sync,      ...(raw.sync || {}) },
+        sync:      { ...DEFAULT_APP_SETTINGS.sync, ...(raw.sync || {}), autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
         ai:        { ...DEFAULT_APP_SETTINGS.ai,        ...(raw.ai || {}) },
         eq:        { ...DEFAULT_APP_SETTINGS.eq,        ...(raw.eq || {}) },
         inbox:     { ...DEFAULT_APP_SETTINGS.inbox,     ...(raw.inbox || {}) },
@@ -510,11 +508,8 @@ function AppInner() {
     return () => window.removeEventListener('jaketunes-ipod-ejected', onEject)
   }, [])
 
-  // Auto-sync on iPod connect (4.0 Settings → Sync). Sidebar dispatches
-  // 'jaketunes-ipod-mounted' on each false→true transition; we react
-  // here only when the user has opted in.
-  const appSettingsRef = useRef(appSettings)
-  appSettingsRef.current = appSettings
+  // Plug-in is inspect-only (TSA). Sidebar dispatches
+  // 'jaketunes-ipod-mounted' on each false→true transition.
   const libStateRef = useRef(libState)
   libStateRef.current = libState
   // Brief 016: playback state ref so closures (the library-external-change
@@ -620,113 +615,23 @@ function AppInner() {
     return () => document.removeEventListener('keydown', handler)
   }, [togglePlayPause, nextTrack, prevTrack, setVolume, dispatch])
 
+  // Plug-in is inspect-only. Auto-repair used to start a second writer on
+  // remount (500/500 → 492 / 33). TSA sealed the last Activity Sync; if
+  // songs have drifted, tell Jake — do not copy, convert, or wipe.
   useEffect(() => {
     const onIpodMounted = async () => {
-      const settings = appSettingsRef.current
-      if (!settings.sync.autoSyncOnConnect) return
-      const lib = libStateRef.current
-      if (lib.tracks.length === 0) return
-      // MERGE 2026-07-18: plug-in AUTO-sync stays the FULL-LIBRARY mirror with
-      // the convert-gate (Cursor's activity flow would sync a ~1000-track
-      // subset on every plug-in and orphan-clean the rest off the device).
-      // Activity sets are a deliberate act — the Device view's Sync sheet.
-      // 4.4.46: auto-sync now ships the SAME playlist set the manual
-      // Device-view "Sync" button does — the user's regular playlists
-      // PLUS the four built-in smart playlists (Recently Added,
-      // Recently Played, Top 25, My Top Rated), freshly evaluated.
-      // Before this, auto-sync passed only `lib.playlists` filtered to
-      // non-iPod entries — so plugging the iPod in and letting it
-      // auto-sync silently dropped every built-in smart playlist. The
-      // iTunesDB writer takes whatever it's handed as THE complete
-      // playlist set, so `buildSmartPlaylistsForSync` returns regular
-      // playlists too (kept as-is) — they are NOT dropped.
-      //
-      // 4.5.0-109: auto-sync now reads the persisted convert toggle from
-      // ui-state.json and passes it along. Pre-fix this call ALWAYS sent
-      // `convertOptions=undefined` → main treated it as off → every
-      // auto-sync silently re-copied lossless originals over previously-
-      // converted AAC files on the iPod. That's how Jake's 2,917 cached
-      // AAC mirrors never made it to the device.
-      // Bug #4: previous logic defaulted `enabled=false` on any ambiguity
-      // (load failure, missing field, exception). That's the *destructive*
-      // default — convert-off means full ALAC copies to the iPod, which is
-      // exactly how 2,540 lossless files landed there this afternoon.
-      //
-      // New rule: if we can't confidently read both convert fields, ABORT
-      // the auto-sync entirely. The user can still trigger a manual sync
-      // from Device view (which uses appliedSettings, gated by Apply).
-      // Silent destructive defaults are how we end up overwriting hours
-      // of work in 30 seconds.
-      let convertOptions: { enabled: boolean; targetKbps: 128 | 192 | 256 } | null = null
-      let abortReason: string | null = null
       try {
-        const ui = await window.electronAPI.loadUiState()
-        if (!ui.ok || !ui.state) {
-          abortReason = 'loadUiState returned no state'
-        } else {
-          const s = ui.state as Record<string, unknown>
-          const enabledRaw = s.optConvertBitrate
-          const targetRaw = s.optConvertBitrateTarget
-          if (typeof enabledRaw !== 'boolean') {
-            abortReason = `optConvertBitrate field missing or non-bool (got ${typeof enabledRaw}=${JSON.stringify(enabledRaw)})`
-          } else if (targetRaw !== '128' && targetRaw !== '192' && targetRaw !== '256') {
-            abortReason = `optConvertBitrateTarget missing or invalid (got ${JSON.stringify(targetRaw)})`
-          } else {
-            const targetKbps: 128 | 192 | 256 = targetRaw === '256' ? 256 : targetRaw === '192' ? 192 : 128
-            convertOptions = { enabled: enabledRaw, targetKbps }
-          }
+        const r = await window.electronAPI.inspectIpodTsaSeal?.()
+        if (!r?.ok || !r.sealed || r.unmounted) return
+        if (r.drifted) {
+          setNotice(
+            `iPod TSA: ${r.present} of ${r.target} songs from the last Activity Sync are still on the Mini. Will not auto-repair — run Activity Sync when you want a new set.`,
+            { kind: 'error', durationMs: 12000 },
+          )
         }
       } catch (err) {
-        abortReason = `exception while reading ui-state: ${err instanceof Error ? err.message : String(err)}`
+        console.warn('[ipod-tsa] inspect failed:', err)
       }
-      // No early return on unreadable prefs — the confirmed set may carry
-      // the convert settings it was ACTUALLY synced with (recorded at
-      // commit time), and replaying that exact choice is not a silent
-      // default. 2026-08-07: a ui-state clobber erased the prefs and every
-      // plug-in repair silently aborted here for a console.warn nobody
-      // sees — while Jake's iPod sat with a firmware-mangled index that
-      // one repair pass would have rebuilt.
-      // 2026-07-18 REVIEW GATE: plug-in auto-sync REPAIRS the last
-      // CONFIRMED set only — the exact trackIds committed after the last
-      // successful review-confirmed sync. It never rebuilds/rotates (that
-      // would bypass the review sheet) and never burns a Music Man call.
-      // Crossover is free: the sync engine skips byte-identical files, so
-      // a repair pass with nothing missing copies zero bytes. No prior
-      // confirmed set -> do nothing and wait for a manual Activity Sync.
-      void (async () => {
-        try {
-          const prev = await window.electronAPI.getWorkoutSyncState?.()
-          if (!prev?.ok || !prev.state?.trackIds?.length) {
-            console.log('[auto-sync] no confirmed activity set — waiting for a manual Activity Sync')
-            return
-          }
-          // Prefer live ui-state prefs; fall back to the convert settings
-          // RECORDED with the confirmed set. Only if neither exists do we
-          // abort — and then VISIBLY, not into the console void.
-          const stored = (prev.state as { convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 } }).convertOptions
-          const convertToUse = convertOptions ?? stored ?? null
-          if (!convertToUse) {
-            console.warn(`[auto-sync] ABORTED — convert preference unreadable (${abortReason}) and none recorded with the confirmed set.`)
-            setNotice('iPod plugged in, but the repair sync was skipped — open Device view and press Apply once to set convert preferences.')
-            return
-          }
-          const idSet = new Set(prev.state.trackIds)
-          const setTracks = lib.tracks.filter((t) => idSet.has(t.id))
-          if (setTracks.length === 0) {
-            console.log('[auto-sync] confirmed set has no matching library tracks — waiting for a manual Activity Sync')
-            return
-          }
-          const playlists = assembleSyncPlaylists(setTracks, lib.playlists || [], prev.state.name)
-          console.log(`[auto-sync] repairing confirmed set "${prev.state.name}" (${setTracks.length} tracks), convertOptions=`, convertToUse)
-          const repair = await window.electronAPI.syncToIpod(setTracks, playlists, convertToUse)
-          if (repair?.alreadyRunning) {
-            console.log('[auto-sync] skipped — a sync is already running (remount during activity sync is not a fresh plug-in)')
-            return
-          }
-        } catch (err) {
-          console.warn('[auto-sync] failed:', err)
-        }
-      })()
     }
     window.addEventListener('jaketunes-ipod-mounted', onIpodMounted)
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)

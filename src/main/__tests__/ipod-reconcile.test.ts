@@ -129,14 +129,18 @@ describe('partitionLanded — honest post-copy split', () => {
   })
 })
 
-describe('activitySetProven — 500 means 500, never a lucky remount', () => {
+describe('activitySetProven — N means N, never a lucky remount', () => {
   it('refuses success on a single remount even when the count looks full', () => {
-    assert.equal(activitySetProven(1, 500, 500), false)
-    assert.equal(activitySetProven(0, 500, 500), false)
+    for (const n of [100, 250, 500, 1000]) {
+      assert.equal(activitySetProven(1, n, n), false)
+      assert.equal(activitySetProven(0, n, n), false)
+    }
   })
 
   it('passes only after two consecutive full proofs at the target', () => {
-    assert.equal(activitySetProven(2, 500, 500), true)
+    for (const n of [100, 250, 500, 1000]) {
+      assert.equal(activitySetProven(2, n, n), true)
+    }
     assert.equal(activitySetProven(3, 250, 250), true)
   })
 
@@ -144,6 +148,9 @@ describe('activitySetProven — 500 means 500, never a lucky remount', () => {
     assert.equal(activitySetProven(4, 33, 500), false)
     assert.equal(activitySetProven(2, 499, 500), false)
     assert.equal(activitySetProven(2, 0, 500), false)
+    assert.equal(activitySetProven(2, 99, 100), false)
+    assert.equal(activitySetProven(2, 247, 250), false)
+    assert.equal(activitySetProven(2, 997, 1000), false)
   })
 })
 

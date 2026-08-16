@@ -247,6 +247,16 @@ const electronAPI = {
   // 2026-07-20 — the sync journal: fired at boot when the last iPod sync
   // died partway (stale device database until the user syncs again).
   getIpodSyncJournal: (): Promise<{ phase: string; at?: string } | null> => ipcRenderer.invoke('get-ipod-sync-journal'),
+  inspectIpodTsaSeal: (): Promise<{
+    ok: boolean
+    sealed: boolean
+    drifted: boolean
+    unmounted?: boolean
+    target: number
+    present: number
+    missing: Array<{ id: number; destPath: string; reason: string }>
+    error?: string
+  }> => ipcRenderer.invoke('inspect-ipod-tsa-seal'),
   onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, info: { phase: string; at?: string }) => callback(info)
     ipcRenderer.on('ipod-sync-incomplete', handler)

@@ -42,6 +42,15 @@ export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): v
       delete ai.exaApiKey
       ai.exaConfigured = fromSettings || fromEnv
       settings.ai = ai
+      // Activity sets must not be mutated by plug-in repair or delete-sync.
+      // 2026-08-15: Mini Songs 500→492 after a "successful" sync while
+      // auto-repair / post-pass deletes were still in play.
+      const syncIn = (settings.sync && typeof settings.sync === 'object' && !Array.isArray(settings.sync))
+        ? { ...(settings.sync as Record<string, unknown>) }
+        : {}
+      syncIn.autoSyncOnConnect = false
+      syncIn.autoRemoveDeletedFromIpod = false
+      settings.sync = syncIn
       return { ok: true, settings }
     } catch {
       return { ok: true, settings: null }   // missing file is fine — renderer applies defaults
@@ -94,6 +103,13 @@ export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): v
         delete aiOut.exaConfigured
         delete aiOut.clearExaKey
         toWrite.ai = aiOut
+      }
+      toWrite.sync = {
+        ...((toWrite.sync && typeof toWrite.sync === 'object' && !Array.isArray(toWrite.sync))
+          ? toWrite.sync as Record<string, unknown>
+          : {}),
+        autoSyncOnConnect: false,
+        autoRemoveDeletedFromIpod: false,
       }
       await writeFile(appSettingsPath(), JSON.stringify(toWrite, null, 2), 'utf-8')
       // 4.4.13: reconfigure the inbox watcher on every save. Idempotent

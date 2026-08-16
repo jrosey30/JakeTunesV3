@@ -824,31 +824,30 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
 
           {tab === 'Sync' && (
             <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <input
-                  type="checkbox"
-                  checked={draft.sync.autoSyncOnConnect}
-                  onChange={(e) => setDraft({
-                    ...draft,
-                    sync: { ...draft.sync, autoSyncOnConnect: e.target.checked },
-                  })}
-                />
-                <span>Automatically sync to iPod when connected</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <input
-                  type="checkbox"
-                  checked={draft.sync.autoRemoveDeletedFromIpod}
-                  onChange={(e) => setDraft({
-                    ...draft,
-                    sync: { ...draft.sync, autoRemoveDeletedFromIpod: e.target.checked },
-                  })}
-                />
-                <span>Automatically remove deleted tracks from iPod</span>
-              </label>
-              <p className="imp-help" style={{ marginTop: 10 }}>
-                When off, both flows still work — they just require an explicit click. Turn on for set-and-forget syncing.
+              <p className="imp-help" style={{ marginBottom: 12 }}>
+                iPod writes happen only when you click Activity Sync or Full Sync.
+                Plug-in no longer auto-repairs — that second writer is how a sealed
+                500 became 492 on the Mini. After Activity Sync, TSA inspects every
+                song by identity and the set stays until you sync again.
               </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, opacity: 0.45 }}>
+                <input
+                  type="checkbox"
+                  checked={false}
+                  disabled
+                  readOnly
+                />
+                <span>Automatically sync to iPod when connected (retired)</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, opacity: 0.45 }}>
+                <input
+                  type="checkbox"
+                  checked={false}
+                  disabled
+                  readOnly
+                />
+                <span>Automatically remove deleted tracks from iPod (retired)</span>
+              </label>
 
               {/* 4.5 — Library backups to homemini. Pulled out of the
                   now-playing pill (was a chirp on every import / metadata

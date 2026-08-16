@@ -173,6 +173,18 @@ import {
   needsIpodAlacTranscode,
   type IntendedTrack,
 } from './ipod-reconcile'
+import {
+  tsaBoardPassenger,
+  tsaScreen,
+  tsaAllClear,
+  tsaActivityOk,
+  tsaSealFromScreen,
+  tsaDestCollisions,
+  tsaNormalizeColonPath,
+  tsaRelFromColon,
+  type TsaPassenger,
+  type TsaScreen,
+} from './ipod-sync-tsa'
 import { ensureContiguousDb } from './ipod-db-contiguity'
 import { registerBandcampIntegration } from './bandcamp-integration'
 import { registerStreamripStore } from './streamrip-store'
@@ -5264,6 +5276,25 @@ async function remountVerifyEntries(
 }
 
 const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
+const IPOD_TSA_SEAL_FILE = () => join(app.getPath('userData'), 'ipod-activity-tsa-seal.json')
+
+async function clearTsaSeal(): Promise<void> {
+  try { await unlink(IPOD_TSA_SEAL_FILE()) } catch { /* no prior seal */ }
+}
+
+async function writeTsaSealFile(seal: { version: 1; sealedAt: string; target: number; passengers: unknown[] }): Promise<void> {
+  const path = IPOD_TSA_SEAL_FILE()
+  const tmp = `${path}.${process.pid}.tmp`
+  await writeFile(tmp, JSON.stringify(seal, null, 2), 'utf-8')
+  await rename(tmp, path)
+}
+
+async function writeLastSyncManifest(payload: Record<string, unknown>): Promise<void> {
+  const manifestPath = join(STATE_DIR, 'last-sync-manifest.json')
+  const tmp = `${manifestPath}.${process.pid}.tmp`
+  await writeFile(tmp, JSON.stringify(payload, null, 1), 'utf-8')
+  await rename(tmp, manifestPath)
+}
 async function writeSyncJournal(phase: string | null): Promise<void> {
   try {
     if (phase === null) {
@@ -5385,18 +5416,19 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
     }
 
-    // Manifest: exactly what this sync contains, and the delta from last time.
+    // Manifest: full-library sync writes the shipped set now. Activity
+    // wipe+rebuild writes in-flight here and only stamps sealed:true after
+    // TSA — a failed 500 must not look like 500 shipped.
     try {
-      const manifestPath = join(STATE_DIR, 'last-sync-manifest.json')
-      let prevIds = new Set<number>()
+      const prevIds = new Set<number>()
       try {
-        const prev = JSON.parse(await readFile(manifestPath, 'utf-8')) as { tracks?: Array<{ id: number }> }
-        prevIds = new Set((prev.tracks || []).map((x) => x.id))
+        const prev = JSON.parse(await readFile(join(STATE_DIR, 'last-sync-manifest.json'), 'utf-8')) as { tracks?: Array<{ id: number }> }
+        for (const x of prev.tracks || []) prevIds.add(x.id)
       } catch { /* first manifest */ }
       const curIds = new Set(tracks.map((t) => Number(t.id)))
       const added = tracks.filter((t) => !prevIds.has(Number(t.id)))
       const removedIds = [...prevIds].filter((id) => !curIds.has(id))
-      const manifest = {
+      const base = {
         syncedAt: new Date().toISOString(),
         count: tracks.length,
         added: added.length,
@@ -5404,10 +5436,13 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         tracks: tracks.map((t) => ({ id: Number(t.id), title: String(t.title || ''), artist: String(t.artist || ''), album: String(t.album || '') })),
         addedTracks: added.map((t) => `${t.title} — ${t.artist}`),
       }
-      const tmp = `${manifestPath}.${process.pid}.tmp`
-      await writeFile(tmp, JSON.stringify(manifest, null, 1), 'utf-8')
-      await rename(tmp, manifestPath)
-      console.log(`sync-to-ipod: MANIFEST — ${tracks.length} songs (all named + file-verified), +${added.length} added / -${removedIds.length} removed since last sync`)
+      if (syncOpts?.wipeFirst) {
+        await writeLastSyncManifest({ ...base, status: 'in-flight', sealed: false })
+        console.log(`sync-to-ipod: MANIFEST in-flight — ${tracks.length} songs boarded, not sealed`)
+      } else {
+        await writeLastSyncManifest({ ...base, status: 'shipped', sealed: false })
+        console.log(`sync-to-ipod: MANIFEST — ${tracks.length} songs (all named + file-verified), +${added.length} added / -${removedIds.length} removed since last sync`)
+      }
     } catch (mErr) {
       console.warn('sync-to-ipod: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
     }
@@ -5473,7 +5508,42 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // the DB holds). The iTunesDB is rewritten fresh from `tracks` below, so after
   // this the device holds EXACTLY the picked set. Only activity sync passes
   // wipeFirst; full-library sync + plug-in auto-repair do not.
+  const activityTarget = tracks.length
+  const tsaBoarded: TsaPassenger[] = syncOpts?.wipeFirst
+    ? tracks.map((t) => tsaBoardPassenger({
+      ...t,
+      destPath: ipodPlayableDestPath(String(t.path || '')),
+    }))
+    : []
   if (syncOpts?.wipeFirst) {
+    if (activityTarget <= 0 || tsaBoarded.length !== activityTarget) {
+      return {
+        ok: false,
+        copied: 0,
+        error: `Activity TSA boarded ${tsaBoarded.length} for a ${activityTarget}-song set. Nothing was wiped.`,
+        target: activityTarget,
+      }
+    }
+    const emptyDest = tsaBoarded.filter((p) => !p.destPath)
+    if (emptyDest.length > 0) {
+      return {
+        ok: false,
+        copied: 0,
+        error: `Activity TSA: ${emptyDest.length} song(s) have no dest path. Nothing was wiped.`,
+        target: activityTarget,
+      }
+    }
+    const collisions = tsaDestCollisions(tsaBoarded)
+    if (collisions.length > 0) {
+      return {
+        ok: false,
+        copied: 0,
+        error: `Activity TSA: ${collisions.length} dest path(s) would collide on the Mini (two songs rewriting to the same file). Nothing was wiped. Examples: ${collisions.slice(0, 3).join(', ')}`,
+        target: activityTarget,
+        destCollisions: collisions.length,
+      }
+    }
+    await clearTsaSeal()
     mainWindow?.webContents.send('sync-progress', { phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
     const wipeMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
     let wiped = 0
@@ -6050,8 +6120,8 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   }
   // Drop leftover FAT-temp / .flac names now that the playable dest exists.
   for (const r of playablePathRewrites) {
-    const stale = join(IPOD_MOUNT, r.oldPath.replace(/:/g, pathSep))
-    const fresh = join(IPOD_MOUNT, r.newPath.replace(/:/g, pathSep))
+    const stale = join(IPOD_MOUNT, tsaRelFromColon(r.oldPath, pathSep))
+    const fresh = join(IPOD_MOUNT, tsaRelFromColon(r.newPath, pathSep))
     if (stale === fresh) continue
     try {
       await stat(fresh)
@@ -6063,15 +6133,17 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // 500 means 500, 1000 means 1000"). The iFlash/FAT32 iPod on macOS fskit
   // accepts writes into the MOUNT CACHE and reports them present while only a
   // subset physically commits to the card — so copyFile "succeeds", the cache
-  // says 500, but the device shows a RANDOM count every sync (103 / 421 / 238…).
+  // says N, but the device shows a RANDOM count every sync (103 / 421 / 238…).
   // Remount-evict + recopy until the true committed count hits the target, then
   // build the iTunesDB from ONLY what landed. Activity wipe+rebuild refuses to
-  // report success on a shortfall — 500 means 500, or the sync failed.
-  const syncTarget = tracks.length
+  // report success on a shortfall — N means N, or the sync failed.
+  const syncTarget = syncOpts?.wipeFirst ? activityTarget : tracks.length
   let verifiedLanded = syncTarget
   let verifyAttempts = 0
   let verifyRan = false
   let activityShortfall = false
+  let activityTsaScreen: TsaScreen | null = null
+  let activityTsaSealed = false
   let failedForReport: SyncReport['failed'] = []
   if (IS_MAC && tracks.length > 0) {
     const verify: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
@@ -6089,7 +6161,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
       const colonPath = String(t.path || '')
       if (!colonPath) continue
-      const relPath = colonPath.replace(/:/g, pathSep)
+      const relPath = tsaRelFromColon(colonPath, pathSep)
       const libraryFile = join(LOCAL_MOUNT, relPath)
       try {
         if (await isStreamedTrackFile(libraryFile)) continue
@@ -6262,7 +6334,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       // loop (cancel, empty verify) must not green a 500/500 either.
       if (syncOpts?.wipeFirst && !activitySetProven(consecutiveFull, landedIds.size, syncTarget)) {
         activityShortfall = true
-        console.error(`sync-to-ipod: ROULETTE — ${landedIds.size}/${syncTarget} after ${consecutiveFull} consecutive full proof(s); refusing success (500 means 500)`)
+        console.error(`sync-to-ipod: ROULETTE — ${landedIds.size}/${syncTarget} after ${consecutiveFull} consecutive full proof(s); refusing success (N means N)`)
       }
 
       const before = tracks.length
@@ -6280,7 +6352,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
       if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
         activityShortfall = true
-        console.error(`sync-to-ipod: ACTIVITY SHORTFALL — asked for ${syncTarget}, card kept ${verifiedLanded}. Will write the honest catalog and report failure (500 means 500).`)
+        console.error(`sync-to-ipod: ACTIVITY SHORTFALL — asked for ${syncTarget}, card kept ${verifiedLanded}. Will write the honest catalog and report failure (N means N).`)
       }
     } else if (syncOpts?.wipeFirst) {
       // Activity sync on Mac MUST remount-verify. A cache-only "all present"
@@ -6310,7 +6382,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       const colonPath = String(t.path || '')
       if (!colonPath && !remembered) continue
       const dst = remembered?.dstPath
-        || join(IPOD_MOUNT, colonPath.replace(/:/g, pathSep))
+        || join(IPOD_MOUNT, tsaRelFromColon(colonPath, pathSep))
       try {
         const sz = (await stat(dst)).size
         if (sz <= 0) continue
@@ -6525,7 +6597,11 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
 
         // Post-sync iPod orphan cleanup — delete audio files on the device
         // whose basename is not referenced by library.json (identity-safe).
+        // Activity wipe+rebuild already emptied Music. Deleting more files
+        // AFTER the catalog is written is how a sealed 500 becomes 492 on
+        // the Mini. TSA holds the set until the next explicit Activity Sync.
         let ipodOrphansDeleted = 0
+        if (!syncOpts?.wipeFirst) {
         try {
           const ipodMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
           const ipodResult = await cleanOrphansOnMusicRoot(ipodMusicRoot, tracks as Array<{ path?: string }>, syncRunStartMs)
@@ -6538,6 +6614,9 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           }
         } catch (ipodOrphErr) {
           console.warn('sync-to-ipod: iPod orphan cleanup failed (non-fatal):', ipodOrphErr)
+        }
+        } else {
+          console.log('sync-to-ipod: TSA — skipping post-catalog orphan deletes on activity rebuild (the wipe was the cleanup)')
         }
 
         // ── FLUSH TO CARD BEFORE "DONE" (2026-07-24, Jake: "the sync progress
@@ -6671,6 +6750,69 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           }
           console.log(`sync-to-ipod: firmware-semantic validation GREEN for all ${syncTarget} tracks`)
           console.log(`sync-to-ipod: readback verified — ${onDevice} catalog records, all ${onDiskFiles.length} files present on disk`)
+
+          // ── TSA (2026-08-15) — every boarded identity on the card, in the
+          // catalog, and listable. 492/497/79 after a green N/N is a hold,
+          // not a near-miss. Plug-in must not auto-repair; this seal is the
+          // set that has to stay until the next explicit Activity Sync.
+          // Screen here; write the seal only after the on-device count check
+          // so a short catalog cannot leave a lying seal on disk.
+          if (syncOpts?.wipeFirst) {
+            mainWindow?.webContents.send('sync-progress', {
+              phase: 'verify', current: 1, total: 1,
+              title: `TSA — inspecting all ${syncTarget} songs by identity…`,
+            })
+            const byId = new Map(tracks.map((t) => [Number(t.id), t]))
+            for (const p of tsaBoarded) {
+              const t = byId.get(p.id)
+              if (t) {
+                p.destPath = tsaNormalizeColonPath(String(t.path || p.destPath))
+                p.title = String(t.title || p.title)
+                p.artist = String(t.artist || p.artist)
+                const remembered = writtenById.get(p.id)
+                p.expectedSize = remembered?.expectedSize || Number(t.fileSize) || p.expectedSize
+              } else {
+                p.destPath = tsaNormalizeColonPath(p.destPath)
+              }
+            }
+            const onCard = new Map<string, number>()
+            for (const p of tsaBoarded) {
+              const remembered = writtenById.get(p.id)
+              const dest = remembered?.dstPath
+                || join(IPOD_MOUNT, tsaRelFromColon(p.destPath, pathSep))
+              try {
+                onCard.set(p.destPath, (await stat(dest)).size)
+              } catch { /* missing — TSA holds */ }
+            }
+            const catalogPaths = new Set(
+              (readback.tracks as Array<{ path?: string }>).map((t) => tsaNormalizeColonPath(String(t.path || ''))),
+            )
+            const screen = tsaScreen({ boarded: tsaBoarded, onCard, catalogPaths })
+            activityTsaScreen = screen
+            if (!tsaAllClear(tsaBoarded.length, screen.cleared.length, screen.held.length) || tsaBoarded.length !== syncTarget) {
+              const sample = screen.held.slice(0, 8)
+                .map((h) => `${h.artist} — ${h.title} (${h.reason})`)
+                .join('; ')
+              console.error(`sync-to-ipod: TSA HELD ${screen.held.length}/${tsaBoarded.length} (target ${syncTarget}): ${sample}`)
+              await writeSyncReport({
+                syncedAt: new Date().toISOString(), target: syncTarget,
+                landed: screen.cleared.length, shortfall: Math.max(screen.held.length, syncTarget - screen.cleared.length),
+                verifyPasses: verifyAttempts, copied, copyErrors,
+                failed: screen.held.slice(0, 40).map((h) => ({
+                  id: h.id, title: h.title, artist: h.artist, path: h.destPath,
+                })),
+              })
+              resolve({
+                ok: false,
+                error: `TSA held ${Math.max(screen.held.length, syncTarget - screen.cleared.length)} of ${syncTarget} songs — the Mini would not show ${syncTarget}. ${sample}`,
+                copied, copyErrors, target: syncTarget,
+                landed: screen.cleared.length,
+                shortfall: Math.max(screen.held.length, syncTarget - screen.cleared.length), verifyAttempts,
+              })
+              return
+            }
+          }
+
           // ── DEBRIS REPORT (2026-08-15) — report-only, deletes NOTHING ──
           // The raw FAT walk that night found ~431 unreferenced audio files
           // plus .XXXXXX staging temps and a stray .flac accumulated on the
@@ -6722,6 +6864,62 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
             })
             return
           }
+          // Seal only after the on-device count is the boarded N. A seal
+          // written earlier is how a short catalog could look "done."
+          if (syncOpts?.wipeFirst) {
+            const screen = activityTsaScreen
+            if (
+              activityShortfall
+              || !screen
+              || tsaBoarded.length !== syncTarget
+              || !tsaAllClear(tsaBoarded.length, screen.cleared.length, screen.held.length)
+            ) {
+              resolve({
+                ok: false,
+                error: `Activity set of ${syncTarget} did not clear TSA (${screen?.cleared.length ?? 0} cleared). Not calling this a success.`,
+                copied, copyErrors, target: syncTarget,
+                landed: screen?.cleared.length ?? verifiedLanded,
+                shortfall: syncTarget - (screen?.cleared.length ?? verifiedLanded),
+                verifyAttempts,
+              })
+              return
+            }
+            const seal = tsaSealFromScreen(screen, new Date().toISOString())
+            if (!seal || seal.target !== syncTarget) {
+              resolve({
+                ok: false,
+                error: `Activity set of ${syncTarget} cleared the lane but TSA could not build a seal. Sync again.`,
+                copied, copyErrors, target: syncTarget, landed: screen.cleared.length,
+                shortfall: 0, verifyAttempts,
+              })
+              return
+            }
+            try {
+              await writeTsaSealFile(seal)
+              activityTsaSealed = true
+              console.log(`sync-to-ipod: TSA sealed ${seal.target} songs — plug-in will inspect, not auto-sync`)
+              try {
+                await writeLastSyncManifest({
+                  syncedAt: seal.sealedAt,
+                  status: 'sealed',
+                  sealed: true,
+                  count: seal.target,
+                  tracks: seal.passengers.map((p) => ({ id: p.id, destPath: p.destPath, identity: p.identity })),
+                })
+              } catch (mErr) {
+                console.warn('sync-to-ipod: sealed, but last-sync-manifest update failed:', mErr)
+              }
+            } catch (sealErr) {
+              console.error('sync-to-ipod: TSA seal write failed — refusing success:', sealErr)
+              resolve({
+                ok: false,
+                error: `The ${syncTarget} songs are on the card but TSA could not seal the set (${sealErr instanceof Error ? sealErr.message : String(sealErr)}). Sync again without unplugging.`,
+                copied, copyErrors, target: syncTarget, landed: screen.cleared.length,
+                shortfall: 0, verifyAttempts,
+              })
+              return
+            }
+          }
           // Retire the firmware's session scratch (2026-07-21: Jake's device
           // indexed the SAME perfect 1000-track DB as 854, then 892 after a
           // hard reset — boot-time merges of stale Play Counts / On-The-Go
@@ -6752,22 +6950,40 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           failed: activityShortfall ? failedForReport : [],
         })
         resolve({
-          ok: !activityShortfall,
+          ok: syncOpts?.wipeFirst
+            ? tsaActivityOk({
+              target: syncTarget,
+              boarded: tsaBoarded.length,
+              cleared: activityTsaScreen?.cleared.length ?? 0,
+              held: activityTsaScreen?.held.length ?? 0,
+              sealed: activityTsaSealed,
+              shortfall: activityShortfall,
+            })
+            : !activityShortfall,
           copied, copyErrors,
           totalTracks: tracks.length,
           // Verified-count truth (2026-07-24): what the user picked vs what
           // actually committed to the card. shortfall>0 → the renderer shows an
           // honest banner instead of a false success. Activity wipe+rebuild
-          // sets ok:false on shortfall so we never commit "500 on the iPod"
+          // sets ok:false on shortfall so we never commit "N on the iPod"
           // when the card kept a random subset (103 / 421 / 238…).
           target: syncTarget,
           landed: verifiedLanded,
           shortfall: finalShortfall,
           verifyAttempts,
-          error: activityShortfall
+          error: (syncOpts?.wipeFirst
+            ? !tsaActivityOk({
+              target: syncTarget,
+              boarded: tsaBoarded.length,
+              cleared: activityTsaScreen?.cleared.length ?? 0,
+              held: activityTsaScreen?.held.length ?? 0,
+              sealed: activityTsaSealed,
+              shortfall: activityShortfall,
+            })
+            : activityShortfall)
             ? (verifiedLanded < syncTarget
               ? `Only ${verifiedLanded} of ${syncTarget} songs actually stuck on the iPod after ${verifyAttempts} tries — the card keeps dropping writes. The catalog matches what landed; sync again (or reformat the card) to reach ${syncTarget}.`
-              : `${verifiedLanded} files looked present but did not hold across two remounts — that is the 500/500 → 33 roulette. Not calling this a success. Sync again without unplugging.`)
+              : `${verifiedLanded} files looked present but did not hold across two remounts — that is the N/N → 33 roulette. Not calling this a success. Sync again without unplugging.`)
             : undefined,
           ipodOrphansDeleted,
           // Return the path rewrites so the renderer can update

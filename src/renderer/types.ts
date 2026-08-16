@@ -711,6 +711,16 @@ declare global {
       // method and the main handler exist; only this type surface had drifted,
       // which made the renderer typecheck report them as missing.
       getIpodSyncJournal: () => Promise<{ phase: string; at?: string } | null>
+      inspectIpodTsaSeal?: () => Promise<{
+        ok: boolean
+        sealed: boolean
+        drifted: boolean
+        unmounted?: boolean
+        target: number
+        present: number
+        missing: Array<{ id: number; destPath: string; reason: string }>
+        error?: string
+      }>
       onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => () => void
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       // Brief 010 Phase 3 + Brief 014a: audio-analysis worker progress
