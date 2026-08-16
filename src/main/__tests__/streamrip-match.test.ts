@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { foldAccents, withinEditDistance, typoBudget } from '../../common/fold-text.ts'
 import { recoArtistMatches, recoTitleMatches } from '../reco-match.ts'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches} from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches, applyExplicitGate } from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -305,5 +305,37 @@ describe('typo tolerance — Apple corrects the spelling, we must not discard it
     assert.equal(withinEditDistance('radiohead', 'radiator', typoBudget(9)), false)
     assert.equal(withinEditDistance('jay', 'kay', typoBudget(3)), false)   // 3 chars: no budget
     assert.equal(withinEditDistance('drake', 'blake', typoBudget(5)), false)
+  })
+})
+
+describe('applyExplicitGate — explicitness is an identity axis', () => {
+  const meta = new Map<string, { parentalWarning?: boolean }>([
+    ['clean1', { parentalWarning: false }],
+    ['explicit1', { parentalWarning: true }],
+    ['unknown1', {}],
+  ])
+  const cands = [{ id: 'clean1' }, { id: 'explicit1' }, { id: 'unknown1' }, { id: 'nometa' }]
+
+  it('explicit wanted: Qobuz-flagged clean candidates are refused', () => {
+    const r = applyExplicitGate(cands, meta, true)
+    assert.deepEqual(r.kept.map(c => c.id), ['explicit1', 'unknown1', 'nometa'])
+    assert.deepEqual(r.refusedClean.map(c => c.id), ['clean1'])
+  })
+
+  it('missing metadata passes through unjudged — an API hiccup must not brick downloads', () => {
+    const r = applyExplicitGate([{ id: 'nometa' }], new Map(), true)
+    assert.deepEqual(r.kept.map(c => c.id), ['nometa'])
+  })
+
+  it('all candidates clean: kept is EMPTY so the caller must fail loudly', () => {
+    const r = applyExplicitGate([{ id: 'clean1' }], meta, true)
+    assert.equal(r.kept.length, 0)
+    assert.equal(r.refusedClean.length, 1)
+  })
+
+  it('explicit not requested: everything passes untouched', () => {
+    const r = applyExplicitGate(cands, meta, false)
+    assert.equal(r.kept.length, 4)
+    assert.equal(r.refusedClean.length, 0)
   })
 })

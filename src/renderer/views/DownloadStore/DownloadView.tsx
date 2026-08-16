@@ -168,6 +168,7 @@ const songQ = (r: SongRow): QResult => ({
   artist: r.artist, title: r.title, album: r.album ? displayAlbumTitle(r.album) : r.album,
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
   cleanedSource: r.explicitness === 'cleaned',
+  explicitSource: r.explicitness === 'explicit',
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',

@@ -313,3 +313,52 @@ export function pickBestSoundcloudMatch(
   }
   return best
 }
+
+// ── The explicitness witness (2026-08-16) ───────────────────────────────
+//
+// Jake: "i cannot stand downloading what ends up being the clean versions
+// of rap songs... it is fucking brutal." Fourth eruption of the class, and
+// the first three fixes were all on the SEARCH side — badges, rescues,
+// collection ids, all verified working. The hole was fulfillment: Qobuz
+// resolves a TEXT query, Qobuz has its own clean editions, and its clean
+// editions routinely ship the same title, the same length, and no marker —
+// invisible to all three staging witnesses (duration, title-marker,
+// album-marker). Measured on "Mask Off": five byte-identical search descs,
+// among them a 204s album cut and two 258s remixes, distinguishable ONLY
+// by the metadata endpoint's parental_warning / duration / version fields.
+//
+// So explicitness becomes a HARD identity axis, resolved before a single
+// byte downloads. The gate never guesses: candidates whose metadata is
+// missing pass through unjudged (an API hiccup must not brick downloads),
+// but a candidate Qobuz itself flags as clean when the user asked for the
+// explicit record is REFUSED — and if every candidate is flagged clean,
+// the download fails LOUDLY instead of silently importing censorship.
+
+export interface QobuzTrackMeta {
+  parentalWarning?: boolean
+  durationSec?: number
+  album?: string
+  version?: string | null
+}
+
+export interface ExplicitGateResult<T> {
+  kept: T[]
+  /** Candidates refused because Qobuz flags them clean. */
+  refusedClean: T[]
+}
+
+export function applyExplicitGate<T extends { id: string }>(
+  ranked: T[],
+  meta: Map<string, QobuzTrackMeta>,
+  wantExplicit: boolean,
+): ExplicitGateResult<T> {
+  if (!wantExplicit) return { kept: ranked, refusedClean: [] }
+  const kept: T[] = []
+  const refusedClean: T[] = []
+  for (const c of ranked) {
+    const m = meta.get(c.id)
+    if (m?.parentalWarning === false) refusedClean.push(c)
+    else kept.push(c)
+  }
+  return { kept, refusedClean }
+}

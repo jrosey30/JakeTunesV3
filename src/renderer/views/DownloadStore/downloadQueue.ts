@@ -29,6 +29,7 @@ export interface QResult {
    *  258s amended vs 251s explicit, Sky's the Limit 277s vs 254s — so pinning
    *  the guard to ±5s of the clean edit rejected every one of them. */
   cleanedSource?: boolean
+  explicitSource?: boolean
 }
 export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
@@ -150,7 +151,7 @@ async function pump(): Promise<void> {
       emit()
       try {
         const r = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource })
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates

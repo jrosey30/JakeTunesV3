@@ -24,7 +24,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf } from '../streamrip-match.ts'
+import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf, applyExplicitGate, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
 
@@ -330,6 +330,51 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       : { ok: true, installed: false, reason: await ripDiagnosis() }
   }, { public: true })
 
+  // ── Qobuz metadata witness (2026-08-16, the clean-version gate) ──────
+  // streamrip's search JSON is too slim to distinguish editions (measured:
+  // five identical "Mask Off by Future" descs hiding a 204s album cut, two
+  // 258s remixes, and the parental flags). The metadata endpoint answers
+  // with the SAME credentials streamrip already holds; values are read per
+  // call and never logged. Fail-soft everywhere: a hiccup yields absent
+  // entries, and absent entries pass the gate unjudged.
+  async function readQobuzCreds(): Promise<{ appId: string; token: string } | null> {
+    try {
+      const cfgPath = join(homedir(), 'Library', 'Application Support', 'streamrip', 'config.toml')
+      const raw = await readFile(cfgPath, 'utf-8')
+      const q = raw.split(/^\[qobuz\]/m)[1]?.split(/^\[/m)[0] || ''
+      const pick = (key: string): string => {
+        const m = q.match(new RegExp('^\\s*' + key + '\\s*=\\s*"([^"]*)"', 'm'))
+        return m ? m[1] : ''
+      }
+      const appId = pick('app_id')
+      const token = pick('password_or_token') || pick('token')
+      return appId && token ? { appId, token } : null
+    } catch { return null }
+  }
+
+  async function qobuzTrackMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
+    const out = new Map<string, QobuzTrackMeta>()
+    const creds = await readQobuzCreds()
+    if (!creds || ids.length === 0) return out
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const res = await fetch(
+          'https://www.qobuz.com/api.json/0.2/track/get?track_id=' + encodeURIComponent(id) + '&app_id=' + creds.appId,
+          { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) },
+        )
+        if (!res.ok) return
+        const d = await res.json() as { parental_warning?: boolean; duration?: number; version?: string | null; album?: { title?: string } }
+        out.set(id, {
+          parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
+          durationSec: typeof d.duration === 'number' ? d.duration : undefined,
+          album: d.album?.title,
+          version: d.version ?? null,
+        })
+      } catch { /* absent entry = unjudged */ }
+    }))
+    return out
+  }
+
   async function searchCatalog(opts: {
     query: string
     source?: string
@@ -394,7 +439,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
   const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
@@ -429,6 +474,28 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
       ? rankStreamripCandidates(lookFor || query, artist, qsearch.results, mediaType)
       : { ranked: [], rejectedVersions: [] }
+      // ── The clean-version gate (2026-08-16). Explicitness is an identity
+      // axis resolved BEFORE any byte downloads: when the clicked row was
+      // explicit, candidates Qobuz itself flags clean are refused, and if
+      // every candidate is clean the download fails LOUDLY — a censored
+      // file must never silently satisfy a request for the record.
+      let ranked2 = ranked
+      if (ranked.length && mediaType === 'track') {
+        const meta = await qobuzTrackMeta(ranked.slice(0, 6).map((c) => c.id))
+        if (opts?.explicitSource) {
+          const gate = applyExplicitGate(ranked.slice(0, 6), meta, true)
+          if (gate.kept.length === 0 && gate.refusedClean.length > 0) {
+            return {
+              ok: false,
+              error: 'Qobuz only carries the CLEAN edition of this track (' + gate.refusedClean.length + ' candidate' + (gate.refusedClean.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
+            }
+          }
+          if (gate.refusedClean.length > 0) {
+            console.log('[streamrip] explicit gate refused ' + gate.refusedClean.length + ' clean candidate(s) for "' + title + '"')
+          }
+          ranked2 = [...gate.kept, ...ranked.slice(6)]
+        }
+      }
     let qobuzMisses: string[] | null = null
     if (ranked.length && durationMs) {
       // Verified path: the caller knows the exact version. Try the top
@@ -441,7 +508,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // the album the user actually picked. Keep the best such file staged as
       // a fallback while we keep looking for the canonical-album copy.
       let fallback: { staged: StagedRip; desc: string } | null = null
-      for (const cand of ranked.slice(0, 3)) {
+      for (const cand of ranked2.slice(0, 3)) {
         const st = await stageRip(['id', cand.source, cand.mediaType, cand.id])
         if (!st.ok) { misses.push(`“${cand.desc}”: ${st.error}`); continue }
         const probe = st.staged.files.length === 1 ? await probeStagedFile(st.staged.files[0]) : null
