@@ -49,7 +49,17 @@ Cut order (each ~1 brief):
    is a MOVE-ONLY cut.
 3. `download-search.ts` — the iTunes/Deezer search + rescue machinery
    (~800 lines, includes fetchExplicitAlbumMap + resolveExplicitEdition).
-4. `caches.ts` — play-cache + sync-convert-cache management.
+4. `caches.ts` — RE-SCOPED after the P1C4 audit (2026-08-16): the
+   play-cache machinery (PLAY_CACHE dir, transcode coalescing map, codec
+   cache, prewarm/prune) lives INSIDE the ipod-audio:// protocol
+   handler's closure and shares live state with the serving path — the
+   region the 2026-08-11 streaming postmortem fenced. Extracting it is
+   closure surgery on the critical playback path, not a move-only cut.
+   Precondition: a dedicated brief that first gives the protocol handler
+   an explicit seam (state object in, serving policy out), reviewed
+   against stream-playback-path locks. Also found: SYNC_CONVERT_CACHE
+   in index.ts is a DEAD constant (zero uses — the machinery moved with
+   the iPod thread's work); its removal belongs to the sync-engine cut.
 5. Repeat until index.ts is wiring + window lifecycle only. Ratchet
    follows it down automatically.
 
