@@ -352,6 +352,29 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch { return null }
   }
 
+  async function qobuzAlbumMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
+    const out = new Map<string, QobuzTrackMeta>()
+    const creds = await readQobuzCreds()
+    if (!creds || ids.length === 0) return out
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const res = await fetch(
+          'https://www.qobuz.com/api.json/0.2/album/get?album_id=' + encodeURIComponent(id) + '&app_id=' + creds.appId,
+          { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) },
+        )
+        if (!res.ok) return
+        const d = await res.json() as { parental_warning?: boolean; tracks_count?: number; version?: string | null; title?: string }
+        out.set(id, {
+          parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
+          durationSec: undefined,
+          album: d.title,
+          version: d.version ?? null,
+        })
+      } catch { /* absent entry = unjudged */ }
+    }))
+    return out
+  }
+
   async function qobuzTrackMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
     const out = new Map<string, QobuzTrackMeta>()
     const creds = await readQobuzCreds()
@@ -480,14 +503,15 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // every candidate is clean the download fails LOUDLY — a censored
       // file must never silently satisfy a request for the record.
       let ranked2 = ranked
-      if (ranked.length && mediaType === 'track') {
-        const meta = await qobuzTrackMeta(ranked.slice(0, 6).map((c) => c.id))
+      if (ranked.length) {
+        const fetchMeta = mediaType === 'album' ? qobuzAlbumMeta : qobuzTrackMeta
+        const meta = await fetchMeta(ranked.slice(0, 6).map((c) => c.id))
         if (opts?.explicitSource) {
           const gate = applyExplicitGate(ranked.slice(0, 6), meta, true)
           if (gate.kept.length === 0 && gate.refusedClean.length > 0) {
             return {
               ok: false,
-              error: 'Qobuz only carries the CLEAN edition of this track (' + gate.refusedClean.length + ' candidate' + (gate.refusedClean.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
+              error: 'Qobuz only carries the CLEAN edition of this ' + (mediaType === 'album' ? 'album' : 'track') + ' (' + gate.refusedClean.length + ' candidate' + (gate.refusedClean.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
             }
           }
           if (gate.refusedClean.length > 0) {
@@ -550,8 +574,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // equally"); the misses ride along for the final error message.
       qobuzMisses = misses
     }
-    if (ranked.length && !qobuzMisses) {
-      const qpick = ranked[0]
+    if (ranked2.length && !qobuzMisses) {
+      const qpick = ranked2[0]
       const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
       return { ...dl, matchDesc: qpick.desc }
     }
