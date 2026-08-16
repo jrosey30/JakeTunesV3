@@ -1230,6 +1230,12 @@ function AppInner() {
         } else if (progress.phase === 'cancelled') {
           a.setSync({ active: true, step: `Sync cancelled (${progress.current} copied)` })
           clearTimer = setTimeout(() => { a.setSync(null) }, 3000)
+        } else if (progress.phase === 'error') {
+          a.setSync({
+            active: true,
+            step: progress.title ? `Sync failed — ${progress.title}` : 'Sync failed',
+          })
+          clearTimer = setTimeout(() => { a.setSync(null) }, 8000)
         }
       }).catch(() => {})
     })

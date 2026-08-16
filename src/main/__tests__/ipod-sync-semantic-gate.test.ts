@@ -31,6 +31,7 @@ test('Activity Sync is a dedicated engine; click-only origin is required', () =>
   assert.match(deviceView, /origin: 'activity-click'/)
   assert.match(deviceView, /origin: 'full-library-click'/)
   assert.doesNotMatch(app, /syncToIpod\(/)
+  assert.match(app, /progress.phase === 'error'/)
 })
 
 test('activity engine runs the independent firmware-semantic validator before TSA seal', () => {

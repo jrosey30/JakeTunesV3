@@ -5166,15 +5166,18 @@ async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlist
   }
   syncInFlight = true
   syncStartedAt = Date.now()
-  // Sync journal (2026-07-20): a marker that only a COMPLETED sync clears.
-  // The renderer crash left an iPod with fresh files and a stale iTunesDB
-  // (2,514 ghost entries, every song auto-skipping) and NOBODY knew until
-  // Jake hit play. If the app boots and this marker is still here, the
-  // last sync died partway — surface it loudly.
-  await writeSyncJournal('copy')
+  // Do not stamp the copy journal until a writer actually mutates the
+  // card. A preflight refuse used to leave phase:copy on disk, and the
+  // LCD / iPod page kept showing a failed sync that never wrote a byte.
   try {
     const result = await runSyncToIpod(tracks, playlists, convertOptions, syncOpts)
     if ((result as { ok?: boolean })?.ok) await writeSyncJournal(null)
+    else {
+      const err = String((result as { error?: string }).error || 'Sync failed')
+      mainWindow?.webContents.send('sync-progress', {
+        phase: 'error', current: 0, total: 0, title: err,
+      })
+    }
     return result
   } finally {
     syncInFlight = false
@@ -5565,6 +5568,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     }
   }
 
+  await writeSyncJournal('copy')
   let copied = 0
   let copyErrors = 0
   const pathSep = IS_WINDOWS ? '\\' : '/'

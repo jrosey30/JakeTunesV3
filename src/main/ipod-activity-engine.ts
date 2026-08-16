@@ -272,6 +272,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     console.warn('activity-sync: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
   }
 
+  await host.writeJournal('copy')
   // ── 2. Wipe until two consecutive empty listings ──
   host.sendProgress({ phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
   let wiped = 0
