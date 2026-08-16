@@ -105,3 +105,31 @@ describe('findFreeImportedId', () => {
     assert.equal(await findFreeImportedId(9), 9, 'a free slot is returned untouched')
   })
 })
+
+describe('duration tolerance — the Slippery rule', () => {
+  test('the same recording off two masters, 304.813s vs 304.041s, IS a dupe', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-import-'))
+    const musicDir = join(dir, 'iPod_Control/Music')
+    mkdirSync(join(musicDir, 'F01'), { recursive: true })
+    writeFileSync(join(musicDir, 'F01', 'imported_1.m4a'), 'bytes')
+    const lib = join(dir, 'library.json')
+    writeFileSync(lib, JSON.stringify({ tracks: [
+      { title: 'Slippery (feat. Gucci Mane)', artist: 'Migos', duration: 304813, path: ':iPod_Control:Music:F01:imported_1.m4a' },
+    ] }))
+    clearSessionImportedFingerprints()
+    initImportPipeline(minimalDeps({ musicDir: () => musicDir, libraryPath: () => lib }))
+    const set = await loadDupeFingerprintsFromLibrary()
+    // Qobuz's edition: feat clause absent, 304041ms → rounds to 304.
+    assert.ok(set.has(fingerprintTrack({ title: 'Slippery', artist: 'Migos', duration: 304041 })!),
+      'a one-second rounding boundary must not defeat dedupe')
+  })
+
+  test('a genuinely different edit, seconds apart, is NOT claimed', async () => {
+    clearSessionImportedFingerprints()
+    addSessionImportedFingerprint('song|artist|300')
+    initImportPipeline(minimalDeps({ libraryPath: () => '/nonexistent/library.json' }))
+    const set = await loadDupeFingerprintsFromLibrary()
+    assert.ok(!set.has('song|artist|305'), 'five seconds apart = a different edit, imports freely')
+    clearSessionImportedFingerprints()
+  })
+})

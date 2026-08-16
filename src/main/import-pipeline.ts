@@ -120,7 +120,7 @@ export function clearSessionImportedFingerprints(): void {
 
 /** The drag-drop / import-track IPC paths record their successes here. */
 export function addSessionImportedFingerprint(fp: string): void {
-  sessionImportedFingerprints.add(fp)
+  for (const k of dupeKeyVariants(fp)) sessionImportedFingerprints.add(k)
 }
 
 export function fingerprintTrack(t: { title?: unknown; artist?: unknown; duration?: unknown }): string | null {
@@ -129,6 +129,25 @@ export function fingerprintTrack(t: { title?: unknown; artist?: unknown; duratio
   const dur    = Math.round(Number(t.duration || 0) / 1000)
   if (!title || !artist || dur <= 0) return null
   return `${title}|${artist}|${dur}`
+}
+
+/**
+ * The three keys a track claims: its rounded duration and both neighbours.
+ *
+ * The Slippery case (2026-08-16, found by the album-gate verification):
+ * the library's "Slippery (feat. Gucci Mane)" runs 304.813s, Qobuz's
+ * "Slippery" runs 304.041s — the same recording off two edition masters,
+ * rounding to 305 and 304. Exact-second equality called them different
+ * songs and imported the second copy; ±1s of tolerance on the CLAIM side
+ * (inserts, not lookups) closes the boundary without loosening identity:
+ * a genuinely different edit is seconds apart, not milliseconds.
+ */
+function dupeKeyVariants(fp: string): string[] {
+  const bar = fp.lastIndexOf('|')
+  const secs = Number(fp.slice(bar + 1))
+  if (!Number.isFinite(secs)) return [fp]
+  const base = fp.slice(0, bar + 1)
+  return [`${base}${secs - 1}`, fp, `${base}${secs + 1}`]
 }
 
 export async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
@@ -168,7 +187,7 @@ export async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
         if (!present) continue
       }
       const fp = fingerprintTrack({ title: t.title, artist: t.artist, duration: t.duration })
-      if (fp) set.add(fp)
+      if (fp) for (const k of dupeKeyVariants(fp)) set.add(k)
     }
   } catch { /* new library, no dupes possible */ }
   return set
@@ -358,7 +377,7 @@ export async function importOneFile(
     // the same batch (or a back-to-back drop) gets caught even before
     // library.json is rewritten on disk.
     if (ft && fa && fd > 0) {
-      dupeFingerprints.add(`${ft}|${fa}|${fd}`)
+      for (const k of dupeKeyVariants(`${ft}|${fa}|${fd}`)) dupeFingerprints.add(k)
     }
 
     // 4.4.12: extract embedded album art if the source has it. Best-effort;
@@ -440,7 +459,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
       // BPM/key analysis starts the moment the song lands — same as drag-drop.
       D().enqueueAnalysis(r.track)
       const fp = fingerprintTrack({ title: r.track.title, artist: r.track.artist, duration: r.track.duration })
-      if (fp) sessionImportedFingerprints.add(fp)
+      if (fp) for (const k of dupeKeyVariants(fp)) sessionImportedFingerprints.add(k)
       done += 1
       id = (Number(r.track.id) || id) + 1
       if (chosenFmt === 'alac') {
