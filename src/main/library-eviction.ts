@@ -34,6 +34,12 @@
  *     evictions.log BEFORE the trash call. If anything ever looks wrong,
  *     the receipt exists.
  *
+ * iPod sync is a separate consumer of the same files. After eviction the
+ * Mac path is empty; Activity Sync must pull those bytes from homemini
+ * over HTTP (ipod-sync-materialize.ts) before copyFile onto the Mini.
+ * Sweep skips / aborts while an iPod sync is in flight so it cannot
+ * trash the copy source mid-run.
+ *
  * Electron-free: every side effect arrives injected, so node --test can
  * exercise the decision logic against fakes.
  */
@@ -65,6 +71,8 @@ export interface EvictionDeps {
   /** Append one line to the eviction journal. */
   journal: (line: string) => Promise<void>
   now: () => number
+  /** Stop mid-batch if iPod sync started — do not trash the copy source. */
+  shouldAbort?: () => boolean
 }
 
 export interface SweepResult {
@@ -126,6 +134,7 @@ export async function sweepOnce(deps: EvictionDeps): Promise<SweepResult> {
   }
 
   for (const c of eligible) {
+    if (deps.shouldAbort?.()) break
     try {
       const theirs = remote.get(c.rel)
       if (!theirs) { r.notOnHomemini++; continue }

@@ -97,3 +97,16 @@ test('the iTunesDB is built locally and proven on the CF across two remounts', (
   assert.doesNotMatch(engine, /ensureContiguousDb\(ipodDb/)
   assert.match(engine, /Not writing a catalog/)
 })
+
+test('evicted Mac copies are pulled from homemini before wipe — every library song is syncable', () => {
+  const ipc = readFileSync(join(mainDir, 'workout-sync-ipc.ts'), 'utf-8')
+  const payload = readFileSync(join(mainDir, '../renderer/utils/workoutIpodSync.ts'), 'utf-8')
+  const boardable = readFileSync(join(mainDir, 'activity-boardable.ts'), 'utf-8')
+  const materialize = readFileSync(join(mainDir, 'ipod-sync-materialize.ts'), 'utf-8')
+  assert.match(engine, /materializeTrack/)
+  assert.match(engine, /formatHomeminiPullRefuse/)
+  assert.match(boardable, /toPull/)
+  assert.match(materialize, /never SMB/)
+  assert.doesNotMatch(ipc, /filterActivityBoardable/)
+  assert.match(payload, /path: t.path/)
+})

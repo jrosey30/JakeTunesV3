@@ -21,7 +21,7 @@
 
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFile, mkdir, readFile, stat, unlink } from 'fs/promises'
+import { copyFile, mkdir, readFile, stat, lstat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { findIpodMount, isIpodMount, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume } from './platform.ts'
 import {
@@ -60,6 +60,11 @@ import {
 } from './ipod-sync-card.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
+import {
+  classifyActivitySyncTracks,
+  formatHomeminiPullRefuse,
+  formatSyncSetFileRefuse,
+} from './activity-boardable.ts'
 
 export interface ActivitySyncHost {
   pythonCmd: string
@@ -93,6 +98,9 @@ export interface ActivitySyncHost {
   }) => Promise<void>
   getDetectedMount: () => string | null
   setDetectedMount: (mount: string | null) => void
+  /** Pull homemini bytes onto this Mac when eviction (or a symlink) left
+   *  nothing copyFile can send to the Mini. HTTP only — never SMB. */
+  materializeTrack: (colonPath: string, trackId: number) => Promise<{ ok: boolean; error?: string; pulled?: boolean }>
 }
 
 export interface ActivitySyncInput {
@@ -169,44 +177,59 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const IPOD_MOUNT = mount
   const LOCAL_MOUNT = host.musicDir.replace(/[/\\]iPod_Control[/\\]Music$/, '')
 
-  // ── 1. Preflight: names, local files, not streamed, dest collisions ──
-  const blanks: string[] = []
-  const fileless: string[] = []
-  const streamed: string[] = []
-  for (const t of tracks) {
-    const title = String(t.title || '').trim()
-    const artist = String(t.artist || '').trim()
-    if (!title || !artist) {
-      blanks.push(`id ${t.id}: title=${JSON.stringify(title)} artist=${JSON.stringify(artist)}`)
-      continue
-    }
-    const colon = String(t.path || '')
-    if (!colon) {
-      fileless.push(`${title} — ${artist} (no path)`)
-      continue
-    }
-    const abs = join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
-    const ok = await stat(abs).then((s) => s.isFile()).catch(() => false)
-    if (!ok) fileless.push(`${title} — ${artist} (no local file: ${colon})`)
-    else if (await host.isStreamedTrackFile(abs)) streamed.push(`${title} — ${artist}`)
-  }
+  // ── 1. Preflight: names, then homemini-pull anything eviction removed ──
+  const { blanks, fileless, toPull } = await classifyActivitySyncTracks(tracks, {
+    localMount: LOCAL_MOUNT,
+    pathSep,
+    lstat,
+  })
   if (blanks.length || fileless.length) {
-    const parts: string[] = []
-    if (blanks.length) parts.push(`${blanks.length} with blank title/artist`)
-    if (fileless.length) parts.push(`${fileless.length} with no playable file`)
+    console.error(`activity-sync: REFUSING — ${target}-song set has unplayable tracks`)
+    for (const b of [...blanks, ...fileless].slice(0, 20)) console.error('   •', b)
+    await host.writeJournal(null)
     return fail({
       copied: 0,
-      error: `Activity sync refused — ${parts.join(' and ')} in the ${target}-song set. Nothing was wiped.`,
+      error: formatSyncSetFileRefuse({
+        lead: 'Activity sync refused',
+        blanks,
+        fileless,
+        total: target,
+        nothingVerb: 'wiped',
+      }),
       target,
     })
   }
-  if (streamed.length > 0) {
-    return fail({
-      copied: 0,
-      error: `Activity sync refused — ${streamed.length} of ${target} songs are streamed off the NAS (not downloaded locally). Pin/download them first. Nothing was wiped.`,
-      streamed: streamed.length,
-      target,
-    })
+  if (toPull.length > 0) {
+    console.log(`activity-sync: ${toPull.length}/${target} not on this Mac — pulling from homemini before wipe`)
+    const pullFail: string[] = []
+    for (let i = 0; i < toPull.length; i++) {
+      if (host.isCancelled()) {
+        await host.writeJournal(null)
+        return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user', target })
+      }
+      const p = toPull[i]
+      host.sendProgress({
+        phase: 'preflight',
+        current: i + 1,
+        total: toPull.length,
+        title: `Pulling from homemini: ${p.label}`,
+      })
+      const r = await host.materializeTrack(p.path, p.id)
+      if (!r.ok) {
+        pullFail.push(`${p.label} (${r.error || 'homemini miss'})`)
+        console.error(`activity-sync: homemini pull failed — ${p.label}: ${r.error}`)
+      } else if (r.pulled) {
+        console.log(`activity-sync: pulled ${p.label} from homemini`)
+      }
+    }
+    if (pullFail.length > 0) {
+      await host.writeJournal(null)
+      return fail({
+        copied: 0,
+        error: formatHomeminiPullRefuse(pullFail, target),
+        target,
+      })
+    }
   }
 
   const tsaBoarded: TsaPassenger[] = tracks.map((t) => tsaBoardPassenger({

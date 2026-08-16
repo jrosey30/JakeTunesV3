@@ -126,4 +126,21 @@ describe('the eviction gates', () => {
     assert.equal(r.errors, 1)
     assert.equal(trashed.length, 0)
   })
+
+  test('aborts mid-batch when iPod sync starts — copy source stays', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-evict-'))
+    const files: EvictionCandidate[] = []
+    const remote: Record<string, string> = {}
+    for (let i = 0; i < 8; i++) {
+      const f = makeFile(dir, `F07/t${i}.m4a`, `b${i}`)
+      files.push(f)
+      remote[f.rel] = md5(`b${i}`)
+    }
+    let calls = 0
+    const { deps, trashed } = harness(files, { remote })
+    deps.shouldAbort = () => { calls++; return calls > 1 }
+    const r = await sweepOnce(deps)
+    assert.ok(trashed.length < 8, `expected abort, trashed=${trashed.length}`)
+    assert.ok(r.evicted < 8)
+  })
 })

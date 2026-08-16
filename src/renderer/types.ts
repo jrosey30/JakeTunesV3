@@ -848,6 +848,7 @@ declare global {
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
         playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
+        path?: string; audioMissing?: boolean
       }>, opts?: { target?: number; brief?: {
         id?: string; profileName?: string; activity: string; intensity: string; setting: string
         place: string; social: string; note?: string

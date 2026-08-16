@@ -192,6 +192,12 @@ import { ensureContiguousDb } from './ipod-db-contiguity'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from './ipod-sync-origin'
 import { runActivitySync } from './ipod-activity-engine'
 import {
+  classifyActivitySyncTracks,
+  formatHomeminiPullRefuse,
+  formatSyncSetFileRefuse,
+} from './activity-boardable'
+import { materializeTrackFromHomemini } from './ipod-sync-materialize'
+import {
   confirmWriteOnCard,
   flushCardCaches,
   remountVerifyEntries,
@@ -4263,25 +4269,40 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
-// Pull a streamed track's real bytes down from homemini into a local file (the
-// "Download"/pin action). Additive — never destructive. Atomic.
+// Pull homemini bytes onto this Mac when eviction (or a NAS symlink) left
+// nothing copyFile can send to the Mini. HTTP only — never SMB.
+async function materializeLibraryTrack(colonPath: string, trackId: number | string): Promise<{ ok: boolean; error?: string; pulled?: boolean }> {
+  const localMount = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
+  const r = await materializeTrackFromHomemini({
+    colonPath,
+    trackId,
+    localMount,
+    pathSep: IS_WINDOWS ? '\\' : '/',
+    homeminiAudioBase: HOMEMINI_AUDIO_BASE,
+    lstat,
+    mkdir,
+    writeFile,
+    rename,
+    unlink,
+    fetchAudio: async (url) => {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+      return { ok: res.ok, status: res.status, buffer: Buffer.from(await res.arrayBuffer()) }
+    },
+  })
+  if (!r.ok) return { ok: false, error: r.error }
+  return { ok: true, pulled: r.pulled }
+}
+
+// Pull a streamed/evicted track's real bytes down from homemini into a local
+// file (the "Download"/pin action, and iPod sync's copy source). Additive —
+// never destructive. Atomic. Works when the Mac file is gone (evicted), not
+// only when a symlink is still sitting in the F-dir.
 async function pinStreamedTrackFromHomemini(ipodPath: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const fp = trackFarmPath(ipodPath)
-    let st
-    try { st = await lstat(fp) } catch { return { ok: false, error: 'track file not found' } }
-    if (!st.isSymbolicLink()) return { ok: true }         // already a real local file
     const id = await trackIdForAbsPath(fp)
     if (id == null) return { ok: false, error: 'track id not found in library' }
-    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, { signal: AbortSignal.timeout(30000) })
-    if (!res.ok && res.status !== 206 && res.status !== 200) return { ok: false, error: `homemini ${res.status}` }
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length <= 0) return { ok: false, error: 'homemini returned no bytes' }
-    const tmp = fp + '.dl.tmp'
-    await unlink(tmp).catch(() => {})
-    await writeFile(tmp, buf)
-    await rename(tmp, fp)                                  // atomic: symlink → real file
-    return { ok: true }
+    return await materializeLibraryTrack(ipodPath, id)
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
@@ -5263,6 +5284,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         detectedIpodMount = m
         detectedIpodVolume = m ? volumeNameFromMount(m) : null
       },
+      materializeTrack: materializeLibraryTrack,
     }, { tracks, playlists, convertOptions })
   }
   if (syncOpts?.wipeFirst) {
@@ -5308,55 +5330,54 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   {
     const blanks: string[] = []
     const fileless: string[] = []
-    for (const t of tracks) {
-      const title = String(t.title || '').trim()
-      const artist = String(t.artist || '').trim()
-      if (!title || !artist) { blanks.push(`id ${t.id}: title=${JSON.stringify(title)} artist=${JSON.stringify(artist)}`); continue }
-      const colon = String(t.path || '')
-      if (colon) {
-        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
-        const ok = await stat(abs).then((s) => s.isFile()).catch(() => false)
-        if (!ok) fileless.push(`${title} — ${artist} (no local file: ${colon})`)
-      } else {
-        fileless.push(`${title} — ${artist} (no path)`)
-      }
+    const toPull: Array<{ id: number; path: string; label: string }> = []
+    {
+      const classified = await classifyActivitySyncTracks(tracks, {
+        localMount: LOCAL_MOUNT,
+        pathSep: IS_WINDOWS ? '\\' : '/',
+        lstat,
+      })
+      blanks.push(...classified.blanks)
+      fileless.push(...classified.fileless)
+      toPull.push(...classified.toPull)
     }
     if (blanks.length || fileless.length) {
-      const parts: string[] = []
-      if (blanks.length) parts.push(`${blanks.length} with blank title/artist`)
-      if (fileless.length) parts.push(`${fileless.length} with no playable file`)
-      console.error(`sync-to-ipod: REFUSING — ${tracks.length}-song set has bad tracks: ${parts.join(', ')}`)
+      const error = formatSyncSetFileRefuse({
+        lead: 'Sync refused',
+        blanks,
+        fileless,
+        total: tracks.length,
+        nothingVerb: 'sent',
+      })
+      console.error(`sync-to-ipod: REFUSING — ${tracks.length}-song set has bad tracks`)
       for (const b of [...blanks, ...fileless].slice(0, 20)) console.error('   •', b)
+      await writeSyncJournal(null)
       return {
         ok: false,
         copied: 0,
-        error: `Sync refused — ${parts.join(' and ')} in the ${tracks.length}-song set. Nothing was sent. These have to be fixed (or dropped) before this set can sync cleanly.`,
+        error,
       }
     }
-
-    // Activity wipe+rebuild cannot ship streamed (NAS symlink) tracks — the
-    // copy loop silently skips them, then remount-verify drops them from the
-    // catalog, and you land short (e.g. 482/500) with no useful reason.
-    // Refuse up front so the set is rebuilt/pinned before anything is wiped.
-    if (syncOpts?.wipeFirst) {
-      const streamed: string[] = []
-      for (const t of tracks) {
-        const colon = String(t.path || '')
-        if (!colon) continue
-        const abs = join(LOCAL_MOUNT, colon.replace(/:/g, IS_WINDOWS ? '\\' : '/'))
-        if (await isStreamedTrackFile(abs)) {
-          streamed.push(`${String(t.title || '')} — ${String(t.artist || '')}`)
+    if (toPull.length > 0) {
+      console.log(`sync-to-ipod: ${toPull.length}/${tracks.length} not on this Mac — pulling from homemini`)
+      const pullFail: string[] = []
+      for (const p of toPull) {
+        if (syncCancelRequested) {
+          await writeSyncJournal(null)
+          return { ok: false, copied: 0, cancelled: true, error: 'Sync cancelled by user' }
+        }
+        const r = await materializeLibraryTrack(p.path, p.id)
+        if (!r.ok) {
+          pullFail.push(`${p.label} (${r.error || 'homemini miss'})`)
+          console.error(`sync-to-ipod: homemini pull failed — ${p.label}: ${r.error}`)
         }
       }
-      if (streamed.length > 0) {
-        console.error(`sync-to-ipod: REFUSING activity set — ${streamed.length}/${tracks.length} are streamed (not downloaded locally)`)
-        for (const s of streamed.slice(0, 20)) console.error('   •', s)
+      if (pullFail.length > 0) {
+        await writeSyncJournal(null)
         return {
           ok: false,
           copied: 0,
-          error: `Activity sync refused — ${streamed.length} of ${tracks.length} songs are streamed off the NAS (not downloaded locally). Pin/download them first, or rebuild the set from local files only. Nothing was wiped.`,
-          streamed: streamed.length,
-          target: tracks.length,
+          error: formatHomeminiPullRefuse(pullFail, tracks.length),
         }
       }
     }
@@ -15576,6 +15597,14 @@ app.whenReady().then(async () => {
   // from the NAS after our push), the local copy moves to Trash. Gates,
   // tests and the full design rationale live in library-eviction.ts.
   const runEvictionSweep = async (): Promise<SweepResult> => {
+    const empty: SweepResult = {
+      examined: 0, tooYoung: 0, notInLibrary: 0, notOnHomemini: 0,
+      hashMismatch: 0, evicted: 0, evictedBytes: 0, errors: 0,
+    }
+    if (syncInFlight) {
+      console.log('[evict] skipped — iPod sync in flight (copy source must stay)')
+      return empty
+    }
     const { readdir: rd, stat: st, appendFile: af } = await import('fs/promises')
     const result = await sweepOnce({
       listLocalAudio: async () => {
@@ -15644,6 +15673,7 @@ app.whenReady().then(async () => {
         await append(join(app.getPath('userData'), 'evictions.log'), line + '\n', 'utf-8')
       },
       now: () => Date.now(),
+      shouldAbort: () => syncInFlight,
     })
     if (result.evicted > 0 || result.errors > 0) {
       console.log(`[evict] examined=${result.examined} evicted=${result.evicted} (${(result.evictedBytes / 1e6).toFixed(1)}MB) young=${result.tooYoung} noLib=${result.notInLibrary} noRemote=${result.notOnHomemini} mismatch=${result.hashMismatch} errors=${result.errors}`)
