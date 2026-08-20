@@ -1,8 +1,51 @@
 # Gated proposal — stop import-time mood embeds from clobbering enriched vectors
 
-Status: PROPOSED 2026-08-18 by the nightly brain exercise. App/trainer code
-change → Jake's call. The nightly repair (REPORT-20260818) fixed the data;
-this fixes the mechanism so it stops recurring.
+Status: **ESCALATED 2026-08-20 — the clobber RECURRED on the first import day
+after the repair, and the mechanism is now fully identified** (see the
+2026-08-20 section below). Originally PROPOSED 2026-08-18. App/trainer code
+change → Jake's call. The nightly repairs (REPORT-20260818, REPORT-20260820)
+fix the data; this fixes the mechanism so it stops recurring.
+
+## ESCALATION (2026-08-20): the real writer is autoBackupStateToNas
+
+The 08-18 repair was reverted within ~40 hours, on the first day with an
+import. Forensics (byte-level, REPORT-20260820):
+- The NAS mood-index reverted to **exactly** the pre-08-18-repair map (all 72
+  pruned orphans back byte-identical; 491/514 repaired vectors back to their
+  corrupted bytes) **plus exactly the 2 tracks imported 08-19 19:02** (Bob
+  Sinclar 10609/10610). Set algebra: clobbered ∖ pre-repair = {10609, 10610},
+  pre-repair ∖ clobbered = ∅. Only a whole-map replay from a stale copy can
+  produce that — import-time embeds alone cannot recreate deleted tracks'
+  vectors.
+- The writer is **`autoBackupStateToNas` (src/main/index.ts:3538)** — the
+  silent boot+timer mirror that pushes ANY local-newer STATE_FILE_NAMES entry
+  wholesale. The import bumped the local mood-index.bin mtime (persistMoodIndex
+  after the import-time embed), local became "newer" than the NAS copy, and the
+  auto-backup replayed the entire stale-lineage local file over the repaired
+  NAS one. No .reconcile-bak by design (the manual reconcile path was ruled
+  out: newest .reconcile-bak is 2026-06-23). The `.tmp` litter naming on the
+  NAS (`mood-index.bin.<pid>.<ts>.<rand>.tmp`) matches atomicPublishToNas,
+  confirming this path has been writing brain files to the NAS all month.
+- Structural flaw: mood-index.bin (and embeddings.bin) have TWO writers with a
+  **mtime-wins-whole-file** policy. The trainer enriches the NAS copy nightly;
+  the app evolves its LOCAL copy at import; local-primary means the app's copy
+  never receives the trainer's enrichment, so every auto-backup push after an
+  import replays a progressively staler brain over the enriched one.
+
+## Additional/updated fixes (beyond fixes 1–3 below)
+4. **Exclude `mood-index.bin` from STATE_FILE_NAMES auto-backup/reconcile**
+   (or make the brain files pull-only NAS→local): the trainer + nightly
+   exercise own the NAS mood-index; the app's local copy is a read cache that
+   must never overwrite it wholesale. This is the single smallest change that
+   ends the recurrence. Same reasoning arguably applies to embeddings.bin
+   (identity metrics show no damage yet, but the same replay path exists).
+5. **Repair the app machine's LOCAL mood-index.bin** (its lineage predates
+   08-18 and is the resurrection reservoir) — or simply delete it and let the
+   app re-pull/rebuild, whichever matches the intended cache semantics.
+
+Until one of these lands, every import day reverts the NAS repair and the
+nightly exercise will keep re-repairing (recipe: repair_20260820.py →
+prove_20260820.py → apply_20260820.py, fidelity-gated, backup + atomic).
 
 ## What happened (measured, 2026-08-18 nightly)
 Tracks imported 08-09..08-16 ended up with mood vectors equal to
