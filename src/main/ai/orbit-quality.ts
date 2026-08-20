@@ -13,19 +13,14 @@
  * ⚠️ TWIN: JakeTunesMobile daily-mix orbit / because-you-played builders
  *    (`backend/src/routes/mixes.ts`). Apply this floor AT GENERATION so
  *    the phone never ships a 25-track tape padded with false neighbors.
- *    Desktop re-applies it on hydration as a safety net.
+ *    Desktop re-applies it on hydration as a safety net — that does NOT
+ *    replace the Mobile twin. Contract: `src/common/mix-brain-twin.ts`.
  */
 
 import { cosine } from '../playlist-vibes.ts'
+import { ORBIT_ABS_FLOOR, ORBIT_REL_MARGIN } from '../../common/mix-brain-twin.ts'
 
-/** Below this raw cosine to the seed, the neighbor is not in orbit. */
-export const ORBIT_ABS_FLOOR = 0.58
-
-/**
- * Drop trails that sit this far below the best neighbor in the set.
- * Keeps a tight cloud around the seed instead of a long mediocre tail.
- */
-export const ORBIT_REL_MARGIN = 0.12
+export { ORBIT_ABS_FLOOR, ORBIT_REL_MARGIN }
 
 export interface OrbitSeedRef {
   /** 'title' = named song ("orbit of 'Ginga'"); 'artist' = Because You Played X */

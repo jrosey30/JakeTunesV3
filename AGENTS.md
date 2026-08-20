@@ -6,6 +6,11 @@ Project-specific rules live in `CLAUDE.md` (Electron renderer API bans, React ho
 
 JakeTunes is a **single Electron + React + TypeScript desktop app** (an iTunes replica) with Python helper scripts in `core/`. There is no server/backend to run — "running the app" means launching the Electron app in dev mode. Standard commands live in `README.md` and `package.json`; notes below are only the non-obvious cloud specifics.
 
+### Brain / daily mixes twin (JakeTunesMobile)
+- Daily mixes the phone shows are built by **JakeTunesMobile** on homemini (`http://homemini:3000/api/mixes`), not by this repo. Desktop only hydrates them (`get-mobile-mixes`).
+- **Desktop is source of truth** for mix-brain gates. Contract: `src/common/mix-brain-twin.ts`. Changing decade / orbit / RAG gate behavior here without twinning `JakeTunesMobile/backend/src/routes/mixes.ts` + `backend/src/util/rag.ts` is incomplete work — hydration safety nets are not a substitute.
+- This cloud environment often has **only** JakeTunesV3. If a task requires patching mix generation, add the private JakeTunesMobile repo to the environment (or start the agent against that repo) before claiming the twin is done.
+
 ### Running the app (dev)
 - The cloud VM has a headless X server on **`DISPLAY=:1`**. Launch with `export DISPLAY=:1 && npm run dev` (`electron-vite dev` — starts main + preload + renderer together; renderer dev server on `localhost:5173`, remote debug on `9222`). Use a long-lived tmux session; `npm run dev` is a watcher, not a one-shot.
 - **The app launches with zero API keys.** Playback and the full library UI work with no `.env`. AI features ("The Music Man" / Cynthia) require `ANTHROPIC_API_KEY`; voice + DJ Mode additionally require `ELEVENLABS_API_KEY`. Missing keys fail soft ("Cynthia is on break"), never crash. `DISCOGS_API_TOKEN`, `OPENWEATHER_API_KEY`, `LASTFM_API_KEY`, `EXA_API_KEY` are enrichment-only.

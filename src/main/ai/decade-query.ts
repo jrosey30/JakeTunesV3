@@ -12,6 +12,7 @@
  *    themed daily mixes ("1970s, Your Version") MUST apply the same
  *    hard year gate after retrieval — cosine alone is not enough.
  *    Keep the word-list + numeric parsing in lockstep with this file.
+ *    Contract: `src/common/mix-brain-twin.ts` (desktop is SoT).
  */
 
 export interface DecadeRange {
