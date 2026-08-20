@@ -4,7 +4,7 @@ import {
   MIX_BRAIN_TWIN,
   ORBIT_ABS_FLOOR,
   ORBIT_REL_MARGIN,
-} from '../common/mix-brain-twin.ts'
+} from '../../common/mix-brain-twin.ts'
 import {
   ORBIT_ABS_FLOOR as orbitFloorFromModule,
   ORBIT_REL_MARGIN as orbitMarginFromModule,
