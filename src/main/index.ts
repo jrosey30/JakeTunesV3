@@ -10980,6 +10980,11 @@ import {
   parseDecadeConstraint,
   yearInDecade,
 } from './ai/decade-query'
+import {
+  parseOrbitSeed,
+  resolveOrbitSeedIds,
+  filterOrbitNeighbors,
+} from './ai/orbit-quality'
 
 async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<number> {
   const validIds = new Set(tracks.map(t => t.id))
@@ -11511,20 +11516,64 @@ ipc.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: 
 // Track objects for playback. Any failure (backend down / off-tailnet) → ok:false
 // and the Home section quietly hides. See JakeTunesMobile backend/src/routes/mixes.ts.
 //
-// Decade hard-gate (desktop safety net): if a mix title/subtitle claims an
-// era ("1970s, Your Version") but the cached track list includes out-of-era
-// songs, strip them here using library year. Soft embedding retrieval on
-// homemini is what polluted the tape — this keeps desktop honest until the
-// Mobile twin lands the same gate at generation time. Prefer a shorter
-// accurate tape over Turnstile-on-a-70s-mixtape.
+// Desktop safety nets until Mobile twins land at generation time:
+//   1. Decade hard-gate — title/subtitle claims an era → strip out-of-year tracks.
+//   2. Orbit quality floor — "orbit of X" / "Because You Played Y" → re-score
+//      neighbors against the seed embedding and drop weak false matches
+//      (RHCP in a Robson Jorge orbit). Same lesson as playlist-vibes SOAD floor.
 const MOBILE_MIXES_BACKEND = 'http://homemini:3000'
+
+async function applyOrbitQualityFloor(
+  title: string,
+  subtitle: string,
+  trackIds: number[],
+): Promise<number[]> {
+  const seedRef = parseOrbitSeed(title, subtitle)
+  if (!seedRef || trackIds.length === 0) return trackIds
+  try {
+    const emb = await ragGetEmbeddingsMap()
+    if (emb.size === 0) return trackIds
+    const lib = (await libraryCache.get()) as {
+      tracks?: Array<{ id: number; title?: string; artist?: string; albumArtist?: string }>
+    }
+    const library = lib.tracks || []
+    const seedIds = resolveOrbitSeedIds(seedRef, library)
+    const seedVecs = seedIds.map((id) => emb.get(id)).filter((v): v is Float32Array => !!v)
+    if (seedVecs.length === 0) return trackIds
+    const candidates = trackIds
+      .map((id) => {
+        const vec = emb.get(id)
+        return vec ? { trackId: id, vec } : null
+      })
+      .filter((c): c is { trackId: number; vec: Float32Array } => !!c)
+    const kept = filterOrbitNeighbors(seedVecs, candidates, {
+      alwaysKeep: new Set(seedIds),
+    })
+    if (kept.length === 0) return trackIds // fail open — don't blank the card
+    if (kept.length < trackIds.length) {
+      console.warn(
+        `[mobile-mixes] orbit quality floor on "${title}": kept ${kept.length}/${trackIds.length} ` +
+          `(seed=${seedRef.kind}:${seedRef.query})`,
+      )
+    }
+    // Preserve original mix order among survivors (not re-rank by score) so
+    // the tape's sequencing intent survives; only the junk is removed.
+    const keepSet = new Set(kept.map((k) => k.trackId))
+    return trackIds.filter((id) => keepSet.has(id))
+  } catch (err) {
+    console.warn('[mobile-mixes] orbit floor skipped:', err instanceof Error ? err.message : err)
+    return trackIds
+  }
+}
+
 ipc.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
   try {
     const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, { signal: AbortSignal.timeout(20000) })
     if (!res.ok) return { ok: false, error: `backend ${res.status}` }
     const body = await res.json() as { date?: string; mixes?: Array<{ id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }> }
     const years = await ragTrackYearMap()
-    const mixes = (body.mixes || []).map(m => {
+    const mixes: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }> = []
+    for (const m of body.mixes || []) {
       const title = String(m.title ?? 'Mix')
       const subtitle = String(m.subtitle ?? '')
       const decade = parseDecadeConstraint(`${title} ${subtitle}`)
@@ -11536,8 +11585,9 @@ ipc.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; m
           console.warn(`[mobile-mixes] decade hard-gate ${decade.label} on "${title}": kept ${trackIds.length}/${before} (stripped ${before - trackIds.length} out-of-era)`)
         }
       }
-      return { id: String(m.id ?? ''), title, subtitle, trackIds }
-    }).filter(m => m.trackIds.length > 0)
+      trackIds = await applyOrbitQualityFloor(title, subtitle, trackIds)
+      if (trackIds.length > 0) mixes.push({ id: String(m.id ?? ''), title, subtitle, trackIds })
+    }
     return { ok: true, date: body.date, mixes }
   } catch (e) {
     return { ok: false, error: safeIpcError(e, 'api-failed') }
