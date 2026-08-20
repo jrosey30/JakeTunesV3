@@ -513,40 +513,50 @@ export default function MusicManView() {
           </div>
         </div>
 
-        {/* The one piece of his old repertoire with no other home: BPM/key
-            analysis, which feeds DJ/vibe features. Compact strip, not a tab. */}
+        {/* BPM/key analysis footer — one primary action, one quiet secondary.
+            Feeds DJ/vibe features; stays a strip, not a tab. */}
         <div className="musicman-analysis-strip">
-          <span className="musicman-analysis-label">
-            Library analysis · {audioAnalysisCounts.analyzed.toLocaleString()} / {audioAnalysisCounts.total.toLocaleString()} tracks have BPM + key
-          </span>
+          <div className="musicman-analysis-copy">
+            <span className="musicman-analysis-kicker">Tempo &amp; key</span>
+            <span className="musicman-analysis-count">
+              <strong>{audioAnalysisCounts.analyzed.toLocaleString()}</strong>
+              <span className="musicman-analysis-sep">/</span>
+              {audioAnalysisCounts.total.toLocaleString()}
+              <span className="musicman-analysis-hint"> measured</span>
+            </span>
+          </div>
           {analysisRunning ? (
             <div className="musicman-analysis-controls">
-              <div className="musicman-org-bar-track" style={{ flex: 1, minWidth: 80 }}>
-                <div className="musicman-org-bar-fill" style={{ width: `${(audioAnalysisCounts.analyzed / Math.max(audioAnalysisCounts.total, 1)) * 100}%` }} />
-              </div>
-              <button className="musicman-org-action-btn" onClick={cancelAudioAnalysisBackfill}>Cancel</button>
               {analysisStatus && <span className="musicman-analysis-status">{analysisStatus}</span>}
+              <div className="musicman-org-bar-track musicman-analysis-bar">
+                <div
+                  className="musicman-org-bar-fill"
+                  style={{ width: `${(audioAnalysisCounts.analyzed / Math.max(audioAnalysisCounts.total, 1)) * 100}%` }}
+                />
+              </div>
+              <button type="button" className="musicman-analysis-btn-secondary" onClick={cancelAudioAnalysisBackfill}>
+                Cancel
+              </button>
             </div>
           ) : (
             <div className="musicman-analysis-controls">
+              {analysisStatus && <span className="musicman-analysis-status">{analysisStatus}</span>}
+              {audioAnalysisCounts.remaining > 0 ? (
+                <button type="button" className="musicman-org-action-btn" onClick={runAudioAnalysisBackfill}>
+                  Analyze {audioAnalysisCounts.remaining.toLocaleString()} remaining
+                </button>
+              ) : audioAnalysisCounts.total > 0 ? (
+                <span className="musicman-analysis-done">All measured</span>
+              ) : null}
               <button
-                className="musicman-org-action-btn"
-                onClick={runAudioAnalysisBackfill}
-                disabled={audioAnalysisCounts.remaining === 0}
-              >
-                {audioAnalysisCounts.remaining === 0
-                  ? 'All tracks analyzed'
-                  : `Analyze ${audioAnalysisCounts.remaining.toLocaleString()} remaining`}
-              </button>
-              <button
-                className="musicman-org-action-btn"
+                type="button"
+                className="musicman-analysis-btn-secondary"
                 onClick={() => setRemeasureConfirmOpen(true)}
                 disabled={audioAnalysisCounts.total === 0}
-                title="Re-run BPM/key analysis on every track — fixes half/double tempo errors from older analysis"
+                title="Re-run BPM/key on every track — corrects half/double tempo errors from older analysis"
               >
-                Re-measure tempos
+                Re-measure
               </button>
-              {analysisStatus && <span className="musicman-analysis-status">{analysisStatus}</span>}
             </div>
           )}
         </div>
