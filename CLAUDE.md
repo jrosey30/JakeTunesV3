@@ -109,10 +109,23 @@ grep -rn "function <name>\|const <name>\|^def <name>" src/ core/
 If a twin exists, fix it in the same commit. Shipping one side of a
 twin pair is the most expensive failure mode this codebase has seen.
 
+**JakeTunesMobile is a twin surface for the brain.** Desktop is the
+source of truth for mix / RAG / embedding behavior. Daily mixes,
+decade gates, orbit quality floors, and `embeddings.bin` load semantics
+MUST stay in lockstep with JakeTunesV3 — see
+`src/common/mix-brain-twin.ts`. Generating tapes on homemini from soft
+cosine alone while desktop hard-gates the same decision is a twin
+violation (2026-08: Turnstile on a 1970s tape; RHCP in a Ginga orbit).
+When you change a listed desktop file, the Mobile paths in that
+contract file are updated in the same change set (or the change is
+explicitly incomplete). Safety-net filtering on desktop hydration does
+not replace generation-time twinning on Mobile.
+
 **Twin functions must declare each other in code.** Any function with
-a twin in another language carries a `⚠️ TWIN: <path>` comment on both
-sides, naming the file and reason. The first thing the next editor
-sees is the link to the other implementation.
+a twin in another language **or repo** (Python ↔ TypeScript, or
+JakeTunesV3 ↔ JakeTunesMobile) carries a `⚠️ TWIN: <path>` comment on
+both sides, naming the file and reason. The first thing the next
+editor sees is the link to the other implementation.
 
 **Destructive operations may not gate on text comparison.** Deletion,
 overwriting, sync abort, or any other irreversible/blocking operation
