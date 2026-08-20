@@ -1497,6 +1497,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const compact = lib.tracks.map(t => ({
         id: t.id, title: t.title, artist: t.artist, album: t.album,
         genre: t.genre, year: t.year,
+        bpm: t.bpm ?? null,
+        camelotKey: t.camelotKey || '',
+        keyRoot: t.keyRoot || '',
+        keyMode: t.keyMode || '',
       }))
       const result = await window.electronAPI.musicmanDjSet(compact, djRecentIds.current)
 

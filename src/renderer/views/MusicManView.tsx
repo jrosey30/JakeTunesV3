@@ -315,7 +315,7 @@ export default function MusicManView() {
   useEffect(() => {
     if (!analysisRunning) return
     const unsubProgress = window.electronAPI.onAudioAnalysisProgress((payload) => {
-      const { remaining, trackId, audioAnalysisAt, bpm, keyRoot, keyMode, camelotKey } = payload
+      const { remaining, trackId, audioAnalysisAt, bpm, keyRoot, keyMode, camelotKey, keyConfidence } = payload
       if (typeof trackId === 'number' && typeof audioAnalysisAt === 'number') {
         const updates: { id: number; field: string; value: string | boolean }[] = [
           { id: trackId, field: 'audioAnalysisAt', value: String(audioAnalysisAt) },
@@ -324,6 +324,7 @@ export default function MusicManView() {
         if (keyRoot) updates.push({ id: trackId, field: 'keyRoot', value: keyRoot })
         if (keyMode) updates.push({ id: trackId, field: 'keyMode', value: keyMode })
         if (camelotKey) updates.push({ id: trackId, field: 'camelotKey', value: camelotKey })
+        if (typeof keyConfidence === 'number') updates.push({ id: trackId, field: 'keyConfidence', value: String(keyConfidence) })
         dispatch({ type: 'UPDATE_TRACKS', updates })
       }
       if (remaining === 0) {
