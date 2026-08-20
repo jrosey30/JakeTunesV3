@@ -70,7 +70,7 @@ const electronAPI = {
     miniId?: boolean,
   ): Promise<{ ok: boolean; text: string; error?: string }> =>
     ipcRenderer.invoke('musicman-radio', track, nextTrack, opener, forceAnnouncer, callerSegment, djHandsSegment, callerId, archetypeId, slot, hourCounter, miniId),
-  musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]): Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }> =>
+  musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; bpm?: number | null; camelotKey?: string; keyRoot?: string; keyMode?: string }[], recentIds: number[]): Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-dj-set', tracks, recentIds),
   // 4.5: playlist track payload extended with playCount/rating/
   // lastPlayedAt/dateAdded so the Music Man can weight picks by your
@@ -314,6 +314,7 @@ const electronAPI = {
     keyRoot?: string | null
     keyMode?: 'major' | 'minor' | '' | null
     camelotKey?: string | null
+    keyConfidence?: number | null
     ok?: boolean
   }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, p: {
@@ -324,6 +325,7 @@ const electronAPI = {
       keyRoot?: string | null
       keyMode?: 'major' | 'minor' | '' | null
       camelotKey?: string | null
+      keyConfidence?: number | null
       ok?: boolean
     }) => callback(p)
     ipcRenderer.on('audio-analysis:progress', handler)

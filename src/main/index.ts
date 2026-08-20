@@ -858,10 +858,16 @@ async function audioAnalysisWorker(): Promise<void> {
             keyRoot: dispatch.keyRoot,
             keyMode: dispatch.keyMode,
             camelotKey: dispatch.camelotKey,
+            keyConfidence: dispatch.keyConfidence,
             ok: dispatch.ok,
           } : {}),
         })
       })
+      // Push measured BPM/key into the brain NOW — don't wait for nightly
+      // teb catch-up. Import auto-index often embeds before analysis finishes,
+      // so without this the vectors lack tempo until the next trainer run.
+      const analyzed = dispatches.filter((d): d is AudioAnalysisDispatch => !!d && d.ok && typeof d.bpm === 'number' && d.bpm > 0)
+      if (analyzed.length) void reembedTracksAfterAnalysis(analyzed)
     }
   } finally {
     audioAnalysisRunning = false
@@ -8976,7 +8982,7 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
 
 
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
-ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
+ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; bpm?: number | null; camelotKey?: string; keyRoot?: string; keyMode?: string }[], recentIds: number[]) => {
   // 4.5.0-88 — RAG candidate pool for DJ-set. No user mood string
   // here (the IPC just says "pick a set"), so seed with a generic
   // danceable-vibe query to bias retrieval toward party-flow tracks
@@ -9003,13 +9009,20 @@ ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string
       }
     }
   }
-  const trackList = candidateTracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
+  // Include measured BPM + Camelot so Stephen can actually match tempo/key
+  // instead of guessing from genre/year (Jake 2026-08: brain wasn't utilizing
+  // correct analysis). '?' when unanalyzed — never fabricate.
+  const trackList = candidateTracks.map(t => {
+    const bpm = typeof t.bpm === 'number' && t.bpm > 0 ? String(Math.round(t.bpm)) : '?'
+    const cam = (t.camelotKey || '').trim() || '?'
+    return `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}|bpm=${bpm}|camelot=${cam}`
+  }).join('\n')
   const recentStr = recentIds.length > 0 ? `\nRecently played track IDs (AVOID these): ${recentIds.join(', ')}` : ''
 
   // 4.4.0: DJ Mode is now Stephen Hands' lane, not Music Man's. Stephen
   // is the in-house DJ — party-first, beats-forward, brief. He runs the
   // continuous AI-DJ flow that DJ Mode triggers between tracks.
-  const djSetInstructions = `You are DJ Stephen Hands running a continuous DJ set from inside the listener's library. Pick 6-10 songs that hang together AS A SET. The criteria: do they MOVE A ROOM. BPM compatibility, key compatibility (Camelot when possible), energy arc, sample/genre bridges between tracks.
+  const djSetInstructions = `You are DJ Stephen Hands running a continuous DJ set from inside the listener's library. Pick 6-10 songs that hang together AS A SET. The criteria: do they MOVE A ROOM. Use the bpm= and camelot= columns on each row — match tempos within ~6 BPM when possible, prefer Camelot neighbors (±1 number or relative major/minor), build an energy arc. Ignore '?' values (unanalyzed).
 
 Return ONLY a JSON object (no markdown, no code fences):
 {"intro":"YOUR spoken DJ intro in Stephen Hands' voice — 1-2 sentences MAX. Hyped, brief, party-first. NOT a Music Man intro — no historian-style framing, no genealogy talk. Sound like a DJ in a booth at 1AM. Examples of the right length: 'Stephen Hands. Pulled up a set that runs hot — disco into house into something nasty. Hands up.' OR 'Yo. Stephen. Built this around BPM matches and one Patrick Adams sample. Lock in.'","trackIds":[array of track ID numbers in play order],"theme":"short theme label in Stephen's voice — 'After Midnight', 'Disco / Boogie / House', 'Drum Programming Mt. Rushmore', etc."}
@@ -9019,6 +9032,7 @@ Rules:
 - Do NOT pick any recently played tracks${recentStr ? ' (see list below)' : ''}
 - HARD ARTIST RULE: each artist appears AT MOST ONCE in the set. Aim for all distinct artists.
 - Order matters — build a journey, but a DANCE FLOOR journey, not a Music Man lecture journey
+- Prefer tracks with real bpm=/camelot= over '?' when choosing between equals
 - Keep the intro SHORT — Stephen is NOT a man of many words${recentStr}`
 
   const act = getActivityPromptBlockSync()
@@ -11197,6 +11211,57 @@ async function moodIndexCatchup(tracks: Array<EmbedTrackInput & { id: number }>)
     if (moodTodo.length) console.log(`[mood-index] caught up ${moodTodo.length} track(s)`)
   } catch (err) {
     console.warn('[mood-index] catch-up failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
+ * After Essentia (+ octave arbiter) lands BPM/key on a track, fold those
+ * facts into embeddings.bin + mood-index.bin immediately. The import-time
+ * auto-index often ran first with no tempo; waiting for nightly `teb`
+ * left the brain tempo-blind for up to a day. Failures here never block
+ * the analysis queue.
+ */
+async function reembedTracksAfterAnalysis(dispatches: AudioAnalysisDispatch[]): Promise<void> {
+  if (!ragIsConfigured() || dispatches.length === 0) return
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<EmbedTrackInput & { id: number }> }
+    const byId = new Map((lib.tracks || []).map((t) => [t.id, t]))
+    const inputs: Array<EmbedTrackInput & { id: number }> = []
+    for (const d of dispatches) {
+      const base = byId.get(d.trackId)
+      if (!base) continue
+      inputs.push({
+        ...base,
+        bpm: d.bpm ?? base.bpm,
+        keyRoot: d.keyRoot || base.keyRoot,
+        keyMode: d.keyMode || base.keyMode,
+        camelotKey: d.camelotKey || base.camelotKey,
+        keyConfidence: d.keyConfidence ?? base.keyConfidence,
+      })
+    }
+    if (inputs.length === 0) return
+    const texts = inputs.map((t) => ragBuildEmbedText(t))
+    const vecs = await ragEmbedTexts(texts)
+    for (let i = 0; i < inputs.length && i < vecs.length; i++) {
+      if (vecs[i]) await ragSetEmbedding(inputs[i].id, vecs[i])
+    }
+    await ragPersistEmbeddings()
+    // Mood twin: overwrite vibe vector with tempo-bearing text (descriptor
+    // may be absent until nightly — tempo alone is still a real upgrade).
+    const moodEntries = inputs
+      .map((t) => ({ t, text: buildMoodText(t) }))
+      .filter((e) => e.text)
+    if (moodEntries.length) {
+      const mvecs = await ragEmbedTexts(moodEntries.map((e) => e.text))
+      for (let i = 0; i < moodEntries.length && i < mvecs.length; i++) {
+        if (mvecs[i]) await setMoodVector(moodEntries[i].t.id, mvecs[i])
+      }
+      await persistMoodIndex()
+    }
+    invalidateEmbeddingStatusCache()
+    console.log(`[rag] re-embedded ${inputs.length} track(s) after audio analysis (tempo/key → brain)`)
+  } catch (err) {
+    console.warn('[rag] post-analysis re-embed failed:', err instanceof Error ? err.message : err)
   }
 }
 
