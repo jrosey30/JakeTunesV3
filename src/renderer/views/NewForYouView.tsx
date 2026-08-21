@@ -26,6 +26,8 @@ import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
+import mmSmug from './RecordStore/art/musicman-smug.png'
+import mmThink from './RecordStore/art/musicman-think.png'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -265,17 +267,26 @@ export default function NewForYouView() {
   return (
     <div className="df-view" ref={pageRef}>
       <div className="df-head">
-        <h1 className="df-title df-title--sign">The Record Shop</h1>
-        {generatedAt && <span className="df-updated">{new Date(generatedAt).toLocaleDateString()}</span>}
+        <div className="df-sign">
+          <span className="df-sign-chain df-sign-chain--l" aria-hidden="true" />
+          <span className="df-sign-chain df-sign-chain--r" aria-hidden="true" />
+          <h1 className="df-title df-title--sign">The Record Shop</h1>
+          <span className="df-sign-sub">WJLR Records · Greenpoint</span>
+        </div>
+        {generatedAt && <span className="df-updated">restocked {new Date(generatedAt).toLocaleDateString()}</span>}
         <button type="button" className="df-refresh" onClick={() => void load(true)} disabled={loading} title="Restock the racks">
           {loading ? '…' : '↻'}
         </button>
         <button type="button" className="df-step-inside" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
-          title="Walk into the shop">Step Inside</button>
+          title="Walk into the shop">
+          <img className="df-step-inside-mm" src={mmSmug} alt="" aria-hidden="true" />
+          <span>Step Inside</span>
+        </button>
       </div>
 
       {learned && (
         <section className={`df-learned df-learned--${learned.confidence}`}>
+          <img className="df-learned-mm" src={mmThink} alt="" aria-hidden="true" />
           <div className="df-learned-head">
             <span className="df-learned-eyebrow">What I've learned</span>
             <span className="df-learned-headline">{learned.headline}</span>
@@ -316,7 +327,7 @@ export default function NewForYouView() {
       {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
 
       {shopLanes.map((lane) => (
-        <section key={lane.id} className="df-lane">
+        <section key={lane.id} className="df-lane" data-lane={lane.id}>
           <div className="df-lane-head">{SHOP_NAMES[lane.id] ?? lane.title}</div>
           <div className="df-row">
             {lane.cards.map((c) => {
@@ -364,7 +375,7 @@ export default function NewForYouView() {
       ))}
 
       {owned.length > 0 && (
-        <section className="df-lane">
+        <section className="df-lane" data-lane="behind-counter">
           <div className="df-lane-head">Behind the Counter</div>
           <div className="df-row">
             {owned.map((pk) => {
