@@ -1464,11 +1464,21 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
     const fp = computeTasteFingerprint(tracks)
     if (fp.totalTracks === 0) return { ok: false, error: 'Library is empty — nothing to base discovery on yet.' }
-    // 16 anchors: the top 8 speak in prompts; the deeper bench widens the
+    // 16 anchors: 8 speak in prompts; the deeper bench widens the
     // MusicBrainz gap-lane and the because-validation map (2026-08-21, the
     // starving-shelves fix — one lane had a single card).
     const anchors = getTasteAnchors(tracks, 16)
-    const anchorNames = anchors.slice(0, 8).map((a) => a.artist).join(', ')
+    // Anchor rotation (the daily-mixes lesson, applied to generation): the
+    // top 3 always speak — they ARE the taste — while the other five prompt
+    // seats rotate daily through the bench, so each day's regeneration
+    // bridges from different corners of the library instead of asking the
+    // same eight names for the same adjacents forever. Stride 5 through a
+    // 13-artist bench is coprime, so every bench artist gets days at the mic.
+    const dayN = Math.floor(Date.now() / 86_400_000)
+    const bench = anchors.slice(3)
+    const speaking = [...anchors.slice(0, 3)]
+    for (let i = 0; i < Math.min(5, bench.length); i++) speaking.push(bench[(dayN * 5 + i) % bench.length])
+    const anchorNames = speaking.map((a) => a.artist).join(', ')
     const nk = (x: string) => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
     const ownedArtists = new Set(tracks.map((t) => nk(String((t as { artist?: string }).artist || ''))).filter(Boolean))
     const ownedAlbumKeys = new Set(tracks.map((t) => {
