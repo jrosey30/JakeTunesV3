@@ -20,7 +20,11 @@ import {
   BRAIN_FLOOR, BRAIN_HARD_FLOOR, BRAIN_LANE_MIN,
   type FeedCard,
 } from '../discover-feed.ts'
-import { buildCandidateText } from '../discovery-brain.ts'
+import {
+  buildCandidateText, adjustedCosine, cosineToPct,
+  REJECT_MARGIN, REJECT_WEIGHT,
+} from '../discovery-brain.ts'
+import { discoverVerdicts, type LedgerRow } from '../discovery-learned.ts'
 
 describe('baseTitleKey — recording identity', () => {
   test('demo variant collapses onto the owned base title', () => {
@@ -127,5 +131,45 @@ describe('buildCandidateText — the library voice', () => {
       ['A — T', 'year: 2001'],
     )
     assert.equal(buildCandidateText({ artist: 'A', title: 'T' }), 'A — T')
+  })
+})
+
+describe('adjustedCosine — rejections push scores down', () => {
+  test('a far rejection is a no-op', () => {
+    assert.equal(adjustedCosine(0.5, REJECT_MARGIN - 0.01), 0.5)
+    assert.equal(adjustedCosine(0.5, 0), 0.5)
+  })
+  test('penalty scales with proximity past the margin', () => {
+    assert.ok(Math.abs(adjustedCosine(0.5, 0.40) - (0.5 - REJECT_WEIGHT * 0.05)) < 1e-9)
+  })
+  test('sounding like rejected music lands under the quality floor', () => {
+    // topK 0.50 would read ~89%; a 0.50-close rejection drags it to ~45%.
+    const pct = cosineToPct(adjustedCosine(0.50, 0.50))
+    assert.ok(pct < 60, `expected sub-floor, got ${pct}`)
+  })
+})
+
+describe('discoverVerdicts — the scorer’s view of the ledger', () => {
+  const row = (verdict: string, artist: string, title: string, surface = 'discover'): LedgerRow =>
+    ({ surface, verdict, key: { artist, title }, ctx: { lane: 'songs', type: 'song' } })
+
+  test('splits accepts and rejects; other surfaces and passes ignored', () => {
+    const v = discoverVerdicts([
+      row('accept', 'Stereolab', 'Emperor Tomato Ketchup'),
+      row('reject', 'Weezer', 'Undone (Kitchen Tape Demo)'),
+      row('pass', 'X', 'Y'),
+      row('accept', 'Z', 'W', 'strip'),
+    ])
+    assert.deepEqual(v.accepts.map((a) => a.artist), ['Stereolab'])
+    assert.deepEqual(v.rejects.map((r) => r.artist), ['Weezer'])
+  })
+  test('latest verdict per card wins — a later accept forgives a reject', () => {
+    const v = discoverVerdicts([row('reject', 'A', 'T'), row('accept', 'A', 'T')])
+    assert.equal(v.rejects.length, 0)
+    assert.equal(v.accepts.length, 1)
+  })
+  test('rows without an artist are dropped', () => {
+    const v = discoverVerdicts([{ surface: 'discover', verdict: 'accept', key: { title: 'only' } }])
+    assert.equal(v.accepts.length + v.rejects.length, 0)
   })
 })

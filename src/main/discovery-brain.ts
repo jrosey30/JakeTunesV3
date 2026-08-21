@@ -64,6 +64,20 @@ export function pickTasteExemplars(tracks: BrainScoreTrack[], cap = 400): number
   return scored.slice(0, cap).map((s) => s.id)
 }
 
+// ── Verdict adjustment (2026-08-21, C of the pick-quality overhaul) ──
+// A rejection's blast radius. Below the margin a reject says nothing about
+// this candidate (everything is ~0.3 from everything in this space); above
+// it the penalty grows steep enough that sounding like rejected music
+// outweighs sounding liked: topK 0.50 with a 0.40 reject nearby → 0.425
+// (mild); with a 0.50 reject → 0.275, which lands under the quality floor.
+export const REJECT_MARGIN = 0.35
+export const REJECT_WEIGHT = 1.5
+
+/** Fold the nearest rejection into the raw taste cosine. */
+export function adjustedCosine(topKMean: number, maxRejectSim: number): number {
+  return topKMean - REJECT_WEIGHT * Math.max(0, maxRejectSim - REJECT_MARGIN)
+}
+
 /** Map a raw top-K cosine (empirically ~0.25 weak … ~0.60 soulmate in this
  *  space) onto a human-readable 40–99%. Calibration, not decoration: 100%
  *  is unreachable by design — the brain never claims certainty about music
@@ -77,11 +91,19 @@ export function cosineToPct(c: number): number {
  * Score candidates against the taste brain. Returns brainPct per candidate
  * (aligned with input order), or null if the brain isn't usable (no key, no
  * exemplar embeddings) — callers fall back to the heuristic score.
+ *
+ * `verdicts` (2026-08-21): the shop's own accept/reject stream finally
+ * teaches the score. Accepted cards join the exemplar set — they are the
+ * purest "shop taste" signal there is — and rejected cards become negative
+ * anchors: the closer a candidate sits to something Jake explicitly turned
+ * down, the harder its score falls (adjustedCosine). One embed batch covers
+ * candidates + verdicts together.
  */
 export async function brainMatchCandidates(
   candidates: BrainScorable[],
   libraryTracks: BrainScoreTrack[],
   topK = 5,
+  verdicts?: { accepts?: BrainScorable[]; rejects?: BrainScorable[] },
 ): Promise<number[] | null> {
   if (candidates.length === 0) return []
   try {
@@ -96,10 +118,18 @@ export async function brainMatchCandidates(
     }
     if (exemplars.length < 20) return null   // not enough taste signal yet
 
+    const accepts = verdicts?.accepts ?? []
+    const rejects = verdicts?.rejects ?? []
+
     // Same textual voice as the library vectors so the cosines are honest.
-    const texts = candidates.map(buildCandidateText)
+    const texts = [...candidates, ...accepts, ...rejects].map(buildCandidateText)
     const vecs = await embedTexts(texts)
-    return vecs.map((v) => {
+    const candVecs = vecs.slice(0, candidates.length)
+    const acceptVecs = vecs.slice(candidates.length, candidates.length + accepts.length).filter(Boolean)
+    const rejectVecs = vecs.slice(candidates.length + accepts.length).filter(Boolean)
+    exemplars.push(...acceptVecs)
+
+    return candVecs.map((v) => {
       if (!v) return 40
       const sims: number[] = []
       for (const e of exemplars) sims.push(cosine(v, e))
@@ -107,7 +137,9 @@ export async function brainMatchCandidates(
       const k = Math.min(topK, sims.length)
       let sum = 0
       for (let i = 0; i < k; i++) sum += sims[i]
-      return cosineToPct(sum / k)
+      let maxRej = 0
+      for (const r of rejectVecs) { const s = cosine(v, r); if (s > maxRej) maxRej = s }
+      return cosineToPct(adjustedCosine(sum / k, maxRej))
     })
   } catch {
     return null   // embed failure → heuristic fallback, never a crash

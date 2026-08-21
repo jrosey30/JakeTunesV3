@@ -32,7 +32,40 @@ export interface LedgerRow {
   surface?: string
   verdict?: string
   key?: { artist?: string; title?: string; trackId?: number; playlistId?: string }
-  ctx?: { lane?: string }
+  ctx?: { lane?: string; type?: string }
+}
+
+export interface DiscoverVerdict {
+  artist: string
+  title: string
+  type?: string
+}
+
+/**
+ * The verdict stream, distilled for the SCORER (2026-08-21): every Discovery
+ * accept/reject with a usable key, deduped so the LATEST verdict per card
+ * wins — accepting something you once rejected forgives it, and vice versa.
+ * Capped at the most recent 200 per side so the embed batch stays cheap as
+ * years of ledger accumulate.
+ */
+export function discoverVerdicts(rows: LedgerRow[]): { accepts: DiscoverVerdict[]; rejects: DiscoverVerdict[] } {
+  const nk = (s: string) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  const latest = new Map<string, { verdict: string; v: DiscoverVerdict }>()
+  for (const r of rows) {
+    if (r.surface !== 'discover') continue
+    if (r.verdict !== 'accept' && r.verdict !== 'reject') continue
+    const artist = String(r.key?.artist || '').trim()
+    if (!artist) continue
+    const title = String(r.key?.title || '').trim()
+    latest.set(`${nk(artist)}|${nk(title)}`, {
+      verdict: r.verdict,
+      v: { artist, title, type: r.ctx?.type },
+    })
+  }
+  const accepts: DiscoverVerdict[] = []
+  const rejects: DiscoverVerdict[] = []
+  for (const { verdict, v } of latest.values()) (verdict === 'accept' ? accepts : rejects).push(v)
+  return { accepts: accepts.slice(-200), rejects: rejects.slice(-200) }
 }
 
 export interface LearnedLane {

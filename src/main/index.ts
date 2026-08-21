@@ -131,7 +131,7 @@ import {
 } from '../common/albumReleaseDate'
 import { foldAccents } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
-import { summariseLearning, type LedgerRow } from './discovery-learned.ts'
+import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { JsonFileCache } from './state-cache'
 import { spawn } from 'child_process'
 import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
@@ -1677,6 +1677,19 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       await new Promise((r) => setTimeout(r, 200))
     }
 
+    // The verdict stream: accepts retire their cards from circulation (a yes
+    // is already on the list — "existence is not memory", the tombstone is
+    // the ledger row) and both sides teach the score below.
+    let verdicts: ReturnType<typeof discoverVerdicts> = { accepts: [], rejects: [] }
+    try {
+      const raw = await readFile(TASTE_LEDGER_PATH(), 'utf-8')
+      const rows = raw.split('\n').filter(Boolean).map((l) => {
+        try { return JSON.parse(l) as LedgerRow } catch { return null }
+      }).filter((r): r is LedgerRow => !!r)
+      verdicts = discoverVerdicts(rows)
+      for (const a of verdicts.accepts) ownedAlbumKeys.add(`${nk(a.artist)}|${nk(a.title)}`)
+    } catch { /* no ledger yet — the brain scores without verdicts */ }
+
     // Jake's verdicts + rotation + ownership + cross-lane dedupe.
     const fb = await discoveryFeedbackCache.get()
     const nowMs = Date.now()
@@ -1689,6 +1702,8 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const pcts = await brainMatchCandidates(
       visible.map((c) => ({ artist: c.artist, title: c.title, genre: c.genre || '', year: c.year, type: c.type, desc: c.desc })),
       tracks as Array<{ id?: number; rating?: number; playCount?: number }>,
+      5,
+      verdicts,
     )
     if (pcts) visible.forEach((c, i) => { c.brainPct = pcts[i] })
     const shelved = pcts ? df.applyQualityFloor(visible) : visible
