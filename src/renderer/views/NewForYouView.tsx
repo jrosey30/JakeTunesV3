@@ -27,7 +27,6 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import mmSmug from './RecordStore/art/musicman-smug.png'
-import mmThink from './RecordStore/art/musicman-think.png'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -273,20 +272,22 @@ export default function NewForYouView() {
           <h1 className="df-title df-title--sign">The Record Shop</h1>
           <span className="df-sign-sub">WJLR Records · Greenpoint</span>
         </div>
-        {generatedAt && <span className="df-updated">restocked {new Date(generatedAt).toLocaleDateString()}</span>}
-        <button type="button" className="df-refresh" onClick={() => void load(true)} disabled={loading} title="Restock the racks">
-          {loading ? '…' : '↻'}
-        </button>
-        <button type="button" className="df-step-inside" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
-          title="Walk into the shop">
-          <img className="df-step-inside-mm" src={mmSmug} alt="" aria-hidden="true" />
-          <span>Step Inside</span>
-        </button>
+        <div className="df-head-right">
+          {generatedAt && <span className="df-updated">restocked {new Date(generatedAt).toLocaleDateString()}</span>}
+          <button type="button" className="df-refresh" onClick={() => void load(true)} disabled={loading} title="Restock the racks">
+            <span className="df-refresh-icon" aria-hidden="true">{loading ? '…' : '↻'}</span>
+            <span>{loading ? 'Restocking' : 'Restock'}</span>
+          </button>
+          <button type="button" className="df-step-inside" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
+            title="Walk into the shop">
+            <img className="df-step-inside-mm" src={mmSmug} alt="" aria-hidden="true" />
+            <span>Step Inside</span>
+          </button>
+        </div>
       </div>
 
       {learned && (
         <section className={`df-learned df-learned--${learned.confidence}`}>
-          <img className="df-learned-mm" src={mmThink} alt="" aria-hidden="true" />
           <div className="df-learned-head">
             <span className="df-learned-eyebrow">What I've learned</span>
             <span className="df-learned-headline">{learned.headline}</span>
