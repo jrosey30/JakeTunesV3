@@ -122,6 +122,9 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'searchItunesSuggestions', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module' },
     { fn: 'itunesAlbumTracks', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module' },
     { fn: 'initImportPipeline', file: 'main/index.ts', minCalls: 1, why: 'P1C1 — the pipeline is dead weight without its world wired in' },
+    // Called as df.applyQualityFloor (dynamic-import namespace), so the wire
+    // matches the literal dotted form the bare-call regex would reject.
+    { fn: '.applyQualityFloor(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'discovery quality floor — without the wire the shop ships 40% "no signal" cards again' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.
     { fn: 'importDownloaded: importDownloadedFiles', file: 'main/index.ts', minCalls: 2, literal: true,

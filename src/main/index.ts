@@ -1464,14 +1464,29 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
     const fp = computeTasteFingerprint(tracks)
     if (fp.totalTracks === 0) return { ok: false, error: 'Library is empty — nothing to base discovery on yet.' }
-    const anchors = getTasteAnchors(tracks, 8)
-    const anchorNames = anchors.map((a) => a.artist).join(', ')
+    // 16 anchors: the top 8 speak in prompts; the deeper bench widens the
+    // MusicBrainz gap-lane and the because-validation map (2026-08-21, the
+    // starving-shelves fix — one lane had a single card).
+    const anchors = getTasteAnchors(tracks, 16)
+    const anchorNames = anchors.slice(0, 8).map((a) => a.artist).join(', ')
     const nk = (x: string) => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
     const ownedArtists = new Set(tracks.map((t) => nk(String((t as { artist?: string }).artist || ''))).filter(Boolean))
     const ownedAlbumKeys = new Set(tracks.map((t) => {
       const tr = t as { artist?: string; album?: string; title?: string }
       return [`${nk(String(tr.artist || ''))}|${nk(String(tr.album || ''))}`, `${nk(String(tr.artist || ''))}|${nk(String(tr.title || ''))}`]
     }).flat())
+    // Recording-identity keys: owning "Undone - The Sweater Song" must also
+    // block "Undone -- The Sweater Song (Kitchen Tape Demo)" — Jake rejected
+    // exactly that card the day this shipped.
+    const ownedBaseKeys = new Set<string>()
+    for (const t of tracks as Array<{ artist?: string; album?: string; title?: string }>) {
+      const a = nk(String(t.artist || ''))
+      if (!a) continue
+      for (const raw of [t.title, t.album]) {
+        const b = df.baseTitleKey(String(raw || ''))
+        if (b && b !== a) ownedBaseKeys.add(`${a}|${b}`)
+      }
+    }
 
     const tasteLine = `Taste: ${fp.summary} Top genres: ${fp.topGenres.slice(0, 6).map((g) => g.genre).join(', ')}. Plays most: ${anchorNames}.`
     const cards: import('./discover-feed.ts').FeedCard[] = []
@@ -1486,13 +1501,13 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         const journalism = blocks.filter(Boolean).join('\n\n')
         if (!journalism) return
         const reply = await claudeCall('discover-brand-new', {
-          model: 'claude-sonnet-4-6', max_tokens: 2000, system: MUSIC_MAN_CORE,
-          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 18 this listener would love. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
+          model: 'claude-sonnet-4-6', max_tokens: 2600, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 24 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
         const block = reply.content[0]
         const text = block && block.type === 'text' ? block.text : ''
         for (const r of df.parseFeedJson<{ artist?: string; title?: string; year?: string; why?: string }>(text)) {
-          if (r.artist && r.title) cards.push({ lane: 'brand-new', type: 'album', artist: String(r.artist), title: String(r.title), year: String(r.year || new Date().getFullYear()), why: df.clipWhy(String(r.why || '')) })
+          if (r.artist && r.title) cards.push({ lane: 'brand-new', type: 'album', artist: String(r.artist), title: String(r.title), year: String(r.year || new Date().getFullYear()), why: df.clipWhy(String(r.why || '')), desc: df.clipWhy(String(r.why || '')) })
         }
       } catch (err) { console.warn('[discover] brand-new lane failed:', err) }
     })()
@@ -1500,11 +1515,11 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L2 · You're missing — MusicBrainz discography minus owned (pure grounding).
     const missingPromise = (async () => {
       try {
-        const tops = anchors.slice(0, 7)
+        const tops = anchors.slice(0, 12)
         for (const a of tops) {
           const disco = await fetchArtistDiscography(a.artist).catch(() => null)
           if (!disco) continue
-          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 3)
+          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 4)
           for (const al of missing) {
             // This lane's anchor is a FACT, not a model claim — it comes straight
             // from the owned-track count, so it needs no validation.
@@ -1589,19 +1604,19 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         let made = 0
         let tried = 0
         for (const p of picks) {
-          if (made >= 12 || tried >= 36) break
+          if (made >= 14 || tried >= 44) break
           tried++
           const v = await df.itunesVerify(p.name, 'album', { artist: p.name }).catch(() => null)
           await new Promise((r) => setTimeout(r, 250))
           if (v?.artUrl) {
-            cards.push({ lane: 'scene', type: 'album', artist: v.artist, title: v.title, year: v.year, why: df.clipWhy(p.connection), artUrl: v.artUrl, because: p.anchor })
+            cards.push({ lane: 'scene', type: 'album', artist: v.artist, title: v.title, year: v.year, why: df.clipWhy(p.connection), artUrl: v.artUrl, because: p.anchor, genre: v.genre, desc: df.clipWhy(p.connection) })
             made++
             continue
           }
           if (p.sampleTitle) {
             const caa = await fetchCaaArtwork(p.name, p.sampleTitle).catch(() => null)
             if (caa) {
-              cards.push({ lane: 'scene', type: 'album', artist: p.name, title: p.sampleTitle, why: df.clipWhy(p.connection), artUrl: caa, because: p.anchor })
+              cards.push({ lane: 'scene', type: 'album', artist: p.name, title: p.sampleTitle, why: df.clipWhy(p.connection), artUrl: caa, because: p.anchor, desc: df.clipWhy(p.connection) })
               made++
             }
           }
@@ -1615,8 +1630,8 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const llmLanes = (async () => {
       try {
         const reply = await claudeCall('discover-time-machine', {
-          model: 'claude-sonnet-4-6', max_tokens: 2800, system: MUSIC_MAN_CORE,
-          messages: [{ role: 'user', content: `${tasteLine}\n\nArtists this listener actually plays (pick "because" ONLY from this list, spelled exactly):\n${anchorNames}\n\nRecommend music from ANY era (1960s to last year — deliberately NOT this year's releases) adjacent to this taste that the listener plausibly does NOT own. Mix eras widely; go deep and surprising, not just the obvious canon.\n\nEVERY pick must name the ONE artist above it bridges from, in "because". Do not invent an artist that is not on that list. The "why" must say what carries over from that artist — the specific sonic link, not praise.\n\nReturn ONLY JSON with two arrays:\n{"classics":[{"type":"album"|"artist","artist","title","year","because","why"}] (18 items), "songs":[{"artist","title","year","because","why"}] (18 items)}\nEvery "why" MUST be 8 words or fewer. No prose, no code fence.` }],
+          model: 'claude-sonnet-4-6', max_tokens: 3800, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nArtists this listener actually plays (pick "because" ONLY from this list, spelled exactly):\n${anchorNames}\n\nRecommend music from ANY era (1960s to last year — deliberately NOT this year's releases) adjacent to this taste that the listener plausibly does NOT own. Mix eras widely; go deep and surprising, not just the obvious canon. Canonical studio recordings only — never demos, live versions, remasters, deluxe/expanded reissues, tributes, or covers.\n\nEVERY pick must name the ONE artist above it bridges from, in "because". Do not invent an artist that is not on that list. The "why" must say what carries over from that artist — the specific sonic link, not praise.\n\nReturn ONLY JSON with two arrays:\n{"classics":[{"type":"album"|"artist","artist","title","year","because","why"}] (24 items), "songs":[{"artist","title","year","because","why"}] (24 items)}\nEvery "why" MUST be 8 words or fewer. No prose, no code fence.` }],
         })
         const block = reply.content[0]
         const text = block && block.type === 'text' ? block.text : ''
@@ -1632,17 +1647,17 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
           return k ? anchorByKey.get(k) : undefined
         }
         // Verify each against iTunes — canonical name/art/year or it doesn't exist.
-        for (const c of (parsed.classics || []).slice(0, 18)) {
+        for (const c of (parsed.classics || []).slice(0, 24)) {
           if (!c.artist) continue
           const entity = c.type === 'artist' ? 'musicArtist' : 'album'
           const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title })
-          if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl, because: validBecause(c.because) })
+          if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl, because: validBecause(c.because), genre: v.genre, desc: df.clipWhy(String(c.why || '')) })
           await new Promise((r) => setTimeout(r, 250))   // stay polite with Apple
         }
-        for (const sng of (parsed.songs || []).slice(0, 18)) {
+        for (const sng of (parsed.songs || []).slice(0, 24)) {
           if (!sng.artist || !sng.title) continue
           const v = await df.itunesVerify(`${sng.artist} ${sng.title}`, 'song', { artist: sng.artist, title: sng.title })
-          if (v) cards.push({ lane: 'songs', type: 'song', artist: v.artist, title: v.title, year: v.year || String(sng.year || ''), why: df.clipWhy(String(sng.why || '')), artUrl: v.artUrl, previewUrl: v.previewUrl, because: validBecause(sng.because) })
+          if (v) cards.push({ lane: 'songs', type: 'song', artist: v.artist, title: v.title, year: v.year || String(sng.year || ''), why: df.clipWhy(String(sng.why || '')), artUrl: v.artUrl, previewUrl: v.previewUrl, because: validBecause(sng.because), genre: v.genre, desc: df.clipWhy(String(sng.why || '')) })
           await new Promise((r) => setTimeout(r, 250))
         }
       } catch (err) { console.warn('[discover] llm lanes failed:', err) }
@@ -1658,21 +1673,25 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       if (c.artUrl) continue
       const v = await df.itunesVerify(`${c.artist} ${c.title}`, 'album', { artist: c.artist, title: c.title }).catch(() => null)
       if (v?.artUrl) { c.artUrl = v.artUrl; if (!c.year && v.year) c.year = v.year }
+      if (v?.genre && !c.genre) c.genre = v.genre
       await new Promise((r) => setTimeout(r, 200))
     }
 
     // Jake's verdicts + rotation + ownership + cross-lane dedupe.
     const fb = await discoveryFeedbackCache.get()
     const nowMs = Date.now()
-    const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs })
+    const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, ownedBaseKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs })
 
-    // The brain scores EVERYTHING in the feed — one embed batch.
+    // The brain scores EVERYTHING in the feed — one embed batch — then the
+    // quality floor decides what earns a shelf spot. The brain PICKS now; it
+    // no longer just stickers whatever the generators produced.
     const { brainMatchCandidates } = await import('./discovery-brain.ts')
     const pcts = await brainMatchCandidates(
-      visible.map((c) => ({ artist: c.artist, title: c.title, genre: '', year: c.year })),
+      visible.map((c) => ({ artist: c.artist, title: c.title, genre: c.genre || '', year: c.year, type: c.type, desc: c.desc })),
       tracks as Array<{ id?: number; rating?: number; playCount?: number }>,
     )
     if (pcts) visible.forEach((c, i) => { c.brainPct = pcts[i] })
+    const shelved = pcts ? df.applyQualityFloor(visible) : visible
 
     const laneDefs = [
       { id: 'brand-new', title: 'Brand New' },
@@ -1682,7 +1701,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       { id: 'songs', title: 'Songs to Try' },
     ]
     const lanes = laneDefs
-      .map((l) => ({ ...l, cards: visible.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
+      .map((l) => ({ ...l, cards: shelved.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
       .filter((l) => l.cards.length > 0)
 
     // Serve-count for rotation.

@@ -20,6 +20,8 @@
  * year, and preview, never the model's memory. Unverified = dropped.
  */
 
+import { searchTitle, unwantedVersionOf } from './streamrip-match.ts'
+
 export type FeedCardType = 'song' | 'album' | 'artist'
 
 export interface FeedCard {
@@ -32,6 +34,13 @@ export interface FeedCard {
   artUrl?: string
   previewUrl?: string
   brainPct?: number
+  /** iTunes primaryGenreName, when verification saw one — feeds the brain's
+   *  candidate embedding so the cosine isn't judging an artist name alone. */
+  genre?: string
+  /** A sonic one-liner for the brain's embedding (usually the lane's `why` or
+   *  the scene connection). Only set when it describes the MUSIC — "3 of
+   *  their tracks already yours" is inventory, not sound, and stays out. */
+  desc?: string
   /** The artist ALREADY IN THE LIBRARY this pick bridges from — the "you play
    *  a lot of X, so try Y" link. Jake asked for this by name: a recommendation
    *  with no stated reason reads as random, and the generic `why` lines were
@@ -50,6 +59,7 @@ interface ItunesHit {
   releaseDate?: string
   artworkUrl100?: string
   previewUrl?: string
+  primaryGenreName?: string
 }
 
 /** Fuzzy field match: equal, one contains the other, or ≥60% token overlap.
@@ -79,7 +89,7 @@ export async function itunesVerify(
   term: string,
   entity: 'song' | 'album' | 'musicArtist',
   want?: { artist?: string; title?: string },
-): Promise<{ artist: string; title: string; year?: string; artUrl?: string; previewUrl?: string } | null> {
+): Promise<{ artist: string; title: string; year?: string; artUrl?: string; previewUrl?: string; genre?: string } | null> {
   try {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=${entity}&limit=6`
     const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
@@ -88,13 +98,22 @@ export async function itunesVerify(
     const titleOf = (h: ItunesHit) => entity === 'song' ? String(h.trackName || '').trim()
       : entity === 'album' ? String(h.collectionName || '').trim()
       : String(h.artistName || '').trim()
-    const hit = want
-      ? results.find((h) => {
+    const matches = want
+      ? results.filter((h) => {
           const artistOk = !want.artist || fieldMatches(String(h.artistName || ''), want.artist)
           const titleOk = !want.title || entity === 'musicArtist' || fieldMatches(titleOf(h), want.title)
           return artistOk && titleOk
         })
-      : results[0]
+      : results.slice(0, 1)
+    // Canonical-edition preference (2026-08-21, the Kitchen Tape Demo reject):
+    // when the request didn't name a version, prefer the hit that doesn't add
+    // one — "Undone" should resolve to the song, not whichever demo/live/
+    // remaster Apple ranks first. Preference only: if every hit is decorated,
+    // the first match still wins (some records only exist decorated).
+    const wantTitle = want?.title || ''
+    const hit = entity === 'musicArtist'
+      ? matches[0]
+      : matches.find((h) => unwantedVersionOf(wantTitle, titleOf(h)) === null) ?? matches[0]
     if (!hit) return null
     const artist = String(hit.artistName || '').trim()
     if (!artist) return null
@@ -106,6 +125,7 @@ export async function itunesVerify(
       year: hit.releaseDate ? String(new Date(hit.releaseDate).getFullYear()) : undefined,
       artUrl: hit.artworkUrl100?.replace('100x100', '300x300'),
       previewUrl: entity === 'song' ? hit.previewUrl : undefined,
+      genre: hit.primaryGenreName ? String(hit.primaryGenreName) : undefined,
     }
   } catch {
     return null
@@ -135,14 +155,37 @@ export function clipWhy(why: string, maxWords = 9): string {
   return words.slice(0, maxWords).join(' ')
 }
 
+/**
+ * Recording-identity key for owned-matching: edition brackets, subtitles, and
+ * marked dash-suffixes stripped, then normalized. "Undone -- The Sweater Song
+ * (Kitchen Tape Demo)" and "Undone - The Sweater Song" collapse to the same
+ * key, so owning the song blocks every decorated variant of it. Built on the
+ * download pipeline's battle-tested strippers (searchTitle) rather than a
+ * fresh twin.
+ */
+export function baseTitleKey(title: string): string {
+  const s = searchTitle(String(title || ''))
+    // Remaining brackets are version markers ("(Live)") or subtitles
+    // ("(Hear Me Tonight)") — for IDENTITY both collapse into the base.
+    .replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, ' ')
+    // " - Live at Reading" style suffixes: only stripped when the suffix
+    // actually carries a version marker — "Song - Part 2" is a title.
+    .replace(/\s+[-–—]\s+[^-–—]*\b(live|demo|acoustic|remix|session|sessions|version|instrumental|unplugged|bootleg|cover|edit|mix)\b[^-–—]*$/i, '')
+  return normKey(s) || normKey(title)
+}
+
 /** Drop cards the user owns (artist match against owned artist set for
- *  artist-cards, artist+title for albums/songs), has vetoed, or that are
- *  resting from rotation. Dedupes across lanes (first lane wins). */
+ *  artist-cards, artist+title for albums/songs — exact AND base-title, so a
+ *  demo/deluxe/live variant of an owned recording is still "owned"), has
+ *  vetoed, or that are resting from rotation. Dedupes across lanes (first
+ *  lane wins). */
 export function filterFeed(
   cards: FeedCard[],
   opts: {
     ownedArtists: Set<string>
     ownedAlbumKeys: Set<string>
+    /** `artistNorm|baseTitleKey` of every owned track title + album. */
+    ownedBaseKeys?: Set<string>
     notForMe: Record<string, unknown>
     served: Record<string, { views: number; last: number }>
     now: number
@@ -160,9 +203,49 @@ export function filterFeed(
     seen.add(key)
     if (opts.notForMe[ak]) return false
     if (c.type === 'artist' && opts.ownedArtists.has(ak)) return false
-    if (c.type !== 'artist' && opts.ownedAlbumKeys.has(key)) return false
+    if (c.type !== 'artist') {
+      if (opts.ownedAlbumKeys.has(key)) return false
+      // Base-identity check — guarded against self-titled collapse: Weezer's
+      // five self-titled albums all reduce to "weezer", so a base key equal
+      // to the artist name proves nothing and only the exact key counts.
+      const bt = baseTitleKey(c.title)
+      if (opts.ownedBaseKeys && bt && bt !== ak && opts.ownedBaseKeys.has(`${ak}|${bt}`)) return false
+    }
     const sv = opts.served[key]
     if (sv && sv.views >= rv && opts.now - sv.last < rr) return false
     return true
   })
+}
+
+// ── Quality floor ────────────────────────────────────────────────────
+// The brain's floor for a shelf spot. Below BRAIN_FLOOR the brain doesn't
+// actually believe in the pick; a thin lane may back-fill with its best
+// sub-floor cards down to BRAIN_HARD_FLOOR (a small shelf of decent picks
+// beats an empty shelf), but a 40 — the "no signal" sentinel — never ships.
+export const BRAIN_FLOOR = 60
+export const BRAIN_HARD_FLOOR = 52
+export const BRAIN_LANE_MIN = 3
+
+/** Apply the floor per lane. Only meaningful after brainPct is stamped —
+ *  callers skip this entirely when the brain didn't score (null pcts). */
+export function applyQualityFloor(cards: FeedCard[]): FeedCard[] {
+  const byLane = new Map<string, FeedCard[]>()
+  for (const c of cards) {
+    const arr = byLane.get(c.lane) || []
+    arr.push(c)
+    byLane.set(c.lane, arr)
+  }
+  const out: FeedCard[] = []
+  for (const arr of byLane.values()) {
+    const kept = arr.filter((c) => (c.brainPct ?? 0) >= BRAIN_FLOOR)
+    if (kept.length < BRAIN_LANE_MIN) {
+      const backfill = arr
+        .filter((c) => (c.brainPct ?? 0) >= BRAIN_HARD_FLOOR && (c.brainPct ?? 0) < BRAIN_FLOOR)
+        .sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0))
+        .slice(0, BRAIN_LANE_MIN - kept.length)
+      kept.push(...backfill)
+    }
+    out.push(...kept)
+  }
+  return out
 }

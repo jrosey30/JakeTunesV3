@@ -14,7 +14,9 @@
  * needs to sit near SOME corner of Jake's taste, not its average — the
  * daily-mixes lesson: never score against a mean centroid of everything).
  */
-import { embedTexts, getEmbeddingsMap, cosine } from './ai/embeddings.ts'
+// Lazy: ai/embeddings pulls the electron state dir at load, which would make
+// this module untestable under node --test. The pure pieces (buildCandidateText,
+// pickTasteExemplars, cosineToPct) must stay importable by the suite.
 
 export interface BrainScoreTrack {
   id?: number
@@ -27,6 +29,29 @@ export interface BrainScorable {
   title: string
   genre?: string
   year?: string
+  /** 'album' | 'song' | 'artist' — shapes the embed text like the library's. */
+  type?: string
+  /** Sonic one-liner (the card's why/connection) — the candidate's stand-in
+   *  for the descriptors and lyric themes the library vectors carry. */
+  desc?: string
+}
+
+/**
+ * The candidate's embedding text, shaped like buildEmbeddingText's library
+ * voice (same line labels, same order) so the cosines compare like with like.
+ * 2026-08-21: candidates used to embed as a bare "Artist — Title" while the
+ * library side carried genre, subgenre, tempo/mood and lyric themes — the
+ * score was mostly measuring whether the model recognized the artist's name.
+ * A candidate can't have audio analysis, but genre (iTunes gives it away
+ * free) plus the why-line's sonic description close most of the gap.
+ */
+export function buildCandidateText(c: BrainScorable): string {
+  const lines = [`${c.artist} — ${c.title}`]
+  if (c.type === 'album') lines.push(`album: ${c.title}${c.year ? ` (${c.year})` : ''}`)
+  else if (c.year) lines.push(`year: ${c.year}`)
+  if (c.genre) lines.push(`genre: ${c.genre}`)
+  if (c.desc) lines.push(c.desc)
+  return lines.join('\n')
 }
 
 /** Pick the exemplar track ids that define "Jake's taste": starred first,
@@ -60,6 +85,7 @@ export async function brainMatchCandidates(
 ): Promise<number[] | null> {
   if (candidates.length === 0) return []
   try {
+    const { embedTexts, getEmbeddingsMap, cosine } = await import('./ai/embeddings.ts')
     const embMap = await getEmbeddingsMap()
     if (embMap.size === 0) return null
     const exemplarIds = pickTasteExemplars(libraryTracks)
@@ -71,12 +97,7 @@ export async function brainMatchCandidates(
     if (exemplars.length < 20) return null   // not enough taste signal yet
 
     // Same textual voice as the library vectors so the cosines are honest.
-    const texts = candidates.map((c) => {
-      const lines = [`${c.artist} — ${c.title}`]
-      if (c.year) lines.push(`year: ${c.year}`)
-      if (c.genre) lines.push(`genre: ${c.genre}`)
-      return lines.join('\n')
-    })
+    const texts = candidates.map(buildCandidateText)
     const vecs = await embedTexts(texts)
     return vecs.map((v) => {
       if (!v) return 40
