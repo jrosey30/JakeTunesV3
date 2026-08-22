@@ -18,7 +18,21 @@ import { join } from 'node:path'
 import { initFlightRecorder, serializeDetail, sanitizeCrashPayload } from '../flight-recorder.ts'
 
 const tmp = async () => mkdtemp(join(tmpdir(), 'fr-test-'))
-const settle = () => new Promise((r) => setTimeout(r, 60))
+// Poll-until-true, never a fixed sleep: fixed waits flaked the gate the
+// first time the suite ran alongside a build (2026-08-22, # fail 1 under
+// load). 2s ceiling = load-proof; passes in ~10ms when idle.
+const settle = async (done?: () => Promise<boolean>) => {
+  const until = Date.now() + 2000
+  for (;;) {
+    if (done) { try { if (await done()) return } catch { /* keep polling */ } }
+    else await new Promise((r) => setTimeout(r, 30))
+    if (Date.now() > until || !done) return
+    await new Promise((r) => setTimeout(r, 30))
+  }
+}
+const fileHas = (path: string, needle: string) => async (): Promise<boolean> => {
+  try { return (await readFile(path, 'utf-8')).includes(needle) } catch { return false }
+}
 
 describe('record', () => {
   test('appends ordered, parseable JSON lines', async () => {
@@ -27,7 +41,7 @@ describe('record', () => {
     fr.record('info', 'boot.main-start')
     fr.record('warn', 'console', { msg: 'lane failed' })
     fr.record('error', 'renderer.crash', { message: 'boom' })
-    await settle()
+    await settle(fileHas(join(dir, 'main.log'), 'renderer.crash'))
     const lines = (await readFile(join(dir, 'main.log'), 'utf-8')).trim().split('\n').map((l) => JSON.parse(l))
     assert.deepEqual(lines.map((l) => [l.level, l.tag]), [
       ['info', 'boot.main-start'], ['warn', 'console'], ['error', 'renderer.crash'],
@@ -42,11 +56,11 @@ describe('record', () => {
     const fr = initFlightRecorder({ logPath: () => path })
     fr.record('info', 'a')
     fr.record('info', 'b')
-    await settle()
+    await settle(async () => fr.drops() === 2)
     assert.equal(fr.drops(), 2)
     path = join(dir, 'main.log')   // path heals
     fr.record('info', 'c')
-    await settle()
+    await settle(fileHas(path, '"c"'))
     const line = JSON.parse((await readFile(path, 'utf-8')).trim())
     assert.equal(line.droppedBefore, 2)
     assert.equal(fr.drops(), 0)
@@ -61,12 +75,12 @@ describe('record', () => {
     await settle()
     await assert.rejects(stat(join(dir, 'main.log')))   // nothing before ready
     release()
-    await settle()
+    await settle(fileHas(join(dir, 'main.log'), 'early'))
     assert.ok((await readFile(join(dir, 'main.log'), 'utf-8')).includes('"early"'))
 
     const fr2 = initFlightRecorder({ logPath: () => join(dir, 'main2.log'), ready: Promise.reject(new Error('boot died')) })
     fr2.record('error', 'still-works')
-    await settle()
+    await settle(fileHas(join(dir, 'main2.log'), 'still-works'))
     assert.ok((await readFile(join(dir, 'main2.log'), 'utf-8')).includes('still-works'))
   })
 
@@ -76,7 +90,7 @@ describe('record', () => {
     await writeFile(p, 'x'.repeat(2000))
     const fr = initFlightRecorder({ logPath: () => p, maxBytes: 1000 })
     for (let i = 0; i < 51; i++) fr.record('info', `t${i}`)   // cross the every-50 check
-    await settle()
+    await settle(fileHas(p, '"t50"'))
     const rotated = await readFile(p + '.1', 'utf-8')
     assert.ok(rotated.startsWith('xxxx'))
     const fresh = await readFile(p, 'utf-8')
@@ -114,7 +128,7 @@ describe('mirrorConsole', () => {
     try {
       fr.mirrorConsole()
       console.warn('[discover] lane failed:', 'timeout')
-      await settle()
+      await settle(fileHas(join(dir, 'main.log'), 'lane failed'))
     } finally {
       console.warn = orig
     }
