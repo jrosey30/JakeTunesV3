@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
+import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { useLibrary } from '../../context/LibraryContext'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
@@ -57,6 +58,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
 // taller rows, and bolder labels — see styles/sidebar.css.
 
 const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
+  { label: BEST_OF_YEAR_NAME, id: 'best-of-year' },
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },

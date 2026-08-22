@@ -37,6 +37,7 @@ function formatDuration(ms: number): string {
 }
 
 const TITLES: Record<string, string> = {
+  'best-of-year': `Best of ${new Date().getFullYear()}`,
   'recently-added': 'Recently Added',
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
@@ -414,6 +415,7 @@ export default function SmartPlaylistView() {
       case 'recently-played': return new Set(['dateAdded', 'playCount', 'channelMode']) // recency-driven; both noisy
       case 'top-25':          return new Set(['dateAdded', 'channelMode'])              // playCount drives the list, keep it visible
       case 'top-rated':       return new Set(['dateAdded', 'playCount', 'channelMode']) // Starred is binary; counts add noise
+      case 'best-of-year':    return new Set(['dateAdded', 'channelMode'])              // the signals that ranked it stay visible
       default:                return new Set(['dateAdded', 'playCount', 'channelMode']) // picks views — meta-light
     }
   }, [playlistId])

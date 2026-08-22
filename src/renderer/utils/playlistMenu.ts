@@ -24,6 +24,7 @@ import { setNotice } from '../activity'
  *  list; if these two ever disagree, the menu offers a playlist the user
  *  cannot see. */
 export const SMART_PLAYLIST_NAMES = new Set([
+  `Best of ${new Date().getFullYear()}`,
   'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated', 'Starred',
   "Songs You'd Star",
   'Classical Music', // empty iPod smart playlist

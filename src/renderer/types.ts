@@ -280,7 +280,7 @@ export interface ItunesSuggestion {
   /** Track length in seconds (from the album-tracks lookup). */
   durationSecs?: number
 }
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
   id: string
