@@ -43,7 +43,7 @@ import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
-import { nasAvailable, NAS_STATE_DIR_PATH } from './state-dir'
+import { nasAvailable, onNasRecovery, NAS_STATE_DIR_PATH } from './state-dir'
 import { mountHostFor, isTailnetHost, decideSyncMode } from './sync-mode.ts'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
@@ -372,6 +372,11 @@ export function startSyncOrchestrator(windowAccessor: () => BrowserWindow | null
   safetyNetTimer = setInterval(() => {
     triggerSync('safety-net')
   }, SAFETY_NET_INTERVAL_MS)
+  // Recovery kick (2026-08-22): a good window on a flapping link may last
+  // minutes — sync the moment the breaker closes instead of waiting for
+  // the hourly tick (deterministic harvest; 17:58Z was timing luck).
+  // safety-net reason → full at home, auto-downgrades to quick remotely.
+  onNasRecovery(() => triggerSync('safety-net'))
   console.log(`[sync-orchestrator] started (script=${SYNC_SCRIPT}, safety-net every ${SAFETY_NET_INTERVAL_MS / 1000}s)`)
 }
 

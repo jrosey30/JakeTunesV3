@@ -127,6 +127,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: '.applyQualityFloor(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'discovery quality floor — without the wire the shop ships 40% "no signal" cards again' },
     { fn: 'initFlightRecorder', file: 'main/index.ts', minCalls: 1, why: 'reliability P0 — without the recorder the app goes back to being blind to its own failures' },
     { fn: 'decideSyncMode', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'WAN full-sync doctrine — unwired, every remote safety-net run burns the 10-min kill-timer again' },
+    { fn: 'onNasRecovery', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'recovery kick — unwired, good windows on a flapping link go back to being harvested by luck' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.

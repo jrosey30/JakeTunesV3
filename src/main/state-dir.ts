@@ -69,6 +69,13 @@ let lastRecoveryAt = 0
 const FLAP_WINDOW_MS = 10 * 60_000
 const COOLDOWN_MS = 5 * 60_000
 const FLAP_COOLDOWN_MS = 15 * 60_000
+// Recovery kick (2026-08-22): a good window on a marginal link may only
+// last minutes — waiting for the next hourly tick wastes it (the 17:58Z
+// harvest that healed nine stranded tracks was pure timing luck). The
+// orchestrator registers here; recovery fires it. Layering: state-dir
+// must not import the orchestrator, so this is a callback seam.
+let nasRecoveryListener: (() => void) | null = null
+export function onNasRecovery(fn: () => void): void { nasRecoveryListener = fn }
 
 export async function nasAvailable(): Promise<boolean> {
   const now = Date.now()
@@ -94,6 +101,7 @@ export async function nasAvailable(): Promise<boolean> {
         breakerEpisodeOpen = false
         lastRecoveryAt = Date.now()
         console.warn('[nas-breaker] NAS recovered — resuming NAS IO')
+        try { nasRecoveryListener?.() } catch (err) { console.warn('[nas-breaker] recovery listener threw:', err) }
       }
       return ok
     } finally {
