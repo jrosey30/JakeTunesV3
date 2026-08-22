@@ -28,7 +28,7 @@ import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import mmSmug from './RecordStore/art/musicman-smug.png'
 import CrateFlip, { SHOP_NAMES, type CrateCard } from '../components/CrateFlip'
-import { SHOP_BINS } from '../../common/record-shop-bins'
+import { SHOP_BINS, binForGenre } from '../../common/record-shop-bins'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import '../styles/discover-feed.css'
@@ -45,6 +45,7 @@ interface FeedCard {
   artUrl?: string
   previewUrl?: string
   brainPct?: number
+  genre?: string
   bin?: string
   hookPreviewUrl?: string
   hookTitle?: string
@@ -231,7 +232,9 @@ export default function NewForYouView() {
   const binCrates = SHOP_BINS
     .map((bin) => ({
       bin,
-      cards: lanes.flatMap((l) => l.cards).filter((c) => (c.bin ?? 'Misc') === bin) as CrateCard[],
+      // v4-cached feeds predate the bin field — compute client-side so the
+      // first post-update look files correctly instead of one giant Misc.
+      cards: lanes.flatMap((l) => l.cards).filter((c) => (c.bin ?? binForGenre(c.genre)) === bin) as CrateCard[],
     }))
     .filter((b) => b.cards.length > 0)
 
