@@ -53,6 +53,11 @@ let nasBreakerUntil = 0
 let lastVerdict = false
 let lastProbeAt = 0
 let probeInflight: Promise<boolean> | null = null
+// Transition-once logging (2026-08-22 flight-log stomp): a sustained
+// remote-mode episode used to re-warn on EVERY re-trip (~every 6 min,
+// all day when the laptop is away). One warn when the breaker OPENS,
+// one when the NAS comes back; the episode in between stays quiet.
+let breakerEpisodeOpen = false
 
 export async function nasAvailable(): Promise<boolean> {
   const now = Date.now()
@@ -69,7 +74,13 @@ export async function nasAvailable(): Promise<boolean> {
       lastProbeAt = Date.now()
       if (!ok) {
         nasBreakerUntil = Date.now() + 5 * 60_000
-        console.warn('[nas-breaker] NAS slow or absent — skipping ALL NAS IO for 5 min')
+        if (!breakerEpisodeOpen) {
+          breakerEpisodeOpen = true
+          console.warn('[nas-breaker] NAS slow or absent — skipping ALL NAS IO (5-min cooldowns; will report recovery)')
+        }
+      } else if (breakerEpisodeOpen) {
+        breakerEpisodeOpen = false
+        console.warn('[nas-breaker] NAS recovered — resuming NAS IO')
       }
       return ok
     } finally {

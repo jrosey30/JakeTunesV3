@@ -143,11 +143,12 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
   // the full 10-minute kill-timer while the NAS breaker ALREADY knew the
   // mount was slow/absent (laptop in remote mode, SMB over the tailnet).
   // A sync that cannot land must not spend 600s discovering that — ask the
-  // breaker first and defer quietly; the next window retries after the
-  // cooldown. console.log, not warn: in remote mode this is the EXPECTED
-  // state, and the breaker already warned once when it tripped.
+  // breaker first and defer; the next window retries after the cooldown.
   if (!(await nasAvailable())) {
-    console.log(`[sync-orchestrator] deferred (reason=${reason}) — NAS unavailable or in breaker cooldown`)
+    // warn, not log: warns are mirrored into the flight recorder, and this
+    // fires at most once per sync window — the POSITIVE verdict that the
+    // breaker gate worked must be visible where the timeouts used to be.
+    console.warn(`[sync-orchestrator] deferred (reason=${reason}) — NAS unavailable or in breaker cooldown`)
     return { ok: false, error: 'NAS unavailable (breaker cooldown)', durationMs: 0 }
   }
   // WAN full-sync stomp (2026-08-22): when the NAS is mounted via the
@@ -161,7 +162,7 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
   const mode = decideSyncMode(wantQuick, remote)
   if (mode.downgradedFromFull) {
     fullSyncOwed = true
-    console.log(`[sync-orchestrator] remote mode (NAS via tailnet) — full sync deferred until home; running quick pass (reason=${reason})`)
+    console.warn(`[sync-orchestrator] remote mode (NAS via tailnet) — full sync deferred until home; running quick pass (reason=${reason})`)
   }
   return new Promise((resolve) => {
     const startedAt = Date.now()
