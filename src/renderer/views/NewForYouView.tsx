@@ -345,9 +345,9 @@ export default function NewForYouView() {
       )}
 
       {binCrates.length > 0 && (
-        <div className="crate-floor">
-          <div className="crate-floor-head">The Bins</div>
-          <div className="crate-grid">
+        <div className="bincrate-floor">
+          <div className="bincrate-floor-head">The Bins</div>
+          <div className="bincrate-grid">
             {binCrates.map(({ bin, cards }) => (
               <CrateFlip
                 key={bin}

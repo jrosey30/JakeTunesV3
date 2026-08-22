@@ -85,7 +85,7 @@ export default function CrateFlip({ bin, cards, cardId, playingId, addedIds, onP
 
   return (
     <section
-      className="crate"
+      className="bincrate"
       data-bin={bin}
       tabIndex={0}
       onKeyDown={(e) => {
@@ -93,14 +93,14 @@ export default function CrateFlip({ bin, cards, cardId, playingId, addedIds, onP
         if (e.key === 'ArrowLeft') { e.preventDefault(); flip(-1) }
       }}
     >
-      <div className="crate-plate">
-        <span className="crate-plate-genre">{bin}</span>
-        <span className="crate-plate-count">{i + 1} / {cards.length}</span>
+      <div className="bincrate-plate">
+        <span className="bincrate-plate-genre">{bin}</span>
+        <span className="bincrate-plate-count">{i + 1} / {cards.length}</span>
       </div>
-      <div className="crate-body">
+      <div className="bincrate-body">
         <button
           type="button"
-          className="crate-stack"
+          className="bincrate-stack"
           title="Flip to the next record (→/←)"
           onClick={() => flip(1)}
         >
@@ -113,34 +113,34 @@ export default function CrateFlip({ bin, cards, cardId, playingId, addedIds, onP
             return (
               <div
                 key={front ? 'front' : `back-${d}`}
-                className={`crate-sleeve${front ? ` crate-sleeve--front${flipDir ? ` crate-sleeve--${flipDir}` : ''}` : ''}`}
+                className={`bincrate-sleeve${front ? ` bincrate-sleeve--front${flipDir ? ` bincrate-sleeve--${flipDir}` : ''}` : ''}`}
                 style={front ? undefined : { transform: `translateY(${(4 - d) * -7}px) scale(${1 - (4 - d) * 0.045})` }}
               >
                 <div className="df-art-ph" aria-hidden="true">♪</div>
                 {card.artUrl && <img src={card.artUrl} alt="" loading="lazy" draggable={false} onError={(e) => { e.currentTarget.style.display = 'none' }} />}
                 {front && card.brainPct != null && <div className="df-pct" title="Brain match vs your taste">{card.brainPct}%</div>}
-                {front && <span className={`crate-sticker crate-sticker--${card.lane}`}>{LANE_STICKERS[card.lane] ?? ''}</span>}
+                {front && <span className={`bincrate-sticker bincrate-sticker--${card.lane}`}>{LANE_STICKERS[card.lane] ?? ''}</span>}
               </div>
             )
           })}
         </button>
-        <div className="crate-detail">
+        <div className="bincrate-detail">
           <div className="df-badge-row">
             <span className={`df-type df-type--${c.type}`}>{c.type}</span>
             {c.year && <span className="df-year">{c.year}</span>}
-            <span className="crate-lane-tag">{SHOP_NAMES[c.lane] ?? c.lane}</span>
+            <span className="bincrate-lane-tag">{SHOP_NAMES[c.lane] ?? c.lane}</span>
           </div>
-          <div className="crate-title" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
-          {c.type !== 'artist' && <div className="crate-artist">{c.artist}</div>}
+          <div className="bincrate-title" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
+          {c.type !== 'artist' && <div className="bincrate-artist">{c.artist}</div>}
           {c.because
             ? <div className="df-because">Because you play <b>{c.because}</b></div>
             : laneReason(c) ? <div className="df-because df-because--lane">{laneReason(c)}</div> : null}
-          {c.why && <div className="df-why crate-why">{c.why}</div>}
-          <div className="crate-actions">
+          {c.why && <div className="df-why bincrate-why">{c.why}</div>}
+          <div className="bincrate-actions">
             {sampleUrl && (
               <button
                 type="button"
-                className={`crate-sample${isPlaying ? ' crate-sample--on' : ''}`}
+                className={`bincrate-sample${isPlaying ? ' bincrate-sample--on' : ''}`}
                 onClick={() => onPreview(id, sampleUrl, c.type === 'album' && c.hookTitle ? `${c.title} · ${c.hookTitle}` : c.title, c.artist)}
                 title={isPlaying ? 'Stop' : sampleLabel}
               >
@@ -151,14 +151,14 @@ export default function CrateFlip({ bin, cards, cardId, playingId, addedIds, onP
             <button type="button" className={`df-add${isAdded ? ' df-add--done' : ''}`} disabled={isAdded} onClick={() => onAdd(c)}>
               {isAdded ? 'On your list ✓' : '+ List'}
             </button>
-            <button type="button" className="crate-nope" title={`Never show ${c.artist} again`} aria-label="Not for me" onClick={() => onNope(c)}>
+            <button type="button" className="bincrate-nope" title={`Never show ${c.artist} again`} aria-label="Not for me" onClick={() => onNope(c)}>
               <CloseIcon />
             </button>
           </div>
-          <div className="crate-flip-hint">
-            <button type="button" className="crate-arrow" onClick={() => flip(-1)} aria-label="Previous record">‹</button>
+          <div className="bincrate-flip-hint">
+            <button type="button" className="bincrate-arrow" onClick={() => flip(-1)} aria-label="Previous record">‹</button>
             <span>flip the bin</span>
-            <button type="button" className="crate-arrow" onClick={() => flip(1)} aria-label="Next record">›</button>
+            <button type="button" className="bincrate-arrow" onClick={() => flip(1)} aria-label="Next record">›</button>
           </div>
         </div>
       </div>
