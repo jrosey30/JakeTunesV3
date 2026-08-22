@@ -1094,6 +1094,12 @@ function sendMediaKeyAction(action: string): void {
   if (action === lastMediaKeyAction && now - lastMediaKeyAt < 250) return
   lastMediaKeyAction = action
   lastMediaKeyAt = now
+  // Flight-recorder sensor (2026-08-22): the one unproven link in the
+  // media-key chain is macOS delivering the hardware key to globalShortcut
+  // (synthetic NX posts can bypass the media-remote daemon, so they can't
+  // test it). A physical press now leaves proof; menu/registration/renderer
+  // legs are already verified working.
+  flightRecorder.record('info', 'media-key', { action })
   sendMenuAction(action)
 }
 
