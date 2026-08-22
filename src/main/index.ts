@@ -133,6 +133,7 @@ import { foldAccents } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { JsonFileCache } from './state-cache'
+import { initFlightRecorder, sanitizeCrashPayload } from './flight-recorder'
 import { spawn } from 'child_process'
 import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
@@ -2342,6 +2343,24 @@ ipc.handle('get-active-host', () => readActiveHostSync(), { public: true })
 // So the app records it instead. Append-only, capped, on the LOCAL disk. When
 // it next fails, the answer is in a file — no restart, no debugger, no asking
 // Jake to describe what he sees.
+// ── Flight recorder (2026-08-21, reliability program P0) ─────────────
+// The app's durable memory of its own failures. mirrorConsole makes every
+// existing console.warn/error in main flow into main.log without touching
+// a single call site; the 'flight-record' channel below is the renderer's
+// crash confession line. LOCAL userData path on purpose — never STATE_DIR,
+// which can resolve to the NAS and hang appends when the mount wedges.
+const flightRecorder = initFlightRecorder({
+  logPath: () => join(app.getPath('userData'), 'main.log'),
+  ready: app.whenReady(),
+})
+flightRecorder.mirrorConsole()
+flightRecorder.record('info', 'boot.main-start')
+app.whenReady().then(() => flightRecorder.record('info', 'boot.ready'))
+ipcMain.on('flight-record', (_e, payload: unknown) => {
+  const p = sanitizeCrashPayload(payload)
+  flightRecorder.record(p.kind.startsWith('boot.') ? 'info' : 'error', `renderer.${p.kind}`, p)
+})
+
 const AUDIO_LOG_PATH = () => join(app.getPath('userData'), 'audio-events.log')
 // The comment above has said "capped" since the night this shipped; the cap
 // itself was never written, and the file was at 1.5MB within days

@@ -603,6 +603,8 @@ declare global {
       // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
       getActiveHost: () => Promise<'mm' | 'megan'>
       audioLog: (line: string) => void
+      // 2026-08-21 reliability P0: renderer crash net → main flight recorder.
+      reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }) => void
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
       musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>

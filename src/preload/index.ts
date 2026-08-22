@@ -53,6 +53,7 @@ const electronAPI = {
   getActiveHost: (): Promise<'mm' | 'megan'> =>
     ipcRenderer.invoke('get-active-host'),
   audioLog: (line: string): void => ipcRenderer.send('audio-log', line),
+  reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }): void => ipcRenderer.send('flight-record', payload),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
