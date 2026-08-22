@@ -92,7 +92,7 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // its error, logs once (the silence-expected-failures doctrine: gate on
   // observable state, log the abnormal), or consciously raises this
   // number in its commit.
-  const SILENT_CATCHES_LOCKED = 78
+  const SILENT_CATCHES_LOCKED = 64
   test(`silent .catch(() => {}) in main stays ≤ ${SILENT_CATCHES_LOCKED}`, () => {
     // Live code only: _archive is dead by definition, and test files cite
     // the pattern as data (this one included — the regex is assembled so

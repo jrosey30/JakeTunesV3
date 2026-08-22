@@ -2239,7 +2239,7 @@ async function fetchWikiSummary(artist: string): Promise<{ extract: string | nul
     console.warn('[wiki] resolver failed for', artist, err)
   }
   const out = { extract, pageUrl }
-  await writeFile(cachePath, JSON.stringify(out)).catch(() => {})
+  await writeFile(cachePath, JSON.stringify(out)).catch((err) => console.warn('[wiki] summary cache write failed:', err?.message ?? err))
   return out
 }
 ipc.handle('get-artist-wiki', async (_event, artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> => {
@@ -2384,6 +2384,7 @@ ipcMain.on('flight-record', (_e, payload: unknown) => {
 let lastOrphanWarnKey = ''
 const streamWarnedOnce = new Set<string>()
 
+let audioLogWarned = false
 const AUDIO_LOG_PATH = () => join(app.getPath('userData'), 'audio-events.log')
 // The comment above has said "capped" since the night this shipped; the cap
 // itself was never written, and the file was at 1.5MB within days
@@ -2406,7 +2407,11 @@ ipcMain.on('audio-log', (_e, line: string) => {
         } catch { /* absent file or busy rename — next check catches it */ }
       }
       await appendFile(AUDIO_LOG_PATH(), line + '\n', 'utf-8')
-    })().catch(() => {})
+    })().catch((err) => {
+      // Once per run: audio forensics silently dropping is exactly the kind
+      // of invisible failure the flight recorder exists to catch.
+      if (!audioLogWarned) { audioLogWarned = true; console.warn('[audio-log] append failed (audio forensics dropping):', err?.message ?? err) }
+    })
   } catch { /* logging must never break playback */ }
 })
 
@@ -3027,7 +3032,7 @@ async function resolveCanonicalArtist(
       wikiTitle,
       disambiguation: top.disambiguation || '',
     }
-    await writeFile(cachePath, JSON.stringify(result)).catch(() => {})
+    await writeFile(cachePath, JSON.stringify(result)).catch((err) => console.warn('[canonical] cache write failed:', err?.message ?? err))
     return result
   } catch (err) {
     console.warn('[resolveCanonicalArtist] failed for', name, err)
@@ -3792,7 +3797,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
 // deterministic ordering, no boot race. Refreshes the NAS mirror first so
 // a just-restarted app absorbs rows adopted while it was closed.
 ipc.handle('get-mobile-imports', async () => {
-  await refreshPhoneAuthoredMirrors().catch(() => {})
+  await refreshPhoneAuthoredMirrors().catch((err) => console.warn('[mobile-imports] mirror refresh failed (serving last-known rows):', err?.message ?? err))
   let overrides: Record<string, { fp?: string; fields?: Record<string, string> }> = {}
   try { overrides = await mobileMetadataOverridesCache.get() } catch { /* none yet */ }
   try {
@@ -3827,7 +3832,7 @@ initListenerProfile({
   profileCache: listenerProfileCache,
   discogsSummary: () => discogsCollection,
   activityBlock: getActivityPromptBlockSync,
-  onReflect: () => { generateObservation().catch(() => {}) },
+  onReflect: () => { generateObservation().catch((err) => console.warn('[persona] observation generation failed:', err?.message ?? err)) },
 })
 const musicmanMemoryCache = new JsonFileCache<unknown[]>(
   () => join(STATE_DIR, 'musicman-memory.json'),
@@ -4846,6 +4851,9 @@ ipc.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?
     () => saveLibraryImpl(tracks, playlists, force),
     () => saveLibraryImpl(tracks, playlists, force),
   )
+  // Chain-keeper only: save errors are surfaced by saveLibraryImpl itself
+  // (both .then arms call it); this catch merely keeps the chain adoptable.
+  // Silent BY DESIGN — do not convert to a warn (it would double-report).
   librarySaveChain = run.catch(() => {})
   return run
 }, { refuse: REFUSED_SENDER })
@@ -12397,7 +12405,7 @@ function withRecoOutbox(fn: (ops: RecoOutboxOp[]) => Promise<RecoOutboxOp[]>): P
     const next = await fn(ops)
     await writeRecoOutbox(next)
   })
-  recoOutboxChain = run.catch(() => {})
+  recoOutboxChain = run.catch((err) => console.warn('[reco] outbox op failed (mutation may be unrecorded):', err?.message ?? err))
   return run
 }
 
@@ -12509,7 +12517,7 @@ interface RecoSyncMeta {
 let lastRecoSyncMeta: RecoSyncMeta = { source: 'cache', backendReachable: false, syncedAt: null, pendingOps: 0 }
 
 async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
-  await replayRecommendationsOutbox().catch(() => {})
+  await replayRecommendationsOutbox().catch((err) => console.warn('[reco] outbox replay failed (will retry next sync):', err?.message ?? err))
   const local = await readRecommendationsFile()
   const outbox = await readRecoOutbox()
   const backendRaw = await fetchRecommendationsFromBackend()   // null = homemini unreachable
@@ -13006,7 +13014,7 @@ ipc.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: bo
     return [...scrubbed, { op: 'delete', ids: remoteIds.length > 0 ? remoteIds : [rid], identities, queuedAt: new Date().toISOString() }]
   })
   // Replay now when the Mini is up; otherwise the op waits for the next sync.
-  void replayRecommendationsOutbox().catch(() => {})
+  void replayRecommendationsOutbox().catch((err) => console.warn('[reco] outbox replay failed (will retry next sync):', err?.message ?? err))
   scheduleRecoConvergeSync()
   return { ok: true }
 }, { refuse: REFUSED_SENDER })
@@ -14979,8 +14987,9 @@ app.whenReady().then(async () => {
   }
   // First sweep 5 minutes after boot (let the app settle), then hourly.
   // Batches are bounded, so a large backlog drains gradually by design.
-  setTimeout(() => { void runEvictionSweep().catch(() => {}) }, 5 * 60 * 1000)
-  setInterval(() => { void runEvictionSweep().catch(() => {}) }, 60 * 60 * 1000)
+  // sweepOnce() is designed never to throw — these catches are tripwires.
+  setTimeout(() => { void runEvictionSweep().catch((err) => console.warn('[eviction] sweep threw (designed impossible):', err)) }, 5 * 60 * 1000)
+  setInterval(() => { void runEvictionSweep().catch((err) => console.warn('[eviction] sweep threw (designed impossible):', err)) }, 60 * 60 * 1000)
   ipc.handle('library-evict-sweep', async () => {
     try { return { ok: true, result: await runEvictionSweep() } }
     catch (err) { return { ok: false, error: safeIpcError(err, 'io-failed') } }
@@ -15081,7 +15090,7 @@ app.whenReady().then(async () => {
       console.log(`[launch] version changed (${prevVersion} → ${currentVersion}) — purging renderer cache + stale knowledge caches`)
       const { rm, readdir, unlink } = await import('fs/promises')
       for (const dir of ['Session Storage', 'Local Storage']) {
-        await rm(join(app.getPath('userData'), dir), { recursive: true, force: true }).catch(() => {})
+        await rm(join(app.getPath('userData'), dir), { recursive: true, force: true }).catch((err) => console.warn(`[reset] could not remove ${dir}:`, err?.message ?? err))
       }
       // 4.5.0-72 — also nuke the wiki cache + artist-image .miss
       // tombstones on every version change. Bugs in earlier versions
@@ -15317,8 +15326,8 @@ app.whenReady().then(async () => {
     }
     // Hand the persona memory its dependencies before the first read.
     initPersonaMemory({ cache: musicmanMemoryCache, userDataDir: app.getPath('userData') })
-    await loadMusicManMemory().catch(() => {})
-    await loadCynthiaMemory().catch(() => {})
+    await loadMusicManMemory().catch((err) => console.warn('[persona] Music Man memory failed to load (starting blank):', err?.message ?? err))
+    await loadCynthiaMemory().catch((err) => console.warn('[persona] Cynthia memory failed to load (starting blank):', err?.message ?? err))
     fetchDiscogsCollection()
   })()
 
