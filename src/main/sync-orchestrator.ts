@@ -43,7 +43,8 @@ import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
-import { nasAvailable } from './state-dir'
+import { nasAvailable, NAS_STATE_DIR_PATH } from './state-dir'
+import { mountHostFor, isTailnetHost, decideSyncMode } from './sync-mode.ts'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
 // 4.4.36: dropped debounce 30 → 5 sec. The 30-sec window was meant to
@@ -92,6 +93,29 @@ export interface LastSyncSnapshot {
   error: string | null
   scriptPresent: boolean  // false on installs where homemini sync is not configured
 }
+// A remote-mode downgrade leaves a FULL pass owed (tombstones + out-of-band
+// edits wait for home network). Cleared by the first full sync that exits 0.
+let fullSyncOwed = false
+
+/** Is the NAS volume currently served over the tailnet (remote mode)?
+ *  One cheap `mount` child per call — same source platform.ts's
+ *  macNetworkMountSet() reads; never touches the (possibly slow) mount. */
+async function nasMountedViaTailnet(): Promise<boolean> {
+  const volume = NAS_STATE_DIR_PATH.split('/').slice(0, 3).join('/')
+  try {
+    const out = await new Promise<string>((resolve, reject) => {
+      const c = spawn('mount', [])
+      let s = ''
+      c.stdout.on('data', (d: Buffer) => { s += d.toString() })
+      c.on('error', reject)
+      c.on('exit', () => resolve(s))
+    })
+    return isTailnetHost(mountHostFor(out, volume))
+  } catch {
+    return false   // can't read the mount table → assume home; the breaker still guards
+  }
+}
+
 const lastSync: LastSyncSnapshot = {
   ok: null,
   reason: null,
@@ -126,6 +150,19 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
     console.log(`[sync-orchestrator] deferred (reason=${reason}) — NAS unavailable or in breaker cooldown`)
     return { ok: false, error: 'NAS unavailable (breaker cooldown)', durationMs: 0 }
   }
+  // WAN full-sync stomp (2026-08-22): when the NAS is mounted via the
+  // TAILNET (remote mode), a full rsync --delete over the 73GB library
+  // cannot finish inside the kill-timer — every hourly safety-net run
+  // burned 600s and died. Downgrade full→quick out there (new imports
+  // still propagate!) and remember a full pass is OWED; the first full
+  // sync that succeeds back on home network clears the debt.
+  const remote = await nasMountedViaTailnet()
+  const wantQuick = reason === 'import' || reason === 'metadata-edit' || reason === 'playlist'
+  const mode = decideSyncMode(wantQuick, remote)
+  if (mode.downgradedFromFull) {
+    fullSyncOwed = true
+    console.log(`[sync-orchestrator] remote mode (NAS via tailnet) — full sync deferred until home; running quick pass (reason=${reason})`)
+  }
   return new Promise((resolve) => {
     const startedAt = Date.now()
     let timedOut = false
@@ -138,7 +175,7 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
     // mode (rsync --delete) to catch tombstones and out-of-band
     // edits. Manual invocations also use full mode (assume the user
     // wants a thorough sync).
-    const useQuickMode = reason === 'import' || reason === 'metadata-edit' || reason === 'playlist'
+    const useQuickMode = mode.quick
     const args = [SYNC_SCRIPT]
     if (useQuickMode) args.push('--quick')
 
@@ -214,6 +251,11 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
         return
       }
       if (code === 0) {
+        // A FULL pass that landed pays off any remote-mode debt.
+        if (!useQuickMode && fullSyncOwed) {
+          fullSyncOwed = false
+          console.log('[sync-orchestrator] owed full sync completed — remote-mode debt cleared')
+        }
         console.log(`[sync-orchestrator] sync OK in ${durationMs}ms (reason=${reason})`)
         resolve({ ok: true, durationMs })
       } else if (code === 9) {
