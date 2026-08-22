@@ -34,7 +34,7 @@ import {
   initListenerProfile, loadListenerProfile, saveListenerProfile, appendListeningEvent,
   addObservation, getListenerProfile, buildTasteProfile, type ListenerProfile,
 } from './listener-profile.ts'
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage, systemPreferences } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
@@ -1105,10 +1105,22 @@ const MEDIA_KEY_ACTIONS: Record<(typeof MEDIA_KEY_ACCELERATORS)[number], string>
 }
 
 function registerMediaKeyShortcuts(): void {
+  // Flight-recorder catch #1 (2026-08-21): these three warns fired on every
+  // boot since forever. Root cause on macOS: capturing hardware media keys
+  // via globalShortcut requires the app to be a TRUSTED ACCESSIBILITY
+  // client; untrusted, register() can only return false. Say the real
+  // cause once, with the remedy, instead of three blind warns — and keep
+  // per-key warns only for the trusted-but-conflicting case (another app
+  // owns the keys). Focused-window media keys work regardless via the
+  // before-input-event path (mediaKeyActionFromInput below).
+  if (process.platform === 'darwin' && !systemPreferences.isTrustedAccessibilityClient(false)) {
+    console.warn('[media-keys] global media keys inactive: JakeTunes is not a trusted Accessibility client. Enable in System Settings → Privacy & Security → Accessibility to control playback while unfocused; focused-window keys work regardless.')
+    return
+  }
   for (const accel of MEDIA_KEY_ACCELERATORS) {
     try {
       const ok = globalShortcut.register(accel, () => sendMediaKeyAction(MEDIA_KEY_ACTIONS[accel]))
-      if (!ok) console.warn(`[media-keys] could not register global ${accel}`)
+      if (!ok) console.warn(`[media-keys] could not register global ${accel} — another app likely owns it`)
     } catch (err) {
       console.warn(`[media-keys] register ${accel} threw:`, err)
     }
@@ -16251,10 +16263,25 @@ app.whenReady().then(async () => {
       }
     })
     autoUpdater.on('error', (err) => {
-      console.log('Auto-update error:', err.message)
+      // warn, not log: warn is mirrored into the flight recorder.
+      console.warn('Auto-update error:', err.message)
     })
-    // Check after a short delay to not slow down startup
-    setTimeout(() => autoUpdater.checkForUpdatesAndNotify(), 5000)
+    // Flight-recorder catch #2 (2026-08-21): dir-target builds ship without
+    // app-update.yml, so checkForUpdatesAndNotify() threw an UNHANDLED
+    // rejection on every boot of a hand-installed build. Gate on the file
+    // updater actually needs, and catch the promise — an update check must
+    // never be the app's loudest failure.
+    const updateManifest = join(process.resourcesPath, 'app-update.yml')
+    if (existsSync(updateManifest)) {
+      // Check after a short delay to not slow down startup
+      setTimeout(() => {
+        autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
+          console.warn('Auto-update check failed:', err instanceof Error ? err.message : String(err))
+        })
+      }, 5000)
+    } else {
+      console.warn('[updater] skipped: no app-update.yml (unpublished/dir build) — updates arrive by hand-install')
+    }
   }
 
   app.on('activate', () => {

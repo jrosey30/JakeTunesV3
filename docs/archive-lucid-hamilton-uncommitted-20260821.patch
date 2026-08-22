@@ -1,0 +1,91 @@
+diff --git a/src/main/index.ts b/src/main/index.ts
+index a827537..890ba91 100644
+--- a/src/main/index.ts
++++ b/src/main/index.ts
+@@ -10916,7 +10916,7 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
+ // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
+ // regardless of artist. The renderer then filters for freshness (new artists,
+ // no same-album) + diversity. We return a generous pool so ↻ has real variety.
+-ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
++ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
+   try {
+     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
+     const m = await ragGetEmbeddingsMap()
+diff --git a/src/main/ipc-register.ts b/src/main/ipc-register.ts
+index 7b5cb19..cb95ac6 100644
+--- a/src/main/ipc-register.ts
++++ b/src/main/ipc-register.ts
+@@ -18,7 +18,7 @@ import { refuseIfNotMainWindow } from './ipc-guard.ts'
+ 
+ export type MainWindowAccessor = () => BrowserWindow | null
+ 
+-export interface RegisterHandleOptions<Result> {
++export interface RegisterHandleOptions<Refuse> {
+   /**
+    * Skip the main-window sender guard. Use only for intentionally
+    * public / read-only channels.
+@@ -28,14 +28,18 @@ export interface RegisterHandleOptions<Result> {
+    * Value returned when a non-main-window sender is refused.
+    * Required unless `public: true`.
+    */
+-  refuse?: Result
++  refuse?: Refuse
+ }
+ 
+ export interface IpcRegistrar {
+-  handle: <Args extends unknown[], Result>(
++  // `Refuse` is inferred separately from `Result`: the channel's effective
++  // result type is `Result | Refuse`, and tying them to one type parameter
++  // makes inference pick whichever argument TypeScript sees first and
++  // reject the other.
++  handle: <Args extends unknown[], Result, Refuse = Result>(
+     channel: string,
+     listener: (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result> | Result,
+-    options?: RegisterHandleOptions<Result>,
++    options?: RegisterHandleOptions<Refuse>,
+   ) => void
+ }
+ 
+@@ -68,10 +72,10 @@ export function createIpcRegistrar(getMainWindow: MainWindowAccessor): IpcRegist
+   // eslint-disable-next-line @typescript-eslint/no-require-imports
+   const { ipcMain } = require('electron') as typeof import('electron')
+ 
+-  function handle<Args extends unknown[], Result>(
++  function handle<Args extends unknown[], Result, Refuse = Result>(
+     channel: string,
+     listener: (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result> | Result,
+-    options?: RegisterHandleOptions<Result>,
++    options?: RegisterHandleOptions<Refuse>,
+   ): void {
+     const { public: isPublic } = assertIpcRegisterOptions(channel, options)
+ 
+@@ -81,7 +85,7 @@ export function createIpcRegistrar(getMainWindow: MainWindowAccessor): IpcRegist
+           event,
+           getMainWindow(),
+           channel,
+-          options!.refuse as Result,
++          options!.refuse as Refuse,
+         )
+         if (refused !== null) return refused
+       }
+diff --git a/src/main/ipc/library-ipc.ts b/src/main/ipc/library-ipc.ts
+index 61289c2..9ff615f 100644
+--- a/src/main/ipc/library-ipc.ts
++++ b/src/main/ipc/library-ipc.ts
+@@ -19,6 +19,7 @@ import {
+   type GroupingProposal,
+ } from '../artist-groups-core.ts'
+ import type { TrackLike } from '../taste-model.ts'
++import type { SyncReason } from '../sync-orchestrator.ts'
+ import {
+   getListeningMemory,
+   recordPlay,
+@@ -43,7 +44,7 @@ export interface LibraryIpcHost {
+   getPlaylists: () => Promise<unknown[]>
+   setPlaylists: (playlists: unknown[]) => void
+   isSaveLocked: () => string | null
+-  triggerSync: (reason: string) => void
++  triggerSync: (reason: SyncReason) => void
+   scanLibraryOrphans: () => Promise<{
+     trackCount: number
+     diskCount: number
