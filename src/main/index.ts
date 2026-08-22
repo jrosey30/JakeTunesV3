@@ -2378,6 +2378,11 @@ ipcMain.on('flight-record', (_e, payload: unknown) => {
   const p = sanitizeCrashPayload(payload)
   flightRecorder.record(p.kind.startsWith('boot.') ? 'info' : 'error', `renderer.${p.kind}`, p)
 })
+// Warn-once state for persisting conditions (flight-log stomp 2026-08-22:
+// one orphaned-edits condition = 23 identical lines; nine propagating
+// imports = 36 stream-404 lines). First occurrence is the signal.
+let lastOrphanWarnKey = ''
+const streamWarnedOnce = new Set<string>()
 
 const AUDIO_LOG_PATH = () => join(app.getPath('userData'), 'audio-events.log')
 // The comment above has said "capped" since the night this shipped; the cap
@@ -3937,8 +3942,17 @@ async function detectStateConflicts(): Promise<void> {
   }
   if (stateConflicts.length > 0) {
     const summary = stateConflicts.map(c => `${c.file} (local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s)`).join(', ')
-    console.warn(`[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
+    // Warn once per FILE-SET per run, not per check: the same unresolved
+    // condition re-warned every ~2 min (23 identical lines in one flight
+    // log). Keyed on the file names — a NEW file joining the orphan set
+    // re-warns with the full picture; the drift seconds ticking up do not.
+    const orphanKey = stateConflicts.map(c => c.file).sort().join('|')
+    if (orphanKey !== lastOrphanWarnKey) {
+      lastOrphanWarnKey = orphanKey
+      console.warn(`[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
+    }
   } else {
+    lastOrphanWarnKey = ''
     console.log('[state] no orphaned local edits detected')
   }
 }
@@ -4194,7 +4208,16 @@ async function fetchAudioFromHomemini(
       if (rangeHeader) reqHeaders['Range'] = rangeHeader
       const res = await fetchHeadersWithin(url, { headers: reqHeaders }, headerBudgetMs)
       if (!res.ok && res.status !== 206) {
-        console.warn(`[stream] homemini ${res.status} for id=${id} flac=${wantFlac}`)
+        // Once per id+status per run: a not-yet-propagated import 404s on
+        // every play attempt and retry (36 near-identical lines in one
+        // flight log while nine fresh imports crossed the WAN). First
+        // occurrence is the signal; repeats are noise. A STATUS change
+        // (404→500) still warns — that's a different story.
+        const streamWarnKey = `${id}:${res.status}:${wantFlac}`
+        if (!streamWarnedOnce.has(streamWarnKey)) {
+          streamWarnedOnce.add(streamWarnKey)
+          console.warn(`[stream] homemini ${res.status} for id=${id} flac=${wantFlac}`)
+        }
         return null
       }
       if (!res.body) return null

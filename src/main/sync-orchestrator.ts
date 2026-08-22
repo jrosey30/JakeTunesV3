@@ -43,6 +43,7 @@ import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
+import { nasAvailable } from './state-dir'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
 // 4.4.36: dropped debounce 30 → 5 sec. The 30-sec window was meant to
@@ -113,7 +114,18 @@ function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durat
   }
 }
 
-function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string; durationMs: number }> {
+async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string; durationMs: number }> {
+  // Flight-log stomp (2026-08-22): eight hourly safety-net runs each hung
+  // the full 10-minute kill-timer while the NAS breaker ALREADY knew the
+  // mount was slow/absent (laptop in remote mode, SMB over the tailnet).
+  // A sync that cannot land must not spend 600s discovering that — ask the
+  // breaker first and defer quietly; the next window retries after the
+  // cooldown. console.log, not warn: in remote mode this is the EXPECTED
+  // state, and the breaker already warned once when it tripped.
+  if (!(await nasAvailable())) {
+    console.log(`[sync-orchestrator] deferred (reason=${reason}) — NAS unavailable or in breaker cooldown`)
+    return { ok: false, error: 'NAS unavailable (breaker cooldown)', durationMs: 0 }
+  }
   return new Promise((resolve) => {
     const startedAt = Date.now()
     let timedOut = false
