@@ -47,7 +47,7 @@ const TITLES: Record<string, string> = {
   'dj-hands-picks': 'DJ Stephen Hands Picks',
 }
 
-interface PicksData {
+export interface PicksData {
   name: string
   commentary: string
   trackIds: number[]
@@ -62,14 +62,14 @@ interface PicksData {
 
 // Bump this whenever picks output should be considered incompatible
 // with what an older build cached. 4.4.48: variety enforcement landed.
-const PICKS_SCHEMA_V = 2
+export const PICKS_SCHEMA_V = 2
 
 // 4.2.18: Picks are weekly now, Friday-to-Friday. Returns the most
 // recent Friday at midnight local — same value for any time within the
 // same Fri→Thu window, so equality on this value tells us "still in
 // the same week's picks." Roll-over fires automatically when the user
 // opens picks after Friday 00:00.
-function getWeekStartFriday(d: Date): Date {
+export function getWeekStartFriday(d: Date): Date {
   const result = new Date(d)
   const day = result.getDay()  // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
   const daysSinceFriday = (day - 5 + 7) % 7

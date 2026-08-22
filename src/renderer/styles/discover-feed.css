@@ -404,3 +404,152 @@
   color: var(--text-dim);
   font-weight: var(--fw-normal);
 }
+
+/* ── The Bins + Staff Wall (2026-08-22 crate reorg) ─────────────────── */
+
+/* Staff picks wall — the WJLR personas, moved in from the sidebar. */
+.staff-wall { margin-bottom: 8px; }
+.staff-shelf-head { display: inline-flex; align-items: center; gap: 8px; }
+.staff-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 1px 1px rgba(0,0,0,0.3); }
+.staff-dot--mm { background: rgb(var(--brand-orange-rgb)); }
+.staff-dot--megan { background: #4a90c2; }
+.staff-dot--djhands { background: #8e5ac2; }
+.staff-full-list {
+  margin-left: 10px; border: 0; background: none; cursor: pointer;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--shop-cream); opacity: 0.85; padding: 0;
+}
+.staff-full-list:hover { opacity: 1; text-decoration: underline; }
+.staff-commentary {
+  font-size: 11px; font-style: italic; color: var(--shop-ink);
+  margin: -4px 0 10px 2px; max-width: 640px;
+}
+.staff-row { min-height: 150px; padding-top: 10px; }
+.staff-card { flex: 0 0 118px; }
+.staff-card .df-art { width: 118px; height: 118px; }
+.staff-art-img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+.staff-card .df-name { font-size: 12px; }
+
+/* The crate floor: genre bins in a responsive grid. */
+.crate-floor { margin-top: 6px; }
+.crate-floor-head {
+  display: inline-block;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--shop-cream);
+  background: linear-gradient(180deg, var(--shop-counter-hi) 0%, var(--shop-counter) 55%, var(--shop-counter-lo) 100%);
+  border: 1px solid var(--shop-edge); border-radius: 4px;
+  padding: 6px 14px; margin-bottom: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 236, 200, 0.18), 0 2px 5px rgba(60, 38, 18, 0.25);
+}
+.crate-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
+  gap: 22px;
+}
+
+/* One crate: wood box, divider plate, the bin inside. */
+.crate {
+  background: linear-gradient(180deg, var(--shop-wood-hi) 0%, var(--shop-wood) 30%, var(--shop-wood-lo) 100%);
+  border: 1px solid var(--shop-edge);
+  border-radius: 8px;
+  padding: 12px 14px 14px;
+  box-shadow: inset 0 2px 6px rgba(255, 236, 200, 0.15), inset 0 -6px 12px rgba(40, 24, 10, 0.35), 0 4px 10px rgba(60, 38, 18, 0.25);
+  outline: none;
+}
+.crate:focus-visible { box-shadow: inset 0 2px 6px rgba(255, 236, 200, 0.15), inset 0 -6px 12px rgba(40, 24, 10, 0.35), 0 4px 10px rgba(60, 38, 18, 0.25), 0 0 0 2px var(--brand-orange); }
+.crate-plate {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--shop-paper);
+  border: 1px solid rgba(140, 115, 80, 0.4); border-radius: 3px;
+  padding: 4px 10px; margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(60, 38, 18, 0.2);
+  transform: rotate(-0.4deg);
+}
+.crate-plate-genre {
+  font-size: 13px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase;
+  color: #3a2d1c;
+}
+.crate-plate-count { font-size: 10px; font-weight: 700; color: var(--shop-ink); opacity: 0.8; }
+
+.crate-body { display: flex; gap: 16px; align-items: flex-start; }
+
+/* The stack: front record + the bin behind it. */
+.crate-stack {
+  position: relative; flex: 0 0 190px; height: 218px;
+  border: 0; background: none; cursor: pointer; padding: 0;
+  perspective: 600px;
+}
+.crate-sleeve {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  width: 190px; height: 190px;
+  border-radius: 3px; overflow: hidden;
+  border: 1px solid rgba(60, 38, 18, 0.35);
+  background: #e8e6e0;
+  box-shadow: 0 3px 8px rgba(30, 18, 8, 0.35);
+  transform-origin: bottom center;
+  transition: transform 200ms ease;
+}
+.crate-sleeve img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+.crate-sleeve .df-art-ph { position: absolute; inset: 0; }
+.crate-sleeve--front { z-index: 3; }
+@keyframes crate-flip-fwd {
+  0% { transform: rotateX(0deg); }
+  45% { transform: rotateX(-58deg); opacity: 0.85; }
+  100% { transform: rotateX(0deg); }
+}
+@keyframes crate-flip-back {
+  0% { transform: rotateX(-58deg); opacity: 0.7; }
+  100% { transform: rotateX(0deg); opacity: 1; }
+}
+.crate-sleeve--fwd { animation: crate-flip-fwd 240ms ease; }
+.crate-sleeve--back { animation: crate-flip-back 240ms ease; }
+.crate-sleeve--front .df-pct { top: 6px; left: 6px; }
+.crate-sticker {
+  position: absolute; bottom: 6px; right: 6px;
+  font-size: 8.5px; font-weight: 900; letter-spacing: 0.08em;
+  color: var(--shop-cream); background: rgba(40, 26, 12, 0.82);
+  border-radius: 2px; padding: 2px 5px;
+}
+
+/* The record in hand: title, pitch, actions. */
+.crate-detail { flex: 1; min-width: 0; padding-top: 4px; }
+.crate-lane-tag {
+  font-size: 8.5px; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--shop-ink); opacity: 0.75;
+}
+.crate-title {
+  font-size: 15px; font-weight: 800; line-height: 1.2; color: #241a10;
+  margin-top: 5px;
+}
+.crate-artist { font-size: 12px; color: #4c3a26; margin-top: 1px; }
+.crate-detail .df-because { color: #f6ecd8; }
+.crate-detail .df-because b { color: #ffd9a8; }
+.crate-detail .df-because--lane { color: rgba(246, 236, 216, 0.85); }
+.crate-why { max-width: 260px; }
+.crate-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.crate-sample {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--shop-edge); border-radius: 4px;
+  background: linear-gradient(180deg, var(--shop-counter-hi), var(--shop-counter-lo));
+  color: var(--shop-cream); font-size: 11px; font-weight: 700;
+  padding: 5px 10px; cursor: pointer;
+}
+.crate-sample:hover { filter: brightness(1.12); }
+.crate-sample--on { background: rgb(var(--brand-orange-rgb)); border-color: #a33a00; }
+.crate-nope {
+  border: 1px solid rgba(60, 38, 18, 0.4); border-radius: 4px;
+  background: rgba(40, 26, 12, 0.25); color: #f0e2c8;
+  width: 26px; height: 26px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.crate-nope:hover { background: rgba(120, 30, 20, 0.55); }
+.crate-flip-hint {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: rgba(246, 236, 216, 0.7);
+}
+.crate-arrow {
+  border: 1px solid rgba(60, 38, 18, 0.45); border-radius: 4px;
+  background: rgba(255, 240, 214, 0.16); color: var(--shop-cream);
+  width: 24px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.crate-arrow:hover { background: rgba(255, 240, 214, 0.3); }

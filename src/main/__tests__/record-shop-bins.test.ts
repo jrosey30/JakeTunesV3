@@ -7,7 +7,7 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { SHOP_BINS, binForGenre, pickHookIndex } from '../record-shop-bins.ts'
+import { SHOP_BINS, binForGenre, pickHookIndex } from '../../common/record-shop-bins.ts'
 
 describe('binForGenre', () => {
   test('the families land where a clerk would file them', () => {
