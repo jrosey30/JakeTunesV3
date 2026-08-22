@@ -132,6 +132,7 @@ import {
 import { foldAccents } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
+import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
 import { initFlightRecorder, sanitizeCrashPayload } from './flight-recorder'
 import { spawn } from 'child_process'
@@ -1367,13 +1368,7 @@ ipc.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boo
  */
 ipc.handle('discovery-learned', async () => {
   try {
-    let rows: LedgerRow[] = []
-    try {
-      const raw = await readFile(TASTE_LEDGER_PATH(), 'utf-8')
-      rows = raw.split('\n').filter(Boolean).map((l) => {
-        try { return JSON.parse(l) as LedgerRow } catch { return null }
-      }).filter((r): r is LedgerRow => !!r)
-    } catch { /* no ledger yet = nothing learned, which the summary says */ }
+    const rows: LedgerRow[] = await readLedgerRows(TASTE_LEDGER_PATH())
 
     let notForMe: Record<string, { artist?: string; at?: number }> = {}
     try { notForMe = (await discoveryFeedbackCache.get())?.notForMe ?? {} } catch { /* none */ }
@@ -1459,7 +1454,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 4
+const FEED_GEN_VERSION = 5  // 5: bins + album hooks + scene pitches (2026-08-22)
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1638,7 +1633,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
           const v = await df.itunesVerify(p.name, 'album', { artist: p.name }).catch(() => null)
           await new Promise((r) => setTimeout(r, 250))
           if (v?.artUrl) {
-            cards.push({ lane: 'scene', type: 'album', artist: v.artist, title: v.title, year: v.year, why: df.clipWhy(p.connection), artUrl: v.artUrl, because: p.anchor, genre: v.genre, desc: df.clipWhy(p.connection) })
+            cards.push({ lane: 'scene', type: 'album', artist: v.artist, title: v.title, year: v.year, why: df.clipWhy(p.connection), artUrl: v.artUrl, because: p.anchor, genre: v.genre, collectionId: v.collectionId, desc: df.clipWhy(p.connection) })
             made++
             continue
           }
@@ -1680,7 +1675,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
           if (!c.artist) continue
           const entity = c.type === 'artist' ? 'musicArtist' : 'album'
           const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title })
-          if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl, because: validBecause(c.because), genre: v.genre, desc: df.clipWhy(String(c.why || '')) })
+          if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl, because: validBecause(c.because), genre: v.genre, collectionId: v.collectionId, desc: df.clipWhy(String(c.why || '')) })
           await new Promise((r) => setTimeout(r, 250))   // stay polite with Apple
         }
         for (const sng of (parsed.songs || []).slice(0, 24)) {
@@ -1694,30 +1689,27 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
 
     await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes])
 
-    // Artwork pass: brand-new (journalism) and missing (MusicBrainz) cards
-    // arrive without art — dress them from iTunes. Existence is already
-    // grounded by their sources, so a missing iTunes hit keeps the card,
-    // just with the placeholder.
-    for (const c of cards) {
-      if (c.artUrl) continue
-      const v = await df.itunesVerify(`${c.artist} ${c.title}`, 'album', { artist: c.artist, title: c.title }).catch(() => null)
-      if (v?.artUrl) { c.artUrl = v.artUrl; if (!c.year && v.year) c.year = v.year }
-      if (v?.genre && !c.genre) c.genre = v.genre
-      await new Promise((r) => setTimeout(r, 200))
-    }
+    // Clerk pitches (module pass — Jake: "need you to get deeper than
+    // label-mates"): runs before scoring so the pitch feeds the embedding.
+    await df.applyScenePitches(cards, {
+      pitchCall: async (prompt) => {
+        const reply = await claudeCall('discover-scene-pitch', {
+          model: 'claude-sonnet-4-6', max_tokens: 1400, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: prompt }],
+        })
+        const b = reply.content[0]
+        return b && b.type === 'text' ? b.text : ''
+      },
+    })
+
+    // Artwork pass (module): dress artless journalism/MB cards from iTunes.
+    await df.dressArtlessCards(cards)
 
     // The verdict stream: accepts retire their cards from circulation (a yes
     // is already on the list — "existence is not memory", the tombstone is
     // the ledger row) and both sides teach the score below.
-    let verdicts: ReturnType<typeof discoverVerdicts> = { accepts: [], rejects: [] }
-    try {
-      const raw = await readFile(TASTE_LEDGER_PATH(), 'utf-8')
-      const rows = raw.split('\n').filter(Boolean).map((l) => {
-        try { return JSON.parse(l) as LedgerRow } catch { return null }
-      }).filter((r): r is LedgerRow => !!r)
-      verdicts = discoverVerdicts(rows)
-      for (const a of verdicts.accepts) ownedAlbumKeys.add(`${nk(a.artist)}|${nk(a.title)}`)
-    } catch { /* no ledger yet — the brain scores without verdicts */ }
+    const verdicts = discoverVerdicts(await readLedgerRows(TASTE_LEDGER_PATH()))
+    for (const a of verdicts.accepts) ownedAlbumKeys.add(`${nk(a.artist)}|${nk(a.title)}`)
 
     // Jake's verdicts + rotation + ownership + cross-lane dedupe.
     const fb = await discoveryFeedbackCache.get()
@@ -1736,6 +1728,14 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     )
     if (pcts) visible.forEach((c, i) => { c.brainPct = pcts[i] })
     const shelved = pcts ? df.applyQualityFloor(visible) : visible
+
+    // Shop passes (module): genre dividers + the one 30s hook sample per
+    // album — floor first, so only shelf-worthy albums earn the lookups.
+    df.stampBins(shelved)
+    await df.applyAlbumHooks(shelved, {
+      albumTracks: (id) => itunesAlbumTracks(id),
+      scoreCandidates: (cands) => brainMatchCandidates(cands, tracks as Array<{ id?: number; rating?: number; playCount?: number }>, 5),
+    })
 
     const laneDefs = [
       { id: 'brand-new', title: 'Brand New' },
