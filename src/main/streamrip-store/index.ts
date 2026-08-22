@@ -24,7 +24,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf, applyExplicitGate, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf, liveBrandMarker, applyExplicitGate, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
 
@@ -546,7 +546,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const durBad = probe?.durSec != null && Math.abs(probe.durSec - wantSec) > durTol
         const titleMarker = probe?.title ? unwantedVersionOf(title, probe.title) : null
         const albumMarker = probe?.album ? unwantedVersionOf(`${title} ${albumHint}`, probe.album) : null
-        if (probe == null || (!durBad && !titleMarker && !albumMarker)) {
+        // Fourth witness (2026-08-22, the Ed Sullivan case): a show-brand in
+        // the file's tags is a different RECORDING even when the title is
+        // clean and the runtime matches the studio take.
+        const brandMarker = probe ? liveBrandMarker(`${title} ${albumHint}`, `${probe.title ?? ''} ${probe.album ?? ''}`) : null
+        if (probe == null || (!durBad && !titleMarker && !albumMarker && !brandMarker)) {
           const albumMatches = !albumHint || !probe?.album || recoTitleMatches(albumHint, probe.album)
           if (albumMatches) {
             if (fallback) await discardStaged(fallback.staged)
@@ -561,7 +565,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         await discardStaged(st.staged)
         const why = durBad ? `runs ${fmtDur(probe.durSec)}, wanted ${fmtDur(wantSec)}`
           : titleMarker ? `is tagged “${probe.title}” (${titleMarker})`
-          : `is from “${probe.album}” (${albumMarker})`
+          : albumMarker ? `is from “${probe.album}” (${albumMarker})`
+          : `is a show recording (“${brandMarker}” in its tags)`
         console.log(`[download] rejected wrong-version candidate for “${title}”: “${cand.desc}” ${why}`)
         misses.push(`“${cand.desc}” ${why}`)
       }
@@ -591,7 +596,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const bcPick = bcResults.find((r) =>
       (!artist || recoArtistMatches(artist, r.band)) &&
       recoTitleMatches(title, r.name) &&
-      !unwantedVersionOf(title, r.name))
+      !unwantedVersionOf(title, r.name) &&
+      !liveBrandMarker(title, r.name))
     if (bcPick) {
       const st = await stageBandcamp(bcPick.url)
       if (st.ok) {
@@ -600,7 +606,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           const probe = await probeStagedFile(st.staged.files[0])
           const durBad = probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > durTol
           const marker = probe.title ? unwantedVersionOf(title, probe.title) : null
-          if (durBad || marker) acceptable = false
+          const brand = liveBrandMarker(title, `${probe.title ?? ''} ${probe.album ?? ''}`)
+          if (durBad || marker || brand) acceptable = false
         }
         if (acceptable) {
           console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)

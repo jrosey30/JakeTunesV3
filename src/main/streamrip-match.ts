@@ -239,6 +239,10 @@ export function rankStreamripCandidates(
       && subtitleVariantMatches(wantTitle, title)
     if (!recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title) && !subtitleOnly) continue
     if (unwantedVersionOf(wantTitle, title)) { rejectedVersions.push(title); continue }
+    // Show-brand live recordings hide the tell in the album part of the
+    // desc while the title reads clean — same rejection lane as markers.
+    const brand = liveBrandMarker(wantTitle, r.desc)
+    if (brand) { rejectedVersions.push(`${title} [${brand}]`); continue }
     let score = 2
     // A subtitle-dropped match is real but weaker evidence than a title that
     // actually reads the same, so it never outranks one that does.
@@ -256,6 +260,44 @@ export function rankStreamripCandidates(
   }
   scored.sort((a, b) => b.score - a.score || a.i - b.i)
   return { ranked: scored.map((s) => s.r), rejectedVersions }
+}
+
+/**
+ * TV/venue-brand LIVE recordings that never say "live" (2026-08-22, Jake:
+ * "the wrong version of these boots were made for walking downloaded.
+ * thats a consistent issue"). The Ed Sullivan cut of a song carries a
+ * CLEAN title, an album named after the SHOW, and a runtime within
+ * seconds of the studio take — so every existing gate (marker words,
+ * duration, title match) passes and the wrong RECORDING lands. These
+ * phrases are recording-identity tells, checked wherever version markers
+ * are checked. Want-side exemption: a request that names the brand
+ * (someone deliberately fetching an Ed Sullivan album) is honored.
+ *
+ * Lexicon discipline: multi-word phrases and unambiguous single tokens
+ * only — zero false positives beats coverage ("letterman" is OUT because
+ * The Lettermen are a real band; late-night host surnames are OUT).
+ * Phrases are written in titleTokens-normal form (folded, alphanumeric).
+ */
+const LIVE_BRAND_PHRASES = [
+  'ed sullivan', 'top of the pops', 'austin city limits', 'grand ole opry',
+  'old grey whistle', 'midnight special', 'beat club', 'soul train',
+  'american bandstand', 'ready steady go', 'smothers brothers',
+  'jools holland', 'howard stern', 'tiny desk', 'kexp', 'live lounge',
+  'peel session', 'hollywood a go',
+] as const
+
+/** The brand phrase present in `gotText` but absent from `wantText`, or
+ *  null. Same budget semantics as unwantedVersionOf: a song legitimately
+ *  NAMED "The Midnight Special" (CCR) never self-rejects, because the
+ *  want side carries the phrase too. */
+export function liveBrandMarker(wantText: string, gotText: string): string | null {
+  const want = ` ${titleTokens(wantText).join(' ')} `
+  const got = ` ${titleTokens(gotText).join(' ')} `
+  for (const b of LIVE_BRAND_PHRASES) {
+    const needle = ` ${b} `
+    if (got.includes(needle) && !want.includes(needle)) return b
+  }
+  return null
 }
 
 /** Back-compat single-pick wrapper over rankStreamripCandidates. */
@@ -298,6 +340,7 @@ export function pickBestSoundcloudMatch(
     // Same version guard as Qobuz: an upload whose desc carries live/remix/
     // cover/etc. beyond the requested words is a different recording.
     if (unwantedVersionOf(`${wantTitle} ${wantArtist}`, r.desc)) continue
+    if (liveBrandMarker(`${wantTitle} ${wantArtist}`, r.desc)) continue
     let score = 1
     if (nArtist) {
       if (!hay.includes(nArtist)) continue     // artist required when we have one
