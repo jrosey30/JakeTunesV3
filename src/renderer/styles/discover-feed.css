@@ -13,7 +13,13 @@
  * +List / ✕, the learned ledger. Only the skin and the flip died.
  */
 
-.df-view { padding: 20px 28px 44px; }
+.df-view {
+  padding: 20px 28px 44px;
+  /* THE page's scroll container — useScrollPersistence('discover-page')
+     binds here, and without height+overflow the page simply cannot scroll
+     (relearned 2026-08-23 when the store rebuild dropped this line). */
+  height: 100%; overflow-y: auto;
+}
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 .store-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px; }
