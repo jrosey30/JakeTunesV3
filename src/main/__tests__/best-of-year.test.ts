@@ -1,7 +1,7 @@
 /**
- * Best of <year> doctrine (2026-08-22): year-filtered, stars-then-plays
- * ranked, hard 2-per-album cap, 40 max, seeded mix with an adjacency
- * spread — and the same seed always deals the same order.
+ * Best of <year> doctrine (rev 2026-08-23): year-filtered, stars-then-
+ * plays ranked, hard 2-per-ARTIST cap, 100 max, seeded mix with an
+ * adjacency spread — and the same seed always deals the same order.
  */
 
 import { test, describe } from 'node:test'
@@ -28,24 +28,23 @@ describe('pickBestOfYear', () => {
     assert.deepEqual(out.map((x) => x.title).sort(), ['both', 'starred'])
   })
 
-  test('hard cap: never more than 2 per album', () => {
-    const alb = (n: number) => t({ artist: 'Band', album: 'The Album', playCount: 50 - n, title: `t${n}` })
-    const out = pickBestOfYear([alb(1), alb(2), alb(3), alb(4), t({ artist: 'Other', album: 'B', playCount: 1 })], { year: 2026 })
-    const fromAlbum = out.filter((x) => x.album === 'The Album')
-    assert.equal(fromAlbum.length, 2)
+  test('hard cap: never more than 2 per ARTIST, even across albums', () => {
+    const band = (n: number, album: string) => t({ artist: 'Band', album, playCount: 50 - n, title: `t${n}` })
+    const out = pickBestOfYear([band(1, 'A'), band(2, 'A'), band(3, 'B'), band(4, 'C'), t({ artist: 'Other', album: 'X', playCount: 1 })], { year: 2026 })
+    assert.equal(out.filter((x) => x.artist === 'Band').length, 2)
     assert.equal(out.length, 3)
   })
 
-  test('album-less singles never share a phantom cap', () => {
-    const singles = Array.from({ length: 5 }, (_, i) => t({ artist: `A${i}`, album: '', playCount: 10 }))
-    assert.equal(pickBestOfYear(singles, { year: 2026 }).length, 5)
+  test('a compilation may carry more than two tracks — different artists, different votes', () => {
+    const comp = Array.from({ length: 4 }, (_, i) => t({ artist: `Guest${i}`, album: 'Now That Is 2026', playCount: 10 }))
+    assert.equal(pickBestOfYear(comp, { year: 2026 }).length, 4)
   })
 
-  test('limit 40, and the mix is deterministic per seed', () => {
-    const pool = Array.from({ length: 120 }, (_, i) => t({ artist: `Artist${i % 30}`, album: `Album${i % 30}`, playCount: (i * 7) % 41, rating: i % 3 ? 0 : 5, title: `s${i}` }))
+  test('limit 100, and the mix is deterministic per seed', () => {
+    const pool = Array.from({ length: 260 }, (_, i) => t({ artist: `Artist${i % 80}`, album: `Album${i % 80}`, playCount: (i * 7) % 41, rating: i % 3 ? 0 : 5, title: `s${i}` }))
     const a = pickBestOfYear(pool, { year: 2026 })
     const b = pickBestOfYear(pool, { year: 2026 })
-    assert.equal(a.length, 40)
+    assert.equal(a.length, 100)
     assert.deepEqual(a.map((x) => x.id), b.map((x) => x.id))
     // …and it is genuinely MIXED, not score-sorted.
     const scores = a.map((x) => (Number(x.rating) || 0) * 25 + Math.min(Number(x.playCount) || 0, 40))

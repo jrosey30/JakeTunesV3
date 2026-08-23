@@ -6,6 +6,11 @@
  * Pure and node-tested; lives in common/ because the shared smart-playlist
  * evaluator (renderer + iPod sync) is the consumer.
  *
+ * 2026-08-23 revision (Jake): "make the best of 2026 100 songs no more
+ * than 2 per artist." The artist cap subsumes the old album cap for
+ * single-artist records and deliberately lets compilations carry more
+ * than two tracks (different artists on one album are different votes).
+ *
  * "Best" is Jake's own signals, nothing invented: stars dominate, plays
  * refine. "Mix them up" is a SEEDED shuffle — the same year always deals
  * the same order (a default playlist that silently reshuffles between
@@ -48,10 +53,10 @@ const artistKey = (t: BestOfInput): string => nk(t.albumArtist || t.artist)
 
 export function pickBestOfYear<T extends BestOfInput>(
   tracks: T[],
-  opts: { year: number; limit?: number; perAlbum?: number; seed?: number },
+  opts: { year: number; limit?: number; perArtist?: number; seed?: number },
 ): T[] {
-  const limit = opts.limit ?? 40
-  const perAlbum = opts.perAlbum ?? 2
+  const limit = opts.limit ?? 100
+  const perArtist = opts.perArtist ?? 2
   const seed = opts.seed ?? opts.year
 
   const score = (t: T): number => (Number(t.rating) || 0) * 25 + Math.min(Number(t.playCount) || 0, 40)
@@ -61,14 +66,14 @@ export function pickBestOfYear<T extends BestOfInput>(
       || (Number(b.playCount) || 0) - (Number(a.playCount) || 0)
       || String(a.title || '').localeCompare(String(b.title || '')))
 
-  // Greedy take under the per-album cap.
-  const perAlbumCount = new Map<string, number>()
+  // Greedy take under the per-artist cap.
+  const perArtistCount = new Map<string, number>()
   const chosen: T[] = []
   for (const t of ranked) {
-    const k = albumKey(t)
-    const n = perAlbumCount.get(k) || 0
-    if (n >= perAlbum) continue
-    perAlbumCount.set(k, n + 1)
+    const k = artistKey(t) || `solo|${t.id}`
+    const n = perArtistCount.get(k) || 0
+    if (n >= perArtist) continue
+    perArtistCount.set(k, n + 1)
     chosen.push(t)
     if (chosen.length >= limit) break
   }
