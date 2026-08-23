@@ -43,7 +43,10 @@ const DESC = join(STATE_DIR, 'brain-descriptors.json')
 const LYRICS = join(STATE_DIR, 'lyrics.json')   // grounded LRCLIB lyrics (scripts/lyrics-fetch.mjs)
 const ENV = join(homedir(), 'JakeTunesV3', '.env')
 const GEMMA_URL = process.env.GEMMA_URL || 'http://homemini:11434/api/generate'
-const GEMMA_MODEL = 'gemma3:4b'
+// GEMMA_MODEL env-overridable (2026-08-23, the descriptor-upgrade program):
+// the Mini carries gemma4:e4b (9.6GB) alongside the 4b — bigger model, same
+// prompt, opt-in per run. Timeout scales with model size below.
+const GEMMA_MODEL = process.env.GEMMA_MODEL || 'gemma3:4b'
 const EMBED_URL = 'https://api.openai.com/v1/embeddings'
 const EMBED_MODEL = 'text-embedding-3-small'
 const EMBED_DIM = 1536
@@ -246,7 +249,7 @@ async function gemmaDescribe(t) {
   const r = await fetch(GEMMA_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: GEMMA_MODEL, prompt, stream: false, options: { temperature: 0.5, num_predict: 70 } }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(GEMMA_MODEL === 'gemma3:4b' ? 30000 : 120000),
   })
   if (!r.ok) throw new Error(`gemma ${r.status}`)
   let d = String((await r.json()).response || '').trim().replace(/\s+/g, ' ').replace(/^["']|["']$/g, '')
@@ -276,7 +279,7 @@ async function gemmaMeaning(t, lyricText) {
   const r = await fetch(GEMMA_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: GEMMA_MODEL, prompt, stream: false, options: { temperature: 0.4, num_predict: 90 } }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(GEMMA_MODEL === 'gemma3:4b' ? 30000 : 120000),
   })
   if (!r.ok) throw new Error(`gemma-meaning ${r.status}`)
   let m = String((await r.json()).response || '').trim().replace(/\s+/g, ' ').replace(/^["']|["']$/g, '')
@@ -466,6 +469,60 @@ async function main() {
       : `${done.toLocaleString()}/${total.toLocaleString()} (${pct}%) tracks taught · ~${nights} night${nights === 1 ? '' : 's'} left at ${BATCH}/night.`
     await notify('🧠 Brain Trainer — status', msg)
     log('status:', msg)
+    return
+  }
+
+  // Force re-describe with the CURRENT model (2026-08-23, Jake: "if the e4b
+  // wins upgrade the whole library overnight"). Every store entry records
+  // which model wrote it (`gm`); this mode regenerates any entry whose gm
+  // differs from GEMMA_MODEL — idempotent + resumable by construction, so a
+  // multi-night run just continues. YIELD RULE: this is the always-on
+  // serving box — before every call we check for active transcodes, and the
+  // moment one appears the model is UNLOADED (9.6GB back to the streams)
+  // until the coast is clear. Run --reembed-all afterwards to fold the new
+  // descriptors into the vectors (that mode has the backup+verify+restore).
+  if (process.argv.includes('--redescribe-all')) {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    const playbackActive = () => {
+      try { return execFileSync('/usr/bin/pgrep', ['-x', 'ffmpeg']).toString().trim().length > 0 }
+      catch { return false }   // pgrep exits 1 when none — that IS idle
+    }
+    const gemmaUnload = async () => {
+      try {
+        await fetch(GEMMA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: GEMMA_MODEL, keep_alive: 0 }), signal: AbortSignal.timeout(15000) })
+      } catch { /* best-effort */ }
+    }
+    const persistDesc = () => { writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC) }
+    const cands = tracks.filter(t => (t.artist || t.title) && (desc[String(t.id)]?.gm !== GEMMA_MODEL))
+    log(`redescribe-all: ${cands.length} track(s) need ${GEMMA_MODEL} descriptors`)
+    let n = 0, fails = 0
+    const t0 = Date.now()
+    for (const t of cands) {
+      while (playbackActive()) {
+        log('playback active — yielding (model unloaded), rechecking in 5 min')
+        persistDesc()
+        await gemmaUnload()
+        await sleep(300000)
+      }
+      try {
+        const d = await gemmaDescribe(t)
+        if (d) {
+          const e = desc[String(t.id)] || {}
+          desc[String(t.id)] = { ...e, d, gm: GEMMA_MODEL }
+          n++
+        } else fails++
+      } catch (err) { fails++; log(`describe failed id=${t.id}: ${err.message}`) }
+      if ((n + fails) % 50 === 0) {
+        persistDesc()
+        const rate = (Date.now() - t0) / Math.max(1, n + fails)
+        log(`redescribe-all: ${n + fails}/${cands.length} (${fails} fails) · ${Math.round(rate)}ms/track · ~${Math.round((cands.length - n - fails) * rate / 3600000 * 10) / 10}h left`)
+      }
+    }
+    persistDesc()
+    await gemmaUnload()
+    writeStatus({ ok: true, mode: 'redescribe-all', model: GEMMA_MODEL, rewritten: n, fails, of: cands.length })
+    log(`redescribe-all DONE: ${n}/${cands.length} rewritten with ${GEMMA_MODEL} (${fails} fails). Next: --reembed-all.`)
     return
   }
 
