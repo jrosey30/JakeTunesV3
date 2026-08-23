@@ -323,7 +323,7 @@ export default function NewForYouView() {
                     full list ›
                   </button>
                 </div>
-                {sh.commentary && <div className="staff-commentary">“{sh.commentary.length > 160 ? sh.commentary.slice(0, 157) + '…' : sh.commentary}”</div>}
+                {sh.commentary && <div className="staff-commentary">“{sh.commentary.length > 160 ? sh.commentary.slice(0, 157).replace(/\s+\S*$/, '') + '…' : sh.commentary}”</div>}
                 <div className="df-row staff-row">
                   {picks.map((t, ti) => (
                     <div key={t.id} className="df-card staff-card">

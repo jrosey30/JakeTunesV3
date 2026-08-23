@@ -559,3 +559,9 @@
   width: 24px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1;
 }
 .bincrate-arrow:hover { background: rgba(255, 240, 214, 0.3); }
+
+/* Staff cards are 118px — the 126px crate-pull vinyl sized for 150px
+   sleeves peeked out at rest. Scale it to fit; the hover pull still works. */
+.staff-card:not(.df-card--artist)::before {
+  width: 96px; height: 96px; top: 11px; left: 11px;
+}

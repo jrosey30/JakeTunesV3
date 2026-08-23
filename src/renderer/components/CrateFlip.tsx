@@ -104,12 +104,16 @@ export default function CrateFlip({ bin, cards, cardId, playingId, addedIds, onP
           title="Flip to the next record (→/←)"
           onClick={() => flip(1)}
         >
-          {/* The bin behind the front record — up to four sleeves deep. */}
-          {cards.slice(0, 5).map((_, d) => {
-            const back = cards[(i + 4 - d) % cards.length]
-            if (d < 4 && (i + 4 - d) % cards.length === i) return null
+          {/* The bin behind the front record — up to four sleeves deep.
+              Iterate the DEPTHS, not the cards: with fewer than five
+              records the front sleeve must still render (2026-08-22 —
+              one-record bins drew nothing, two-record bins drew only a
+              back-positioned sleeve). */}
+          {[0, 1, 2, 3, 4].map((d) => {
             const front = d === 4
-            const card = front ? c : back
+            const backIdx = (i + 4 - d) % cards.length
+            if (!front && (cards.length < 2 || backIdx === i || 4 - d >= cards.length)) return null
+            const card = front ? c : cards[backIdx]
             return (
               <div
                 key={front ? 'front' : `back-${d}`}
