@@ -71,8 +71,12 @@ export default function AlbumsView() {
                 .catch((err) => setNotice(`Live set failed: ${err instanceof Error ? err.message : String(err)}`))
             },
           }]
+    const compCtx = verifyLiveSetCompleteness(ordered)
     return [
-      { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
+      ...(compCtx.complete && compCtx.verifiedTotal
+        ? [{ label: 'Play Album — front to back', onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) } }]
+        : []),
+      { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, /* running order is the record */ true) } },
       { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
       ...(liveEntries.length ? [{ separator: true as const }, ...liveEntries] : []),
       { separator: true as const },
@@ -262,6 +266,12 @@ export default function AlbumsView() {
         {filteredAlbums.map((album) => {
           const key = albumKeyFromStrings(album.artist, album.name)
           const artHash = findArtHash(album)
+          // Album Mode gate (2026-08-23): the Play Album button appears ONLY
+          // when the record is verifiably complete — the same completeness
+          // doctrine the live-set merge uses (one definition, no twin).
+          const ordered = sortAlbumTracks(album.tracks)
+          const comp = verifyLiveSetCompleteness(ordered)
+          const fullAlbum = comp.complete && comp.verifiedTotal
           return (
             <div
               key={key}
@@ -278,6 +288,14 @@ export default function AlbumsView() {
               onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(album.tracks).map(t => t.id))}
             >
               <div className="album-card-art">
+                {fullAlbum && (
+                  <button
+                    type="button"
+                    className="album-play-full"
+                    title={`Play ${album.name} — front to back, in order, gapless`}
+                    onClick={(e) => { e.stopPropagation(); if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, /* an album's running order IS the record */ true) }}
+                  >▶ Album</button>
+                )}
                 {artHash ? (
                   <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" size={320} />
                 ) : (

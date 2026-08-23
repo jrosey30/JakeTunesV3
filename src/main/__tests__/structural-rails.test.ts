@@ -130,6 +130,8 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'onNasRecovery', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'recovery kick — unwired, good windows on a flapping link go back to being harvested by luck' },
     { fn: 'binForGenre', file: 'main/discover-feed.ts', minCalls: 1, why: 'shop bins — unwired, every card files under Misc and the crate reorg silently dies' },
     { fn: 'pickHookIndex', file: 'main/discover-feed.ts', minCalls: 1, why: 'album hook sample — unwired, album cards lose their 30s sell' },
+    { fn: 'albumAdjacent', file: 'renderer/hooks/useAudio.ts', minCalls: 2, why: 'Album Mode — unwired, merged-work seams (The Wall, Discovery) fall back to gapped or crossfaded transitions' },
+    { fn: 'getEqInputNode', file: 'renderer/audio/seamScheduler.ts', minCalls: 1, why: 'Album Mode — unwired, seam buffers bypass the EQ/width chain and every seam carries a character jump' },
     { fn: '.stampBins(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'crate reorg — the feed gen must file cards into bins' },
     { fn: '.applyScenePitches(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'deeper-than-label-mates doctrine — unwired, the shallow connection lines return' },
     { fn: '.applyAlbumHooks(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'album hook sample — unwired, album cards lose their 30s sell' },
