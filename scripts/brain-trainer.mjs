@@ -248,7 +248,9 @@ async function gemmaDescribe(t) {
   const prompt = `You are a precise music cataloguer. In ONE line (max 18 words), describe the SOUND and MOOD of this track: energy level, tempo feel, instrumentation, emotional tone, and the setting it fits. Name concrete sonic traits and instruments; vary your vocabulary; avoid generic filler. Output ONLY the descriptor, no preamble.\n\nTrack: ${t.artist || '?'} — ${t.title || '?'}\nAlbum: ${t.album || '?'} (${t.year || '?'})\nGenre: ${t.genre || '?'}`
   const r = await fetch(GEMMA_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: GEMMA_MODEL, prompt, stream: false, options: { temperature: 0.5, num_predict: 70 } }),
+    // think:false — thinking models (qwen3) otherwise spend the whole token
+    // budget inside <think> and return an empty response (2026-08-23 A/B lesson).
+    body: JSON.stringify({ model: GEMMA_MODEL, prompt, stream: false, think: false, options: { temperature: 0.5, num_predict: 90 } }),
     signal: AbortSignal.timeout(GEMMA_MODEL === 'gemma3:4b' ? 30000 : 120000),
   })
   if (!r.ok) throw new Error(`gemma ${r.status}`)
