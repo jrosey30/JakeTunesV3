@@ -27,7 +27,7 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import mmSmug from './RecordStore/art/musicman-smug.png'
-import { SHOP_BINS, binForGenre } from '../../common/record-shop-bins'
+import { binForGenre, applyBinQuotas } from '../../common/record-shop-bins'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import '../styles/discover-feed.css'
@@ -228,12 +228,12 @@ export default function NewForYouView() {
   // ── Genre sections (2026-08-23 store rebuild): the crate-flip diorama is
   // gone — cards group under clean genre shelves, scannable at a glance,
   // in the app's own iTunes-Store idiom. Bin organization survives.
-  const binSections = SHOP_BINS
-    .map((bin) => ({
-      bin,
-      cards: lanes.flatMap((l) => l.cards).filter((c) => (c.bin ?? binForGenre(c.genre)) === bin),
-    }))
-    .filter((b) => b.cards.length > 0)
+  // Shelf quotas (Jake: 'some genre's shouldnt have 7 picks and others 2
+  // and 1'): each shelf shows its best ~6; too-thin bins fold into a
+  // single 'More Finds' shelf at the end.
+  const binSections = applyBinQuotas(
+    lanes.flatMap((l) => l.cards).map((c) => ({ ...c, bin: c.bin ?? binForGenre(c.genre) })),
+  )
 
   const SHOP_NAMES: Record<string, string> = {
     'brand-new': 'New', 'scene': 'Scene', 'missing': 'Gap', 'time-machine': 'Used', 'songs': 'Single',

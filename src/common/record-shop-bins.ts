@@ -53,3 +53,56 @@ export function pickHookIndex(tracks: Array<{ previewUrl?: string; pct?: number 
   }
   return best
 }
+
+/**
+ * Shelf quotas (2026-08-23, Jake: "some genre's shouldnt have 7 picks and
+ * others 2 and 1"). Presentation policy, applied at render time so cached
+ * feeds behave identically:
+ *  - a bin shows at most `cap` cards — its BEST by brain %, ties keep
+ *    original order;
+ *  - a bin with fewer than `minShelf` cards can't stand as a shelf — its
+ *    cards fold into the 'More Finds' shelf at the end, so nothing is lost
+ *    but no shelf looks abandoned.
+ */
+export const MORE_BIN = 'More Finds'
+
+export function applyBinQuotas<T extends { bin?: string; brainPct?: number }>(
+  cards: T[],
+  opts: { cap?: number; minShelf?: number } = {},
+): Array<{ bin: string; cards: T[] }> {
+  const cap = opts.cap ?? 6
+  const minShelf = opts.minShelf ?? 3
+  const byBin = new Map<string, T[]>()
+  for (const c of cards) {
+    const b = c.bin || 'Misc'
+    const arr = byBin.get(b) || []
+    arr.push(c)
+    byBin.set(b, arr)
+  }
+  const shelves: Array<{ bin: string; cards: T[] }> = []
+  const overflow: T[] = []
+  for (const bin of SHOP_BINS) {
+    const arr = byBin.get(bin)
+    if (!arr) continue
+    if (arr.length < minShelf) { overflow.push(...arr); continue }
+    const kept = [...arr]
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => ((b.c.brainPct ?? 0) - (a.c.brainPct ?? 0)) || (a.i - b.i))
+      .slice(0, cap)
+      .sort((a, b) => a.i - b.i)
+      .map((x) => x.c)
+    shelves.push({ bin, cards: kept })
+  }
+  // Unknown bins (future-proofing) fold into More too.
+  for (const [bin, arr] of byBin) if (!(SHOP_BINS as readonly string[]).includes(bin)) overflow.push(...arr)
+  if (overflow.length) {
+    const kept = [...overflow]
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => ((b.c.brainPct ?? 0) - (a.c.brainPct ?? 0)) || (a.i - b.i))
+      .slice(0, cap + 2)
+      .sort((a, b) => a.i - b.i)
+      .map((x) => x.c)
+    shelves.push({ bin: MORE_BIN, cards: kept })
+  }
+  return shelves
+}

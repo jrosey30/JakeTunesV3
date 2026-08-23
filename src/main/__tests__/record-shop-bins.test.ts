@@ -7,7 +7,7 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { SHOP_BINS, binForGenre, pickHookIndex } from '../../common/record-shop-bins.ts'
+import { SHOP_BINS, binForGenre, pickHookIndex, applyBinQuotas, MORE_BIN } from '../../common/record-shop-bins.ts'
 
 describe('binForGenre', () => {
   test('the families land where a clerk would file them', () => {
@@ -54,5 +54,27 @@ describe('pickHookIndex', () => {
   })
   test('nothing previewable → -1', () => {
     assert.equal(pickHookIndex([{}, { pct: 90 }]), -1)
+  })
+})
+
+describe('applyBinQuotas — balanced shelves (2026-08-23)', () => {
+  const card = (bin: string, pct: number) => ({ bin, brainPct: pct })
+  test('fat bins keep their best `cap`, original order preserved', () => {
+    const rock = [90, 60, 85, 70, 95, 65, 88, 72].map((p) => card('Rock', p))
+    const out = applyBinQuotas([...rock, card('Punk', 80), card('Punk', 70), card('Punk', 75)], { cap: 6, minShelf: 3 })
+    const r = out.find((s) => s.bin === 'Rock')!
+    assert.equal(r.cards.length, 6)
+    assert.ok(!r.cards.some((c) => c.brainPct === 60 || c.brainPct === 65))   // the two weakest dropped
+    assert.deepEqual(r.cards.map((c) => c.brainPct), [90, 85, 70, 95, 88, 72]) // original order kept
+  })
+  test('thin bins fold into More Finds instead of standing alone', () => {
+    const out = applyBinQuotas([card('Pop', 80), card('Jazz & Blues', 75), card('Punk', 90), card('Punk', 85), card('Punk', 70)])
+    assert.deepEqual(out.map((s) => s.bin), ['Punk', MORE_BIN])
+    assert.equal(out.find((s) => s.bin === MORE_BIN)!.cards.length, 2)
+  })
+  test('shelf order follows SHOP_BINS, More Finds last', () => {
+    const cards = [card('Electronic', 70), card('Electronic', 71), card('Electronic', 72), card('Punk', 90), card('Punk', 80), card('Punk', 85), card('Pop', 60)]
+    const out = applyBinQuotas(cards)
+    assert.deepEqual(out.map((s) => s.bin), ['Punk', 'Electronic', MORE_BIN])
   })
 })
