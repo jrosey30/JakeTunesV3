@@ -64,3 +64,23 @@ Nov: 4 trend review; freeze the Review's Class-B section list based on
 what the numbers actually support.
 Dec 17: ship the Review with Class A everywhere and only the EARNED
 Class B.
+
+## 2026-08-23 overnight: the descriptor A/B campaign (4 arms, no launch)
+
+| arm | result |
+|---|---|
+| gemma4:e4b | 100% empty responses — and it's Gemma 3n *effective*-4B, an edge model, not an upgrade at all |
+| qwen3:8b | fluent but MORE monotone than incumbent (diversity 0.213 vs 0.26); needed think:false (empty otherwise — lesson now in the trainer) |
+| prompt-v2 (ban-list + "unusual detail") | diversity 0.331 (+27%!) but the detail demand made 4B CONFABULATE — theremins, carousel calliopes, children whispering. Would poison retrieval. |
+| prompt-v3 (ban-list + no-invention) | grounded but stilted ("This track possesses…" template), diversity back to 0.27 |
+
+**Decision: no full rewrite.** The incumbent gemma3:4b descriptors are
+genuinely good; the 8h re-embed had nothing better to write. The REAL
+finding: the descriptor layer is near its useful ceiling — the AUC
+slippage (0.819) lives in the TASTE MODEL, so the improvement effort
+moves to program items 2+3 (verdict/skip volume, recency+completion
+features). Assets banked: the A/B rig (runner on the Mini, reusable in
+one command), trainer --redescribe-all + GEMMA_MODEL override +
+think:false (all committed — the moment a genuinely better
+model/prompt exists, the overnight path is one launch away), qwen3:8b
+staged on the Mini.
