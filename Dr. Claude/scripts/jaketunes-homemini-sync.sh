@@ -461,7 +461,16 @@ else
   #      (same reasoning as the '/.*/' rule above): no hidden file in a music
   #      tree is ever content — they are OS, SMB and rsync turds without
   #      exception, and naming them one at a time just schedules the next bug.
-  rsync -az --size-only --no-perms --no-owner --no-group --no-times \
+  # 2026-08-23 --no-links: THIS SYNC ATE A 630 MB TRACK. One file in the
+  # library is a local SYMLINK pointing INTO the NAS (Daft Punk "Alive 2007",
+  # kept on the vault to save laptop disk). rsync -a implies -l, so the push
+  # copied that symlink ONTO the NAS — replacing the real 630 MB file with a
+  # link pointing at itself. ELOOP: unreadable from both sides, and the only
+  # surviving copy was an orphaned rsync temp. Recovered 2026-08-23 and
+  # verified (exact size + 5040.639s + clean decode). A symlink whose target
+  # lives inside the destination must NEVER be pushed; --no-links skips
+  # symlinks entirely, which is correct here — the referent is already there.
+  rsync -az --size-only --no-links --no-perms --no-owner --no-group --no-times \
     --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
     --exclude='/.*/' --exclude='.*' \
     "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
