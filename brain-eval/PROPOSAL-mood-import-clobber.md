@@ -6,12 +6,15 @@ after the repair, and the mechanism is now fully identified** (see the
 change → Jake's call. The nightly repairs (REPORT-20260818, REPORT-20260820)
 fix the data; this fixes the mechanism so it stops recurring.
 
-**RECURRENCE LOG:** 3rd event 2026-08-22 (library 9,592→9,645, +53 imports;
+**RECURRENCE LOG:** 4th event 2026-08-23 (library 9,645→9,686, +41 imports;
+96 orphans back, 709 clobbered vectors; router-truth 0.755 → repaired 0.830
+— REPORT-20260823). 3rd event 2026-08-22 (library 9,592→9,645, +53 imports;
 96 orphans back, 668 clobbered vectors; router-truth 0.750 → repaired 0.830
-— REPORT-20260822). Prediction confirmed twice now: every import day reverts
-the NAS mood-index to the app's stale local map until fixes 4/5 land. Each
-recurrence costs a nightly re-embed of ~600+ vectors and a day of degraded
-phone mixes. This is the top open ask.
+— REPORT-20260822). Prediction now confirmed on EVERY import day since the
+mechanism was identified (08-20, 08-22, 08-23): each one reverts the NAS
+mood-index to the app's stale local map until fixes 4/5 land. Each
+recurrence costs a nightly re-embed of ~600-700 vectors (~$0.15) and a day
+of degraded phone mixes. This is the top open ask.
 
 ## ESCALATION (2026-08-20): the real writer is autoBackupStateToNas
 
