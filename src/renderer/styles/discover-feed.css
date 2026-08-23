@@ -1,567 +1,212 @@
-/* Discover feed v2 — typed multi-lane cards. Tight: phrases, not paragraphs.
-   One voice with the V6 system (eyebrow lane heads, orange-only accent). */
+/* The Record Shop — iTunes-Store-2006 rebuild (2026-08-23).
+ *
+ * Jake's verdict on the crate diorama: "horrible" on all four axes — the
+ * look, the flip, the animation feel, the whole concept. Root cause of two
+ * failed skins: dressing this page as a themed diorama inside an app whose
+ * identity is 2006-iTunes polish. This sheet speaks the app's own language
+ * instead: light page, horizontal shelves, big art, tight type, and motion
+ * BY SUBTRACTION — hover scale + shadow (Home's idiom), a play overlay
+ * fade, and nothing else. No wood, no spins, no tilts, no stickers.
+ *
+ * Everything functional survives from the reorg: staff-pick shelves,
+ * genre sections, hook samples, deep pitches, because-lines, % badge,
+ * +List / ✕, the learned ledger. Only the skin and the flip died.
+ */
 
-/* ── The shop's design tokens (2026-08-21, Jake: "does not seem like a very
-   strong codified code on this page"). EVERY shop surface draws from these
-   twelve names — no loose hexes below this block. Brief-037 palette. ── */
-:root {
-  --shop-sky: #a8d8ff;
-  --shop-wood: #b87333;
-  --shop-wood-hi: #c98d4b;
-  --shop-wood-lo: #8a5a30;
-  --shop-counter: #5a3a22;
-  --shop-counter-hi: #6b4527;
-  --shop-counter-lo: #4c3019;
-  --shop-cream: #f8ecd7;
-  --shop-brass: #d9b98a;
-  --shop-paper: #fdf9ee;
-  --shop-ink: rgba(95, 78, 55, 0.92);
-  --shop-edge: #3d2614;
-}
+.df-view { padding: 20px 28px 44px; }
 
-/* ── The room (2026-08-21 facelift, Jake: "huge facelift and improvement").
-   Brief 037's locked palette carried into the browsing page: warm plaster
-   wall, wood everywhere structure lives. sky #a8d8ff · wood var(--shop-wood) ·
-   counter var(--shop-counter), cream from the V6 base. The white void is gone. */
-.df-view {
-  padding: 26px 30px 48px;
-  background:
-    radial-gradient(120% 90% at 50% 0%, rgba(168, 216, 255, 0.10), transparent 55%),
-    linear-gradient(180deg, #f8f2e6 0%, #f4ecdc 60%, #efe4cf 100%);
+/* ── Header ─────────────────────────────────────────────────────────── */
+.store-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px; }
+.store-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin: 0; color: var(--text-primary, #1a1a1a); }
+.store-sub { font-size: 11px; color: var(--text-secondary, #8a8275); }
+.store-head-right { display: flex; align-items: center; gap: 8px; }
+.store-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid rgba(85, 78, 64, 0.22); border-radius: 6px;
+  background: var(--white, #fff); color: #4a4438;
+  font-size: 11.5px; font-weight: 600; padding: 6px 12px; cursor: pointer;
 }
-
-.df-head { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
-/* The counter controls: date, Restock, and the door — one cluster, one
-   material. No more orphaned white circle floating in the room. */
-.df-head-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-
-/* The hanging sign: counter-wood plank on two chains, cream lettering,
-   brass edge. The page's one piece of theatre — everything else stays
-   furniture. */
-.df-sign {
-  position: relative;
-  padding: 10px 22px 9px;
-  background: linear-gradient(180deg, var(--shop-counter-hi) 0%, var(--shop-counter) 55%, var(--shop-counter-lo) 100%);
-  border: 1px solid var(--shop-edge);
-  border-radius: 5px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 236, 200, 0.18),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.25),
-    0 3px 8px rgba(60, 38, 18, 0.28);
-  margin-top: 10px;
-}
-.df-sign-chain {
-  position: absolute; top: -10px; width: 2px; height: 10px;
-  background: linear-gradient(180deg, #8a7a5a, #5f5340);
-}
-.df-sign-chain--l { left: 18%; }
-.df-sign-chain--r { right: 18%; }
-.df-title {
-  font-size: 21px; font-weight: 800; margin: 0;
-  letter-spacing: 0.045em; text-transform: uppercase;
-  color: var(--shop-cream);
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
-}
-.df-title--sign { padding-bottom: 0; border-bottom: 0; }
-.df-sign-sub {
-  display: block; margin-top: 1px;
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--shop-brass);
-}
-.df-step-inside {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 6px 14px 6px 8px;
-  border: 1px solid #a06a2c;
-  border-radius: 3px;
-  background: linear-gradient(180deg, var(--shop-wood-hi) 0%, var(--shop-wood) 60%, #a56528 100%);
-  color: #fff7ec;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 1px rgba(0,0,0,0.15);
-}
-.df-step-inside-mm {
-  width: 26px; height: 26px; object-fit: contain; image-rendering: auto;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
-  transition: transform 160ms ease;
-}
-.df-step-inside:hover .df-step-inside-mm { transform: translateY(-2px) rotate(-4deg); }
-.df-step-inside:hover { filter: brightness(1.06); }
-.df-step-inside:active { box-shadow: inset 0 1px 2px rgba(0,0,0,0.25); }
-.df-updated {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--shop-ink); opacity: 0.75; margin-right: 2px;
-}
-.df-refresh {
-  display: inline-flex; align-items: center; gap: 7px;
-  border: 1px solid var(--shop-edge);
-  background: linear-gradient(180deg, var(--shop-wood-hi) 0%, var(--shop-wood) 55%, var(--shop-wood-lo) 100%);
-  border-radius: 5px; padding: 6px 12px; cursor: pointer;
-  font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--shop-cream);
-  box-shadow: inset 0 1px 0 rgba(255, 236, 200, 0.28), 0 2px 4px rgba(60, 38, 18, 0.22);
-}
-.df-refresh-icon { font-size: 13px; line-height: 1; }
-.df-refresh:hover:not(:disabled) { filter: brightness(1.08); }
-.df-refresh:disabled { opacity: 0.65; cursor: default; }
+.store-btn:hover:not(:disabled) { background: rgba(var(--brand-orange-rgb), 0.07); }
+.store-btn:disabled { opacity: 0.6; cursor: default; }
+.store-btn--primary { background: rgb(var(--brand-orange-rgb)); border-color: #c74a08; color: #fff; }
+.store-btn--primary:hover { filter: brightness(1.05); background: rgb(var(--brand-orange-rgb)); }
+.df-step-inside-mm { width: 20px; height: 20px; object-fit: contain; }
 
 .df-loading, .df-error { padding: 30px 0; font-size: 13px; font-style: italic; color: var(--text-secondary, #8a8275); }
 
-/* Each lane is a SHELF: records stand on a wood plank, and the lane name
-   is a little label plate pinned to its front edge. A one-record shelf is
-   a shelf with one record — the plank keeps it from reading as a void. */
-.df-lane { margin-bottom: 34px; position: relative; }
-.df-lane-head {
-  display: inline-block;
-  font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--shop-cream);
-  background: linear-gradient(180deg, var(--shop-wood-lo) 0%, var(--shop-wood-lo) 100%);
-  border: 1px solid var(--shop-edge);
-  border-radius: 3px;
-  padding: 4px 10px 3px;
-  margin-bottom: 12px;
-  transform: rotate(-0.6deg);
-  box-shadow: inset 0 1px 0 rgba(255, 236, 200, 0.22), 0 1px 2px rgba(60, 38, 18, 0.25);
+/* ── Shelves ────────────────────────────────────────────────────────── */
+.store-shelf { margin-bottom: 26px; }
+.store-shelf-head {
+  display: flex; align-items: baseline; gap: 10px;
+  border-top: 1px solid rgba(85, 78, 64, 0.09);
+  padding: 12px 0 10px;
 }
-.df-lane-head::after {
-  content: '';
-  display: inline-block; width: 4px; height: 4px; border-radius: 50%;
-  background: var(--shop-brass); margin-left: 8px; vertical-align: 2px;
-  box-shadow: inset 0 0.5px 1px rgba(0,0,0,0.4);
+.store-shelf-title {
+  font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-secondary, #6d675c);
 }
-.df-row {
+.store-shelf-note {
+  font-size: 11px; font-style: italic; color: var(--text-secondary, #98917f);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch;
+}
+.store-shelf-count { font-size: 10.5px; color: var(--text-secondary, #a49c8a); }
+.store-seeall {
+  margin-left: auto; border: 0; background: none; cursor: pointer; padding: 0;
+  font-size: 11px; font-weight: 600; color: rgb(var(--brand-orange-rgb));
+}
+.store-seeall:hover { text-decoration: underline; }
+.staff-dot { width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.staff-dot--mm { background: rgb(var(--brand-orange-rgb)); }
+.staff-dot--megan { background: #4a90c2; }
+.staff-dot--djhands { background: #8e5ac2; }
+
+.store-row {
   display: flex; gap: 16px; overflow-x: auto; overflow-y: hidden;
-  padding: 48px 8px 18px; scrollbar-width: none;
-  min-height: 172px;
-  border-bottom: 12px solid transparent;
-  border-image: linear-gradient(180deg, var(--shop-wood-hi) 0%, var(--shop-wood) 40%, var(--shop-wood-lo) 100%) 0 0 12 0;
-  background: linear-gradient(180deg, transparent calc(100% - 13px), rgba(60, 38, 18, 0.18) calc(100% - 12px), transparent calc(100% - 11px));
+  padding: 2px 2px 10px; scrollbar-width: none;
 }
-/* The Used Bins: secondhand crate — the records sit a little askew. */
-.df-lane[data-lane='time-machine'] .df-card:nth-child(odd)  { transform: rotate(-1deg); }
-.df-lane[data-lane='time-machine'] .df-card:nth-child(even) { transform: rotate(0.8deg); }
-.df-row::-webkit-scrollbar { display: none; }
+.store-row::-webkit-scrollbar { display: none; }
 
-/* Flex column + stretch rows: every card in a lane shares one height and
-   the + List button sits on ONE baseline, however many text lines a card
-   carries (uneven buttons read as sloppy — Jake, 2026-08-07). */
-.df-card { flex: 0 0 150px; width: 150px; display: flex; flex-direction: column; animation: home-card-in 300ms cubic-bezier(0.2, 0.65, 0.3, 1) both; }
-.df-art {
-  position: relative; width: 150px; height: 150px; border-radius: 3px; overflow: hidden;
-  background: #e8e6e0;
-  border: 1px solid rgba(60, 38, 18, 0.22);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 252, 244, 0.35),
-    0 4px 10px rgba(60, 38, 18, 0.18);
+/* ── Cards ──────────────────────────────────────────────────────────── */
+.store-card { flex: 0 0 156px; width: 156px; display: flex; flex-direction: column; cursor: pointer; }
+.store-card--reco { cursor: default; }
+.store-art {
+  position: relative; width: 156px; height: 156px; border-radius: 6px; overflow: hidden;
+  background: #eceae4;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 180ms ease, transform 180ms ease;
 }
-/* Vinyl v2 (Jake: "i hate the record animation it needs to be different and
-   cooler"): the crate-pull. Hover LIFTS the card slightly and the record
-   rises out of the top of the sleeve, SPINNING — grooves, brass label, a
-   rotating light sheen. The sheen spins via an animated @property angle so
-   the rise (transform transition) and the spin (conic rotation) never fight
-   over the same property. Lives on the CARD; the sleeve clips its children. */
-@property --df-ang {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
-.df-card:not(.df-card--artist) {
-  position: relative;
-  transition: transform 200ms ease;
-}
-.df-card:not(.df-card--artist):hover { transform: translateY(-3px) rotate(0deg); }
-.df-card:not(.df-card--artist)::before {
-  content: '';
-  position: absolute; top: 12px; left: 12px;
-  width: 126px; height: 126px; border-radius: 50%;
-  background:
-    conic-gradient(from var(--df-ang),
-      rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.12) 38deg, rgba(255, 255, 255, 0) 76deg,
-      rgba(255, 255, 255, 0) 180deg, rgba(255, 255, 255, 0.08) 218deg, rgba(255, 255, 255, 0) 256deg),
-    radial-gradient(circle at 50% 50%,
-      var(--shop-brass) 0 7%, #17130f 8% 13%, #2a221a 13.5% 14.5%, #17130f 15% 22%,
-      #241d16 22.5% 23.5%, #17130f 24% 31%, #201a14 31.5% 32.5%, #17130f 33% 100%);
-  transform: translateY(0);
-  transition: transform 260ms cubic-bezier(0.2, 0.7, 0.3, 1.15), box-shadow 260ms ease;
-  z-index: 0;
-}
-.df-card:not(.df-card--artist):hover::before {
-  transform: translateY(-40px);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.32);
-  animation: df-vinyl-spin 1.6s linear infinite;
-}
-@keyframes df-vinyl-spin { to { --df-ang: 360deg; } }
-.df-card:not(.df-card--artist) .df-art { z-index: 1; }
-.df-card--artist .df-art { border-radius: 50%; }   /* artist grammar: circles */
-/* The cover overlays the ♪ placeholder (absolute, not in-flow): a cover
-   that 404s hides itself and the placeholder shows — never a blank hole. */
-.df-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-/* Artless card = the shop's own kraft inner sleeve (Apple throttles art;
-   the backfill re-dresses these in place — meanwhile they look stocked). */
+.store-card:hover .store-art { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22); transform: scale(1.02); }
+.store-art-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .df-art-ph {
-  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
-  font-size: 30px; color: var(--shop-brass);
-  background:
-    radial-gradient(circle at 50% 50%, rgba(60, 38, 18, 0.10) 0 30%, transparent 31%),
-    linear-gradient(160deg, #e4d3b4 0%, #d9c6a4 60%, #cdb890 100%);
-  box-shadow: inset 0 0 0 6px rgba(255, 250, 238, 0.35), inset 0 0 18px rgba(60, 38, 18, 0.12);
-  text-shadow: 0 1px 0 rgba(255, 250, 238, 0.5);
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 30px; color: #b7b0a2;
 }
-/* The brain % as a round PRICE STICKER — the shop prices by taste match. */
-.df-pct {
-  position: absolute; top: 5px; left: 5px;
-  width: 34px; height: 34px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10.5px; font-weight: 800; color: #fff;
-  background: radial-gradient(circle at 35% 30%, #ff7a24, rgb(var(--brand-orange-rgb)) 70%);
-  border: 1.5px dashed rgba(255, 247, 236, 0.75);
-  box-shadow: 0 2px 5px rgba(60, 38, 18, 0.35);
-  transform: rotate(-8deg);
-}
-.df-nope {
-  position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%;
-  border: none; cursor: pointer; background: rgba(20, 16, 12, 0.55); color: rgba(255, 255, 255, 0.9);
-  /* Same fix as .df-play — the `✕` glyph sat off-centre for the same reason. */
-  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 0;
-  opacity: 0; transition: opacity 130ms ease, background 130ms ease;
-}
-.df-card:hover .df-nope { opacity: 1; }
-.df-nope:hover { background: rgba(160, 40, 30, 0.9); }
-.df-play {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
-  /* Flex-centred, not text-centred. The old rule centred nothing: the mark was
-     a `▶` glyph laid out on a text baseline, so it sat high and left inside the
-     disc, and `padding-left: 2px` was an attempt to nudge it back by hand. The
-     mark is an SVG now (TransportIcons) and carries its own optical offset, so
-     the button's only job is to put it dead centre. */
-  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 0;
-  background: rgb(var(--brand-orange-rgb)); color: #fff;
-  opacity: 0; transition: opacity 140ms ease; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
-}
-.df-card:hover .df-play, .df-play--on { opacity: 1; }
 
-.df-badge-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.store-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(252, 250, 247, 0.92); color: #221c14;
+  border: 0; cursor: pointer;
+  opacity: 0; transition: opacity 150ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.store-card:hover .store-play, .store-play--on { opacity: 1; }
+.store-play--on { background: rgb(var(--brand-orange-rgb)); color: #fff; }
+
+.store-pct {
+  position: absolute; top: 6px; left: 6px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.02em;
+  color: #fff; background: rgba(20, 16, 12, 0.62);
+  border-radius: 999px; padding: 2px 7px;
+}
+.store-nope {
+  position: absolute; top: 5px; right: 5px;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; cursor: pointer;
+  background: rgba(20, 16, 12, 0.5); color: rgba(255, 255, 255, 0.9);
+  opacity: 0; transition: opacity 150ms ease;
+}
+.store-card:hover .store-nope { opacity: 1; }
+.store-nope:hover { background: rgba(150, 30, 20, 0.85); }
+
+.store-meta-line { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
 .df-type {
-  font-size: 8.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 2px 6px; border-radius: 4px; color: #6a604e; background: rgba(85, 78, 64, 0.10);
+  font-size: 8.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  border-radius: 3px; padding: 1.5px 5px;
 }
 .df-type--song  { color: rgb(var(--brand-orange-rgb)); background: rgba(var(--brand-orange-rgb), 0.12); }
 .df-type--album { color: #4a5a3a; background: rgba(90, 110, 60, 0.14); }
 .df-type--artist { color: #3a4a6a; background: rgba(60, 80, 130, 0.12); }
-.df-year { font-size: 10px; font-weight: 600; color: var(--text-secondary, #999); }
+.df-type--owned { color: #6a5a3a; background: rgba(130, 110, 60, 0.14); }
+.store-year { font-size: 10px; font-weight: 600; color: var(--text-secondary, #999); }
+.store-lane { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary, #b0a896); margin-left: auto; }
 
+.store-name {
+  margin-top: 4px; font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--text-primary, #1a1a1a);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.store-artist {
+  font-size: 11.5px; color: var(--text-secondary, #777); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.store-because { font-size: 10.5px; color: var(--text-secondary, #8a8275); margin-top: 4px; }
+.store-because b { color: rgb(var(--brand-orange-rgb)); font-weight: 700; }
+.store-because--lane { font-style: italic; }
+.store-pitch {
+  font-size: 10.5px; font-style: italic; color: #6d6354;
+  margin-top: 3px; line-height: 1.35;
+}
+.store-add {
+  margin-top: auto; padding-top: 8px;
+  border: 0; background: none; cursor: pointer; text-align: left; padding-left: 0;
+  font-size: 11px; font-weight: 700; color: rgb(var(--brand-orange-rgb));
+}
+.store-add:hover:not(:disabled) { text-decoration: underline; }
+.store-add--done, .store-add:disabled { color: #9a9384; cursor: default; text-decoration: none; }
+
+/* ── The learned ledger — clean panel, same honesty ─────────────────── */
+.df-learned {
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  border: 1px solid rgba(85, 78, 64, 0.14);
+  border-left: 3px solid rgb(var(--brand-orange-rgb));
+  border-radius: 8px;
+  background: var(--white, #fff);
+}
+.df-learned-head { display: flex; flex-direction: column; gap: 2px; }
+.df-learned-eyebrow { font-size: 9px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-secondary, #98917f); }
+.df-learned-headline { font-size: 13px; font-weight: 700; color: var(--text-primary, #1a1a1a); }
+.df-learned-stats { display: flex; gap: 14px; margin-top: 6px; font-size: 11px; color: var(--text-secondary, #777); }
+.df-learned-dim { color: var(--text-secondary, #a49c8a); }
+.df-learned-lanes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.df-learned-lane {
+  font-size: 10px; border: 1px solid rgba(85, 78, 64, 0.16); border-radius: 999px;
+  padding: 2px 8px; color: var(--text-secondary, #777);
+}
+.df-learned-yes { color: #3d7a3d; margin-left: 4px; }
+.df-learned-no { color: #a33a2a; margin-left: 3px; }
+.df-learned-stopped { margin-top: 8px; font-size: 10.5px; color: var(--text-secondary, #a49c8a); }
+
+/* ── Behind the Counter (owned rediscovery artists) — kept, cleaned ── */
+.df-card { flex: 0 0 150px; width: 150px; display: flex; flex-direction: column; }
+.df-card--artist { align-items: center; }
+.df-art {
+  position: relative; width: 150px; height: 150px; border-radius: 6px; overflow: hidden;
+  background: #eceae4; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.df-card--artist .df-art { border-radius: 50%; }
+.df-art--btn { border: 0; padding: 0; cursor: pointer; transition: box-shadow 180ms ease, transform 180ms ease; }
+.df-art--btn:hover { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22); transform: scale(1.02); }
+.df-portrait { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.df-initials {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 34px; font-weight: 800; color: rgba(255, 255, 255, 0.92);
+}
+.df-play--owned {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(252, 250, 247, 0.92); color: #221c14;
+  opacity: 0; transition: opacity 150ms ease;
+}
+.df-art--btn:hover .df-play--owned { opacity: 1; }
+.df-badge-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+.df-badge-row--center { justify-content: center; }
+.df-year { font-size: 10px; font-weight: 600; color: var(--text-secondary, #999); }
 .df-name {
   margin-top: 4px; font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--text-primary, #1a1a1a);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.df-artist {
-  font-size: 11.5px; color: var(--text-secondary, #777); margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-/* Shelf-talker (2026-08-07): the why-blurb reads as the clerk's note
- * taped under the record — cream card, hairline, a whisper of tilt. */
-.df-why {
-  font-size: 10.5px; font-style: italic; color: var(--shop-ink);
-  margin-top: 4px; line-height: 1.35;
-  background: var(--shop-paper);
-  border: 1px solid rgba(140, 115, 80, 0.22);
-  border-radius: 2px;
-  padding: 3px 6px;
-  position: relative;
-  transform: rotate(-0.4deg);
-  box-shadow: 0 1px 1px rgba(0,0,0,0.05);
-}
-.df-card:nth-child(even) .df-why { transform: rotate(0.35deg); }
-.df-why::before {
-  content: '';
-  position: absolute;
-  top: -4px; left: 50%;
-  width: 26px; height: 7px;
-  transform: translateX(-50%) rotate(-1deg);
-  background: rgba(210, 195, 160, 0.5);
-  border-left: 1px solid rgba(160, 140, 100, 0.25);
-  border-right: 1px solid rgba(160, 140, 100, 0.25);
-}
-.df-add {
-  margin-top: auto; width: 100%; padding: 5px 0; border-radius: 6px; cursor: pointer;
-  border: 1px solid rgba(85, 78, 64, 0.16); background: var(--white);
-  font-size: 11px; font-weight: 700; color: #5a5244; transition: background 130ms ease;
-}
-.df-add:hover:not(:disabled) { background: rgba(var(--brand-orange-rgb), 0.10); color: rgb(var(--brand-orange-rgb)); }
-.df-add--done { color: rgb(var(--brand-orange-rgb)); border-color: rgba(var(--brand-orange-rgb), 0.3); cursor: default; }
-
-/* The view IS the scroller (Jake: "i cant scroll on the new discovery page") */
-.df-view { height: 100%; overflow-y: auto; }
-
-/* Owned lane: the whole cover is a play button */
-.df-art--btn { border: none; padding: 0; cursor: pointer; display: block; }
-.df-type--owned { color: rgb(var(--brand-orange-rgb)); background: rgba(var(--brand-orange-rgb), 0.14); }
-.df-play--owned { pointer-events: none; }
-.df-art--btn:hover .df-play--owned { opacity: 1; }
-
-/* Owned lane = artist grammar: centered under the circle */
-.df-badge-row--center { justify-content: center; }
 .df-name--center { text-align: center; }
-
-/* Artist cards show the ARTIST (2026-07-28). Portrait fills the circle;
- * when there's no photo we draw an initials disc rather than punching a
- * square album cover into a circle — that misrepresented a cover as a
- * picture of a person, which is what read as sloppy. */
-.df-portrait {
-  width: 100%; height: 100%;
-  object-fit: cover;
-  display: block;
+.df-artist { font-size: 11.5px; color: var(--text-secondary, #777); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.df-lane { margin-bottom: 26px; }
+.df-lane-head {
+  font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-secondary, #6d675c);
+  border-top: 1px solid rgba(85, 78, 64, 0.09);
+  padding: 12px 0 10px;
 }
-.df-initials {
-  width: 100%; height: 100%;
-  display: flex; align-items: center; justify-content: center;
-  color: #fff;
-  font-size: 44px; font-weight: 700; letter-spacing: 0.02em;
-  user-select: none;
-}
-
-/* "Because you play X" — the bridge from something owned to something new
- * (2026-07-31). This is the single most useful line on a card, so it reads
- * above the why rather than under it, and the artist name carries the weight.
- * The why below it says what actually carries over. */
-.df-because {
-  margin-top: 5px;
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--text-secondary, #6a604e);
-}
-.df-because b {
-  font-weight: 700;
-  color: rgb(var(--brand-orange-rgb));
-}
-
-/* ── "What I've learned" ───────────────────────────────────────────────────
-   Jake: "hard to know if you are actually learning my tastes or not based on
-   what is recommended." The page answers that out loud now, from the ledger
-   it already keeps. Styled as a NOTE rather than a hero — it reports on the
-   racks, it isn't one of them — and it gets quieter as confidence rises,
-   because a system that knows you should stop explaining itself. */
-/* The clerk's ledger: an index card on the counter — ruled lines, red
-   margin, the Music Man mulling it over in the corner. It reports on the
-   racks; it isn't one of them. */
-.df-learned {
-  position: relative;
-  margin: 0 0 var(--space-7);
-  padding: var(--space-5) var(--space-6);
-  border: 1px solid rgba(140, 115, 80, 0.35);
-  border-left: 3px solid rgba(200, 80, 60, 0.55);
-  border-radius: 3px;
-  background:
-    repeating-linear-gradient(180deg, transparent 0 21px, rgba(120, 150, 190, 0.13) 21px 22px),
-    var(--shop-paper);
-  box-shadow: 0 2px 6px rgba(60, 38, 18, 0.12);
-  transform: rotate(-0.25deg);
-}
-/* Thin evidence reads as a warning; a solid read fades into the page. */
-.df-learned--none,
-.df-learned--thin    { border-left-color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.055); }
-.df-learned--growing { border-left-color: #b08a3a; }
-.df-learned--solid   { border-left-color: var(--color-success); opacity: 0.85; }
-
-.df-learned-head { display: flex; flex-direction: column; gap: 3px; }
-.df-learned-eyebrow {
-  font-size: var(--font-10); font-weight: var(--fw-heavy);
-  letter-spacing: var(--track-eyebrow); text-transform: uppercase; color: var(--text-dim);
-}
-.df-learned-headline { font-size: var(--font-14); font-weight: var(--fw-bold); color: var(--text-primary); }
-
-.df-learned-stats {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-5);
-  margin-top: var(--space-4); font-size: var(--font-12); color: var(--text-secondary);
-}
-.df-learned-stats b { font-variant-numeric: tabular-nums; color: var(--text-primary); }
-.df-learned-dim { color: var(--text-dim); }
-
-.df-learned-lanes { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
-.df-learned-lane {
-  display: inline-flex; align-items: baseline; gap: 5px;
-  font-size: var(--font-11); color: var(--text-secondary);
-  padding: 2px var(--space-3);
-  border: 1px solid var(--border-warm); border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.6);
-}
-.df-learned-lane b { font-variant-numeric: tabular-nums; }
-.df-learned-yes { color: var(--color-success); }
-.df-learned-no  { color: var(--brand-orange-dark); }
-
-.df-learned-stopped {
-  margin-top: var(--space-4); font-size: var(--font-11); color: var(--text-dim);
-}
-
-/* A lane-derived reason is TRUE but weaker evidence than a validated bridge
-   to an artist Jake plays, so it reads quieter — the eye should still find
-   "Because you play Daft Punk" first. Both beat silence, which is what made
-   two out of five cards look arbitrary. */
-.df-because--lane {
-  font-style: normal;
-  color: var(--text-dim);
-  font-weight: var(--fw-normal);
-}
-
-/* ── The Bins + Staff Wall (2026-08-22 bincrate reorg) ─────────────────── */
-
-/* Staff picks wall — the WJLR personas, moved in from the sidebar. */
-.staff-wall { margin-bottom: 8px; }
-.staff-shelf-head { display: inline-flex; align-items: center; gap: 8px; }
-.staff-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 1px 1px rgba(0,0,0,0.3); }
-.staff-dot--mm { background: rgb(var(--brand-orange-rgb)); }
-.staff-dot--megan { background: #4a90c2; }
-.staff-dot--djhands { background: #8e5ac2; }
-.staff-full-list {
-  margin-left: 10px; border: 0; background: none; cursor: pointer;
-  font-size: 9px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--shop-cream); opacity: 0.85; padding: 0;
-}
-.staff-full-list:hover { opacity: 1; text-decoration: underline; }
-.staff-commentary {
-  font-size: 11px; font-style: italic; color: var(--shop-ink);
-  margin: -4px 0 10px 2px; max-width: 640px;
-}
-.staff-row { min-height: 150px; padding-top: 10px; }
-.staff-card { flex: 0 0 118px; }
-.staff-card .df-art { width: 118px; height: 118px; }
-.staff-art-img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
-.staff-card .df-name { font-size: 12px; }
-
-/* The bincrate floor: genre bins in a responsive grid. */
-.bincrate-floor { margin-top: 6px; }
-.bincrate-floor-head {
-  display: inline-block;
-  font-size: 12px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
-  color: var(--shop-cream);
-  background: linear-gradient(180deg, var(--shop-counter-hi) 0%, var(--shop-counter) 55%, var(--shop-counter-lo) 100%);
-  border: 1px solid var(--shop-edge); border-radius: 4px;
-  padding: 6px 14px; margin-bottom: 16px;
-  box-shadow: inset 0 1px 0 rgba(255, 236, 200, 0.18), 0 2px 5px rgba(60, 38, 18, 0.25);
-}
-.bincrate-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
-  gap: 22px;
-}
-
-/* One bincrate: wood box, divider plate, the bin inside. */
-.bincrate {
-  background: linear-gradient(180deg, var(--shop-wood-hi) 0%, var(--shop-wood) 30%, var(--shop-wood-lo) 100%);
-  border: 1px solid var(--shop-edge);
-  border-radius: 8px;
-  padding: 12px 14px 14px;
-  box-shadow: inset 0 2px 6px rgba(255, 236, 200, 0.15), inset 0 -6px 12px rgba(40, 24, 10, 0.35), 0 4px 10px rgba(60, 38, 18, 0.25);
-  outline: none;
-}
-.bincrate:focus-visible { box-shadow: inset 0 2px 6px rgba(255, 236, 200, 0.15), inset 0 -6px 12px rgba(40, 24, 10, 0.35), 0 4px 10px rgba(60, 38, 18, 0.25), 0 0 0 2px var(--brand-orange); }
-.bincrate-plate {
-  display: flex; align-items: center; justify-content: space-between;
-  background: var(--shop-paper);
-  border: 1px solid rgba(140, 115, 80, 0.4); border-radius: 3px;
-  padding: 4px 10px; margin-bottom: 12px;
-  box-shadow: 0 1px 2px rgba(60, 38, 18, 0.2);
-  transform: rotate(-0.4deg);
-}
-.bincrate-plate-genre {
-  font-size: 13px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase;
-  color: #3a2d1c;
-}
-.bincrate-plate-count { font-size: 10px; font-weight: 700; color: var(--shop-ink); opacity: 0.8; }
-
-.bincrate-body { display: flex; gap: 16px; align-items: flex-start; }
-
-/* The stack: front record + the bin behind it. */
-.bincrate-stack {
-  /* NAMESPACED (bincrate-*): the immersive RecordStoreView already owns
-     `.crate` as full-scene absolute overlays — the unprefixed name put six
-     content-area-sized crates on one spot, six wood gradients deep (the
-     2026-08-22 "why is the shop pitch black" screenshot). Same lesson the
-     DJ booth learned with its `booth-` namespace. */
-  position: relative; flex: 0 0 190px; height: 218px;
-  border: 0; background: none; cursor: pointer; padding: 0;
-  perspective: 600px;
-  display: block;
-}
-.bincrate-sleeve {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  width: 190px; height: 190px;
-  border-radius: 3px; overflow: hidden;
-  border: 1px solid rgba(60, 38, 18, 0.35);
-  background: #e8e6e0;
-  box-shadow: 0 3px 8px rgba(30, 18, 8, 0.35);
-  transform-origin: bottom center;
-  transition: transform 200ms ease;
-}
-.bincrate-sleeve img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
-.bincrate-sleeve .df-art-ph { position: absolute; inset: 0; }
-.bincrate-sleeve--front { z-index: 3; }
-@keyframes bincrate-flip-fwd {
-  0% { transform: rotateX(0deg); }
-  45% { transform: rotateX(-58deg); opacity: 0.85; }
-  100% { transform: rotateX(0deg); }
-}
-@keyframes bincrate-flip-back {
-  0% { transform: rotateX(-58deg); opacity: 0.7; }
-  100% { transform: rotateX(0deg); opacity: 1; }
-}
-.bincrate-sleeve--fwd { animation: bincrate-flip-fwd 240ms ease; }
-.bincrate-sleeve--back { animation: bincrate-flip-back 240ms ease; }
-.bincrate-sleeve--front .df-pct { top: 6px; left: 6px; }
-.bincrate-sticker {
-  position: absolute; bottom: 6px; right: 6px;
-  font-size: 8.5px; font-weight: 900; letter-spacing: 0.08em;
-  color: var(--shop-cream); background: rgba(40, 26, 12, 0.82);
-  border-radius: 2px; padding: 2px 5px;
-}
-
-/* The record in hand: title, pitch, actions. */
-.bincrate-detail { flex: 1; min-width: 0; padding-top: 4px; }
-.bincrate-lane-tag {
-  font-size: 8.5px; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase;
-  color: var(--shop-ink); opacity: 0.75;
-}
-.bincrate-title {
-  font-size: 15px; font-weight: 800; line-height: 1.2; color: #241a10;
-  margin-top: 5px;
-}
-.bincrate-artist { font-size: 12px; color: #4c3a26; margin-top: 1px; }
-.bincrate-detail .df-because { color: #f6ecd8; }
-.bincrate-detail .df-because b { color: #ffd9a8; }
-.bincrate-detail .df-because--lane { color: rgba(246, 236, 216, 0.85); }
-.bincrate-why { max-width: 260px; }
-.bincrate-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.bincrate-sample {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--shop-edge); border-radius: 4px;
-  background: linear-gradient(180deg, var(--shop-counter-hi), var(--shop-counter-lo));
-  color: var(--shop-cream); font-size: 11px; font-weight: 700;
-  padding: 5px 10px; cursor: pointer;
-}
-.bincrate-sample:hover { filter: brightness(1.12); }
-.bincrate-sample--on { background: rgb(var(--brand-orange-rgb)); border-color: #a33a00; }
-.bincrate-nope {
-  border: 1px solid rgba(60, 38, 18, 0.4); border-radius: 4px;
-  background: rgba(40, 26, 12, 0.25); color: #f0e2c8;
-  width: 26px; height: 26px; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.bincrate-nope:hover { background: rgba(120, 30, 20, 0.55); }
-.bincrate-flip-hint {
-  display: flex; align-items: center; gap: 8px; margin-top: 12px;
-  font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
-  color: rgba(246, 236, 216, 0.7);
-}
-.bincrate-arrow {
-  border: 1px solid rgba(60, 38, 18, 0.45); border-radius: 4px;
-  background: rgba(255, 240, 214, 0.16); color: var(--shop-cream);
-  width: 24px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1;
-}
-.bincrate-arrow:hover { background: rgba(255, 240, 214, 0.3); }
-
-/* Staff cards are 118px — the 126px crate-pull vinyl sized for 150px
-   sleeves peeked out at rest. Scale it to fit; the hover pull still works. */
-.staff-card:not(.df-card--artist)::before {
-  width: 96px; height: 96px; top: 11px; left: 11px;
-}
+.df-row { display: flex; gap: 16px; overflow-x: auto; overflow-y: hidden; padding: 2px 2px 10px; scrollbar-width: none; }
+.df-row::-webkit-scrollbar { display: none; }

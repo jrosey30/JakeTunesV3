@@ -27,7 +27,6 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import mmSmug from './RecordStore/art/musicman-smug.png'
-import CrateFlip, { SHOP_NAMES, type CrateCard } from '../components/CrateFlip'
 import { SHOP_BINS, binForGenre } from '../../common/record-shop-bins'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
@@ -226,17 +225,29 @@ export default function NewForYouView() {
   }, [])
   useEffect(() => { loadLearned() }, [loadLearned])
 
-  // ── The crates (2026-08-22 reorg): every card files under its genre
-  // divider; lane identity survives as a sticker on the sleeve. Cards
-  // already deduped cross-lane by the feed's filterFeed.
-  const binCrates = SHOP_BINS
+  // ── Genre sections (2026-08-23 store rebuild): the crate-flip diorama is
+  // gone — cards group under clean genre shelves, scannable at a glance,
+  // in the app's own iTunes-Store idiom. Bin organization survives.
+  const binSections = SHOP_BINS
     .map((bin) => ({
       bin,
-      // v4-cached feeds predate the bin field — compute client-side so the
-      // first post-update look files correctly instead of one giant Misc.
-      cards: lanes.flatMap((l) => l.cards).filter((c) => (c.bin ?? binForGenre(c.genre)) === bin) as CrateCard[],
+      cards: lanes.flatMap((l) => l.cards).filter((c) => (c.bin ?? binForGenre(c.genre)) === bin),
     }))
     .filter((b) => b.cards.length > 0)
+
+  const SHOP_NAMES: Record<string, string> = {
+    'brand-new': 'New', 'scene': 'Scene', 'missing': 'Gap', 'time-machine': 'Used', 'songs': 'Single',
+  }
+  const laneReason = (c: FeedCard): string | null => {
+    switch (c.lane) {
+      case 'brand-new': return c.year ? `New in ${c.year}` : 'Out now'
+      case 'time-machine': return c.year ? `From ${c.year} — an era you play` : 'From an era you play'
+      case 'scene': return 'From the scene around your library'
+      case 'missing': return 'A gap in a genre you play'
+      case 'songs': return 'One song to try'
+      default: return null
+    }
+  }
 
   // ── Staff picks wall — the WJLR personas, moved in from the sidebar.
   const shelves = useWjlrPicks(useMemo(
@@ -247,23 +258,18 @@ export default function NewForYouView() {
 
   return (
     <div className="df-view" ref={pageRef}>
-      <div className="df-head">
-        <div className="df-sign">
-          <span className="df-sign-chain df-sign-chain--l" aria-hidden="true" />
-          <span className="df-sign-chain df-sign-chain--r" aria-hidden="true" />
-          <h1 className="df-title df-title--sign">The Record Shop</h1>
-          <span className="df-sign-sub">WJLR Records · Greenpoint</span>
+      <div className="store-head">
+        <div>
+          <h1 className="store-title">The Record Shop</h1>
+          <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
         </div>
-        <div className="df-head-right">
-          {generatedAt && <span className="df-updated">restocked {new Date(generatedAt).toLocaleDateString()}</span>}
-          <button type="button" className="df-refresh" onClick={() => void load(true)} disabled={loading} title="Restock the racks">
-            <span className="df-refresh-icon" aria-hidden="true">{loading ? '…' : '↻'}</span>
-            <span>{loading ? 'Restocking' : 'Restock'}</span>
+        <div className="store-head-right">
+          <button type="button" className="store-btn" onClick={() => void load(true)} disabled={loading}>
+            {loading ? 'Restocking…' : '↻ Restock'}
           </button>
-          <button type="button" className="df-step-inside" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
-            title="Walk into the shop">
+          <button type="button" className="store-btn store-btn--primary" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}>
             <img className="df-step-inside-mm" src={mmSmug} alt="" aria-hidden="true" />
-            <span>Step Inside</span>
+            Step Inside
           </button>
         </div>
       </div>
@@ -309,61 +315,81 @@ export default function NewForYouView() {
       )}
       {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
 
-      {shelves && shelves.length > 0 && (
-        <div className="staff-wall">
-          {shelves.map((sh) => {
-            const picks = sh.trackIds.map((tid) => trackById.get(tid)).filter((t): t is NonNullable<typeof t> => !!t).slice(0, 12)
-            if (!picks.length) return null
-            return (
-              <section key={sh.id} className={`df-lane staff-shelf staff-shelf--${sh.accent}`} data-lane={`staff-${sh.accent}`}>
-                <div className="df-lane-head staff-shelf-head">
-                  <span className={`staff-dot staff-dot--${sh.accent}`} aria-hidden="true" />
-                  {sh.label} picks
-                  <button type="button" className="staff-full-list" onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sh.id })}>
-                    full list ›
+      {shelves && shelves.length > 0 && shelves.map((sh) => {
+        const picks = sh.trackIds.map((tid) => trackById.get(tid)).filter((t): t is NonNullable<typeof t> => !!t).slice(0, 12)
+        if (!picks.length) return null
+        return (
+          <section key={sh.id} className="store-shelf" data-lane={`staff-${sh.accent}`}>
+            <div className="store-shelf-head">
+              <span className={`staff-dot staff-dot--${sh.accent}`} aria-hidden="true" />
+              <span className="store-shelf-title">{sh.label} Picks</span>
+              {sh.commentary && <span className="store-shelf-note" title={sh.commentary}>“{sh.commentary.length > 110 ? sh.commentary.slice(0, 107).replace(/\s+\S*$/, '') + '…' : sh.commentary}”</span>}
+              <button type="button" className="store-seeall" onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sh.id })}>See All ›</button>
+            </div>
+            <div className="store-row">
+              {picks.map((t, ti) => (
+                <div key={t.id} className="store-card" onClick={() => playTrack(t, picks, ti, undefined, true, true)} title={`Play ${t.title}`}>
+                  <div className="store-art">
+                    <div className="df-art-ph" aria-hidden="true">♪</div>
+                    {(() => { const h = lookupArtworkOneShot(lib.artworkMap, t.artist, t.album); return h ? <AlbumArtImage hash={h} alt="" className="store-art-img" size={320} /> : null })()}
+                    <span className="store-play" aria-hidden="true"><PlayIcon size={16} /></span>
+                  </div>
+                  <div className="store-name" title={t.title}>{t.title}</div>
+                  <div className="store-artist" title={t.artist}>{t.artist}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )
+      })}
+
+      {binSections.map(({ bin, cards }) => (
+        <section key={bin} className="store-shelf" data-lane={`bin-${bin}`}>
+          <div className="store-shelf-head">
+            <span className="store-shelf-title">{bin}</span>
+            <span className="store-shelf-count">{cards.length} pick{cards.length === 1 ? '' : 's'}</span>
+          </div>
+          <div className="store-row">
+            {cards.map((c) => {
+              const id = cardId(c)
+              const isPlaying = preview.playingId === id
+              const isAdded = added.has(id)
+              const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
+              return (
+                <div key={id} className="store-card store-card--reco">
+                  <div className="store-art">
+                    <div className="df-art-ph" aria-hidden="true">♪</div>
+                    {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+                    {c.brainPct != null && <span className="store-pct" title="Brain match vs your taste">{c.brainPct}%</span>}
+                    <button type="button" className="store-nope" title={`Never show ${c.artist} again`} aria-label="Not for me" onClick={() => notForMe(c)}><CloseIcon /></button>
+                    {sampleUrl && (
+                      <button type="button" className={`store-play store-play--btn${isPlaying ? ' store-play--on' : ''}`}
+                        onClick={() => togglePreview(id, sampleUrl, c.type === 'album' && c.hookTitle ? `${c.title} · ${c.hookTitle}` : c.title, c.artist)}
+                        title={isPlaying ? 'Stop' : (c.type === 'album' && c.hookTitle ? `Sample: ${c.hookTitle}` : 'Preview')}>
+                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                      </button>
+                    )}
+                  </div>
+                  <div className="store-meta-line">
+                    <span className={`df-type df-type--${c.type}`}>{c.type}</span>
+                    {c.year && <span className="store-year">{c.year}</span>}
+                    <span className="store-lane">{SHOP_NAMES[c.lane] ?? ''}</span>
+                  </div>
+                  <div className="store-name" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
+                  {c.type !== 'artist' && <div className="store-artist" title={c.artist}>{c.artist}</div>}
+                  {c.because
+                    ? <div className="store-because">Because you play <b>{c.because}</b></div>
+                    : laneReason(c) ? <div className="store-because store-because--lane">{laneReason(c)}</div> : null}
+                  {c.why && <div className="store-pitch">{c.why}</div>}
+                  <button type="button" className={`store-add${isAdded ? ' store-add--done' : ''}`} disabled={isAdded} onClick={() => void addToList(c)}>
+                    {isAdded ? 'On your list ✓' : '+ List'}
                   </button>
                 </div>
-                {sh.commentary && <div className="staff-commentary">“{sh.commentary.length > 160 ? sh.commentary.slice(0, 157).replace(/\s+\S*$/, '') + '…' : sh.commentary}”</div>}
-                <div className="df-row staff-row">
-                  {picks.map((t, ti) => (
-                    <div key={t.id} className="df-card staff-card">
-                      <button type="button" className="df-art df-art--btn" title={`Play ${t.title}`}
-                        onClick={() => playTrack(t, picks, ti, undefined, true, /* a persona's arc is curated */ true)}>
-                        <div className="df-art-ph" aria-hidden="true">♪</div>
-                        {(() => { const h = lookupArtworkOneShot(lib.artworkMap, t.artist, t.album); return h ? <AlbumArtImage hash={h} alt="" className="staff-art-img" size={320} /> : null })()}
-                        <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
-                      </button>
-                      <div className="df-name" title={t.title}>{t.title}</div>
-                      <div className="df-artist" title={t.artist}>{t.artist}</div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-        </div>
-      )}
-
-      {binCrates.length > 0 && (
-        <div className="bincrate-floor">
-          <div className="bincrate-floor-head">The Bins</div>
-          <div className="bincrate-grid">
-            {binCrates.map(({ bin, cards }) => (
-              <CrateFlip
-                key={bin}
-                bin={bin}
-                cards={cards}
-                cardId={(c) => cardId(c as FeedCard)}
-                playingId={preview.playingId}
-                addedIds={added}
-                onPreview={(id, url, title, artist) => togglePreview(id, url, title, artist)}
-                onAdd={(c) => void addToList(c as FeedCard)}
-                onNope={(c) => notForMe(c as FeedCard)}
-              />
-            ))}
+              )
+            })}
           </div>
-        </div>
-      )}
+        </section>
+      ))}
 
       {owned.length > 0 && (
         <section className="df-lane" data-lane="behind-counter">
