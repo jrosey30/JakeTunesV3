@@ -77,17 +77,30 @@ export function buildTasteProfile(library: Track[]): TasteProfile {
   }
 }
 
-// 4.5 taste v3 (2026-06-30) — LEARNED logistic weights from a raw-feature
-// regression over ★ vs unstarred-old (5×5 CV held-out AUC 0.804, up from the
-// hand-tuned 0.774). Album dominates — Jake stars whole records; recency is
-// mildly NEGATIVE (the old +0.07 was backwards); decade is ~noise. Re-derive via
-// scripts/taste-eval.py. ⚠️ TWIN: keep identical to the backend copy
-// JakeTunesMobile/backend/src/util/tasteScore.ts.
-const W = { bias: -4.455, album: 8.636, artist: 3.79, genre: 0.989, decade: -0.164, plays: 0.81, recency: -0.554 }
+// 4.5 taste v4 (2026-08-23) — feature lab (scratchpad taste-feature-lab.py,
+// same leak-safe 5x5 CV protocol as scripts/taste-eval.py): playINTENSITY
+// (log1p(plays)/months owned) is the real behavior signal — it absorbs
+// lifetime playCount (whose weight flips mildly negative as the age-noisy
+// proxy it was) and lifts held-out AUC 0.8039 -> 0.8096 (+/-0.016, 25 folds).
+// Skips re-tested at 6x the June data: still nothing. Exp-recency: noise.
+// Weights re-derived on the full-rate basis (deployment parity).
+// Re-derive via the lab; the laptop harness (taste-eval.py) now measures the
+// same 7-feature model. ⚠️ TWIN: keep identical to the other tasteScore copy.
+const W = { bias: -6.529, album: 12.625, artist: 1.892, genre: -0.068, decade: 0.285, plays: -0.824, recency: -0.191, intensity: 4.65 }
 
 /** Predicted star-probability (0..1): a logistic model over identity affinity
  *  (album > artist > genre > era) + listening behavior, learned weights. Unknown
  *  keys fall back to the prior (the cold-start floor). */
+/** Months since dateAdded (fallback: 24 — an "average-aged" track). The
+ *  intensity feature needs ownership age; a missing date must not zero it. */
+function monthsOwned(t: Track, nowMs: number): number {
+  const da = String(t.dateAdded || '')
+  if (!da) return 24
+  const ms = Date.parse(da)
+  if (!Number.isFinite(ms)) return 24
+  return Math.max(1, (nowMs - ms) / (30 * 86400000))
+}
+
 export function tasteScore(t: Track, p: TasteProfile): number {
   const al = p.album.get(albumKey(t)) ?? p.prior
   const ar = p.artist.get(artistKey(t)) ?? p.prior
@@ -97,6 +110,7 @@ export function tasteScore(t: Track, p: TasteProfile): number {
   const lp = Number(t.lastPlayedAt) || 0
   const daysAgo = lp > 0 ? (p.nowMs - lp) / 86400000 : 3650
   const recencyNorm = 1 - Math.min(daysAgo, 3650) / 3650
-  const z = W.bias + W.album * al + W.artist * ar + W.genre * ge + W.decade * de + W.plays * playNorm + W.recency * recencyNorm
+  const intensity = monthsOwned(t, p.nowMs) > 0 ? Math.log1p(Number(t.playCount) || 0) / monthsOwned(t, p.nowMs) : 0
+  const z = W.bias + W.album * al + W.artist * ar + W.genre * ge + W.decade * de + W.plays * playNorm + W.recency * recencyNorm + W.intensity * intensity
   return 1 / (1 + Math.exp(-z))
 }
