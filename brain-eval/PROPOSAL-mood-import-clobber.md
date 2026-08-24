@@ -6,7 +6,15 @@ after the repair, and the mechanism is now fully identified** (see the
 change → Jake's call. The nightly repairs (REPORT-20260818, REPORT-20260820)
 fix the data; this fixes the mechanism so it stops recurring.
 
-**RECURRENCE LOG:** 4th event 2026-08-23 (library 9,645→9,686, +41 imports;
+**RECURRENCE LOG:** 5th event 2026-08-24 (library 9,686→9,692, +6 imports;
+97 orphans back, 768 clobbered vectors; router-truth 0.748 → repaired 0.823,
+mood-routed mean 0.833 — REPORT-20260824. NEW this night: the 2:00 trainer
+FATAL'd before writing, so (a) the clobber also wiped the 08-23 trainer batch
+with nothing re-writing it — the fidelity gate had to move to an aged cohort —
+and (b) the tempo-view exclusion protected 8 corrupted import embeds the
+trainer's tempo catch-up would normally have fixed; rule refined, see report.
+Even a +6-import day reverts the whole map — event size does not scale down
+with import count.) 4th event 2026-08-23 (library 9,645→9,686, +41 imports;
 96 orphans back, 709 clobbered vectors; router-truth 0.755 → repaired 0.830
 — REPORT-20260823). 3rd event 2026-08-22 (library 9,592→9,645, +53 imports;
 96 orphans back, 668 clobbered vectors; router-truth 0.750 → repaired 0.830
