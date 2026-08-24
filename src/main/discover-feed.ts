@@ -21,7 +21,7 @@
  */
 
 import { searchTitle, unwantedVersionOf } from './streamrip-match.ts'
-import { binForGenre, pickHookIndex } from './record-shop-bins.ts'
+import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
 
 export type FeedCardType = 'song' | 'album' | 'artist'
 
