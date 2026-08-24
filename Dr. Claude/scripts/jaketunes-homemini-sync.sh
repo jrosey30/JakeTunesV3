@@ -470,7 +470,21 @@ else
   # verified (exact size + 5040.639s + clean decode). A symlink whose target
   # lives inside the destination must NEVER be pushed; --no-links skips
   # symlinks entirely, which is correct here — the referent is already there.
-  rsync -az --size-only --no-links --no-perms --no-owner --no-group --no-times \
+  # 2026-08-24 — BOUNDED. The music leg had no time limit of its own, so when
+  # the SMB link FLAPS mid-walk (the breaker's own words: "link is flapping"),
+  # rsync wedges in an uninterruptible read: the orchestrator's 600s watchdog
+  # fires, SIGTERM is ignored because the process is stuck in the kernel, and
+  # the run took 1,059s and 633s to die on two consecutive ticks. A hung music
+  # leg also killed the WHOLE script, so the homemini push, artwork, stars and
+  # playlist legs — none of which touch the flapping mount — never ran.
+  #   --timeout=180 lets rsync abort itself when the link goes quiet, which is
+  # the only bound that works while a syscall is stuck; the outer alarm is the
+  # backstop, sized to land INSIDE the 600s watchdog so we exit on our own
+  # terms with the other legs still to come. The leg is additive, so a killed
+  # pass just resumes next tick.
+  perl -e 'alarm shift; exec @ARGV' 420 \
+    rsync -az --size-only --no-links --no-perms --no-owner --no-group --no-times \
+    --timeout=180 \
     --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
     --exclude='/.*/' --exclude='.*' \
     "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
@@ -537,6 +551,13 @@ if [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
 elif [ $music_rc -eq 23 ] || [ $music_rc -eq 24 ]; then
   log "WARNING: rsync partial transfer (exit $music_rc) — a file was busy (likely streaming) or vanished; new imports still synced, continuing to Plex scan + homemini push"
   notify "Music sync: a file was busy (probably playing) — everything else synced fine."
+elif [ $music_rc -eq 30 ] || [ $music_rc -eq 142 ] || [ $music_rc -eq 143 ]; then
+  # 2026-08-24: link flapped mid-walk (rsync I/O timeout, or our alarm). NOT a
+  # failure worth aborting the run for — the music leg is additive and resumes
+  # next tick, while every other leg still has work it CAN do. Noted hourly so
+  # a persistent flap is still visible without crying wolf every 10 minutes.
+  log_hourly /tmp/.jt-music-flap \
+    "music leg timed out (exit $music_rc) — SMB link flapping; additive sync resumes next tick, other legs continuing"
 elif [ $music_rc -ne 0 ]; then
   notify "Music rsync failed (exit $music_rc). See /tmp/jaketunes-sync.log."
   exit 2
