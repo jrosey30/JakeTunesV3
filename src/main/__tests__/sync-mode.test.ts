@@ -60,3 +60,17 @@ describe('decideSyncMode', () => {
     assert.deepEqual(decideSyncMode(false, true), { quick: true, downgradedFromFull: true })
   })
 })
+
+// 2026-08-24 — cadence easing (Jake: "ease up the full sync cadence").
+// The recovery kick fires on every breaker close; on a flapping link that is
+// many times an hour. It must NOT cost a full both-tree SMB walk.
+describe('nas-recovery is a quick reason', () => {
+  test('recovery kick asks for quick mode, not a full reconcile', () => {
+    // wantQuick=true is what the orchestrator derives for 'nas-recovery'.
+    assert.equal(decideSyncMode(true, false).quick, true)
+    assert.equal(decideSyncMode(true, false).downgradedFromFull, false)
+  })
+  test('the periodic reconcile is still full at home', () => {
+    assert.equal(decideSyncMode(false, false).quick, false)
+  })
+})

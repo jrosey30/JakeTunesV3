@@ -15,7 +15,7 @@
  * interactive shell, including full access to network volumes.
  *
  * Triggers wired by main/index.ts:
- *   - safety-net setInterval(10 min)
+ *   - safety-net setInterval(6 h)
  *   - post-success of `import-track` / `import-tracks`
  *   - post-success of `save-metadata-override`
  *   - post-success of `save-playlists`
@@ -60,11 +60,19 @@ const DEBOUNCE_MS = 5_000
 // (on every import/edit, ~15s) carry new music. So run the full one rarely,
 // nice'd + preemptible, so it never blocks or hogs. A timeout on it is now
 // harmless: quick syncs keep new music flowing regardless.
-const SAFETY_NET_INTERVAL_MS = 3_600_000  // 60 min — rare full reconcile (was 10 min)
+// 2026-08-24 (Jake: "ease up the full sync cadence"): 60 min -> 6 h. The NAS
+// is I/O-saturated at the filesystem level (btrfs extent-ref cleanup on an
+// encrypted volume, plus Synology's own indexing of the music share), and a
+// full both-tree stat walk over SMB costs ~320s while the link is degraded
+// vs ~19s healthy. Nothing NEEDS this walk to be frequent: every import,
+// metadata edit and playlist change fires its own quick sync in ~15s, so new
+// music still reaches the NAS and the phone immediately. This is the
+// belt-and-braces reconcile for out-of-band changes only.
+const SAFETY_NET_INTERVAL_MS = 21_600_000 // 6 h — rare full reconcile (10 min -> 60 min -> 6 h)
 const RUN_TIMEOUT_MS = 600_000            // kill a hung sync after 10 min
 
 export type SyncReason =
-  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork'
+  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery'
 
 let getWindow: (() => BrowserWindow | null) | null = null
 let debounceTimer: NodeJS.Timeout | null = null
@@ -78,7 +86,7 @@ let pendingReason: SyncReason | null = null
 let currentChild: ChildProcess | null = null
 let currentReason: SyncReason | null = null
 let preempted = false
-const isQuickReason = (r: SyncReason): boolean => r === 'import' || r === 'metadata-edit' || r === 'playlist'
+const isQuickReason = (r: SyncReason): boolean => r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery'
 
 // 4.5: persist the last sync outcome in process memory so the renderer
 // can read "last backed up: 3 min ago" in Settings → Sync. Cleared on
@@ -158,7 +166,7 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
   // still propagate!) and remember a full pass is OWED; the first full
   // sync that succeeds back on home network clears the debt.
   const remote = await nasMountedViaTailnet()
-  const wantQuick = reason === 'import' || reason === 'metadata-edit' || reason === 'playlist'
+  const wantQuick = isQuickReason(reason)
   const mode = decideSyncMode(wantQuick, remote)
   if (mode.downgradedFromFull) {
     fullSyncOwed = true
@@ -172,7 +180,7 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
     // (import / metadata-edit / playlist). It scans only files
     // modified in the last 10 min, skipping the rsync stat-walk over
     // the full 73GB library — cuts sync from ~5 min to ~15 sec for
-    // a typical album drop. The 10-min safety-net tick uses FULL
+    // a typical album drop. The periodic safety-net tick uses FULL
     // mode (rsync --delete) to catch tombstones and out-of-band
     // edits. Manual invocations also use full mode (assume the user
     // wants a thorough sync).
@@ -322,7 +330,7 @@ async function flushDebounce(): Promise<void> {
  *   - 'import' — post-import-track / post-import-tracks
  *   - 'metadata-edit' — post-save-metadata-override
  *   - 'playlist' — post-save-playlists
- *   - 'safety-net' — periodic 10-min tick
+ *   - 'safety-net' — periodic full reconcile tick (6 h)
  *   - 'manual' — explicit user action
  */
 export function triggerSync(reason: SyncReason): void {
@@ -375,8 +383,14 @@ export function startSyncOrchestrator(windowAccessor: () => BrowserWindow | null
   // Recovery kick (2026-08-22): a good window on a flapping link may last
   // minutes — sync the moment the breaker closes instead of waiting for
   // the hourly tick (deterministic harvest; 17:58Z was timing luck).
-  // safety-net reason → full at home, auto-downgrades to quick remotely.
-  onNasRecovery(() => triggerSync('safety-net'))
+  // 2026-08-24: this kick used the 'safety-net' reason, i.e. a FULL walk —
+  // and on a link that flaps every ~20 min it fired one on every recovery,
+  // which is the single biggest source of SMB load on an already-saturated
+  // NAS (and of the 600s timeouts). The kick's whole purpose is to harvest
+  // the change that just landed while the link was down, and that is exactly
+  // what quick mode does, in seconds. Anything older is still caught by the
+  // periodic full reconcile and by the fullSyncOwed debt.
+  onNasRecovery(() => triggerSync('nas-recovery'))
   console.log(`[sync-orchestrator] started (script=${SYNC_SCRIPT}, safety-net every ${SAFETY_NET_INTERVAL_MS / 1000}s)`)
 }
 
