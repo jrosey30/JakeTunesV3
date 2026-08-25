@@ -908,10 +908,16 @@ async function audioAnalysisWorker(): Promise<void> {
             keyRoot: dispatch.keyRoot,
             keyMode: dispatch.keyMode,
             camelotKey: dispatch.camelotKey,
+            keyConfidence: dispatch.keyConfidence,
             ok: dispatch.ok,
           } : {}),
         })
       })
+      // Push measured BPM/key into the brain NOW — don't wait for nightly
+      // teb catch-up. Import auto-index often embeds before analysis finishes,
+      // so without this the vectors lack tempo until the next trainer run.
+      const analyzed = dispatches.filter((d): d is AudioAnalysisDispatch => !!d && d.ok && typeof d.bpm === 'number' && d.bpm > 0)
+      if (analyzed.length) void reembedTracksAfterAnalysis(analyzed)
     }
   } finally {
     audioAnalysisRunning = false
@@ -9355,7 +9361,7 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
 
 
 // Music Man DJ Set — picks a batch of songs and generates a DJ intro
-ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => {
+ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; bpm?: number | null; camelotKey?: string; keyRoot?: string; keyMode?: string }[], recentIds: number[]) => {
   // 4.5.0-88 — RAG candidate pool for DJ-set. No user mood string
   // here (the IPC just says "pick a set"), so seed with a generic
   // danceable-vibe query to bias retrieval toward party-flow tracks
@@ -9382,13 +9388,20 @@ ipc.handle('musicman-dj-set', async (_event, tracks: { id: number; title: string
       }
     }
   }
-  const trackList = candidateTracks.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}`).join('\n')
+  // Include measured BPM + Camelot so Stephen can actually match tempo/key
+  // instead of guessing from genre/year (Jake 2026-08: brain wasn't utilizing
+  // correct analysis). '?' when unanalyzed — never fabricate.
+  const trackList = candidateTracks.map(t => {
+    const bpm = typeof t.bpm === 'number' && t.bpm > 0 ? String(Math.round(t.bpm)) : '?'
+    const cam = (t.camelotKey || '').trim() || '?'
+    return `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}|${t.year}|bpm=${bpm}|camelot=${cam}`
+  }).join('\n')
   const recentStr = recentIds.length > 0 ? `\nRecently played track IDs (AVOID these): ${recentIds.join(', ')}` : ''
 
   // 4.4.0: DJ Mode is now Stephen Hands' lane, not Music Man's. Stephen
   // is the in-house DJ — party-first, beats-forward, brief. He runs the
   // continuous AI-DJ flow that DJ Mode triggers between tracks.
-  const djSetInstructions = `You are DJ Stephen Hands running a continuous DJ set from inside the listener's library. Pick 6-10 songs that hang together AS A SET. The criteria: do they MOVE A ROOM. BPM compatibility, key compatibility (Camelot when possible), energy arc, sample/genre bridges between tracks.
+  const djSetInstructions = `You are DJ Stephen Hands running a continuous DJ set from inside the listener's library. Pick 6-10 songs that hang together AS A SET. The criteria: do they MOVE A ROOM. Use the bpm= and camelot= columns on each row — match tempos within ~6 BPM when possible, prefer Camelot neighbors (±1 number or relative major/minor), build an energy arc. Ignore '?' values (unanalyzed).
 
 Return ONLY a JSON object (no markdown, no code fences):
 {"intro":"YOUR spoken DJ intro in Stephen Hands' voice — 1-2 sentences MAX. Hyped, brief, party-first. NOT a Music Man intro — no historian-style framing, no genealogy talk. Sound like a DJ in a booth at 1AM. Examples of the right length: 'Stephen Hands. Pulled up a set that runs hot — disco into house into something nasty. Hands up.' OR 'Yo. Stephen. Built this around BPM matches and one Patrick Adams sample. Lock in.'","trackIds":[array of track ID numbers in play order],"theme":"short theme label in Stephen's voice — 'After Midnight', 'Disco / Boogie / House', 'Drum Programming Mt. Rushmore', etc."}
@@ -9398,6 +9411,7 @@ Rules:
 - Do NOT pick any recently played tracks${recentStr ? ' (see list below)' : ''}
 - HARD ARTIST RULE: each artist appears AT MOST ONCE in the set. Aim for all distinct artists.
 - Order matters — build a journey, but a DANCE FLOOR journey, not a Music Man lecture journey
+- Prefer tracks with real bpm=/camelot= over '?' when choosing between equals
 - Keep the intro SHORT — Stephen is NOT a man of many words${recentStr}`
 
   const act = getActivityPromptBlockSync()
@@ -10192,22 +10206,38 @@ ipc.handle('musicman-playlist', async (_event, mood: string, tracks: { id: numbe
   // hits (suggests embeddings haven't been backfilled or are sparse).
   const RAG_PLAYLIST_OVERSAMPLE = 5
   const RAG_PLAYLIST_MIN_POOL = 50
-  let candidateTracks: typeof tracks = tracks
+  const moodDecade = parseDecadeConstraint(mood)
+  // Decade claim → hard-filter the candidate pool by library year BEFORE
+  // Claude sees it. Cosine retrieval alone will surface Turnstile on a
+  // "1970s" mood (the daily-mix failure). Missing year = out.
+  let candidateTracks: typeof tracks = moodDecade
+    ? tracks.filter(t => yearInDecade(t.year, moodDecade))
+    : tracks
+  if (moodDecade) {
+    console.log(`[musicman-playlist] decade hard-gate ${moodDecade.label}: ${candidateTracks.length}/${tracks.length}`)
+    if (candidateTracks.length < 5) {
+      return {
+        ok: false,
+        error: `Not enough ${moodDecade.label} tracks in the library (${candidateTracks.length}) to build a set — need at least 5 with a year in ${moodDecade.start}–${moodDecade.end}.`,
+      }
+    }
+  }
   let ragUsed = false
   if (ragIsConfigured()) {
-    const idxCount = await ragIndexedCountForTracks(tracks)
-    if (idxCount >= Math.max(50, Math.floor(tracks.length * 0.8))) {
+    const idxCount = await ragIndexedCountForTracks(candidateTracks.length ? candidateTracks : tracks)
+    if (idxCount >= Math.max(50, Math.floor((candidateTracks.length || tracks.length) * 0.8))) {
       const queryMatch = mood.match(/\b(\d{1,3})\s*(?:song|track|tune|cut|jam)/i)
       const queryTarget = queryMatch ? Math.max(5, Math.min(200, parseInt(queryMatch[1], 10))) : 25
       const k = Math.max(RAG_PLAYLIST_MIN_POOL, queryTarget * RAG_PLAYLIST_OVERSAMPLE)
       const hits = await ragRetrieveByQuery(mood, k)
-      if (hits.length >= RAG_PLAYLIST_MIN_POOL) {
+      if (hits.length >= Math.min(RAG_PLAYLIST_MIN_POOL, candidateTracks.length || RAG_PLAYLIST_MIN_POOL)) {
         const idSet = new Set(hits.map(h => h.trackId))
-        const subset = tracks.filter(t => idSet.has(t.id))
-        if (subset.length >= RAG_PLAYLIST_MIN_POOL) {
+        const subset = candidateTracks.filter(t => idSet.has(t.id))
+        const minPool = moodDecade ? Math.min(RAG_PLAYLIST_MIN_POOL, Math.max(5, Math.floor(candidateTracks.length * 0.5))) : RAG_PLAYLIST_MIN_POOL
+        if (subset.length >= minPool) {
           candidateTracks = subset
           ragUsed = true
-          console.log(`[musicman-playlist] RAG pool: ${candidateTracks.length} candidates from ${tracks.length} total`)
+          console.log(`[musicman-playlist] RAG pool: ${candidateTracks.length} candidates`)
         }
       }
     }
@@ -10279,7 +10309,7 @@ HARD RULES (the playlist is rejected and you'll be asked to redo it if any of th
 - MAXIMUM ${MAX_PER_ARTIST} tracks per artist across the entire playlist. ${MAX_PER_ARTIST} is a ceiling, not a target — use it sparingly for headliners only
 - At least ${MIN_DISTINCT_ARTISTS} DIFFERENT artists in a ${TARGET_COUNT}-track playlist (UNLESS the mood is a specific catalog — see CATALOG ACCURACY below — in which case authentic membership beats artist count)
 - Never put two tracks by the same artist back-to-back
-- COMMENTARY MUST MATCH THE PICKS. Write the commentary AFTER you finalize trackIds, never before. Do NOT claim "the user doesn't have X" if X is in your trackIds. Do NOT claim "I'm pulling from Y" if Y isn't in your trackIds. Self-contradiction reads as the model wasn't paying attention. If your commentary needs editing because your picks changed, edit the commentary — not the other way around.
+${moodDecade ? `- ERA GATE: the mood claims the ${moodDecade.label}. ONLY pick tracks whose Year column is ${moodDecade.start}–${moodDecade.end}. A song that "feels" like the era but was released later is a FAIL — Turnstile on a 1970s tape is how the brain looks broken.\n` : ''}- COMMENTARY MUST MATCH THE PICKS. Write the commentary AFTER you finalize trackIds, never before. Do NOT claim "the user doesn't have X" if X is in your trackIds. Do NOT claim "I'm pulling from Y" if Y isn't in your trackIds. Self-contradiction reads as the model wasn't paying attention. If your commentary needs editing because your picks changed, edit the commentary — not the other way around.
 
 CATALOG ACCURACY (CRITICAL when the user names a specific canon — Bond themes, Pixar songs, Disney villain songs, Tarantino soundtracks, Christmas standards, Marvel scores, etc.):
 - A "Bond theme" is a song from the OPENING TITLES of a James Bond film. There are ~25 of them. "Thunderball" (Tom Jones), "Goldfinger" (Shirley Bassey), "Live and Let Die" (Wings), "Nobody Does It Better" (Carly Simon), "A View to a Kill" (Duran Duran), "Goldeneye" (Tina Turner), "Skyfall" (Adele), "No Time To Die" (Billie Eilish), etc. Songs that ARE NOT Bond themes even if they share keywords or artists: "Thunderball" by Johnny Cash (rejected demo, never used), "Sixteen Saltines" by Jack White, "Danger Zone" by Kenny Loggins (Top Gun).
@@ -10306,8 +10336,8 @@ CRAFT RULES (for non-canon mood requests):
   // valid, otherwise a violation string Claude can act on in retry.
   function validate(trackIds: number[]): string | null {
     if (!Array.isArray(trackIds) || trackIds.length === 0) return 'empty trackIds'
-    const byId = new Map<number, { artist: string; title: string }>()
-    for (const t of tracks) byId.set(t.id, { artist: t.artist || '', title: t.title || '' })
+    const byId = new Map<number, { artist: string; title: string; year: string | number }>()
+    for (const t of tracks) byId.set(t.id, { artist: t.artist || '', title: t.title || '', year: t.year })
     const artistCounts = new Map<string, number>()
     const seen = new Set<number>()
     let lastArtist = ''
@@ -10316,6 +10346,9 @@ CRAFT RULES (for non-canon mood requests):
       if (!t) return `track id ${id} is not in the library`
       if (seen.has(id)) return `track id ${id} appears twice`
       seen.add(id)
+      if (moodDecade && !yearInDecade(t.year, moodDecade)) {
+        return `"${t.title}" by ${t.artist} is year ${t.year || '?'} — outside ${moodDecade.label} (${moodDecade.start}–${moodDecade.end})`
+      }
       const a = t.artist.toLowerCase().trim()
       artistCounts.set(a, (artistCounts.get(a) || 0) + 1)
       if (a && a === lastArtist) return `back-to-back tracks by ${t.artist}`
@@ -11335,6 +11368,16 @@ import {
   persistMoodIndex,
   pruneStaleMoodVectors,
 } from './ai/mood-index'
+import {
+  DECADE_QUERY_RE,
+  parseDecadeConstraint,
+  yearInDecade,
+} from './ai/decade-query'
+import {
+  parseOrbitSeed,
+  resolveOrbitSeedIds,
+  filterOrbitNeighbors,
+} from './ai/orbit-quality'
 
 async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<number> {
   const validIds = new Set(tracks.map(t => t.id))
@@ -11550,6 +11593,57 @@ async function moodIndexCatchup(tracks: Array<EmbedTrackInput & { id: number }>)
   }
 }
 
+/**
+ * After Essentia (+ octave arbiter) lands BPM/key on a track, fold those
+ * facts into embeddings.bin + mood-index.bin immediately. The import-time
+ * auto-index often ran first with no tempo; waiting for nightly `teb`
+ * left the brain tempo-blind for up to a day. Failures here never block
+ * the analysis queue.
+ */
+async function reembedTracksAfterAnalysis(dispatches: AudioAnalysisDispatch[]): Promise<void> {
+  if (!ragIsConfigured() || dispatches.length === 0) return
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<EmbedTrackInput & { id: number }> }
+    const byId = new Map((lib.tracks || []).map((t) => [t.id, t]))
+    const inputs: Array<EmbedTrackInput & { id: number }> = []
+    for (const d of dispatches) {
+      const base = byId.get(d.trackId)
+      if (!base) continue
+      inputs.push({
+        ...base,
+        bpm: d.bpm ?? base.bpm,
+        keyRoot: d.keyRoot || base.keyRoot,
+        keyMode: d.keyMode || base.keyMode,
+        camelotKey: d.camelotKey || base.camelotKey,
+        keyConfidence: d.keyConfidence ?? base.keyConfidence,
+      })
+    }
+    if (inputs.length === 0) return
+    const texts = inputs.map((t) => ragBuildEmbedText(t))
+    const vecs = await ragEmbedTexts(texts)
+    for (let i = 0; i < inputs.length && i < vecs.length; i++) {
+      if (vecs[i]) await ragSetEmbedding(inputs[i].id, vecs[i])
+    }
+    await ragPersistEmbeddings()
+    // Mood twin: overwrite vibe vector with tempo-bearing text (descriptor
+    // may be absent until nightly — tempo alone is still a real upgrade).
+    const moodEntries = inputs
+      .map((t) => ({ t, text: buildMoodText(t) }))
+      .filter((e) => e.text)
+    if (moodEntries.length) {
+      const mvecs = await ragEmbedTexts(moodEntries.map((e) => e.text))
+      for (let i = 0; i < moodEntries.length && i < mvecs.length; i++) {
+        if (mvecs[i]) await setMoodVector(moodEntries[i].t.id, mvecs[i])
+      }
+      await persistMoodIndex()
+    }
+    invalidateEmbeddingStatusCache()
+    console.log(`[rag] re-embedded ${inputs.length} track(s) after audio analysis (tempo/key → brain)`)
+  } catch (err) {
+    console.warn('[rag] post-analysis re-embed failed:', err instanceof Error ? err.message : err)
+  }
+}
+
 let autoIndexBusy = false
 async function autoIndexNewTracks(): Promise<void> {
   if (!ragIsConfigured() || autoIndexBusy) return
@@ -11591,7 +11685,7 @@ async function autoIndexNewTracks(): Promise<void> {
 //   • anything else (vibe-shaped)   → mood index, if it's ready
 // Validated 2026-07-07 (brain-eval mood_index_proto.py): this routing
 // takes retrieval 0.825 → ~0.91 on the held-out eval set.
-const DECADE_QUERY_RE = /\b(19|20)\d{2}s?\b|(^|\D)['’]?[1-9]0s\b|\b(fifties|sixties|seventies|eighties|nineties|noughties|aughts|2000s)\b/i
+// DECADE_QUERY_RE lives in ./ai/decade-query (twin with Mobile rag).
 // Genre-ish words that can also be band names — an artist match on one
 // of these must not hijack a vibe query ("house and dance music" is not
 // about a band named House).
@@ -11632,16 +11726,44 @@ async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'> {
   return mood.size >= main.size * 0.5 && mood.size > 0 ? 'mood' : 'main'
 }
 
+/** Library year lookup for the decade hard-gate. Missing year = excluded. */
+async function ragTrackYearMap(): Promise<Map<number, string | number | undefined>> {
+  try {
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ id: number; year?: string | number }> }
+    return new Map((lib.tracks || []).filter(t => typeof t?.id === 'number').map(t => [t.id, t.year]))
+  } catch {
+    return new Map()
+  }
+}
+
 // Retrieve the K most-similar tracks to a free-text query. Used by
 // musicman-chat to build a focused context block in place of the
 // giant pre-computed digest. Returns track IDs + similarity scores;
 // caller resolves to full track records. Routes between the identity
 // brain and the mood brain (see the router block above).
+//
+// Decade hard-gate (2026-08): when the query claims an era ("1970s",
+// "seventies", "'80s"), restrict the cosine scan to tracks whose
+// library year falls in that range. Soft embedding similarity alone
+// will happily rank Turnstile next to Bill Withers on a "1970s" query —
+// that is the daily-mix "1970s, Your Version" failure mode. Fail closed
+// on missing year (no year → not eligible for a decade claim).
 async function ragRetrieveByQuery(query: string, k: number): Promise<Array<{ trackId: number; score: number }>> {
   if (!ragIsConfigured()) return []
   const route = await pickRetrievalIndex(query)
-  const map = route === 'mood' ? await getMoodIndexMap() : await ragGetEmbeddingsMap()
+  let map = route === 'mood' ? await getMoodIndexMap() : await ragGetEmbeddingsMap()
   if (map.size === 0) return []
+  const decade = parseDecadeConstraint(query)
+  if (decade) {
+    const years = await ragTrackYearMap()
+    const gated = new Map<number, Float32Array>()
+    for (const [id, vec] of map) {
+      if (yearInDecade(years.get(id), decade)) gated.set(id, vec)
+    }
+    console.log(`[rag] decade hard-gate ${decade.label} (${decade.start}-${decade.end}): ${gated.size}/${map.size} candidates`)
+    map = gated
+    if (map.size === 0) return []
+  }
   try {
     const [qvec] = await ragEmbedTexts([query])
     if (!qvec) return []
@@ -11837,18 +11959,79 @@ ipc.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: 
 // play history. We return only trackIds; the renderer resolves them to local
 // Track objects for playback. Any failure (backend down / off-tailnet) → ok:false
 // and the Home section quietly hides. See JakeTunesMobile backend/src/routes/mixes.ts.
+//
+// Desktop safety nets until Mobile twins land at generation time:
+//   1. Decade hard-gate — title/subtitle claims an era → strip out-of-year tracks.
+//   2. Orbit quality floor — "orbit of X" / "Because You Played Y" → re-score
+//      neighbors against the seed embedding and drop weak false matches
+//      (RHCP in a Robson Jorge orbit). Same lesson as playlist-vibes SOAD floor.
 const MOBILE_MIXES_BACKEND = 'http://homemini:3000'
+
+async function applyOrbitQualityFloor(
+  title: string,
+  subtitle: string,
+  trackIds: number[],
+): Promise<number[]> {
+  const seedRef = parseOrbitSeed(title, subtitle)
+  if (!seedRef || trackIds.length === 0) return trackIds
+  try {
+    const emb = await ragGetEmbeddingsMap()
+    if (emb.size === 0) return trackIds
+    const lib = (await libraryCache.get()) as {
+      tracks?: Array<{ id: number; title?: string; artist?: string; albumArtist?: string }>
+    }
+    const library = lib.tracks || []
+    const seedIds = resolveOrbitSeedIds(seedRef, library)
+    const seedVecs = seedIds.map((id) => emb.get(id)).filter((v): v is Float32Array => !!v)
+    if (seedVecs.length === 0) return trackIds
+    const candidates = trackIds
+      .map((id) => {
+        const vec = emb.get(id)
+        return vec ? { trackId: id, vec } : null
+      })
+      .filter((c): c is { trackId: number; vec: Float32Array } => !!c)
+    const kept = filterOrbitNeighbors(seedVecs, candidates, {
+      alwaysKeep: new Set(seedIds),
+    })
+    if (kept.length === 0) return trackIds // fail open — don't blank the card
+    if (kept.length < trackIds.length) {
+      console.warn(
+        `[mobile-mixes] orbit quality floor on "${title}": kept ${kept.length}/${trackIds.length} ` +
+          `(seed=${seedRef.kind}:${seedRef.query})`,
+      )
+    }
+    // Preserve original mix order among survivors (not re-rank by score) so
+    // the tape's sequencing intent survives; only the junk is removed.
+    const keepSet = new Set(kept.map((k) => k.trackId))
+    return trackIds.filter((id) => keepSet.has(id))
+  } catch (err) {
+    console.warn('[mobile-mixes] orbit floor skipped:', err instanceof Error ? err.message : err)
+    return trackIds
+  }
+}
+
 ipc.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
   try {
     const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, { signal: AbortSignal.timeout(20000) })
     if (!res.ok) return { ok: false, error: `backend ${res.status}` }
     const body = await res.json() as { date?: string; mixes?: Array<{ id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }> }
-    const mixes = (body.mixes || []).map(m => ({
-      id: String(m.id ?? ''),
-      title: String(m.title ?? 'Mix'),
-      subtitle: String(m.subtitle ?? ''),
-      trackIds: (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n)),
-    })).filter(m => m.trackIds.length > 0)
+    const years = await ragTrackYearMap()
+    const mixes: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }> = []
+    for (const m of body.mixes || []) {
+      const title = String(m.title ?? 'Mix')
+      const subtitle = String(m.subtitle ?? '')
+      const decade = parseDecadeConstraint(`${title} ${subtitle}`)
+      let trackIds = (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n))
+      if (decade && trackIds.length) {
+        const before = trackIds.length
+        trackIds = trackIds.filter(id => yearInDecade(years.get(id), decade))
+        if (trackIds.length < before) {
+          console.warn(`[mobile-mixes] decade hard-gate ${decade.label} on "${title}": kept ${trackIds.length}/${before} (stripped ${before - trackIds.length} out-of-era)`)
+        }
+      }
+      trackIds = await applyOrbitQualityFloor(title, subtitle, trackIds)
+      if (trackIds.length > 0) mixes.push({ id: String(m.id ?? ''), title, subtitle, trackIds })
+    }
     return { ok: true, date: body.date, mixes }
   } catch (e) {
     return { ok: false, error: safeIpcError(e, 'api-failed') }

@@ -74,7 +74,15 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // deliberate act instead of the path of least resistance. Small slack
   // (+150) so an ordinary fix isn't blocked mid-crisis; the direction is
   // what's enforced.
-  const INDEX_LINES_LOCKED = 16255
+  // 2026-08-25 re-baselined 16255 -> 16437 for the main merge ONLY. index.ts
+  // did not sprawl: this branch sat at 16403, UNDER the old lock, and the growth
+  // is main's three already-reviewed PRs arriving intact — #41 iTunesDB file
+  // sizes (+79), #42 decade gating (+154), #43 BPM octave arbiter (+71). The
+  // lock is set so post-merge (16587) sits exactly at limit+150 with ZERO new
+  // slack, so the ratchet keeps biting from the new baseline. Raise this for a
+  // merge from main; NEVER to make room for new capability — that belongs in a
+  // module (personas.ts / library-eviction.ts).
+  const INDEX_LINES_LOCKED = 16437
   test(`index.ts stays ≤ ${INDEX_LINES_LOCKED + 150} lines and the lock follows it down`, () => {
     const lines = readFileSync(join(SRC, 'main/index.ts'), 'utf-8').split('\n').length
     assert.ok(lines <= INDEX_LINES_LOCKED + 150,

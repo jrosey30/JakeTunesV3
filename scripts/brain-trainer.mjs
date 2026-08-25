@@ -161,7 +161,12 @@ function tempoEnergy(t) {
 
   const root = String(t.keyRoot || '').trim()
   const mode = String(t.keyMode || '').trim().toLowerCase()
-  if (mode === 'minor' || mode === 'major') {
+  // ⚠️ TWIN: src/main/ai/embeddings.ts KEY_CONFIDENCE_FLOOR + tempoEnergyText
+  const KEY_CONFIDENCE_FLOOR = 0.45
+  const confRaw = t.keyConfidence
+  const conf = confRaw == null || confRaw === '' ? null : Number(confRaw)
+  const keyTrusted = conf == null || (Number.isFinite(conf) && conf >= KEY_CONFIDENCE_FLOOR)
+  if (keyTrusted && (mode === 'minor' || mode === 'major')) {
     parts.push(mode === 'minor'
       ? `key: ${root} minor — darker, moody, melancholy, introspective`
       : `key: ${root} major — brighter, warmer, open, resolved`)
@@ -169,7 +174,7 @@ function tempoEnergy(t) {
 
   const fast = b >= 122
   const slow = b < 100
-  const minor = mode === 'minor'
+  const minor = keyTrusted && mode === 'minor'
   parts.push('good for: ' + (
     fast && minor ? 'driving late-night, workout, intense focus'
     : fast ? 'workout, running, parties, daytime energy'
@@ -179,7 +184,7 @@ function tempoEnergy(t) {
   ))
 
   const cam = String(t.camelotKey || '').trim()
-  if (cam) parts.push(`camelot ${cam}`)
+  if (keyTrusted && cam) parts.push(`camelot ${cam}`)
   return parts.join(' · ')
 }
 
@@ -368,7 +373,7 @@ const NUMERIC_OVERRIDE_FIELDS = new Set([
   'playCount', 'rating', 'duration', 'fileSize',
   'year', 'trackNumber', 'trackCount', 'discNumber', 'discCount',
   'lastPlayedAt', 'skipCount',
-  'bpm', 'audioAnalysisAt',
+  'bpm', 'audioAnalysisAt', 'keyConfidence',
 ])
 
 function applyMetadataOverrides(tracks) {
@@ -401,7 +406,7 @@ function applyMetadataOverrides(tracks) {
  *  'TEMPO_ENCODING_VERSION' before initialization" — but only AFTER paying
  *  OpenAI to embed all ~8,800 tracks and writing the .bak, so it burned the
  *  money and saved nothing. Up here it cannot be shadowed by execution order. */
-const TEMPO_ENCODING_VERSION = 2
+const TEMPO_ENCODING_VERSION = 3   // v3: omit low-confidence key/Camelot from embed text
 
 async function main() {
   if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)

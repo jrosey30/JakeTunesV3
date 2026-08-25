@@ -234,6 +234,56 @@ describe('activity wipe — one empty fskit listing is not proof', () => {
   })
 })
 
+describe('fileSizeForItunesDb — catalog size is the card, never library.json', () => {
+  it('uses the on-card byte size (Beyond Me: 7.5MB on card, not 31MB ALAC in library.json)', () => {
+    assert.equal(fileSizeForItunesDb(7_549_180), 7_549_180)
+    assert.notEqual(fileSizeForItunesDb(7_549_180), 31_481_234)
+  })
+
+  it('refuses a missing or zero file — do not pack a stale library size into the mhit', () => {
+    assert.equal(fileSizeForItunesDb(0), 0)
+    assert.equal(fileSizeForItunesDb(null), 0)
+    assert.equal(fileSizeForItunesDb(undefined), 0)
+    assert.equal(fileSizeForItunesDb(-1), 0)
+  })
+})
+
+describe('sampleRateForItunesDb / mediaTypeForItunesDb — never pack zeros Mini 1.4.1 aborts on', () => {
+  it('keeps a real rate and defaults missing/zero to 44100', () => {
+    assert.equal(sampleRateForItunesDb(44100), 44100)
+    assert.equal(sampleRateForItunesDb(48000), 48000)
+    assert.equal(sampleRateForItunesDb(0), 44100)
+    assert.equal(sampleRateForItunesDb(undefined), 44100)
+    assert.equal(sampleRateForItunesDb(null), 44100)
+  })
+
+  it('mediatype is always music (1)', () => {
+    assert.equal(mediaTypeForItunesDb(), 1)
+  })
+})
+
+describe('activity wipe — one empty fskit listing is not proof', () => {
+  it('needs two consecutive empty readdirs', () => {
+    let streak = 0
+    streak = activityWipeEmptyStreak(20, streak)
+    assert.equal(streak, 0)
+    assert.equal(activityWipeProvenEmpty(streak), false)
+    streak = activityWipeEmptyStreak(0, streak)
+    assert.equal(streak, 1)
+    assert.equal(activityWipeProvenEmpty(streak), false)
+    streak = activityWipeEmptyStreak(0, streak)
+    assert.equal(streak, 2)
+    assert.equal(activityWipeProvenEmpty(streak), true)
+  })
+
+  it('a file that reappears resets the streak', () => {
+    let streak = activityWipeEmptyStreak(0, 1)
+    streak = activityWipeEmptyStreak(3, streak)
+    assert.equal(streak, 0)
+    assert.equal(activityWipeProvenEmpty(streak), false)
+  })
+})
+
 describe('estimateIpodBytes / looksLossless / packTracksToCapacity', () => {
   it('estimates AAC size from duration when converting lossless', () => {
     // 4 minutes at 128 kbps ≈ 3_840_000 bytes

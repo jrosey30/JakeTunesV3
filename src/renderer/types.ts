@@ -57,10 +57,11 @@ export interface Track {
   // core/audio_analysis.py (aubio + librosa). Not surfaced in any UI in
   // Phase 0 — consumed by Music Man v2, Auto-DJ, and (stretch) smart
   // playlists. Stored as overrides; analyze-once, persist forever.
-  bpm?: number                                 // beats per minute, ~±1 BPM accuracy
+  bpm?: number                                 // beats per minute (~±1; octave-arbitrated)
   keyRoot?: string                             // pitch class: C, C#, D, ..., B
   keyMode?: 'major' | 'minor'                  // tonality
   camelotKey?: string                          // Camelot wheel position: "1A"-"12B"
+  keyConfidence?: number                       // 0..1 Essentia vote agreement; brain omits weak keys
   // Epoch ms of the last analysis attempt. Set on success AND failure so
   // we don't re-analyze every session. Re-tried after audioAnalysisRetryAfter
   // (see consumer) when audio_analysis.py rolls forward.
@@ -608,7 +609,7 @@ declare global {
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
       musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>
-      musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
+      musicmanDjSet: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; bpm?: number | null; camelotKey?: string; keyRoot?: string; keyMode?: string }[], recentIds: number[]) => Promise<{ ok: boolean; intro?: string; trackIds?: number[]; theme?: string; error?: string }>
       musicmanPlaylist: (mood: string, tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number; playCount?: number; rating?: number; lastPlayedAt?: number; dateAdded?: string }[]) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       getMobileMixes: () => Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }>
       getMobileVibeMix: (vibe: string) => Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }>
@@ -736,6 +737,7 @@ declare global {
         keyRoot?: string | null
         keyMode?: 'major' | 'minor' | '' | null
         camelotKey?: string | null
+        keyConfidence?: number | null
         ok?: boolean
       }) => void) => () => void
       // Brief 010 Phase 4: queue-based backfill IPCs.

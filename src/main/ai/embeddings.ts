@@ -34,6 +34,9 @@ import { join } from 'path'
 import { app } from 'electron'
 import { readFile, writeFile, mkdir, stat } from 'fs/promises'
 import { STATE_DIR } from '../state-dir'
+import { tempoEnergyText, KEY_CONFIDENCE_FLOOR, type TempoEnergyInput } from './tempo-energy'
+
+export { tempoEnergyText, KEY_CONFIDENCE_FLOOR }
 
 // ── Config ──────────────────────────────────────────────────────────
 const EMBED_MODEL = 'text-embedding-3-small'
@@ -168,7 +171,7 @@ export function parseEmbeddingsBlob(buf: Buffer): Map<number, Float32Array> {
 // ── Canonical embedding text per track ──────────────────────────────
 // Includes play + rating signals so retrieval can weight by "tracks
 // I love that fit X" rather than just "tracks that nominally fit X."
-export interface EmbedTrackInput {
+export interface EmbedTrackInput extends TempoEnergyInput {
   artist?: string
   title?: string
   album?: string
@@ -176,85 +179,8 @@ export interface EmbedTrackInput {
   year?: number | string
   playCount?: number
   rating?: number
-  bpm?: number
   subgenre?: string
   subgenrePath?: string
-  keyRoot?: string
-  keyMode?: string
-  camelotKey?: string
-}
-
-// Grounded tempo/energy/use-case from REAL bpm + genre. The literary mood
-// descriptor scored ~random on tempo queries ("fast workout" / "mellow late
-// night") because bpm was never in the embed text. Adding this lifts mood
-// retrieval to recall@30 0.80–0.93 (validated 2026-06-26, /tmp/validate_mood.py).
-// Only CLEAR high/low get energy/use-case — bland mid-tempo filler dilutes
-// precise genre queries without helping any mood search.
-// ⚠️ TWIN: scripts/brain-trainer.mjs tempoEnergy() — keep these in sync.
-/**
- * Measured 2026-07-26 against the real library (8,730 tracks): the previous
- * version described the ENTIRE collection with 10 distinct strings. 33% of it
- * got the identical "mid-tempo, moderate groove", 60% got no energy statement
- * at all, and 259 tracks were told they were "slow, relaxed, downtempo. energy:
- * high-energy and intense" — because a genre regex overrode the tempo it had
- * just measured. A vector can't separate songs the text describes identically,
- * which is why mixes felt same-y no matter how the picker was tuned.
- *
- * Two changes:
- *
- * 1. Thresholds calibrated to THIS library. bpm runs 72-152 with a median of
- *    112, so the old ">=120 fast / >=130 high-energy" cut-offs put a third of
- *    everything in one bucket and almost never fired the top branch.
- *
- * 2. Key and mode are used. They are 100% covered by audio analysis (4,820
- *    major / 3,908 minor) and had never once reached the brain — the single
- *    strongest bright-vs-dark axis available, sitting unused on disk.
- *
- * Energy is no longer asserted from a genre keyword. It follows from tempo and
- * mode together, which cannot contradict the measured facts.
- *
- * Result on the real library: 504 distinct descriptions, largest bucket 1.0%,
- * every track carries a mood statement, zero self-contradictions.
- *
- * ⚠️ TWIN: scripts/brain-trainer.mjs tempoEnergy() — keep these in lockstep.
- * The trainer builds the SAME line when it embeds; if they drift, a track's
- * vector stops matching what the desktop thinks that track sounds like.
- */
-export function tempoEnergyText(t: EmbedTrackInput): string {
-  const b = Number(t.bpm) || 0
-  if (b <= 0) return ''            // no bpm -> say nothing, never fabricate
-  const tempo =
-    b < 88 ? 'slow, spacious, downtempo'
-    : b < 100 ? 'relaxed, loping mid-tempo'
-    : b < 112 ? 'steady mid-tempo groove'
-    : b < 122 ? 'brisk, forward-moving'
-    : b < 134 ? 'fast, driving, propulsive'
-    : 'very fast, urgent, relentless'
-
-  const parts = [`tempo: ${Math.round(b)} BPM, ${tempo}`]
-
-  const root = (t.keyRoot || '').trim()
-  const mode = (t.keyMode || '').trim().toLowerCase()
-  if (mode === 'minor' || mode === 'major') {
-    parts.push(mode === 'minor'
-      ? `key: ${root} minor — darker, moody, melancholy, introspective`
-      : `key: ${root} major — brighter, warmer, open, resolved`)
-  }
-
-  const fast = b >= 122
-  const slow = b < 100
-  const minor = mode === 'minor'
-  parts.push('good for: ' + (
-    fast && minor ? 'driving late-night, workout, intense focus'
-    : fast ? 'workout, running, parties, daytime energy'
-    : slow && minor ? 'late night, rainy day, winding down, solitude'
-    : slow ? 'morning, relaxing, background, easy listening'
-    : 'focus, walking, everyday listening'
-  ))
-
-  const cam = (t.camelotKey || '').trim()
-  if (cam) parts.push(`camelot ${cam}`)   // harmonic neighbours for mixing
-  return parts.join(' · ')
 }
 
 // ⚠️ TWIN: scripts/brain-trainer.mjs subgenreText() — keep in sync. Folds the AI
