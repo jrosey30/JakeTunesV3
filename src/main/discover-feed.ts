@@ -353,3 +353,86 @@ export async function dressArtlessCards(cards: FeedCard[], sleepMs = 200): Promi
     await new Promise((r) => setTimeout(r, sleepMs))
   }
 }
+
+/**
+ * Release types that are NOISE in a discovery shelf (2026-08-25, Jake: "i see
+ * a lack of new music in discovery pretty much always....its glitchy").
+ *
+ * The gap lane asks MusicBrainz for everything an artist released and the brain
+ * stamps it with ARTIST affinity, so a blink-182 "Studio Outtakes" scored 99%
+ * — a confident recommendation of something nobody wants. One audit of the live
+ * feed found outtakes, an "EP" of an album, "Spotify Singles", "Shady Beats",
+ * a bootleg-shaped "Dark Ages Chronicles - The Red Handle Pandemic PT1", and
+ * the TRON: Legacy soundtrack THREE times (album, score, collector's EP).
+ *
+ * Deliberately NOT filtered: live albums and remixes as such — some are
+ * canonical works. This targets non-releases: session leftovers, promo
+ * exclusives, and interview/sampler discs.
+ */
+const JUNK_RELEASE = new RegExp([
+  'outtakes?', 'studio\\s+sessions?', 'rough\\s+mixes?', 'demos?\\b',
+  'unreleased', 'bootleg', 'sampler', 'interview', 'karaoke', 'tribute',
+  'spotify\\s+singles?', 'itunes\\s+session', 'aol\\s+sessions?',
+  'radio\\s+sessions?', 'beats?\\b', 'chronicles?\\b',
+  'instrumentals?$', 'a\\s+cappellas?$',
+].join('|'), 'i')
+
+/** A film/game SCORE — fine as a record, noise when the same soundtrack also
+ *  appears as album and collector's EP. Used to keep ONE per soundtrack. */
+const SCORE_MARKER = /\b(score|original motion picture|soundtrack|ost)\b/i
+
+export function isJunkRelease(title: string): boolean {
+  return JUNK_RELEASE.test(String(title || ''))
+}
+
+/**
+ * Trim a gap-lane to real records: drop noise releases, collapse a soundtrack
+ * to a single entry, and cap how many one artist may take — four blink-182
+ * albums in a row is a completion list, not discovery.
+ */
+export function trimGapLane<T extends { artist?: string; title?: string }>(
+  cards: T[],
+  opts: { perArtist?: number } = {},
+): T[] {
+  const perArtist = opts.perArtist ?? 1
+  const nk = (s: unknown) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  const count = new Map<string, number>()
+  const scored = new Set<string>()
+  const out: T[] = []
+  for (const c of cards) {
+    const title = String(c.title || '')
+    if (!title || isJunkRelease(title)) continue
+    const a = nk(c.artist)
+    // One soundtrack per artist — the TRON: Legacy hat-trick.
+    if (SCORE_MARKER.test(title) || /tron|legacy/i.test(title)) {
+      const base = `${a}|${nk(title).split(' ').slice(0, 2).join(' ')}`
+      if (scored.has(base)) continue
+      scored.add(base)
+    }
+    const n = count.get(a) || 0
+    if (n >= perArtist) continue
+    count.set(a, n + 1)
+    out.push(c)
+  }
+  return out
+}
+
+/** Build the completion shelf from fetched discographies: drop owned records,
+ *  drop noise, one per artist, hard ceiling. Lives here (not index.ts) so the
+ *  rationale sits beside the filters it depends on. */
+export function buildGapCards(
+  input: Array<{ artist: string; tracks: number; albums: Array<{ title: string; year?: string | number }> }>,
+  ownedAlbumKeys: Set<string>,
+  opts: { limit?: number } = {},
+): FeedCard[] {
+  const nk = (s: unknown) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  const gap: FeedCard[] = []
+  for (const a of input) {
+    for (const al of a.albums) {
+      if (ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)) continue
+      // The why-line is a FACT (owned-track count), not a model claim.
+      gap.push({ lane: 'missing', type: 'album', artist: a.artist, title: al.title, year: String(al.year || ''), why: `${a.tracks} of their tracks already yours`, because: a.artist } as FeedCard)
+    }
+  }
+  return trimGapLane(gap, { perArtist: 1 }).slice(0, opts.limit ?? 6)
+}

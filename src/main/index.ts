@@ -1525,14 +1525,16 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const radarPromise = (async () => {
       try {
         const year = String(new Date().getFullYear())
-        const scenes = fp.spines.slice(0, 3).map((sp) => RADAR_SCENES[sp.name] || sp.name.toLowerCase())
+        // 2026-08-25: 3 scenes -> 6. Only 9% of the feed was from the last two
+        // years because this, the only new-release lane, was also the smallest.
+        const scenes = fp.spines.slice(0, 6).map((sp) => RADAR_SCENES[sp.name] || sp.name.toLowerCase())
         const { exaNewMusic } = await import('./exa')
         const blocks = await Promise.all(scenes.map((sc) => exaNewMusic(sc, year)))
         const journalism = blocks.filter(Boolean).join('\n\n')
         if (!journalism) return
         const reply = await claudeCall('discover-brand-new', {
           model: 'claude-sonnet-4-6', max_tokens: 2600, system: MUSIC_MAN_CORE,
-          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 24 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
+          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 40 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
         const block = reply.content[0]
         const text = block && block.type === 'text' ? block.text : ''
@@ -1545,17 +1547,12 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L2 · You're missing — MusicBrainz discography minus owned (pure grounding).
     const missingPromise = (async () => {
       try {
-        const tops = anchors.slice(0, 12)
-        for (const a of tops) {
-          const disco = await fetchArtistDiscography(a.artist).catch(() => null)
-          if (!disco) continue
-          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 4)
-          for (const al of missing) {
-            // This lane's anchor is a FACT, not a model claim — it comes straight
-            // from the owned-track count, so it needs no validation.
-            cards.push({ lane: 'missing', type: 'album', artist: a.artist, title: al.title, year: String(al.year || ''), why: `${a.tracks} of their tracks already yours`, because: a.artist })
-          }
-        }
+        // 2026-08-25: completion WAS the page. Now a small shelf — buildGapCards.
+        const discos = await Promise.all(anchors.slice(0, 8).map(async (a) => ({
+          artist: a.artist, tracks: a.tracks,
+          albums: (await fetchArtistDiscography(a.artist).catch(() => null))?.albums || [],
+        })))
+        for (const c of df.buildGapCards(discos, ownedAlbumKeys)) cards.push(c)
       } catch (err) { console.warn('[discover] missing lane failed:', err) }
     })()
 
@@ -1634,7 +1631,9 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         let made = 0
         let tried = 0
         for (const p of picks) {
-          if (made >= 14 || tried >= 44) break
+          // 2026-08-25: the "never heard of them" lane (already refuses owned
+          // artists). The throttle, not the supply, kept it at 7 cards.
+          if (made >= 26 || tried >= 80) break
           tried++
           const v = await df.itunesVerify(p.name, 'album', { artist: p.name }).catch(() => null)
           await new Promise((r) => setTimeout(r, 250))
