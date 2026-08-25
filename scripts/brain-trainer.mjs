@@ -105,10 +105,19 @@ const KEY = (existsSync(ENV)
 if (!KEY) fatal('no OPENAI_API_KEY (checked ~/JakeTunesV3/.env and env)')
 
 // ── embeddings.bin (EMBD binary format, shared with src/main/ai/embeddings.ts) ──
+// ⚠️ TWIN: src/main/ai/embeddings.ts parseEmbeddingsBlob (desktop) and
+// ~/JakeTunesMobile/backend/src/util/rag.ts readBrain (phone backend) parse
+// this same format — a format or guard change here must be mirrored there.
 function readEmb(path) {
   const buf = readFileSync(path)
   if (buf.length < 12 || buf.toString('ascii', 0, 4) !== MAGIC) throw new Error('embeddings.bin: bad magic')
   const dim = buf.readUInt16LE(6), count = buf.readUInt32LE(8), rec = 4 + dim * 4
+  // A short SMB read must be FATAL, never tolerated: on 2026-08-25 a flapping
+  // mount handed readFileSync 8510 of 9790 records without an error, the
+  // silent partial parse became the in-memory map, and the nightly write
+  // amputated 1280 vectors from the live brain. The header count is the
+  // truth — if the bytes don't cover it, this read cannot be trusted.
+  if (buf.length < 12 + count * rec) throw new Error(`${path}: truncated read — header says ${count} vectors but bytes cover only ${Math.floor((buf.length - 12) / rec)} (flaky mount?)`)
   const map = new Map(); let off = 12
   for (let i = 0; i < count && off + rec <= buf.length; i++) {
     const id = buf.readUInt32LE(off); off += 4

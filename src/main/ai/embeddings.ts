@@ -145,6 +145,14 @@ export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer 
 // vectors vs 30ms of per-float reads — and the views share the one buffer
 // instead of duplicating 50MB of copies. Callers may freely mix in
 // standalone Float32Arrays via setEmbedding.
+// ⚠️ TWIN: scripts/brain-trainer.mjs readEmb and
+// ~/JakeTunesMobile/backend/src/util/rag.ts parse this same format.
+// KNOWN HOLE (2026-08-25): the loop below silently tolerates a truncated
+// buffer (short SMB read ⇒ partial map with no error). In the trainer that
+// exact hole amputated 1280 vectors from the live brain; readEmb now throws
+// on truncation. This side still tolerates it because both callers feed a
+// long-lived cache that later write paths replay — the safe fix needs
+// caller-by-caller analysis first. See PROPOSAL-truncated-read-guard.md.
 export function parseEmbeddingsBlob(buf: Buffer): Map<number, Float32Array> {
   const out = new Map<number, Float32Array>()
   if (buf.length < 12) return out
