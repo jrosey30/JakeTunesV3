@@ -1748,15 +1748,15 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       .map((l) => ({ ...l, cards: shelved.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
       .filter((l) => l.cards.length > 0)
 
-    // Serve-count for rotation.
-    await discoveryFeedbackCache.update((cur) => {
-      for (const l of lanes) for (const c of l.cards as import('./discover-feed.ts').FeedCard[]) {
-        const k = df.cardKey(c)
-        const sv = cur.served[k]
-        if (sv) { sv.views += 1; sv.last = nowMs } else cur.served[k] = { first: nowMs, last: nowMs, views: 1 }
-      }
-      return cur
-    })
+    // 2026-08-24 — the serve-count MOVED OUT of generation (Jake: "not enough
+    // new music recommendations where did that go????"). Counting a "view"
+    // here counted the MACHINE's work, not Jake's attention: every background
+    // refresh, every boot warm and every regeneration I ran while rebuilding
+    // the shop burned a view on all ~24 cards per lane. Rotation hides a card
+    // at 4 views for 14 days, so a handful of regenerations silently retired
+    // the whole pool — 127 candidates were hidden with Jake never having seen
+    // them. It is now counted where a human actually looks: the
+    // get-discover-feed handler, whose only caller is the Record Shop view.
 
     // Never cache an empty feed — a transient failure (Apple 403, Exa down)
     // must not stick; the next open retries.
@@ -1832,6 +1832,23 @@ async function backfillDiscoverArt(): Promise<void> {
   }
 }
 
+/** Rotation bookkeeping — called ONLY when the shop page is actually served
+ *  a feed, never on generation. See the note in generateDiscoverFeed. */
+async function countFeedServed(lanes: Array<{ id: string; title: string; cards: unknown[] }>): Promise<void> {
+  try {
+    const df = await import('./discover-feed.ts')
+    const nowMs = Date.now()
+    await discoveryFeedbackCache.update((cur) => {
+      for (const l of lanes) for (const c of l.cards as import('./discover-feed.ts').FeedCard[]) {
+        const k = df.cardKey(c)
+        const sv = cur.served[k]
+        if (sv) { sv.views += 1; sv.last = nowMs } else cur.served[k] = { first: nowMs, last: nowMs, views: 1 }
+      }
+      return cur
+    })
+  } catch (err) { console.warn('[discover] serve-count failed (rotation may repeat a card):', err) }
+}
+
 ipc.handle('get-discover-feed', async (_e, force?: boolean) => {
   const isFresh = (at: number) => Date.now() - at < DISCOVER_TTL_MS
   const currentVer = (c: FeedCacheShape | null) => (c?.ver ?? 0) === FEED_GEN_VERSION
@@ -1847,9 +1864,12 @@ ipc.handle('get-discover-feed', async (_e, force?: boolean) => {
     // re-dress any artless cards (see backfillDiscoverArt above).
     if (!isFresh(discoverFeedMem.at)) void generateDiscoverFeed()
     void backfillDiscoverArt()
+    void countFeedServed(discoverFeedMem.lanes)
     return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true, stale: !isFresh(discoverFeedMem.at) }
   }
-  return generateDiscoverFeed()
+  const gen = await generateDiscoverFeed()
+  if (gen.ok && gen.lanes) void countFeedServed(gen.lanes)
+  return gen
 }, { refuse: REFUSED_SENDER })
 
 // Boot warmer: if the persisted feed is stale/empty, regenerate quietly ~25s
