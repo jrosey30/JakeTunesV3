@@ -79,7 +79,7 @@ export default function MixDetailView() {
     window.getSelection()?.removeAllRanges()
     if (!tracks.length) return
     setTapeSession({ mixtapeId: `mix:${mix?.id ?? 'unknown'}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
-    playTrack(tracks[0], tracks, 0, undefined, true)
+    playTrack(tracks[0], tracks, 0, undefined, true, /* preserveOrder — a mix's arc IS the product */ true)
   }, [tracks, playTrack, mix])
 
   // Right-click → the same track context menu the rest of the app uses.
@@ -100,7 +100,7 @@ export default function MixDetailView() {
     return [
       { label: 'Play the mix from the top', onClick: () => {
         setTapeSession({ mixtapeId: `mix:${mix?.id ?? 'unknown'}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
-        playTrack(tracks[0], tracks, 0, undefined, true)
+        playTrack(tracks[0], tracks, 0, undefined, true, /* preserveOrder — a mix's arc IS the product */ true)
       } },
       { separator: true as const },
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
@@ -262,7 +262,7 @@ export default function MixDetailView() {
   const playMix = (): void => {
     if (!tracks.length) return
     setTapeSession({ mixtapeId: `mix:${mix.id}`, tapeTrackIds: tracks.map((t) => t.id), cuts: [] })
-    playTrack(tracks[0], tracks, 0, undefined, true)
+    playTrack(tracks[0], tracks, 0, undefined, true, /* preserveOrder — a mix's arc IS the product */ true)
   }
 
   return (

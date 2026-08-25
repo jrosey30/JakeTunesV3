@@ -26,6 +26,9 @@ export interface WorkoutTrack {
   fileSize?: number
   /** ms — needed by the skit/intro gate. Absent = gate passes it. */
   duration?: number
+  /** Colon path. Absent in unit tests; the IPC boardable filter is the disk gate. */
+  path?: string
+  audioMissing?: boolean
 }
 
 export interface WorkoutVibe {
@@ -223,8 +226,12 @@ export function selectWorkoutSyncSet(
   // A track with no title or no artist can never sync (the iPod shows it
   // blank and the sync gate refuses it) — exclude it from the pool up
   // front so a blank never eats one of the 1000 slots (2026-07-21).
+  // audioMissing / explicit empty path are the same class: they eat an N
+  // slot and then the copy preflight refuses the whole set (2026-08-16).
   const named = (t: WorkoutTrack) => String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
-  const eligible = tracks.filter((t) => named(t) && !isSkitOrIntro(t))
+  const playableHint = (t: WorkoutTrack) =>
+    t.audioMissing !== true && (t.path === undefined || String(t.path).trim() !== '')
+  const eligible = tracks.filter((t) => named(t) && playableHint(t) && !isSkitOrIntro(t))
 
   // Brain term: the taste model is the dominant quality signal now. Cosine
   // fit is tightly packed in this embedding space (~0.59 … 0.72 across the

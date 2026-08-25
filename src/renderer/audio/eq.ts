@@ -78,6 +78,14 @@ export const EQ_PRESETS: Record<string, { preamp: number; bands: number[] }> = {
 
 let audioContext: AudioContext | null = null
 let preampNode: GainNode | null = null
+
+/** The EQ chain's input node, for OTHER audio paths that must sound
+ *  IDENTICAL to element playback (2026-08-23: the sample-accurate album
+ *  seam buffers were routing straight to ctx.destination — bypassing
+ *  preamp → EQ → width/crossfeed — so every seam carried an audible
+ *  character jump. Null until the chain is built; callers fall back to
+ *  ctx.destination). */
+export function getEqInputNode(): AudioNode | null { return preampNode }
 let filterNodes: BiquadFilterNode[] = []
 let analyserNode: AnalyserNode | null = null
 let masterTapped = false

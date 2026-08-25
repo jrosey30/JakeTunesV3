@@ -14,7 +14,9 @@
  * needs to sit near SOME corner of Jake's taste, not its average — the
  * daily-mixes lesson: never score against a mean centroid of everything).
  */
-import { embedTexts, getEmbeddingsMap, cosine } from './ai/embeddings.ts'
+// Lazy: ai/embeddings pulls the electron state dir at load, which would make
+// this module untestable under node --test. The pure pieces (buildCandidateText,
+// pickTasteExemplars, cosineToPct) must stay importable by the suite.
 
 export interface BrainScoreTrack {
   id?: number
@@ -27,6 +29,29 @@ export interface BrainScorable {
   title: string
   genre?: string
   year?: string
+  /** 'album' | 'song' | 'artist' — shapes the embed text like the library's. */
+  type?: string
+  /** Sonic one-liner (the card's why/connection) — the candidate's stand-in
+   *  for the descriptors and lyric themes the library vectors carry. */
+  desc?: string
+}
+
+/**
+ * The candidate's embedding text, shaped like buildEmbeddingText's library
+ * voice (same line labels, same order) so the cosines compare like with like.
+ * 2026-08-21: candidates used to embed as a bare "Artist — Title" while the
+ * library side carried genre, subgenre, tempo/mood and lyric themes — the
+ * score was mostly measuring whether the model recognized the artist's name.
+ * A candidate can't have audio analysis, but genre (iTunes gives it away
+ * free) plus the why-line's sonic description close most of the gap.
+ */
+export function buildCandidateText(c: BrainScorable): string {
+  const lines = [`${c.artist} — ${c.title}`]
+  if (c.type === 'album') lines.push(`album: ${c.title}${c.year ? ` (${c.year})` : ''}`)
+  else if (c.year) lines.push(`year: ${c.year}`)
+  if (c.genre) lines.push(`genre: ${c.genre}`)
+  if (c.desc) lines.push(c.desc)
+  return lines.join('\n')
 }
 
 /** Pick the exemplar track ids that define "Jake's taste": starred first,
@@ -37,6 +62,20 @@ export function pickTasteExemplars(tracks: BrainScoreTrack[], cap = 400): number
     .map((t) => ({ id: t.id as number, w: (t.rating ?? 0) * 10 + Math.min(t.playCount ?? 0, 40) }))
     .sort((a, b) => b.w - a.w)
   return scored.slice(0, cap).map((s) => s.id)
+}
+
+// ── Verdict adjustment (2026-08-21, C of the pick-quality overhaul) ──
+// A rejection's blast radius. Below the margin a reject says nothing about
+// this candidate (everything is ~0.3 from everything in this space); above
+// it the penalty grows steep enough that sounding like rejected music
+// outweighs sounding liked: topK 0.50 with a 0.40 reject nearby → 0.425
+// (mild); with a 0.50 reject → 0.275, which lands under the quality floor.
+export const REJECT_MARGIN = 0.35
+export const REJECT_WEIGHT = 1.5
+
+/** Fold the nearest rejection into the raw taste cosine. */
+export function adjustedCosine(topKMean: number, maxRejectSim: number): number {
+  return topKMean - REJECT_WEIGHT * Math.max(0, maxRejectSim - REJECT_MARGIN)
 }
 
 /** Map a raw top-K cosine (empirically ~0.25 weak … ~0.60 soulmate in this
@@ -52,14 +91,23 @@ export function cosineToPct(c: number): number {
  * Score candidates against the taste brain. Returns brainPct per candidate
  * (aligned with input order), or null if the brain isn't usable (no key, no
  * exemplar embeddings) — callers fall back to the heuristic score.
+ *
+ * `verdicts` (2026-08-21): the shop's own accept/reject stream finally
+ * teaches the score. Accepted cards join the exemplar set — they are the
+ * purest "shop taste" signal there is — and rejected cards become negative
+ * anchors: the closer a candidate sits to something Jake explicitly turned
+ * down, the harder its score falls (adjustedCosine). One embed batch covers
+ * candidates + verdicts together.
  */
 export async function brainMatchCandidates(
   candidates: BrainScorable[],
   libraryTracks: BrainScoreTrack[],
   topK = 5,
+  verdicts?: { accepts?: BrainScorable[]; rejects?: BrainScorable[] },
 ): Promise<number[] | null> {
   if (candidates.length === 0) return []
   try {
+    const { embedTexts, getEmbeddingsMap, cosine } = await import('./ai/embeddings.ts')
     const embMap = await getEmbeddingsMap()
     if (embMap.size === 0) return null
     const exemplarIds = pickTasteExemplars(libraryTracks)
@@ -70,15 +118,18 @@ export async function brainMatchCandidates(
     }
     if (exemplars.length < 20) return null   // not enough taste signal yet
 
+    const accepts = verdicts?.accepts ?? []
+    const rejects = verdicts?.rejects ?? []
+
     // Same textual voice as the library vectors so the cosines are honest.
-    const texts = candidates.map((c) => {
-      const lines = [`${c.artist} — ${c.title}`]
-      if (c.year) lines.push(`year: ${c.year}`)
-      if (c.genre) lines.push(`genre: ${c.genre}`)
-      return lines.join('\n')
-    })
+    const texts = [...candidates, ...accepts, ...rejects].map(buildCandidateText)
     const vecs = await embedTexts(texts)
-    return vecs.map((v) => {
+    const candVecs = vecs.slice(0, candidates.length)
+    const acceptVecs = vecs.slice(candidates.length, candidates.length + accepts.length).filter(Boolean)
+    const rejectVecs = vecs.slice(candidates.length + accepts.length).filter(Boolean)
+    exemplars.push(...acceptVecs)
+
+    return candVecs.map((v) => {
       if (!v) return 40
       const sims: number[] = []
       for (const e of exemplars) sims.push(cosine(v, e))
@@ -86,7 +137,9 @@ export async function brainMatchCandidates(
       const k = Math.min(topK, sims.length)
       let sum = 0
       for (let i = 0; i < k; i++) sum += sims[i]
-      return cosineToPct(sum / k)
+      let maxRej = 0
+      for (const r of rejectVecs) { const s = cosine(v, r); if (s > maxRej) maxRej = s }
+      return cosineToPct(adjustedCosine(sum / k, maxRej))
     })
   } catch {
     return null   // embed failure → heuristic fallback, never a crash

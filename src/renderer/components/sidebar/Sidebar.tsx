@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
+import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { useLibrary } from '../../context/LibraryContext'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
@@ -55,13 +56,9 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
 // the featured/curated content, separate from the standard system smart
 // playlists. Picks render with a distinct background tint, slightly
 // taller rows, and bolder labels — see styles/sidebar.css.
-const featuredPicks: { label: string; id: SmartPlaylistId }[] = [
-  { label: 'The Music Man Picks',  id: 'musicman-picks' },
-  { label: 'Megan Picks',          id: 'megan-picks' },
-  { label: 'DJ Stephen Hands Picks', id: 'dj-hands-picks' },
-]
 
 const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
+  { label: BEST_OF_YEAR_NAME, id: 'best-of-year' },
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
@@ -181,44 +178,12 @@ function SmartPlaylistIcon() {
   )
 }
 
-function MusicManPicksIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      {/* Vinyl record */}
-      <circle cx="6" cy="6" r="5" stroke="#FC5501" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#FC5501" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#FC5501" />
-      {/* Sparkle */}
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#FC5501" />
-    </svg>
-  )
-}
 
 // Megan picks gets a vinyl too — same shape so the picks pair reads as a
 // pair, but in a teal/blue tone to differentiate her from MM's orange.
-function MeganPicksIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <circle cx="6" cy="6" r="5" stroke="#3a7ca5" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#3a7ca5" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#3a7ca5" />
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#3a7ca5" />
-    </svg>
-  )
-}
 
 // DJ Hands picks — vinyl in deep purple, the third color in the picks
 // trio. Beats / electronic / hip-hop tone.
-function DjHandsPicksIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <circle cx="6" cy="6" r="5" stroke="#7a3a9c" strokeWidth="0.9" />
-      <circle cx="6" cy="6" r="2.8" stroke="#7a3a9c" strokeWidth="0.5" opacity="0.5" />
-      <circle cx="6" cy="6" r="1.2" fill="#7a3a9c" />
-      <path d="M10 1.5L10.4 2.8 11.5 2 10.4 2.4 10 3.5 9.6 2.4 8.5 2 9.6 2.8z" fill="#7a3a9c" />
-    </svg>
-  )
-}
 
 function EjectIcon() {
   return (
@@ -567,27 +532,10 @@ export default function Sidebar() {
           </SidebarSection>
         )}
 
-        {/* 4.4.0: WJLR Picks featured section — stands above the standard
-            smart playlists with a distinct visual treatment. */}
-        <SidebarSection title="WJLR PICKS">
-          <div className="sidebar-picks-group">
-            {featuredPicks.map((sp) => (
-              <SidebarItem
-                key={sp.id}
-                label={sp.label}
-                className="sidebar-item--picks"
-                icon={
-                  sp.id === 'musicman-picks' ? <MusicManPicksIcon /> :
-                  sp.id === 'megan-picks' ? <MeganPicksIcon /> :
-                  sp.id === 'dj-hands-picks' ? <DjHandsPicksIcon /> :
-                  <SmartPlaylistIcon />
-                }
-                selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
-                onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
-              />
-            ))}
-          </div>
-        </SidebarSection>
+        {/* WJLR Picks moved INTO the Record Shop as the staff wall
+            (2026-08-22, Jake: "move these into a row for each person on the
+            record store page"). Full-table views remain routable — the
+            shop's shelf headers link straight to VIEW_SMART_PLAYLIST. */}
 
         {/* 2026-07-18 — mixtapes: real cassettes made from a song
             selection. Module store (mixtapes.ts) mirrors concertNav;

@@ -53,6 +53,7 @@ const electronAPI = {
   getActiveHost: (): Promise<'mm' | 'megan'> =>
     ipcRenderer.invoke('get-active-host'),
   audioLog: (line: string): void => ipcRenderer.send('audio-log', line),
+  reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }): void => ipcRenderer.send('flight-record', payload),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
@@ -247,6 +248,16 @@ const electronAPI = {
   // 2026-07-20 — the sync journal: fired at boot when the last iPod sync
   // died partway (stale device database until the user syncs again).
   getIpodSyncJournal: (): Promise<{ phase: string; at?: string } | null> => ipcRenderer.invoke('get-ipod-sync-journal'),
+  inspectIpodTsaSeal: (): Promise<{
+    ok: boolean
+    sealed: boolean
+    drifted: boolean
+    unmounted?: boolean
+    target: number
+    present: number
+    missing: Array<{ id: number; destPath: string; reason: string }>
+    error?: string
+  }> => ipcRenderer.invoke('inspect-ipod-tsa-seal'),
   onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, info: { phase: string; at?: string }) => callback(info)
     ipcRenderer.on('ipod-sync-incomplete', handler)
@@ -552,7 +563,7 @@ const electronAPI = {
   // sources are transcoded + cached; their iPod destination filename
   // is rewritten to .m4a and the iTunesDB entry updated. Optional —
   // omitted means original-quality copy (legacy behavior).
-  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
+  syncToIpod: (tracks: unknown[], playlists: unknown[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }): Promise<{ ok: boolean; copied?: number; copyErrors?: number; totalTracks?: number; target?: number; landed?: number; shortfall?: number; verifyAttempts?: number; error?: string; cancelled?: boolean; pathRewrites?: Array<{ id: number; newPath: string }> }> =>
     ipcRenderer.invoke('sync-to-ipod', tracks, playlists, convertOptions, syncOpts),
   // 4.5.0-109: cancel an in-flight sync. Main flips a flag; the copy
   // loop checks it between files and bails with cancelled:true.
@@ -561,6 +572,7 @@ const electronAPI = {
   buildWorkoutSyncSet: (tracks: Array<{
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
+    path?: string; audioMissing?: boolean
   }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean }): Promise<{
     ok: boolean
     trackIds?: number[]
@@ -617,8 +629,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-activity-brain-context'),
   previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>
     ipcRenderer.invoke('preview-place-weather', place),
-  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled'; current: number; total: number; title: string }) => callback(progress)
+  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)
     return () => { ipcRenderer.removeListener('sync-progress', handler) }
   },
@@ -787,7 +799,7 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
-  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active'),

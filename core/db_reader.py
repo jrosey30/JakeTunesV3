@@ -354,6 +354,12 @@ def add_file_sizes(tracks):
 # all three carrying U+2019 (curly apostrophe). Three anomalies, three missing
 # songs. Everything else in the set was plain ASCII and landed.
 #
+# 2026-08-15: Activity 500 → Songs 497. Same class (firmware skipped 3
+# rows). One of those shapes was Hebrew tags folded to whitespace
+# ('  ' / '') because anything >U+00FF was dropped. A title the device
+# can carry in UTF-16 is better than a blank mhod it may skip — if the
+# map would leave only whitespace, keep the original.
+#
 # We fold to the obvious ASCII equivalent ONLY in the bytes written to the
 # iPod's database. library.json keeps the real characters, so titles are
 # unchanged everywhere else in JakeTunes — this is a device-compatibility
@@ -376,9 +382,13 @@ IPOD_CHAR_FOLD = {
 def fold_for_ipod(text):
     """Fold characters the iPod firmware rejects down to safe ASCII.
 
-    Anything still above U+00FF after the explicit map is transliterated via
-    NFKD (é -> e) and, failing that, dropped — a title the device can render is
-    infinitely better than a track it refuses to list. See IPOD_CHAR_FOLD.
+    Curly quotes / dashes / ellipsis become ASCII (Mini 1.4.1 Songs-skips
+    U+2019). Latin-1 stays. Anything still above U+00FF is transliterated
+    via NFKD when that yields Latin; if the result would be whitespace
+    but the original was not, keep the original UTF-16 — blanking Hebrew
+    ("דג") is how a listable track becomes a skip.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts foldForIpod
     """
     s = str(text or '')
     if not s:
@@ -395,6 +405,8 @@ def fold_for_ipod(text):
             ascii_only = ''.join(x for x in dec if ord(x) <= 0xFF and not unicodedata.combining(x))
             folded.append(ascii_only)
         out = ''.join(folded)
+    if not out.strip() and s.strip():
+        return s
     return out
 
 
@@ -471,14 +483,48 @@ def sample_rate_for_itunesdb(hz):
     return n if 8000 <= n <= 192000 else 44100
 
 
-# Filetype markers in mhit header (offset 0x18) — ASCII codec identifiers
+# Filetype markers in mhit header (offset 0x18) — ASCII codec identifiers.
+# Never default unknown extensions to MP3 — 2026-08-15: three ALAC files
+# named .0i4zLU / .fQMz7S / .KtCGDs were stamped 'MP3 ' and Mini Songs
+# skipped them (500 catalog → 497). Never stamp FLAC either; the Mini
+# cannot index it. Caller transcodes FLAC → ipod-safe ALAC .m4a.
+#
+# ⚠️ TWIN: src/main/ipod-reconcile.ts ipodPlayableDestPath / ipodFirmwareWillList
 CODEC_MARKERS = {
-    'm4a': b'M4A ', 'aac': b'M4A ', 'alac': b'M4A ',
+    'm4a': b'M4A ', 'aac': b'M4A ', 'alac': b'M4A ', 'mp4': b'M4A ',
     'mp3': b'MP3 ',
     'wav': b'WAV ', 'wave': b'WAV ',
     'aif': b'AIFF', 'aiff': b'AIFF',
-    'flac': b'FLAC',
 }
+
+_FILETYPE_MHOD = {
+    b'M4A ': 'AAC audio file',
+    b'MP3 ': 'MPEG audio file',
+    b'WAV ': 'WAV audio file',
+    b'AIFF': 'AIFF audio file',
+}
+
+
+def codec_marker_for_track(track, ext=None):
+    """mhit 0x18 marker. Unknown ext / FLAC / FAT temps → M4A, never MP3.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts ipodPlayableDestPath (dest is .m4a
+    for garbage names); Mini 1.4.1 skips ALAC bytes stamped as MP3.
+    """
+    if ext is None:
+        path = str(track.get('path') or '')
+        ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
+    ext = (ext or '').lower().lstrip('.')
+    if ext in CODEC_MARKERS:
+        return CODEC_MARKERS[ext]
+    codec = str(track.get('codec') or '').lower()
+    if 'mp3' in codec or codec in ('mpeg', 'mpga'):
+        return b'MP3 '
+    if 'wav' in codec:
+        return b'WAV '
+    if 'aiff' in codec or codec == 'aif':
+        return b'AIFF'
+    return b'M4A '
 
 # mhod types that we rebuild from JakeTunes metadata (may have changed).
 # Type 32 is album artist — included so we can restore it instead of
@@ -513,6 +559,10 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
       • 0x3C  — sample rate (Hz << 16). Same as 0xD0: always pack;
                 never leave 0. ⚠️ TWIN: sampleRateForItunesDb /
                 mediaTypeForItunesDb in src/main/ipod-reconcile.ts.
+      • 0x18  — codec marker. Pack on EVERY mhit from the path/codec,
+                never default unknown ext to MP3, never stamp FLAC.
+                2026-08-15: 500 → 497 from three ALAC files with FAT
+                temp extensions inherited/stamped 'MP3 '.
     If you find a NEW field that turns out to be a silent firmware
     filter, add it to this list so the next editor knows to check it.
     """
@@ -600,20 +650,20 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     # recorded a live regression (250→118) from that change on this device.
     struct.pack_into('<I', hdr, 0x64, 1)
 
-    # For new tracks: set filetype marker and timestamps. Audio facts the
-    # firmware filters on (sample rate, mediatype) are packed for EVERY
-    # track below — a reused mhit template can carry zeros, and Mini 1.4.1
-    # Songs-aborts on sampleRate=0 / mediatype=0.
+    # Filetype marker: pack on EVERY mhit. A reused template can carry
+    # 'MP3 ' over an ALAC .m4a (or a FAT temp name), and Mini 1.4.1
+    # Songs-skips the mismatch. Timestamps stay is_new-only.
+    # Audio facts the firmware filters on (sample rate, mediatype) are
+    # packed for EVERY track below — Mini 1.4.1 Songs-aborts on 0.
     path = str(track.get('path', ''))
     ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
+    marker = codec_marker_for_track(track, ext)
+    struct.pack_into('<4s', hdr, 0x18, marker)
+    if marker == b'MP3 ':
+        struct.pack_into('<I', hdr, 0x1C, 0x100)
+    else:
+        struct.pack_into('<I', hdr, 0x1C, 0)
     if is_new:
-        marker = CODEC_MARKERS.get(ext, b'MP3 ')
-        struct.pack_into('<4s', hdr, 0x18, marker)
-        # Set codec sub-type flag at 0x1C (MP3 uses 0x100, AAC uses 0)
-        if ext in ('mp3',):
-            struct.pack_into('<I', hdr, 0x1C, 0x100)
-        else:
-            struct.pack_into('<I', hdr, 0x1C, 0)
         # Set timestamps (Mac classic epoch: seconds since 1904-01-01)
         now_mac = int(time.time()) + MAC_EPOCH_OFFSET
         struct.pack_into('<I', hdr, 0x20, now_mac)   # date created
@@ -633,7 +683,7 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
         struct.pack_into('<I', hdr, 0xD0, 1)
 
     # Build standard mhod children: title(1), path(2), album(3), artist(4), genre(5), filetype(6), sort-artist(22)
-    ft = 'AAC audio file' if ext in ('m4a', 'aac', 'alac') else 'MPEG audio file'
+    ft = _FILETYPE_MHOD.get(marker, 'AAC audio file')
 
     mhods = bytearray()
     mhods += build_string_mhod(1, track.get('title', ''))
@@ -806,27 +856,32 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
     return bytes(hdr) + bytes(mhods) + bytes(items)
 
 
-def write_itunesdb(tracks, playlists, template_path, output_path):
+def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None):
     """Rebuild the iPod iTunesDB from JakeTunes library data."""
     # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
     # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
     # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
-    # 1.4.1 skips or aborts Songs indexing on mismatch. output_path is
-    # <mount>/iPod_Control/iTunes/iTunesDB — three dirnames up is the volume.
-    ipod_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(output_path))))
+    # 1.4.1 skips or aborts Songs indexing on mismatch.
+    # 2026-08-16: output_path is a LOCAL file (Mac temp). Deriving the
+    # volume from output_path would restat the wrong disk and the 500-row
+    # catalog would never be the file on the CF. Pass ipod_root = the mount.
+    if ipod_root:
+        root = os.path.abspath(ipod_root)
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(output_path))))
     sized = 0
     for t in tracks:
         path = t.get('path') or ''
         if not path:
             continue
         rel = path.replace(':', os.sep).lstrip('/' + os.sep)
-        fs_path = os.path.join(ipod_root, rel)
+        fs_path = os.path.join(root, rel)
         try:
             t['fileSize'] = os.path.getsize(fs_path)
             sized += 1
         except OSError:
             pass
-    print(f"write_itunesdb: restated {sized}/{len(tracks)} fileSize(s) from {ipod_root}", file=sys.stderr)
+    print(f"write_itunesdb: restated {sized}/{len(tracks)} fileSize(s) from {root}", file=sys.stderr)
 
     with open(template_path, 'rb') as f:
         existing = f.read()
@@ -1244,13 +1299,23 @@ if __name__ == "__main__":
         idx = sys.argv.index('--write')
         db_path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
         if not db_path:
-            print("Usage: db_reader.py --write <ipod_itunesdb_path>", file=sys.stderr)
+            print("Usage: db_reader.py --write <output_path> [--template <itunesdb>] [--ipod-root <mount>]", file=sys.stderr)
             sys.exit(1)
+        template = db_path
+        if '--template' in sys.argv:
+            tidx = sys.argv.index('--template')
+            template = sys.argv[tidx + 1] if tidx + 1 < len(sys.argv) else db_path
+        root = None
+        if '--ipod-root' in sys.argv:
+            ridx = sys.argv.index('--ipod-root')
+            root = sys.argv[ridx + 1] if ridx + 1 < len(sys.argv) else None
         input_data = json.load(sys.stdin)
         count = write_itunesdb(
             input_data['tracks'],
             input_data.get('playlists', []),
-            db_path, db_path
+            template,
+            db_path,
+            ipod_root=root,
         )
         json.dump({'ok': True, 'count': count}, sys.stdout)
         sys.exit(0)

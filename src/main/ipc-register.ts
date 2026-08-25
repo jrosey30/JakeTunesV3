@@ -18,7 +18,7 @@ import { refuseIfNotMainWindow } from './ipc-guard.ts'
 
 export type MainWindowAccessor = () => BrowserWindow | null
 
-export interface RegisterHandleOptions<Result> {
+export interface RegisterHandleOptions {
   /**
    * Skip the main-window sender guard. Use only for intentionally
    * public / read-only channels.
@@ -27,15 +27,21 @@ export interface RegisterHandleOptions<Result> {
   /**
    * Value returned when a non-main-window sender is refused.
    * Required unless `public: true`.
+   *
+   * Deliberately NOT typed as the handler's Result: when it shared the
+   * generic, TypeScript inferred Result from THIS literal and pinned all
+   * 70+ call sites' handlers to the refusal shape (the 2026-08 "73
+   * errors" wall). The refusal is a wire value the renderer's `{ ok:
+   * false }` handling already absorbs — it never was the handler's type.
    */
-  refuse?: Result
+  refuse?: unknown
 }
 
 export interface IpcRegistrar {
   handle: <Args extends unknown[], Result>(
     channel: string,
     listener: (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result> | Result,
-    options?: RegisterHandleOptions<Result>,
+    options?: RegisterHandleOptions,
   ) => void
 }
 
@@ -50,7 +56,7 @@ export const REFUSED_SENDER = REFUSED
  */
 export function assertIpcRegisterOptions(
   channel: string,
-  options?: RegisterHandleOptions<unknown>,
+  options?: RegisterHandleOptions,
 ): { public: boolean } {
   const isPublic = options?.public === true
   // Allow `{ refuse: undefined }` for void-returning handlers — the key
@@ -71,7 +77,7 @@ export function createIpcRegistrar(getMainWindow: MainWindowAccessor): IpcRegist
   function handle<Args extends unknown[], Result>(
     channel: string,
     listener: (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result> | Result,
-    options?: RegisterHandleOptions<Result>,
+    options?: RegisterHandleOptions,
   ): void {
     const { public: isPublic } = assertIpcRegisterOptions(channel, options)
 

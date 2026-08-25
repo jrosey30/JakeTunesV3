@@ -38,11 +38,16 @@
 
 import type { Track, Playlist, SmartPlaylistId } from '../types'
 import { buildTasteProfile, tasteScore } from './tasteScore'
+import { pickBestOfYear } from '../../common/best-of-year'
 
 /** The four built-in, sync-eligible smart playlists and their iPod /
  *  sidebar display names. Keep these names in lockstep with
  *  `SMART_PLAYLIST_NAMES` in `Sidebar.tsx`. */
+export const BEST_OF_YEAR = new Date().getFullYear()
+export const BEST_OF_YEAR_NAME = `Best of ${BEST_OF_YEAR}`
+
 export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name: string }> = [
+  { id: 'best-of-year',    name: BEST_OF_YEAR_NAME },
   { id: 'recently-added',  name: 'Recently Added' },
   { id: 'recently-played', name: 'Recently Played' },
   { id: 'top-25',          name: 'Top 25 Most Played' },
@@ -101,6 +106,13 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
           return bd - ad
         })
     }
+
+    case 'best-of-year':
+      // Jake, 2026-08-22: "best of 2026. no more than 2 songs per album.
+      // mix them up. 40 songs." Definition + mix live in
+      // common/best-of-year.ts (node-tested); seeded by the year so the
+      // order holds steady all year and rolls fresh next January.
+      return pickBestOfYear(tracks, { year: BEST_OF_YEAR })
 
     case 'youd-star': {
       // 4.5: the taste model, deployed. The data-validated identity model

@@ -53,6 +53,29 @@ let nasBreakerUntil = 0
 let lastVerdict = false
 let lastProbeAt = 0
 let probeInflight: Promise<boolean> | null = null
+// Transition-once logging (2026-08-22 flight-log stomp): a sustained
+// remote-mode episode used to re-warn on EVERY re-trip (~every 6 min,
+// all day when the laptop is away). One warn when the breaker OPENS,
+// one when the NAS comes back; the episode in between stays quiet.
+let breakerEpisodeOpen = false
+// Flap damping (same day, four transitions in 30 min on a marginal WAN
+// link): a failure RIGHT AFTER a recovery earns a longer cooldown — the
+// link is oscillating around the probe threshold and rapid retries just
+// churn state. A failure after a LONG healthy stretch keeps the quick
+// 5-min retry, so genuinely-good windows are still harvested promptly
+// (the 17:58Z quick pass that healed nine stranded tracks rode exactly
+// such a window — never damp those).
+let lastRecoveryAt = 0
+const FLAP_WINDOW_MS = 10 * 60_000
+const COOLDOWN_MS = 5 * 60_000
+const FLAP_COOLDOWN_MS = 15 * 60_000
+// Recovery kick (2026-08-22): a good window on a marginal link may only
+// last minutes — waiting for the next hourly tick wastes it (the 17:58Z
+// harvest that healed nine stranded tracks was pure timing luck). The
+// orchestrator registers here; recovery fires it. Layering: state-dir
+// must not import the orchestrator, so this is a callback seam.
+let nasRecoveryListener: (() => void) | null = null
+export function onNasRecovery(fn: () => void): void { nasRecoveryListener = fn }
 
 export async function nasAvailable(): Promise<boolean> {
   const now = Date.now()
@@ -68,8 +91,17 @@ export async function nasAvailable(): Promise<boolean> {
       lastVerdict = ok
       lastProbeAt = Date.now()
       if (!ok) {
-        nasBreakerUntil = Date.now() + 5 * 60_000
-        console.warn('[nas-breaker] NAS slow or absent — skipping ALL NAS IO for 5 min')
+        const flapping = lastRecoveryAt > 0 && Date.now() - lastRecoveryAt < FLAP_WINDOW_MS
+        nasBreakerUntil = Date.now() + (flapping ? FLAP_COOLDOWN_MS : COOLDOWN_MS)
+        if (!breakerEpisodeOpen) {
+          breakerEpisodeOpen = true
+          console.warn(`[nas-breaker] NAS slow or absent — skipping ALL NAS IO (${flapping ? '15-min cooldown, link is flapping' : '5-min cooldowns'}; will report recovery)`)
+        }
+      } else if (breakerEpisodeOpen) {
+        breakerEpisodeOpen = false
+        lastRecoveryAt = Date.now()
+        console.warn('[nas-breaker] NAS recovered — resuming NAS IO')
+        try { nasRecoveryListener?.() } catch (err) { console.warn('[nas-breaker] recovery listener threw:', err) }
       }
       return ok
     } finally {

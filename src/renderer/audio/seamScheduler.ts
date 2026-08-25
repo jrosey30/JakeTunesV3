@@ -34,6 +34,7 @@
  * Flip to false for instant rollback to the pre-78 Howler-only path.
  */
 
+import { getEqInputNode } from './eq'
 import { Howl } from 'howler'
 import {
   USE_GAPLESS_TAIL_TRIM,
@@ -275,7 +276,12 @@ export function scheduleAbsoluteStart(
   source.buffer = buffer
   const gain = ctx.createGain()
   source.connect(gain)
-  gain.connect(ctx.destination)
+  // Through the SAME preamp → EQ → width/crossfeed chain as element
+  // playback — a seam that changes the sound's character is not a seam
+  // (2026-08-23; house rule: never a bare disconnect, and never a second
+  // signal path that only "mostly" matches the first).
+  const eqIn = getEqInputNode()
+  gain.connect(eqIn ?? ctx.destination)
   if (fadeInMs > 0) {
     gain.gain.setValueAtTime(0, absoluteStartTime)
     gain.gain.linearRampToValueAtTime(targetVolume, absoluteStartTime + fadeInMs / 1000)

@@ -101,7 +101,20 @@ input:focus-visible,
 [tabindex]:not([tabindex="-1"]):focus-visible {
   outline: 2px solid var(--brand-orange);
   outline-offset: 2px;
-  border-radius: inherit;
+  /* NOTE: no border-radius here. `border-radius: inherit` used to sit on
+   * this rule to "make the ring follow the shape" — but inherit takes the
+   * PARENT's radius (usually 0), so keyboard focus literally squared off
+   * circular buttons (Jake, 2026-08-22: "who the fuck made the play/pause
+   * a square??"). Outlines follow the element's own border-radius natively
+   * in Chromium; the element's shape is not this rule's business. */
+}
+/* Transport circles show NO focus ring at all (Jake: "NO NEED FOR ORANGE
+ * OUTLINE") — same doctrine as .search-input below: chrome-area controls
+ * keep their native iTunes look, and the pressed/glow states they already
+ * have are the interaction cue. */
+.transport-btn:focus-visible,
+.transport-toggle:focus-visible {
+  outline: none;
 }
 /* 4.5.0-93 — the toolbar search input is in the brushed-metal chrome
  * area; the brand-orange focus ring shouted there. Fully suppressed —

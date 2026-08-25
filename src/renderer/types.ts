@@ -281,7 +281,7 @@ export interface ItunesSuggestion {
   /** Track length in seconds (from the album-tracks lookup). */
   durationSecs?: number
 }
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
 
 export interface ChatConversation {
   id: string
@@ -604,6 +604,8 @@ declare global {
       // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
       getActiveHost: () => Promise<'mm' | 'megan'>
       audioLog: (line: string) => void
+      // 2026-08-21 reliability P0: renderer crash net → main flight recorder.
+      reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }) => void
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
       musicmanRadio: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, opener?: boolean, forceAnnouncer?: boolean, callerSegment?: boolean, djHandsSegment?: boolean, callerId?: string, archetypeId?: string, slot?: number, hourCounter?: number, miniId?: boolean) => Promise<{ ok: boolean; text: string; error?: string }>
@@ -712,6 +714,16 @@ declare global {
       // method and the main handler exist; only this type surface had drifted,
       // which made the renderer typecheck report them as missing.
       getIpodSyncJournal: () => Promise<{ phase: string; at?: string } | null>
+      inspectIpodTsaSeal?: () => Promise<{
+        ok: boolean
+        sealed: boolean
+        drifted: boolean
+        unmounted?: boolean
+        target: number
+        present: number
+        missing: Array<{ id: number; destPath: string; reason: string }>
+        error?: string
+      }>
       onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => () => void
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       // Brief 010 Phase 3 + Brief 014a: audio-analysis worker progress
@@ -813,7 +825,7 @@ declare global {
       allowDroppedImportPaths: (files: File[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
-      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean }) => Promise<{
+      syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }) => Promise<{
         ok: boolean
         copied?: number
         copyErrors?: number
@@ -835,11 +847,12 @@ declare global {
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
       cancelSync: () => Promise<{ ok: boolean; wasRunning: boolean }>
-      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled'; current: number; total: number; title: string }) => void) => () => void
+      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => () => void
       onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
         playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
+        path?: string; audioMissing?: boolean
       }>, opts?: { target?: number; brief?: {
         id?: string; profileName?: string; activity: string; intensity: string; setting: string
         place: string; social: string; note?: string
@@ -955,7 +968,7 @@ declare global {
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
       streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
-      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
+      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
       streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>

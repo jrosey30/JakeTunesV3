@@ -110,4 +110,23 @@ describe('selectWorkoutSyncSet', () => {
     const overlap = second.trackIds.filter((id) => first.trackIds.includes(id)).length
     assert.ok(overlap < 5, `expected rotation, overlap=${overlap}`)
   })
+
+  it('skips audioMissing and empty-path tracks so they cannot eat an N slot', () => {
+    const tracks: WorkoutTrack[] = []
+    for (let i = 0; i < 20; i++) {
+      tracks.push(t({
+        id: i + 1,
+        artist: `Artist ${i}`,
+        genre: 'Electronic',
+        bpm: 140,
+        playCount: 3,
+        path: i === 0 ? '' : `:iPod_Control:Music:F00:t${i}.m4a`,
+        audioMissing: i === 1,
+      }))
+    }
+    const picked = selectWorkoutSyncSet(tracks, { target: 10, seed: 1, brief: runBrief })
+    assert.equal(picked.trackIds.length, 10)
+    assert.ok(!picked.trackIds.includes(1), 'empty path must not be picked')
+    assert.ok(!picked.trackIds.includes(2), 'audioMissing must not be picked')
+  })
 })

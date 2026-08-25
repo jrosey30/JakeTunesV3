@@ -1,3 +1,4 @@
+import { albumAdjacent } from '../../common/album-adjacent'
 import { useRef, useEffect, useCallback } from 'react'
 import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
@@ -169,6 +170,16 @@ let crossfadePendingIdx = -1
 export function setCrossfadeSettings(s: { enabled: boolean; seconds: number }) {
   crossfadeSettings = { enabled: !!s.enabled, seconds: Math.max(1, Math.min(12, s.seconds || 6)) }
 }
+/** Is the NEXT queue step a merged-work seam? Crossfade must never smear
+ *  one (Discovery's segues are the record), and the gapless path claims
+ *  those seams even for crossfade users. */
+function albumAdjacentUpcoming(st: { queue: Track[]; queueIndex: number; repeat: string }): boolean {
+  if (st.repeat === 'one' || st.queue.length === 0) return false
+  const n = st.queueIndex + 1 < st.queue.length ? st.queueIndex + 1 : (st.repeat === 'all' ? 0 : -1)
+  if (n < 0) return false
+  return albumAdjacent(st.queue[st.queueIndex], st.queue[n])
+}
+
 function cleanupCrossfadeAudio() {
   if (outgoingHowl) {
     try { outgoingHowl.stop() } catch { /* ignore */ }
@@ -617,7 +628,7 @@ export function useAudio(opts?: { primary?: boolean }) {
   // playTrackRef lets the stuck-audio watchdog (inside updatePosition)
   // recover by re-loading the current track. updatePosition is defined
   // first, so this ref is the cycle-breaker.
-  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => void) | null>(null)
+  const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean, preserveOrder?: boolean) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
     rafTickCount++
@@ -797,8 +808,37 @@ export function useAudio(opts?: { primary?: boolean }) {
       // pre-warm + promote moments uncontested.
       // Skipped when crossfade is enabled (crossfade does its own
       // overlap), DJ Mode is on, repeat=one, or no next track exists.
+      // Album-adjacent EARLY decode (2026-08-23, Album Mode): a merged-work
+      // seam (The Wall, Discovery…) needs the incoming track's raw buffer
+      // decoded BEFORE the 10s window — over remote streaming, a full-file
+      // fetch+decode routinely outlives 10s and the seam silently degraded
+      // to the gapped element fallback. Kick the decode as soon as the
+      // adjacent next track is known; one buffer (~40MB) held per track.
+      if (!autoDjMode && dur > 12) {
+        const sE = stateRef.current
+        if (sE.repeat !== 'one' && sE.queue.length > 0) {
+          const nIdx = sE.queueIndex + 1 < sE.queue.length ? sE.queueIndex + 1 : (sE.repeat === 'all' ? 0 : -1)
+          const nT = nIdx >= 0 ? sE.queue[nIdx] : null
+          const cT = sE.queue[sE.queueIndex]
+          if (USE_SAMPLE_ACCURATE_SEAMS && nT && albumAdjacent(cT, nT)) {
+            const { url: earlyUrl } = ipodPathToAudioURL(nT.path || '')
+            if (seamIncomingBufferUrl !== earlyUrl) {
+              const ctxE = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+              if (ctxE) {
+                seamIncomingBufferUrl = earlyUrl
+                decodeUrl(earlyUrl, ctxE).then(buf => {
+                  if (seamIncomingBufferUrl === earlyUrl) seamIncomingBuffer = buf
+                }).catch(() => {
+                  if (seamIncomingBufferUrl === earlyUrl) { seamIncomingBufferUrl = null; seamIncomingBuffer = null }
+                })
+              }
+            }
+          }
+        }
+      }
+
       if (
-        !crossfadeSettings.enabled &&
+        (!crossfadeSettings.enabled || albumAdjacentUpcoming(stateRef.current)) &&
         !autoDjMode &&
         !gaplessNextHowl &&
         dur > 12
@@ -998,6 +1038,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       // above, so the user keeps seeing the old track during overlap.
       if (
         crossfadeSettings.enabled &&
+        !albumAdjacentUpcoming(stateRef.current) &&   // merged seams belong to gapless
         !autoDjMode &&
         dur > crossfadeSettings.seconds + 1
       ) {
@@ -1481,7 +1522,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         gaplessNextHowl &&
         gaplessNextTrack &&
         gaplessNextTrack.id === nextTrack.id &&
-        !crossfadeSettings.enabled  // crossfade has its own preload path
+        (!crossfadeSettings.enabled || albumAdjacent(s.queue[s.queueIndex], nextTrack))  // merged seams stay gapless even for crossfade users
       ) {
         const next = gaplessNextHowl
         const nt = gaplessNextTrack
@@ -1682,7 +1723,7 @@ export function useAudio(opts?: { primary?: boolean }) {
     }
   }, [loadAndPlay])
 
-  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean) => {
+  const playTrack = useCallback((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean, preserveOrder?: boolean) => {
     // User gesture — resume the graph HERE, before Howl construction,
     // so mix auto-advance later inherits a running context.
     primeAudioGraph()
@@ -1718,6 +1759,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       queue: q,
       queueIndex: qi,
       freshContext,
+      preserveOrder,
       duration: (track.duration || 0) / 1000,
     })
     loadAndPlay(track, q, qi)

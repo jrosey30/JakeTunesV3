@@ -5,6 +5,8 @@ import {
   partitionLanded,
   sizeVerified,
   activitySetProven,
+  catalogBytesMatch,
+  catalogOnCardProven,
   fileSizeForItunesDb,
   estimateIpodBytes,
   looksLossless,
@@ -13,6 +15,12 @@ import {
   mediaTypeForItunesDb,
   activityWipeEmptyStreak,
   activityWipeProvenEmpty,
+  ipodPlayableDestPath,
+  ipodFirmwareWillList,
+  foldForIpod,
+  needsIpodAlacTranscode,
+  isIpodFirmwareScratchName,
+  IPOD_FIRMWARE_SCRATCH_NAMES,
   type IntendedTrack,
   type DeviceCatalogEntry,
 } from '../ipod-reconcile.ts'
@@ -125,14 +133,18 @@ describe('partitionLanded — honest post-copy split', () => {
   })
 })
 
-describe('activitySetProven — 500 means 500, never a lucky remount', () => {
+describe('activitySetProven — N means N, never a lucky remount', () => {
   it('refuses success on a single remount even when the count looks full', () => {
-    assert.equal(activitySetProven(1, 500, 500), false)
-    assert.equal(activitySetProven(0, 500, 500), false)
+    for (const n of [100, 250, 500, 1000]) {
+      assert.equal(activitySetProven(1, n, n), false)
+      assert.equal(activitySetProven(0, n, n), false)
+    }
   })
 
   it('passes only after two consecutive full proofs at the target', () => {
-    assert.equal(activitySetProven(2, 500, 500), true)
+    for (const n of [100, 250, 500, 1000]) {
+      assert.equal(activitySetProven(2, n, n), true)
+    }
     assert.equal(activitySetProven(3, 250, 250), true)
   })
 
@@ -140,6 +152,85 @@ describe('activitySetProven — 500 means 500, never a lucky remount', () => {
     assert.equal(activitySetProven(4, 33, 500), false)
     assert.equal(activitySetProven(2, 499, 500), false)
     assert.equal(activitySetProven(2, 0, 500), false)
+    assert.equal(activitySetProven(2, 99, 100), false)
+    assert.equal(activitySetProven(2, 247, 250), false)
+    assert.equal(activitySetProven(2, 997, 1000), false)
+  })
+})
+
+describe('catalogOnCardProven — the 500-row iTunesDB must be on the CF', () => {
+  const full = {
+    onCardBytes: 400000, localBytes: 400000,
+    onCardMd5: 'abc', localMd5: 'abc',
+    trackCount: 500, target: 500,
+  }
+  it('one remount that looks like 500 is still cache', () => {
+    assert.equal(catalogBytesMatch(full), true)
+    assert.equal(catalogOnCardProven(1, true), false)
+    assert.equal(catalogOnCardProven(0, true), false)
+  })
+  it('two remounts with matching bytes, hash, and N tracks is on the card', () => {
+    for (const n of [100, 250, 500, 1000]) {
+      const m = catalogBytesMatch({ ...full, trackCount: n, target: n })
+      assert.equal(m, true)
+      assert.equal(catalogOnCardProven(2, m), true)
+    }
+  })
+  it('450 tracks, or a hash mismatch, is never the catalog we wrote', () => {
+    assert.equal(catalogBytesMatch({ ...full, trackCount: 450 }), false)
+    assert.equal(catalogOnCardProven(4, catalogBytesMatch({ ...full, trackCount: 450 })), false)
+    assert.equal(catalogBytesMatch({ ...full, onCardMd5: 'nope' }), false)
+    assert.equal(catalogBytesMatch({ ...full, onCardBytes: 1 }), false)
+  })
+})
+
+describe('fileSizeForItunesDb — catalog size is the card, never library.json', () => {
+  it('uses the on-card byte size (Beyond Me: 7.5MB on card, not 31MB ALAC in library.json)', () => {
+    assert.equal(fileSizeForItunesDb(7_549_180), 7_549_180)
+    assert.notEqual(fileSizeForItunesDb(7_549_180), 31_481_234)
+  })
+
+  it('refuses a missing or zero file — do not pack a stale library size into the mhit', () => {
+    assert.equal(fileSizeForItunesDb(0), 0)
+    assert.equal(fileSizeForItunesDb(null), 0)
+    assert.equal(fileSizeForItunesDb(undefined), 0)
+    assert.equal(fileSizeForItunesDb(-1), 0)
+  })
+})
+
+describe('sampleRateForItunesDb / mediaTypeForItunesDb — never pack zeros Mini 1.4.1 aborts on', () => {
+  it('keeps a real rate and defaults missing/zero to 44100', () => {
+    assert.equal(sampleRateForItunesDb(44100), 44100)
+    assert.equal(sampleRateForItunesDb(48000), 48000)
+    assert.equal(sampleRateForItunesDb(0), 44100)
+    assert.equal(sampleRateForItunesDb(undefined), 44100)
+    assert.equal(sampleRateForItunesDb(null), 44100)
+  })
+
+  it('mediatype is always music (1)', () => {
+    assert.equal(mediaTypeForItunesDb(), 1)
+  })
+})
+
+describe('activity wipe — one empty fskit listing is not proof', () => {
+  it('needs two consecutive empty readdirs', () => {
+    let streak = 0
+    streak = activityWipeEmptyStreak(20, streak)
+    assert.equal(streak, 0)
+    assert.equal(activityWipeProvenEmpty(streak), false)
+    streak = activityWipeEmptyStreak(0, streak)
+    assert.equal(streak, 1)
+    assert.equal(activityWipeProvenEmpty(streak), false)
+    streak = activityWipeEmptyStreak(0, streak)
+    assert.equal(streak, 2)
+    assert.equal(activityWipeProvenEmpty(streak), true)
+  })
+
+  it('a file that reappears resets the streak', () => {
+    let streak = activityWipeEmptyStreak(0, 1)
+    streak = activityWipeEmptyStreak(3, streak)
+    assert.equal(streak, 0)
+    assert.equal(activityWipeProvenEmpty(streak), false)
   })
 })
 
@@ -229,5 +320,70 @@ describe('estimateIpodBytes / looksLossless / packTracksToCapacity', () => {
     assert.deepEqual(r.dropped.map((t) => t.id), [3, 4])
     assert.equal(r.usedBytes, 200)
     assert.equal(r.budgetBytes, 200)
+  })
+})
+
+describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 79', () => {
+  it('rewrites FAT temp names and FLAC to .m4a', () => {
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F00:x.0i4zLU'),
+      ':iPod_Control:Music:F00:x.m4a',
+    )
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F10:imported_9860.flac'),
+      ':iPod_Control:Music:F10:imported_9860.m4a',
+    )
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F00:ok.m4a'),
+      ':iPod_Control:Music:F00:ok.m4a',
+    )
+    assert.equal(needsIpodAlacTranscode(':F10:imported_9860.flac'), true)
+    assert.equal(needsIpodAlacTranscode(':F00:ok.m4a'), false)
+  })
+
+  it('folds curly apostrophes but does not blank Hebrew', () => {
+    assert.equal(foldForIpod("B’s On The Table"), "B's On The Table")
+    assert.equal(foldForIpod('דג').trim(), 'דג')
+    assert.ok(foldForIpod('בלו בלו בלו').trim().length > 0)
+  })
+
+  it('rejects the three 497-of-500 shapes and accepts a real ALAC row', () => {
+    assert.equal(ipodFirmwareWillList({
+      title: 'The Brighter The Light', artist: 'The Juan Maclean',
+      path: ':iPod_Control:Music:F00:x.0i4zLU', codec: 'alac',
+    }), false)
+    assert.equal(ipodFirmwareWillList({
+      title: 'Feeling for You', artist: 'Cassius',
+      path: ':iPod_Control:Music:F10:imported_9860.flac', codec: 'flac',
+    }), false)
+    assert.equal(ipodFirmwareWillList({
+      title: '  ', artist: 'דג',
+      path: ':iPod_Control:Music:F00:x.m4a', codec: 'alac',
+    }), false)
+    assert.equal(ipodFirmwareWillList({
+      title: 'בלו בלו בלו', artist: 'דג',
+      path: ':iPod_Control:Music:F00:imported_5828.m4a', codec: 'alac',
+    }), true)
+    assert.equal(ipodFirmwareWillList({
+      title: "B’s On The Table", artist: 'Drake',
+      path: ':iPod_Control:Music:F00:x.m4a',
+    }), true)
+  })
+})
+
+describe('isIpodFirmwareScratchName — leftover Play Counts is a 450 abort', () => {
+  it('matches every name iTunes and libgpod retire on write', () => {
+    for (const n of IPOD_FIRMWARE_SCRATCH_NAMES) {
+      assert.equal(isIpodFirmwareScratchName(n), true, n)
+    }
+    assert.equal(isIpodFirmwareScratchName('OTGPlaylist_1'), true)
+    assert.equal(isIpodFirmwareScratchName('OTGPlaylist2'), true)
+    assert.equal(isIpodFirmwareScratchName('Play Counts.bak'), true)
+  })
+
+  it('does not treat iTunesDB or audio as scratch', () => {
+    assert.equal(isIpodFirmwareScratchName('iTunesDB'), false)
+    assert.equal(isIpodFirmwareScratchName('iTunesPrefs'), false)
+    assert.equal(isIpodFirmwareScratchName('song.m4a'), false)
   })
 })

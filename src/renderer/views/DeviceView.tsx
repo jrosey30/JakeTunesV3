@@ -115,6 +115,15 @@ export default function DeviceView() {
     }).catch(() => {})
   }, [])
 
+  // A refused sync used to paint the pink banner forever. LCD pill
+  // cleared in 4s; this bar did not. Dismiss so "6 with no playable
+  // file" cannot sit on the iPod page after nothing was written.
+  useEffect(() => {
+    if (syncStatus.state !== 'error') return
+    const t = window.setTimeout(() => setSyncStatus({ state: 'idle' }), 8000)
+    return () => window.clearTimeout(t)
+  }, [syncStatus])
+
   const saveLastSetAsPlaylist = () => {
     if (!lastCommitted) return
     const exists = state.playlists.some((p) => p.category === 'synced-set' && p.name === lastCommitted.name)
@@ -362,7 +371,7 @@ export default function DeviceView() {
       const result = await window.electronAPI.syncToIpod(state.tracks, syncPlaylists, {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
-      })
+      }, { origin: 'full-library-click' })
       if (result.alreadyRunning) return
       if (!result.ok) {
         const msg = result.error || 'Sync failed'
@@ -477,7 +486,7 @@ export default function DeviceView() {
       const result = await window.electronAPI.syncToIpod(finalTracks, playlists, {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
-      }, { wipeFirst: true })  // clean-slate rebuild every activity sync (Jake, 2026-07-24)
+      }, { wipeFirst: true, origin: 'activity-click' })  // dedicated activity engine; click-only
       if (result.alreadyRunning) {
         return
       }

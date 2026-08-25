@@ -168,6 +168,7 @@ const songQ = (r: SongRow): QResult => ({
   artist: r.artist, title: r.title, album: r.album ? displayAlbumTitle(r.album) : r.album,
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
   cleanedSource: r.explicitness === 'cleaned',
+  explicitSource: r.explicitness === 'explicit',
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
@@ -177,6 +178,8 @@ const albumQ = (r: AlbumRow): QResult => ({
   // Search Qobuz without Apple's " - Single"/" - EP" stamp. Identity (id)
   // keeps the raw iTunes name so two editions don't collapse.
   album: displayAlbumTitle(r.album) || r.album,
+  cleanedSource: r.explicitness === 'cleaned',
+  explicitSource: r.explicitness === 'explicit',
 })
 
 export default function DownloadView() {

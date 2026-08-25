@@ -34,6 +34,8 @@ function toWorkoutTrack(t: Track) {
     codec: t.codec,
     fileSize: t.fileSize,
     duration: t.duration,
+    path: t.path,
+    audioMissing: t.audioMissing,
   }
 }
 

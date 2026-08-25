@@ -169,19 +169,20 @@ ensure_jakeshared() {
 # embeddings.bin to the NAS or it would clobber the mini's enriched brain —
 # single-writer. The laptop still authors metadata-overrides.json (Cynthia +
 # taxonomy) which the mini's brain-trainer READS to fold subgenres.
-# 2026-08-12 — REMOVED mobile-playlists.json + playlist-additions.json from the
-# PUSH list (same single-writer rule as recommendations.json). The iOS backend
-# on homemini owns those files. Blunt macbook→homemini rsync was overwriting
-# live phone "Add to Playlist" writes with a stale MacBook mirror on every
-# save-playlists / 10-min safety-net tick — Jake: "I can't add songs to
-# playlists. At all." They are PULLED homemini→local (and NAS) in step 5
-# instead; see PHONE_PLAYLIST_SIDECARS below.
-# Names are @jaketunes/contracts sidecars.phonePlaylistSidecarsNeverPushFromDesktop
-# (vendored at vendor/jaketunes-contracts/). Do not hand-edit the array —
-# npm run sync:contracts rewrites it. Tests lock SYNC_FILES against that list.
+# 2026-08-23 — PORTED from the repo copy, where this fix was committed
+# 2026-08-12 and then never reached this running script. mobile-playlists.json
+# and playlist-additions.json are REMOVED from the push list (same
+# single-writer rule as recommendations.json): the iOS backend on homemini
+# owns them. A blunt macbook→homemini rsync overwrote live phone
+# "Add to Playlist" writes with a stale MacBook mirror on every save-playlists
+# and every 10-min safety-net tick — Jake: "I can't add songs to playlists.
+# At all." They are PULLED homemini→local (and NAS) further down instead.
+# ⚠️ TWIN: vendor/jaketunes-contracts/contracts.json
+#          phonePlaylistSidecarsNeverPushFromDesktop (repo-side tests lock
+#          SYNC_FILES against that list — but they lock the REPO copy, not
+#          this one, which is how the drift went unnoticed for 11 days).
 SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json)
 # Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
-# ⚠️ TWIN: vendor/jaketunes-contracts/contracts.json phonePlaylistSidecarsNeverPushFromDesktop
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 
 log() {
@@ -413,22 +414,79 @@ else
   # The canonical post-import content lives in iPod_Control/Music/F**/
   # via JakeTunes' importOneFile copy step. Local _pending-imports/ stays
   # untouched as a local "paper trail" per download-router.ts intent.
-  # 2026-08-08: --exclude='.moov-repair-backup/' — same class of bug as
-  # _pending-imports/ above, found the moment the log stopped crying wolf
-  # about the phone listening log. That directory holds the pre-remux
-  # ORIGINALS from the April faststart repair (1,136 files, 7.9 GB, all
-  # dated Apr 25). Nothing in the app or any script references it; it is an
-  # inert local safety copy. Mirroring it meant every full sync asked the
-  # NAS to stat 983 files it had no reason to care about, 19 of which
-  # timed out at 60s each — which is what made full syncs crawl, and what
-  # made the script log "a file was busy (likely streaming) or vanished"
-  # on every full run. That diagnosis was wrong; nothing was streaming.
-  # NOTE: sync is additive-only, so this does NOT remove the 8 GB copy
-  # already sitting on the NAS. Reclaiming that is a deliberate deletion
-  # and needs Jake's say-so — it is not a side effect of this change.
-  rsync -az \
+  # 2026-08-08: --exclude='/.*/' — no hidden directory at the library ROOT
+  # is ever pushed. Same class of bug as _pending-imports/ above, found the
+  # moment the log stopped crying wolf about the phone listening log.
+  #
+  # Two such dirs existed, 15.8 GB between them, both inert local safety
+  # copies from past repairs that no code anywhere in the tree references:
+  #   .moov-repair-backup/       1,136 files, 7.9 GB — pre-remux originals
+  #                              from the April faststart repair
+  #   .squeak-backup-20260721/   1,135 files, 7.9 GB — pre-afconvert
+  #                              originals from the July iTunSMPB fix
+  # Mirroring them made every FULL sync ask the NAS to stat ~2,000 files it
+  # had no reason to care about, many timing out at 60s each. That is what
+  # made full syncs crawl, and it is why the script reported "a file was
+  # busy (likely streaming) or vanished" on every full run — a wrong
+  # diagnosis; nothing was streaming.
+  #
+  # Excluded as a CLASS, not by name, because each repair coins a new dated
+  # directory and naming them one at a time just schedules the same bug for
+  # the next repair. The leading slash anchors the pattern to the transfer
+  # root, so real content nested anywhere below is untouched — verified by
+  # dry run: 2,273 backup entries dropped while iPod_Control (14,970) and
+  # Playlists (27) came out identical. Quick mode already did this via its
+  # find's `-not -path './.*'`; this brings full mode in line.
+  #
+  # NOTE: sync is additive-only, so this does NOT remove the ~16 GB already
+  # sitting on the NAS. Reclaiming that is a deliberate deletion and needs
+  # Jake's say-so — it is not a side effect of this change.
+  #
+  # 2026-08-23 — THE FULL SYNC COULD NEVER FINISH. Two compounding bugs, both
+  # visible only as "[sync-orchestrator] sync TIMED OUT after 600s" every hour:
+  #
+  #   1. SMB refuses preserved mtimes and modes, so `-a` re-flagged 5,177
+  #      unchanged tracks as `>f..tp.....` on EVERY run — 12.7 GB re-sent
+  #      forever, converging never. This script's own state-file helper and
+  #      macbook-mini-artwork-sync.sh both learned this years apart
+  #      (`--no-perms --no-times`); the music leg never got it. Stop fighting
+  #      a filesystem that will not take the metadata: compare on SIZE, and
+  #      don't try to set what SMB discards. Safe here because the library is
+  #      additive — imports write once, re-encodes change size, and tag edits
+  #      go to metadata-overrides.json, never to the audio file.
+  #   2. Killed runs left rsync's own `.NAME.XXXXXX` temp files behind, and
+  #      the next run treated those as SOURCE FILES — coining
+  #      `.NAME.XXXXXX.YYYYYY`, then `.…ZZZZZZ`. 1,863 files / 49 GB of
+  #      compounding garbage, growing with every timeout. Excluded as a CLASS
+  #      (same reasoning as the '/.*/' rule above): no hidden file in a music
+  #      tree is ever content — they are OS, SMB and rsync turds without
+  #      exception, and naming them one at a time just schedules the next bug.
+  # 2026-08-23 --no-links: THIS SYNC ATE A 630 MB TRACK. One file in the
+  # library is a local SYMLINK pointing INTO the NAS (Daft Punk "Alive 2007",
+  # kept on the vault to save laptop disk). rsync -a implies -l, so the push
+  # copied that symlink ONTO the NAS — replacing the real 630 MB file with a
+  # link pointing at itself. ELOOP: unreadable from both sides, and the only
+  # surviving copy was an orphaned rsync temp. Recovered 2026-08-23 and
+  # verified (exact size + 5040.639s + clean decode). A symlink whose target
+  # lives inside the destination must NEVER be pushed; --no-links skips
+  # symlinks entirely, which is correct here — the referent is already there.
+  # 2026-08-24 — BOUNDED. The music leg had no time limit of its own, so when
+  # the SMB link FLAPS mid-walk (the breaker's own words: "link is flapping"),
+  # rsync wedges in an uninterruptible read: the orchestrator's 600s watchdog
+  # fires, SIGTERM is ignored because the process is stuck in the kernel, and
+  # the run took 1,059s and 633s to die on two consecutive ticks. A hung music
+  # leg also killed the WHOLE script, so the homemini push, artwork, stars and
+  # playlist legs — none of which touch the flapping mount — never ran.
+  #   --timeout=180 lets rsync abort itself when the link goes quiet, which is
+  # the only bound that works while a syscall is stuck; the outer alarm is the
+  # backstop, sized to land INSIDE the 600s watchdog so we exit on our own
+  # terms with the other legs still to come. The leg is additive, so a killed
+  # pass just resumes next tick.
+  perl -e 'alarm shift; exec @ARGV' 420 \
+    rsync -az --size-only --no-links --no-perms --no-owner --no-group --no-times \
+    --timeout=180 \
     --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
-    --exclude='.moov-repair-backup/' \
+    --exclude='/.*/' --exclude='.*' \
     "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
     >> "$LOG" 2>&1
   music_rc=$?
@@ -441,7 +499,19 @@ run_music_rsync
 # "sync script exited 2" banner colliding with every flap window. Remount
 # (identity-gated, silent) and retry ONCE; only a genuine outage still
 # reaches the banner.
-if [ "$music_rc" -ne 0 ] && [ "$music_rc" -ne 23 ] && [ "$music_rc" -ne 24 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
+# 2026-08-08: the exit-code conditions below used to also require rc∉{23,24},
+# which let a TOTAL share drop slip past this retry entirely. Observed live:
+# the share vanished mid-run, the receiver failed with `mkdir
+# "/Volumes/JakeShared/JakeTunesLibrary" failed: No such file or directory`
+# (code 11) — but the SENDER reported 23, so rc was 23, the remount never
+# fired, and the run went on to tell Jake "a file was busy (probably
+# playing) — everything else synced fine." Nothing had synced. The share was
+# not mounted at all, and still wasn't when the run ended.
+#
+# So gate on the OBSERVABLE FACT instead of the exit code: if the target
+# directory isn't there, the share dropped, whatever number rsync chose to
+# return. An exit code is a summary; `-d` is the actual state.
+if [ "$music_rc" -ne 0 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
   log "share dropped mid-run (music rsync exit=$music_rc, target gone) — remounting + one retry"
   if ensure_jakeshared; then
     run_music_rsync
@@ -461,9 +531,33 @@ log "music rsync exit=$music_rc (mode=$([ $QUICK_MODE -eq 1 ] && echo quick || e
 # Plexamp would silently block new music from reaching mobile at all.
 # Now: 23/24 → warn + continue; only a HARD failure (connection lost,
 # disk full, etc.) aborts.
-if [ $music_rc -eq 23 ] || [ $music_rc -eq 24 ]; then
+# The share-gone case is checked FIRST and unconditionally. "Partial
+# transfer, everything else synced fine" is only true when there was
+# somewhere to sync TO; with the mount still missing after the retry above,
+# nothing copied, and saying otherwise is worse than saying nothing.
+#
+# But this is NOT an error to shout about, and it must NOT abort the run.
+# The share being away is the normal state whenever Jake's laptop is off the
+# home network — the NAS is LAN-only. Everything below this point (artwork,
+# stars, plays, recos) goes to homemini over Tailscale and works fine
+# without it, so aborting here would break the legs that still work in order
+# to complain about the one that can't. Skip the music leg, note it once an
+# hour rather than every ~2 minutes, and carry on.
+SHARE_MISSING=0
+if [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
+  SHARE_MISSING=1
+  log_hourly /tmp/.jt-share-away \
+    "NAS share not mounted (rsync exit $music_rc) — music leg skipped; homemini legs continue over Tailscale"
+elif [ $music_rc -eq 23 ] || [ $music_rc -eq 24 ]; then
   log "WARNING: rsync partial transfer (exit $music_rc) — a file was busy (likely streaming) or vanished; new imports still synced, continuing to Plex scan + homemini push"
   notify "Music sync: a file was busy (probably playing) — everything else synced fine."
+elif [ $music_rc -eq 30 ] || [ $music_rc -eq 142 ] || [ $music_rc -eq 143 ]; then
+  # 2026-08-24: link flapped mid-walk (rsync I/O timeout, or our alarm). NOT a
+  # failure worth aborting the run for — the music leg is additive and resumes
+  # next tick, while every other leg still has work it CAN do. Noted hourly so
+  # a persistent flap is still visible without crying wolf every 10 minutes.
+  log_hourly /tmp/.jt-music-flap \
+    "music leg timed out (exit $music_rc) — SMB link flapping; additive sync resumes next tick, other legs continuing"
 elif [ $music_rc -ne 0 ]; then
   notify "Music rsync failed (exit $music_rc). See /tmp/jaketunes-sync.log."
   exit 2
@@ -493,14 +587,28 @@ fi
 # run, or the safety-net tick catching out-of-band edits that need indexing).
 if [ "$PLEX_SKIP" = "1" ]; then
   log "Plex scan skipped (JT_PLEX_SKIP=1)"
+elif [ "${SHARE_MISSING:-0}" = "1" ]; then
+  # Plex lives ON the DS225. If the share never mounted, the NAS is
+  # unreachable, no music moved, and there is nothing new to index — the ssh
+  # would just time out and fire "Plex scan failed" every couple of minutes
+  # about a scan that had no reason to run. (2026-08-08)
+  log_hourly /tmp/.jt-plex-away "Plex scan skipped (NAS unreachable — nothing was copied to index)"
 elif [ $QUICK_MODE -eq 1 ] && [ "${file_count:-0}" -eq 0 ]; then
   log "Plex scan skipped (quick mode, no files changed)"
 else
   log "triggering Plex scan (section $PLEX_SECTION) via $PLEX_SSH …"
-  ssh -o BatchMode=yes -o ConnectTimeout=8 "$PLEX_SSH" \
-    "export LD_LIBRARY_PATH=\"/volume1/@appstore/PlexMediaServer:\$LD_LIBRARY_PATH\"; \
+  # 2026-08-23: DETACHED. This said "kicked off" but blocked for the FULL
+  # scan — measured at 176s of a 600s watchdog budget, burned on every sync
+  # even when the music rsync moved zero files. The scan's outcome was never
+  # used for anything (a failed scan is explicitly non-fatal below: the music
+  # IS synced either way), so waiting for it bought nothing and helped push
+  # healthy runs into the kill timer. nohup + & on the NAS side makes the
+  # log's own claim true; ssh now returns in ~1s. ServerAlive keeps a dead
+  # session from hanging here the way hop-2 did in macbook-nas-sync.
+  ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$PLEX_SSH" \
+    "nohup sh -c 'export LD_LIBRARY_PATH=\"/volume1/@appstore/PlexMediaServer:\$LD_LIBRARY_PATH\"; \
      export PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR=\"/volume1/PlexMediaServer/AppData\"; \
-     \"$PLEX_SCANNER\" --scan --refresh --section $PLEX_SECTION" \
+     \"$PLEX_SCANNER\" --scan --refresh --section $PLEX_SECTION' >/dev/null 2>&1 &" \
     >> "$LOG" 2>&1
   plex_rc=$?
   if [ $plex_rc -eq 0 ]; then
@@ -588,6 +696,17 @@ fi
 rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
 rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
   log_hourly /tmp/.jt-phonelog-note "phone listening log not present yet (appears after the first phone play post-deploy)"
+# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
+# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
+# reads these as Brief 121 mirrors; the iOS backend is the writer.
+log "pulling phone playlist sidecars (homemini → local) …"
+for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+  rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$JT_DATA_LOCAL/$f" || \
+    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
+  if [ -d "$MOUNT/JakeTunesState" ]; then
+    rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$MOUNT/JakeTunesState/$f" || true
+  fi
+done
 log "pushing desktop stars (local → homemini) …"
 if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
@@ -605,18 +724,6 @@ if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
     "$JT_DATA_LOCAL/mobile-plays.json" "$HOMEMINI:$JT_DATA_REMOTE/mobile-plays.json" >> "$LOG" 2>&1 || true
 fi
-
-# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
-# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS comment above.
-# Desktop V3 reads these as Brief 121 mirrors; the iOS backend is the writer.
-log "pulling phone playlist sidecars (homemini → local) …"
-for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
-  rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$JT_DATA_LOCAL/$f" || \
-    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
-  if [ -d "$MOUNT/JakeTunesState" ]; then
-    rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$MOUNT/JakeTunesState/$f" || true
-  fi
-done
 
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
 #

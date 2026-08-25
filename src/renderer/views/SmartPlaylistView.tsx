@@ -37,6 +37,7 @@ function formatDuration(ms: number): string {
 }
 
 const TITLES: Record<string, string> = {
+  'best-of-year': `Best of ${new Date().getFullYear()}`,
   'recently-added': 'Recently Added',
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
@@ -47,7 +48,7 @@ const TITLES: Record<string, string> = {
   'dj-hands-picks': 'DJ Stephen Hands Picks',
 }
 
-interface PicksData {
+export interface PicksData {
   name: string
   commentary: string
   trackIds: number[]
@@ -62,14 +63,14 @@ interface PicksData {
 
 // Bump this whenever picks output should be considered incompatible
 // with what an older build cached. 4.4.48: variety enforcement landed.
-const PICKS_SCHEMA_V = 2
+export const PICKS_SCHEMA_V = 2
 
 // 4.2.18: Picks are weekly now, Friday-to-Friday. Returns the most
 // recent Friday at midnight local — same value for any time within the
 // same Fri→Thu window, so equality on this value tells us "still in
 // the same week's picks." Roll-over fires automatically when the user
 // opens picks after Friday 00:00.
-function getWeekStartFriday(d: Date): Date {
+export function getWeekStartFriday(d: Date): Date {
   const result = new Date(d)
   const day = result.getDay()  // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
   const daysSinceFriday = (day - 5 + 7) % 7
@@ -414,6 +415,7 @@ export default function SmartPlaylistView() {
       case 'recently-played': return new Set(['dateAdded', 'playCount', 'channelMode']) // recency-driven; both noisy
       case 'top-25':          return new Set(['dateAdded', 'channelMode'])              // playCount drives the list, keep it visible
       case 'top-rated':       return new Set(['dateAdded', 'playCount', 'channelMode']) // Starred is binary; counts add noise
+      case 'best-of-year':    return new Set(['dateAdded', 'channelMode'])              // the signals that ranked it stay visible
       default:                return new Set(['dateAdded', 'playCount', 'channelMode']) // picks views — meta-light
     }
   }, [playlistId])

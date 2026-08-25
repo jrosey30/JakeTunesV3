@@ -104,6 +104,16 @@ def identity_auc(tracks, y):
     arts = [k_artist(t) for t in tracks]; albs = [k_album(t) for t in tracks]
     gens = [k_genre(t) for t in tracks]; decs = [k_dec(t) for t in tracks]
     plays = np.array([np.log1p(float(t.get("playCount") or 0)) for t in tracks])
+    # v4 (2026-08-23): playINTENSITY — plays per month owned. The feature-lab
+    # win (+0.006 held-out); lifetime plays kept for continuity.
+    def _months(t):
+        da = str(t.get("dateAdded") or "")
+        try:
+            d = datetime.datetime.fromisoformat(da.replace("Z", "+00:00")) if "T" in da else datetime.datetime.strptime(da[:10], "%Y-%m-%d")
+            return max(1.0, (now_ms/1000 - d.timestamp()) / (30*86400))
+        except Exception:
+            return 24.0
+    intensity = np.array([np.log1p(float(t.get("playCount") or 0)) / _months(t) for t in tracks])
     rec = np.array([(3650.0 if not (t.get("lastPlayedAt") or 0)
                      else min(3650.0, (now_ms - (t.get("lastPlayedAt") or 0)) / 86400000.0)) / 3650.0
                     for t in tracks])
@@ -119,7 +129,7 @@ def identity_auc(tracks, y):
         def feats(idx):
             return np.column_stack([[ar(arts[i]) for i in idx], [al(albs[i]) for i in idx],
                                     [gr(gens[i]) for i in idx], [dr(decs[i]) for i in idx],
-                                    plays[idx], rec[idx]])
+                                    plays[idx], rec[idx], intensity[idx]])
         sc = StandardScaler().fit(feats(tr))
         clf = LogisticRegression(C=0.2, class_weight="balanced", max_iter=4000).fit(sc.transform(feats(tr)), y[tr])
         aucs.append(roc_auc_score(y[te], clf.predict_proba(sc.transform(feats(te)))[:, 1]))

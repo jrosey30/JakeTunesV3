@@ -20,7 +20,7 @@ interface PlaybackState {
 }
 
 type PlaybackAction =
-  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number; freshContext?: boolean }
+  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number; freshContext?: boolean; preserveOrder?: boolean }
   | { type: 'PAUSE' }
   | { type: 'RESUME' }
   | { type: 'STOP' }
@@ -106,7 +106,13 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
       let resolvedOriginalQueue: Track[] | null = state.originalQueue
       let resolvedQueueIndex: number = action.queueIndex ?? state.queueIndex
       if (action.queue) {
-        if (state.shuffle && action.freshContext === true) {
+        // Jake, 2026-08-17: "mixes mean shuffle aint gonna work!!!!" A
+        // curated sequence (a mix's energy arc, a tape's running order) IS
+        // the product — preserveOrder installs it verbatim even in shuffle
+        // mode. The global shuffle setting is untouched; the shuffled-at-
+        // install queue model means the sequential walk then plays the arc
+        // exactly as built. Regular plays keep full shuffle behaviour.
+        if (state.shuffle && action.freshContext === true && !action.preserveOrder) {
           // Fresh shuffle play: clicked track to position 0, all
           // other tracks shuffled and tacked on. Brief 030b pattern.
           const sourceIndex = action.queueIndex ?? 0

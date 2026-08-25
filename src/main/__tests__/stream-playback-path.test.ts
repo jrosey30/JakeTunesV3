@@ -295,16 +295,23 @@ describe('workmini-index-sync teaches homemini before workmini can race', () => 
 
 describe('workmini must not sync-probe SMB on the main thread', () => {
   test('loadDupeFingerprintsFromLibrary uses lstat, never existsSync', () => {
-    const start = index.indexOf('async function loadDupeFingerprintsFromLibrary')
+    // P1C1 (2026-08-16): the function moved to import-pipeline.ts. The rule
+    // it enforces is unchanged and travels with it; this lock caught the
+    // move the moment it happened — exactly its job — and was repointed on
+    // purpose, per the header's own instruction.
+    const pipeline = readFileSync(join(import.meta.dirname, '../import-pipeline.ts'), 'utf-8')
+    assert.equal(index.indexOf('async function loadDupeFingerprintsFromLibrary'), -1,
+      'the function must not be REDEFINED in index.ts — one implementation, in the pipeline')
+    const start = pipeline.indexOf('async function loadDupeFingerprintsFromLibrary')
     assert.notEqual(start, -1)
-    const open = index.indexOf('{', start)
+    const open = pipeline.indexOf('{', start)
     let depth = 0
     let end = open
-    for (let i = open; i < index.length; i++) {
-      if (index[i] === '{') depth++
-      else if (index[i] === '}' && --depth === 0) { end = i; break }
+    for (let i = open; i < pipeline.length; i++) {
+      if (pipeline[i] === '{') depth++
+      else if (pipeline[i] === '}' && --depth === 0) { end = i; break }
     }
-    const body = index.slice(open, end + 1)
+    const body = pipeline.slice(open, end + 1)
     assert.match(body, /lstat\s*\(/, 'dupe scan must lstat local farm entries')
     assert.doesNotMatch(body, /existsSync\s*\(/,
       'existsSync is back in the dupe scan — that follows farm symlinks into SMB on the main thread and beachballs workmini')

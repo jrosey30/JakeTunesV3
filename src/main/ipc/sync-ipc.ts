@@ -15,6 +15,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
+import { parseTsaSeal, tsaInspectSeal, tsaRelFromColon, tsaNormalizeColonPath } from '../ipod-sync-tsa.ts'
 
 export interface StateConflict {
   file: string
@@ -46,7 +47,7 @@ export interface SyncIpcHost {
     tracks: Array<Record<string, unknown>>,
     playlists: Array<Record<string, unknown>>,
     convertOptions?: SyncConvertOptions,
-    syncOpts?: { wipeFirst?: boolean },
+    syncOpts?: { wipeFirst?: boolean; origin?: string },
   ) => Promise<unknown>
   /** Pull new tracks from device DB not already in the library. */
   syncIpodFromDevice: (existingIds: number[]) => Promise<unknown>
@@ -73,6 +74,10 @@ export interface SyncIpcHost {
 
 function ipodSyncJournalPath(): string {
   return join(app.getPath('userData'), 'ipod-sync-journal.json')
+}
+
+function ipodTsaSealPath(): string {
+  return join(app.getPath('userData'), 'ipod-activity-tsa-seal.json')
 }
 
 /**
@@ -186,6 +191,46 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
     } catch { return null }
   }, { public: true })
 
+  // Read-only: did the sealed activity set drift? Never copies, never repairs.
+  ipc.handle('inspect-ipod-tsa-seal', async () => {
+    try {
+      let raw: unknown
+      try {
+        raw = JSON.parse(await readFile(ipodTsaSealPath(), 'utf-8'))
+      } catch {
+        return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
+      }
+      const seal = parseTsaSeal(raw)
+      if (!seal) {
+        return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
+      }
+      const mount = host.getIpodMount()
+      if (!mount) {
+        return { ok: true, sealed: true, drifted: false, unmounted: true, target: seal.target, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
+      }
+      const sep = host.getPathSep()
+      const onCard = new Map<string, number>()
+      for (const p of seal.passengers) {
+        const destPath = tsaNormalizeColonPath(p.destPath)
+        const dest = join(mount, tsaRelFromColon(destPath, sep))
+        try {
+          onCard.set(destPath, (await stat(dest)).size)
+        } catch { /* missing */ }
+      }
+      const { present, missing } = tsaInspectSeal(seal, onCard)
+      return {
+        ok: true,
+        sealed: true,
+        drifted: missing.length > 0,
+        target: seal.target,
+        present,
+        missing: missing.slice(0, 20),
+      }
+    } catch (err) {
+      return { ok: false, error: safeIpcError(err, 'io-failed'), sealed: false, drifted: false, target: 0, present: 0, missing: [] }
+    }
+  }, { public: true })
+
   ipc.handle('get-ipod-db-tracks', async () => {
     try {
       const ipodData = await host.readIpodDatabase()
@@ -200,7 +245,7 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
     return host.syncIpodFromDevice(existingIds)
   }, { public: true })
 
-  ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean }) => {
+  ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean; origin?: string }) => {
     return host.syncToIpod(tracks, playlists, convertOptions, syncOpts)
   }, { refuse: { ok: false, copied: 0, error: 'refused-sender' } as const })
 
