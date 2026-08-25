@@ -1539,7 +1539,8 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         const block = reply.content[0]
         const text = block && block.type === 'text' ? block.text : ''
         for (const r of df.parseFeedJson<{ artist?: string; title?: string; year?: string; why?: string }>(text)) {
-          if (r.artist && r.title) cards.push({ lane: 'brand-new', type: 'album', artist: String(r.artist), title: String(r.title), year: String(r.year || new Date().getFullYear()), why: df.clipWhy(String(r.why || '')), desc: df.clipWhy(String(r.why || '')) })
+          const card = await df.dressJournalismPick(r, { verify: df.itunesVerify as never, caa: fetchCaaArtwork, clipWhy: df.clipWhy })  // existence gate
+          if (card) cards.push(card)
         }
       } catch (err) { console.warn('[discover] brand-new lane failed:', err) }
     })()

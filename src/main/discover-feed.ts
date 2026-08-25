@@ -436,3 +436,33 @@ export function buildGapCards(
   }
   return trimGapLane(gap, { perArtist: 1 }).slice(0, opts.limit ?? 6)
 }
+
+/** Existence gate for a journalism-sourced pick: iTunes first, Cover Art
+ *  Archive second (the underground lives off Apple's map), no art = no card.
+ *  Extracted so the brand-new lane reads as one call — 2026-08-25, when that
+ *  lane was found to be the only LLM lane shipping UNVERIFIED cards and a
+ *  third of the shop turned out to be phrases lifted from article prose
+ *  ("Kelela — new avatar", "Arca — XXXXX": Apple returns zero for both). */
+export async function dressJournalismPick(
+  r: { artist?: string; title?: string; year?: string; why?: string },
+  deps: {
+    verify: (q: string, entity: 'album', hint: { artist: string; title: string }) => Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number } | null>
+    caa: (artist: string, title: string) => Promise<string | null>
+    clipWhy: (s: string) => string
+  },
+): Promise<FeedCard | null> {
+  if (!r.artist || !r.title) return null
+  const artist = String(r.artist), title = String(r.title)
+  const v = await deps.verify(`${artist} ${title}`, 'album', { artist, title }).catch(() => null)
+  await new Promise((res) => setTimeout(res, 250))
+  const caa = v?.artUrl ? null : await deps.caa(artist, title).catch(() => null)
+  if (!v?.artUrl && !caa) return null
+  const why = deps.clipWhy(String(r.why || ''))
+  return {
+    lane: 'brand-new', type: 'album',
+    artist: v?.artist || artist, title: v?.title || title,
+    year: v?.year || String(r.year || new Date().getFullYear()),
+    why, artUrl: v?.artUrl || caa || undefined,
+    genre: v?.genre, collectionId: v?.collectionId, desc: why,
+  } as FeedCard
+}
