@@ -42,7 +42,17 @@ const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecordin
  * the song's title. The artist is matched separately and the duration guard
  * still runs, so dropping them widens the search without weakening any check.
  */
-const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?|album version|single version|original version|bonus(?: track)?s?|deluxe|mono|stereo|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|feat\.?\s.*|featuring\s.*|ft\.?\s.*|with\s.+)$/i
+// 2026-08-25 — the list was CLOSED, so any reissue label outside it survived
+// into the Qobuz query and returned nothing. Jake: Get on Simple Plan's
+// "No Pads, No Helmets...Just Balls (15th Anniversary Tour Edition)" searched
+// Qobuz for that literal string; Qobuz catalogs the album as "No Pads, No
+// Helmets...Just Balls". Same failure shape as the Love Fiend "- Single" bug
+// below, one layer up. "deluxe" alone was listed but "Deluxe Edition" was not,
+// so even the commonest reissue label missed. Now anything containing
+// "edition"/"anniversary", plus reissue/expanded, is treated as PACKAGING.
+// The VERSION_MARKER guard still runs first, so "(Live Edition)" survives —
+// that names a different recording.
+const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?|album version|single version|original version|bonus(?: track)?s?|deluxe|mono|stereo|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|feat\.?\s.*|featuring\s.*|ft\.?\s.*|with\s.+|.*\bedition\b.*|.*\banniversar(?:y|ies)\b.*|reissue[ds]?|expanded|remastered\s+version)$/i
 
 /**
  * Apple MASKS profanity inside track names — "N****s Bleed", "F!*@ You

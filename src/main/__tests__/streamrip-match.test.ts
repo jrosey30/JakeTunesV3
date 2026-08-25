@@ -375,3 +375,27 @@ describe('liveBrandMarker — the Ed Sullivan class (2026-08-22)', () => {
     assert.equal(liveBrandMarker('Song', 'Song — Kexperimental Works'), null)
   })
 })
+
+// 2026-08-25 — Jake hit "No search results found for query Simple Plan No
+// Pads, No Helmets...Just Balls (15th Anniversary Tour Edition)" while Apple
+// showed the album and all 19 tracks right there. EDITION_GROUP was a CLOSED
+// list, so any reissue label outside it rode into the Qobuz query and matched
+// nothing. Packaging must strip; a different RECORDING must survive.
+describe('searchTitle — reissue packaging is not the album’s name', () => {
+  it('strips edition / anniversary / reissue labels', () => {
+    assert.equal(searchTitle('No Pads, No Helmets...Just Balls (15th Anniversary Tour Edition)'), 'No Pads, No Helmets...Just Balls')
+    assert.equal(searchTitle('Nevermind (Deluxe Edition)'), 'Nevermind')       // "deluxe" alone was listed; "Deluxe Edition" was not
+    assert.equal(searchTitle('OK Computer (Collector’s Edition)'), 'OK Computer')
+    assert.equal(searchTitle('Pet Sounds (50th Anniversary)'), 'Pet Sounds')
+    assert.equal(searchTitle('Doolittle (Expanded)'), 'Doolittle')
+    assert.equal(searchTitle('Loveless (Reissue)'), 'Loveless')
+  })
+
+  it('keeps a different RECORDING — the wrong-version guard depends on it', () => {
+    assert.equal(searchTitle('Under the Bridge (Live)'), 'Under the Bridge (Live)')
+    assert.equal(searchTitle('Layla (Acoustic)'), 'Layla (Acoustic)')
+    assert.equal(searchTitle('Ray of Light (Remix)'), 'Ray of Light (Remix)')
+    // VERSION_MARKER is checked before EDITION_GROUP, so this is NOT packaging.
+    assert.equal(searchTitle('MTV Unplugged (Live Edition)'), 'MTV Unplugged (Live Edition)')
+  })
+})
