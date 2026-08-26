@@ -1102,13 +1102,25 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           return
         } else {
           console.warn('[DJ] TTS failed or no audio:', tts.error)
+          micFailed = /401|unauthor/i.test(String(tts.error || ''))
+            ? "Music Man can't speak — the voice service rejected the key."
+            : "Music Man had the words but no voice — speech failed."
         }
       } else {
         console.warn('[DJ] Claude returned no text:', result)
+        micFailed = 'Music Man had nothing to say about this one.'
       }
     } catch (err) {
       console.error('[DJ] Error:', err)
+      micFailed = "Music Man couldn't reach the mic."
     }
+    // 2026-08-25 — Jake: "the mic button lowered the volume but no voice....no
+    // fun fact....nothing". Every failure fell through to a console.warn nobody
+    // reads, and the volume duck was NEVER undone — the exact
+    // reverse-every-side-effect rule in CLAUDE.md. Restore on EVERY path and
+    // say what happened; a silently half-volume app is the worst outcome.
+    try { fadeVolumeIn() } catch { /* ignore */ }
+    if (micFailed) setNotice(micFailed, { kind: 'error', durationMs: 6000 })
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
