@@ -304,7 +304,15 @@ export async function ejectVolume(mountPoint: string): Promise<void> {
       const raw = String((err as { stderr?: string; message?: string })?.stderr
         || (err as Error)?.message || '')
       const busy = /in use by process\s+(\d+)\s*\(([^)]+)\)/i.exec(raw)
-      if (/simulator/i.test(raw)) throw new Error('the iOS Simulator is holding the disk — quit it (xcrun simctl shutdown all) and retry')
+      if (/simulator/i.test(raw)) {
+        // Same self-heal as the sync path: shut the simulators and try once more.
+        try { await execP('xcrun', ['simctl', 'shutdown', 'all'], { timeout: 60000 }) } catch { /* best-effort */ }
+        await new Promise((r) => setTimeout(r, 3000))
+        try {
+          await execP('diskutil', ['eject', mountPoint])
+          return
+        } catch { throw new Error('the iOS Simulator was holding the disk; shutting it down did not free it — try again in a moment') }
+      }
       if (busy) throw new Error(`the disk is still in use by ${busy[2]}`)
       if (/dissent/i.test(raw)) throw new Error('another app refused to let the disk go')
       if (/busy|resource/i.test(raw)) throw new Error('the disk is busy')
@@ -396,6 +404,12 @@ export async function remountVolume(mountPoint: string, opts: RemountVolumeOpts 
       } catch (e) {
         lastErr = e instanceof Error ? e.message : String(e)
       }
+    }
+    if (!unmounted && tryN === 1 && /simulator/i.test(lastErr)) {
+      // Clear the one dissenter we can safely clear, then let the loop retry.
+      try { await execP('xcrun', ['simctl', 'shutdown', 'all'], { timeout: 60000 }) } catch { /* best-effort */ }
+      await new Promise((r) => setTimeout(r, 3000))
+      continue
     }
     if (!unmounted && tryN < CLEAN_TRIES) {
       await new Promise((r) => setTimeout(r, 1000))
