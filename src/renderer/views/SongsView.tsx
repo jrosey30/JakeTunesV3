@@ -345,13 +345,15 @@ export default function SongsView() {
   // value so the FIRST render computes startIndex/endIndex correctly.
   // Pair with useScrollPersistence(key, containerRef) which then keeps
   // both DOM scrollTop and the cache in sync.
-  // 2026-08-26 overscan 10 -> 44 (Jake: "scrolling fast looks weird"). A fling
-  // outruns a 10-row buffer in one frame and the list shows a blank band until
-  // React catches up. 44 is ~1.5 screens of slack each way; the hook's math was
-  // never wrong, it was starved. (useVirtualScroll is Do-Not-Touch — this is
-  // its call-site argument, not a change to the hook.)
+  // 2026-08-26 overscan, tuned WITH flushSync below — the two trade off.
+  // flushSync renders the new window in the same frame, which removes the
+  // blank band; but it also makes every scroll event pay for the whole slice.
+  // Measured at 44: 129 rows for 41 visible, median frame 17.8ms (over the
+  // 16.7ms 60fps budget), worst 26.5ms — a continuous scrollbar drag dropped
+  // frames and read as stutter. 14 keeps ~1.7x coverage at roughly half the
+  // per-frame work. (useVirtualScroll is Do-Not-Touch; this is its argument.)
   const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(
-    sorted.length, ROW_HEIGHT, 44, getSavedScrollTop('songs'),
+    sorted.length, ROW_HEIGHT, 14, getSavedScrollTop('songs'),
   )
   useScrollPersistence('songs', containerRef)
   // 4.4.27: removed useElasticOverscroll — let macOS provide the
