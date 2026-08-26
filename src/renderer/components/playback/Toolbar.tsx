@@ -994,6 +994,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
     if (!pb.nowPlaying) return
     djCancelledRef.current = false
+    let micFailed = ''
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
