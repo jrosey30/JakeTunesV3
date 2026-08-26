@@ -304,6 +304,7 @@ export async function ejectVolume(mountPoint: string): Promise<void> {
       const raw = String((err as { stderr?: string; message?: string })?.stderr
         || (err as Error)?.message || '')
       const busy = /in use by process\s+(\d+)\s*\(([^)]+)\)/i.exec(raw)
+      if (/simulator/i.test(raw)) throw new Error('the iOS Simulator is holding the disk — quit it (xcrun simctl shutdown all) and retry')
       if (busy) throw new Error(`the disk is still in use by ${busy[2]}`)
       if (/dissent/i.test(raw)) throw new Error('another app refused to let the disk go')
       if (/busy|resource/i.test(raw)) throw new Error('the disk is busy')
@@ -409,9 +410,12 @@ export async function remountVolume(mountPoint: string, opts: RemountVolumeOpts 
     }
   }
   if (!unmounted) {
+    const hint = /simulator/i.test(lastErr)
+      ? 'the iOS Simulator is holding the card — quit it (xcrun simctl shutdown all) and sync again. '
+      : ''
     return {
       ok: false,
-      error: `clean unmount failed for ${node} (refusing force — force unmount discards dirty FAT32 pages and is the 500→33 roulette). ${lastErr}`.trim(),
+      error: `${hint}clean unmount failed for ${node} (refusing force — force unmount discards dirty FAT32 pages and is the 500→33 roulette). ${lastErr}`.trim(),
     }
   }
   // Remount by node — diskutil mount is synchronous and restores /Volumes/NAME.
