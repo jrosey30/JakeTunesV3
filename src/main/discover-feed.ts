@@ -455,14 +455,127 @@ export async function dressJournalismPick(
   const artist = String(r.artist), title = String(r.title)
   const v = await deps.verify(`${artist} ${title}`, 'album', { artist, title }).catch(() => null)
   await new Promise((res) => setTimeout(res, 250))
-  const caa = v?.artUrl ? null : await deps.caa(artist, title).catch(() => null)
-  if (!v?.artUrl && !caa) return null
+  // Apple miss or 403 is NOT proof the record does not exist — see deezerVerify.
+  const dz = v?.artUrl ? null : await deezerVerify(artist, title).catch(() => null)
+  const caa = (v?.artUrl || dz?.artUrl) ? null : await deps.caa(artist, title).catch(() => null)
+  const art = v?.artUrl || dz?.artUrl || caa
+  if (!art) return null
   const why = deps.clipWhy(String(r.why || ''))
   return {
     lane: 'brand-new', type: 'album',
-    artist: v?.artist || artist, title: v?.title || title,
-    year: v?.year || String(r.year || new Date().getFullYear()),
-    why, artUrl: v?.artUrl || caa || undefined,
+    artist: v?.artist || dz?.artist || artist, title: v?.title || dz?.title || title,
+    year: v?.year || dz?.year || String(r.year || new Date().getFullYear()),
+    why, artUrl: art,
     genre: v?.genre, collectionId: v?.collectionId, desc: why,
   } as FeedCard
+}
+
+/**
+ * Deezer verification — the answer to two problems at once (2026-08-25, Jake:
+ * "find ways to make it work!!!").
+ *
+ * 1. Apple rate-limits by IP and 403s under any real load, which starved every
+ *    verified lane. Deezer's public search needs no key and is far more
+ *    generous.
+ * 2. Apple simply does not carry a lot of underground music. I very nearly
+ *    deleted Kelela's "new avatar" and Arca's "XXXXX" as hallucinations
+ *    because Apple returned zero for both — Deezer has them, with art. Those
+ *    are exactly the records Jake wants surfaced, so an Apple miss must never
+ *    be read as "does not exist".
+ *
+ * record_type is a bonus quality signal Apple's search does not give us:
+ * "album" vs "single"/"ep"/"compilation" separates a record from a promo drop.
+ */
+export interface CatalogHit {
+  artist: string
+  title: string
+  year?: string
+  artUrl?: string
+  recordType?: string
+  trackCount?: number
+}
+
+export async function deezerVerify(
+  artist: string,
+  title: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<CatalogHit | null> {
+  const q = encodeURIComponent(`${artist} ${title}`.trim())
+  if (!q) return null
+  const res = await fetchFn(`https://api.deezer.com/search/album?q=${q}&limit=5`)
+  if (!res.ok) return null
+  const body = await res.json() as { data?: Array<Record<string, unknown>> }
+  const rows = Array.isArray(body?.data) ? body.data : []
+  if (!rows.length) return null
+  const want = `${artist} ${title}`.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  // Prefer a row whose artist AND title both look right; fall back to the
+  // first hit, which Deezer already ranks by relevance.
+  const scored = rows.map((r) => {
+    const a = String((r.artist as { name?: string })?.name || '')
+    const t = String(r.title || '')
+    const joined = `${a} ${t}`.toLowerCase().replace(/[^a-z0-9]+/g, '')
+    let score = 0
+    if (joined === want) score += 4
+    if (want.includes(t.toLowerCase().replace(/[^a-z0-9]+/g, '')) && t) score += 2
+    if (want.includes(a.toLowerCase().replace(/[^a-z0-9]+/g, '')) && a) score += 2
+    if (String(r.record_type || '') === 'album') score += 1
+    return { r, a, t, score }
+  }).sort((x, y) => y.score - x.score)
+  const best = scored[0]
+  if (!best || best.score < 2) return null
+  const r = best.r
+  return {
+    artist: best.a || artist,
+    title: best.t || title,
+    year: String(r.release_date || '').slice(0, 4) || undefined,
+    artUrl: String(r.cover_big || r.cover_medium || '') || undefined,
+    recordType: String(r.record_type || '') || undefined,
+    trackCount: typeof r.nb_tracks === 'number' ? r.nb_tracks : undefined,
+  }
+}
+
+/** Deezer track lookup — also yields a 30s preview, which the songs lane needs. */
+export async function deezerTrack(artist: string, title: string, fetchFn: typeof fetch = fetch): Promise<(CatalogHit & { previewUrl?: string }) | null> {
+  const q = encodeURIComponent(`${artist} ${title}`.trim())
+  if (!q) return null
+  const res = await fetchFn(`https://api.deezer.com/search/track?q=${q}&limit=5`)
+  if (!res.ok) return null
+  const body = await res.json() as { data?: Array<Record<string, unknown>> }
+  const rows = Array.isArray(body?.data) ? body.data : []
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const wantA = norm(artist), wantT = norm(title)
+  for (const r of rows) {
+    const a = String((r.artist as { name?: string })?.name || '')
+    const t = String(r.title || '')
+    if (!norm(a).includes(wantA) && !wantA.includes(norm(a))) continue
+    if (!norm(t).includes(wantT) && !wantT.includes(norm(t))) continue
+    const al = r.album as { cover_big?: string; cover_medium?: string } | undefined
+    return { artist: a, title: t, artUrl: al?.cover_big || al?.cover_medium, previewUrl: String(r.preview || '') || undefined }
+  }
+  return null
+}
+
+/**
+ * The verification any lane should use: Apple first (richest metadata), Deezer
+ * second. Apple 403s this IP under load and does not carry much underground
+ * music, and BOTH failure modes previously read as "this record is not real" —
+ * which starved time-machine to 2 cards and songs to 3 on a live run.
+ */
+export async function catalogVerify(
+  q: string,
+  entity: 'album' | 'song' | 'musicArtist',
+  hint: { artist: string; title?: string },
+  itunes: (q: string, e: 'album' | 'song' | 'musicArtist', h: { artist: string; title?: string }) => Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number; previewUrl?: string } | null>,
+): Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number; previewUrl?: string } | null> {
+  const v = await itunes(q, entity, hint).catch(() => null)
+  if (v?.artUrl) return v
+  if (entity === 'musicArtist') return v
+  const title = hint.title || ''
+  if (!title) return v
+  if (entity === 'song') {
+    const t = await deezerTrack(hint.artist, title).catch(() => null)
+    return t ? { artist: t.artist, title: t.title, artUrl: t.artUrl, previewUrl: t.previewUrl } : v
+  }
+  const d = await deezerVerify(hint.artist, title).catch(() => null)
+  return d ? { artist: d.artist, title: d.title, year: d.year, artUrl: d.artUrl } : v
 }

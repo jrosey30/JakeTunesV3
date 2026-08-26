@@ -1680,13 +1680,13 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         for (const c of (parsed.classics || []).slice(0, 24)) {
           if (!c.artist) continue
           const entity = c.type === 'artist' ? 'musicArtist' : 'album'
-          const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title })
+          const v = await df.catalogVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title }, df.itunesVerify as never)
           if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl, because: validBecause(c.because), genre: v.genre, collectionId: v.collectionId, desc: df.clipWhy(String(c.why || '')) })
           await new Promise((r) => setTimeout(r, 250))   // stay polite with Apple
         }
         for (const sng of (parsed.songs || []).slice(0, 24)) {
           if (!sng.artist || !sng.title) continue
-          const v = await df.itunesVerify(`${sng.artist} ${sng.title}`, 'song', { artist: sng.artist, title: sng.title })
+          const v = await df.catalogVerify(`${sng.artist} ${sng.title}`, 'song', { artist: sng.artist, title: sng.title }, df.itunesVerify as never)
           if (v) cards.push({ lane: 'songs', type: 'song', artist: v.artist, title: v.title, year: v.year || String(sng.year || ''), why: df.clipWhy(String(sng.why || '')), artUrl: v.artUrl, previewUrl: v.previewUrl, because: validBecause(sng.because), genre: v.genre, desc: df.clipWhy(String(sng.why || '')) })
           await new Promise((r) => setTimeout(r, 250))
         }
