@@ -1536,11 +1536,11 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
           model: 'claude-sonnet-4-6', max_tokens: 8000, system: MUSIC_MAN_CORE,
           messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 40 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
-        const block = reply.content[0]
-        const text = block && block.type === 'text' ? block.text : ''
+        const block = reply.content[0]; console.warn(`[dx.brandnew] scenes=${scenes.length} journalism=${journalism.length}ch`)
+        const text = block && block.type === 'text' ? block.text : ''; console.warn(`[dx.brandnew] replyChars=${text.length} stop=${reply.stop_reason} picks=${df.parseFeedJson(text).length}`)
         for (const r of df.parseFeedJson<{ artist?: string; title?: string; year?: string; why?: string }>(text)) {
           const card = await df.dressJournalismPick(r, { verify: df.itunesVerify as never, caa: fetchCaaArtwork, clipWhy: df.clipWhy })  // existence gate
-          if (card) cards.push(card)
+          if (card) cards.push(card); else console.warn(`[dx.brandnew] REJECTED ${r.artist} — ${r.title}`)
         }
       } catch (err) { console.warn('[discover] brand-new lane failed:', err) }
     })()
@@ -10789,7 +10789,7 @@ Your picks should also be shaped by:
 LIBRARY-AWARE FALLBACK: if the user's library doesn't have ${opts.trackCount} tracks in your strict lane, take what's CLOSEST to your lane — but stay AS FAR AS POSSIBLE from the other two personas' territory. You MUST return EXACTLY ${opts.trackCount} tracks. If you genuinely can't find ${opts.trackCount} in-lane, acknowledge it in the commentary ("Library was thin in my territory this week — these are the closest matches.").
 
 Return ONLY a JSON object (no markdown, no code fences):
-{"name":"creative weekly rotation name","commentary":"3-4 sentences explaining the week's picks, in character — why THIS music for THIS WEEK. Be specific about what's driving your choices.","trackIds":[array of exactly ${opts.trackCount} track ID numbers]}
+{"name":"creative weekly rotation name","commentary":"1-2 sentences, max 30 words total, about THE MUSIC IN THIS LIST — what it sounds like and who it is for. Name a band or two. NO musing about festivals, the news, the state of the library, or your own feelings. NO 'I will die on this hill'. NO throat-clearing. Say what is in here and stop.","trackIds":[array of exactly ${opts.trackCount} track ID numbers]}
 
 Rules:
 - ONLY use track IDs from the provided library
