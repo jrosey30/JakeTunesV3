@@ -859,12 +859,47 @@ export default function SongsView() {
     idleTimerRef.current = setTimeout(followNowPlayingTop, FOLLOW_IDLE_MS)
   }, [followNowPlayingTop])
 
+// Blank-frame recorder (2026-08-26). Synthetic drags could not reproduce what
+// Jake sees, so measure the real one: what fraction of the visible box is
+// covered by rows on the frame after a scroll. Reports a bad RUN once, with
+// numbers, instead of spamming per frame.
+let blankRun = 0, blankWorst = 100, blankLastReport = 0
+function scrollBlankProbe(sc: HTMLDivElement | null): void {
+  if (!sc) return
+  requestAnimationFrame(() => {
+    const cr = sc.getBoundingClientRect()
+    if (cr.height < 50) return
+    let top = Infinity, bot = -Infinity
+    for (const r of sc.querySelectorAll('.songs-row')) {
+      const b = (r as HTMLElement).getBoundingClientRect()
+      if (b.bottom < cr.top || b.top > cr.bottom) continue
+      if (b.top < top) top = b.top
+      if (b.bottom > bot) bot = b.bottom
+    }
+    const pct = isFinite(top)
+      ? Math.round((100 * Math.max(0, Math.min(bot, cr.bottom) - Math.max(top, cr.top))) / cr.height)
+      : 0
+    if (pct < 70) {
+      blankRun++
+      if (pct < blankWorst) blankWorst = pct
+    } else if (blankRun > 0) {
+      const now = Date.now()
+      if (now - blankLastReport > 3000) {
+        blankLastReport = now
+        console.warn(`[dx.scroll-blank] ${blankRun} frame(s) under 70% covered, worst ${blankWorst}% — scrollTop=${Math.round(sc.scrollTop)} rows=${sc.querySelectorAll('.songs-row').length}`)
+      }
+      blankRun = 0; blankWorst = 100
+    }
+  })
+}
+
   const handleScroll = useCallback((_e: React.UIEvent<HTMLDivElement>) => {
     // See the note above the useVirtualScroll call: React batches this state
     // update, so a fast scroll leaves the translated row block at the previous
     // offset and the viewport goes blank until it catches up. Render it in the
     // same frame as the scroll event.
     flushSync(() => { onScroll() })
+    scrollBlankProbe(containerRef.current)
     // Skip activity update if this scroll was triggered by our own
     // auto-follow (within 200ms of the programmatic scrollTop write).
     if (Date.now() - isAutoScrollAtRef.current > 200) {
