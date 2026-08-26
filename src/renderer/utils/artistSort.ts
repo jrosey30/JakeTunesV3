@@ -1,4 +1,9 @@
 /** iTunes-style sort name — used for BOTH artists and albums via compareNames().
+ *  ⚠️ TWIN: src/main/ipod-artist-sort.ts artistSortName / ipodArtistSortKey
+ *  ⚠️ TWIN: core/db_reader.py ipod_artist_sort_key
+ *
+ *  iPod Music > Artists must use the same key or a 500-song activity set
+ *  files under first-seen picker order instead of A–Z.
  *  Ignore a leading article so "The Beatles" files under B, "A Tribe Called
  *  Quest" under T. Only a whole leading word counts — "a-ha" and "Theory of a
  *  Deadman" are untouched. ALL leading punctuation/symbols are stripped, so

@@ -6,6 +6,7 @@ import random
 import time
 import plistlib
 import hashlib
+import unicodedata
 
 MAC_EPOCH_OFFSET = 2082844800  # seconds between 1904-01-01 and 1970-01-01
 
@@ -395,7 +396,6 @@ def fold_for_ipod(text):
         return ''
     out = ''.join(IPOD_CHAR_FOLD.get(c, c) for c in s)
     if any(ord(c) > 0xFF for c in out):
-        import unicodedata
         folded = []
         for c in out:
             if ord(c) <= 0xFF:
@@ -688,7 +688,8 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     mhods = bytearray()
     mhods += build_string_mhod(1, track.get('title', ''))
     mhods += build_string_mhod(4, track.get('artist', ''))
-    mhods += build_string_mhod(22, track.get('artist', ''))
+    mhods += build_string_mhod(22, ipod_artist_sort_label(
+        track.get('artist', ''), track.get('sortArtist')))
     mhods += build_string_mhod(3, track.get('album', ''))
     mhods += build_string_mhod(5, track.get('genre', ''))
     mhods += build_string_mhod(6, ft)
@@ -740,6 +741,87 @@ def build_sort_mhod(sort_key, sorted_indices):
     for i, idx in enumerate(sorted_indices):
         struct.pack_into('<I', rec, 72 + i * 4, idx)
     return bytes(rec)
+
+
+def ipod_artist_sort_key(name, sort_artist=None):
+    """iPod Music > Artists A–Z key: case-insensitive, ignore leading The/A/An.
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodArtistSortKey / artistSortName
+    ⚠️ TWIN: src/renderer/utils/artistSort.ts artistSortName
+
+    Activity sync used to emit mhia records in picker/score order, so the
+    Mini's Artists menu was first-seen, not alphabetical. sortArtist wins
+    when present. Do NOT use this for type-52 mhod tables — those must
+    stay on _fold() or firmware discards out-of-order Songs rows.
+    """
+    raw = str(sort_artist or '').strip() or str(name or '')
+    s = raw.strip().lower()
+    prev = None
+    while s and s != prev:
+        prev = s
+        i = 0
+        while i < len(s) and (s[i].isspace() or unicodedata.category(s[i])[0] in 'PS'):
+            i += 1
+        s = s[i:]
+        for art in ('the ', 'a ', 'an '):
+            if s.startswith(art):
+                s = s[len(art):]
+                break
+        s = s.strip()
+    return s or raw.strip().lower()
+
+
+def ipod_artist_sort_label(name, sort_artist=None):
+    """mhod 22 value: 'Beatles' for 'The Beatles'. Explicit sortArtist wins.
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodArtistSortLabel
+    """
+    if sort_artist and str(sort_artist).strip():
+        return str(sort_artist).strip()
+    raw = str(name or '').strip()
+    if not raw:
+        return ''
+    s = raw
+    prev = None
+    while s and s != prev:
+        prev = s
+        i = 0
+        while i < len(s) and (s[i].isspace() or unicodedata.category(s[i])[0] in 'PS'):
+            i += 1
+        s = s[i:]
+        low = s.lower()
+        for art in ('the ', 'a ', 'an '):
+            if low.startswith(art):
+                s = s[len(art):]
+                break
+        s = s.strip()
+    return s or raw
+
+
+def album_tuples_for_itunesdb(tracks):
+    """Unique (artist, albumArtist, album) in iPod A–Z artist order.
+
+    First-seen order was the activity-sync Artists-menu shuffle.
+    """
+    seen = set()
+    album_tuples = []
+    for t in tracks:
+        artist_str = (t.get('artist', '') or '').strip()
+        albumartist_str = (t.get('albumArtist', '') or t.get('artist', '') or '').strip()
+        album_str = (t.get('album', '') or '').strip()
+        if not album_str:
+            continue
+        key = (albumartist_str.lower(), album_str.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        album_tuples.append((artist_str, albumartist_str, album_str))
+    album_tuples.sort(key=lambda x: (
+        ipod_artist_sort_key(x[0]),
+        ipod_artist_sort_key(x[2]),
+        (x[1] or '').lower(),
+    ))
+    return album_tuples
 
 
 def _fold(s):
@@ -1162,19 +1244,7 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
     # Each mhia record is 0x58 bytes of header + 0..3 child mhods. The
     # mhia mhod types are 200=album, 201=artist, 202=albumArtist (NOT
     # the same as track-mhod types 1/2/3/4/5 — different namespace).
-    seen_albums = set()
-    album_tuples = []
-    for t in tracks:
-        artist_str = (t.get('artist', '') or '').strip()
-        albumartist_str = (t.get('albumArtist', '') or t.get('artist', '') or '').strip()
-        album_str = (t.get('album', '') or '').strip()
-        if not album_str:
-            continue
-        key = (albumartist_str.lower(), album_str.lower())
-        if key in seen_albums:
-            continue
-        seen_albums.add(key)
-        album_tuples.append((artist_str, albumartist_str, album_str))
+    album_tuples = album_tuples_for_itunesdb(tracks)
 
     def build_album_mhod(mhod_type, s):
         sb = s.encode('utf-16-le')

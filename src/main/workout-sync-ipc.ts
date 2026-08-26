@@ -283,7 +283,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         return `• ${h.syncedAt.slice(0, 10)} "${h.name}" (${h.trackCount} tracks)${rm ? ` | removed: ${rm}` : ''}${ad ? ` | added: ${ad}` : ''}`
       }).join('\n')
       const vibe = await askActivityVibe(host, tracks, brief, weather, prev?.name, historyLines || undefined)
-      const target = Math.min(opts?.target ?? WORKOUT_TARGET, tracks.length)
+      const target = Math.max(1, Math.floor(Number(opts?.target) || WORKOUT_TARGET))
 
       // Brain fit — the taste model finally decides the set (Jake 2026-07-23:
       // "get better at picking… you pick a lot of shit and miss on a lot of
@@ -347,6 +347,9 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       if (selected.trackIds.length === 0) {
         return { ok: false, error: 'Could not build an activity set from this library.' }
       }
+      if (selected.shortfall > 0) {
+        console.warn(`[workout-sync] requested ${selected.requested}, proposing ${selected.trackIds.length} (shortfall ${selected.shortfall})`)
+      }
 
       // REVIEW GATE (2026-07-18): building is now a PROPOSAL — nothing
       // persists here. The renderer shows the set for review (edits,
@@ -356,6 +359,9 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       return {
         ok: true,
         trackIds: selected.trackIds,
+        reserveIds: selected.reserveIds,
+        requested: selected.requested,
+        shortfall: selected.shortfall,
         name: selected.name,
         commentary: selected.commentary,
         alacCount: selected.alacCount,
