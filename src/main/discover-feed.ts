@@ -153,11 +153,16 @@ export function parseFeedJson<T>(text: string): T[] {
   const body = (fence ? fence[1] : text).trim()
   const start = body.indexOf('[')
   const end = body.lastIndexOf(']')
-  if (start < 0 || end <= start) return []
+  if (start < 0) return []
+  // A TRUNCATED reply used to return [] — the whole lane, silently zero.
+  // 2026-08-25: the brand-new ask went 24 -> 40 rows without raising the token
+  // budget, the JSON was cut mid-array, and the one lane carrying NEW music
+  // collapsed to a single card. Salvage the objects that DID arrive.
+  if (end <= start) return salvageObjects<T>(body.slice(start))
   try {
     const arr = JSON.parse(body.slice(start, end + 1))
     return Array.isArray(arr) ? arr as T[] : []
-  } catch { return [] }
+  } catch { return salvageObjects<T>(body.slice(start)) }
 }
 
 const normKey = (s: string) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
@@ -454,18 +459,21 @@ export async function dressJournalismPick(
 ): Promise<FeedCard | null> {
   if (!r.artist || !r.title) return null
   const artist = String(r.artist), title = String(r.title)
-  const v = await deps.verify(`${artist} ${title}`, 'album', { artist, title }).catch(() => null)
-  await new Promise((res) => setTimeout(res, 250))
-  // Apple miss or 403 is NOT proof the record does not exist — see deezerVerify.
-  const dz = v?.artUrl ? null : await deezerVerify(artist, title).catch(() => null)
+  // DEEZER FIRST here too (2026-08-25). This gate kept asking Apple first while
+  // Apple was throttling us, so the one lane that carries NEW music sat at 3
+  // cards while every other lane recovered. Apple is the enrichment pass now,
+  // not the gatekeeper — and it never was proof of existence.
+  const dz = await deezerVerify(artist, title).catch(() => null)
+  const v = dz?.artUrl ? null : await deps.verify(`${artist} ${title}`, 'album', { artist, title }).catch(() => null)
+  if (!dz?.artUrl) await new Promise((res) => setTimeout(res, 250))
   const caa = (v?.artUrl || dz?.artUrl) ? null : await deps.caa(artist, title).catch(() => null)
-  const art = v?.artUrl || dz?.artUrl || caa
+  const art = dz?.artUrl || v?.artUrl || caa
   if (!art) return null
   const why = deps.clipWhy(String(r.why || ''))
   return {
     lane: 'brand-new', type: 'album',
-    artist: v?.artist || dz?.artist || artist, title: v?.title || dz?.title || title,
-    year: v?.year || dz?.year || String(r.year || new Date().getFullYear()),
+    artist: dz?.artist || v?.artist || artist, title: dz?.title || v?.title || title,
+    year: dz?.year || v?.year || String(r.year || new Date().getFullYear()),
     why, artUrl: art,
     genre: v?.genre, collectionId: v?.collectionId, desc: why,
   } as FeedCard
@@ -568,17 +576,27 @@ export async function catalogVerify(
   hint: { artist: string; title?: string },
   itunes: (q: string, e: 'album' | 'song' | 'musicArtist', h: { artist: string; title?: string }) => Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number; previewUrl?: string } | null>,
 ): Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number; previewUrl?: string } | null> {
+  // 2026-08-25 — DEEZER FIRST. Apple was primary and it 403s this IP under any
+  // real load: six test regenerations in an hour throttled it hard enough that
+  // every verified lane shrank (39 cards -> 20) and Jake got served the worst
+  // one. Deezer needs no key, does not throttle like this, and carries the
+  // underground Apple omits. Apple is now the ENRICHMENT pass (genre,
+  // collectionId) for the rows Deezer cannot answer.
+  const title = hint.title || ''
+  if (entity !== 'musicArtist' && title) {
+    if (entity === 'song') {
+      const t = await deezerTrack(hint.artist, title).catch(() => null)
+      if (t?.artUrl && acceptableHit(hint, t)) return { artist: t.artist, title: t.title, artUrl: t.artUrl, previewUrl: t.previewUrl }
+    } else {
+      const d = await deezerVerify(hint.artist, title).catch(() => null)
+      if (d?.artUrl && acceptableHit(hint, d)) return { artist: d.artist, title: d.title, year: d.year, artUrl: d.artUrl }
+    }
+  }
   const v = await itunes(q, entity, hint).catch(() => null)
   if (v?.artUrl && acceptableHit(hint, v)) return v
   if (entity === 'musicArtist') return v
-  const title = hint.title || ''
   if (!title) return v
-  if (entity === 'song') {
-    const t = await deezerTrack(hint.artist, title).catch(() => null)
-    return t && acceptableHit(hint, t) ? { artist: t.artist, title: t.title, artUrl: t.artUrl, previewUrl: t.previewUrl } : null
-  }
-  const d = await deezerVerify(hint.artist, title).catch(() => null)
-  return d && acceptableHit(hint, d) ? { artist: d.artist, title: d.title, year: d.year, artUrl: d.artUrl } : null
+  return null
 }
 
 /**
@@ -600,7 +618,11 @@ export function acceptableHit(
   got: { artist?: string; title?: string },
 ): boolean {
   if (want.artist && got.artist && !recoArtistMatches(want.artist, got.artist)) return false
-  if (want.title && got.title && unwantedVersionOf(want.title, got.title)) return false
+  const cut = want.title && got.title ? unwantedVersionOf(want.title, got.title) : null
+  // Downloads must refuse ANY unasked-for version; discovery only refuses an
+  // artefact nobody would shelve. A remaster or a live pressing is still the
+  // record. Rejecting all of them cost real cards for no quality gain.
+  if (cut && /^(karaoke|tribute|instrumental|instrumentals|acappella|commentary)$/i.test(cut)) return false
   return true
 }
 
@@ -609,7 +631,7 @@ export function acceptableHit(
  *  Irons) — technically all real scene reach, but it reads as one rabbit hole
  *  instead of a shop. Round-robin already spreads the SOURCE anchors; this
  *  caps what survives verification. 2026-08-25. */
-export function capOrbits<T extends { because?: string; artist?: string }>(cards: T[], perAnchor = 2): T[] {
+export function capOrbits<T extends { because?: string; artist?: string }>(cards: T[], perAnchor = 3): T[] {
   const n = new Map<string, number>()
   const out: T[] = []
   for (const c of cards) {
@@ -619,6 +641,32 @@ export function capOrbits<T extends { because?: string; artist?: string }>(cards
     if (seen >= perAnchor) continue
     n.set(k, seen + 1)
     out.push(c)
+  }
+  return out
+}
+
+/** Pull complete {...} objects out of a cut-off JSON array. A truncated model
+ *  reply should cost the last row, never the whole lane. 2026-08-25. */
+export function salvageObjects<T>(body: string): T[] {
+  const out: T[] = []
+  let depth = 0, startIdx = -1, inStr = false, esc = false
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; continue }
+    if (ch === '{') { if (depth === 0) startIdx = i; depth++; continue }
+    if (ch === '}') {
+      depth--
+      if (depth === 0 && startIdx >= 0) {
+        try { out.push(JSON.parse(body.slice(startIdx, i + 1)) as T) } catch { /* skip the broken one */ }
+        startIdx = -1
+      }
+    }
   }
   return out
 }

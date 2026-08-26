@@ -10,7 +10,7 @@
  */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isJunkRelease, trimGapLane } from '../discover-feed.ts'
+import { isJunkRelease, trimGapLane, parseFeedJson } from '../discover-feed.ts'
 
 describe('isJunkRelease — session leftovers and promo discs are not records', () => {
   test('rejects the things the live feed actually shipped', () => {
@@ -56,5 +56,29 @@ describe('trimGapLane — completion must not dominate the shop', () => {
       { artist: 'Daft Punk', title: 'TRON: Legacy Collector’s Digital EP' },
     ], { perArtist: 3 })
     assert.equal(out.length, 1)
+  })
+})
+
+// 2026-08-25 — a truncated model reply cost the ENTIRE lane, not the last row.
+// The brand-new ask went 24 -> 40 rows without raising the token budget; the
+// JSON was cut mid-array, JSON.parse threw, and the one lane carrying NEW
+// music went to a single card while Jake watched.
+describe('parseFeedJson — a cut-off reply must not cost the whole lane', () => {
+  test('salvages the complete rows from a truncated array', () => {
+    const truncated = '[{"artist":"Kelela","title":"new avatar","year":"2026","why":"brave"},' +
+                      '{"artist":"Arca","title":"XXXXX","year":"2026","why":"peak"},' +
+                      '{"artist":"L\'Rain","title":"fata mor'
+    const rows = parseFeedJson<{ artist: string }>(truncated)
+    assert.equal(rows.length, 2)
+    assert.deepEqual(rows.map((r) => r.artist), ['Kelela', 'Arca'])
+  })
+
+  test('a complete array still parses normally', () => {
+    assert.equal(parseFeedJson<unknown>('[{"a":1},{"a":2}]').length, 2)
+  })
+
+  test('braces inside strings do not confuse the salvage', () => {
+    const rows = parseFeedJson<{ title: string }>('[{"title":"a } b"},{"title":"c')
+    assert.deepEqual(rows.map((r) => r.title), ['a } b'])
   })
 })

@@ -1533,7 +1533,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         const journalism = blocks.filter(Boolean).join('\n\n')
         if (!journalism) return
         const reply = await claudeCall('discover-brand-new', {
-          model: 'claude-sonnet-4-6', max_tokens: 2600, system: MUSIC_MAN_CORE,
+          model: 'claude-sonnet-4-6', max_tokens: 8000, system: MUSIC_MAN_CORE,
           messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 40 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
         const block = reply.content[0]
