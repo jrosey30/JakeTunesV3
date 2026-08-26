@@ -187,12 +187,19 @@ def test_ipod_artist_sort_and_album_index():
         {'artist': 'The Beatles', 'album': 'Help!', 'albumArtist': 'The Beatles'},
         {'artist': 'A Tribe Called Quest', 'album': 'The Low End Theory',
          'albumArtist': 'A Tribe Called Quest'},
+        {'artist': 'Pink Floyd', 'album': 'The Dark Side of the Moon',
+         'albumArtist': 'Pink Floyd'},
     ])
-    artists = [t[0] for t in tuples]
-    check("mhia artist index is A–Z by sort key, not insertion order",
-          artists == ['The Beatles', 'The Beatles', 'Daft Punk', 'The Strokes',
-                      'A Tribe Called Quest'],
-          f"-> {artists}")
+    albums = [t[2] for t in tuples]
+    check("mhia album list is A–Z by album title (The/A/An stripped)",
+          albums == ['Abbey Road', 'The Dark Side of the Moon', 'Discovery', 'Help!',
+                     'Is This It', 'The Low End Theory'],
+          f"-> {albums}")
+    check("sortAlbum wins for mhia album order",
+          db_reader.album_tuples_for_itunesdb([
+              {'artist': 'Z', 'album': 'Zebra', 'albumArtist': 'Z', 'sortAlbum': 'Apple'},
+              {'artist': 'A', 'album': 'Banana', 'albumArtist': 'A'},
+          ])[0][2] == 'Zebra')
 
     MHIT_HLEN = 0x270
     template = bytearray(MHIT_HLEN)
@@ -216,6 +223,102 @@ def test_ipod_artist_sort_and_album_index():
         q += u32(rec, q + 8)
     check("mhod 4 display artist keeps The", strs.get(4) == 'The Beatles')
     check("mhod 22 sort-artist is Beatles", strs.get(22) == 'Beatles', f"-> {strs.get(22)!r}")
+
+
+def _sample_music_tracks():
+    return [
+        {'id': 1, 'title': 'The End', 'artist': 'The Doors', 'album': 'The Doors',
+         'genre': 'Rock', 'sortArtist': 'Doors'},
+        {'id': 2, 'title': 'Taste', 'artist': 'Sabrina Carpenter', 'album': 'Short n\' Sweet',
+         'genre': 'Pop'},
+        {'id': 3, 'title': 'Come Together', 'artist': 'The Beatles', 'album': 'Abbey Road',
+         'genre': 'Rock', 'sortArtist': 'Beatles'},
+        {'id': 4, 'title': 'One More Time', 'artist': 'Daft Punk', 'album': 'Discovery',
+         'genre': 'Electronic'},
+        {'id': 5, 'title': 'Excursions', 'artist': 'A Tribe Called Quest',
+         'album': 'The Low End Theory', 'genre': 'Hip-Hop'},
+        {'id': 6, 'title': 'Time', 'artist': 'Pink Floyd', 'album': 'The Dark Side of the Moon',
+         'genre': 'Rock'},
+        {'id': 7, 'title': 'Tiësto', 'artist': 'Tiësto', 'album': 'In My Memory',
+         'genre': 'Electronic'},
+    ]
+
+
+def test_music_menu_sort_indexes():
+    print("\nMusic menus — Songs / Albums / Genres type-52 + mhia / genre A–Z")
+    check("partial template still emits Songs+Genres+Albums+Artists keys",
+          db_reader.music_menu_sort_keys([4, 18]) == [3, 4, 5, 7, 18],
+          f"-> {db_reader.music_menu_sort_keys([4, 18])}")
+    check("empty template uses defaults with 3/4/5/7 first",
+          db_reader.music_menu_sort_keys([])[:4] == [3, 4, 5, 7])
+    check("already-complete template keeps extras after required",
+          db_reader.music_menu_sort_keys([3, 4, 5, 7, 18, 35, 36]) == [3, 4, 5, 7, 18, 35, 36])
+
+    tracks = _sample_music_tracks()
+
+    # Songs — type-52 key 7 is firmware _fold. "The End" stays under T
+    # (after Taste), never article-stripped to E. That's the Mini 1.4.1
+    # discard rule.
+    titles = [tracks[i]['title'] for i in db_reader._sort_indices(tracks, 7)]
+    check("Songs type-52 is firmware-fold title A–Z (The stays under T)",
+          titles == ['Come Together', 'Excursions', 'One More Time', 'Taste',
+                     'The End', 'Tiësto', 'Time'],
+          f"-> {titles}")
+    check("Songs _fold('The End') starts with the (not end)",
+          db_reader._fold('The End').startswith('the '))
+
+    titled = [
+        {'title': 'Zebra', 'sortTitle': 'Apple'},
+        {'title': 'Banana'},
+    ]
+    check("Songs prefers sortTitle as _fold input",
+          [titled[i]['title'] for i in db_reader._sort_indices(titled, 7)] == ['Zebra', 'Banana'])
+
+    # Albums — type-52 key 3 is _fold (The Dark Side under T, not D).
+    albums = [tracks[i]['album'] for i in db_reader._sort_indices(tracks, 3)]
+    # unique consecutive for the assertion of fold order
+    seen = []
+    for a in albums:
+        if a not in seen:
+            seen.append(a)
+    check("Albums type-52 is firmware-fold (The Dark Side under T, not D)",
+          seen == ['Abbey Road', 'Discovery', 'In My Memory', 'Short n\' Sweet',
+                   'The Dark Side of the Moon', 'The Doors', 'The Low End Theory'],
+          f"-> {seen}")
+    check("Albums _fold keeps leading The",
+          db_reader._fold('The Dark Side of the Moon').startswith('the '))
+    folded_albums = [
+        {'album': 'Zebra', 'sortAlbum': 'Apple', 'discNumber': 1, 'trackNumber': 1},
+        {'album': 'Banana', 'discNumber': 1, 'trackNumber': 1},
+    ]
+    check("Albums prefers sortAlbum as _fold input",
+          [folded_albums[i]['album'] for i in db_reader._sort_indices(folded_albums, 3)]
+          == ['Zebra', 'Banana'])
+
+    # Artists type-52 key 4 MUST fold display artist, not stamped sortArtist.
+    # "The Beatles" / sortArtist Beatles → 'the beatles', or firmware drops Songs.
+    artist_idx = db_reader._sort_indices(tracks, 4)
+    artist_folds = [db_reader._fold(tracks[i]['artist']) for i in artist_idx]
+    check("Artists type-52 folds display artist (The Beatles under T)",
+          artist_folds == sorted(artist_folds), f"-> {artist_folds}")
+    check("Artists type-52 does not use stamped sortArtist Beatles",
+          db_reader._fold(tracks[2]['sortArtist']) == 'beatles'
+          and db_reader._fold(tracks[2]['artist']).startswith('the '))
+
+    # Genres — type-52 key 5 + unique list.
+    genres = [tracks[i]['genre'] for i in db_reader._sort_indices(tracks, 5)]
+    first = []
+    for g in genres:
+        if g not in first:
+            first.append(g)
+    check("Genres type-52 first-seen is A–Z by _fold(genre)",
+          first == ['Electronic', 'Hip-Hop', 'Pop', 'Rock'], f"-> {first}")
+    check("unique_genre_names_az matches type-52 genre order",
+          db_reader.unique_genre_names_az(tracks) == ['Electronic', 'Hip-Hop', 'Pop', 'Rock'])
+
+    # Accent fold still lives in type-52 (the Songs-vanished bug).
+    check("type-52 folds ë→e so Tiësto sits with T, not after Tz",
+          db_reader._fold('Tiësto') == 'tiesto')
 
 
 def test_codec_marker_never_defaults_to_mp3():
@@ -254,6 +357,7 @@ def main():
     test_playlist_ordinal()
     test_empirical_device_fields()
     test_ipod_artist_sort_and_album_index()
+    test_music_menu_sort_indexes()
     test_codec_marker_never_defaults_to_mp3()
     print("=" * 62)
     if FAILURES:

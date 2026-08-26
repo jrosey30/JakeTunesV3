@@ -102,3 +102,111 @@ export function stampIpodSortArtist<T extends { artist?: unknown; sortArtist?: u
   track.sortArtist = label
   return track
 }
+
+/**
+ * Firmware collation for iTunesDB type-52 tables.
+ *
+ * ⚠️ TWIN: core/db_reader.py _fold
+ *
+ * NFKD-strip combining marks, normalize typographic quotes/dashes, casefold.
+ * Does NOT strip a leading "The " — Mini 1.4.1 discards out-of-order
+ * type-52 rows (Tiësto / Entrañas / The-prefixed titles vanish from Songs).
+ */
+export function ipodFirmwareFold(s: string): string {
+  return String(s || '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u00A0/g, ' ')
+    .toLocaleLowerCase('en')
+}
+
+function optionalSortText(display: unknown, sortValue?: unknown): string {
+  const stamped = String(sortValue || '').trim()
+  if (stamped) return stamped
+  return String(display || '')
+}
+
+/** Music > Songs write / type-52 key 7 order (firmware fold of sortTitle || title). */
+export function orderTracksForIpodTitleIndex<T extends {
+  title?: unknown
+  sortTitle?: unknown
+  artist?: unknown
+  album?: unknown
+  trackNumber?: unknown
+}>(tracks: T[]): T[] {
+  return [...tracks].sort((a, b) => {
+    const c = ipodFirmwareFold(optionalSortText(a.title, a.sortTitle)).localeCompare(
+      ipodFirmwareFold(optionalSortText(b.title, b.sortTitle)),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    )
+    if (c !== 0) return c
+    const art = ipodFirmwareFold(String(a.artist || '')).localeCompare(
+      ipodFirmwareFold(String(b.artist || '')),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    )
+    if (art !== 0) return art
+    const alb = ipodFirmwareFold(String(a.album || '')).localeCompare(
+      ipodFirmwareFold(String(b.album || '')),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    )
+    if (alb !== 0) return alb
+    return numField(a.trackNumber) - numField(b.trackNumber)
+  })
+}
+
+/** Unique albums in Music > Albums A–Z (article-strip / sortAlbum — mhia, not type-52).
+ *  ⚠️ TWIN: core/db_reader.py album_tuples_for_itunesdb
+ */
+export function orderAlbumsForIpodIndex<T extends {
+  album?: unknown
+  sortAlbum?: unknown
+  artist?: unknown
+  albumArtist?: unknown
+}>(tracks: T[]): Array<{ artist: string; albumArtist: string; album: string }> {
+  const seen = new Set<string>()
+  const rows: Array<{ artist: string; albumArtist: string; album: string; sortAlbum?: string }> = []
+  for (const t of tracks) {
+    const album = String(t.album || '').trim()
+    if (!album) continue
+    const artist = String(t.artist || '').trim()
+    const albumArtist = String(t.albumArtist || t.artist || '').trim()
+    const key = `${albumArtist.toLowerCase()}\0${album.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const sortAlbum = String(t.sortAlbum || '').trim()
+    rows.push({ artist, albumArtist, album, sortAlbum: sortAlbum || undefined })
+  }
+  rows.sort((a, b) => {
+    const c = compareIpodArtistNames(a.album, b.album, a.sortAlbum, b.sortAlbum)
+    if (c !== 0) return c
+    return compareIpodArtistNames(a.artist, b.artist)
+  })
+  return rows.map(({ artist, albumArtist, album }) => ({ artist, albumArtist, album }))
+}
+
+/** Unique genres in Music > Genres A–Z (firmware fold — type-52 key 5).
+ *  ⚠️ TWIN: core/db_reader.py unique_genre_names_az
+ */
+export function uniqueGenresAz<T extends { genre?: unknown }>(tracks: T[]): string[] {
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const t of tracks) {
+    const g = String(t.genre || '').trim()
+    if (!g) continue
+    const k = g.toLocaleLowerCase('en')
+    if (seen.has(k)) continue
+    seen.add(k)
+    names.push(g)
+  }
+  names.sort((a, b) => ipodFirmwareFold(a).localeCompare(ipodFirmwareFold(b), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  }))
+  return names
+}

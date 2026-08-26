@@ -66,7 +66,7 @@ import {
   formatSyncSetFileRefuse,
 } from './activity-boardable.ts'
 import { activityTrackCanBoard, pickReplacementTracks, queueActivityCandidates } from './activity-fill.ts'
-import { orderTracksForIpodArtistIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
+import { orderTracksForIpodTitleIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
 
 export interface ActivitySyncHost {
   pythonCmd: string
@@ -651,8 +651,10 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   }
 
   // Stamp iTunesDB sizes from the card, not library.json.
-  // Then write the artist index in iPod A–Z order (ignore leading "The ").
-  tracks = orderTracksForIpodArtistIndex(tracks.map((t) => stampIpodSortArtist(t)))
+  // Write tracks in firmware-fold title order so Music > Songs is A–Z
+  // even if type-52 key 7 is discarded. stamp sortArtist for mhod 22
+  // (Artists). mhia + type-52 3/5 are built inside write_itunesdb.
+  tracks = orderTracksForIpodTitleIndex(tracks.map((t) => stampIpodSortArtist(t)))
   for (const t of tracks) {
     const remembered = writtenById.get(Number(t.id))
     if (!remembered) continue
