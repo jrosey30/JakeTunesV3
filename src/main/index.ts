@@ -11437,7 +11437,7 @@ ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: numbe
     function* candidateEntries(): Generator<[number, Float32Array]> {
       for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
-    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, clusters)
+    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))))
     // Candidate DIVERSITY (2026-08-07, Jake: "it seems to only suggest
     // other songs by bands already in that playlist"): measured on Pool
     // Dos, 101 of 162 raw candidates were catalog-mates of the playlist's
