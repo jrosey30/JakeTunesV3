@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect, useLayoutEffect, useRef, useMemo, memo, useSyncExternalStore } from 'react'
+import { flushSync } from 'react-dom'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -344,8 +345,13 @@ export default function SongsView() {
   // value so the FIRST render computes startIndex/endIndex correctly.
   // Pair with useScrollPersistence(key, containerRef) which then keeps
   // both DOM scrollTop and the cache in sync.
+  // 2026-08-26 overscan 10 -> 44 (Jake: "scrolling fast looks weird"). A fling
+  // outruns a 10-row buffer in one frame and the list shows a blank band until
+  // React catches up. 44 is ~1.5 screens of slack each way; the hook's math was
+  // never wrong, it was starved. (useVirtualScroll is Do-Not-Touch — this is
+  // its call-site argument, not a change to the hook.)
   const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(
-    sorted.length, ROW_HEIGHT, 10, getSavedScrollTop('songs'),
+    sorted.length, ROW_HEIGHT, 44, getSavedScrollTop('songs'),
   )
   useScrollPersistence('songs', containerRef)
   // 4.4.27: removed useElasticOverscroll — let macOS provide the
@@ -852,7 +858,11 @@ export default function SongsView() {
   }, [followNowPlayingTop])
 
   const handleScroll = useCallback((_e: React.UIEvent<HTMLDivElement>) => {
-    onScroll()
+    // See the note above the useVirtualScroll call: React batches this state
+    // update, so a fast scroll leaves the translated row block at the previous
+    // offset and the viewport goes blank until it catches up. Render it in the
+    // same frame as the scroll event.
+    flushSync(() => { onScroll() })
     // Skip activity update if this scroll was triggered by our own
     // auto-follow (within 200ms of the programmatic scrollTop write).
     if (Date.now() - isAutoScrollAtRef.current > 200) {
