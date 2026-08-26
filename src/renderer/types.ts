@@ -859,6 +859,9 @@ declare global {
       }; saveProfile?: boolean }) => Promise<{
         ok: boolean
         trackIds?: number[]
+        reserveIds?: number[]
+        requested?: number
+        shortfall?: number
         name?: string
         commentary?: string
         alacCount?: number

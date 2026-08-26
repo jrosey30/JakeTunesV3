@@ -79,10 +79,26 @@ export async function buildWorkoutIpodSyncPayload(
     return { ok: false, error: res?.error || 'Could not build activity sync set.' }
   }
 
-  const byId = new Map(allTracks.map((t) => [t.id, t]))
-  const tracks = res.trackIds.map((id) => byId.get(id)).filter((t): t is Track => !!t)
+  const byId = new Map(allTracks.map((t) => [Number(t.id), t]))
+  const requested = Math.max(res.trackIds.length, Number(res.requested) || brief?.target || 1000)
+  const tracks: Track[] = []
+  const seen = new Set<number>()
+  const take = (raw: number | string) => {
+    if (tracks.length >= requested) return
+    const id = Number(raw)
+    if (!Number.isFinite(id) || seen.has(id)) return
+    const t = byId.get(id)
+    if (!t) return
+    seen.add(id)
+    tracks.push(t)
+  }
+  for (const id of res.trackIds) take(id)
+  for (const id of res.reserveIds || []) take(id)
   if (tracks.length === 0) {
     return { ok: false, error: 'Activity set produced no matching library tracks.' }
+  }
+  if (tracks.length < requested) {
+    console.warn(`[workout-sync] resolved ${tracks.length}/${requested} — library had no more eligible replacements`)
   }
 
   const w = res.weather

@@ -170,6 +170,54 @@ def test_empirical_device_fields():
     check("title/path/album/artist mhods present", {1, 2, 3, 4} <= set(types), f"types={types}")
 
 
+def test_ipod_artist_sort_and_album_index():
+    print("\nipod artist sort — Music > Artists A–Z (activity-sync first-seen bug)")
+    k = db_reader.ipod_artist_sort_key
+    check("The Beatles files under B", k('The Beatles') == 'beatles')
+    check("A Tribe Called Quest files under T", k('A Tribe Called Quest') == 'tribe called quest')
+    check("sortArtist wins", k('The Beatles', 'Beatles') == 'beatles')
+    check("label strips The", db_reader.ipod_artist_sort_label('The Beatles') == 'Beatles')
+    check("_fold still keeps The (mhod52 must not use artist-sort)",
+          db_reader._fold('The Beatles').startswith('the '))
+
+    tuples = db_reader.album_tuples_for_itunesdb([
+        {'artist': 'The Strokes', 'album': 'Is This It', 'albumArtist': 'The Strokes'},
+        {'artist': 'Daft Punk', 'album': 'Discovery', 'albumArtist': 'Daft Punk'},
+        {'artist': 'The Beatles', 'album': 'Abbey Road', 'albumArtist': 'The Beatles'},
+        {'artist': 'The Beatles', 'album': 'Help!', 'albumArtist': 'The Beatles'},
+        {'artist': 'A Tribe Called Quest', 'album': 'The Low End Theory',
+         'albumArtist': 'A Tribe Called Quest'},
+    ])
+    artists = [t[0] for t in tuples]
+    check("mhia artist index is A–Z by sort key, not insertion order",
+          artists == ['The Beatles', 'The Beatles', 'Daft Punk', 'The Strokes',
+                      'A Tribe Called Quest'],
+          f"-> {artists}")
+
+    MHIT_HLEN = 0x270
+    template = bytearray(MHIT_HLEN)
+    struct.pack_into('<4s', template, 0, b'mhit')
+    struct.pack_into('<I', template, 4, MHIT_HLEN)
+    rec = db_reader.build_mhit_record(
+        {'id': 1, 'title': 'Come Together', 'artist': 'The Beatles', 'album': 'Abbey Road',
+         'genre': 'Rock', 'path': ':iPod_Control:Music:F00:AAAA.m4a',
+         'audioFingerprint': 'fp-beatles', 'fileSize': 1000, 'duration': 200000},
+        55, bytes(template), is_new=True)
+    mhod_count = u32(rec, 0x0C)
+    q = u32(rec, 4)
+    strs = {}
+    for _ in range(mhod_count):
+        if rec[q:q + 4] != b'mhod':
+            break
+        mtyp = u32(rec, q + 12)
+        slen = u32(rec, q + 28)
+        if slen and 40 + slen <= u32(rec, q + 8):
+            strs[mtyp] = rec[q + 40:q + 40 + slen].decode('utf-16-le')
+        q += u32(rec, q + 8)
+    check("mhod 4 display artist keeps The", strs.get(4) == 'The Beatles')
+    check("mhod 22 sort-artist is Beatles", strs.get(22) == 'Beatles', f"-> {strs.get(22)!r}")
+
+
 def test_codec_marker_never_defaults_to_mp3():
     print("\ncodec marker — unknown ext / FLAC / leftover MP3 template")
     MHIT_HLEN = 0x270
@@ -205,6 +253,7 @@ def main():
     test_string_mhod_folding()
     test_playlist_ordinal()
     test_empirical_device_fields()
+    test_ipod_artist_sort_and_album_index()
     test_codec_marker_never_defaults_to_mp3()
     print("=" * 62)
     if FAILURES:

@@ -192,7 +192,7 @@ import {
 } from './ipod-sync-tsa'
 import { ensureContiguousDb } from './ipod-db-contiguity'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from './ipod-sync-origin'
-import { runActivitySync } from './ipod-activity-engine'
+import { bindActivityReplacements, runActivitySync } from './ipod-activity-engine'
 import {
   classifyActivitySyncTracks,
   formatHomeminiPullRefuse,
@@ -5437,7 +5437,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         detectedIpodMount = m
         detectedIpodVolume = m ? volumeNameFromMount(m) : null
       },
-      materializeTrack: materializeLibraryTrack,
+      materializeTrack: materializeLibraryTrack, loadReplacementTracks: bindActivityReplacements(() => libraryCache.get() as Promise<{ tracks?: Array<Record<string, unknown>> }>, getConcertOwnedTrackIds),
     }, { tracks, playlists, convertOptions })
   }
   if (syncOpts?.wipeFirst) {
