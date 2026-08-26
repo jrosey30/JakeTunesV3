@@ -179,7 +179,7 @@ def _arbitrate_bpm_octave(onset, sr: float, bpm: float, margin: float = _OCTAVE_
             if not any(abs(cand - c) < 0.5 for c in cands):
                 cands.append(cand)
     if len(cands) == 1:
-        return round(bpm, 1)
+        return _plausibility_clamp(round(bpm, 1))
 
     scored = [(cand, _score_tempo_onsets(onset, sr, cand)) for cand in cands]
     # Prefer the measured tempo when scores are close — the extractor usually
@@ -188,8 +188,37 @@ def _arbitrate_bpm_octave(onset, sr: float, bpm: float, margin: float = _OCTAVE_
     measured_score = next((s for c, s in scored if abs(c - bpm) < 0.5), 0.0)
     best_cand, best_score = max(scored, key=lambda cs: cs[1])
     if best_score >= measured_score * margin and abs(best_cand - bpm) >= 0.5:
-        return round(best_cand, 1)
-    return round(bpm, 1)
+        return _plausibility_clamp(round(best_cand, 1))
+    return _plausibility_clamp(round(bpm, 1))
+
+
+# 2026-08-25 (Jake: "PATCHWORK BY WESTSIDE COWBOY IS 247 BPM?????????").
+# Onset scoring cannot break an octave tie when the halved grid lands on the
+# SAME hits — four-on-the-floor is the pathological case, and a doubled rock
+# tempo is its mirror. When it cannot tell, it keeps what was measured, and
+# the library ended up with 15 tracks above 200 BPM. Every one was exactly
+# double a real tempo: Westside Cowboy "Patchwork" 247 (~123), The Cars
+# "My Best Friend's Girl" 242 (~121), Maribou State "Otherside" 248 (~124),
+# Simple Plan "I'm Just a Kid" 220 (~110).
+#
+# So: a last, GENRE-FREE sanity rule. Recorded music essentially does not sit
+# above 200 or below 50 BPM; when a value does AND folding it once lands
+# squarely in the ordinary band, the fold is the answer. Deliberately narrow —
+# 160-199 is left alone because punk, DnB and hardcore genuinely live there,
+# and the genre-guessing repair script wanted to push blink-182 to 191-204
+# (First Date is ~158), which is exactly the over-correction to avoid.
+_IMPLAUSIBLE_FAST = 200.0
+_IMPLAUSIBLE_SLOW = 50.0
+_ORDINARY_LOW = 90.0
+_ORDINARY_HIGH = 160.0
+
+
+def _plausibility_clamp(bpm: float) -> float:
+    if bpm > _IMPLAUSIBLE_FAST and _ORDINARY_LOW <= bpm / 2.0 <= _ORDINARY_HIGH:
+        return round(bpm / 2.0, 1)
+    if 0 < bpm < _IMPLAUSIBLE_SLOW and _ORDINARY_LOW <= bpm * 2.0 <= _ORDINARY_HIGH:
+        return round(bpm * 2.0, 1)
+    return bpm
 
 
 def _bpm_from(y, sr) -> float:
