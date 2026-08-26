@@ -514,7 +514,7 @@ export default function Sidebar() {
                   if (r.ok) {
                     window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
                   } else {
-                    setNotice(`Eject failed: ${r.error || 'unknown error'}`, { kind: 'error', durationMs: 6000 })
+                    setNotice(`Couldn't eject — ${r.error || 'the disk did not respond'}`, { kind: 'error', durationMs: 6000 })
                   }
                 }}><EjectIcon /></button>
               </li>

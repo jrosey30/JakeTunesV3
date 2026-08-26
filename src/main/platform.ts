@@ -292,7 +292,23 @@ export async function ejectVolume(mountPoint: string): Promise<void> {
     // finished can still have catalog bytes in the page cache; ejecting
     // without this is how a 500/500 report became 33 songs on the Mini.
     try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
-    await execP('diskutil', ['eject', mountPoint])
+    try {
+      await execP('diskutil', ['eject', mountPoint])
+    } catch (err) {
+      // 2026-08-25 — diskutil's own words are the ONLY useful part of an eject
+      // failure ("in use by process N", "dissented by ..."), and they were
+      // being thrown away: the caller caught this and returned the literal
+      // string 'Eject failed', which the UI then prefixed with "Eject failed:"
+      // — Jake got "Eject failed: Eject failed" and no reason at all.
+      // Re-thrown with the cause, PATH-FREE so safeIpcError won't scrub it.
+      const raw = String((err as { stderr?: string; message?: string })?.stderr
+        || (err as Error)?.message || '')
+      const busy = /in use by process\s+(\d+)\s*\(([^)]+)\)/i.exec(raw)
+      if (busy) throw new Error(`the disk is still in use by ${busy[2]}`)
+      if (/dissent/i.test(raw)) throw new Error('another app refused to let the disk go')
+      if (/busy|resource/i.test(raw)) throw new Error('the disk is busy')
+      throw new Error('the disk did not respond to eject')
+    }
     return
   }
   // Windows — use PowerShell to call the Shell.Application COM object's

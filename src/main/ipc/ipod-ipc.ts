@@ -136,8 +136,11 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       await ejectVolume(mount)
       host.setMount({ mount: null, volume: null, missStreak: 0 })
       return { ok: true }
-    } catch {
-      return { ok: false, error: 'Eject failed' }
+    } catch (err) {
+      // Pass the CAUSE through (platform.ts phrases it path-free) instead of a
+      // constant the UI then prefixes into "Eject failed: Eject failed".
+      const why = err instanceof Error ? err.message : ''
+      return { ok: false, error: why || 'the disk did not respond to eject' }
     }
   }, { refuse: REFUSED_SENDER })
 
