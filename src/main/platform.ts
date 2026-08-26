@@ -305,13 +305,21 @@ export async function ejectVolume(mountPoint: string): Promise<void> {
         || (err as Error)?.message || '')
       const busy = /in use by process\s+(\d+)\s*\(([^)]+)\)/i.exec(raw)
       if (/simulator/i.test(raw)) {
-        // Same self-heal as the sync path: shut the simulators and try once more.
-        try { await execP('xcrun', ['simctl', 'shutdown', 'all'], { timeout: 60000 }) } catch { /* best-effort */ }
-        await new Promise((r) => setTimeout(r, 3000))
-        try {
-          await execP('diskutil', ['eject', mountPoint])
-          return
-        } catch { throw new Error('the iOS Simulator was holding the disk; shutting it down did not free it — try again in a moment') }
+        // Same escalation as the sync path: shut simulators, then kill the
+        // service that holds stale state, retrying the eject after each.
+        const steps: Array<{ cmd: string; args: string[]; timeout: number }> = [
+          { cmd: 'xcrun', args: ['simctl', 'shutdown', 'all'], timeout: 60000 },
+          { cmd: 'killall', args: ['-9', 'com.apple.CoreSimulator.CoreSimulatorService'], timeout: 20000 },
+        ]
+        for (const step of steps) {
+          try { await execP(step.cmd, step.args, { timeout: step.timeout }) } catch { /* best-effort */ }
+          await new Promise((r) => setTimeout(r, 3000))
+          try {
+            await execP('diskutil', ['eject', mountPoint])
+            return
+          } catch { /* try the next escalation */ }
+        }
+        throw new Error('the iOS Simulator is holding the disk and would not let go — unplug and replug the iPod')
       }
       if (busy) throw new Error(`the disk is still in use by ${busy[2]}`)
       if (/dissent/i.test(raw)) throw new Error('another app refused to let the disk go')
@@ -405,11 +413,19 @@ export async function remountVolume(mountPoint: string, opts: RemountVolumeOpts 
         lastErr = e instanceof Error ? e.message : String(e)
       }
     }
-    if (!unmounted && tryN === 1 && /simulator/i.test(lastErr)) {
-      // Clear the one dissenter we can safely clear, then let the loop retry.
-      try { await execP('xcrun', ['simctl', 'shutdown', 'all'], { timeout: 60000 }) } catch { /* best-effort */ }
-      await new Promise((r) => setTimeout(r, 3000))
-      continue
+    if (!unmounted && /simulator/i.test(lastErr)) {
+      if (tryN === 1) {
+        try { await execP('xcrun', ['simctl', 'shutdown', 'all'], { timeout: 60000 }) } catch { /* best-effort */ }
+        await new Promise((r) => setTimeout(r, 3000))
+        continue
+      }
+      if (tryN === 2) {
+        // Still dissenting with nothing booted: the SERVICE is holding stale
+        // state. launchd brings it back when something needs it.
+        try { await execP('killall', ['-9', 'com.apple.CoreSimulator.CoreSimulatorService'], { timeout: 20000 }) } catch { /* best-effort */ }
+        await new Promise((r) => setTimeout(r, 4000))
+        continue
+      }
     }
     if (!unmounted && tryN < CLEAN_TRIES) {
       await new Promise((r) => setTimeout(r, 1000))
