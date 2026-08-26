@@ -75,6 +75,9 @@ export interface VibeHit { trackId: number; score: number; cluster: number }
  *  separates "this playlist's weaker corner" from "nothing fits". */
 const FLOOR_MARGIN = 0.08
 const FLOOR_PROBE_RANK = 9    // 10th-best candidate = the cluster's proven depth
+// Enough candidates for the renderer's round-robin to actually have a choice.
+// Below this the strip visibly starves — see the backfill below.
+const MIN_SERVABLE_HITS = 40
 const LAMBDA = 0.3            // global-center penalty
 const PER_CLUSTER_POOL = 60
 
@@ -120,11 +123,39 @@ export function scorePlaylistCandidates(
     .sort((a, b) => a - b)
   const floor = depths.length ? depths[depths.length >> 1] - FLOOR_MARGIN : -Infinity
 
-  const hits: VibeHit[] = []
-  perCluster.forEach((list, c) => {
-    const servable = list.filter((h) => h.rawSim >= floor)
-    servable.sort((a, b) => b.score - a.score)
-    for (const h of servable.slice(0, PER_CLUSTER_POOL)) hits.push({ trackId: h.trackId, score: h.score, cluster: c })
-  })
+  // 2026-08-25 (Jake, on a 7-song playlist: "only 2 suggestions?????") —
+  // BACKFILL. The floor asks "what does a good match look like for THIS
+  // playlist", which is right for a playlist with one clear character. On a
+  // genuinely eclectic one (School of Rock -> Kompromat -> India Ramey -> XTC)
+  // the clusters scatter, almost nothing clears the bar, and the strip served
+  // TWO cards. An empty strip is not a quality signal, it just looks broken.
+  // So: take the floor's picks first, then, if the pool is too thin for the
+  // renderer to choose from, relax in steps and keep taking the best remaining
+  // — still best-first, never random. Same doctrine as the discovery lane's
+  // LANE_MIN: a small shelf of decent picks beats an empty one.
+  const collect = (cut: number): VibeHit[] => {
+    const out: VibeHit[] = []
+    perCluster.forEach((list, c) => {
+      const servable = list.filter((h) => h.rawSim >= cut)
+      servable.sort((a, b) => b.score - a.score)
+      for (const h of servable.slice(0, PER_CLUSTER_POOL)) out.push({ trackId: h.trackId, score: h.score, cluster: c })
+    })
+    return out
+  }
+  let hits = collect(floor)
+  // ...but ONLY for a mosaic. A playlist with a dominant character is SUPPOSED
+  // to shed its outlier corner — the one metal track in a chill playlist must
+  // not start pulling metal suggestions, which is the contract the
+  // "outlier seed cluster ... serves NOTHING" test pins. Relax only when no
+  // single vibe holds half the seeds, i.e. the playlist really is a mosaic and
+  // there is no dominant character to protect.
+  const totalSeeds = clusterSeeds.reduce((a, b) => a + b, 0)
+  const dominant = totalSeeds > 0 && Math.max(...clusterSeeds) / totalSeeds >= 0.5
+  if (!dominant) {
+    for (const relax of [0.05, 0.12, 0.25]) {
+      if (hits.length >= MIN_SERVABLE_HITS) break
+      hits = collect(floor - relax)
+    }
+  }
   return { hits, clusterSeeds }
 }

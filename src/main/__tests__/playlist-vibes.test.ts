@@ -107,3 +107,23 @@ describe('playlist-vibes — kmeansCentroids', () => {
     assert.equal(kmeansCentroids([vec(0, 1)], 5).length, 1)
   })
 })
+
+// 2026-08-25 — Jake on a 7-song eclectic playlist: "only 2 suggestions?????"
+// The floor is right for a playlist with one clear character; on a mosaic it
+// starved the strip. The backfill must relax rather than serve an empty shelf.
+describe('vibe floor backfill — an eclectic playlist still fills the strip', () => {
+  it('yields a usable pool instead of a handful', () => {
+    const dim = 8
+    const unit = (i: number) => { const v = new Float32Array(dim); v[i % dim] = 1; return v }
+    const seeds = [0, 1, 2, 3, 4].map(unit)   // five distant corners = a mosaic
+    const candidates = new Map<number, Float32Array>()
+    for (let i = 0; i < 120; i++) {
+      const v = new Float32Array(dim)
+      v[i % 5] = 0.6
+      v[(i * 7) % dim] += 0.4
+      candidates.set(i + 1, v)
+    }
+    const { hits } = scorePlaylistCandidates(seeds, candidates, null)
+    assert.ok(hits.length >= 40, `expected a usable pool, got ${hits.length}`)
+  })
+})
