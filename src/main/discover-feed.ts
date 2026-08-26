@@ -21,6 +21,7 @@
  */
 
 import { searchTitle, unwantedVersionOf } from './streamrip-match.ts'
+import { recoArtistMatches } from './reco-match.ts'
 import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
 
 export type FeedCardType = 'song' | 'album' | 'artist'
@@ -568,14 +569,56 @@ export async function catalogVerify(
   itunes: (q: string, e: 'album' | 'song' | 'musicArtist', h: { artist: string; title?: string }) => Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number; previewUrl?: string } | null>,
 ): Promise<{ artist: string; title: string; year?: string; artUrl?: string; genre?: string; collectionId?: number; previewUrl?: string } | null> {
   const v = await itunes(q, entity, hint).catch(() => null)
-  if (v?.artUrl) return v
+  if (v?.artUrl && acceptableHit(hint, v)) return v
   if (entity === 'musicArtist') return v
   const title = hint.title || ''
   if (!title) return v
   if (entity === 'song') {
     const t = await deezerTrack(hint.artist, title).catch(() => null)
-    return t ? { artist: t.artist, title: t.title, artUrl: t.artUrl, previewUrl: t.previewUrl } : v
+    return t && acceptableHit(hint, t) ? { artist: t.artist, title: t.title, artUrl: t.artUrl, previewUrl: t.previewUrl } : null
   }
   const d = await deezerVerify(hint.artist, title).catch(() => null)
-  return d ? { artist: d.artist, title: d.title, year: d.year, artUrl: d.artUrl } : v
+  return d && acceptableHit(hint, d) ? { artist: d.artist, title: d.title, year: d.year, artUrl: d.artUrl } : null
+}
+
+/**
+ * Does a catalogue row actually answer what we asked for? (2026-08-25)
+ *
+ * Two ways a "verified" card was still wrong on the live shop:
+ *  - WRONG ARTIST. "Killing in the Name" came back credited to "Rage Against
+ *    the Blues" — a soundalike — and shipped, because verification only
+ *    checked that SOMETHING came back. Flagged once before and it recurred,
+ *    so it is a guard now, not a note.
+ *  - WRONG CUT. "Liquid Swords (Instrumental)" and "Born Slippy (Radio Edit)"
+ *    are not the record you would hand someone.
+ *
+ * Both guards are REUSED, not re-written: recoArtistMatches (reco-match.ts)
+ * and unwantedVersionOf (streamrip-match.ts, the download wrong-version guard).
+ */
+export function acceptableHit(
+  want: { artist: string; title?: string },
+  got: { artist?: string; title?: string },
+): boolean {
+  if (want.artist && got.artist && !recoArtistMatches(want.artist, got.artist)) return false
+  if (want.title && got.title && unwantedVersionOf(want.title, got.title)) return false
+  return true
+}
+
+/** No single band's orbit may own the scene shelf. A live run gave 6 of 12
+ *  cards to the Chili Peppers orbit (Frusciante x2, Klinghoffer x2, Navarro,
+ *  Irons) — technically all real scene reach, but it reads as one rabbit hole
+ *  instead of a shop. Round-robin already spreads the SOURCE anchors; this
+ *  caps what survives verification. 2026-08-25. */
+export function capOrbits<T extends { because?: string; artist?: string }>(cards: T[], perAnchor = 2): T[] {
+  const n = new Map<string, number>()
+  const out: T[] = []
+  for (const c of cards) {
+    const k = String(c.because || '').toLowerCase().trim()
+    if (!k) { out.push(c); continue }
+    const seen = n.get(k) || 0
+    if (seen >= perAnchor) continue
+    n.set(k, seen + 1)
+    out.push(c)
+  }
+  return out
 }

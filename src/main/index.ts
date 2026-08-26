@@ -1751,7 +1751,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       { id: 'songs', title: 'Songs to Try' },
     ]
     const lanes = laneDefs
-      .map((l) => ({ ...l, cards: shelved.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
+      .map((l) => ({ ...l, cards: df.capOrbits(shelved.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0))).slice(0, 24) }))
       .filter((l) => l.cards.length > 0)
 
     // 2026-08-24 — the serve-count MOVED OUT of generation (Jake: "not enough
