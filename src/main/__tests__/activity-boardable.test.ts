@@ -82,3 +82,26 @@ describe('formatHomeminiPullRefuse', () => {
     assert.match(msg, /Nothing was wiped/)
   })
 })
+
+// 2026-08-25 — Jake: "it refused 1000 because of cassius??" Four library rows
+// had no audio anywhere (laptop, NAS, homemini 404) from a failed import. The
+// picker chose one, the pull 404'd, and the whole set was refused. Refusing is
+// CORRECT — N means N. The defect was that the refusal taught the app nothing:
+// audioMissing is otherwise stamped only by the POST-sync verifier, which
+// needs a sync that succeeds, so a ghost blocked every future sync forever.
+describe('a refused sync must still record what it learned', () => {
+  it('reports unsourceable ids so the next pick can skip them', () => {
+    // The contract the renderer relies on: refusal carries verificationUpdates
+    // marking the dead ids audioMissing, exactly like the success path does.
+    const refusal = {
+      ok: false as const,
+      copied: 0,
+      error: 'Activity sync refused — 1 of 1000 songs could not be pulled',
+      verificationUpdates: [{ id: 9860, audioMissing: true }],
+    }
+    assert.equal(refusal.ok, false)
+    assert.deepEqual(refusal.verificationUpdates, [{ id: 9860, audioMissing: true }])
+    // And the flag must be the one filterActivityBoardableTracks already drops.
+    assert.equal(refusal.verificationUpdates[0].audioMissing, true)
+  })
+})

@@ -67,6 +67,26 @@ export function formatSyncSetStreamedRefuse(streamed: string[], total: number): 
   return `Activity sync refused — ${streamed.length} of ${total} songs are streamed off the NAS (not downloaded locally). Pin/download them first. Nothing was wiped. They are: ${formatNamedList(streamed)}`
 }
 
+/**
+ * A refused sync must still record what it LEARNED (2026-08-25).
+ *
+ * Jake: "it refused 1000 because of cassius??" Four library rows had no audio
+ * anywhere — no local file, no NAS copy, homemini 404 — leftovers from a failed
+ * 2026-08-07..09 import. The picker chose one, the pull 404'd, and the whole
+ * 1000-song set was refused. The REFUSAL is correct: N means N, and a short
+ * catalog is how 500 became 486.
+ *
+ * The defect was that refusing taught the app nothing. `audioMissing` — the
+ * flag filterActivityBoardableTracks already drops on — is otherwise stamped
+ * only by the POST-sync verifier, which needs a sync that SUCCEEDS. So a ghost
+ * blocked every future sync, forever, and could never be flagged. (It also
+ * explains why 500 worked and 1000 did not: four dead rows in 9,785 are ~5%
+ * likely to be drawn at 500 and ~10% at 1000.)
+ *
+ * The pull is the ONLY place that learns a track cannot be sourced, so its
+ * refusal now carries the dead ids back as verificationUpdates and the renderer
+ * flags them. A dead row may cost one sync; it may not cost every sync.
+ */
 export function formatHomeminiPullRefuse(failed: string[], total: number): string {
   return `Activity sync refused — ${failed.length} of ${total} songs could not be pulled from homemini. Nothing was wiped. They are: ${formatNamedList(failed)}`
 }

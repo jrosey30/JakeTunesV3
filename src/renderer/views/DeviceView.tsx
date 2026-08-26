@@ -501,6 +501,12 @@ export default function DeviceView() {
           return
         }
         const msg = result.error || 'Unknown error'
+        if (result.verificationUpdates && result.verificationUpdates.length > 0) {
+          const dead = result.verificationUpdates
+            .filter((u) => u.audioMissing === true)
+            .map((u) => ({ id: u.id, field: 'audioMissing', value: true as const }))
+          if (dead.length > 0) dispatch({ type: 'UPDATE_TRACKS', updates: dead })
+        }
         setSyncStatus({ state: 'error', message: msg })
         activity.setSync({ active: true, step: `Sync failed — ${msg}` })
         setTimeout(() => activity.setSync(null), 4000)

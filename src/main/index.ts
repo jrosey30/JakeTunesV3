@@ -5513,7 +5513,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     }
     if (toPull.length > 0) {
       console.log(`sync-to-ipod: ${toPull.length}/${tracks.length} not on this Mac — pulling from homemini`)
-      const pullFail: string[] = []
+      const pullFail: string[] = []; const unsourceableIds: number[] = []   // ghosts: see activity-boardable.ts
       for (const p of toPull) {
         if (syncCancelRequested) {
           await writeSyncJournal(null)
@@ -5521,16 +5521,15 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         }
         const r = await materializeLibraryTrack(p.path, p.id)
         if (!r.ok) {
-          pullFail.push(`${p.label} (${r.error || 'homemini miss'})`)
+          pullFail.push(`${p.label} (${r.error || 'homemini miss'})`); unsourceableIds.push(p.id)
           console.error(`sync-to-ipod: homemini pull failed — ${p.label}: ${r.error}`)
         }
       }
       if (pullFail.length > 0) {
         await writeSyncJournal(null)
         return {
-          ok: false,
-          copied: 0,
-          error: formatHomeminiPullRefuse(pullFail, tracks.length),
+          ok: false, copied: 0, error: formatHomeminiPullRefuse(pullFail, tracks.length),
+          verificationUpdates: unsourceableIds.map((id) => ({ id, audioMissing: true })),   // learn-on-refusal
         }
       }
     }
