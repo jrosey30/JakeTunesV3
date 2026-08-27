@@ -24,6 +24,29 @@
 import { foldAccents } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
 
+/**
+ * A catalogue row that is really a 30-second PREVIEW, not the song.
+ *
+ * 2026-08-26, Jake with a screenshot of a search result reading 0:29 —
+ * "WHAT THE FUCK IS THIS????". Matt and Kim's "Let's Go" was being offered at
+ * twenty-nine seconds. There was NO minimum-duration guard anywhere in search,
+ * so a snippet release ranked like a real track and would have downloaded as
+ * one.
+ *
+ * Deliberately narrow, because Jake's library legitimately contains 3-15s
+ * pieces (Eminem "Paul (Skit)", Modest Mouse "Horn Intro", The Who "Miracle
+ * Cure" — 122 tracks under 45s). Those announce themselves in the title. A
+ * short row that does NOT is a snippet.
+ */
+const DELIBERATELY_SHORT = /\b(interlude|skit|intro|outro|prelude|reprise|segue|prologue|epilogue|bonus beat|a cappella)\b|^untitled/i
+export const PREVIEW_MAX_SECS = 45
+
+export function isPreviewLengthResult(durationSecs: number | undefined, title: string): boolean {
+  if (typeof durationSecs !== 'number' || !Number.isFinite(durationSecs) || durationSecs <= 0) return false
+  if (durationSecs > PREVIEW_MAX_SECS) return false
+  return !DELIBERATELY_SHORT.test(String(title || ''))
+}
+
 export interface ItunesSuggestion {
   song: string
   artist: string
@@ -237,7 +260,8 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
                 : (typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined),
             }
           })
-          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
+          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || '')
+            && !isPreviewLengthResult(s.durationSecs, s.song))
       }
     } catch { raw = null }
     if (raw === null) raw = await fetchDeezerSuggestions(q)
@@ -448,6 +472,8 @@ export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boo
         genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
         explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
       }))
+      // A 30s snippet is not the song — see isPreviewLengthResult.
+      .filter((t) => !isPreviewLengthResult(t.durationSecs, t.song))
       .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
     return {
       ok: true,
