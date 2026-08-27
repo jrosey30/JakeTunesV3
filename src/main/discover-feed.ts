@@ -166,6 +166,13 @@ export function parseFeedJson<T>(text: string): T[] {
 }
 
 const normKey = (s: string) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+/** Accent-FOLDING key: combining marks are removed BEFORE the non-alnum
+ *  strip, so "Récord" → "record" and "JAŸ-Z" → "jay z" (normKey turns the
+ *  orphaned marks into spaces — "re cord"). normKey itself CANNOT change:
+ *  cardKey feeds the persisted served/notForMe ledgers, and refolding it
+ *  would orphan every verdict Jake has already given. Use foldKey only for
+ *  ephemeral, rebuilt-per-run comparisons. */
+export const foldKey = (s: string): string => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
 export const cardKey = (c: { artist: string; title: string }) => `${normKey(c.artist)}|${normKey(c.title)}`
 
 /** Clip a "why" to at most n words — the feed shows phrases, not paragraphs. */
@@ -255,7 +262,10 @@ export function applyQualityFloor(cards: FeedCard[]): FeedCard[] {
     byLane.set(c.lane, arr)
   }
   const out: FeedCard[] = []
-  for (const arr of byLane.values()) {
+  for (const [lane, arr] of byLane) {
+    // Quota lanes (25/25, "NO LESS"): the brain ORDERS them, it never
+    // starves them — the count is the contract, not the cosine.
+    if (QUOTA_LANES.has(lane)) { out.push(...arr); continue }
     const kept = arr.filter((c) => (c.brainPct ?? 0) >= BRAIN_FLOOR)
     if (kept.length < BRAIN_LANE_MIN) {
       const backfill = arr
@@ -669,4 +679,97 @@ export function salvageObjects<T>(body: string): T[] {
     }
   }
   return out
+}
+
+// ── Bulk supply lanes (2026-08-27) ──────────────────────────────────
+// Jake: "25 new songs each day as well as 25 new albums that I DO NOT
+// HAVE IN MY LIBRARY. NO LESS". These two lanes carry that quota; the
+// harvest itself lives in discover-supply.ts (fixture-tested, offline).
+
+/** Lanes whose card COUNT is the contract — the quality floor never
+ *  starves them below quota, it only orders them. */
+export const QUOTA_LANES = new Set(['fresh-albums', 'fresh-songs'])
+
+/**
+ * Harvest the daily 25/25 from the Deezer related-artist graph and dress
+ * the results as feed cards. Ownership closures are built over the SAME
+ * normalized-key sets index.ts feeds filterFeed, so "not in my library"
+ * means the same thing at harvest time as it does at filter time.
+ * Harvests 40 of each so verdict tombstones and cross-lane dedupe can
+ * take their cut and 25 still stand on the shelf.
+ */
+export async function supplyLanes(
+  anchorNames: string[],
+  dayNumber: number,
+  owned: { artists: Set<string>; albumKeys: Set<string>; baseKeys: Set<string> },
+  fetchFn: typeof fetch = fetch,
+  sleepMs = 120,   // Deezer politeness (50 req / 5 s per IP); tests pass 0
+): Promise<FeedCard[]> {
+  const { buildDailyDiscovery } = await import('./discover-supply.ts')
+  // Accent bridge: the library sets were keyed with normKey, which turns a
+  // decomposed accent into a SPACE ("Récord" → "re cord"), so an accented
+  // title on one side and a plain one on the other never match. Squashing
+  // spaces out of both sides after folding makes the comparison accent-proof
+  // in BOTH directions without touching normKey (persisted-ledger keys).
+  // Over-matching only makes the gate stricter — the safe direction for
+  // "I DO NOT HAVE IN MY LIBRARY".
+  const squash = (k: string): string => k.replace(/ /g, '')
+  const albumSq = new Set([...owned.albumKeys].map(squash))
+  const baseSq = new Set([...owned.baseKeys].map(squash))
+  const artistSq = new Set([...owned.artists].map(squash))
+  const deps = {
+    fetchJson: async (url: string): Promise<unknown> => {
+      if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs))
+      const res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) })
+      return res.json()
+    },
+    ownsAlbum: (artist: string, album: string): boolean =>
+      owned.albumKeys.has(`${normKey(artist)}|${normKey(album)}`) ||
+      albumSq.has(squash(`${foldKey(artist)}|${foldKey(album)}`)) ||
+      owned.baseKeys.has(`${normKey(artist)}|${baseTitleKey(album)}`) ||
+      baseSq.has(squash(`${foldKey(artist)}|${baseTitleKey(album)}`)),
+    ownsSong: (artist: string, title: string): boolean =>
+      owned.albumKeys.has(`${normKey(artist)}|${normKey(title)}`) ||
+      albumSq.has(squash(`${foldKey(artist)}|${foldKey(title)}`)) ||
+      owned.baseKeys.has(`${normKey(artist)}|${baseTitleKey(title)}`) ||
+      baseSq.has(squash(`${foldKey(artist)}|${baseTitleKey(title)}`)),
+    ownsArtist: (artist: string): boolean =>
+      owned.artists.has(normKey(artist)) || artistSq.has(squash(foldKey(artist))),
+  }
+  const daily = await buildDailyDiscovery(anchorNames, deps, { want: 40, dayNumber })
+  if (daily.report.shortfall.length) {
+    console.warn(`[discover] supply shortfall: ${daily.report.shortfall.join(', ')} (pool ${daily.report.poolSize}, ${daily.report.passes} passes)`)
+  }
+  const cards: FeedCard[] = []
+  for (const a of daily.albums) {
+    cards.push({ lane: 'fresh-albums', type: 'album', artist: a.artist, title: a.title, year: a.year, why: clipWhy(a.because ? `Neighbors with ${a.because}` : 'Near your library'), artUrl: a.artUrl, because: a.because })
+  }
+  for (const s of daily.songs) {
+    cards.push({ lane: 'fresh-songs', type: 'song', artist: s.artist, title: s.title, why: clipWhy(s.because ? `Neighbors with ${s.because}` : 'Near your library'), artUrl: s.artUrl, previewUrl: s.previewUrl, because: s.because })
+  }
+  return cards
+}
+
+/** One place decides what a shelf holds. Quota lanes seat exactly 25 when
+ *  supply allows (Jake: "NO LESS"); narrative lanes stay at 24; the scene
+ *  lane keeps its per-anchor orbit cap. Extracted from index.ts under the
+ *  line ratchet — the rail said new capability belongs in a module. */
+export function assembleLanes(shelved: FeedCard[]): Array<{ id: string; title: string; cards: FeedCard[] }> {
+  const laneDefs = [
+    { id: 'brand-new', title: 'Brand New', cap: 24 },
+    { id: 'fresh-albums', title: 'New Records', cap: 25 },
+    { id: 'fresh-songs', title: 'New Songs', cap: 25 },
+    { id: 'scene', title: 'From the Scene', cap: 24 },
+    { id: 'missing', title: "You're Missing", cap: 24 },
+    { id: 'time-machine', title: 'Time Machine', cap: 24 },
+    { id: 'songs', title: 'Songs to Try', cap: 24 },
+  ]
+  return laneDefs
+    .map((l) => ({
+      id: l.id, title: l.title,
+      cards: (l.id === 'scene' ? capOrbits(shelved.filter((c) => c.lane === l.id)) : shelved.filter((c) => c.lane === l.id))
+        .sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0))
+        .slice(0, l.cap),
+    }))
+    .filter((l) => l.cards.length > 0)
 }

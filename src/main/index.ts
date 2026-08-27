@@ -1460,7 +1460,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 5  // 5: bins + album hooks + scene pitches (2026-08-22)
+const FEED_GEN_VERSION = 6  // 6: fresh-albums/fresh-songs 25/25 supply lanes (2026-08-27); 5: bins + album hooks + scene pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1693,7 +1693,10 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       } catch (err) { console.warn('[discover] llm lanes failed:', err) }
     })()
 
-    await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes])
+    // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16 anchors feed the pool.
+    const supplyPromise = df.supplyLanes(anchors.map((a) => a.artist), dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
+
+    await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise])
 
     // Clerk pitches (module pass — Jake: "need you to get deeper than
     // label-mates"): runs before scoring so the pitch feeds the embedding.
@@ -1743,16 +1746,10 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       scoreCandidates: (cands) => brainMatchCandidates(cands, tracks as Array<{ id?: number; rating?: number; playCount?: number }>, 5),
     })
 
-    const laneDefs = [
-      { id: 'brand-new', title: 'Brand New' },
-      { id: 'scene', title: 'From the Scene' },
-      { id: 'missing', title: "You're Missing" },
-      { id: 'time-machine', title: 'Time Machine' },
-      { id: 'songs', title: 'Songs to Try' },
-    ]
-    const lanes = laneDefs
-      .map((l) => ({ ...l, cards: (l.id === 'scene' ? df.capOrbits(shelved.filter((c) => c.lane === l.id)) : shelved.filter((c) => c.lane === l.id)).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
-      .filter((l) => l.cards.length > 0)
+    // Lane seating moved to df.assembleLanes (2026-08-27, the line-ratchet
+    // extraction) — quota lanes seat 25, narrative lanes 24, scene keeps
+    // its orbit cap.
+    const lanes = df.assembleLanes(shelved)
 
     // 2026-08-24 — the serve-count MOVED OUT of generation (Jake: "not enough
     // new music recommendations where did that go????"). Counting a "view"
