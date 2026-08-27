@@ -286,3 +286,30 @@ describe('buildDailyDiscovery — the quota is the feature', () => {
     assert.ok(out.report.shortfall.length > 0)
   })
 })
+
+describe('edition gate — canonical studio records only', () => {
+  // Both refusals below were REAL cards seated by the first live harvest
+  // (2026-08-27) before this gate existed. They stay pinned by name.
+  test('refuses deluxe, live, and best-of editions', async () => {
+    const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [
+      { title: 'Culture III (Deluxe)' },
+      { title: 'The Best of Sid Vicious (Live)' },
+      { title: 'Nevermind (30th Anniversary Remaster)' },
+      { title: 'Greatest Hits' },
+      { title: 'An Honest Record' },
+    ] } })
+    const out = await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson }))
+    assert.deepEqual(out.map((a) => a.title), ['An Honest Record'])
+  })
+
+  test('does NOT refuse canonical titles that merely contain hot words', async () => {
+    const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [
+      { title: 'Live Through This' },   // Hole — "live" is the lyric, not the edition
+      { title: 'Demon Days' },          // Gorillaz — "demo" must not match inside a word
+      { title: 'Alive' },
+    ] } })
+    const out = await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson }))
+    // 2-per-artist cap keeps two of the three; the point is none were junked.
+    assert.equal(out.length, 2)
+  })
+})

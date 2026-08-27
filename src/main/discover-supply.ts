@@ -81,7 +81,20 @@ export async function relatedArtistPool(
   return [...pool.filter((a) => !a.owned), ...pool.filter((a) => a.owned)]
 }
 
-const JUNK = /karaoke|tribute|made famous|instrumental version|\bcover(s)? of\b/i
+// ⚠️ TWIN: src/main/discover-feed.ts JUNK_RELEASE (journalism/gap lanes) —
+// same purpose, different lane. This one ALSO refuses non-canonical
+// EDITIONS: the shop's doctrine is canonical studio releases only, and the
+// first live harvest (2026-08-27) seated "Culture III (Deluxe)" and "The
+// Best of Sid Vicious (Live)". Over-refusal is the safe direction — the
+// 40-card headroom absorbs a false reject; a Deluxe on the shelf is the
+// "insane amount of minimal music" complaint all over again.
+const JUNK = new RegExp([
+  'karaoke', 'tribute', 'made famous', 'instrumental version', '\\bcovers? of\\b',
+  '\\bdeluxe\\b', '\\bexpanded\\b', 'remaster', '\\banniversary\\b', '\\breissue\\b',
+  '\\bbest of\\b', 'greatest hits', '\\banthology\\b', '\\bb-?sides\\b',
+  '\\blive (at|in|from)\\b', '\\((live|acoustic|demos?|unplugged)\\b[^)]*\\)',
+  '\\bdemos?\\b', '\\bunplugged\\b', '\\bsessions?\\b', '\\bbootleg\\b', '\\bouttakes?\\b',
+].join('|'), 'i')
 
 /** Albums he does not own, real records only, newest first. */
 export async function harvestAlbums(
