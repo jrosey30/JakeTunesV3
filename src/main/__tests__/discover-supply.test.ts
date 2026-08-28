@@ -313,3 +313,18 @@ describe('edition gate — canonical studio records only', () => {
     assert.equal(out.length, 2)
   })
 })
+
+describe('edition gate — live markers ANYWHERE in the parens', () => {
+  // "Next to You (Audiotree Live Version)" reached the shelf 2026-08-28:
+  // the old pattern only matched parens STARTING with the marker.
+  test('(Audiotree Live Version) is junk; titles merely containing Live-ish words are not', async () => {
+    const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [
+      { title: 'Next to You (Audiotree Live Version)' },
+      { title: 'Set It Off (MTV Unplugged)' },
+      { title: 'Alive' },
+      { title: 'An Honest Record' },
+    ] } })
+    const out = await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson }))
+    assert.deepEqual(out.map((a) => a.title), ['Alive', 'An Honest Record'])
+  })
+})

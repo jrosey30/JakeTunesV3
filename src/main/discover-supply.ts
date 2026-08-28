@@ -92,7 +92,7 @@ const JUNK = new RegExp([
   'karaoke', 'tribute', 'made famous', 'instrumental version', '\\bcovers? of\\b',
   '\\bdeluxe\\b', '\\bexpanded\\b', 'remaster', '\\banniversary\\b', '\\breissue\\b',
   '\\bbest of\\b', 'greatest hits', '\\banthology\\b', '\\bb-?sides\\b',
-  '\\blive (at|in|from)\\b', '\\((live|acoustic|demos?|unplugged)\\b[^)]*\\)',
+  '\\blive (at|in|from)\\b', '\\([^)]*\\b(live|acoustic|demos?|unplugged)\\b[^)]*\\)',
   '\\bdemos?\\b', '\\bunplugged\\b', '\\bsessions?\\b', '\\bbootleg\\b', '\\bouttakes?\\b',
 ].join('|'), 'i')
 
