@@ -127,18 +127,24 @@ PY
 if [ -s "$TMP_OUT/audio-candidates.list" ]; then
   mkdir -p "$APPDIR/mixtape-intros"
   ssh $SSH_OPTS "$REMOTE" "mkdir -p \"$REMOTE_DIR/mixtape-intros\"" || true
-  while IFS= read -r AUDIO; do
+  # `|| [ -n "$AUDIO" ]` keeps the FINAL line even without a trailing
+  # newline — the list is join()ed, and read alone drops an unterminated
+  # last line (caught live: the second of two talkovers never healed).
+  while IFS= read -r AUDIO || [ -n "$AUDIO" ]; do
     [ -n "$AUDIO" ] || continue
     BASE="$(basename "$AUDIO")"
+    # -n on every ssh that doesn't take a redirect: without it ssh slurps the
+    # rest of the candidates list from the loop's stdin (caught live — only
+    # the FIRST of two talkovers healed on the first run).
     if [ ! -f "$AUDIO" ]; then
-      if ssh $SSH_OPTS "$REMOTE" "test -f \"$REMOTE_DIR/mixtape-intros/$BASE\"" 2>/dev/null; then
-        ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/mixtape-intros/$BASE\"" > "$AUDIO.partial" && mv "$AUDIO.partial" "$AUDIO"
+      if ssh -n $SSH_OPTS "$REMOTE" "test -f \"$REMOTE_DIR/mixtape-intros/$BASE\"" 2>/dev/null; then
+        ssh -n $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/mixtape-intros/$BASE\"" > "$AUDIO.partial" && mv "$AUDIO.partial" "$AUDIO"
         echo "  healed voice audio (pulled): $BASE"
       fi
     else
-      if ! ssh $SSH_OPTS "$REMOTE" "test -f \"$REMOTE_DIR/mixtape-intros/$BASE\"" 2>/dev/null; then
+      if ! ssh -n $SSH_OPTS "$REMOTE" "test -f \"$REMOTE_DIR/mixtape-intros/$BASE\"" 2>/dev/null; then
         ssh $SSH_OPTS "$REMOTE" "cat > \"$REMOTE_DIR/mixtape-intros/.$BASE.staged\"" < "$AUDIO"
-        ssh $SSH_OPTS "$REMOTE" "mv \"$REMOTE_DIR/mixtape-intros/.$BASE.staged\" \"$REMOTE_DIR/mixtape-intros/$BASE\""
+        ssh -n $SSH_OPTS "$REMOTE" "mv \"$REMOTE_DIR/mixtape-intros/.$BASE.staged\" \"$REMOTE_DIR/mixtape-intros/$BASE\""
         echo "  healed voice audio (pushed): $BASE"
       fi
     fi
