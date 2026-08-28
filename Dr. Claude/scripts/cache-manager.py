@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-import json, os, subprocess
+import json, os, subprocess, sys
+
+# Remote-mode gate (2026-08-28, the blip incident): away from the home LAN
+# the warm's NAS copies ride the WAN (or hang on a wedged mount) and starve
+# the very streaming this cache exists to serve. Not home = don't warm.
+if subprocess.run(["ping", "-c", "1", "-t", "2", "homemini.local"],
+                  capture_output=True).returncode != 0:
+    print("cache-manager: not on the home LAN — warm skipped (runs next time we're home)")
+    sys.exit(0)
 HOME=os.path.expanduser("~")
 LIB=f"{HOME}/Library/Application Support/JakeTunes/library.json"
 DLS=f"{HOME}/Library/Application Support/JakeTunes/downloads-state.json"
