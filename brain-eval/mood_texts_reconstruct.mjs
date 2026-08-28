@@ -28,8 +28,24 @@ function extract(name) {
 }
 const fns = new Function(`${extract('tempoEnergy')}\n${extract('moodText')}\nreturn { tempoEnergy, moodText }`)()
 
+// 2026-08-27: the trainer applies metadata-overrides (laptop-authored bpm/key/
+// genre) BEFORE embedding — fresh imports can carry bpm ONLY in the overrides
+// (first seen: 10 Parcels tracks, teb=130 vs library bpm=null → 40/50 fidelity
+// gate). Extract the trainer's own applyMetadataOverrides + its numeric-field
+// set so the reconstruction sees the exact same track view. Same no-hand-port
+// rule as moodText above.
+const numMatch = src.match(/^const NUMERIC_OVERRIDE_FIELDS = new Set\(\[[\s\S]*?\]\)/m)
+if (!numMatch) { console.error('[fatal] NUMERIC_OVERRIDE_FIELDS not found'); process.exit(1) }
+const applyOverrides = new Function('OVERRIDES', 'existsSync', 'readFileSync', 'log',
+  `${numMatch[0]}\n${extract('applyMetadataOverrides')}\nreturn applyMetadataOverrides`)
+
 const lib = JSON.parse(readFileSync(join(stateDir, 'library.json'), 'utf8'))
 const tracks = Array.isArray(lib) ? lib : lib.tracks
+{
+  const { existsSync } = await import('node:fs')
+  applyOverrides(join(stateDir, 'metadata-overrides.json'), existsSync, readFileSync,
+    (...a) => console.error('[overrides]', ...a))(tracks)
+}
 const desc = JSON.parse(readFileSync(join(stateDir, 'brain-descriptors.json'), 'utf8'))
 
 const rows = []
