@@ -6,7 +6,15 @@ after the repair, and the mechanism is now fully identified** (see the
 change → Jake's call. The nightly repairs (REPORT-20260818, REPORT-20260820)
 fix the data; this fixes the mechanism so it stops recurring.
 
-**RECURRENCE LOG:** 5th event 2026-08-24 (library 9,686→9,692, +6 imports;
+**RECURRENCE LOG:** 7th event detected 2026-08-27 (import day 08-26: library
+9,783→9,791, +8 incl. the Parcels album; 109 orphans, 57 dup groups). The
+08-27 session ABORTED before repairing (REPORT-20260827 — three stacked infra
+failures + a fidelity-gate blind spot it fixed), so the damage stayed LIVE for
+~24h and was repaired+applied 08-28 (router-truth 0.744→0.826, mood-routed
+0.838, 870 suspects re-embedded, 109 orphans pruned — REPORT-20260828). New
+cost datum: when the nightly repair misses a night, the phone serves the
+clobbered map all day. 6th event 2026-08-26 (library 9,692→9,783, +91 imports;
+104 orphans/60 dups; rt 0.744→0.826 — REPORT-20260826). 5th event 2026-08-24 (library 9,686→9,692, +6 imports;
 97 orphans back, 768 clobbered vectors; router-truth 0.748 → repaired 0.823,
 mood-routed mean 0.833 — REPORT-20260824. NEW this night: the 2:00 trainer
 FATAL'd before writing, so (a) the clobber also wiped the 08-23 trainer batch
