@@ -42,11 +42,10 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'
+import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe } from './stream-spool.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
-import { safeIpcError } from './safe-ipc-error.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
 import { registerSettingsIpc } from './ipc/settings-ipc.ts'
@@ -4244,6 +4243,8 @@ async function fetchAudioFromHomemini(
   // is never aborted by this timer (fetchHeadersWithin).
   const headerBudgetMs = wantFlac ? 25_000 : 12_000
   const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${wantFlac ? '?fmt=flac' : ''}`
+  // Spool ("do the deeper buffering thing", 2026-08-28): a landed local copy serves every range from disk — WAN jitter can't reach a playing song. Not landed yet: kick the full download, live-proxy this request as before.
+  const viaSpool = await spoolAwareServe(join(app.getPath('userData'), 'stream-spool'), `${id}${wantFlac ? '-flac' : ''}`, url, rangeHeader); if (viaSpool) return viaSpool
 
   const once = async (): Promise<Response | null> => {
     try {
