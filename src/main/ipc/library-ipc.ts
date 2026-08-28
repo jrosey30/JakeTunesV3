@@ -13,6 +13,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { STATE_DIR } from '../state-dir.ts'
 import { recordPlaylistSave, tombstonesPath } from '../playlist-tombstones.ts'
+import { stampModifiedPlaylists, schedulePlaylistHubConverge } from '../playlist-hub-sync.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import {
   computeArtistCandidates,
@@ -152,10 +153,15 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
     // resurrect it ("existence is not memory"). Fire-and-forget: a ledger
     // failure must never fail the save.
     const prev = (await host.getPlaylists()) as Array<{ id?: unknown; name?: unknown }>
-    host.setPlaylists(playlists)
+    // Hub stamps (final-form sync): content changed → modifiedAt = now,
+    // untouched → carry the previous stamp. The renderer never sees stamps;
+    // this diff is where they're minted.
+    const stamped = stampModifiedPlaylists(prev as never, playlists as never)
+    host.setPlaylists(stamped)
     host.triggerSync('playlist')
     void recordPlaylistSave(prev, playlists as Array<{ id?: unknown }>, tombstonesPath(STATE_DIR))
       .catch((err) => console.warn('[playlist-tombstones] record failed:', err))
+    schedulePlaylistHubConverge()
     return { ok: true }
   }, { refuse: REFUSED_SENDER })
 

@@ -82,6 +82,10 @@ import { buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
+import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
+import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from './playlist-tombstones.ts'
+import { pinsPath as playlistPinsPath } from './playlist-pins.ts'
+import { hostname as osHostname } from 'os'
 import { computeStandings, computeAlbumCredits, creditKindOf, albumKeyOfStrings, type CreditRecord } from './friend-standings-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
@@ -11943,7 +11947,12 @@ ipc.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: 
   try {
     const data = await mobilePlaylistsCache.get()
     const playlists = Array.isArray(data?.playlists) ? data.playlists : []
-    return { ok: true, playlists }
+    // Tombstone gate (2026-08-28): a mobile playlist Jake deleted on the
+    // desktop must not resurrect on the next boot merge — the Brief-121
+    // append was gated on existence, not deletion ("existence is not
+    // memory"). The mirror stays read-only; only the VIEW filters.
+    const dead = new Set((await loadPlaylistTombstones(playlistTombstonesPath(STATE_DIR))).map((t) => t.id))
+    return { ok: true, playlists: playlists.filter((p) => !dead.has(String(p.id))) }
   } catch {
     return { ok: true, playlists: [] }
   }
@@ -13128,6 +13137,23 @@ ipc.handle('get-friend-standings', async () => {
 ipc.handle('sweep-friend-imports', async () => ({ ok: true, credited: await sweepFriendImports() }), { refuse: REFUSED_SENDER })
 setTimeout(() => { void sweepFriendImports() }, 30_000)
 setInterval(() => { void sweepFriendImports() }, 5 * 60_000)
+
+// ── Playlist hub (2026-08-28, final-form sync: "work like spotify") ──
+// Converge with homemini quietly: on boot, every 10 minutes, and
+// (debounced, via library-ipc) after every save. The hub's answer is
+// adopted into the cache BEFORE the renderer hears about it, so the echo
+// save diffs against already-adopted state. homemini down = quiet skip.
+initPlaylistHubSync({
+  hubUrl: MOBILE_BACKEND_URL,
+  device: osHostname(),
+  getPlaylists: () => playlistsCache.get() as Promise<HubPlaylistLike[]>,
+  setPlaylists: (p) => { playlistsCache.set(p as unknown[]) },
+  tombstonesFile: playlistTombstonesPath(STATE_DIR),
+  pinsFile: playlistPinsPath(STATE_DIR),
+  onApplied: (p) => { mainWindow?.webContents.send('playlists-updated', { playlists: p }) },
+})
+setTimeout(() => { schedulePlaylistHubConverge(0) }, 45_000)
+setInterval(() => { schedulePlaylistHubConverge(0) }, 10 * 60_000)
 
 ipc.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
   // Identity-wide delete: removing a song removes EVERY copy of it (the list

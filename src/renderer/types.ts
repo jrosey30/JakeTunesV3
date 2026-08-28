@@ -889,6 +889,8 @@ declare global {
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
+      // Playlist hub push — main adopted new hub state
+      onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => () => void
       // Sidebar pins — synced sidecar (playlist-pins.json), not per-machine ui-state
       loadPlaylistPins: () => Promise<{ ok: boolean; pins: { pinnedPlaylists: string[]; updatedAt: string } | null }>
       savePlaylistPins: (pinnedPlaylists: string[]) => Promise<{ ok: boolean }>

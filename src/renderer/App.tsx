@@ -47,7 +47,7 @@ import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
-import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
+import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist } from './types'
 import { setNotice } from './activity'
 import './styles/variables.css'
 import './styles/primitives.css'
@@ -1090,6 +1090,18 @@ function AppInner() {
     }
     window.electronAPI.savePlaylists(libState.playlists)
   }, [libState.playlists])
+
+  // Playlist hub push (2026-08-28, final-form sync): the main process
+  // converged with homemini and adopted new state — swap the list in
+  // place. The echo save this triggers diffs clean against the already-
+  // adopted cache, so nothing loops and nothing tombstones.
+  useEffect(() => {
+    return window.electronAPI.onPlaylistsUpdated(({ playlists }) => {
+      if (Array.isArray(playlists)) {
+        dispatch({ type: 'LOAD_PLAYLISTS', playlists: playlists as Playlist[] })
+      }
+    })
+  }, [dispatch])
 
   // Persist library (tracks + playlists) whenever tracks change (debounced)
   const libraryLoaded = useRef(false)

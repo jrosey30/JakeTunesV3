@@ -643,6 +643,13 @@ const electronAPI = {
     ipcRenderer.invoke('load-ui-state'),
   saveUiState: (state: Record<string, unknown>): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-ui-state', state),
+  // Playlist hub push (final-form sync): main adopted new hub state —
+  // the renderer swaps its list in place, no reboot needed.
+  onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { playlists: unknown[] }) => callback(p)
+    ipcRenderer.on('playlists-updated', handler)
+    return () => { ipcRenderer.removeListener('playlists-updated', handler) }
+  },
   // Sidebar pins — synced sidecar, no longer part of per-machine ui-state.
   loadPlaylistPins: (): Promise<{ ok: boolean; pins: { pinnedPlaylists: string[]; updatedAt: string } | null }> =>
     ipcRenderer.invoke('load-playlist-pins'),
