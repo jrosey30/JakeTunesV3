@@ -652,7 +652,7 @@ const electronAPI = {
     ipcRenderer.invoke('spotify-connect'),
   spotifyDisconnect: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('spotify-disconnect'),
-  spotifyPullNow: (): Promise<{ ok: boolean; added?: number; scored?: number; error?: string }> =>
+  spotifyPullNow: (): Promise<{ ok: boolean; tracks?: number; topArtists?: string[]; error?: string }> =>
     ipcRenderer.invoke('spotify-pull-now'),
   // Playlist hub push (final-form sync): main adopted new hub state —
   // the renderer swaps its list in place, no reboot needed.

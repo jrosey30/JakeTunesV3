@@ -13,43 +13,46 @@
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
 import {
-  loadAuth, saveAuth, connectSpotify, fetchDiscoverWeekly, SPOTIFY_REDIRECT_URI,
+  loadAuth, saveAuth, connectSpotify, fetchTopTracks, fetchLikedRecent, SPOTIFY_REDIRECT_URI,
 } from './spotify-connect.ts'
+import { aggregateTopArtists, saveSpotifyTaste } from './spotify-taste.ts'
 
 export interface SpotifyIpcHost {
   authFile: string
+  /** Where the weekly taste pull lands (read by the shop's anchor pool). */
+  tasteFile: string
   openExternal: (url: string) => void
-  /** Brain scores for candidate tracks (null = brain unavailable). */
-  scoreCandidates: (cands: Array<{ artist: string; title: string }>) => Promise<number[] | null>
-  /** The normal list-add path — dedupe + tombstones + attribution included. */
-  addRecommendation: (input: { song: string; artist: string; album?: string; note: string; source: string }) => Promise<{ ok: boolean; deduped?: boolean }>
 }
 
-/** Below this brain score a DW track stays off the list — the same
- *  hard floor the Record Shop uses for a shelf spot. */
-export const DW_BRAIN_FLOOR = 52
 const PULL_EVERY_MS = 6 * 24 * 3600 * 1000   // "weekly", tolerant of drift
 
-export async function pullDiscoverWeekly(host: SpotifyIpcHost): Promise<{ ok: boolean; added?: number; scored?: number; error?: string }> {
-  const dw = await fetchDiscoverWeekly(host.authFile)
-  if (!dw.ok || !dw.tracks) return { ok: false, error: dw.error }
-  if (dw.tracks.length === 0) return { ok: true, added: 0, scored: 0 }
-  const pcts = await host.scoreCandidates(dw.tracks.map((t) => ({ artist: t.artist, title: t.song })))
-  let added = 0
-  for (let i = 0; i < dw.tracks.length; i++) {
-    const pct = pcts?.[i]
-    // Brain down = don't gate blind; brain up = the floor decides.
-    if (pcts && (pct === undefined || pct < DW_BRAIN_FLOOR)) continue
-    const t = dw.tracks[i]
-    const note = pcts ? `Discover Weekly · brain ${Math.round(pcts[i])}%` : 'Discover Weekly'
-    const r = await host.addRecommendation({ song: t.song, artist: t.artist, album: t.album, note, source: 'spotify' })
-    if (r.ok && !r.deduped) added++
-  }
+/**
+ * The taste pull (2026-08-28, "wire in the taste signal they use"):
+ * Discover Weekly itself is API-dead for personal apps (Nov 2024), but
+ * his OWN Spotify listening — the input DW fed on — is still readable.
+ * Top tracks (short + medium term) and recent likes land in
+ * spotify-taste.json; the Record Shop's anchor pool reads the ranked
+ * artists so the Deezer graph digs from the Spotify side of his ear.
+ */
+export async function pullSpotifyTaste(host: SpotifyIpcHost): Promise<{ ok: boolean; topArtists?: string[]; tracks?: number; error?: string }> {
+  const [short, medium, liked] = await Promise.all([
+    fetchTopTracks(host.authFile, 'short_term'),
+    fetchTopTracks(host.authFile, 'medium_term'),
+    fetchLikedRecent(host.authFile, 2),
+  ])
+  const total = short.length + medium.length + liked.length
+  if (total === 0) return { ok: false, error: 'Spotify returned no listening — connected?' }
+  const topArtists = aggregateTopArtists([
+    { tracks: short, weight: 3 },
+    { tracks: medium, weight: 2 },
+    { tracks: liked, weight: 1 },
+  ], 8)
+  await saveSpotifyTaste({ topArtists, topTracks: [...short, ...medium], likedRecent: liked, pulledAt: new Date().toISOString() }, host.tasteFile)
   const auth = await loadAuth(host.authFile)
   auth.lastPullAt = new Date().toISOString()
   await saveAuth(auth, host.authFile)
-  console.log(`[spotify] Discover Weekly: ${dw.tracks.length} tracks, ${added} added (floor ${DW_BRAIN_FLOOR})`)
-  return { ok: true, added, scored: dw.tracks.length }
+  console.log(`[spotify] taste pull: ${total} tracks → top artists: ${topArtists.slice(0, 5).join(', ')}`)
+  return { ok: true, topArtists, tracks: total }
 }
 
 /** Weekly cadence check — called on boot and every 12h. */
@@ -58,8 +61,8 @@ export async function pullIfDue(host: SpotifyIpcHost): Promise<void> {
   if (!auth.refreshToken) return   // not connected — silent
   const last = Date.parse(auth.lastPullAt || '') || 0
   if (Date.now() - last < PULL_EVERY_MS) return
-  const r = await pullDiscoverWeekly(host)
-  if (!r.ok) console.warn('[spotify] weekly pull failed:', r.error)
+  const r = await pullSpotifyTaste(host)
+  if (!r.ok) console.warn('[spotify] weekly taste pull failed:', r.error)
 }
 
 export function registerSpotifyIpc(ipc: IpcRegistrar, host: SpotifyIpcHost): void {
@@ -95,7 +98,7 @@ export function registerSpotifyIpc(ipc: IpcRegistrar, host: SpotifyIpcHost): voi
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('spotify-pull-now', async () => {
-    return await pullDiscoverWeekly(host)
+    return await pullSpotifyTaste(host)
   }, { refuse: REFUSED_SENDER })
 
   setTimeout(() => { void pullIfDue(host) }, 90_000)

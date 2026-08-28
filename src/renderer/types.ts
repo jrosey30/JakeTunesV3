@@ -894,7 +894,7 @@ declare global {
       spotifySetClientId: (clientId: string) => Promise<{ ok: boolean; error?: string }>
       spotifyConnect: () => Promise<{ ok: boolean; error?: string }>
       spotifyDisconnect: () => Promise<{ ok: boolean }>
-      spotifyPullNow: () => Promise<{ ok: boolean; added?: number; scored?: number; error?: string }>
+      spotifyPullNow: () => Promise<{ ok: boolean; tracks?: number; topArtists?: string[]; error?: string }>
       // Playlist hub push — main adopted new hub state
       onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => () => void
       // Sidebar pins — synced sidecar (playlist-pins.json), not per-machine ui-state

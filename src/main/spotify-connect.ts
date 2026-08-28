@@ -26,7 +26,7 @@ export const SPOTIFY_REDIRECT_URI = `http://127.0.0.1:${SPOTIFY_LOOPBACK_PORT}/c
 const AUTH_URL = 'https://accounts.spotify.com/authorize'
 const TOKEN_URL = 'https://accounts.spotify.com/api/token'
 const API = 'https://api.spotify.com/v1'
-const SCOPES = 'playlist-read-private playlist-read-collaborative'
+const SCOPES = 'playlist-read-private playlist-read-collaborative user-top-read user-library-read'
 
 export interface SpotifyAuthState {
   clientId?: string
@@ -192,4 +192,36 @@ export async function fetchDiscoverWeekly(file: string, fetchFn: typeof fetch = 
     tracks.push({ song: t.name, artist: t.artists[0].name, album: t.album?.name })
   }
   return { ok: true, tracks }
+}
+
+/** His own Spotify listening — still readable after the Nov-2024 purge. */
+export async function fetchTopTracks(file: string, range: 'short_term' | 'medium_term', fetchFn: typeof fetch = fetch): Promise<DwTrack[]> {
+  const token = await freshAccessToken(file, fetchFn)
+  if (!token) return []
+  const res = await fetchFn(`${API}/me/top/tracks?time_range=${range}&limit=50`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) return []
+  const data = await res.json() as { items?: Array<{ name?: string; artists?: Array<{ name?: string }>; album?: { name?: string } }> }
+  return (data.items || [])
+    .filter((t) => t?.name && t.artists?.[0]?.name)
+    .map((t) => ({ song: t.name!, artist: t.artists![0].name!, album: t.album?.name }))
+}
+
+export async function fetchLikedRecent(file: string, pages = 2, fetchFn: typeof fetch = fetch): Promise<DwTrack[]> {
+  const token = await freshAccessToken(file, fetchFn)
+  if (!token) return []
+  const out: DwTrack[] = []
+  let url: string | null = `${API}/me/tracks?limit=50`
+  for (let i = 0; i < pages && url; i++) {
+    const res = await fetchFn(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) })
+    if (!res.ok) break
+    const data = await res.json() as { items?: Array<{ track?: { name?: string; artists?: Array<{ name?: string }>; album?: { name?: string } } }>; next?: string | null }
+    for (const it of data.items || []) {
+      const t = it?.track
+      if (t?.name && t.artists?.[0]?.name) out.push({ song: t.name, artist: t.artists[0].name, album: t.album?.name })
+    }
+    url = typeof data.next === 'string' ? data.next : null
+  }
+  return out
 }

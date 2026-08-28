@@ -1130,13 +1130,13 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     <p className="imp-help" style={{ marginBottom: 8 }}>
                       Connected{spotify.connectedAt ? ` since ${new Date(spotify.connectedAt).toLocaleDateString()}` : ''}.
                       {spotify.lastPullAt ? ` Last pull ${new Date(spotify.lastPullAt).toLocaleString()}.` : ' No pull yet.'}
-                      {' '}Weekly, brain-gated onto Listen to the List.
+                      {' '}Weekly taste signal: your Spotify listening feeds the Record Shop's anchors.
                     </p>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="imp-btn" disabled={spotifyBusy} onClick={() => { void (async () => {
                         setSpotifyBusy(true); setSpotifyMsg('Pulling…')
                         const r = await window.electronAPI.spotifyPullNow()
-                        setSpotifyMsg(r.ok ? `Scored ${r.scored ?? 0}, added ${r.added ?? 0}.` : (r.error || 'Pull failed'))
+                        setSpotifyMsg(r.ok ? `Pulled ${r.tracks ?? 0} tracks · top: ${(r.topArtists ?? []).slice(0, 3).join(', ')}` : (r.error || 'Pull failed'))
                         setSpotifyBusy(false)
                       })() }}>Pull now</button>
                       <button className="imp-btn" disabled={spotifyBusy} onClick={() => { void (async () => {

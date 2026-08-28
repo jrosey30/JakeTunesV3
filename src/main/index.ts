@@ -85,6 +85,7 @@ import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from 
 import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
 import { initMixtapeHubSync, scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
 import { registerSpotifyIpc } from './spotify-ipc.ts'
+import { loadSpotifyTasteAnchors } from './spotify-taste.ts'
 import { readMixtapesForHub, writeMixtapesFromHub, mixtapeTombstonesFile, mixtapeIntrosDir } from './mixtapes.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from './playlist-tombstones.ts'
 import { pinsPath as playlistPinsPath } from './playlist-pins.ts'
@@ -1003,12 +1004,8 @@ registerUiStateIpc(ipc)
 // ("get Discover Weekly into the brain", greenlit 2026-07-14).
 registerSpotifyIpc(ipc, {
   authFile: join(STATE_DIR, 'spotify-auth.json'),
+  tasteFile: join(STATE_DIR, 'spotify-taste.json'),
   openExternal: (url) => { void shell.openExternal(url) },
-  scoreCandidates: async (cands) => {
-    const { brainMatchCandidates } = await import('./discovery-brain.ts')
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ id?: number; rating?: number; playCount?: number }> }
-    return brainMatchCandidates(cands.map((c) => ({ artist: c.artist, title: c.title, genre: '', type: 'song' as const })), lib.tracks || [], 5) },
-  addRecommendation: (input) => addRecommendationCore({ ...input, source: input.source as RecoSource }),
 })
 registerBackupIpc(ipc, { getMainWindow: () => mainWindow })
 registerSettingsIpc(ipc, {
@@ -1711,8 +1708,10 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       } catch (err) { console.warn('[discover] llm lanes failed:', err) }
     })()
 
-    // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16 anchors feed the pool.
-    const supplyPromise = df.supplyLanes(anchors.map((a) => a.artist), dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
+    // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16
+    // anchors feed the pool, plus his top SPOTIFY artists ("wire in the taste signal they use").
+    const spotifyAnchors = await loadSpotifyTasteAnchors(join(STATE_DIR, 'spotify-taste.json'), 4)
+    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
 
     await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise])
 
