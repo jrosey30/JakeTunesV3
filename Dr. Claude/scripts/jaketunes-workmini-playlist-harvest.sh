@@ -25,8 +25,8 @@ LOCAL_TS="$APPDIR/playlist-tombstones.json"
 SSH_OPTS="-o ConnectTimeout=15 -o BatchMode=yes"
 REMOTE_DIR='$HOME/Library/Application Support/JakeTunes'
 
-TMP_R="$(mktemp)"; TMP_RT="$(mktemp)"; TMP_RP="$(mktemp)"; TMP_OUT="$(mktemp -d)"
-trap 'rm -rf "$TMP_R" "$TMP_RT" "$TMP_RP" "$TMP_OUT"' EXIT
+TMP_R="$(mktemp)"; TMP_RT="$(mktemp)"; TMP_RP="$(mktemp)"; TMP_RM="$(mktemp)"; TMP_RMT="$(mktemp)"; TMP_OUT="$(mktemp -d)"
+trap 'rm -rf "$TMP_R" "$TMP_RT" "$TMP_RP" "$TMP_RM" "$TMP_RMT" "$TMP_OUT"' EXIT
 
 if ! ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/playlists.json\"" > "$TMP_R" 2>/dev/null; then
   echo "  workmini unreachable — nothing harvested"; exit 0
@@ -34,9 +34,128 @@ fi
 ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/playlist-tombstones.json\" 2>/dev/null" > "$TMP_RT" || true
 [ -s "$TMP_RT" ] || echo '[]' > "$TMP_RT"
 ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/playlist-pins.json\" 2>/dev/null" > "$TMP_RP" || true
+TMP_RM="$(mktemp)"; TMP_RMT="$(mktemp)"
+ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/mixtapes.json\" 2>/dev/null" > "$TMP_RM" || true
+[ -s "$TMP_RM" ] || echo '[]' > "$TMP_RM"
+ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/mixtape-tombstones.json\" 2>/dev/null" > "$TMP_RMT" || true
+[ -s "$TMP_RMT" ] || echo '[]' > "$TMP_RMT"
 
 REMOTE_APP_RUNNING=0
 if ssh $SSH_OPTS "$REMOTE" 'pgrep -x JakeTunes >/dev/null' 2>/dev/null; then REMOTE_APP_RUNNING=1; fi
+
+# ── Mixtape exchange (2026-08-28) — same doctrine as playlists ────────────
+# Tapes are add-by-id both ways (the deploy's wholesale push used to DESTROY
+# a workmini-minted tape), deletes are tombstoned (union, applied both
+# sides), and a tape's voice audio (intro/talkovers) travels with it —
+# workmini held Jake's tape with two talkover paths that existed only on
+# the MacBook, so his voice silently vanished from playback there.
+python3 - "$TMP_RM" "$TMP_RMT" "$APPDIR/mixtapes.json" "$APPDIR/mixtape-tombstones.json" "$TMP_OUT" "$APPDIR" <<'PY' || true
+import json, os, sys, tempfile, subprocess
+remote_p, remote_ts_p, local_p, local_ts_p, out_dir, appdir = sys.argv[1:7]
+
+def jload(p, dflt):
+    try:
+        v = json.load(open(p))
+        return v if isinstance(v, list) else dflt
+    except Exception:
+        return dflt
+
+r_tapes, l_tapes = jload(remote_p, []), jload(local_p, [])
+union = {}
+for t in jload(local_ts_p, []) + jload(remote_ts_p, []):
+    tid = str(t.get('id'))
+    cur = union.get(tid)
+    if not cur or str(t.get('deletedAt','')) < str(cur.get('deletedAt','')):
+        union[tid] = t
+dead = set(union)
+
+l_after = [x for x in l_tapes if str(x.get('id')) not in dead]
+dropped = len(l_tapes) - len(l_after)
+if dropped > 3 and dropped * 2 > len(l_tapes):
+    print('  ⚠ GUARD: union would delete %d/%d local tapes — refusing the mass drop' % (dropped, len(l_tapes)))
+    l_after, dropped = l_tapes, 0
+elif dropped:
+    print('  tapes: applying %d tombstoned delete(s) locally' % dropped)
+
+l_ids = {str(x.get('id')) for x in l_after}
+new = [x for x in r_tapes if str(x.get('id')) not in l_ids and str(x.get('id')) not in dead]
+for x in new:
+    print('  tape minted on workmini: %s' % str(x.get('title'))[:40])
+merged = new + l_after   # local wins shared ids; remote-only tapes join
+
+changed = len(new) > 0 or dropped > 0
+ts_changed = sorted(union) != sorted(str(t.get('id')) for t in jload(local_ts_p, []))
+if changed or ts_changed:
+    if subprocess.run(['pgrep','-f','JakeTunes.app'], capture_output=True).returncode == 0:
+        print('  ⚠ tapes: JakeTunes is running on this Mac — local tape merge skipped (next run settles)')
+    else:
+        d = os.path.dirname(local_p)
+        fd, tmp = tempfile.mkstemp(dir=d, suffix='.tmp')
+        with os.fdopen(fd, 'w') as f: json.dump(merged, f, indent=2)
+        os.replace(tmp, local_p)
+        fd, tmp = tempfile.mkstemp(dir=d, suffix='.tmp')
+        with os.fdopen(fd, 'w') as f: json.dump(sorted(union.values(), key=lambda t: str(t.get('deletedAt',''))), f, indent=2)
+        os.replace(tmp, local_ts_p)
+        print('  tapes: merged %d -> %d, %d tombstones' % (len(l_tapes), len(merged), len(union)))
+else:
+    print('  tapes: nothing to do (%d there, %d here, %d tombstones)' % (len(r_tapes), len(l_tapes), len(union)))
+
+# Stage the workmini side: the merged shelf + union tombstones.
+r_after = [x for x in r_tapes if str(x.get('id')) not in dead]
+r_dropped = len(r_tapes) - len(r_after)
+if r_dropped > 3 and r_dropped * 2 > len(r_tapes):
+    print('  ⚠ GUARD: union would delete %d/%d workmini tapes — not staging the remote apply' % (r_dropped, len(r_tapes)))
+else:
+    json.dump(merged, open(os.path.join(out_dir, 'mixtapes.json'), 'w'), indent=2)
+    json.dump(sorted(union.values(), key=lambda t: str(t.get('deletedAt',''))), open(os.path.join(out_dir, 'mixtape-tombstones.json'), 'w'), indent=2)
+
+# Voice audio referenced by the FINAL shelf — candidates for the heal.
+# PATH-GATED to the app's own mixtape-intros dir: a JSON path may never
+# point this copier anywhere else.
+intros_prefix = os.path.join(appdir, 'mixtape-intros') + os.sep
+audio = set()
+for t in merged:
+    for pth in [t.get('introPath')] + [tv.get('path') for tv in (t.get('talkovers') or [])]:
+        if isinstance(pth, str) and pth.startswith(intros_prefix) and os.sep not in pth[len(intros_prefix):]:
+            audio.add(pth)
+with open(os.path.join(out_dir, 'audio-candidates.list'), 'w') as f:
+    f.write('\n'.join(sorted(audio)))
+PY
+
+# Heal voice audio: copy each referenced file to whichever side is missing
+# it. NEVER overwrites — a file that exists on a side is left alone.
+if [ -s "$TMP_OUT/audio-candidates.list" ]; then
+  mkdir -p "$APPDIR/mixtape-intros"
+  ssh $SSH_OPTS "$REMOTE" "mkdir -p \"$REMOTE_DIR/mixtape-intros\"" || true
+  while IFS= read -r AUDIO; do
+    [ -n "$AUDIO" ] || continue
+    BASE="$(basename "$AUDIO")"
+    if [ ! -f "$AUDIO" ]; then
+      if ssh $SSH_OPTS "$REMOTE" "test -f \"$REMOTE_DIR/mixtape-intros/$BASE\"" 2>/dev/null; then
+        ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/mixtape-intros/$BASE\"" > "$AUDIO.partial" && mv "$AUDIO.partial" "$AUDIO"
+        echo "  healed voice audio (pulled): $BASE"
+      fi
+    else
+      if ! ssh $SSH_OPTS "$REMOTE" "test -f \"$REMOTE_DIR/mixtape-intros/$BASE\"" 2>/dev/null; then
+        ssh $SSH_OPTS "$REMOTE" "cat > \"$REMOTE_DIR/mixtape-intros/.$BASE.staged\"" < "$AUDIO"
+        ssh $SSH_OPTS "$REMOTE" "mv \"$REMOTE_DIR/mixtape-intros/.$BASE.staged\" \"$REMOTE_DIR/mixtape-intros/$BASE\""
+        echo "  healed voice audio (pushed): $BASE"
+      fi
+    fi
+  done < "$TMP_OUT/audio-candidates.list"
+fi
+
+# Push the staged tape shelf — only while workmini's app is closed.
+if [ -s "$TMP_OUT/mixtape-tombstones.json" ]; then
+  if [ "$REMOTE_APP_RUNNING" = "1" ]; then
+    echo "  ⚠ JakeTunes is RUNNING on workmini — tape exchange not pushed (next run settles)"
+  else
+    ssh $SSH_OPTS "$REMOTE" "cat > \"$REMOTE_DIR/.mixtapes.json.staged\"" < "$TMP_OUT/mixtapes.json"
+    ssh $SSH_OPTS "$REMOTE" "cat > \"$REMOTE_DIR/.mixtape-tombstones.json.staged\"" < "$TMP_OUT/mixtape-tombstones.json"
+    ssh $SSH_OPTS "$REMOTE" "cp \"$REMOTE_DIR/mixtapes.json\" \"$REMOTE_DIR/.mixtapes.json.pre-exchange-backup\" 2>/dev/null; mv \"$REMOTE_DIR/.mixtapes.json.staged\" \"$REMOTE_DIR/mixtapes.json\" && mv \"$REMOTE_DIR/.mixtape-tombstones.json.staged\" \"$REMOTE_DIR/mixtape-tombstones.json\""
+    echo "  pushed tape exchange to workmini"
+  fi
+fi
 
 python3 - "$TMP_R" "$TMP_RT" "$LOCAL_PL" "$LOCAL_TS" "$TMP_OUT" "$TMP_RP" "$APPDIR/playlist-pins.json" <<'PY'
 import json, os, sys, tempfile, shutil, subprocess

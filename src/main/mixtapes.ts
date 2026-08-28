@@ -29,6 +29,11 @@ import type { Message } from '@anthropic-ai/sdk/resources/messages'
 import { fitSide, tapeTracks, MAX_TAPE_SONGS } from '../common/tape-physics'
 import { RADIO_CAST } from './cast'
 import { isSkitOrIntro } from './workout-sync.ts'
+// Tombstone primitives are structural ({id, name, deletedAt}) — the same
+// machinery playlists use, pointed at mixtape-tombstones.json, so a tape
+// deleted on either machine stays deleted everywhere (the harvest unions
+// and applies both files). "Existence is not memory."
+import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
 
 const execP = promisify(execFile)
 
@@ -93,6 +98,7 @@ interface MixtapeInputTrack {
 }
 
 const MIXTAPES_FILE = () => join(app.getPath('userData'), 'mixtapes.json')
+const MIXTAPE_TOMBSTONES_FILE = () => join(app.getPath('userData'), 'mixtape-tombstones.json')
 const INTROS_DIR = () => join(app.getPath('userData'), 'mixtape-intros')
 const MAX_INPUT_SONGS = 150
 // TRUE tape limits (Jake: "absolutely true time limits... if i run out of
@@ -562,6 +568,12 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       if (idx >= 0) all[idx] = tape
       else all.unshift(tape)
       await saveMixtapes(all)
+      // A saved tape is alive by the owner's word — clear any tombstone for
+      // its id so a deliberate re-creation isn't re-deleted by the next sync.
+      const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
+      if (ts.some((t) => t.id === tape.id)) {
+        await saveTombstones(ts.filter((t) => t.id !== tape.id), MIXTAPE_TOMBSTONES_FILE())
+      }
       return { ok: true }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'io-failed') }
@@ -577,6 +589,13 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       const next = all.filter((m) => m.id !== id)
       if (next.length === all.length) return { ok: false, error: 'No mixtape with that id.' }
       await saveMixtapes(next)
+      // Durable record of the deletion — the harvest unions this with
+      // workmini's so the tape stays dead everywhere and can never be
+      // resurrected by a sync ("existence is not memory").
+      const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
+      if (!ts.some((t) => t.id === id)) {
+        await saveTombstones([...ts, { id, name: gone?.title ?? '', deletedAt: new Date().toISOString() }], MIXTAPE_TOMBSTONES_FILE())
+      }
       if (gone?.introPath) await unlink(gone.introPath).catch(() => {})
       // The merged tape audio goes with the tape — otherwise every deleted
       // tape leaves a few hundred MB of ALAC behind forever. Identity-gated
