@@ -643,6 +643,11 @@ const electronAPI = {
     ipcRenderer.invoke('load-ui-state'),
   saveUiState: (state: Record<string, unknown>): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-ui-state', state),
+  // Sidebar pins — synced sidecar, no longer part of per-machine ui-state.
+  loadPlaylistPins: (): Promise<{ ok: boolean; pins: { pinnedPlaylists: string[]; updatedAt: string } | null }> =>
+    ipcRenderer.invoke('load-playlist-pins'),
+  savePlaylistPins: (pinnedPlaylists: string[]): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('save-playlist-pins', pinnedPlaylists),
   // CD drive
   checkCdDrive: (): Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }> =>
     ipcRenderer.invoke('check-cd-drive'),

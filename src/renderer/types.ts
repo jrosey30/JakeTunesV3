@@ -889,6 +889,9 @@ declare global {
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
+      // Sidebar pins — synced sidecar (playlist-pins.json), not per-machine ui-state
+      loadPlaylistPins: () => Promise<{ ok: boolean; pins: { pinnedPlaylists: string[]; updatedAt: string } | null }>
+      savePlaylistPins: (pinnedPlaylists: string[]) => Promise<{ ok: boolean }>
       // CD drive
       checkCdDrive: () => Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }>
       getCdInfo: () => Promise<{ ok: boolean; volumeName?: string; volumePath?: string; artist?: string; album?: string; year?: string; genre?: string; tracks?: { number: number; title: string; duration: number; filePath: string }[]; error?: string }>

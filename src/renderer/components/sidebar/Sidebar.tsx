@@ -224,20 +224,19 @@ export default function Sidebar() {
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
   // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
-  // Persisted in ui-state via FRESH read-modify-write (the scroll-clobber
-  // lesson: never save from a stale snapshot).
+  // 2026-08-28: pins moved OUT of per-machine ui-state into the synced
+  // playlist-pins.json sidecar ("same pins" across machines — the workmini
+  // harvest exchanges it, newest save wins). load-playlist-pins migrates a
+  // machine's old ui-state pins on first read, so nothing is lost.
   const [pinned, setPinned] = useState<string[]>([])
   useEffect(() => {
-    void window.electronAPI.loadUiState().then((r) => {
-      const raw = (r?.state as Record<string, unknown> | null)?.pinnedPlaylists
-      if (Array.isArray(raw)) setPinned(raw.filter((x): x is string => typeof x === 'string').slice(0, 3))
+    void window.electronAPI.loadPlaylistPins().then((r) => {
+      if (r?.ok && r.pins) setPinned(r.pins.pinnedPlaylists.slice(0, 3))
     })
   }, [])
   const persistPins = useCallback(async (next: string[]) => {
     setPinned(next)
-    const r = await window.electronAPI.loadUiState()
-    const fresh = (r?.state as Record<string, unknown> | null) ?? {}
-    await window.electronAPI.saveUiState({ ...fresh, pinnedPlaylists: next })
+    await window.electronAPI.savePlaylistPins(next)
   }, [])
   const togglePin = useCallback((id: string) => {
     setPlCtxMenu(null)

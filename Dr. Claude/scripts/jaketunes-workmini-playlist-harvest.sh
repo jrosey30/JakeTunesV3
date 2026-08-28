@@ -25,21 +25,22 @@ LOCAL_TS="$APPDIR/playlist-tombstones.json"
 SSH_OPTS="-o ConnectTimeout=15 -o BatchMode=yes"
 REMOTE_DIR='$HOME/Library/Application Support/JakeTunes'
 
-TMP_R="$(mktemp)"; TMP_RT="$(mktemp)"; TMP_OUT="$(mktemp -d)"
-trap 'rm -rf "$TMP_R" "$TMP_RT" "$TMP_OUT"' EXIT
+TMP_R="$(mktemp)"; TMP_RT="$(mktemp)"; TMP_RP="$(mktemp)"; TMP_OUT="$(mktemp -d)"
+trap 'rm -rf "$TMP_R" "$TMP_RT" "$TMP_RP" "$TMP_OUT"' EXIT
 
 if ! ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/playlists.json\"" > "$TMP_R" 2>/dev/null; then
   echo "  workmini unreachable — nothing harvested"; exit 0
 fi
 ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/playlist-tombstones.json\" 2>/dev/null" > "$TMP_RT" || true
 [ -s "$TMP_RT" ] || echo '[]' > "$TMP_RT"
+ssh $SSH_OPTS "$REMOTE" "cat \"$REMOTE_DIR/playlist-pins.json\" 2>/dev/null" > "$TMP_RP" || true
 
 REMOTE_APP_RUNNING=0
 if ssh $SSH_OPTS "$REMOTE" 'pgrep -x JakeTunes >/dev/null' 2>/dev/null; then REMOTE_APP_RUNNING=1; fi
 
-python3 - "$TMP_R" "$TMP_RT" "$LOCAL_PL" "$LOCAL_TS" "$TMP_OUT" <<'PY'
+python3 - "$TMP_R" "$TMP_RT" "$LOCAL_PL" "$LOCAL_TS" "$TMP_OUT" "$TMP_RP" "$APPDIR/playlist-pins.json" <<'PY'
 import json, os, sys, tempfile, shutil, subprocess
-remote_p, remote_ts_p, local_p, local_ts_p, out_dir = sys.argv[1:6]
+remote_p, remote_ts_p, local_p, local_ts_p, out_dir, remote_pins_p, local_pins_p = sys.argv[1:8]
 
 def items(d): return d if isinstance(d, list) else d.get('playlists', [])
 def load_ts(p):
@@ -103,6 +104,30 @@ else:
     print('  merged: %d -> %d playlists, %d tombstones (backup at ~/.jaketunes-playlists-preharvest-backup.json)'
           % (len(l_items), len(back), len(union)))
 
+# Pins: Spotify semantics — the LAST pin change anywhere wins wholesale.
+# ⚠️ TWIN: src/main/playlist-pins.ts newestPins (same rule in-app).
+def load_pins(p):
+    try:
+        v = json.load(open(p))
+        ids = v.get('pinnedPlaylists')
+        if not isinstance(ids, list): return None
+        return {'pinnedPlaylists': [x for x in ids if isinstance(x, str)][:3],
+                'updatedAt': v.get('updatedAt') if isinstance(v.get('updatedAt'), str) else ''}
+    except Exception:
+        return None
+lp, rp = load_pins(local_pins_p), load_pins(remote_pins_p)
+if rp and (not lp or rp['updatedAt'] > lp['updatedAt']):
+    if subprocess.run(['pgrep','-f','JakeTunes.app'], capture_output=True).returncode == 0:
+        print('  pins: workmini is newer but JakeTunes is running here — skipped (next run settles)')
+    else:
+        json.dump(rp, open(local_pins_p, 'w'), indent=2)
+        print('  pins: took workmini\'s (newer, %s)' % (rp['updatedAt'] or 'legacy'))
+elif lp and (not rp or (lp['updatedAt'] or '') > (rp['updatedAt'] or '')):
+    json.dump(lp, open(os.path.join(out_dir, 'playlist-pins.json'), 'w'), indent=2)
+    print('  pins: staging ours for workmini (newer, %s)' % (lp['updatedAt'] or 'legacy'))
+elif lp or rp:
+    print('  pins: already in agreement')
+
 # Stage the workmini side of the exchange: union tombstones + the remote
 # collection with the union APPLIED. Pushing tombstones without applying
 # them would let the app clear them as "resurrected" — they travel together.
@@ -123,6 +148,16 @@ PYRC=$?
 
 # Push the staged exchange to workmini — only while its app is closed
 # (stage + ssh-mv; scp/rsync choke on the spaced path).
+if [ -s "$TMP_OUT/playlist-pins.json" ]; then
+  if [ "$REMOTE_APP_RUNNING" = "1" ]; then
+    echo "  ⚠ JakeTunes is RUNNING on workmini — pins not pushed (next run settles)"
+  else
+    ssh $SSH_OPTS "$REMOTE" "cat > \"$REMOTE_DIR/.playlist-pins.json.staged\"" < "$TMP_OUT/playlist-pins.json"
+    ssh $SSH_OPTS "$REMOTE" "mv \"$REMOTE_DIR/.playlist-pins.json.staged\" \"$REMOTE_DIR/playlist-pins.json\""
+    echo "  pushed pins to workmini"
+  fi
+fi
+
 if [ -s "$TMP_OUT/playlist-tombstones.json" ]; then
   if [ "$REMOTE_APP_RUNNING" = "1" ]; then
     echo "  ⚠ JakeTunes is RUNNING on workmini — exchange not pushed (next deploy/harvest will settle it)"
