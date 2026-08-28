@@ -14,6 +14,14 @@ import { dirname } from 'path'
 
 export interface SpotifyTasteTrack { song: string; artist: string; album?: string }
 
+/** Jake, verbatim (2026-08-28): "FAKE MUSIC can not be involved in
+ *  jaketunes." Hard exclusion — these artists never enter the taste
+ *  signal, never rank, never anchor. Case-insensitive. Add names here;
+ *  never soften. */
+export const SPOTIFY_TASTE_BLOCKLIST = new Set(['fake music'])
+
+const blocked = (artist: string): boolean => SPOTIFY_TASTE_BLOCKLIST.has(String(artist || '').trim().toLowerCase())
+
 export interface SpotifyTasteFile {
   /** Ranked by weighted presence across top-tracks + likes. */
   topArtists: string[]
@@ -31,7 +39,7 @@ export function aggregateTopArtists(slices: { tracks: SpotifyTasteTrack[]; weigh
   for (const { tracks, weight } of slices) {
     tracks.forEach((t, i) => {
       const name = String(t.artist || '').trim()
-      if (!name) return
+      if (!name || blocked(name)) return
       const key = name.toLowerCase()
       // Earlier in a ranked list = stronger signal.
       const points = weight * (tracks.length - i) / tracks.length
@@ -54,7 +62,11 @@ export async function saveSpotifyTaste(taste: SpotifyTasteFile, file: string): P
 export async function loadSpotifyTasteAnchors(file: string, max = 4): Promise<string[]> {
   try {
     const v = JSON.parse(await readFile(file, 'utf-8')) as SpotifyTasteFile
-    return Array.isArray(v.topArtists) ? v.topArtists.filter((x): x is string => typeof x === 'string').slice(0, max) : []
+    // Blocklist applies at READ too — a taste file written before a name
+    // was banned can never leak it into the anchor pool.
+    return Array.isArray(v.topArtists)
+      ? v.topArtists.filter((x): x is string => typeof x === 'string' && !blocked(x)).slice(0, max)
+      : []
   } catch {
     return []
   }

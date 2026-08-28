@@ -39,3 +39,17 @@ describe('taste file round-trip', () => {
     assert.deepEqual(await loadSpotifyTasteAnchors(file, 3), ['A', 'B', 'C'])
   })
 })
+
+describe('the blocklist — "FAKE MUSIC can not be involved in jaketunes"', () => {
+  test('a blocked artist never ranks, whatever the casing', () => {
+    const out = aggregateTopArtists([{ tracks: [t('FAKE MUSIC'), t('Fake Music'), t('TV Girl')], weight: 3 }], 5)
+    assert.deepEqual(out, ['TV Girl'])
+  })
+
+  test('a taste file written BEFORE the ban still cannot leak it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'staste-'))
+    const file = join(dir, 'spotify-taste.json')
+    await saveSpotifyTaste({ topArtists: ['FAKE MUSIC', 'TV Girl'], topTracks: [], likedRecent: [], pulledAt: '2026-08-28' }, file)
+    assert.deepEqual(await loadSpotifyTasteAnchors(file, 4), ['TV Girl'])
+  })
+})
