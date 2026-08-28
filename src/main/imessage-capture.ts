@@ -88,6 +88,8 @@ export interface ImessageCaptureHost {
   stateFile: string
   addRecommendation: (input: {
     song?: string; artist?: string; album?: string; note?: string; from?: string; link?: string
+    /** message arrival time — the credit sweep's date gate judges the SEND */
+    sentAt?: string
   }) => Promise<{ ok: boolean; deduped?: boolean; error?: string }>
 }
 
@@ -333,7 +335,7 @@ async function scanOnce(host: ImessageCaptureHost): Promise<void> {
       const from = senderName(item.sender, contacts)
       const link = await resolveLink(item.url)
       if (link && (link.song || link.album)) {
-        const res = await host.addRecommendation({ ...link, from, link: item.url })
+        const res = await host.addRecommendation({ ...link, from, link: item.url, sentAt: item.at })
         state.captures.push({ guid: item.guid, url: item.url, ...link, from, at: item.at, status: res.ok ? (res.deduped ? 'deduped' : 'added') : 'failed' })
         if (res.ok) console.log(`[imsg] captured: ${link.song || link.album} — ${link.artist || '?'} (from ${from || 'unknown'})${res.deduped ? ' [already on list]' : ''}`)
         else state.pending.push({ ...item, attempts: item.attempts + 1 })

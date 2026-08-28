@@ -81,7 +81,7 @@ import {
 import { buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
-import { computeImportCredits, pairKeys, friendOfNote } from './friend-imports-core'
+import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
 import { computeStandings, computeAlbumCredits, creditKindOf, albumKeyOfStrings, type CreditRecord } from './friend-standings-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
@@ -12857,7 +12857,7 @@ ipc.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }
 // Shared by the renderer's omnibox AND the iMessage watcher — one add path,
 // so attribution, friends-ledger ticks, identity dedupe, and outbox replay
 // behave identically no matter where a song came from.
-async function addRecommendationCore(input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> {
+async function addRecommendationCore(input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string; sentAt?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> {
   // v2 capture: friend attribution + source link ride the synced `note`
   // field (backend passes note through verbatim), and the friend gets an
   // 'add' tick in the local ledger for the Scouts ranking.
@@ -12875,6 +12875,13 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
   // exactly how Lorin's two retro-captured songs double-counted 13 → 15
   // on top of their manual adds (both 2026-08-07).
   const fromName = input.from?.trim() || ''
+  // Durable send record — survives dedupes and list removals so the credit
+  // sweep can still award the import ("lorin should get credit for the
+  // latest john mayer song that i imported", 2026-08-28).
+  const noteFriendSend = (): void => {
+    if (!fromName) return
+    void noteAttribution({ song: trimmed.song, artist: trimmed.artist, friend: fromName, at: input.sentAt || new Date().toISOString(), url: input.link }).catch((err) => console.warn('[scouts] attribution record failed:', err instanceof Error ? err.message : err))
+  }
   const tickFriendAdd = (): void => {
     if (!fromName) return
     void friendsCache.update((cur) => {
@@ -12905,6 +12912,11 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
     })
     if (dupe) {
       console.log('[reco] add deduped — already on list:', dupe.id)
+      // The song was already listed, but the SEND still happened — remember
+      // it (attribution + add tick) instead of dropping the friend's name
+      // on the floor. This is how Lorin's 8/24 text vanished.
+      noteFriendSend()
+      tickFriendAdd()
       return { ok: true, recommendation: dupe, deduped: true }
     }
   } catch { /* fall through to normal add */ }
@@ -12965,6 +12977,7 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
       console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
     }
     scheduleRecoConvergeSync()
+    noteFriendSend()
     tickFriendAdd()
     return { ok: true, recommendation }
   }
@@ -12987,6 +13000,7 @@ async function addRecommendationCore(input: { song?: string; artist?: string; al
     ])
     suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
     console.log('[reco] saved locally + queued for homemini (backend', backendStatus ?? 'unreachable', ') —', local.id)
+    noteFriendSend()
     tickFriendAdd()
     return { ok: true, recommendation: local, savedLocally: true }
   } catch (err) {
@@ -13007,81 +13021,18 @@ startImessageCapture(ipc, {
   addRecommendation: (input) => addRecommendationCore(input),
 })
 
-// ── Friend import credit (2026-07-19): the Scouts ledger's `imported`
-// counter — a friend earns it only when their reco's song is ACTUALLY in
-// the library, arrived after they sent it. Logic in friend-imports-core.ts
-// (pure, tested); one credit per reco ever (ledger below). ──
-const importCreditCache = new JsonFileCache<{ credited: string[] }>(
-  () => join(STATE_DIR, 'reco-import-credit.json'),
-  () => ({ credited: [] }),
-  'reco-import-credit',
-)
-async function sweepFriendImports(): Promise<number> {
-  try {
-    const recos = await readRecommendationsFile()
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; album?: string; dateAdded?: string }> }
-    const credited = new Set((await importCreditCache.get()).credited)
-    const tracks = lib.tracks || []
-
-    // Song credits (existing matcher) — but only for song-kind recos, so an
-    // album reco that happens to carry a title can't double-earn.
-    const songRecos = recos.filter((r) => creditKindOf(r as Parameters<typeof creditKindOf>[0]) === 'song')
-    const credits = computeImportCredits(songRecos, tracks, credited)
-    // Album credits (2026-08-05, the standings feature): +5 material.
-    const albumHits = computeAlbumCredits(recos as Parameters<typeof computeAlbumCredits>[0], tracks, credited, friendOfNote)
-
-    if (credits.length === 0 && albumHits.length === 0) return 0
-
-    // Per-credit RECORDS with the identity the award was granted on —
-    // standings recompute points from these against the live library, which
-    // is what makes "minus 1 when I delete it" automatic.
-    const recoById = new Map(recos.map((r) => [String(r.id), r]))
-    const now = new Date().toISOString()
-    const newRecords: CreditRecord[] = []
-    for (const c of credits) {
-      const r = recoById.get(c.recoId)
-      if (!r) continue
-      const title = String(r.matchedTitle || r.song || '').trim()
-      const artist = String(r.matchedArtist || r.artist || '').trim()
-      newRecords.push({
-        recoId: c.recoId, friend: c.friend, kind: 'song',
-        label: artist ? `${title} — ${artist}` : title,
-        keys: pairKeys(r), creditedAt: now,
-      })
-    }
-    for (const h of albumHits) {
-      newRecords.push({
-        recoId: h.recoId, friend: h.friend, kind: 'album',
-        label: h.label, albumKey: h.albumKey, n0: h.n0, creditedAt: now,
-      })
-    }
-
-    await friendsCache.update((cur) => {
-      for (const c of [...credits, ...albumHits]) {
-        const key = c.friend.trim().toLowerCase()
-        const f = cur[key] || { name: c.friend.trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
-        f.imported = (f.imported || 0) + 1
-        cur[key] = f
-      }
-      return cur
-    })
-    await friendCreditsCache.update((cur) => {
-      const have = new Set(cur.credits.map((r) => r.recoId))
-      for (const r of newRecords) if (!have.has(r.recoId)) cur.credits.push(r)
-      return cur
-    })
-    await importCreditCache.update((cur) => {
-      cur.credited = [...new Set([...cur.credited, ...newRecords.map((r) => r.recoId)])]
-      return cur
-    })
-    for (const r of newRecords) console.log(`[scouts] ${r.kind} credit → ${r.friend} (${r.label})`)
-    return newRecords.length
-  } catch (err) {
-    console.warn('[scouts] import sweep failed:', err instanceof Error ? err.message : err)
-    return 0
-  }
+// ── Friend import credit: sweep + attribution ledger moved to
+// friend-credit-sweep.ts (2026-08-28, the line-ratchet extraction, in the
+// same change that added attribution credits — "lorin should get credit
+// for the latest john mayer song that i imported"). Pure logic stays in
+// friend-imports-core.ts.
+const sweepDeps: import('./friend-credit-sweep.ts').SweepDeps = {
+  readRecos: () => readRecommendationsFile() as unknown as Promise<Array<Record<string, unknown>>>,
+  getTracks: async () => ((await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; album?: string; dateAdded?: string }> }).tracks || [],
+  updateFriends: (fn) => friendsCache.update(fn as never),
+  creditsCache: friendCreditsCache,
 }
-
+const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweepDeps)
 /**
  * Standings: friends ranked by deletion-aware points. Points are computed
  * fresh from credit records vs the live library on every call — nothing has

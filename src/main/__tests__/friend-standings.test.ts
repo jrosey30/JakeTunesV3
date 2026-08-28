@@ -85,29 +85,32 @@ test('legacy credits are +1 flat and can never go negative', () => {
 
 // ── standings assembly ─────────────────────────────────────────────────────
 
-test('standings rank by points and keep zero-point friends on the board', () => {
+// Jake, 2026-08-28: "Joey should not be in standings" — Joey had sent one
+// legitimate song (captured, listed) but never had an import. SENDING no
+// longer seats you; the first CREDIT does. Supersedes the 2026-08-07
+// adds>0 rule this test used to pin.
+test('standings show ONLY friends with credits — senders wait for their first import', () => {
   const ledger = {
     'joey levine': { name: 'Joey Levine', adds: 1, tossed: 0 },
     'lorin bloom': { name: 'Lorin Bloom', adds: 11, tossed: 9 },
     'quiet friend': { name: 'Quiet Friend', adds: 3, tossed: 3 },
   }
   const rows = computeStandings([songCredit(), albumCredit()], ledger, LIB)
-  assert.deepEqual(rows.map((r) => r.name), ['Lorin Bloom', 'Joey Levine', 'Quiet Friend'])
-  assert.deepEqual(rows.map((r) => r.points), [5, 1, 0])
-  assert.equal(rows[2].credits.length, 0, 'winless friend still listed')
+  assert.deepEqual(rows.map((r) => r.name), ['Lorin Bloom', 'Joey Levine'])
+  assert.deepEqual(rows.map((r) => r.points), [5, 1])
 })
 
 // Jake's rule (2026-08-07): "dan sent a podcast so he should not show in
 // standings until he sends a legitimate song. that is the rule." A ledger
 // entry with zero adds/credits/tosses = nothing legitimate ever landed —
 // hidden from the board entirely, reappears on the first real song.
-test('a friend with no legitimate song sent does not appear at all', () => {
+test('with no credits at all the board is EMPTY — senders and podcast links alike', () => {
   const ledger = {
     'lorin bloom': { name: 'Lorin Bloom', adds: 13, tossed: 9 },
     'dan gottlieb': { name: 'Dan Gottlieb', adds: 0, tossed: 0 },
   }
   const rows = computeStandings([], ledger, LIB)
-  assert.deepEqual(rows.map((r) => r.name), ['Lorin Bloom'])
+  assert.deepEqual(rows, [])
 })
 
 test('a friend whose only import was deleted goes NEGATIVE on the board', () => {
