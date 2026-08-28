@@ -59,6 +59,7 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
+import { orderForIpodCatalog } from './ipod-catalog-order.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
@@ -545,6 +546,13 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       error: `${unlistable.length} song(s) Mini 1.4.1 will not list. Not writing a catalog. ${unlistable.slice(0, 3).map((t) => `${t.artist} — ${t.title}`).join('; ')}`,
     }))
   }
+
+  // Mini 1.4.1 lists artists in mhit PHYSICAL order (no type-52 sort
+  // tables in that firmware) — the catalog is written alphabetically so
+  // the Artists menu reads A-Z. Playlists reference dbids, so their order
+  // is untouched. (2026-08-28, Jake: "why are the artists not in
+  // alphabetical order?")
+  tracks = orderForIpodCatalog(tracks)
 
   // ── 5. Build catalog locally, copy to CF, prove bytes+hash+N ──
   await host.writeJournal('db')
