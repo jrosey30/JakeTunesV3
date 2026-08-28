@@ -83,6 +83,8 @@ import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
 import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
+import { initMixtapeHubSync, scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+import { readMixtapesForHub, writeMixtapesFromHub, mixtapeTombstonesFile, mixtapeIntrosDir } from './mixtapes.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from './playlist-tombstones.ts'
 import { pinsPath as playlistPinsPath } from './playlist-pins.ts'
 import { hostname as osHostname } from 'os'
@@ -13154,6 +13156,19 @@ initPlaylistHubSync({
 })
 setTimeout(() => { schedulePlaylistHubConverge(0) }, 45_000)
 setInterval(() => { schedulePlaylistHubConverge(0) }, 10 * 60_000)
+
+// Mixtape hub (same doctrine; tapes were the last ssh-synced collection).
+// Voice audio heals through the hub's store in the same converge pass.
+initMixtapeHubSync({
+  hubUrl: MOBILE_BACKEND_URL,
+  device: osHostname(),
+  getMixtapes: () => readMixtapesForHub() as unknown as Promise<import('./mixtape-hub-sync.ts').HubTapeLike[]>,
+  setMixtapes: (tapes) => writeMixtapesFromHub(tapes as never),
+  tombstonesFile: mixtapeTombstonesFile(),
+  introsDir: mixtapeIntrosDir(),
+})
+setTimeout(() => { scheduleMixtapeHubConverge(0) }, 60_000)
+setInterval(() => { scheduleMixtapeHubConverge(0) }, 10 * 60_000)
 
 ipc.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
   // Identity-wide delete: removing a song removes EVERY copy of it (the list

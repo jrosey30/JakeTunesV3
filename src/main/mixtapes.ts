@@ -34,6 +34,17 @@ import { isSkitOrIntro } from './workout-sync.ts'
 // deleted on either machine stays deleted everywhere (the harvest unions
 // and applies both files). "Existence is not memory."
 import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
+import { scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+
+/** Hub accessors — the mixtape hub client converges through these. */
+export async function readMixtapesForHub(): Promise<Mixtape[]> {
+  return loadMixtapes()
+}
+export async function writeMixtapesFromHub(tapes: Mixtape[]): Promise<void> {
+  await saveMixtapes(tapes)
+}
+export const mixtapeTombstonesFile = (): string => MIXTAPE_TOMBSTONES_FILE()
+export const mixtapeIntrosDir = (): string => INTROS_DIR()
 
 const execP = promisify(execFile)
 
@@ -79,6 +90,9 @@ export interface Mixtape {
    *  only has its tail. Sparse, keyed by track id. */
   startOffsets?: Record<string, number>
   createdAt: string
+  /** Hub stamp (2026-08-28): set on every save — the mixtape hub's
+   *  newest-wholesale merge keys on it. */
+  modifiedAt?: string
   /** J-card ink color the renderer drew the label with (stable per tape). */
   inkColor?: string
   /** Season tape marker ('YYYY-MM') — auto-dubbed monthly, deduped by this. */
@@ -564,10 +578,12 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
         return { ok: false, error: `A tape holds ${MAX_TAPE_SONGS} songs.` }
       }
       const all = await loadMixtapes()
+      tape.modifiedAt = new Date().toISOString()   // hub merge keys on this
       const idx = all.findIndex((m) => m.id === tape.id)
       if (idx >= 0) all[idx] = tape
       else all.unshift(tape)
       await saveMixtapes(all)
+      scheduleMixtapeHubConverge()
       // A saved tape is alive by the owner's word — clear any tombstone for
       // its id so a deliberate re-creation isn't re-deleted by the next sync.
       const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
@@ -596,6 +612,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       if (!ts.some((t) => t.id === id)) {
         await saveTombstones([...ts, { id, name: gone?.title ?? '', deletedAt: new Date().toISOString() }], MIXTAPE_TOMBSTONES_FILE())
       }
+      scheduleMixtapeHubConverge()
       if (gone?.introPath) await unlink(gone.introPath).catch(() => {})
       // The merged tape audio goes with the tape — otherwise every deleted
       // tape leaves a few hundred MB of ALAC behind forever. Identity-gated
