@@ -84,6 +84,7 @@ import { decodeHtmlEntities } from './imessage-capture-core'
 import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
 import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
 import { initMixtapeHubSync, scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+import { registerSpotifyIpc } from './spotify-ipc.ts'
 import { readMixtapesForHub, writeMixtapesFromHub, mixtapeTombstonesFile, mixtapeIntrosDir } from './mixtapes.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from './playlist-tombstones.ts'
 import { pinsPath as playlistPinsPath } from './playlist-pins.ts'
@@ -998,6 +999,17 @@ let cachedActiveHost: 'mm' | 'megan' = 'mm'
 // only for intentionally public / read-only channels.
 const ipc = createIpcRegistrar(() => mainWindow)
 registerUiStateIpc(ipc)
+// Spotify connect + weekly Discover Weekly → brain-gated onto the list
+// ("get Discover Weekly into the brain", greenlit 2026-07-14).
+registerSpotifyIpc(ipc, {
+  authFile: join(STATE_DIR, 'spotify-auth.json'),
+  openExternal: (url) => { void shell.openExternal(url) },
+  scoreCandidates: async (cands) => {
+    const { brainMatchCandidates } = await import('./discovery-brain.ts')
+    const lib = (await libraryCache.get()) as { tracks?: Array<{ id?: number; rating?: number; playCount?: number }> }
+    return brainMatchCandidates(cands.map((c) => ({ artist: c.artist, title: c.title, genre: '', type: 'song' as const })), lib.tracks || [], 5) },
+  addRecommendation: (input) => addRecommendationCore({ ...input, source: input.source as RecoSource }),
+})
 registerBackupIpc(ipc, { getMainWindow: () => mainWindow })
 registerSettingsIpc(ipc, {
   setCachedActiveHost: (host) => { cachedActiveHost = host },
@@ -12096,7 +12108,7 @@ ipc.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions
 // from a Music Man suggestion; 'radar' = added from the New for You feed.
 // Drives the "Your jots" vs "Suggested for you" sections in the UI. Legacy
 // records have no source → treated as 'user' (the original jot-it-down flow).
-type RecoSource = 'user' | 'mm' | 'radar'
+type RecoSource = 'user' | 'mm' | 'radar' | 'spotify'
 interface RecommendationRecord {
   id: string
   song?: string

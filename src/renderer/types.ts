@@ -889,6 +889,12 @@ declare global {
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
+      // Spotify connect + Discover Weekly
+      spotifyStatus: () => Promise<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string }>
+      spotifySetClientId: (clientId: string) => Promise<{ ok: boolean; error?: string }>
+      spotifyConnect: () => Promise<{ ok: boolean; error?: string }>
+      spotifyDisconnect: () => Promise<{ ok: boolean }>
+      spotifyPullNow: () => Promise<{ ok: boolean; added?: number; scored?: number; error?: string }>
       // Playlist hub push — main adopted new hub state
       onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => () => void
       // Sidebar pins — synced sidecar (playlist-pins.json), not per-machine ui-state

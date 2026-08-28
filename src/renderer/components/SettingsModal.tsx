@@ -138,6 +138,14 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
   const [tab, setTab] = useState<Tab>('Playback')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Spotify connect (AI tab) — status loads when the tab opens.
+  const [spotify, setSpotify] = useState<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string } | null>(null)
+  const [spotifyClientId, setSpotifyClientId] = useState('')
+  const [spotifyBusy, setSpotifyBusy] = useState(false)
+  const [spotifyMsg, setSpotifyMsg] = useState('')
+  useEffect(() => {
+    if (tab === 'AI' && !spotify) void window.electronAPI.spotifyStatus().then(setSpotify).catch(() => {})
+  }, [tab, spotify])
   // 4.4.13: resolved default path (~/Music2/_inbox) used as the placeholder
   // for the inbox folder input. Comes from main since renderer doesn't
   // know the user's homedir without a separate IPC.
@@ -1112,6 +1120,62 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <p className="imp-help" style={{ marginTop: 10 }}>
                 Hard cap on how many Claude calls JakeTunes makes per day (max 2000). After hitting the ceiling, fallback uses the most recent cached response.
               </p>
+              {/* Spotify — Discover Weekly into the brain (greenlit 2026-07-14).
+                  One-time setup: free dev app at developer.spotify.com with
+                  the exact redirect URI shown, paste the Client ID, Connect. */}
+              <div style={{ marginTop: 22, padding: '12px 14px', background: '#f5f1e2', borderRadius: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Spotify — Discover Weekly</div>
+                {spotify && spotify.connected ? (
+                  <>
+                    <p className="imp-help" style={{ marginBottom: 8 }}>
+                      Connected{spotify.connectedAt ? ` since ${new Date(spotify.connectedAt).toLocaleDateString()}` : ''}.
+                      {spotify.lastPullAt ? ` Last pull ${new Date(spotify.lastPullAt).toLocaleString()}.` : ' No pull yet.'}
+                      {' '}Weekly, brain-gated onto Listen to the List.
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="imp-btn" disabled={spotifyBusy} onClick={() => { void (async () => {
+                        setSpotifyBusy(true); setSpotifyMsg('Pulling…')
+                        const r = await window.electronAPI.spotifyPullNow()
+                        setSpotifyMsg(r.ok ? `Scored ${r.scored ?? 0}, added ${r.added ?? 0}.` : (r.error || 'Pull failed'))
+                        setSpotifyBusy(false)
+                      })() }}>Pull now</button>
+                      <button className="imp-btn" disabled={spotifyBusy} onClick={() => { void (async () => {
+                        await window.electronAPI.spotifyDisconnect()
+                        setSpotify(await window.electronAPI.spotifyStatus())
+                        setSpotifyMsg('Disconnected.')
+                      })() }}>Disconnect</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="imp-help" style={{ marginBottom: 8 }}>
+                      One-time setup: create a free app at developer.spotify.com with redirect URI
+                      {' '}<code style={{ userSelect: 'all' }}>{spotify?.redirectUri || 'http://127.0.0.1:48213/callback'}</code>,
+                      paste its Client ID here, then Connect (opens Spotify login once).
+                    </p>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder="Client ID"
+                        value={spotifyClientId}
+                        onChange={(e) => setSpotifyClientId(e.target.value)}
+                        style={{ flex: 1, padding: 6, fontSize: 12, fontFamily: 'monospace' }}
+                      />
+                      <button className="imp-btn" disabled={spotifyBusy || !spotifyClientId.trim()} onClick={() => { void (async () => {
+                        setSpotifyBusy(true); setSpotifyMsg('')
+                        const set = await window.electronAPI.spotifySetClientId(spotifyClientId)
+                        if (!set.ok) { setSpotifyMsg(set.error || 'Bad Client ID'); setSpotifyBusy(false); return }
+                        setSpotifyMsg('Waiting for Spotify login in your browser…')
+                        const r = await window.electronAPI.spotifyConnect()
+                        setSpotifyMsg(r.ok ? 'Connected.' : (r.error || 'Connect failed'))
+                        setSpotify(await window.electronAPI.spotifyStatus())
+                        setSpotifyBusy(false)
+                      })() }}>Connect</button>
+                    </div>
+                  </>
+                )}
+                {spotifyMsg && <p className="imp-help" style={{ marginTop: 8 }}>{spotifyMsg}</p>}
+              </div>
             </>
           )}
 

@@ -643,6 +643,17 @@ const electronAPI = {
     ipcRenderer.invoke('load-ui-state'),
   saveUiState: (state: Record<string, unknown>): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-ui-state', state),
+  // Spotify connect (PKCE) + Discover Weekly pull.
+  spotifyStatus: (): Promise<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string }> =>
+    ipcRenderer.invoke('spotify-status'),
+  spotifySetClientId: (clientId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('spotify-set-client-id', clientId),
+  spotifyConnect: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('spotify-connect'),
+  spotifyDisconnect: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('spotify-disconnect'),
+  spotifyPullNow: (): Promise<{ ok: boolean; added?: number; scored?: number; error?: string }> =>
+    ipcRenderer.invoke('spotify-pull-now'),
   // Playlist hub push (final-form sync): main adopted new hub state —
   // the renderer swaps its list in place, no reboot needed.
   onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => {
