@@ -773,3 +773,42 @@ export function assembleLanes(shelved: FeedCard[]): Array<{ id: string; title: s
     }))
     .filter((l) => l.cards.length > 0)
 }
+
+// ── Ownership pair keys, contributor-expanded (2026-08-28) ──────────
+// "dont i have fourfiveseconds?" — he did. Library tag: "Rihanna, Kanye
+// West, and Paul McCartney"; Deezer credited it to "Paul McCartney"
+// alone, the pair keys never matched, and an OWNED song reached the
+// fresh shelf. Every contributing artist in a multi-artist tag now
+// indexes the track, so a collab blocks under any of its credits.
+// Extra keys can only cause over-REFUSAL — the safe direction for
+// "I DO NOT HAVE IN MY LIBRARY".
+const CONTRIB_SPLIT = /\s*(?:,|&|\+|\bfeat\.?\b|\bfeaturing\b|\bwith\b|\band\b|\bx\b|\bvs\.?\b)\s*/i
+
+export function artistContributors(raw: string): string[] {
+  const full = String(raw || '').trim()
+  if (!full) return []
+  const parts = full.split(new RegExp(CONTRIB_SPLIT.source, 'gi')).map((p) => p.trim()).filter((p) => p.length > 1)
+  // The FULL name always stays — splitting is additive, so "Florence and
+  // the Machine" keeps her whole identity alongside the split tokens.
+  return [full, ...parts.filter((p) => p.toLowerCase() !== full.toLowerCase())]
+}
+
+/** The owned artist|album + artist|title key set, contributor-expanded. */
+export function ownedPairKeys(tracks: Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>): string[] {
+  const out: string[] = []
+  for (const t of tracks) {
+    const names = new Set<string>()
+    for (const who of [t.artist, t.albumArtist]) {
+      for (const n of artistContributors(String(who || ''))) names.add(n)
+    }
+    for (const n of names) {
+      const a = normKey(n)
+      if (!a) continue
+      for (const x of [t.album, t.title]) {
+        const k = normKey(String(x || ''))
+        if (k) out.push(`${a}|${k}`)
+      }
+    }
+  }
+  return out
+}

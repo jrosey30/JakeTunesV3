@@ -114,3 +114,20 @@ describe('foldKey — accents fold BEFORE the strip', () => {
     assert.equal(foldKey('Bj\u00f6rk'), 'bjork')
   })
 })
+
+describe('ownedPairKeys — multi-artist tags index every contributor', () => {
+  test('the FourFiveSeconds case: collab tag blocks under any single credit', async () => {
+    const { ownedPairKeys } = await import('../discover-feed.ts')
+    const keys = new Set(ownedPairKeys([{ artist: 'Rihanna, Kanye West, and Paul McCartney', title: 'FourFiveSeconds', album: 'FourFiveSeconds' }]))
+    assert.ok(keys.has('paul mccartney|fourfiveseconds'))
+    assert.ok(keys.has('rihanna|fourfiveseconds'))
+    assert.ok(keys.has('kanye west|fourfiveseconds'))
+    assert.ok(keys.has('rihanna kanye west and paul mccartney|fourfiveseconds'), 'the full tag stays too')
+  })
+
+  test('splitting is additive — a band with "and" in its name keeps its identity', async () => {
+    const { ownedPairKeys } = await import('../discover-feed.ts')
+    const keys = new Set(ownedPairKeys([{ artist: 'Florence and the Machine', title: 'Dog Days Are Over' }]))
+    assert.ok(keys.has('florence and the machine|dog days are over'))
+  })
+})

@@ -1516,10 +1516,10 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const anchorNames = speaking.map((a) => a.artist).join(', ')
     const nk = (x: string) => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
     const ownedArtists = new Set(tracks.map((t) => nk(String((t as { artist?: string }).artist || ''))).filter(Boolean))
-    const ownedAlbumKeys = new Set(tracks.map((t) => {
-      const tr = t as { artist?: string; album?: string; title?: string }
-      return [`${nk(String(tr.artist || ''))}|${nk(String(tr.album || ''))}`, `${nk(String(tr.artist || ''))}|${nk(String(tr.title || ''))}`]
-    }).flat())
+    // Contributor-expanded (2026-08-28, the FourFiveSeconds catch): a
+    // collab tag indexes under every credited artist. Logic + tests in
+    // discover-feed.ownedPairKeys.
+    const ownedAlbumKeys = new Set(df.ownedPairKeys(tracks as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>))
     // Recording-identity keys: owning "Undone - The Sweater Song" must also
     // block "Undone -- The Sweater Song (Kitchen Tape Demo)" — Jake rejected
     // exactly that card the day this shipped.
