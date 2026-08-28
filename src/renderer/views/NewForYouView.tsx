@@ -119,8 +119,9 @@ export default function NewForYouView() {
     if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true)
   }
 
-  const load = async (force = false) => {
-    setLoading(true); setError(null)
+  const load = async (force = false, quiet = false) => {
+    if (!quiet) setLoading(true)
+    setError(null)
     try {
       const r = await window.electronAPI.getDiscoverFeed?.(force)
       if (r?.ok && r.lanes) {
@@ -143,7 +144,14 @@ export default function NewForYouView() {
       pendingFeed = null
       return
     }
-    if (feedCache === null) void load()
+    // ALWAYS refetch on arrival (2026-08-28): the module cache used to be
+    // trusted forever, so a regen that finished while another view was open
+    // was never heard (the updated-push only subscribes while mounted) and
+    // the shop stayed stale until relaunch — "yeah no i dont see it...."
+    // Arrival IS "between visits", so adopting the newest feed here never
+    // reshuffles anything under the cursor; quiet keeps the seeded page
+    // from flashing a spinner.
+    void load(false, feedCache !== null)
   }, [])
 
   // A stale feed serves instantly; when the background refresh lands, only
