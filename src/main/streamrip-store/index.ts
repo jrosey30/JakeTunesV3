@@ -375,6 +375,27 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     return out
   }
 
+  /** The album's own tracklist — the ALBUM DOOR. Qobuz's TRACK search
+   *  misses songs its catalogue carries (2026-08-29: every track of
+   *  Vacations' "Pursuit of Anything" was downloadable by id while track
+   *  search returned 1957 Mose Allison), so when the caller names the
+   *  album we can walk in through album/get and pick the track by id. */
+  async function qobuzAlbumTrackList(albumId: string): Promise<Array<{ id: string; title: string; durationSec?: number }>> {
+    const creds = await readQobuzCreds()
+    if (!creds) return []
+    try {
+      const res = await fetch(
+        'https://www.qobuz.com/api.json/0.2/album/get?album_id=' + encodeURIComponent(albumId) + '&app_id=' + creds.appId,
+        { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) },
+      )
+      if (!res.ok) return []
+      const d = await res.json() as { tracks?: { items?: Array<{ id?: number | string; title?: string; duration?: number }> } }
+      return (d.tracks?.items || [])
+        .filter((t) => t && t.id != null && t.title)
+        .map((t) => ({ id: String(t.id), title: String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined }))
+    } catch { return [] }
+  }
+
   async function qobuzTrackMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
     const out = new Map<string, QobuzTrackMeta>()
     const creds = await readQobuzCreds()
@@ -585,6 +606,30 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ...dl, matchDesc: qpick.desc }
     }
 
+    // ── The ALBUM DOOR (2026-08-29, "another failed download. getting
+    // ridiculous"): Qobuz's track search misses songs its own catalogue
+    // carries. When the caller named the album, find the ALBUM, read its
+    // tracklist, and download the wanted track by id — lossless, canonical
+    // album, duration verified against Qobuz's own clock.
+    if (!wantAlbum && (opts?.album || '').trim()) {
+      const albName = (opts!.album as string).trim()
+      const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
+      const albRanked = asearch.ok && asearch.results?.length
+        ? rankStreamripCandidates(albName, artist, asearch.results, 'album').ranked
+        : []
+      for (const alb of albRanked.slice(0, 2)) {
+        const tl = await qobuzAlbumTrackList(alb.id)
+        const hit = tl.find((t) =>
+          recoTitleMatches(lookFor || title, t.title) &&
+          !unwantedVersionOf(title, t.title) &&
+          (!durationMs || t.durationSec == null || Math.abs(t.durationSec - durationMs / 1000) <= durTol))
+        if (!hit) continue
+        console.log(`[download] album door: “${title}” found inside “${alb.desc}” (track ${hit.id}) — Qobuz track search had missed it`)
+        const dl = await runDownload(['id', 'qobuz', 'track', hit.id])
+        if (dl.ok) return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”` }
+      }
+    }
+
     // ── Bandcamp — equal citizen (2026-08-07, Jake: "bandcamp is very
     // much used by me too. use both equally"). Scene bands live here when
     // Qobuz has never heard of them. Full-track stream tier (same honesty
@@ -647,6 +692,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // silently shipping a re-record/live cut (Jake, 2026-08-07).
       return { ok: false, error: `Qobuz only has other versions of “${title}” (${rejectedVersions.slice(0, 3).join(', ')}). Try pasting a link in the Download view.` }
     }
+    console.warn(`[download] FAILED “${title}” — ${artist}: no source had it (query “${query}”)`)
     return { ok: false, error: `Not on Qobuz${wantAlbum ? '' : ' or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
   }, { refuse: REFUSED_SENDER })
 
