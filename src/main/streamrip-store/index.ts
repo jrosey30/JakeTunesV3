@@ -380,20 +380,23 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  Vacations' "Pursuit of Anything" was downloadable by id while track
    *  search returned 1957 Mose Allison), so when the caller names the
    *  album we can walk in through album/get and pick the track by id. */
-  async function qobuzAlbumTrackList(albumId: string): Promise<Array<{ id: string; title: string; durationSec?: number }>> {
+  async function qobuzAlbumTrackList(albumId: string): Promise<{ releaseDate?: string; tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean }> }> {
     const creds = await readQobuzCreds()
-    if (!creds) return []
+    if (!creds) return { tracks: [] }
     try {
       const res = await fetch(
         'https://www.qobuz.com/api.json/0.2/album/get?album_id=' + encodeURIComponent(albumId) + '&app_id=' + creds.appId,
         { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) },
       )
-      if (!res.ok) return []
-      const d = await res.json() as { tracks?: { items?: Array<{ id?: number | string; title?: string; duration?: number }> } }
-      return (d.tracks?.items || [])
-        .filter((t) => t && t.id != null && t.title)
-        .map((t) => ({ id: String(t.id), title: String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined }))
-    } catch { return [] }
+      if (!res.ok) return { tracks: [] }
+      const d = await res.json() as { release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; duration?: number; streamable?: boolean }> } }
+      return {
+        releaseDate: typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined,
+        tracks: (d.tracks?.items || [])
+          .filter((t) => t && t.id != null && t.title)
+          .map((t) => ({ id: String(t.id), title: String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined })),
+      }
+    } catch { return { tracks: [] } }
   }
 
   async function qobuzTrackMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
@@ -619,11 +622,19 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         : []
       for (const alb of albRanked.slice(0, 2)) {
         const tl = await qobuzAlbumTrackList(alb.id)
-        const hit = tl.find((t) =>
+        const hit = tl.tracks.find((t) =>
           recoTitleMatches(lookFor || title, t.title) &&
           !unwantedVersionOf(title, t.title) &&
           (!durationMs || t.durationSec == null || Math.abs(t.durationSec - durationMs / 1000) <= durTol))
         if (!hit) continue
+        // "you could have said the album is not coming out until october 2"
+        // (2026-08-29, verbatim): a PRE-RELEASE track is on the album page
+        // with streamable=false — say WHEN instead of a bare Retry.
+        if (hit.streamable === false) {
+          const when = tl.releaseDate ? ` — releases ${tl.releaseDate}` : ''
+          console.warn(`[download] “${title}” is on “${alb.desc}” but not out yet${when}`)
+          return { ok: false, error: `Not out yet: “${alb.desc}”${when}. It'll download once it releases.` }
+        }
         console.log(`[download] album door: “${title}” found inside “${alb.desc}” (track ${hit.id}) — Qobuz track search had missed it`)
         const dl = await runDownload(['id', 'qobuz', 'track', hit.id])
         if (dl.ok) return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”` }
@@ -676,8 +687,28 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         : null
       if (spick) {
         console.log(`[download] Qobuz had no match for "${query}" — falling back to SoundCloud: ${spick.desc}`)
-        const dl = await runDownload(['id', spick.source, spick.mediaType, spick.id])
-        return { ...dl, matchDesc: `${spick.desc} (SoundCloud)` }
+        // The file's own clock is the only trustworthy witness (2026-08-29,
+        // the TopKnot case: truncated descs hide "Remix"; a 357s file
+        // imported for a 187s song because this lane never probed). Same
+        // staging witnesses Bandcamp has had all along.
+        const st = await stageRip(['id', spick.source, spick.mediaType, spick.id])
+        if (st.ok) {
+          let acceptable = true
+          if (st.staged.files.length === 1) {
+            const probe = await probeStagedFile(st.staged.files[0])
+            const durBad = durationMs > 0 && probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > durTol
+            const marker = probe.title ? unwantedVersionOf(`${title} ${artist}`, probe.title) : null
+            if (durBad || marker) {
+              acceptable = false
+              console.log(`[download] SoundCloud candidate rejected at staging: ${durBad ? `runs ${Math.round(probe.durSec!)}s, wanted ${Math.round(durationMs / 1000)}s` : `tagged “${probe.title}” (${marker})`}`)
+            }
+          }
+          if (acceptable) {
+            const dl = await importStaged(st.staged)
+            return { ...dl, matchDesc: `${spick.desc} (SoundCloud)` }
+          }
+          await discardStaged(st.staged)
+        }
       }
     }
 

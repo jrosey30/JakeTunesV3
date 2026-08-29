@@ -351,6 +351,14 @@ export function pickBestSoundcloudMatch(
     // cover/etc. beyond the requested words is a different recording.
     if (unwantedVersionOf(`${wantTitle} ${wantArtist}`, r.desc)) continue
     if (liveBrandMarker(`${wantTitle} ${wantArtist}`, r.desc)) continue
+    // TRUNCATION SUSPICION (2026-08-29, the TopKnot case): SoundCloud cuts
+    // descs at ~50 chars — "(TopKnot 5 Years L" hid the word Remix from the
+    // guard above and a 5:57 remix imported as the 3:07 song. A desc whose
+    // final "(" never closes is hiding its version marker: refuse it. An
+    // original upload rarely needs a parenthetical; a derivative always has
+    // one. Over-refusal is the safe direction.
+    const tail = r.desc.slice(r.desc.lastIndexOf('('))
+    if (r.desc.includes('(') && !tail.includes(')')) continue
     let score = 1
     if (nArtist) {
       if (!hay.includes(nArtist)) continue     // artist required when we have one
