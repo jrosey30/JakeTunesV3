@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
@@ -804,7 +805,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const caption = stripRadioAudioTags(seg.line)
       // Tape-off-the-radio: the deck (if REC is down) tapes this DJ break.
       window.dispatchEvent(new CustomEvent('jaketunes-radio-segment', { detail: { audioData: seg.audioData } }))
-      const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+      const audio = audioFromBase64Mpeg(seg.audioData)
       const finish = () => {
         try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
         resolve()
@@ -1042,7 +1043,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         console.log('[DJ] TTS response:', tts.ok, tts.error || '')
         if (tts.ok && tts.audio) {
           const caption = stripAudioTags(result.text)
-          const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+          const audio = audioFromBase64Mpeg(tts.audio)
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           audio.onended = () => {
@@ -1561,7 +1562,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         setDjLoading(false)
         if (tts.ok && tts.audio) {
           setDjText(result.intro)
-          const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+          const audio = audioFromBase64Mpeg(tts.audio)
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           await fadeVolumeOut()

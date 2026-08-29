@@ -18,6 +18,7 @@
  * master analyser via attach*ToBroadcast.
  */
 import type { RadioLine, RadioSegment, SpeakerId } from './types'
+import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { setBroadcastTimed, setRadio } from '../activity'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { playStinger, randomPreStinger, randomEndStinger } from '../audio/stingers'
@@ -148,7 +149,7 @@ export class RadioEngine {
     return new Promise((resolve) => {
       const member = this.byId.get(line.speaker)
       const caption = stripAudioTags(line.text)
-      const audio = new Audio(`data:audio/mpeg;base64,${line.audio}`)
+      const audio = audioFromBase64Mpeg(line.audio || '')
       this.currentAudio = audio
       const finish = (): void => {
         try { detachClipFromBroadcast(audio) } catch { /* ignore */ }

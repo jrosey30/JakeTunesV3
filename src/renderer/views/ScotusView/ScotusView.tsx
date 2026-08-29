@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import type { ScotusArchiveData, ScotusOpinionDoc, ScotusSegment } from '../../types'
 import './scotus.css'
 
@@ -219,7 +220,7 @@ export default function ScotusView() {
       // fast=true → ElevenLabs flash: speech starts in ~1s, not ~10s.
       const tts = await window.electronAPI.musicmanSpeak(text, true, AMICUS_VOICE)
       if (tts?.ok && tts.audio) {
-        const a = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        const a = audioFromBase64Mpeg(tts.audio)
         amicusAudioRef.current = a
         a.onended = restore
         await a.play().catch(restore)

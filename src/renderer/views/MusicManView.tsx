@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { libraryHiddenTrackIds } from '../liveSets'
 import { useLibrary } from '../context/LibraryContext'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
@@ -227,7 +228,7 @@ export default function MusicManView() {
     try {
       const tts = await window.electronAPI.musicmanSpeak(text)
       if (tts.ok && tts.audio) {
-        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        const audio = audioFromBase64Mpeg(tts.audio)
         attachClipToBroadcast(audio)
         audioRef.current = audio
         audio.onended = () => {

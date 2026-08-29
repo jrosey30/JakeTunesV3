@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
+import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -706,7 +707,7 @@ export default function SmartPlaylistView() {
           window.addEventListener('musicman-fade-ready', listener, { once: true })
           setTimeout(() => resolve(), 2000)
         })
-        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        const audio = audioFromBase64Mpeg(tts.audio)
         attachClipToBroadcast(audio)
         audioRef.current = audio
         audio.onended = () => {
