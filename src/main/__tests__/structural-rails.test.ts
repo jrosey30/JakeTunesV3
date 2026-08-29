@@ -160,3 +160,53 @@ describe('WIRING — the tested code is the live code', () => {
     })
   }
 })
+
+describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")', () => {
+  // ── Voice playback: data-URIs are BANNED on media elements ──────────
+  // Chromium rejects large data:audio URLs ("Media load rejected by URL
+  // safety check"); short quips squeaked under the cap for months and a
+  // full Music Man take killed EVERY voice in the app behind a misleading
+  // "couldn't reach the mic" notice. Seven sites shared the landmine.
+  // Base64 speech goes through audioFromBase64Mpeg (Blob URL) — always.
+  test('BAN: no data:audio URIs anywhere in the renderer', () => {
+    const files = walk(join(SRC, 'renderer'), ['.ts', '.tsx'])
+    const { total, hits } = countAcross(files, /data:audio\/[a-z0-9]+;base64/g)
+    assert.equal(total, 0,
+      `data:audio URI(s) in: ${hits.map((h) => `${h.file}(${h.n})`).join(', ')} — use audioFromBase64Mpeg (renderer/audio/base64-audio.ts); Chromium refuses large media data-URLs`)
+  })
+
+  test('WIRING: audioFromBase64Mpeg carries the voices (≥5 live call sites)', () => {
+    const files = walk(join(SRC, 'renderer'), ['.ts', '.tsx']).filter((f) => !f.includes('base64-audio'))
+    const { total } = countAcross(files, /audioFromBase64Mpeg\(/g)
+    assert.ok(total >= 5,
+      `audioFromBase64Mpeg has ${total} call site(s); the DJ/one-shot/Radio/MusicMan/commentary voices all route through it — a drop below 5 means a voice path regressed`)
+  })
+
+  // ── Stream spool: the deeper-buffering doctrine stays wired ──────────
+  test('WIRING: spoolAwareServe is live in the homemini fetch path', () => {
+    const idx = readFileSync(join(SRC, 'main/index.ts'), 'utf-8')
+    assert.ok(/spoolAwareServe\(/.test(idx),
+      'fetchAudioFromHomemini no longer consults the stream spool — WAN jitter reaches playing songs again ("do the deeper buffering thing")')
+  })
+
+  // ── Downloads: the SoundCloud truncation guard stays in the picker ───
+  test('WIRING: pickBestSoundcloudMatch keeps the truncated-paren refusal', () => {
+    const m = readFileSync(join(SRC, 'main/streamrip-match.ts'), 'utf-8')
+    assert.ok(m.includes('TRUNCATION SUSPICION'),
+      'the truncated-desc refusal left pickBestSoundcloudMatch — SoundCloud descs cut at ~50 chars hid "(TopKnot 5 Years L[ater Remix)" and a 5:57 remix imported as a 3:07 song')
+  })
+
+  test('WIRING: the SoundCloud lane stages and probes before import', () => {
+    const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
+    const scBlock = store.split('── SoundCloud fallback (2026-07-22')[1]?.split('if (!qsearch.ok')[0] ?? ''
+    assert.ok(/stageRip\(/.test(scBlock) && /probeStagedFile\(/.test(scBlock),
+      'the SoundCloud lane imports without staging witnesses again — "the file\'s own clock is the only trustworthy witness"')
+  })
+
+  // ── Cache warm: not home = no warm ───────────────────────────────────
+  test('WIRING: cache-manager.py keeps the home-LAN gate', () => {
+    const cm = readFileSync(join(SRC, '../Dr. Claude/scripts/cache-manager.py'), 'utf-8')
+    assert.ok(cm.includes('homemini.local'),
+      'the cache warm lost its remote-mode gate — at the office it grinds the WAN and starves the streaming it exists to serve')
+  })
+})
