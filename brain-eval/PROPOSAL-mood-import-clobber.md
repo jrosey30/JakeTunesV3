@@ -6,7 +6,12 @@ after the repair, and the mechanism is now fully identified** (see the
 change → Jake's call. The nightly repairs (REPORT-20260818, REPORT-20260820)
 fix the data; this fixes the mechanism so it stops recurring.
 
-**RECURRENCE LOG:** 7th event detected 2026-08-27 (import day 08-26: library
+**RECURRENCE LOG:** 8th event detected 2026-08-29 (import day: library
+9,791→9,806, +15 imports; 122 orphans, 62 dup groups, 970 suspects). Repaired
++ applied same night — router-truth 0.756→0.833, worst per-probe delta +0.00,
+strict bars PASS with no precedent-based judgment needed (REPORT-20260829).
+Eight-for-eight on import days; the mechanism fires regardless of import
+count. 7th event detected 2026-08-27 (import day 08-26: library
 9,783→9,791, +8 incl. the Parcels album; 109 orphans, 57 dup groups). The
 08-27 session ABORTED before repairing (REPORT-20260827 — three stacked infra
 failures + a fidelity-gate blind spot it fixed), so the damage stayed LIVE for
