@@ -329,6 +329,56 @@ export function getStereoWidth(): number {
   return cfg.widthOn ? cfg.widthHigh : 1
 }
 
+// ── dx.stereo — one-sided-output diagnostic (2026-08-30) ────────────────
+// Jake: "sometimes it only plays one side of the stereo audio... homepod
+// mini since it is one speaker, car speakers even" — BOTH apps. The width
+// math here and in Mobile's MusicEQ.swift is verified mono-sum-safe
+// (L'+R' = L+R per band), and a 30-file aphasemeter scan found no
+// phase-inverted masters. So the cause is upstream/route-level, and only
+// instrumentation can tell which hypothesis is real:
+//   H1 output route delivers/keeps only one channel (device/OS) →
+//      one-sided BEFORE our chain: masterRms already lopsided.
+//   H2 our chain collapses a side under some state → master balanced,
+//      post-chain (cfMerger tap) lopsided.
+//   H3 mono-downmix cancellation somewhere outside the app → both taps
+//      balanced here, yet the speaker sounds one-sided (points at the
+//      route/receiver, not this process).
+// Logs [dx.stereo.one-sided] at most once/min when one channel runs
+// ≥ 20 dB under the other for 3 consecutive samples while audible.
+// No behavior change. Logging only. Toggle:
+const DX_STEREO_WATCH = true
+let dxLopsided = 0
+let dxLastLog = 0
+setInterval(() => {
+  if (!DX_STEREO_WATCH) return
+  try {
+    if (!corrL || !corrR || !corrBufL || !corrBufR) { void getCorrelation(); return }
+    corrL.getFloatTimeDomainData(corrBufL as Float32Array<ArrayBuffer>)
+    corrR.getFloatTimeDomainData(corrBufR as Float32Array<ArrayBuffer>)
+    let el = 0, er = 0
+    for (let i = 0; i < corrBufL.length; i++) { el += corrBufL[i] * corrBufL[i]; er += corrBufR[i] * corrBufR[i] }
+    const rl = Math.sqrt(el / corrBufL.length), rr = Math.sqrt(er / corrBufR.length)
+    const loud = Math.max(rl, rr)
+    if (loud < 0.005) { dxLopsided = 0; return }   // silence/pause — nothing to judge
+    const quiet = Math.min(rl, rr)
+    if (quiet < loud * 0.1) {
+      dxLopsided++
+      if (dxLopsided >= 3 && Date.now() - dxLastLog > 60_000) {
+        dxLastLog = Date.now()
+        console.warn('[dx.stereo.one-sided]', {
+          tap: corrTapNode === (cfMerger as AudioNode | null) ? 'post-chain' : 'master(pre-chain)',
+          rmsL: rl.toFixed(4), rmsR: rr.toFixed(4),
+          inserted, widthOn: cfg.widthOn, crossfeedOn: cfg.crossfeedOn,
+          corr: getCorrelation().toFixed(3),
+          ctxState: ctx?.state, destChannels: ctx?.destination.maxChannelCount,
+        })
+      }
+    } else {
+      dxLopsided = 0
+    }
+  } catch { /* diagnostic must never break audio */ }
+}, 2000)
+
 // Dev escape hatch, mirrors eq.ts's window.__resetAudio.
 if (typeof window !== 'undefined') {
   ;(window as unknown as Record<string, unknown>).__resetStereoWidth = () => setEnhanceConfig({ widthOn: false, crossfeedOn: false })
