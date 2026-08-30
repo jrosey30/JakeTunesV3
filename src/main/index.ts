@@ -213,6 +213,7 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card'
 import { sweepOnce, type SweepResult } from './library-eviction'
+import { serveEvictedFromHomemini } from './evicted-playback.ts'
 import {
   initImportPipeline,
   importOneFile,
@@ -14443,6 +14444,7 @@ ipc.handle('live-set-merge', async (
     } catch (err) {
       console.warn('[live-set] artwork alias failed (non-fatal):', err instanceof Error ? err.message : err)
     }
+    allowImportPaths([result.mergedPath])  // scratch output must be importable — no grant source covers it (2026-08-30: declare died post-merge on path-not-allowed)
     return { ok: true, ...result }
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
@@ -16219,6 +16221,9 @@ app.whenReady().then(async () => {
         if (altOk) resolvedPath = candidate
       }
     }
+    // Evicted-track fallback — pass-through storage trashed the local copy; serve homemini's proven bytes (evicted-playback.ts).
+    const evictedServe = (localMissing && resolvedPath === rawPath) ? await serveEvictedFromHomemini(rawPath, request.headers.get('range'), { trackIdForAbsPath, fetchAudioFromHomemini, wantsFlac: wantsHomeminiFlac }) : null
+    if (evictedServe) return evictedServe
 
     let filePath = resolvedPath
     let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
