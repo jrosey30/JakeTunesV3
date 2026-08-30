@@ -42,7 +42,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe } from './stream-spool.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
@@ -3778,28 +3778,18 @@ const PHONE_AUTHORED_FILES = [
   'mobile-imports.json',
 ]
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
-  // Circuit breaker — bare stat() on a wedged Synology share parks a libuv
-  // thread forever. That is the "works after restart, then certain songs
-  // stop" leftover after the playback path itself stopped touching SMB.
-  if (!(await nasAvailable())) return
-  const nasDir = '/Volumes/JakeShared/JakeTunesState'
-  try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
-  const refreshedNames: string[] = []
-  for (const name of PHONE_AUTHORED_FILES) {
-    try {
-      const nasPath = join(nasDir, name)
-      const localPath = join(app.getPath('userData'), name)
-      const nasStat = await stat(nasPath)
-      const localStat = await stat(localPath).catch(() => null)
-      if (!localStat || nasStat.mtimeMs > localStat.mtimeMs + 1000) {
-        const tmp = localPath + '.tmp'
-        await copyFile(nasPath, tmp)
-        const { rename: renameFS } = await import('fs/promises')
-        await renameFS(tmp, localPath)
-        refreshedNames.push(name)
-      }
-    } catch { /* per-file best effort */ }
-  }
+  // 2026-08-30 ("do a better job of adding the songs i download on mobile
+  // to the library"): mirroring moved to phone-mirrors.ts — HTTP from the
+  // backend FIRST (works from anywhere), the flappy NAS mount only as
+  // fallback. The old NAS-only path sat NINE DAYS stale behind breaker
+  // cooldowns while phone downloads waited invisible.
+  const refreshedNames = await refreshPhoneMirrors({
+    files: PHONE_AUTHORED_FILES,
+    localDir: app.getPath('userData'),
+    nasDir: '/Volumes/JakeShared/JakeTunesState',
+    backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+    nasAvailable,
+  })
   if (refreshedNames.length > 0) {
     mobilePlaylistsCache.invalidate()
     mobileStarsCache.invalidate()
@@ -3826,6 +3816,9 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
       const parsed = JSON.parse(raw) as { tracks?: unknown[] }
       const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
       if (tracks.length > 0 && mainWindow) {
+        // Audio FIRST (pulled straight from homemini — no rsync, no NAS),
+        // so the absorb always lands rows whose bytes are already on disk.
+        await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
         mainWindow.webContents.send('mobile-imports-updated', { tracks })
       }
     } catch { /* no imports yet — next tick retries */ }
@@ -3842,7 +3835,9 @@ ipc.handle('get-mobile-imports', async () => {
   try {
     const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
     const parsed = JSON.parse(raw) as { tracks?: unknown[] }
-    return { tracks: Array.isArray(parsed?.tracks) ? parsed.tracks : [], overrides }
+    const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
+    if (tracks.length > 0) await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
+    return { tracks, overrides }
   } catch {
     return { tracks: [], overrides }
   }
