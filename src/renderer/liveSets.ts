@@ -36,6 +36,13 @@ export function getLiveSetsSnapshot(): LiveSetsState {
   return state
 }
 
+/** Printed-setlist display title — strips "(Live …)" AND "[Live]" tag
+ *  suffixes. Shared by ConcertDetailView + AlbumDetailView so the two
+ *  setlist surfaces can never disagree on what a song is called. */
+export function cleanLiveTitle(t: string): string {
+  return t.replace(/\s*[[(]Live[\])].*$|\s*[[(]Live\b.*$/i, '').trim() || t
+}
+
 /** Idempotent initial load — call from anywhere, first caller wins. */
 export function ensureLiveSetsLoaded(): Promise<void> {
   if (loadPromise) return loadPromise

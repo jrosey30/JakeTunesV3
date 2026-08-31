@@ -2,7 +2,7 @@ import React, { useMemo, useEffect, useState, useRef, useSyncExternalStore, useC
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta } from '../liveSets'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta, cleanLiveTitle as cleanTitle } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled, getCrowdParams, setCrowdParams } from '../concertCrowd'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getConcertKey, subscribeConcertKey } from '../concertNav'
@@ -12,12 +12,6 @@ import ContextMenu from '../components/ContextMenu'
 import type { LiveSetCue, Track } from '../types'
 import '../styles/concerts.css'
 import '../styles/concert-detail.css'
-
-/** Setlist display title — strips the "(Live …)" AND "[Live]" tag suffixes
- *  (the old paren-only strip left "[Live]" on every printed row). */
-function cleanTitle(t: string): string {
-  return t.replace(/\s*[[(]Live[\])].*$|\s*[[(]Live\b.*$/i, '').trim() || t
-}
 
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))

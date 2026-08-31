@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import React, { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import PageGate from '../components/PageGate'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
@@ -23,7 +23,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 // V5 Live Concert Mode — declared-set store + declare orchestration.
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt, promoteTrackToLibrary } from '../liveSets'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt, promoteTrackToLibrary, cleanLiveTitle } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
 import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
@@ -57,6 +57,14 @@ function formatTotalDuration(ms: number): string {
   const mins = Math.round((totalSecs % 3600) / 60)
   if (hrs > 0) return `${hrs} hr ${mins} min`
   return `${mins} min`
+}
+
+/** Clock offset for the setlist AT column — 4:24, 1:05:03. Matches
+ *  ConcertDetailView's hms so the two sheets read identically. */
+function startClock(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`
 }
 
 // Album tracklist — #, name, duration only.
@@ -641,35 +649,71 @@ export default function AlbumDetailView() {
       {/* V5 Live Concert Mode — the set list. Active song highlights while
           the merged set plays; clicking jumps the playing set to that song
           (or starts the set from the top when it isn't playing). */}
-      {liveSet && mergedTrack && (
-        <div className="album-page-setlist">
-          <div className="album-page-setlist-head">
-            <span className="album-page-setlist-title">Set List</span>
-            <span className="album-page-setlist-sub">
-              {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)} continuous
-              {setPlaying && activeCue ? ` · now: ${activeCue.index + 1}/${liveSet.cues.length}` : ''}
-            </span>
-          </div>
-          {liveSet.cues.map((cue, i) => {
-            const inLibrary = (liveSet.promotedTrackIds || []).includes(cue.trackId)
-            return (
-            <div
-              key={`${cue.trackId}-${i}`}
-              className={`album-page-setlist-row${activeCue && activeCue.index === i ? ' album-page-setlist-row--active' : ''}${activeCue && i < activeCue.index ? ' album-page-setlist-row--played' : ''}${inLibrary ? ' album-page-setlist-row--in-library' : ''}`}
-              onClick={() => seekToCue(cue)}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
-              title={setPlaying ? `Jump to "${cue.title}"` : 'Play the live set — right-click a song to add it to your library'}
-              role="button"
-            >
-              <span className="album-page-setlist-num">{i + 1}</span>
-              <span className="album-page-setlist-name">{cue.title}</span>
-              {inLibrary && <span className="album-page-setlist-inlib" title="In your library">✓</span>}
-              <span className="album-page-setlist-time">{formatDuration(cue.durationMs)}</span>
+      {liveSet && mergedTrack && (() => {
+        // The printed setlist sheet — same prop as ConcertDetailView (shared
+        // .concert-sheet / .cj-* language from concert-detail.css), minus the
+        // journey rail. Length bars scale to the night's longest song; the ✓
+        // renders only when it distinguishes rows; guest cues get a chip.
+        const promoted = new Set(liveSet.promotedTrackIds || [])
+        const allPromoted = liveSet.cues.every((c) => promoted.has(c.trackId))
+        const maxDurMs = Math.max(1, ...liveSet.cues.map((c) => c.durationMs))
+        const artistLc = albumArtist.toLowerCase().trim()
+        const dividers = new Map<number, string>()
+        for (const s of liveSet.concert?.segments || []) {
+          if (s && typeof s.before === 'number' && s.label) dividers.set(s.before, s.label)
+        }
+        return (
+          <div className="concert-sheet album-page-sheet">
+            <div className="cs-head">
+              <span className="cs-head-title">Set List</span>
+              <span className="cs-head-rule" aria-hidden="true" />
+              <span className="cs-head-stat">
+                {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)}
+                {setPlaying && activeCue ? ` · now ${activeCue.index + 1}/${liveSet.cues.length}` : ''}
+              </span>
             </div>
-            )
-          })}
-        </div>
-      )}
+            <div className="cs-cols cs-cols--norail" aria-hidden="true">
+              <span className="cs-cols-song">Song</span>
+              <span className="cs-cols-len">Length</span>
+              <span className="cs-cols-at">At</span>
+            </div>
+            <div className="aps-rows">
+              {liveSet.cues.map((cue, i) => {
+                const inLibrary = !allPromoted && promoted.has(cue.trackId)
+                const guest = (cue.artist || '').toLowerCase().trim() !== artistLc ? cue.artist : null
+                const state = activeCue ? (activeCue.index === i ? '--active' : i < activeCue.index ? '--played' : '') : ''
+                const divider = dividers.get(i + 1)
+                return (
+                  <React.Fragment key={`${cue.trackId}-${i}`}>
+                    {divider && (
+                      <div className="cs-divider cs-divider--norail" aria-label={divider}>
+                        <span className="cs-divider-rule" /><span className="cs-divider-label">{divider}</span><span className="cs-divider-rule" />
+                      </div>
+                    )}
+                    <div
+                      className={`cj-song aps-row${state ? ` aps-row${state}` : ''}`}
+                      onClick={() => seekToCue(cue)}
+                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
+                      title={setPlaying ? `Jump to "${cleanLiveTitle(cue.title)}"` : 'Play the live set — right-click a song to add it to your library'}
+                      role="button"
+                    >
+                      <span className="cj-num">{String(i + 1).padStart(2, '0')}</span>
+                      <span className="cj-name">
+                        <span className="cj-name-text">{cleanLiveTitle(cue.title)}</span>
+                        {guest && <span className="cj-guest">{guest}</span>}
+                        {inLibrary && <span className="cj-inlib" title="In your library">✓</span>}
+                      </span>
+                      <span className="cj-lane" aria-hidden="true"><span className="cj-lane-bar" style={{ width: `${Math.max(6, Math.round((cue.durationMs / maxDurMs) * 100))}%` }} /></span>
+                      <span className="cj-len">{formatDuration(cue.durationMs)}</span>
+                      <span className="cj-at" title="Starts at this point in the show">{startClock(cue.startMs)}</span>
+                    </div>
+                  </React.Fragment>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
 
       <div className="album-page-tracklist songs-view" ref={tracklistRef}>
         <div className="songs-header" style={{ gridTemplateColumns: GRID_COLS }}>

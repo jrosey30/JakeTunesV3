@@ -188,6 +188,32 @@
   text-transform: uppercase;
   color: #a0762a;
 }
+
+/* ── Album-page variant — the same sheet without the journey rail ──────
+ * AlbumDetailView renders the identical prop (shared classes) so the two
+ * setlist surfaces can never drift apart again. */
+.album-page-sheet { margin: 18px 0 6px; max-width: 720px; }
+.cs-cols--norail { grid-template-columns: 30px minmax(0, 1fr) 88px 52px 56px; padding-left: 22px; }
+.cs-cols--norail .cs-cols-song { grid-column: 2; }
+.cs-cols--norail .cs-cols-len { grid-column: 4; }
+.cs-cols--norail .cs-cols-at { grid-column: 5; }
+.cs-divider--norail { margin-left: 8px; }
+.aps-rows { padding: 2px 18px 14px; }
+.aps-row { cursor: pointer; }
+.aps-row:hover { background: rgba(224, 129, 46, 0.10); }
+.aps-row--active {
+  background: rgba(224, 129, 46, 0.13);
+  box-shadow: inset 3px 0 0 var(--brand-orange, #FC5501);
+}
+.aps-row--active .cj-name-text { color: #1c1408; }
+.aps-row--active .cj-lane-bar { background: #FC5501; }
+.aps-row--played { opacity: 0.55; }
+.aps-row--played .cj-name-text {
+  text-decoration: line-through;
+  text-decoration-color: #a0762a;
+  text-decoration-thickness: 1.5px;
+}
+.aps-row--played .cj-lane-bar { background: #d9c9a8; }
 .cj-row {
   display: flex;
   gap: 12px;
