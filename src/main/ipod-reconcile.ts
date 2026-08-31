@@ -352,10 +352,28 @@ export function ipodPathExtension(pathOrExt: string): string {
 export function ipodPlayableDestPath(colonOrFsPath: string): string {
   const p = String(colonOrFsPath || '')
   if (!p) return p
-  const ext = ipodPathExtension(p)
-  if (IPOD_FIRMWARE_EXTS.has(ext)) return p
-  const i = p.lastIndexOf('.')
-  return i >= 0 ? p.slice(0, i) + '.m4a' : p + '.m4a'
+  const ext0 = ipodPathExtension(p)
+  const ext = IPOD_FIRMWARE_EXTS.has(ext0) ? ext0 : '.m4a'
+  // Split off the last path segment — colon (library) or fs separators both
+  // arrive here (dstToCopy re-checks land as absolute fs paths).
+  const cut = Math.max(p.lastIndexOf(':'), p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  const dir = cut >= 0 ? p.slice(0, cut + 1) : ''
+  const base = cut >= 0 ? p.slice(cut + 1) : p
+  const stem = base.replace(/\.[^.]*$/, '')
+  // 8.3-SAFE stems (2026-08-31). Names longer than 8 chars force VFAT
+  // long-filename chains + generated aliases on the card. macOS's FSKit
+  // msdos driver writes LFN structures the Mini 1.4.1 FAT parser rejects
+  // for a deterministic slice of files — every "About says 897/862/908
+  // of 1000" undercount traced to this (full forensic record in the
+  // 2026-08-31 session: catalog, files, FS, and card all exonerated;
+  // legacy 4-char names never failed in years of full syncs). So:
+  // 'imported_10926.m4a' → '10926.m4a'; short legacy names pass through.
+  let stem83 = stem
+  if (!/^[A-Za-z0-9_~-]{1,8}$/.test(stem)) {
+    const digits = stem.replace(/[^0-9]/g, '')
+    stem83 = (digits || stem.replace(/[^A-Za-z0-9_-]/g, '')).slice(-8) || 'X'
+  }
+  return dir + stem83 + ext
 }
 
 export function needsIpodAlacTranscode(pathOrExt?: string | null): boolean {
