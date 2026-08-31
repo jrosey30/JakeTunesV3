@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, useRef, useSyncExternalStore, useCallback } from 'react'
+import React, { useMemo, useEffect, useState, useRef, useSyncExternalStore, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -12,6 +12,12 @@ import ContextMenu from '../components/ContextMenu'
 import type { LiveSetCue, Track } from '../types'
 import '../styles/concerts.css'
 import '../styles/concert-detail.css'
+
+/** Setlist display title — strips the "(Live …)" AND "[Live]" tag suffixes
+ *  (the old paren-only strip left "[Live]" on every printed row). */
+function cleanTitle(t: string): string {
+  return t.replace(/\s*[[(]Live[\])].*$|\s*[[(]Live\b.*$/i, '').trim() || t
+}
 
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -153,6 +159,20 @@ export default function ConcertDetailView() {
 
   const posMs = pb.position * 1000
   const promoted = new Set(liveSet.promotedTrackIds || [])
+  // Printed-setlist affordances (2026-08-31, Jake: "more exciting and more
+  // organized"): per-song length bars scale against the longest song; the
+  // in-library ✓ only renders when it carries information (a show declared
+  // keep-in-library has EVERY row promoted — 16 identical checks is noise);
+  // a cue whose artist differs from the headliner gets a guest chip
+  // (Stop Making Sense track 13 is Tom Tom Club); segment dividers
+  // (e.g. ENCORE) come from grounded concert.segments only.
+  const maxDurMs = Math.max(1, ...liveSet.cues.map((c) => c.durationMs))
+  const allPromoted = liveSet.cues.every((c) => promoted.has(c.trackId))
+  const bandLc = meta.band.toLowerCase().trim()
+  const dividers = new Map<number, string>()
+  for (const s of liveSet.concert?.segments || []) {
+    if (s && typeof s.before === 'number' && s.label) dividers.set(s.before, s.label)
+  }
 
   return (
     <div className="concert-detail">
@@ -226,48 +246,76 @@ export default function ConcertDetailView() {
         </div>
       </div>
 
-      {/* The setlist journey — you travel down the show. */}
-      <div className="concert-journey">
-        {liveSet.cues.map((cue, i) => {
-          const state = activeCue
-            ? (i < activeCue.index ? 'played' : i === activeCue.index ? 'current' : 'upcoming')
-            : 'idle'
-          const inLib = promoted.has(cue.trackId)
-          const elapsed = state === 'current' ? Math.max(0, posMs - cue.startMs) : 0
-          const frac = state === 'current' && cue.durationMs > 0 ? Math.min(1, elapsed / cue.durationMs) : 0
-          return (
-            <div
-              key={`${cue.trackId}-${i}`}
-              className={`cj-row cj-row--${state}`}
-              onClick={() => jumpTo(cue)}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
-              role="button"
-              title={setPlaying ? `Jump to "${cue.title.replace(/\s*\(Live.*/, '')}"` : 'Play the show — right-click a song to add it to your library'}
-            >
-              <div className="cj-rail">
-                <div className="cj-line cj-line--top" />
-                <div className="cj-node" />
-                <div className="cj-line cj-line--bot" />
-              </div>
-              {state === 'current' ? (
-                <div className="cj-card">
-                  <div className="cj-card-tag">NOW PLAYING · {i + 1} OF {liveSet.cues.length}</div>
-                  <div className="cj-card-title">{cue.title.replace(/\s*\(Live.*/, '')}{inLib && <span className="cj-inlib" title="In your library">✓</span>}</div>
-                  <div className="cj-card-prog">
-                    <div className="cj-card-bar"><div className="cj-card-fill" style={{ width: `${Math.round(frac * 100)}%` }} /></div>
-                    <span className="cj-card-time">{mmss(elapsed)} / {mmss(cue.durationMs)}</span>
+      {/* The setlist journey, printed: the sheet taped to the stage floor.
+          Same spine + played/current/upcoming mechanics; the rows now read
+          like the physical prop — numbered, timed, crossed off as played. */}
+      <div className="concert-sheet">
+        <div className="cs-head">
+          <span className="cs-head-title">Set List</span>
+          <span className="cs-head-rule" aria-hidden="true" />
+          <span className="cs-head-stat">{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)}</span>
+        </div>
+        <div className="cs-cols" aria-hidden="true">
+          <span className="cs-cols-song">Song</span>
+          <span className="cs-cols-len">Length</span>
+          <span className="cs-cols-at">At</span>
+        </div>
+        <div className="concert-journey">
+          {liveSet.cues.map((cue, i) => {
+            const state = activeCue
+              ? (i < activeCue.index ? 'played' : i === activeCue.index ? 'current' : 'upcoming')
+              : 'idle'
+            const inLib = !allPromoted && promoted.has(cue.trackId)
+            const guest = (cue.artist || '').toLowerCase().trim() !== bandLc ? cue.artist : null
+            const elapsed = state === 'current' ? Math.max(0, posMs - cue.startMs) : 0
+            const frac = state === 'current' && cue.durationMs > 0 ? Math.min(1, elapsed / cue.durationMs) : 0
+            const divider = dividers.get(i + 1)
+            return (
+              <React.Fragment key={`${cue.trackId}-${i}`}>
+                {divider && (
+                  <div className="cs-divider" aria-label={divider}>
+                    <span className="cs-divider-rule" /><span className="cs-divider-label">{divider}</span><span className="cs-divider-rule" />
                   </div>
+                )}
+                <div
+                  className={`cj-row cj-row--${state}`}
+                  onClick={() => jumpTo(cue)}
+                  onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
+                  role="button"
+                  title={setPlaying ? `Jump to "${cleanTitle(cue.title)}"` : 'Play the show — right-click a song to add it to your library'}
+                >
+                  <div className="cj-rail">
+                    <div className="cj-line cj-line--top" />
+                    <div className="cj-node" />
+                    <div className="cj-line cj-line--bot" />
+                  </div>
+                  {state === 'current' ? (
+                    <div className="cj-card">
+                      <div className="cj-card-tag">NOW PLAYING · {i + 1} OF {liveSet.cues.length}</div>
+                      <div className="cj-card-title">{cleanTitle(cue.title)}{guest && <span className="cj-guest">{guest}</span>}{inLib && <span className="cj-inlib" title="In your library">✓</span>}</div>
+                      <div className="cj-card-prog">
+                        <div className="cj-card-bar"><div className="cj-card-fill" style={{ width: `${Math.round(frac * 100)}%` }} /></div>
+                        <span className="cj-card-time">{mmss(elapsed)} / {mmss(cue.durationMs)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="cj-song">
+                      <span className="cj-num">{String(i + 1).padStart(2, '0')}</span>
+                      <span className="cj-name">
+                        <span className="cj-name-text">{cleanTitle(cue.title)}</span>
+                        {guest && <span className="cj-guest">{guest}</span>}
+                        {inLib && <span className="cj-inlib" title="In your library">✓</span>}
+                      </span>
+                      <span className="cj-lane" aria-hidden="true"><span className="cj-lane-bar" style={{ width: `${Math.max(6, Math.round((cue.durationMs / maxDurMs) * 100))}%` }} /></span>
+                      <span className="cj-len">{mmss(cue.durationMs)}</span>
+                      <span className="cj-at" title="Starts at this point in the show">{hms(cue.startMs)}</span>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="cj-song">
-                  <span className="cj-num">{i + 1}</span>
-                  <span className="cj-name">{cue.title.replace(/\s*\(Live.*/, '')}{inLib && <span className="cj-inlib" title="In your library">✓</span>}</span>
-                  <span className="cj-dur" title="Starts at this point in the show">{hms(cue.startMs)}</span>
-                </div>
-              )}
-            </div>
-          )
-        })}
+              </React.Fragment>
+            )
+          })}
+        </div>
       </div>
 
       {/* Companion — the tour-book layer: grounded facts, the details, your notes. */}
@@ -325,7 +373,7 @@ export default function ConcertDetailView() {
           items={
             promoted.has(cueCtx.cue.trackId)
               ? [{ label: 'Already in your library', onClick: () => {}, disabled: true }]
-              : [{ label: `Add "${cueCtx.cue.title.replace(/\s*\(Live.*/, '')}" to My Library`, onClick: () => { void promoteTrackToLibrary(albumKey, cueCtx.cue.trackId) } }]
+              : [{ label: `Add "${cleanTitle(cueCtx.cue.title)}" to My Library`, onClick: () => { void promoteTrackToLibrary(albumKey, cueCtx.cue.trackId) } }]
           }
           onClose={() => setCueCtx(null)}
         />

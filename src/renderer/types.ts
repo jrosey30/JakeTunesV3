@@ -177,6 +177,10 @@ export interface ConcertMeta {
   source?: string
   label?: string
   merchUrl?: string
+  /** Grounded set-structure dividers rendered on the printed setlist —
+   *  e.g. { before: 15, label: 'Encore' } draws — ENCORE — above track 15.
+   *  ⚠️ TWIN: src/main/index.ts LiveSetEntry.concert carries the same shape. */
+  segments?: Array<{ before: number; label: string }>
 }
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
