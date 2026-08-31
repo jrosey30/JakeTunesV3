@@ -192,7 +192,21 @@
 /* ── Album-page variant — the same sheet without the journey rail ──────
  * AlbumDetailView renders the identical prop (shared classes) so the two
  * setlist surfaces can never drift apart again. */
-.album-page-sheet { margin: 18px 0 6px; max-width: 720px; }
+/* The album page is a FIXED-viewport flex column (.album-page overflow:
+ * hidden — only inner regions scroll). The sheet therefore scrolls its
+ * own rows under the letterpress header; without this the sheet got
+ * flex-squeezed and overflow:hidden ate the rest of the show (2026-08-31:
+ * "i cant scroll on any of those pages"). */
+.album-page-sheet {
+  margin: 18px 24px 14px;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 180px;
+}
+.album-page-sheet .cs-head, .album-page-sheet .cs-cols { flex: 0 0 auto; }
+.album-page-sheet .aps-rows { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
 .cs-cols--norail { grid-template-columns: 30px minmax(0, 1fr) 88px 52px 56px; padding-left: 22px; }
 .cs-cols--norail .cs-cols-song { grid-column: 2; }
 .cs-cols--norail .cs-cols-len { grid-column: 4; }
