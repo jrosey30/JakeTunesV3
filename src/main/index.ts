@@ -58,6 +58,7 @@ import { registerMobileReadsIpc } from './ipc/mobile-reads-ipc.ts'
 import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
 import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type RecommendationRecord } from './ipc/recommendations-ipc.ts'
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
+import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerAlbumInfoIpc } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
@@ -9276,6 +9277,7 @@ const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweep
  */
 // Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
 registerTasteIpc(ipc)
+registerPreviewRefreshIpc(ipc)
 
 
 ipc.handle('get-friend-standings', async () => {

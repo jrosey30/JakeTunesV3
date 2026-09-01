@@ -8,8 +8,8 @@ import { app } from 'electron'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
-import { normalize } from './normalize'
-import { triggerSync } from './sync-orchestrator'
+import { normalize } from './normalize.ts'
+import { triggerSync } from './sync-orchestrator.ts'
 
 // Artwork helpers
 export function getArtworkDir(): string {
@@ -557,16 +557,8 @@ export async function extractAndSaveEmbeddedArtwork(
 // recoverable by re-importing the file anyway.
 export const pendingArtworkMigrations = new Map<string, Set<string>>()
 
-// Normalize an artist/album string for strict matching: drop edition
-// parens/brackets, a leading "the", and collapse whitespace.
-export function normalizeArtTerm(s: string): string {
-  return s.toLowerCase()
-    .replace(/\s*\(.*?\)\s*/g, ' ')
-    .replace(/\s*\[.*?\]\s*/g, ' ')
-    .replace(/^the\s+/, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+import { normalizeArtTerm } from './art-term.ts'
+export { normalizeArtTerm }
 
 // Deezer album art search (shared by artwork fetcher and recommendations).
 //

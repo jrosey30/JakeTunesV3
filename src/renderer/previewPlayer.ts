@@ -63,9 +63,30 @@ export function getPreviewSnapshot(): PreviewState {
 
 export function playPreview(id: string, url: string, title: string, artist: string): void {
   const a = ensureAudio()
+  setState({ playingId: id, title, artist, position: 0, duration: 0 })
+  // Deezer preview URLs are SIGNED + TIME-LIMITED — the ones cached on
+  // discovery cards expire on the shelf and 403 (media error code 4, the
+  // 2026-09-01 console capture). Re-resolve a fresh URL at play time;
+  // fall back to the cached one if the refresh misses (it may still be
+  // inside its window).
+  if (/\bdzcdn\.net\//.test(url) && window.electronAPI.refreshDeezerPreview) {
+    void window.electronAPI.refreshDeezerPreview(artist, title)
+      .then((r) => {
+        if (state.playingId !== id) return  // user moved on mid-refresh
+        a.src = (r.ok && r.previewUrl) ? r.previewUrl : url
+        a.currentTime = 0
+        a.play().catch(() => stopPreview())
+      })
+      .catch(() => {
+        if (state.playingId !== id) return
+        a.src = url
+        a.currentTime = 0
+        a.play().catch(() => stopPreview())
+      })
+    return
+  }
   a.src = url
   a.currentTime = 0
-  setState({ playingId: id, title, artist, position: 0, duration: 0 })
   a.play().catch(() => stopPreview())
 }
 

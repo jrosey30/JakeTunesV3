@@ -851,7 +851,8 @@ declare global {
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
       cancelSync: () => Promise<{ ok: boolean; wasRunning: boolean }>
-      onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => () => void
+      refreshDeezerPreview: (artist: string, title: string) => Promise<{ ok: boolean; previewUrl?: string }>
+  onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => () => void
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => () => void
       onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void
       buildWorkoutSyncSet?: (tracks: Array<{
