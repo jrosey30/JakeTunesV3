@@ -105,6 +105,29 @@ library)."*
 
 ---
 
+## Activity Sync front end (Jake, 2026-09-01)
+
+*"Make it sleeker, easier to use, easier to keep track of sync history…
+the core idea of it wont change AT ALL, the look will."*
+
+- **Scope law:** behavior/pipeline untouched — the engine, picker, gates, and
+  ledger are proven and stay exactly as they are. This is a LOOK and
+  legibility project only.
+- **Sync history view:** the backend already records everything —
+  `activity-sync-ledger.jsonl` (picks + result per sync: what went on, what
+  came off, target vs landed, timestamps). No UI reads it yet. A history
+  panel is mostly presentation: list of syncs, each expandable to its on/off
+  diff with artist — title (resolve ids against the library), target/landed
+  badge. The ledger diffs sync-to-sync (established 8/31).
+- **Sleeker sync flow:** clearer phase progress (board → copy → verify →
+  catalog → seal already exist as engine progress events), calmer language,
+  obvious size picker (100/250/500/1000), and a prominent "landed N of N"
+  result that matches what About will say — which we can now actually promise.
+- **Caution:** the Activity Sync UI lives in `DeviceView.tsx`, which is on the
+  Do-Not-Touch list (and was the vector of the 702-row corruption). This
+  section is Jake's explicit ask, but each change set still names what it
+  touches there, and pathRewrites handling is off limits.
+
 ## Open questions for Jake
 
 1. Which pillar is THE 6.0 story — round trip, or library-anywhere? (Others
