@@ -168,6 +168,52 @@ def main():
     snap['discoverAcceptRate'] = round(disc_acc / (disc_acc + disc_rej), 4) if (disc_acc + disc_rej) else None
     snap['mmPlaylistsKept'] = tl[('mm-playlist', 'accept')] - tl[('mm-playlist', 'reject')]
 
+    # ── 8. Became-loved funnel (brain-improvement-2026h2 item 4) — the
+    # trust metric: shop accept → imported → playCount ≥ 5 within 60 days.
+    # Accepts younger than 60d are PENDING (no verdict yet); the rate is
+    # over decided cohorts only, so December's number is earned. Matching
+    # is folded artist/title (albums lane: artist/album) — a read-only
+    # stat, so text matching is acceptable here (never for mutations). ──
+    import unicodedata
+    def _fold(x):
+        x = unicodedata.normalize('NFKD', str(x or '').casefold())
+        return ''.join(c for c in x if not unicodedata.combining(c)).strip()
+    by_song = {}
+    by_album = {}
+    for t in tracks.values():
+        a = _fold(t.get('albumArtist') or t.get('artist'))
+        by_song[(a, _fold(t.get('title')))] = t
+        key = (a, _fold(t.get('album')))
+        cur = by_album.get(key)
+        if cur is None or (t.get('playCount') or 0) > (cur.get('playCount') or 0):
+            by_album[key] = t
+    LOVED_PLAYS, DECIDE_DAYS = 5, 60
+    pending = decided = imported = loved = 0
+    for ev in jlines('taste-ledger.jsonl'):
+        if ev.get('surface') != 'discover' or ev.get('verdict') != 'accept':
+            continue
+        k = ev.get('key') or {}
+        lane = (ev.get('ctx') or {}).get('lane')
+        try:
+            ts = time.mktime(time.strptime(str(ev.get('ts',''))[:19], '%Y-%m-%dT%H:%M:%S'))
+        except Exception:
+            continue
+        age_d = (now - ts) / 86400
+        idx = by_album if lane == 'albums' else by_song
+        hit = idx.get((_fold(k.get('artist')), _fold(k.get('title'))))
+        if age_d < DECIDE_DAYS:
+            pending += 1
+            continue
+        decided += 1
+        if hit is not None:
+            imported += 1
+            if (hit.get('playCount') or 0) >= LOVED_PLAYS:
+                loved += 1
+    snap['becameLovedDecided'] = decided
+    snap['becameLovedPending'] = pending
+    snap['becameLovedImportRate'] = round(imported / decided, 4) if decided else None
+    snap['becameLovedRate'] = round(loved / decided, 4) if decided else None
+
     # ── Coverage (representation health) ──
     n = len(tracks)
     snap['libraryTracks'] = n
