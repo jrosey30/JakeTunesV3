@@ -1263,6 +1263,26 @@ function AppInner() {
     return () => { if (clearTimer) clearTimeout(clearTimer); cleanup() }
   }, [])
 
+  // Round Trip (6.0): the iPod brought home offline listens. Apply the
+  // absolute play-count/last-played updates through the normal reducer +
+  // debounced save flow, and say so in the pill. Main already deduped,
+  // delta'd, and ledgered — this is pure application.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onIpodRoundTrip?.((payload) => {
+      if (payload.updates.length > 0) {
+        // Reducer's action type carries string values; NUMERIC_FIELDS
+        // coerces playCount/lastPlayedAt back to numbers on apply.
+        dispatch({ type: 'UPDATE_TRACKS', updates: payload.updates.map(u => ({ ...u, value: String(u.value) })) })
+      }
+      import('./activity').then(a => {
+        const s = payload.summary
+        a.setNotice(`iPod brought home ${s.plays} play${s.plays === 1 ? '' : 's'} across ${s.tracks} song${s.tracks === 1 ? '' : 's'}`,
+          { kind: 'success', durationMs: 6000 })
+      }).catch(() => {})
+    })
+    return () => { cleanup?.() }
+  }, [dispatch])
+
   // Global CD-rip progress listener. Lives at the App level so it survives
   // when the user navigates away from the CD Import view mid-rip — the
   // main process keeps ripping regardless, and tracks continue to appear

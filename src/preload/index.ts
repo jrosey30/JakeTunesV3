@@ -629,6 +629,11 @@ const electronAPI = {
     ipcRenderer.invoke('get-activity-brain-context'),
   previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>
     ipcRenderer.invoke('preview-place-weather', place),
+  onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => callback(payload)
+    ipcRenderer.on('ipod-roundtrip', handler)
+    return () => { ipcRenderer.removeListener('ipod-roundtrip', handler) }
+  },
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)

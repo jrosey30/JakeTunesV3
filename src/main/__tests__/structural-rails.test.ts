@@ -131,6 +131,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'itunesAlbumTracks', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module (moved with the album-info cut)' },
     { fn: 'initImportPipeline', file: 'main/index.ts', minCalls: 1, why: 'P1C1 — the pipeline is dead weight without its world wired in' },
     { fn: 'initRagRetrieval', file: 'main/index.ts', minCalls: 1, why: 'P1 rag cut — retrieval throws on first call if its world is never wired in' },
+    { fn: 'ingestIpodRoundTrip', file: 'main/index.ts', minCalls: 1, why: 'the 6.0 story — unwired, every offline listen evaporates again' },
     // Called as df.applyQualityFloor (dynamic-import namespace), so the wire
     // matches the literal dotted form the bare-call regex would reject.
     { fn: '.applyQualityFloor(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'discovery quality floor — without the wire the shop ships 40% "no signal" cards again' },

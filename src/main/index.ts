@@ -75,6 +75,7 @@ import {
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
+import { ingestIpodRoundTrip } from './sync-engine/roundtrip.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
 import {
   registerCynthiaIpc,
@@ -1063,6 +1064,18 @@ registerIpodIpc(ipc, {
   },
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
   isSyncInFlight: () => syncEngine.isSyncInFlight(),
+  onMountDetected: (mount) => {
+    void ingestIpodRoundTrip(mount, {
+      stateDir: STATE_DIR,
+      getLibraryTracks: async () =>
+        (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
+      appendPlayEvents: async (trackId, count, tsMs) => {
+        for (let i = 0; i < count; i++) await appendPlayEvent(trackId, tsMs)
+      },
+      sendToRenderer,
+      isSyncInFlight: () => syncEngine.isSyncInFlight(),
+    })
+  },
 })
 registerSyncIpc(ipc, {
   requestSyncCancel: () => syncEngine.requestSyncCancel(),
