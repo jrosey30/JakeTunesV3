@@ -255,3 +255,40 @@
   border-color: #F9864C;
   color: #b5651d;
 }
+
+/* ── Sync History sheet (6.0 Phase 2b) ─────────────────────────────── */
+.sync-history-sheet { width: min(560px, 100%); }
+.sh-empty { padding: 18px 4px; color: #8a8478; font-size: 12px; }
+.sh-rows { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; }
+.sh-row {
+  border: 1px solid #ddd8cd;
+  border-radius: 8px;
+  background: #fbfaf6;
+  overflow: hidden;
+}
+.sh-row--trip { background: #f6faf6; }
+.sh-row-head {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 12px;
+  background: none; border: none; cursor: pointer;
+  font: inherit; text-align: left;
+}
+.sh-row-head:hover { background: rgba(0, 0, 0, 0.03); }
+.sh-when { font-size: 11px; color: #8a8478; min-width: 92px; font-feature-settings: "tnum"; }
+.sh-what { font-size: 12px; font-weight: 600; color: #2a2a2a; flex: 1; min-width: 0; }
+.sh-badge {
+  font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 9px;
+  white-space: nowrap;
+}
+.sh-badge--good { background: #e4f2e2; color: #2a7a2a; border: 1px solid #b0d8b0; }
+.sh-badge--warn { background: #fdf3e0; color: #9a6a10; border: 1px solid #eacd92; }
+.sh-badge--bad  { background: #fceeed; color: #a03030; border: 1px solid #e8b0b0; }
+.sh-badge--trip { background: #e6f0fa; color: #2a5d9a; border: 1px solid #b8d4f0; }
+.sh-detail { padding: 4px 12px 10px 114px; border-top: 1px dashed #e3ddd0; }
+.sh-detail-head {
+  margin: 8px 0 3px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #8a8478;
+}
+.sh-line { font-size: 11.5px; color: #3a3a3a; padding: 1px 0; }
+.sh-line--off { color: #8a5a5a; }
+.sh-line--dim { color: #9a948a; font-style: italic; }

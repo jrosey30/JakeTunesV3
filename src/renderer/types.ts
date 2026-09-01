@@ -851,7 +851,14 @@ declare global {
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
       cancelSync: () => Promise<{ ok: boolean; wasRunning: boolean }>
-      refreshDeezerPreview: (artist: string, title: string) => Promise<{ ok: boolean; previewUrl?: string }>
+      getSyncHistory: () => Promise<{ ok: boolean; entries: Array<{
+    kind: 'sync' | 'roundtrip'; when: string; target?: number; landed?: number
+    sealedOk?: boolean; aborted?: boolean; pickedCount?: number
+    added?: Array<{ id: number; t?: string; a?: string }>
+    removed?: Array<{ id: number; t?: string; a?: string }>
+    plays?: Array<{ id: number; delta: number }>; otgLists?: number; unmatched?: number
+  }> }>
+  refreshDeezerPreview: (artist: string, title: string) => Promise<{ ok: boolean; previewUrl?: string }>
   onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => () => void
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => () => void
       onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void

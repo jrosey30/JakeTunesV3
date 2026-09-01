@@ -10,6 +10,7 @@ import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
 import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
+import SyncHistorySheet from '../components/SyncHistorySheet'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
 
@@ -90,6 +91,7 @@ export default function DeviceView() {
   // FAT32 device (2026-07-25).
   const [ipodFsName, setIpodFsName] = useState<string | null>(null)
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
+  const [showSyncHistory, setShowSyncHistory] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
   const [showActivitySheet, setShowActivitySheet] = useState(false)
   const [showFullSyncConfirm, setShowFullSyncConfirm] = useState(false)
@@ -790,6 +792,11 @@ export default function DeviceView() {
             title="See exactly what tracks and playlists are on the iPod right now"
           >On This iPod…</button>
           <button
+            className="device-itunes-btn"
+            onClick={() => setShowSyncHistory(true)}
+            title="Every sync's cargo and every play the iPod brought home"
+          >Sync History</button>
+          <button
             className="device-itunes-btn device-itunes-btn--eject"
             onClick={async () => {
               await window.electronAPI.ejectIpod()
@@ -841,6 +848,7 @@ export default function DeviceView() {
         </div>
       </div>
       {showIpodLibrary && <IpodLibraryModal onClose={() => setShowIpodLibrary(false)} />}
+      {showSyncHistory && <SyncHistorySheet onClose={() => setShowSyncHistory(false)} />}
       {showActivitySheet && (
         <ActivitySheet
           initial={lastBrief}

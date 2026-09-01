@@ -629,6 +629,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-activity-brain-context'),
   previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>
     ipcRenderer.invoke('preview-place-weather', place),
+  getSyncHistory: (): Promise<{ ok: boolean; entries: Array<Record<string, unknown>> }> =>
+    ipcRenderer.invoke('get-sync-history'),
   refreshDeezerPreview: (artist: string, title: string): Promise<{ ok: boolean; previewUrl?: string }> =>
     ipcRenderer.invoke('refresh-deezer-preview', artist, title),
   onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => {
