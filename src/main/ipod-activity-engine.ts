@@ -60,7 +60,7 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
-import { orderForIpodCatalog } from './ipod-catalog-order.ts'
+import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
@@ -615,6 +615,18 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }))
   }
   console.log('activity-sync stderr:', written.stderr)
+  // Firmware finds songs by binary search on mhit id — ids must ascend in
+  // record order or songs silently vanish from About (the 819 saga).
+  const conform = await conformCatalogIdOrder(localDb)
+  if (!conform.ok) {
+    try { await unlink(localDb) } catch { /* temp */ }
+    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    return rewipeAndStop(fail({
+      copied, copyErrors, target,
+      error: `The catalog could not be conformed to firmware id order (${conform.error}). Previous catalog is untouched. Sync again.`,
+    }))
+  }
+  console.log(`activity-sync: ${conform.summary}`)
   const contig = await ensureContiguousDb(localDb, python)
   console.log(`activity-sync: ${contig.summary}`)
   if (!contig.ok) {

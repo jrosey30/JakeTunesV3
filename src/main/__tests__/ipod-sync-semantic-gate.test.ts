@@ -69,6 +69,18 @@ test('activity engine refuses a catalog row the Mini will not list', () => {
   assert.match(engine, /ipodPathExtension\(rawColon\) !== ipodPathExtension\(destColon\)/)
 })
 
+test('catalog ids are conformed to firmware binary-search order before the md5 proof', () => {
+  // 2026-09-01: Mini 1.4.1 finds songs by binary search on mhit id — the
+  // 819-of-1000 root cause. Ids must be re-minted ascending in record
+  // order AFTER the artist sort and BEFORE the contiguity/md5 proof.
+  assert.match(engine, /conformCatalogIdOrder/)
+  const sort = engine.indexOf('orderForIpodCatalog(tracks)')
+  const conform = engine.indexOf('await conformCatalogIdOrder(localDb)')
+  const contig = engine.indexOf('await ensureContiguousDb(localDb, python)')
+  assert.ok(sort >= 0 && conform > sort, 'id conform must run after the artist sort')
+  assert.ok(contig > conform, 'id conform must run before the contiguity/md5 proof')
+})
+
 test('activity engine runs TSA by identity and does not auto-delete after the catalog', () => {
   assert.match(engine, /tsaAllClear/)
   assert.match(engine, /tsaScreen/)
