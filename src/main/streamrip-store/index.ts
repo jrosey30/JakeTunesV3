@@ -45,7 +45,18 @@ function ripBinary(): string {
 
 const AUDIO_EXT = new Set(['.flac', '.m4a', '.mp3', '.aac', '.alac', '.ogg', '.opus', '.wav', '.aiff', '.aif'])
 
-/** Recursively collect audio files streamrip wrote under the staging dir. */
+// A failed Qobuz transfer can leave a ZERO-BYTE stub with a healthy
+// filename ("file said 4 bytes, read 0 bytes" — live 2026-09-01: '18 and
+// Life' and 'Come Sail Away' both imported as tagless ghost rows because
+// this collector counted FILES, not bytes, and the wrong-version witness
+// passes unreadable probes unjudged). Anything under the floor is a stub:
+// dropped here, so a stub-only staging reads as a FAILED download and the
+// ladder's designed fallbacks (next candidate, Bandcamp, SoundCloud)
+// actually get their turn.
+const MIN_AUDIO_BYTES = 64 * 1024
+
+/** Recursively collect REAL audio files streamrip wrote under the staging
+ *  dir — stubs below MIN_AUDIO_BYTES are logged and refused. */
 async function collectAudio(dir: string): Promise<string[]> {
   const out: string[] = []
   async function walk(d: string): Promise<void> {
@@ -56,7 +67,16 @@ async function collectAudio(dir: string): Promise<string[]> {
       if (e.isDirectory()) await walk(p)
       else {
         const dot = e.name.lastIndexOf('.')
-        if (dot >= 0 && AUDIO_EXT.has(e.name.slice(dot).toLowerCase())) out.push(p)
+        if (dot < 0 || !AUDIO_EXT.has(e.name.slice(dot).toLowerCase())) continue
+        try {
+          const { stat } = await import('fs/promises')
+          const st = await stat(p)
+          if (st.size < MIN_AUDIO_BYTES) {
+            console.warn(`[streamrip] refusing ${st.size}-byte stub: ${e.name}`)
+            continue
+          }
+        } catch { continue }
+        out.push(p)
       }
     }
   }
