@@ -40,7 +40,14 @@ function ensureAudio(): HTMLAudioElement {
   a.addEventListener('timeupdate', () => setState({ position: a.currentTime }))
   a.addEventListener('loadedmetadata', () => setState({ duration: isFinite(a.duration) ? a.duration : 30 }))
   a.addEventListener('ended', () => stopPreview())
-  a.addEventListener('error', () => stopPreview())
+  a.addEventListener('error', () => {
+    // 2026-09-01: "previews stopped playing again" recovered on restart
+    // with no evidence — this handler was swallowing it. Name the failure
+    // so the next occurrence is diagnosable from the console.
+    const err = a.error
+    console.warn(`[preview] media error code=${err?.code ?? '?'} msg=${err?.message || ''} src=${(a.src || '').slice(0, 90)}`)
+    stopPreview()
+  })
   audio = a
   return a
 }
