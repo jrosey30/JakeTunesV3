@@ -120,3 +120,13 @@ instead of a 2am session.
   design brief), discovery feed cluster, musicman handler bodies,
   metadata-overrides, friends strand — all optional-scope beyond the
   40–60 target, which is met.
+- 2026-09-01 (Phase 4): download reliability SHIPPED f2d9f59 — 12-min
+  ladder clock with clamped stage timeouts, kind-scoped cancel (searches
+  survive; flag ends the whole ladder), stageRip retry-with-backoff
+  (staging wiped between attempts), boot sweep of orphaned
+  jaketunes-{rip,bc,ripsearch,itunesdb}-* temp dirs. Matcher "rewrite"
+  RE-SCOPED with evidence: rankStreamripCandidates already IS a weighted
+  score with identity vetoes around it (unwantedVersionOf, live-brand
+  lexicon, explicit gate — each pinning a tested incident). Score for
+  preference / veto for identity is the right architecture; grow the
+  lexicons and regression matrix as incidents arrive, never rewrite.
