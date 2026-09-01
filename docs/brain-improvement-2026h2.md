@@ -52,9 +52,13 @@ claim this" earns the right to be believed elsewhere.
    brain's picks CONVERT, December's "your discovery wins" section is
    earned, not asserted. Wire into kpi-snapshot (Sun 9am) so the trend
    exists before December.
-5. **AUC drift alarm.** The weekly Mini eval already notifies on WARN;
-   add aucDelta < -0.02 to the WARN conditions so a slipping brain
-   pings the phone instead of waiting for a Saturday read.
+5. **AUC drift alarm.** ✅ SHIPPED 2026-09-01 (Mobile 1ecb280): the
+   weekly Mini eval WARNs on aucDelta < -0.02 alongside the 0.72
+   absolute floor — a slipping brain pings the phone. Also 2026-09-01:
+   run_eval.py now scores the PRODUCTION retrieval path (V2 bucket via
+   brain-eval/bridge/) — first reading retrieval_prod 0.753; mood-route
+   vibe queries (0.24–0.48) are the measured weak wing for item 2/3 +
+   the 6.0 reranker to move.
 
 ## Sequencing
 
