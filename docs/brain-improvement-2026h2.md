@@ -41,17 +41,22 @@ claim this" earns the right to be believed elsewhere.
    ⚠️ buildEmbeddingText has a declared TWIN in scripts/brain-trainer.mjs
    — any text-shape change lands on both sides in one commit.
 2. **Verdict volume.** The shop now feeds accept/reject into scoring
-   (2026-08-22). Keep the flow growing; fold COMPLETION vs SKIP events
-   into the taste model's negatives (skips are the cheapest honest
-   "no" signal we barely use).
-3. **Taste-model features.** Add recency-weighted plays + completion
-   rate to tasteScore; target AUC ≥ 0.85 on the same 5-fold weekly
-   eval before any Review narrative leans on it.
-4. **The became-loved metric (the trust metric).** Track the funnel:
-   shop accept → imported → playCount ≥ 5 within 60 days. If the
-   brain's picks CONVERT, December's "your discovery wins" section is
-   earned, not asserted. Wire into kpi-snapshot (Sun 9am) so the trend
-   exists before December.
+   (2026-08-22). Keep the flow growing. ⚠️ 2026-09-01 disposition: the
+   Aug-23 taste-v4 lab RE-tested skips at 6x the June data — still
+   nothing. Skip-folding is measured-dead; verdict volume remains the
+   live lever.
+3. **Taste-model features.** ⚠️ 2026-09-01 disposition: exp-recency
+   tested by the Aug-23 lab = noise; playINTENSITY shipped (+0.006).
+   Completion-rate has NO per-track data yet — it waits on new signal
+   collection (play-event completion / iPod Round Trip), not model
+   work. The 0.85 AUC target stands, gated on new signals.
+4. **The became-loved metric (the trust metric).** ✅ SHIPPED 2026-09-01
+   in kpi-snapshot (Sun 9am): discover accept → imported → playCount
+   ≥ 5 within 60d, decided-cohorts-only. First run: 87 accepts pending;
+   first decided cohort ~Oct 7 — trend exists before December.
+   ALSO 2026-09-01: the 6.0 3c RERANKER shipped both repos —
+   retrieval_prod 0.753 → 0.815 (lexical genre bonus w=0.08 at the
+   ragRetrieveByQuery choke point, twinned to Mobile).
 5. **AUC drift alarm.** ✅ SHIPPED 2026-09-01 (Mobile 1ecb280): the
    weekly Mini eval WARNs on aucDelta < -0.02 alongside the 0.72
    absolute floor — a slipping brain pings the phone. Also 2026-09-01:
