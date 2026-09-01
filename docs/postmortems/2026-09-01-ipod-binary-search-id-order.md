@@ -2,10 +2,11 @@
 
 **Severity:** P0 (device showed wrong library for four days; ~25 theories burned)
 **Author:** Claude (the agent that introduced the bug and eventually found it)
-**Status:** Resolved — `conformCatalogIdOrder` shipped (2fc09ad); locked by
-semantic gate + synthetic-catalog unit tests. Verified on-device at 100 and 250
-(500 and 1000 gauntlet in progress at time of writing; 1000 verified via
-hand-applied surgery before the engine fix shipped).
+**Status:** CLOSED — `conformCatalogIdOrder` shipped (2fc09ad); locked by
+semantic gate + synthetic-catalog unit tests. On-device gauntlet complete
+2026-09-01: engine-path syncs at **100, 250, 500, and 1000 all showed the
+exact count in About**. First time in the project's history a 500 or 1000
+sync ever came back right.
 
 ---
 
@@ -87,6 +88,27 @@ Every symptom was consistent with a dozen other explanations:
 3. **One-boot falsifiable confirmation.** Renumbering the ids on the card
    (surgery only — same records, same order, ids 10000..10999 ascending, 2658
    mhip refs remapped) took About from 819 to **1000**.
+
+## Archaeology — the disease predates Activity Sync
+
+After the fix, Jake asked whether the old full-sync era's chronic "always ~8
+songs off" was the same thing. Running the binary-search model on surviving
+catalogs from **before** the Aug 28 artist sort (backups, Aug 15–16):
+
+| Catalog (card backup)        | Tracks | id-inversions | Model predicts |
+|------------------------------|--------|---------------|----------------|
+| iTunesDB.frag9 (Aug 15)      | 500    | 8             | 464            |
+| pre-semantic-fix (Aug 15)    | 500    | 8             | 449            |
+| iTunesDB.prefrag (Aug 16)    | 500    | 8             | 462            |
+
+Every pre-artist-sort catalog carries exactly **8 id-inversions** — the old
+writer emitted near-insertion order, but re-downloaded/replaced tracks kept
+their position while carrying newer ids. So the full-sync era's stubborn
+small shortfalls were **the same disease in mild form**, stacked on top of the
+two genuine labeling bugs that were separately found and fixed (July's U+2019
+strings, August's ALAC-as-MP3 markers). One old catalog predicts exactly 462
+— a number the device actually displayed. The conform pass retroactively
+eliminates the entire class: zero inversions by construction, at any size.
 
 ## Timeline
 
