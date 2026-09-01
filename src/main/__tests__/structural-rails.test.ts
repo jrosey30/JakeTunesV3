@@ -82,7 +82,7 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // slack, so the ratchet keeps biting from the new baseline. Raise this for a
   // merge from main; NEVER to make room for new capability — that belongs in a
   // module (personas.ts / library-eviction.ts).
-  const INDEX_LINES_LOCKED = 12834
+  const INDEX_LINES_LOCKED = 11696
   test(`index.ts stays ≤ ${INDEX_LINES_LOCKED + 150} lines and the lock follows it down`, () => {
     const lines = readFileSync(join(SRC, 'main/index.ts'), 'utf-8').split('\n').length
     assert.ok(lines <= INDEX_LINES_LOCKED + 150,
