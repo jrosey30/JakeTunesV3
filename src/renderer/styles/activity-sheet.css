@@ -284,7 +284,7 @@
 .sh-badge--warn { background: #fdf3e0; color: #9a6a10; border: 1px solid #eacd92; }
 .sh-badge--bad  { background: #fceeed; color: #a03030; border: 1px solid #e8b0b0; }
 .sh-badge--trip { background: #e6f0fa; color: #2a5d9a; border: 1px solid #b8d4f0; }
-.sh-detail { padding: 4px 12px 10px 114px; border-top: 1px dashed #e3ddd0; }
+.sh-detail { padding: 4px 12px 10px 114px; border-top: 1px dashed #e3ddd0; max-height: 340px; overflow-y: auto; }
 .sh-detail-head {
   margin: 8px 0 3px; font-size: 10px; font-weight: 700;
   letter-spacing: 0.06em; text-transform: uppercase; color: #8a8478;

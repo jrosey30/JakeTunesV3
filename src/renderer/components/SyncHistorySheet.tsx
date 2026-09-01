@@ -92,15 +92,13 @@ export default function SyncHistorySheet({ onClose }: { onClose: () => void }) {
                     {(e.added || []).length > 0 && (
                       <>
                         <div className="sh-detail-head">Went on ({e.added!.length})</div>
-                        {e.added!.slice(0, 40).map((x) => <div key={`a${x.id}`} className="sh-line">{nameOf(x)}</div>)}
-                        {e.added!.length > 40 && <div className="sh-line sh-line--dim">…and {e.added!.length - 40} more</div>}
+                        {e.added!.map((x) => <div key={`a${x.id}`} className="sh-line">{nameOf(x)}</div>)}
                       </>
                     )}
                     {(e.removed || []).length > 0 && (
                       <>
                         <div className="sh-detail-head">Came off ({e.removed!.length})</div>
-                        {e.removed!.slice(0, 40).map((x) => <div key={`r${x.id}`} className="sh-line sh-line--off">{nameOf(x)}</div>)}
-                        {e.removed!.length > 40 && <div className="sh-line sh-line--dim">…and {e.removed!.length - 40} more</div>}
+                        {e.removed!.map((x) => <div key={`r${x.id}`} className="sh-line sh-line--off">{nameOf(x)}</div>)}
                       </>
                     )}
                     {(e.added || []).length === 0 && (e.removed || []).length === 0 && (
