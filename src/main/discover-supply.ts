@@ -29,7 +29,7 @@ export interface SupplyDeps {
 }
 
 export interface SupplyAlbum { artist: string; title: string; year?: string; artUrl?: string; recordType?: string; deezerId?: number; because?: string }
-export interface SupplySong { artist: string; title: string; artUrl?: string; previewUrl?: string; deezerId?: number; because?: string }
+export interface SupplySong { artist: string; title: string; artUrl?: string; previewUrl?: string; deezerId?: number; because?: string; curated?: string }
 
 const API = 'https://api.deezer.com'
 const arr = (o: unknown): Array<Record<string, unknown>> => {
@@ -159,6 +159,53 @@ export async function harvestSongs(
   return out
 }
 
+/**
+ * Curator picks (2026-09-01): songs from a followed curator's public
+ * playlists, resolved on Deezer for art + a 30s preview. Same gates as
+ * the graph harvest — JUNK editions refused, owned songs refused,
+ * per-artist cap — plus a strict Deezer identity match (wrong artist
+ * NEVER resolves; an unresolvable pick is skipped, the pool is deep).
+ */
+export async function harvestCuratorSongs(
+  pool: Array<{ artist: string; title: string; curator: string; playlist: string }>,
+  want: number,
+  deps: SupplyDeps,
+  dayNumber: number,
+): Promise<SupplySong[]> {
+  const out: SupplySong[] = []
+  if (want <= 0 || pool.length === 0) return out
+  const order = dayStride(dayNumber, pool.length, pool.length)
+  const perArtist = new Map<string, number>()
+  const norm = (x: string): string => x.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\s*[([].*?[)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  for (const idx of order) {
+    if (out.length >= want) break
+    const c = pool[idx]
+    if (!c || JUNK.test(c.title)) continue
+    if (deps.ownsSong(c.artist, c.title)) continue
+    const n = perArtist.get(c.artist) || 0
+    if (n >= 2) continue
+    const q = encodeURIComponent(`artist:"${c.artist}" track:"${c.title}"`)
+    const rows = arr(await deps.fetchJson(`${API}/search?q=${q}&limit=5`).catch(() => null))
+    const hit = rows.find((t) => {
+      const ra = norm(str((t.artist as { name?: string } | undefined)?.name || ''))
+      const rt = norm(str(t.title))
+      const wa = norm(c.artist); const wt = norm(c.title)
+      return ra === wa && (rt === wt || (wt.length >= 3 && (rt.startsWith(wt) || wt.startsWith(rt))))
+    })
+    if (!hit) continue
+    perArtist.set(c.artist, n + 1)
+    const album = hit.album as { cover_big?: string; cover_medium?: string } | undefined
+    out.push({
+      artist: c.artist, title: c.title,
+      artUrl: album?.cover_big || album?.cover_medium,
+      previewUrl: str(hit.preview) || undefined,
+      deezerId: Number(hit.id) || undefined,
+      curated: c.playlist ? `${c.curator} · ${c.playlist}` : c.curator,
+    })
+  }
+  return out
+}
+
 export interface DailyDiscovery {
   albums: SupplyAlbum[]
   songs: SupplySong[]
@@ -182,7 +229,7 @@ export interface DailyDiscovery {
 export async function buildDailyDiscovery(
   anchors: string[],
   deps: SupplyDeps,
-  opts: { want?: number; dayNumber?: number; maxPasses?: number } = {},
+  opts: { want?: number; dayNumber?: number; maxPasses?: number; curatorSongs?: Array<{ artist: string; title: string; curator: string; playlist: string }>; curatorSlots?: number } = {},
 ): Promise<DailyDiscovery> {
   const want = opts.want ?? 25
   const maxPasses = opts.maxPasses ?? 3
@@ -202,6 +249,18 @@ export async function buildDailyDiscovery(
   const seenAlbum = new Set<string>()
   const seenSong = new Set<string>()
   const key = (a: string, b: string): string => `${a} ${b}`.toLowerCase()
+
+  // Curator picks seat first (a few reserved slots, rotated daily); the
+  // graph fills the rest of the quota as always.
+  if (opts.curatorSongs?.length) {
+    const slots = Math.min(opts.curatorSlots ?? 5, want)
+    for (const s of await harvestCuratorSongs(opts.curatorSongs, slots, deps, dayNumber)) {
+      const k = key(s.artist, s.title)
+      if (seenSong.has(k)) continue
+      seenSong.add(k)
+      songs.push(s)
+    }
+  }
 
   let passes = 0
   let frontier = pool

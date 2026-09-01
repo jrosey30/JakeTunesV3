@@ -736,7 +736,20 @@ export async function supplyLanes(
     ownsArtist: (artist: string): boolean =>
       owned.artists.has(normKey(artist)) || artistSq.has(squash(foldKey(artist))),
   }
-  const daily = await buildDailyDiscovery(anchorNames, deps, { want: 40, dayNumber })
+  // Curator pool (guarded: state-dir drags electron, which the node test
+  // loader cannot resolve — tests run with an empty pool, the app with
+  // the real one).
+  const curatorSongs = await (async () => {
+    try {
+      const { loadCuratorPool } = await import('./spotify-curators.ts')
+      const { join: joinPath } = await import('path')
+      const { STATE_DIR: stateDir } = await import('./state-dir.ts')
+      return await loadCuratorPool(joinPath(stateDir, 'spotify-curator-pool.json'))
+    } catch {
+      return []
+    }
+  })()
+  const daily = await buildDailyDiscovery(anchorNames, deps, { want: 40, dayNumber, curatorSongs })
   if (daily.report.shortfall.length) {
     console.warn(`[discover] supply shortfall: ${daily.report.shortfall.join(', ')} (pool ${daily.report.poolSize}, ${daily.report.passes} passes)`)
   }
@@ -745,7 +758,7 @@ export async function supplyLanes(
     cards.push({ lane: 'fresh-albums', type: 'album', artist: a.artist, title: a.title, year: a.year, why: clipWhy(a.because ? `Neighbors with ${a.because}` : 'Near your library'), artUrl: a.artUrl, because: a.because })
   }
   for (const s of daily.songs) {
-    cards.push({ lane: 'fresh-songs', type: 'song', artist: s.artist, title: s.title, why: clipWhy(s.because ? `Neighbors with ${s.because}` : 'Near your library'), artUrl: s.artUrl, previewUrl: s.previewUrl, because: s.because })
+    cards.push({ lane: 'fresh-songs', type: 'song', artist: s.artist, title: s.title, why: clipWhy(s.curated ? `Curated by ${s.curated}` : (s.because ? `Neighbors with ${s.because}` : 'Near your library')), artUrl: s.artUrl, previewUrl: s.previewUrl, because: s.because })
   }
   return cards
 }

@@ -1036,6 +1036,8 @@ registerUiStateIpc(ipc)
 registerSpotifyIpc(ipc, {
   authFile: join(STATE_DIR, 'spotify-auth.json'),
   tasteFile: join(STATE_DIR, 'spotify-taste.json'),
+  curatorsFile: join(STATE_DIR, 'spotify-curators.json'),
+  curatorPoolFile: join(STATE_DIR, 'spotify-curator-pool.json'),
   openExternal: (url) => { void shell.openExternal(url) },
 })
 registerBackupIpc(ipc, { getMainWindow: () => mainWindow })
@@ -1514,7 +1516,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 7  // 7: supply edition gate — no deluxe/live/best-of (2026-08-27); 6: 25/25 supply lanes; 5: bins + hooks + pitches
+const FEED_GEN_VERSION = 8  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000

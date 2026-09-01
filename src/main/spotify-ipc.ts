@@ -16,11 +16,15 @@ import {
   loadAuth, saveAuth, connectSpotify, fetchTopTracks, fetchLikedRecent, SPOTIFY_REDIRECT_URI,
 } from './spotify-connect.ts'
 import { aggregateTopArtists, saveSpotifyTaste } from './spotify-taste.ts'
+import { pullCuratorPool } from './spotify-curators.ts'
 
 export interface SpotifyIpcHost {
   authFile: string
   /** Where the weekly taste pull lands (read by the shop's anchor pool). */
   tasteFile: string
+  /** Curator roster + harvested pool (read by the shop's New Songs lane). */
+  curatorsFile: string
+  curatorPoolFile: string
   openExternal: (url: string) => void
 }
 
@@ -63,6 +67,8 @@ export async function pullIfDue(host: SpotifyIpcHost): Promise<void> {
   if (Date.now() - last < PULL_EVERY_MS) return
   const r = await pullSpotifyTaste(host)
   if (!r.ok) console.warn('[spotify] weekly taste pull failed:', r.error)
+  const c = await pullCuratorPool({ authFile: host.authFile, curatorsFile: host.curatorsFile, poolFile: host.curatorPoolFile })
+  if (!c.ok) console.warn('[spotify] curator pool pull failed:', c.error)
 }
 
 export function registerSpotifyIpc(ipc: IpcRegistrar, host: SpotifyIpcHost): void {
@@ -98,7 +104,9 @@ export function registerSpotifyIpc(ipc: IpcRegistrar, host: SpotifyIpcHost): voi
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('spotify-pull-now', async () => {
-    return await pullSpotifyTaste(host)
+    const taste = await pullSpotifyTaste(host)
+    const curators = await pullCuratorPool({ authFile: host.authFile, curatorsFile: host.curatorsFile, poolFile: host.curatorPoolFile })
+    return { ...taste, curatorSongs: curators.songs ?? 0 }
   }, { refuse: REFUSED_SENDER })
 
   setTimeout(() => { void pullIfDue(host) }, 90_000)

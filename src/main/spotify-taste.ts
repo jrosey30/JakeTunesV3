@@ -21,6 +21,8 @@ export interface SpotifyTasteTrack { song: string; artist: string; album?: strin
 export const SPOTIFY_TASTE_BLOCKLIST = new Set(['fake music'])
 
 const blocked = (artist: string): boolean => SPOTIFY_TASTE_BLOCKLIST.has(String(artist || '').trim().toLowerCase())
+/** Shared gate — curator pulls refuse blocklisted artists too. */
+export const spotifyArtistBlocked = blocked
 
 export interface SpotifyTasteFile {
   /** Ranked by weighted presence across top-tracks + likes. */
