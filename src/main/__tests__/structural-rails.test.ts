@@ -82,7 +82,7 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // slack, so the ratchet keeps biting from the new baseline. Raise this for a
   // merge from main; NEVER to make room for new capability — that belongs in a
   // module (personas.ts / library-eviction.ts).
-  const INDEX_LINES_LOCKED = 11560
+  const INDEX_LINES_LOCKED = 11405
   test(`index.ts stays ≤ ${INDEX_LINES_LOCKED + 150} lines and the lock follows it down`, () => {
     const lines = readFileSync(join(SRC, 'main/index.ts'), 'utf-8').split('\n').length
     assert.ok(lines <= INDEX_LINES_LOCKED + 150,
@@ -130,6 +130,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'searchItunesSuggestions', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module (moved with the album-info cut)' },
     { fn: 'itunesAlbumTracks', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module (moved with the album-info cut)' },
     { fn: 'initImportPipeline', file: 'main/index.ts', minCalls: 1, why: 'P1C1 — the pipeline is dead weight without its world wired in' },
+    { fn: 'initRagRetrieval', file: 'main/index.ts', minCalls: 1, why: 'P1 rag cut — retrieval throws on first call if its world is never wired in' },
     // Called as df.applyQualityFloor (dynamic-import namespace), so the wire
     // matches the literal dotted form the bare-call regex would reject.
     { fn: '.applyQualityFloor(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'discovery quality floor — without the wire the shop ships 40% "no signal" cards again' },
