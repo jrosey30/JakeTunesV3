@@ -1,6 +1,8 @@
-# Post-Mortem — The 819 Saga: iPod Mini Binary-Search ID Order (Aug 28 – Sep 1, 2026)
+# Post-Mortem — The 819 Saga: iPod Mini Binary-Search ID Order (acute phase Aug 28 – Sep 1, 2026)
 
-**Severity:** P0 (device showed wrong library for four days; ~25 theories burned)
+**Severity:** P0 (acute: device showed wrong library for four days, ~25 theories
+burned — but the mild form of the disease produced unexplained shortfalls for
+months before that; see Archaeology. This was a months-long war that ended Sep 1.)
 **Author:** Claude (the agent that introduced the bug and eventually found it)
 **Status:** CLOSED — `conformCatalogIdOrder` shipped (2fc09ad); locked by
 semantic gate + synthetic-catalog unit tests. On-device gauntlet complete
