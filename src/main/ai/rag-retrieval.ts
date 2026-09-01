@@ -16,6 +16,7 @@ import {
   topK as ragTopK,
 } from './embeddings'
 import { getMoodIndexMap } from './mood-index'
+import { RERANK_OVERFETCH, RERANK_POOL_CAP, RERANK_GENRE_W, rerankHits } from './rag-rerank.ts'
 
 export interface RagRetrievalHost {
   libraryCache: { get: () => Promise<unknown> }
@@ -82,6 +83,15 @@ export async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'
 }
 
 /** Library year lookup for the decade hard-gate. Missing year = excluded. */
+async function ragTrackGenreMap(): Promise<Map<number, string>> {
+  try {
+    const lib = (await ragHost.libraryCache.get()) as { tracks?: Array<{ id: number; genre?: string }> }
+    return new Map((lib.tracks || []).filter(t => typeof t?.id === 'number').map(t => [t.id, String(t.genre || '')]))
+  } catch {
+    return new Map()
+  }
+}
+
 export async function ragTrackYearMap(): Promise<Map<number, string | number | undefined>> {
   try {
     const lib = (await ragHost.libraryCache.get()) as { tracks?: Array<{ id: number; year?: string | number }> }
@@ -123,7 +133,14 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
     const [qvec] = await ragEmbedTexts([query])
     if (!qvec) return []
     console.log(`[rag] route=${route} k=${k} "${query.slice(0, 60)}"`)
-    return ragTopK(qvec, map, k)
+    // 3c reranker: over-fetch, add the lexical genre bonus, re-slice.
+    const poolK = Math.min(Math.max(k * RERANK_OVERFETCH, k), RERANK_POOL_CAP)
+    const pool = ragTopK(qvec, map, poolK)
+    const reranked = rerankHits(query, pool, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+    const beforeTop = new Set(pool.slice(0, k).map((h) => h.trackId))
+    const moved = reranked.filter((h) => !beforeTop.has(h.trackId)).length
+    if (moved > 0) console.log(`[rag] rerank promoted ${moved}/${k} from the ${pool.length}-deep pool`)
+    return reranked
   } catch (err) {
     console.warn('[rag] retrieve failed:', err instanceof Error ? err.message : err)
     return []

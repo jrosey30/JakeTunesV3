@@ -38,10 +38,12 @@ export const MIX_BRAIN_TWIN = {
   mobileMustTwin: [
     'backend/src/routes/mixes.ts',
     'backend/src/util/rag.ts',
+    'backend/src/util/ragRerank.ts',
   ],
   desktopCanonical: [
     'src/common/mix-brain-twin.ts',
     'src/main/ai/decade-query.ts',
+    'src/main/ai/rag-rerank.ts',
     'src/main/ai/orbit-quality.ts',
     'src/main/ai/embeddings.ts',
     'src/main/playlist-vibes.ts',
