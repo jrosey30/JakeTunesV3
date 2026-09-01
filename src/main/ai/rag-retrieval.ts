@@ -16,6 +16,8 @@ import {
   topK as ragTopK,
 } from './embeddings'
 import { getMoodIndexMap } from './mood-index'
+import { getAudioIndexMap, audioTopK } from './audio-index.ts'
+import { clapEmbedText } from './audio-query.ts'
 import { RERANK_OVERFETCH, RERANK_POOL_CAP, RERANK_GENRE_W, rerankHits } from './rag-rerank.ts'
 
 export interface RagRetrievalHost {
@@ -128,6 +130,25 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
     console.log(`[rag] decade hard-gate ${decade.label} (${decade.start}-${decade.end}): ${gated.size}/${map.size} candidates`)
     map = gated
     if (map.size === 0) return []
+  }
+  // 3d (gated): the AUDIO route — CLAP text query against how tracks
+  // actually SOUND. Opt-in via JT_AUDIO_ROUTE until the production-path
+  // eval says it beats the mood route; every failure falls through.
+  if (route === 'mood' && process.env.JT_AUDIO_ROUTE === '1' && !decade) {
+    try {
+      const amap = await getAudioIndexMap()
+      if (amap.size > 0) {
+        const aq = await clapEmbedText(query)
+        if (aq) {
+          console.log(`[rag] route=audio k=${k} "${query.slice(0, 60)}"`)
+          const poolK = Math.min(Math.max(k * RERANK_OVERFETCH, k), RERANK_POOL_CAP)
+          const pool = audioTopK(aq, amap, poolK)
+          return rerankHits(query, pool, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+        }
+      }
+    } catch (err) {
+      console.warn('[rag] audio route failed — falling back to mood:', err instanceof Error ? err.message : err)
+    }
   }
   try {
     const [qvec] = await ragEmbedTexts([query])
