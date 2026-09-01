@@ -141,7 +141,7 @@ import { explicitWins } from '../common/explicit.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
-import { initFlightRecorder, sanitizeCrashPayload } from './flight-recorder'
+import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
 import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
@@ -907,7 +907,7 @@ async function audioAnalysisWorker(): Promise<void> {
       // `remaining` counts down across the batch so the UI ticks smoothly; a
       // null dispatch (skipped — no librosa) still advances the counter.
       dispatches.forEach((dispatch, idx) => {
-        mainWindow?.webContents.send('audio-analysis:progress', {
+        sendToRenderer('audio-analysis:progress', {
           remaining: audioAnalysisQueue.length + (dispatches.length - 1 - idx),
           ...(dispatch ? {
             trackId: dispatch.trackId,
@@ -990,6 +990,13 @@ function kickAudioAnalysisWorker(): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+
+// Renderer sends must survive window teardown — `?.` guards null but a
+// destroyed window still throws ("Object has been destroyed", seen ×2 in
+// the flight recorder from mid-sync progress events).
+const sendToRenderer = (channel: string, ...args: unknown[]): void => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
+}
 
 // AI host preference — written by settings IPC, read by prompt builders.
 // Declared above registerSettingsIpc so the setter closure is valid.
@@ -1101,7 +1108,7 @@ registerCynthiaIpc(ipc, cynthiaIpcHost)
 const codecByAbsPath = new Map<string, string>()
 
 function sendMenuAction(action: string) {
-  mainWindow?.webContents.send('menu-action', action)
+  sendToRenderer('menu-action', action)
 }
 
 // Hardware media keys (keyboard play/pause/next/prev). Menu F7/F8/F9
@@ -1783,7 +1790,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     if (lanes.length > 0) {
       discoverFeedMem = { at: nowMs, ver: FEED_GEN_VERSION, lanes }
       await discoverFeedDisk.update(() => ({ at: nowMs, ver: FEED_GEN_VERSION, lanes }))
-      mainWindow?.webContents.send('discover-feed-updated', { lanes, generatedAt: nowMs })
+      sendToRenderer('discover-feed-updated', { lanes, generatedAt: nowMs })
       // If Apple rate-limited during THIS build, cards persisted artless —
       // re-dress them instead of serving gray placeholders until the TTL.
       void backfillDiscoverArt()
@@ -1839,7 +1846,7 @@ async function backfillDiscoverArt(): Promise<void> {
     }
     if (fixed > 0) {
       await discoverFeedDisk.update(() => ({ at: mem.at, ver: mem.ver ?? FEED_GEN_VERSION, lanes: mem.lanes }))
-      mainWindow?.webContents.send('discover-feed-updated', { lanes: mem.lanes, generatedAt: mem.at })
+      sendToRenderer('discover-feed-updated', { lanes: mem.lanes, generatedAt: mem.at })
       // Progress was made — let the next serve finish the stragglers without
       // waiting out the backoff window.
       discoverArtBackfillLastTry = 0
@@ -2817,14 +2824,6 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', role: 'toggleDevTools' }
     ]
   },
-  {
-    label: 'Playlists',
-    submenu: [
-      { label: 'Recently Added' },
-      { label: 'Recently Played' },
-      { label: 'Top 25 Most Played' }
-    ]
-  }
 ]
 
 // Search Wikipedia for artist info
@@ -3803,7 +3802,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
     if (refreshedNames.includes('mobile-metadata-overrides.json')) {
       try {
         const ov = await mobileMetadataOverridesCache.get()
-        mainWindow?.webContents.send('mobile-overrides-updated', { overrides: ov })
+        sendToRenderer('mobile-overrides-updated', { overrides: ov })
       } catch { /* next boot's overlay still applies them */ }
     }
   }
@@ -3820,7 +3819,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
         // Audio FIRST (pulled straight from homemini — no rsync, no NAS),
         // so the absorb always lands rows whose bytes are already on disk.
         await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
-        mainWindow.webContents.send('mobile-imports-updated', { tracks })
+        sendToRenderer('mobile-imports-updated', { tracks })
       }
     } catch { /* no imports yet — next tick retries */ }
   }
@@ -3989,7 +3988,7 @@ async function detectStateConflicts(): Promise<void> {
     const orphanKey = stateConflicts.map(c => c.file).sort().join('|')
     if (orphanKey !== lastOrphanWarnKey) {
       lastOrphanWarnKey = orphanKey
-      console.warn(`[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
+      quietWarn('state-orphaned-edits', `[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
     }
   } else {
     lastOrphanWarnKey = ''
@@ -4122,7 +4121,7 @@ async function autoBackupStateToNas(): Promise<void> {
         if (c.nasMtimeMs > 0) {
           const ns = await stat(c.nasPath).catch(() => null)
           if (ns && c.localSizeBytes < ns.size * 0.5) {
-            console.warn(`[state] auto-backup SKIPPED "${c.file}" — local ${(c.localSizeBytes / 1048576).toFixed(1)}MB ≪ NAS ${(ns.size / 1048576).toFixed(1)}MB (possible truncation; left for manual review)`)
+            quietWarn(`state-backup-skip:${c.file}`, `[state] auto-backup SKIPPED "${c.file}" — local ${(c.localSizeBytes / 1048576).toFixed(1)}MB ≪ NAS ${(ns.size / 1048576).toFixed(1)}MB (possible truncation; left for manual review)`)
             skipped++
             continue
           }
@@ -4818,7 +4817,7 @@ function scheduleDbRebuild(deletedPaths: string[]) {
         } catch (err) { reject(err) }
       })
       console.log(`[delete-sync] removed ${removed.length} files from iPod, iTunesDB rebuilt`)
-      mainWindow?.webContents.send('ipod-db-rebuilt', { removed: removed.length })
+      sendToRenderer('ipod-db-rebuilt', { removed: removed.length })
     } catch (err) {
       console.warn('[delete-sync] iPod cleanup after delete failed:', err)
     }
@@ -4923,7 +4922,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
       if (driftFromLoad > 2000 && driftFromSelfWrite > 2000) {
         console.warn(`[save-library] EXTERNAL-WRITE CONFLICT: on-disk mtime ${onDiskMtime} > load ${lastLoadedLibraryMtimeMs} (+${driftFromLoad}ms) AND > self-write ${lastSelfWriteMtimeMs} (+${driftFromSelfWrite}ms). Refusing to overwrite.`)
         libraryCache.invalidate()
-        mainWindow?.webContents.send('library-external-change')
+        sendToRenderer('library-external-change')
         return {
           ok: false,
           error: 'external-write-conflict',
@@ -4957,7 +4956,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     if (refusal) {
       console.warn(`[save-library] REFUSED (${refusal.error}): ${prevCount} → ${newCount} tracks. Pass force to override.`)
       libraryCache.invalidate()
-      mainWindow?.webContents.send('library-external-change')
+      sendToRenderer('library-external-change')
       return { ok: false, ...refusal }
     }
     if (newCount < prevCount) {
@@ -5148,7 +5147,7 @@ async function checkLibraryExternalChange(): Promise<void> {
     // codec map freezes at boot and new ALACs play as raw Chromium-illegal
     // audio until relaunch.
     void loadCodecMapFromLibrary()
-    mainWindow?.webContents.send('library-external-change')
+    sendToRenderer('library-external-change')
   } catch { /* file briefly missing during atomic replace — ignore */ }
 }
 function startLibraryWatcher() {
@@ -5335,7 +5334,7 @@ async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlist
     if ((result as { ok?: boolean })?.ok) await writeSyncJournal(null)
     else {
       const err = String((result as { error?: string }).error || 'Sync failed')
-      mainWindow?.webContents.send('sync-progress', {
+      sendToRenderer('sync-progress', {
         phase: 'error', current: 0, total: 0, title: err,
       })
     }
@@ -5432,7 +5431,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       musicDir: MUSIC_DIR,
       pathSep: IS_WINDOWS ? '\\' : '/',
       isMac: IS_MAC,
-      sendProgress: (p) => { mainWindow?.webContents.send('sync-progress', p) },
+      sendProgress: (p) => { sendToRenderer('sync-progress', p) },
       isCancelled: () => syncCancelRequested,
       isStreamedTrackFile,
       buildAacMirror,
@@ -5673,7 +5672,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       }
     }
     await clearTsaSeal()
-    mainWindow?.webContents.send('sync-progress', { phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
+    sendToRenderer('sync-progress', { phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
     const wipeMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
     let wiped = 0
     try {
@@ -5974,7 +5973,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   const totalToCopy = toCopy.length
   // Kick off the progress so the renderer can seed its bar even
   // when nothing needs copying (still-will-write-DB phase coming).
-  mainWindow?.webContents.send('sync-progress', {
+  sendToRenderer('sync-progress', {
     phase: 'copy', current: 0, total: totalToCopy, title: '',
   })
   // 4.5: track-id → newColonPath when bitrate conversion changes
@@ -6002,7 +6001,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     if (chunkPending.length === 0) return
     const batch = chunkPending
     chunkPending = []
-    mainWindow?.webContents.send('sync-progress', {
+    sendToRenderer('sync-progress', {
       phase: 'verify', current: copied, total: Math.max(totalToCopy, 1),
       title: `Confirming song ${copied} actually stuck on the card…`,
     })
@@ -6034,7 +6033,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     // progress event with phase:'cancelled' so the renderer flips out
     // of the syncing state cleanly.
     if (syncCancelRequested) {
-      mainWindow?.webContents.send('sync-progress', {
+      sendToRenderer('sync-progress', {
         phase: 'cancelled', current: copied + copyErrors, total: totalToCopy, title: '',
       })
       console.log(`sync-to-ipod: cancelled by user after ${copied} of ${totalToCopy} files`)
@@ -6052,7 +6051,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     if (await isStreamedTrackFile(local)) {
       console.log(`sync-to-ipod: skipping streamed track (not downloaded locally): ${title}`)
       copied++
-      mainWindow?.webContents.send('sync-progress', {
+      sendToRenderer('sync-progress', {
         phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
       })
       continue
@@ -6066,7 +6065,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     // track entry's path so the device knows the new filename.
     if (convertOptions?.enabled) {
       try {
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy,
           title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
         })
@@ -6107,7 +6106,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     // copy the FLAC bytes onto the card — that's a Songs skip.
     if (needsIpodAlacTranscode(srcToCopy)) {
       try {
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy,
           title: `Converting → ALAC: ${title}`,
         })
@@ -6115,7 +6114,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         if (!mirror) {
           console.error(`sync-to-ipod: refusing to copy FLAC onto the Mini: ${title}`)
           copyErrors++
-          mainWindow?.webContents.send('sync-progress', {
+          sendToRenderer('sync-progress', {
             phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
           })
           continue
@@ -6127,7 +6126,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       } catch (err) {
         console.error(`sync-to-ipod: FLAC→ALAC failed, not copying original: ${title}`, err)
         copyErrors++
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
         })
         continue
@@ -6159,7 +6158,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           await flushCopyChunk()
         }
         copied++
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
         })
         continue
@@ -6174,7 +6173,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       if (!conf.ok) {
         console.error(`sync-to-ipod: write NOT confirmed for "${title}" — ${conf.reason}`)
         copyErrors++
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'copy', current: copied + copyErrors, total: totalToCopy,
           title: `✗ did not stick: ${title}`,
         })
@@ -6214,7 +6213,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       console.error(`Copy failed: ${srcToCopy} → ${dstToCopy}:`, err)
       copyErrors++
     }
-    mainWindow?.webContents.send('sync-progress', {
+    sendToRenderer('sync-progress', {
       phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
     })
   }
@@ -6310,7 +6309,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
     const MAX_VERIFY_PASSES = syncOpts?.wipeFirst ? 16 : 4
     let landedIds = new Set<number>()
     if (verify.length > 0) {
-      mainWindow?.webContents.send('sync-progress', {
+      sendToRenderer('sync-progress', {
         phase: 'verify', current: 1, total: MAX_VERIFY_PASSES,
         title: `Verifying all ${verify.length} songs actually landed on the iPod…`,
       })
@@ -6352,7 +6351,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
       const gapFillMissing = async (missing: typeof verify, label: string) => {
         if (missing.length === 0 || syncCancelRequested) return 0
         console.warn(`sync-to-ipod: ${label} — ${missing.length} missing; copy + F_FULLFSYNC + clean remount per song (never force)`)
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'verify', current: landedIds.size, total: syncTarget,
           title: `Finishing the last ${missing.length} song(s) — one at a time…`,
         })
@@ -6392,7 +6391,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
               console.warn(`sync-to-ipod: ${label} failed for ${e.id}:`, err)
             }
           }
-          mainWindow?.webContents.send('sync-progress', {
+          sendToRenderer('sync-progress', {
             phase: 'verify', current: landedIds.size, total: syncTarget,
             title: stuck
               ? `Recovered ${recovered} of ${missing.length} missing…`
@@ -6419,7 +6418,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         const PROOF_ROUNDS = 4
         for (let round = 1; round <= PROOF_ROUNDS; round++) {
           if (syncCancelRequested) break
-          mainWindow?.webContents.send('sync-progress', {
+          sendToRenderer('sync-progress', {
             phase: 'verify', current: landedIds.size, total: syncTarget,
             title: `Double-checking the card (proof ${round}/${PROOF_ROUNDS}) — no cache lies…`,
           })
@@ -6595,7 +6594,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
   // preflight is done; from here it's the iTunesDB rebuild + write
   // (sub-second) and then the post-sync verifier (seconds).
   await writeSyncJournal('db')
-  mainWindow?.webContents.send('sync-progress', {
+  sendToRenderer('sync-progress', {
     phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
   })
 
@@ -6670,7 +6669,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           })
           return
         }
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
         })
 
@@ -6756,7 +6755,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
         // Copy the local catalog onto the CF and prove it the same way as
         // audio: F_FULLFSYNC + two cold remounts. A parse of 500 from the
         // mount cache is not the Mini.
-        mainWindow?.webContents.send('sync-progress', {
+        sendToRenderer('sync-progress', {
           phase: 'db', current: 1, total: 1,
           title: `Putting the ${syncTarget}-song catalog on the card…`,
         })
@@ -6947,7 +6946,7 @@ async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: 
           // Screen here; write the seal only after the on-device count check
           // so a short catalog cannot leave a lying seal on disk.
           if (syncOpts?.wipeFirst) {
-            mainWindow?.webContents.send('sync-progress', {
+            sendToRenderer('sync-progress', {
               phase: 'verify', current: 1, total: 1,
               title: `TSA — inspecting all ${syncTarget} songs by identity…`,
             })
@@ -7236,7 +7235,7 @@ ipc.handle('alac-compat-fix', async () => {
       // Python line "[N/M] file … OK" counts as a step.
       const m = d.toString().match(/\[(\d+)\/(\d+)\]\s+(\S+)/)
       if (m) {
-        mainWindow?.webContents.send('alac-compat-progress', {
+        sendToRenderer('alac-compat-progress', {
           current: Number(m[1]), total: Number(m[2]), file: m[3],
         })
       }
@@ -8030,7 +8029,7 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
 
   // Initial progress event so the pill lights up immediately
-  mainWindow?.webContents.send('import-progress', {
+  sendToRenderer('import-progress', {
     current: 0, total: resolvedPaths.length, title: '',
   })
 
@@ -8077,7 +8076,7 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
 
       id++
       trackIndex++
-      mainWindow?.webContents.send('import-progress', {
+      sendToRenderer('import-progress', {
         current: imported.length,
         total: resolvedPaths.length,
         title: r.track.title as string,
@@ -8085,12 +8084,12 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
     } else if (r.ok && r.dupe) {
       skippedDupes.push(r.dupe)
       trackIndex++
-      mainWindow?.webContents.send('import-progress', {
+      sendToRenderer('import-progress', {
         current: trackIndex, total: resolvedPaths.length,
         title: `Skipped (already in library): ${r.dupe.matchedTitle}`,
       })
     } else {
-      mainWindow?.webContents.send('import-progress', {
+      sendToRenderer('import-progress', {
         current: imported.length,
         total: resolvedPaths.length,
         title: srcPath.substring(srcPath.lastIndexOf('/') + 1),
@@ -9806,7 +9805,7 @@ function buildCynthiaSweepHooks() {
     },
     isIdle: () => !playbackActive,
     sendProgress: (payload: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => {
-      mainWindow?.webContents.send('cynthia-sweep:progress', payload)
+      sendToRenderer('cynthia-sweep:progress', payload)
     },
     escalate: async (_albumKey: string, label: string, tracks: CynthiaScanTrack[], evidence: string) => {
       const res = await runCynthiaInvestigation(
@@ -12571,7 +12570,7 @@ async function fetchRecommendationsFromBackend(): Promise<RecommendationRecord[]
     }
     return parseRecommendationsPayload(await res.json() as unknown)
   } catch (err) {
-    console.warn('[reco] backend GET unreachable:', err instanceof Error ? err.message : err)
+    quietWarn('reco-backend-unreachable', '[reco] backend GET unreachable:', err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -13160,7 +13159,7 @@ initPlaylistHubSync({
   setPlaylists: (p) => { playlistsCache.set(p as unknown[]) },
   tombstonesFile: playlistTombstonesPath(STATE_DIR),
   pinsFile: playlistPinsPath(STATE_DIR),
-  onApplied: (p) => { mainWindow?.webContents.send('playlists-updated', { playlists: p }) },
+  onApplied: (p) => { sendToRenderer('playlists-updated', { playlists: p }) },
 })
 setTimeout(() => { schedulePlaylistHubConverge(0) }, 45_000)
 setInterval(() => { schedulePlaylistHubConverge(0) }, 10 * 60_000)
@@ -14248,7 +14247,7 @@ ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: str
       // Progress + cooperative yield — give the audio decoder a thread
       // tick between every parseFile (the 4.0.10 "playback wins" rule).
       if (processed % 25 === 0) {
-        mainWindow?.webContents.send('artwork-backfill-progress', { processed, total })
+        sendToRenderer('artwork-backfill-progress', { processed, total })
       }
       await new Promise(resolve => setImmediate(resolve))
     }
@@ -14273,7 +14272,7 @@ ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: str
     return { ok: false, error: safeIpcError(err, 'io-failed'), artwork: results }
   }
 
-  mainWindow?.webContents.send('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
+  sendToRenderer('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
   return { ok: true, artwork: results }
 }, { refuse: REFUSED_SENDER })
 
@@ -14883,7 +14882,7 @@ ipc.handle('rip-cd-tracks', async (_e,
       // Send per-track progress to renderer, including the just-imported
       // track record so the library can add it immediately instead of
       // waiting for the whole batch to finish.
-      mainWindow?.webContents.send('cd-rip-progress', {
+      sendToRenderer('cd-rip-progress', {
         current: imported.length,
         total: cdTracks.length,
         trackNumber: cdTrack.number,
@@ -14895,7 +14894,7 @@ ipc.handle('rip-cd-tracks', async (_e,
       cdTrackIndex++
     } catch (err) {
       console.error(`Failed to rip track ${cdTrack.number}:`, err)
-      mainWindow?.webContents.send('cd-rip-progress', {
+      sendToRenderer('cd-rip-progress', {
         current: imported.length,
         total: cdTracks.length,
         trackNumber: cdTrack.number,
@@ -15040,12 +15039,12 @@ async function pollMicStatus(): Promise<void> {
       // active when we arm (music started during a call), fire once so
       // the renderer routes immediately — otherwise stay quiet.
       lastMicActive = active
-      if (active) mainWindow?.webContents.send('call-state-changed', { onCall: true })
+      if (active) sendToRenderer('call-state-changed', { onCall: true })
       return
     }
     if (active !== lastMicActive) {
       lastMicActive = active
-      mainWindow?.webContents.send('call-state-changed', { onCall: active })
+      sendToRenderer('call-state-changed', { onCall: active })
     }
   } catch {
     // mic-status failed (helper missing / timeout) — stay quiet, retry next tick.
@@ -15091,7 +15090,7 @@ app.whenReady().then(async () => {
     enqueueAnalysis: (track) => { enqueueAnalysisForImportedTrack(track) },
     prewarmAlacCache,
     trashItem: (abs) => shell.trashItem(abs),
-    emitToRenderer: (channel, payload) => { mainWindow?.webContents.send(channel, payload) },
+    emitToRenderer: (channel, payload) => { sendToRenderer(channel, payload) },
   })
 
   // ── Pass-through eviction (2026-08-15, Jake: "files i download are not
@@ -15208,7 +15207,7 @@ app.whenReady().then(async () => {
   // telling the user to restart.
   startNasReconnectWatcher((reason) => {
     try {
-      mainWindow?.webContents.send('state-save-locked', { reason })
+      sendToRenderer('state-save-locked', { reason })
     } catch { /* renderer may not be mounted yet — the lock is still active */ }
   })
   // 4.5.0-91 Phase 2.5 — orphaned-edit detection. When the user makes
@@ -16082,7 +16081,7 @@ app.whenReady().then(async () => {
           )
           if (rawTry) return rawTry
         }
-        console.warn(
+        quietWarn('ipod-audio-homemini-miss',
           `[ipod-audio] homemini miss for id=${streamId} — if this is a brand-new import, ` +
           `homemini's backend may not have reloaded library.json yet (index-sync kickstarts it)`,
         )
@@ -16470,12 +16469,12 @@ app.whenReady().then(async () => {
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.on('update-available', (info) => {
       console.log('Update available:', info.version)
-      if (mainWindow) mainWindow.webContents.send('update-status', { status: 'available', version: info.version })
+      sendToRenderer('update-status', { status: 'available', version: info.version })
     })
     autoUpdater.on('update-downloaded', (info) => {
       console.log('Update downloaded:', info.version)
       if (mainWindow) {
-        mainWindow.webContents.send('update-status', { status: 'downloaded', version: info.version })
+        sendToRenderer('update-status', { status: 'downloaded', version: info.version })
         dialog.showMessageBox(mainWindow, {
           type: 'info',
           title: 'Update Ready',
@@ -16485,7 +16484,7 @@ app.whenReady().then(async () => {
           defaultId: 0,
         }).then(({ response }) => {
           if (response === 0) {
-            if (mainWindow) mainWindow.webContents.send('update-status', { status: 'installing', version: info.version })
+            sendToRenderer('update-status', { status: 'installing', version: info.version })
             // On macOS, calling quitAndInstall directly from the dialog
             // promise callback can occasionally no-op (app neither quits
             // nor relaunches). Defer to the next tick and pass explicit

@@ -18,6 +18,7 @@
 import { BrowserWindow } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
+import { safeIpcError } from '../safe-ipc-error.ts'
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import { join } from 'path'
@@ -204,7 +205,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: true, staged: { staging, files } }
     } catch (err) {
       if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
-      return { ok: false, error: 'tool-failed' }
+      return { ok: false, error: safeIpcError(err, 'tool-failed') }
     }
   }
 
@@ -250,7 +251,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return { ok: true, staged: { staging, files } }
     } catch (err) {
       if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
-      return { ok: false, error: 'tool-failed' }
+      return { ok: false, error: safeIpcError(err, 'tool-failed') }
     }
   }
 
@@ -297,7 +298,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const dupes = Array.isArray(summary) ? 0 : ((summary as { dupeCount?: number }).dupeCount ?? 0)
       return { ok: true, imported: importedTracks.length, dupes }
     } catch (err) {
-      return { ok: false, error: 'tool-failed' }
+      return { ok: false, error: safeIpcError(err, 'tool-failed') }
     } finally {
       await rm(staged.staging, { recursive: true, force: true }).catch(() => {})
     }
@@ -451,7 +452,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         .map((r) => ({ source: r.source || source, mediaType: r.media_type || mediaType, id: String(r.id), desc: String(r.desc) }))
       return { ok: true, results }
     } catch (err) {
-      return { ok: false, error: 'tool-failed' }
+      return { ok: false, error: safeIpcError(err, 'tool-failed') }
     } finally {
       if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
     }

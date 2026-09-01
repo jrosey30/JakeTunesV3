@@ -1222,6 +1222,8 @@ function AppInner() {
             step: progress.total > 0
               ? `Copying ${progress.current}/${progress.total} to iPod${progress.title ? ' — ' + progress.title : ''}`
               : 'Copying to iPod...',
+            current: progress.current,
+            total: progress.total,
           })
         } else if (progress.phase === 'preflight') {
           a.setSync({
@@ -1229,7 +1231,14 @@ function AppInner() {
             step: progress.total > 0
               ? `Verifying ${progress.current}/${progress.total} audio files…`
               : 'Verifying audio files…',
+            current: progress.current,
+            total: progress.total,
           })
+        } else if (progress.phase === 'verify') {
+          // Landing-proof + TSA are the longest stretch of an activity
+          // sync; no auto-clear here — DeviceView's terminal status
+          // always replaces this step.
+          a.setSync({ active: true, step: progress.title || 'Verifying the iPod…' })
         } else if (progress.phase === 'db') {
           const done = progress.current >= progress.total
           a.setSync({

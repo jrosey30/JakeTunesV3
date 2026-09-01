@@ -162,3 +162,31 @@ export function sanitizeCrashPayload(p: unknown): { kind: string; message: strin
     source: str(o.source, 300),
   }
 }
+
+/**
+ * Rate-limited warn for known-recurring conditions (renovation-roadmap
+ * Phase 3). The top five warnings were 76% of the flight recorder's
+ * volume — thousands of identical lines burying novel failures. Each
+ * key logs immediately the first time, then at most once per window,
+ * confessing how many identical warns were suppressed in between.
+ */
+const QUIET_WARN_WINDOW_MS = 10 * 60 * 1000
+const quietWarnState = new Map<string, { lastLoggedAt: number; suppressed: number }>()
+
+export function quietWarn(key: string, ...args: unknown[]): void {
+  const now = Date.now()
+  const s = quietWarnState.get(key)
+  if (!s) {
+    quietWarnState.set(key, { lastLoggedAt: now, suppressed: 0 })
+    console.warn(...args)
+    return
+  }
+  if (now - s.lastLoggedAt < QUIET_WARN_WINDOW_MS) {
+    s.suppressed++
+    return
+  }
+  const held = s.suppressed
+  s.lastLoggedAt = now
+  s.suppressed = 0
+  console.warn(...args, held > 0 ? `(+${held} suppressed in the last window)` : '')
+}

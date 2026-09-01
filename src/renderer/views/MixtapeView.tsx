@@ -85,6 +85,7 @@ export default function MixtapeView() {
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmDropCover, setConfirmDropCover] = useState(false)
   const mixPageRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('mixtapes-page', mixPageRef)
   // Inline rename (2026-07-31, Jake: "ability to name my mixtapes"). Inline
@@ -308,7 +309,7 @@ export default function MixtapeView() {
           className="mixtape-cover"
           title={tapeCover ? 'Click to replace this cover · right-click for the album mosaic' : 'Click to choose a cover'}
           onClick={() => { void pickPlaylistCover(tape.id).then(() => refreshPlaylistCovers()) }}
-          onContextMenu={(e) => { e.preventDefault(); if (tapeCover) void clearPlaylistCover(tape.id) }}
+          onContextMenu={(e) => { e.preventDefault(); if (tapeCover) setConfirmDropCover(true) }}
         >
           {/* A tape wears the same cover system playlists do — its own
               picture if it has one (inherited from the playlist it came
@@ -511,6 +512,15 @@ export default function MixtapeView() {
 
       {remixing && (
         <MixtapeSheet tracks={allTracks} existing={tape} onClose={() => { setRemixing(false); void refreshMixtapes() }} />
+      )}
+      {confirmDropCover && (
+        <ConfirmDialog
+          message={`Remove the custom cover from “${tape.title}”?`}
+          detail="The tape goes back to the album mosaic. The picture file itself is not deleted."
+          confirmLabel="Remove Cover"
+          onConfirm={() => { setConfirmDropCover(false); void clearPlaylistCover(tape.id) }}
+          onCancel={() => setConfirmDropCover(false)}
+        />
       )}
       {confirmDelete && (
         <ConfirmDialog

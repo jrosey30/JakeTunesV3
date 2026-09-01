@@ -128,6 +128,7 @@ export default function PlaylistView() {
   // Tracks handed to the mixtape sheet — null when it's closed.
   const [mixtapeFrom, setMixtapeFrom] = useState<Track[] | null>(null)
   const [coverBusy, setCoverBusy] = useState(false)
+  const [confirmDropCover, setConfirmDropCover] = useState(false)
   const [coverNote, setCoverNote] = useState('')
   const customCover = playlistCoverSrc(playlist?.id ?? '')
   const chooseCover = async (): Promise<void> => {
@@ -670,7 +671,7 @@ export default function PlaylistView() {
           className="playlist-view-cover"
           title={customCover ? 'Click to replace this cover · right-click to go back to the album mosaic' : 'Click to choose a cover'}
           onClick={() => { void chooseCover() }}
-          onContextMenu={(e) => { e.preventDefault(); if (customCover) void dropCover() }}
+          onContextMenu={(e) => { e.preventDefault(); if (customCover) setConfirmDropCover(true) }}
         >
           {customCover
             ? <img src={customCover} alt="" className="playlist-view-cover-img" />
@@ -1003,6 +1004,15 @@ export default function PlaylistView() {
               })),
           ]}
           onClose={() => setHeaderCtxMenu(null)}
+        />
+      )}
+      {confirmDropCover && (
+        <ConfirmDialog
+          message={`Remove the custom cover from "${playlist.name}"?`}
+          detail="The cover goes back to the album mosaic. The picture file itself is not deleted."
+          confirmLabel="Remove Cover"
+          onConfirm={() => { setConfirmDropCover(false); void dropCover() }}
+          onCancel={() => setConfirmDropCover(false)}
         />
       )}
       {confirmAction && confirmAction.type === 'remove-tracks' && (
