@@ -102,3 +102,19 @@ instead of a 2am session.
 - No new features until Phase 1 is done — the god file is the fire.
 - iPod/Activity Sync internals stay with their owning session; Phase 1
   cut #2 moves their code without changing it, coordinated first.
+
+## Phase 1 progress log (6.0 push)
+
+- 2026-09-01: P1C2 sync-engine/ cut LANDED (move-only, 13 enumerated
+  substitutions; index.ts 16,586 → 14,609). IPC batches 1–3 LANDED:
+  cd-ipc, audio-output-ipc, live-sets-ipc, mobile-reads-ipc,
+  artwork-engine.ts + artwork-ipc (32 handlers total; index.ts →
+  12,834; ratchet follows at every step).
+- NEXT batch (scouted, needs its own session): the recommendations
+  subsystem (~9,420–10,740) — but it INTERLEAVES with playlist/mixtape
+  hub-sync inits, friends/credits, and iMessage capture. Sub-map the
+  braid first; candidate shape is src/main/recommendations/ owning
+  readRecommendationsFile/outbox/converge + exporting
+  syncRecommendationsToLocal + startRecoSyncTimer for boot. After that:
+  discovery feed cluster (1,400–2,100), musicman/AI handler bodies
+  (with the Phase-3a rag-core extraction), metadata/overrides.
