@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "created": "2026-09-01",
+    "note": "V2 bucket — scored through the PRODUCTION retrieval path (router + mood index + decade hard-gate) via bridge/rag-bridge.ts. The frozen golden-35 in eval_set.json stays untouched for comparability; these rows are a separate series. Predicates are objective library facts, same resolver as v1. Prompts deliberately cover all three router routes: vibe-shaped (mood index), decade-gated (main + year gate), artist-named (main).",
+    "route_expectation_key": "expect_route is informational — logged, not scored."
+  },
+  "prompts": [
+    { "id": "prod-001", "bucket": "retrieval_prod", "query": "dreamy ambient soundscapes for late night", "expected": { "genre_any": ["ambient", "downtempo", "chill", "electronic"] }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-002", "bucket": "retrieval_prod", "query": "aggressive high-energy workout bangers", "expected": { "bpm_min": 130 }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-003", "bucket": "retrieval_prod", "query": "slow heartbroken late-night ballads", "expected": { "bpm_max": 85 }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-004", "bucket": "retrieval_prod", "query": "smooth jazzy grooves for a rainy evening", "expected": { "genre_any": ["jazz", "soul", "r&b", "funk"] }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-005", "bucket": "retrieval_prod", "query": "sunny feel-good reggae and ska vibes", "expected": { "genre_any": ["reggae", "ska", "dub"] }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-006", "bucket": "retrieval_prod", "query": "heavy crushing guitars and screaming", "expected": { "genre_any": ["metal", "hardcore", "punk"] }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-007", "bucket": "retrieval_prod", "query": "glittery upbeat dance floor fillers", "expected": { "genre_any": ["dance", "house", "disco", "electronic"] }, "k": 25, "expect_route": "mood" },
+    { "id": "prod-008", "bucket": "retrieval_prod", "query": "90s grunge", "expected": { "year_range": [1990, 1999], "genre_any": ["grunge", "rock", "alternative"] }, "k": 25, "expect_route": "main" },
+    { "id": "prod-009", "bucket": "retrieval_prod", "query": "80s synth pop", "expected": { "year_range": [1980, 1989], "genre_any": ["pop", "new wave", "synth", "electronic"] }, "k": 25, "expect_route": "main" },
+    { "id": "prod-010", "bucket": "retrieval_prod", "query": "2010s indie rock", "expected": { "year_range": [2010, 2019], "genre_any": ["indie", "rock", "alternative"] }, "k": 25, "expect_route": "main" },
+    { "id": "prod-011", "bucket": "retrieval_prod", "query": "70s funk and soul", "expected": { "year_range": [1970, 1979], "genre_any": ["funk", "soul", "r&b", "disco"] }, "k": 25, "expect_route": "main" },
+    { "id": "prod-012", "bucket": "retrieval_prod", "query": "songs by Jay-Z", "expected": { "artist": "Jay-Z" }, "k": 20, "expect_route": "main" },
+    { "id": "prod-013", "bucket": "retrieval_prod", "query": "Red Hot Chili Peppers songs", "expected": { "artist": "Red Hot Chili Peppers" }, "k": 20, "expect_route": "main" },
+    { "id": "prod-014", "bucket": "retrieval_prod", "query": "music by Daft Punk", "expected": { "artist": "Daft Punk" }, "k": 20, "expect_route": "main" },
+    { "id": "prod-015", "bucket": "retrieval_prod", "query": "The Beatles tracks", "expected": { "artist": "Beatles" }, "k": 20, "expect_route": "main" }
+  ]
+}

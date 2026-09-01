@@ -46,6 +46,8 @@ STATE_DIR = os.environ.get("JT_STATE_DIR") or os.path.expanduser("~/Library/Appl
 EMB_PATH = os.path.join(STATE_DIR, "embeddings.bin")
 LIB_PATH = os.path.join(STATE_DIR, "library.json")
 EVAL_PATH = os.path.join(HERE, "eval_set.json")
+EVAL_V2_PATH = os.path.join(HERE, "eval_set_v2.json")
+BRIDGE_DIR = os.path.join(HERE, "bridge")
 LOG_PATH = os.path.join(HERE, "score_log.jsonl")
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIM = 1536
@@ -324,6 +326,63 @@ def self_test(titles, artists, by_id):
         sys.exit(2)
     print(f"[selftest] hallucination check fires on fabrication, passes real track \"{real_title}\". OK")
 
+# ---------- production-path retrieval (V2 bucket, via the TS bridge) ----------
+def run_production_retrieval(v2_prompts, tracks, env_key):
+    """Run V2 prompts through the REAL desktop retrieval path (router +
+    mood index + decade gate) via bridge/rag-bridge.ts. Returns
+    (per_prompt_rows, mean_recall) or (None, None) if the bridge can't run
+    — loudly, never silently."""
+    import subprocess, tempfile
+    queries = [p["query"] for p in v2_prompts]
+    max_k = max(p.get("k", 25) for p in v2_prompts)
+    tmpdir = os.path.join(HERE, "tmp"); os.makedirs(tmpdir, exist_ok=True)
+    qpath = os.path.join(tmpdir, "prod-queries.json")
+    with open(qpath, "w", encoding="utf-8") as f:
+        json.dump(queries, f)
+    env = dict(os.environ); env["OPENAI_API_KEY"] = env_key
+    try:
+        r = subprocess.run(
+            ["npx", "tsx", "--tsconfig", os.path.join(BRIDGE_DIR, "tsconfig.json"),
+             os.path.join(BRIDGE_DIR, "rag-bridge.ts"), qpath, str(max_k)],
+            capture_output=True, text=True, timeout=300, cwd=BRIDGE_DIR, env=env)
+    except Exception as e:
+        print(f"[prod] bridge failed to launch: {e} — production bucket SKIPPED", file=sys.stderr)
+        return None, None
+    if r.returncode != 0:
+        print(f"[prod] bridge exited {r.returncode} — production bucket SKIPPED\n{r.stderr[-800:]}", file=sys.stderr)
+        return None, None
+    by_query = {}
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if "query" in row and "hits" in row:
+            by_query[row["query"]] = row
+    rows, scores = [], []
+    for p in v2_prompts:
+        got = by_query.get(p["query"])
+        if not got:
+            print(f"  prod {p['id']}: NO RESULT from bridge")
+            continue
+        exp = expected_ids(p["expected"], tracks)
+        if not exp:
+            print(f"  [skip] {p['id']}: predicate matched 0 library tracks")
+            continue
+        k = p.get("k", 25)
+        topk = [h["trackId"] for h in got["hits"]][:k]
+        rec = recall_at_k(topk, exp, k)
+        route = got.get("index", "?")
+        route_tag = "" if p.get("expect_route") in (None, route) else f"  [route≠{p['expect_route']}]"
+        rows.append({"id": p["id"], "recall": rec, "route": route, "k": k, "expected_n": len(exp)})
+        scores.append(rec)
+        print(f"  prod {p['id']}: recall@{k}={rec:.2f}  route={route}  (|expected|={len(exp)}){route_tag}")
+    mean = (sum(scores) / len(scores)) if scores else None
+    return rows, mean
+
 # ---------- per-brain evaluation ----------
 def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, embed_cache):
     ids, vecs, meta = read_embeddings(emb_path)
@@ -387,6 +446,7 @@ def main():
     ap.add_argument("--no-llm", action="store_true", help="retrieval only (no Claude calls)")
     ap.add_argument("--model", default="claude-haiku-4-5", help="LLM for grounding/judge")
     ap.add_argument("--limit", type=int, default=0, help="first N prompts per bucket (smoke test)")
+    ap.add_argument("--no-prod", action="store_true", help="skip the V2 production-path bucket")
     args = ap.parse_args()
 
     do_base = args.baseline or (args.models and "base" in args.models)
@@ -435,6 +495,20 @@ def main():
     print("=" * 58)
     print("retrieval/grounding are mechanical; persona needs --judge. "
           "The enrichment_sensitive (*enrich) retrieval prompts are the real altimeter.")
+
+    # V2: score the PRODUCTION retrieval path (router + mood + decade gate).
+    # Separate series from the frozen golden-35 — never mixed into 'retrieval'.
+    prod_rows, prod_mean = (None, None)
+    if not args.no_prod and os.path.exists(EVAL_V2_PATH):
+        v2 = json.load(open(EVAL_V2_PATH, encoding="utf-8"))["prompts"]
+        if args.limit:
+            v2 = v2[: args.limit]
+        print(f"\n=== production path (bridge) — {len(v2)} V2 prompts ===")
+        prod_rows, prod_mean = run_production_retrieval(v2, tracks, key("OPENAI_API_KEY"))
+        if prod_mean is not None:
+            print(f"  retrieval_prod mean: {prod_mean:.3f}")
+            summaries[-1]["retrieval_prod"] = prod_mean
+            summaries[-1]["retrieval_prod_rows"] = prod_rows
 
     # append one row per brain
     now = time.time()
