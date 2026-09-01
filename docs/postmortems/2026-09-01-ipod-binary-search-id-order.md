@@ -127,7 +127,9 @@ eliminates the entire class: zero inversions by construction, at any size.
   Comparator fitting fails. Jake issues the 2004 directive.
 - **Sep 1** — binary-search-by-id model fits all four points; card surgery
   boots 1000/1000; `conformCatalogIdOrder` shipped, gated, tested; on-device
-  gauntlet begins (100 ✓, 250 ✓ as of this writing).
+  gauntlet runs 100 ✓, 250 ✓, 500 ✓ — and at **11:35 AM EST**, About reads
+  **1000** on the final engine-path sync. The war ends. (Jake: "remember
+  september 1 2026 at 11:35 am EST forever.")
 
 ## Lessons
 
