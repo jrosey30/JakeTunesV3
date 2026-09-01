@@ -19,13 +19,15 @@ const card = readFileSync(join(mainDir, 'ipod-sync-card.ts'), 'utf-8')
 const origin = readFileSync(join(mainDir, 'ipod-sync-origin.ts'), 'utf-8')
 const verifier = readFileSync(join(mainDir, '../../core/tools/itdb_verify.py'), 'utf-8')
 const syncIpc = readFileSync(join(mainDir, 'ipc/sync-ipc.ts'), 'utf-8')
+const syncEngine = readFileSync(join(mainDir, 'sync-engine/index.ts'), 'utf-8')
 const deviceView = readFileSync(join(mainDir, '../renderer/views/DeviceView.tsx'), 'utf-8')
 const app = readFileSync(join(mainDir, '../renderer/App.tsx'), 'utf-8')
 
 test('Activity Sync is a dedicated engine; click-only origin is required', () => {
-  assert.match(index, /runActivitySync/)
-  assert.match(index, /origin === 'activity-click'/)
-  assert.match(index, /refuseIpodSyncUnlessUserClick/)
+  // P1C2: the routing moved verbatim into sync-engine/ — the lock follows it.
+  assert.match(syncEngine, /runActivitySync/)
+  assert.match(syncEngine, /origin === 'activity-click'/)
+  assert.match(syncEngine, /refuseIpodSyncUnlessUserClick/)
   assert.match(origin, /activity-click/)
   assert.match(origin, /full-library-click/)
   assert.match(deviceView, /origin: 'activity-click'/)

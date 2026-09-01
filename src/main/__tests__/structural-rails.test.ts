@@ -82,7 +82,7 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // slack, so the ratchet keeps biting from the new baseline. Raise this for a
   // merge from main; NEVER to make room for new capability — that belongs in a
   // module (personas.ts / library-eviction.ts).
-  const INDEX_LINES_LOCKED = 16437
+  const INDEX_LINES_LOCKED = 14609
   test(`index.ts stays ≤ ${INDEX_LINES_LOCKED + 150} lines and the lock follows it down`, () => {
     const lines = readFileSync(join(SRC, 'main/index.ts'), 'utf-8').split('\n').length
     assert.ok(lines <= INDEX_LINES_LOCKED + 150,
@@ -124,7 +124,7 @@ describe('WIRING — the tested code is the live code', () => {
   // this is the roster of load-bearing wires with no better home.)
   const WIRES: Array<{ fn: string; file: string; minCalls: number; why: string; literal?: boolean }> = [
     { fn: 'explicitWins', file: 'main/download-search.ts', minCalls: 1, why: 'the dedupe merge must run on the TESTED doctrine (unwired 08/10-08/15; moved with P1C3)' },
-    { fn: 'ensureContiguousDb', file: 'main/index.ts', minCalls: 1, why: 'the catalog layout pass — content gates cannot see fragmentation' },
+    { fn: 'ensureContiguousDb', file: 'main/sync-engine/index.ts', minCalls: 1, why: 'the catalog layout pass — content gates cannot see fragmentation (moved with the P1C2 sync-engine cut)' },
     { fn: 'sweepOnce', file: 'main/index.ts', minCalls: 1, why: 'pass-through eviction — without the wire the laptop silently hoards again' },
     { fn: 'initPersonaPrompts', file: 'main/index.ts', minCalls: 1, why: 'supplier injection — a missing init freezes activeHost at boot value' },
     { fn: 'searchItunesSuggestions', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module' },
