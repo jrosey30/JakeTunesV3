@@ -60,6 +60,13 @@ test('activity engine refuses a catalog row the Mini will not list', () => {
   assert.match(engine, /ipodFirmwareWillList/)
   assert.match(engine, /needsIpodAlacTranscode/)
   assert.match(engine, /ipodPlayableDestPath/)
+  // 2026-08-31 locks: the sync ledger must exist (picks + result entries),
+  // and card-only 8.3 stem shortenings must never be exported as library
+  // path rewrites (702-row corruption incident).
+  assert.match(engine, /activity-sync-ledger\.jsonl/)
+  assert.match(engine, /kind: 'picks'/)
+  assert.match(engine, /kind: 'result'/)
+  assert.match(engine, /ipodPathExtension\(rawColon\) !== ipodPathExtension\(destColon\)/)
 })
 
 test('activity engine runs TSA by identity and does not auto-delete after the catalog', () => {

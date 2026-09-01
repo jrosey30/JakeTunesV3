@@ -21,7 +21,7 @@
 
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFile, mkdir, readFile, stat, lstat, unlink } from 'fs/promises'
+import { appendFile, copyFile, mkdir, readFile, stat, lstat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { findIpodMount, isIpodMount, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume } from './platform.ts'
 import {
@@ -34,6 +34,7 @@ import {
   fileSizeForItunesDb,
   ipodFirmwareWillList,
   ipodPlayableDestPath,
+  ipodPathExtension,
   needsIpodAlacTranscode,
   sampleRateForItunesDb,
 } from './ipod-reconcile.ts'
@@ -259,6 +260,37 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     })
   }
 
+  // ── Activity Sync Ledger (2026-08-31, Jake: "we need records of this on
+  // the back end so that we know what is going in and what is coming off
+  // each activity sync"). Append-only JSONL in STATE_DIR — one 'picks'
+  // entry per attempt with the added/removed diff vs the previous attempt,
+  // one 'result' entry when a sync seals. A picks entry with no matching
+  // result = a refused/aborted run. Never blocks a sync.
+  const ledgerPath = join(host.stateDir, 'activity-sync-ledger.jsonl')
+  const ledgerWhen = new Date().toISOString()
+  try {
+    let prevIds: number[] = []
+    try {
+      const lines = (await readFile(ledgerPath, 'utf-8')).trim().split('\n')
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const e = JSON.parse(lines[i]) as { kind?: string; pickedIds?: number[] }
+        if (e.kind === 'picks') { prevIds = e.pickedIds || []; break }
+      }
+    } catch { /* first ledger entry ever */ }
+    const prevSet = new Set(prevIds)
+    const pickedIds = tsaBoarded.map((p) => p.id)
+    const nowSet = new Set(pickedIds)
+    await appendFile(ledgerPath, JSON.stringify({
+      kind: 'picks', when: ledgerWhen, target,
+      pickedIds,
+      added: pickedIds.filter((i) => !prevSet.has(i)),
+      removed: prevIds.filter((i) => !nowSet.has(i)),
+      picked: tsaBoarded.map((p) => ({ id: p.id, t: String(p.title || ''), a: String(p.artist || '') })),
+    }) + '\n', 'utf-8')
+  } catch (err) {
+    console.warn('activity-sync: ledger append failed (non-blocking):', err)
+  }
+
   await host.clearSeal()
   try {
     await host.writeManifest({
@@ -341,7 +373,14 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     const rawColon = String(track.path || '')
     const destColon = ipodPlayableDestPath(rawColon)
     if (destColon !== rawColon) {
-      pathRewrites.push({ id, newPath: destColon })
+      // track.path becomes the CARD path (DB payload + TSA read it), but a
+      // rewrite is only exported to the LIBRARY when the extension changed
+      // (flac/FAT-temp → m4a, the mechanism's original purpose). The 8.3
+      // stem shortening is card-only — exporting it rewrote 702 library
+      // rows to names that exist nowhere in the farm (2026-08-31).
+      if (ipodPathExtension(rawColon) !== ipodPathExtension(destColon)) {
+        pathRewrites.push({ id, newPath: destColon })
+      }
       track.path = destColon
     }
     const localFile = join(LOCAL_MOUNT, rawColon.replace(/:/g, pathSep))
@@ -810,6 +849,14 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     copyErrors,
     failed: [],
   })
+  try {
+    await appendFile(join(host.stateDir, 'activity-sync-ledger.jsonl'), JSON.stringify({
+      kind: 'result', when: new Date().toISOString(), picksWhen: ledgerWhen,
+      target, landed: target, sealedOk, copied, copyErrors,
+    }) + '\n', 'utf-8')
+  } catch (err) {
+    console.warn('activity-sync: ledger result append failed (non-blocking):', err)
+  }
 
   return {
     ok: sealedOk,
