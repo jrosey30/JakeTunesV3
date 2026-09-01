@@ -110,11 +110,13 @@ instead of a 2am session.
   cd-ipc, audio-output-ipc, live-sets-ipc, mobile-reads-ipc,
   artwork-engine.ts + artwork-ipc (32 handlers total; index.ts →
   12,834; ratchet follows at every step).
-- NEXT batch (scouted, needs its own session): the recommendations
-  subsystem (~9,420–10,740) — but it INTERLEAVES with playlist/mixtape
-  hub-sync inits, friends/credits, and iMessage capture. Sub-map the
-  braid first; candidate shape is src/main/recommendations/ owning
-  readRecommendationsFile/outbox/converge + exporting
-  syncRecommendationsToLocal + startRecoSyncTimer for boot. After that:
-  discovery feed cluster (1,400–2,100), musicman/AI handler bodies
-  (with the Phase-3a rag-core extraction), metadata/overrides.
+- 2026-09-01 (evening): reco braid SUB-MAPPED and cut — recommendations
+  subsystem to ipc/recommendations-ipc.ts (friends/taste/hub-sync/
+  album-info strands identified and separated); taste-ipc + album-info-ipc
+  landed; rag retrieval core to ai/rag-retrieval.ts with initRagRetrieval
+  wiring-locked (Phase 3a UNBLOCKED — the eval harness can call the
+  production path). index.ts 16,586 → 11,402 across the day; 48 handlers
+  in 9 modules. Phase 1 remaining: caches.ts seam (still gated on its own
+  design brief), discovery feed cluster, musicman handler bodies,
+  metadata-overrides, friends strand — all optional-scope beyond the
+  40–60 target, which is met.
