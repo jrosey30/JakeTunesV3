@@ -46,6 +46,7 @@ import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe }
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
+import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
@@ -10407,6 +10408,8 @@ app.whenReady().then(async () => {
   // handler below, where the stream-playback-path locks can see it. Local
   // names are kept so the handler and the maintenance IPCs read as before.
   const playCache = createPlayCache({ dir: join(app.getPath('userData'), 'play-cache') })
+  // One media load, one byte stream — see play-cache-serve-pin.ts.
+  const servePin = createServePin()
   await playCache.ensureDir()
   const PLAY_CACHE = playCache.dir
   const aacCachePath = playCache.cachePathFor
@@ -10763,6 +10766,14 @@ app.whenReady().then(async () => {
           }
         }
       } catch { /* fall through */ }
+      {
+        const start = servePin.rangeStart(request.headers.get('range'))
+        const served = servePin.resolve(rawPath, { kind: 'local', path: filePath }, start, (p) => existsSync(p))
+        if (served.kind === 'local' && served.path !== filePath) {
+          filePath = served.path
+          ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+        }
+      }
       const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
       try {
         const fileStat = await stat(filePath)
@@ -10883,11 +10894,13 @@ app.whenReady().then(async () => {
       if (!streamed && (await readStreamSourceCached()) === 'homemini') {
         try { streamed = (await lstat(resolvedPath)).isSymbolicLink() } catch { /* real local file */ }
       }
-      if (streamed) {
+      const pinStart = servePin.rangeStart(request.headers.get('range'))
+      const pinnedNow = pinStart > 0 ? servePin.pinned(rawPath) : null
+      if (streamed && pinnedNow?.kind !== 'local') {
         const id = await trackIdForAbsPath(rawPath)
         if (id != null) {
           const remote = await fetchAudioFromHomemini(id, request.headers.get('range'), isAlac)
-          if (remote) return remote
+          if (remote) { servePin.resolve(rawPath, { kind: 'remote' }, pinStart, () => true); return remote }
         }
       }
     }
@@ -10928,6 +10941,14 @@ app.whenReady().then(async () => {
         }
       }
     } catch { /* fall through */ }
+    {
+      const start = servePin.rangeStart(request.headers.get('range'))
+      const served = servePin.resolve(rawPath, { kind: 'local', path: filePath }, start, (p) => existsSync(p))
+      if (served.kind === 'local' && served.path !== filePath) {
+        filePath = served.path
+        ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+      }
+    }
     const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
     try {
       const fileStat = await stat(filePath)
