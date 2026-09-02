@@ -213,9 +213,6 @@ export default function ConcertDetailView() {
   }
   const c = liveSet.concert || {}
   const facts = c.facts || []
-  const longest = liveSet.cues.reduce((a, b) => (b.durationMs > a.durationMs ? b : a), liveSet.cues[0])
-  const encoreAt = [...dividers.entries()].find(([, label]) => /encore/i.test(label))?.[0]
-  const encoreCount = encoreAt != null ? liveSet.cues.length - (encoreAt - 1) : null
   const totalMs = Math.max(1, liveSet.totalDurationMs)
   const artUrl = meta.artHash ? `album-art://${meta.artHash}.jpg?s=640` : null
   const crowdLabel = crowdState === 'preparing' ? 'Preparing the crowd…' : crowdOn ? '◉ Crowd on' : '◎ Crowd'
@@ -250,10 +247,11 @@ export default function ConcertDetailView() {
               {c.city && <div className="cd-venue-city">{c.city}</div>}
             </div>
           )}
+          {/* The stub says only what the ticket would: the date(s) and the set.
+              No labels, no release (that is a footnote at the bottom). */}
           <div className="cd-stub">
-            {meta.date && <div><b>{/[&,–-]/.test(meta.date) ? 'Nights' : 'Night'}</b><span>{meta.date}</span></div>}
-            <div><b>Set</b><span>{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)}</span></div>
-            {c.label && <div><b>Release</b><span>{c.label}</span></div>}
+            {meta.date && <div><span>{meta.date}</span></div>}
+            <div><span>{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)}</span></div>
           </div>
           <div className="cd-actions">
             {/* Wrapped, NOT passed directly: React's MouseEvent would land in startFrac. */}
@@ -401,17 +399,6 @@ export default function ConcertDetailView() {
             </div>
           )}
           <div className="cd-card">
-            <h4>At a glance</h4>
-            <div className="cd-glance">
-              <div><b>Opens with</b><span title={cleanTitle(liveSet.cues[0].title)}>{cleanTitle(liveSet.cues[0].title)}</span></div>
-              <div><b>Closes with</b><span title={cleanTitle(liveSet.cues[liveSet.cues.length - 1].title)}>{cleanTitle(liveSet.cues[liveSet.cues.length - 1].title)}</span></div>
-              <div><b>Longest</b><span title={cleanTitle(longest.title)}>{cleanTitle(longest.title)} · {mmss(longest.durationMs)}</span></div>
-              {encoreCount != null
-                ? <div><b>Encore</b><span>{encoreCount} song{encoreCount === 1 ? '' : 's'}</span></div>
-                : <div><b>Songs in your library</b><span>{allPromoted ? 'all of them' : `${promoted.size} of ${liveSet.cues.length}`}</span></div>}
-            </div>
-          </div>
-          <div className="cd-card">
             <h4>Your notes</h4>
             <textarea
               className="cd-notes"
@@ -423,6 +410,8 @@ export default function ConcertDetailView() {
           </div>
         </aside>
       </div>
+
+      {c.label && <div className="cd-footnote">Released on {c.label}</div>}
 
       {cueCtx && (
         <ContextMenu

@@ -78,10 +78,10 @@
   border: 1px dashed #c2c2c2; border-radius: 8px; overflow: hidden; background: #fff;
   margin-bottom: 20px;
 }
-.cd-stub > div { padding: 9px 16px; border-right: 1px dashed #c2c2c2; }
+.cd-stub > div { padding: 10px 18px; border-right: 1px dashed #c2c2c2; }
 .cd-stub > div:last-child { border-right: 0; }
 .cd-stub b { display: block; font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: #7b7b7b; font-weight: 700; margin-bottom: 3px; }
-.cd-stub span { font-size: 14px; color: #1d1d1f; font-variant-numeric: tabular-nums; }
+.cd-stub span { font-size: 15px; font-weight: 600; color: #1d1d1f; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
 
 .cd-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .cd-btn {
@@ -192,3 +192,6 @@
 .concert-row-where b { color: #1d1d1f; }
 .concert-row-blurb { font-family: "Iowan Old Style", "Palatino", Georgia, serif; font-size: 14.5px; line-height: 1.5; color: #2a2a28; margin: 10px 0 0; max-width: 72ch; }
 .concert-row-stat { margin-top: 8px; font-size: 11.5px; color: #9a9a9a; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
+
+/* Release — a footnote, not a fact on the ticket. */
+.cd-footnote { margin: 26px 2px 0; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #9a9a9a; }
