@@ -73,6 +73,30 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
       return buf.toString('base64')
     } catch { return null }
   }, { public: true })
+  // The crowd clip itself, cut from the show's own tape (concert-crowd-extract).
+  // Renderer passes the merged track's colon path + cue starts; the clip
+  // lands where get-concert-crowd already looks. Idempotent per merged id.
+  const crowdInFlight = new Map<number, Promise<{ ok: boolean; error?: string; startSec?: number }>>()
+  ipc.handle('extract-concert-crowd', async (_e, mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => {
+    const existing = crowdInFlight.get(mergedTrackId)
+    if (existing) return existing
+    const job = (async () => {
+      try {
+        const { extractCrowdClip } = await import('../concert-crowd-extract.ts')
+        const LOCAL_MOUNT = host.getMusicDir().replace(/[/\\]iPod_Control[/\\]Music$/, '')
+        const src = join(LOCAL_MOUNT, String(colonPath || '').replace(/:/g, IS_WINDOWS ? '\\' : '/'))
+        const out = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
+        const r = await extractCrowdClip(src, cueStartsMs, totalMs, out)
+        console.log(`[concert-crowd] ${mergedTrackId}: clip cut at ${r.startSec}s (score ${r.score.toFixed(2)}, ${r.scanned} windows)`)
+        return { ok: true, startSec: r.startSec }
+      } catch (err) {
+        console.warn('[concert-crowd] extraction failed:', err instanceof Error ? err.message : err)
+        return { ok: false, error: safeIpcError(err, 'unknown') }
+      } finally { crowdInFlight.delete(mergedTrackId) }
+    })()
+    crowdInFlight.set(mergedTrackId, job)
+    return job
+  }, { refuse: REFUSED_SENDER })
   // Crowd tuning knobs (level / rise / tail) — persisted so the user's by-ear dial-in sticks.
   function crowdTuningPath(): string { return join(app.getPath('userData'), 'concert-crowd-tuning.json') }
   ipc.handle('save-crowd-tuning', async (_e, t: Record<string, number>): Promise<{ ok: boolean }> => {

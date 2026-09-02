@@ -169,6 +169,7 @@ export interface ConcertMeta {
   city?: string
   date?: string        // display string, e.g. "May 15–16, 1980"
   poster?: string      // artwork key/hash for the concert poster (portrait)
+  blurb?: string       // one-line summary for the Live Concerts index (grounded; falls back to facts[0])
   // Companion panel (tour-book layer). All grounded or user-authored, never
   // fabricated. facts = short grounded blurbs; notes = the user's own memories;
   // source/label = recording lineage; merchUrl = a real store link.
@@ -936,6 +937,7 @@ declare global {
       loadLiveSets: () => Promise<{ ok: boolean; sets: Record<string, LiveSetEntry> }>
       saveLiveSet: (albumKey: string, entry: LiveSetEntry) => Promise<{ ok: boolean; error?: string }>
       removeLiveSet: (albumKey: string) => Promise<{ ok: boolean }>
+      extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => Promise<{ ok: boolean; error?: string; startSec?: number }>
       getConcertCrowd: (mergedTrackId: number) => Promise<string | null>
       saveCrowdTuning: (t: Record<string, number>) => Promise<{ ok: boolean }>
       loadCrowdTuning: () => Promise<Record<string, number> | null>
