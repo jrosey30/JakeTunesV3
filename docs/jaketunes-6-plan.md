@@ -111,8 +111,13 @@ mood best rank 82, fusion 33, audio 121. Every space reads "yacht rock" as
 the token "rock" (classic rock, hard rock). That is a LEXICON gap, not an
 ears gap: a subgenre → artist/era expansion for the 3c reranker ("yacht
 rock" → smooth soft rock, 1976–84, Steely Dan/McDonald/Toto…) is the fix,
-and it is cheap. Filed for 6.1 under "grow lexicons, never rewrite the
-matcher".
+and it is cheap. SHIPPED same day (Jake: "do the lexicon fix now"):
+src/common/subgenre-lexicon.ts — entry = aliases + sonic expansion (embedded
+with the query) + in-era anchor artists (injected into the pool, +0.12
+anchor bonus in the 3c reranker, per-artist era windows). "yacht rock":
+0/25 → 25/25; new eval prompt prod-016 = 1.00; the other 15 prompts
+unchanged (mean 0.854 on 16). Twin copied to Mobile (subgenreLexicon.ts,
+ragRerank.ts, rag.ts) in the same change set. Grow it by adding entries.
 
 Twin note: fusion runs on the DESKTOP only until homemini has the CLAP text
 tower (CPU is fine for text queries). Until then mobile vibe retrieval stays

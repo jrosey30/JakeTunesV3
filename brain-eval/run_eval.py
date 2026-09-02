@@ -140,6 +140,9 @@ def expected_ids(pred, tracks):
             a = (t.get("artist") or "").lower()
             p = pred["artist"].lower()
             ok = ok and (p in a or a in p) and bool(a)
+        if "artist_any" in pred:
+            a = (t.get("artist") or "").lower()
+            ok = ok and any(x.lower() == a for x in pred["artist_any"])
         if "genre_any" in pred:
             g = (t.get("genre") or "").lower()
             ok = ok and any(term.lower() in g for term in pred["genre_any"]) and bool(g)

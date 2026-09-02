@@ -19,6 +19,7 @@ import { getMoodIndexMap } from './mood-index'
 import { getAudioIndexMap, audioTopK } from './audio-index.ts'
 import { clapEmbedText } from './audio-query.ts'
 import { RERANK_OVERFETCH, RERANK_POOL_CAP, RERANK_GENRE_W, rerankHits } from './rag-rerank.ts'
+import { matchSubgenre, expandSubgenreQuery, isSubgenreAnchor, type SubgenreEntry } from '../../common/subgenre-lexicon.ts'
 
 export interface RagRetrievalHost {
   libraryCache: { get: () => Promise<unknown> }
@@ -94,6 +95,22 @@ async function ragTrackGenreMap(): Promise<Map<number, string>> {
   }
 }
 
+/** Subgenre anchors (2026-09-02): ids of in-era anchor-artist tracks for a
+ *  lexicon entry — injected into the candidate pool and bonused in rerank. */
+async function ragSubgenreAnchorIds(entry: SubgenreEntry): Promise<Set<number>> {
+  try {
+    const lib = (await ragHost.libraryCache.get()) as { tracks?: Array<{ id: number; artist?: string; albumArtist?: string; year?: string | number }> }
+    const out = new Set<number>()
+    for (const t of lib.tracks || []) {
+      if (typeof t?.id !== 'number') continue
+      if (isSubgenreAnchor(entry, t.artist, t.year) || isSubgenreAnchor(entry, t.albumArtist, t.year)) out.add(t.id)
+    }
+    return out
+  } catch {
+    return new Set()
+  }
+}
+
 export async function ragTrackYearMap(): Promise<Map<number, string | number | undefined>> {
   try {
     const lib = (await ragHost.libraryCache.get()) as { tracks?: Array<{ id: number; year?: string | number }> }
@@ -120,6 +137,29 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
   const route = await pickRetrievalIndex(query)
   let map = route === 'mood' ? await getMoodIndexMap() : await ragGetEmbeddingsMap()
   if (map.size === 0) return []
+  // Subgenre lexicon (2026-09-02): a NAMED style the genre column lacks.
+  // Embed the expanded query (so the spaces hear the style), make sure the
+  // anchor artists' in-era tracks are in the pool, and let the reranker
+  // lift them. Absent a match, everything below is exactly as before.
+  const lex = matchSubgenre(query)
+  const embedText = lex ? expandSubgenreQuery(query, lex) : query
+  const anchorIds = lex ? await ragSubgenreAnchorIds(lex) : new Set<number>()
+  if (lex) console.log(`[rag] lexicon "${lex.key}": ${anchorIds.size} anchor track(s)`)
+  const dotQ = (a: Float32Array, b: Float32Array): number => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i] * b[i]; return t }
+  /** Union anchor tracks into a pool with their real cosine (or the pool floor). */
+  const withAnchors = (pool: Array<{ trackId: number; score: number }>, qv: Float32Array | null): Array<{ trackId: number; score: number }> => {
+    if (anchorIds.size === 0) return pool
+    const have = new Set(pool.map((h) => h.trackId))
+    const floor = pool.length ? pool[pool.length - 1].score : 0
+    const extra: Array<{ trackId: number; score: number }> = []
+    for (const id of anchorIds) {
+      if (have.has(id)) continue
+      const v = qv ? map.get(id) : undefined
+      extra.push({ trackId: id, score: v && qv ? dotQ(qv, v) : floor })
+    }
+    return [...pool, ...extra]
+  }
+  const rerankOpts = { anchorIds }
   const decade = parseDecadeConstraint(query)
   if (decade) {
     const years = await ragTrackYearMap()
@@ -142,13 +182,13 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
     try {
       const amap = await getAudioIndexMap()
       if (amap.size > 0) {
-        const aq = await clapEmbedText(query)
+        const aq = await clapEmbedText(embedText)
         if (aq) {
           const poolK = Math.min(Math.max(k * RERANK_OVERFETCH, k), RERANK_POOL_CAP)
           if (audioMode === '1') {
             console.log(`[rag] route=audio k=${k} "${query.slice(0, 60)}"`)
             const pool = audioTopK(aq, amap, poolK)
-            return rerankHits(query, pool, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+            return rerankHits(query, withAnchors(pool, null), await ragTrackGenreMap(), k, RERANK_GENRE_W, rerankOpts)
           }
           // FUSION: union of the mood pool and the audio pool; every candidate
           // gets both cosines. The audio term is added as a DEVIATION scaled
@@ -156,7 +196,7 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
           // cosine units and the 3c genre reranker's weight means the same
           // thing it always did. A track with no audio vector sits at the
           // audio mean (no bonus, no penalty).
-          const [qvec] = await ragEmbedTexts([query])
+          const [qvec] = await ragEmbedTexts([embedText])
           if (qvec) {
             const W = Number(process.env.JT_AUDIO_W ?? '0.5')
             const moodPool = ragTopK(qvec, map, poolK)
@@ -182,7 +222,7 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
               .sort((x, y) => y.score - x.score)
               .slice(0, poolK)
             console.log(`[rag] route=fusion W=${W} pool=${rows.length} k=${k} "${query.slice(0, 60)}"`)
-            return rerankHits(query, fused, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+            return rerankHits(query, withAnchors(fused, qvec), await ragTrackGenreMap(), k, RERANK_GENRE_W, rerankOpts)
           }
         }
       }
@@ -191,13 +231,13 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
     }
   }
   try {
-    const [qvec] = await ragEmbedTexts([query])
+    const [qvec] = await ragEmbedTexts([embedText])
     if (!qvec) return []
     console.log(`[rag] route=${route} k=${k} "${query.slice(0, 60)}"`)
     // 3c reranker: over-fetch, add the lexical genre bonus, re-slice.
     const poolK = Math.min(Math.max(k * RERANK_OVERFETCH, k), RERANK_POOL_CAP)
     const pool = ragTopK(qvec, map, poolK)
-    const reranked = rerankHits(query, pool, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+    const reranked = rerankHits(query, withAnchors(pool, qvec), await ragTrackGenreMap(), k, RERANK_GENRE_W, rerankOpts)
     const beforeTop = new Set(pool.slice(0, k).map((h) => h.trackId))
     const moved = reranked.filter((h) => !beforeTop.has(h.trackId)).length
     if (moved > 0) console.log(`[rag] rerank promoted ${moved}/${k} from the ${pool.length}-deep pool`)

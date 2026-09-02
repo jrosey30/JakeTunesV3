@@ -57,3 +57,16 @@ describe('rerankHits', () => {
     for (let i = 1; i < out.length; i++) assert.ok(out[i - 1].score >= out[i].score)
   })
 })
+
+describe('anchor bonus (subgenre lexicon, 2026-09-02)', () => {
+  test('an anchored track climbs past un-anchored higher-cosine hits; no anchors = unchanged', () => {
+    const hits = [
+      { trackId: 1, score: 0.50 }, { trackId: 2, score: 0.48 }, { trackId: 3, score: 0.40 },
+    ]
+    const g = new Map<number, string>([[1, 'Rock'], [2, 'Rock'], [3, 'Classic Rock']])
+    const plain = rerankHits('yacht rock', hits, g, 3, 0.08)
+    assert.deepEqual(plain.map((h) => h.trackId), [1, 2, 3])
+    const anchored = rerankHits('yacht rock', hits, g, 3, 0.08, { anchorIds: new Set([3]), anchorWeight: 0.12 })
+    assert.equal(anchored[0].trackId, 3)
+  })
+})

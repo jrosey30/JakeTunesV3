@@ -21,6 +21,11 @@ import { foldAccents } from '../../common/fold-text.ts'
 export const RERANK_OVERFETCH = 4          // candidates considered = k × this (cap below)
 export const RERANK_POOL_CAP = 400
 export const RERANK_GENRE_W = Number(process.env.JT_RERANK_GENRE_W ?? '0.08')
+/** Subgenre-lexicon anchor bonus (2026-09-02): a track by an in-era anchor
+ *  artist for the named style ("yacht rock" → Steely Dan '77). Larger than
+ *  the genre bonus on purpose — the whole point is to lift tracks the vector
+ *  spaces rank 80th into the top 25 when the user literally named the style. */
+export const RERANK_ANCHOR_W = Number(process.env.JT_RERANK_ANCHOR_W ?? '0.12')
 
 // Words that appear in vibe queries without naming a genre.
 const STOP = new Set([
@@ -68,14 +73,19 @@ export function rerankHits(
   genreById: Map<number, string>,
   k: number,
   weight: number = RERANK_GENRE_W,
+  opts?: { anchorIds?: Set<number>; anchorWeight?: number },
 ): Array<{ trackId: number; score: number }> {
-  if (weight <= 0 || hits.length <= 1) return hits.slice(0, k)
+  const anchors = opts?.anchorIds
+  const aw = anchors && anchors.size > 0 ? (opts?.anchorWeight ?? RERANK_ANCHOR_W) : 0
+  if ((weight <= 0 && aw <= 0) || hits.length <= 1) return hits.slice(0, k)
   const tokens = rerankQueryTokens(query)
-  if (tokens.length === 0) return hits.slice(0, k)
+  if (tokens.length === 0 && aw <= 0) return hits.slice(0, k)
   return hits
     .map((h) => ({
       trackId: h.trackId,
-      score: h.score + weight * genreLexicalFit(tokens, genreById.get(h.trackId) || ''),
+      score: h.score
+        + (weight > 0 && tokens.length > 0 ? weight * genreLexicalFit(tokens, genreById.get(h.trackId) || '') : 0)
+        + (aw > 0 && anchors!.has(h.trackId) ? aw : 0),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, k)
