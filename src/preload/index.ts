@@ -13,8 +13,8 @@ const electronAPI = {
     return () => { ipcRenderer.removeListener('menu-action', handler) }
   },
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
-  musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
-    ipcRenderer.invoke('musicman-chat', messages),
+  musicmanChat: (messages: { role: string; content: string }[], context?: string): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
+    ipcRenderer.invoke('musicman-chat', messages, context),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }> =>

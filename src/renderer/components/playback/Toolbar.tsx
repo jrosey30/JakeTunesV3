@@ -111,7 +111,7 @@ const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
   djhands: 'is on the decks',
 }
 
-export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean }) {
+export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggleMusicMan, showMusicMan }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean; onToggleMusicMan: () => void; showMusicMan: boolean }) {
   const { state: pb } = usePlayback()
   const { state: lib } = useLibrary()
   const { setVolume, playTrack, stopPlayback } = useAudio()
@@ -1818,6 +1818,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         )}
       </div>
       </div>
+      <button
+        className={`transport-toggle queue-toggle ${showMusicMan ? 'queue-toggle--active' : ''}`}
+        onClick={onToggleMusicMan}
+        title="The Music Man (⇧⌘M) — ask about what's in front of you"
+        aria-label="The Music Man"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />
+          <path d="M5.5 6.5h5M5.5 8.5h3" />
+        </svg>
+      </button>
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}

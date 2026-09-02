@@ -1,11 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { libraryHiddenTrackIds } from '../liveSets'
 import { useLibrary } from '../context/LibraryContext'
-import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { setNotice } from '../activity'
-import { ChatConversation } from '../types'
 import ConfirmDialog from '../components/ConfirmDialog'
+import MusicManChat from '../components/MusicManChat'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
 
@@ -50,33 +48,6 @@ const TAGLINES = [
   "I don't have a type. I have range. You wouldn't understand.",
 ]
 
-const CHAT_INTROS = [
-  "Look, I don't just listen to music. I understand it. I've forgotten more about obscure B-sides than most people will ever know. Go ahead. Ask me something. But fair warning — I might judge your taste.",
-  "Oh good, another person who wants my opinion. Lucky for you, my opinions are correct. Ask away — but don't waste my time with anything you could Google.",
-  "You want to talk music? Finally, someone with ambition. Most people just press shuffle and call it a personality. What do you want to know?",
-  "Welcome to the only conversation about music that matters today. I've been waiting for someone to ask me something worth answering. No pressure.",
-  "I could be organizing my vinyl right now, but sure, let's chat. Ask me anything. I promise to be honest. Brutally, if necessary.",
-  "You've come to the right place. Or the wrong place, depending on how attached you are to your current opinions. What's on your mind?",
-  "Before you ask — yes, I've heard it. Yes, I have thoughts. And yes, they're better than yours. Go ahead.",
-  "I've spent more time in record stores than most people spend awake. That expertise is now available to you. You're welcome. Ask.",
-  "Another day, another chance to educate someone about music. I don't do this for the gratitude. I do it because someone has to. What do you need?",
-  "Sure, the internet exists. But the internet doesn't have taste. I do. Ask me something real.",
-  "I was born for this. Literally — my first word was 'overrated.' Hit me with a question.",
-  "Let's skip the small talk. You have questions. I have answers and a superiority complex. Let's go.",
-  "Most music advice is bad. Mine isn't. That's not arrogance, it's a track record. What do you want to know?",
-  "I've been told I'm 'a lot.' I prefer 'thorough.' Ask me anything about music — I dare you to stump me.",
-]
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  // 4.5: tagged version of the assistant's response (with ElevenLabs
-  // [scoff]/[laughs]/[softer]/etc. inline). Hidden from display — `content`
-  // is the stripped-clean version — but used by the speaker button so v3 still
-  // performs the dialogue expressively when the user opts into hearing it.
-  contentRaw?: string
-}
-
 export default function MusicManView() {
   // The wall — what the brain actually knows (brain-status IPC).
   const [brain, setBrain] = useState<Record<string, unknown> | null>(null)
@@ -84,13 +55,6 @@ export default function MusicManView() {
     window.electronAPI.brainStatus?.().then((r) => { if (r?.ok) setBrain(r) }).catch(() => {})
   }, [])
   const { state: libState, dispatch } = useLibrary()
-  const [chatInput, setChatInput] = useState('')
-  const [conversations, setConversations] = useState<ChatConversation[]>([])
-  const [activeChatId, setActiveChatId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const [speakingIdx, setSpeakingIdx] = useState(-1)
   // Audio analysis backfill (4.0 §2.4b). The main-side worker drains the queue
   // (subprocess isolation + playback debounce); the renderer enqueues + tracks
   // progress. Counter derives from audioAnalysisCounts (a memo over the live
@@ -101,165 +65,6 @@ export default function MusicManView() {
   // backfill button alone skips those, which left the post-clamp library stuck.
   const [remeasureConfirmOpen, setRemeasureConfirmOpen] = useState(false)
   const analysisTotalRef = useRef(0)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  // Stop any in-flight TTS when the view unmounts (e.g. navigating away).
-  // Detach → pause → null, then tell the rest of the app speaking has ended so
-  // the avatar/EQ state resets and dead nodes don't accumulate.
-  useEffect(() => () => {
-    if (audioRef.current) {
-      detachClipFromBroadcast(audioRef.current)
-      audioRef.current.pause()
-      audioRef.current = null
-      window.dispatchEvent(new Event('musicman-speaking-end'))
-    }
-  }, [])
-
-  // Load chat history on mount
-  useEffect(() => {
-    window.electronAPI.loadChatHistory().then(result => {
-      if (result.ok && result.conversations) {
-        setConversations(result.conversations)
-      }
-    })
-  }, [])
-
-  const saveConversations = useCallback((convs: ChatConversation[]) => {
-    setConversations(convs)
-    window.electronAPI.saveChatHistory(convs)
-  }, [])
-
-  const startNewChat = useCallback(() => {
-    setActiveChatId(null)
-    setMessages([])
-    setChatInput('')
-  }, [])
-
-  const loadChat = useCallback((conv: ChatConversation) => {
-    setActiveChatId(conv.id)
-    setMessages(conv.messages)
-  }, [])
-
-  const deleteChat = useCallback((id: string) => {
-    const updated = conversations.filter(c => c.id !== id)
-    saveConversations(updated)
-    if (activeChatId === id) {
-      setActiveChatId(null)
-      setMessages([])
-    }
-  }, [conversations, activeChatId, saveConversations])
-
-  const sendMessage = async () => {
-    const text = chatInput.trim()
-    if (!text || isLoading) return
-    setChatInput('')
-
-    const newMessages: ChatMessage[] = [...messages, { role: 'user', content: text }]
-    setMessages(newMessages)
-    setIsLoading(true)
-
-    try {
-      const result = await window.electronAPI.musicmanChat(newMessages)
-      // 2026-08-07: the Music Man has HANDS — when his create_playlist
-      // tool fired, the resolved playlist lands in the sidebar HERE, the
-      // same ADD_PLAYLIST path a hand-made playlist uses.
-      if (result.createdPlaylist && result.createdPlaylist.trackIds.length > 0) {
-        const playlist = { id: `mm-${Date.now()}`, name: result.createdPlaylist.name, trackIds: result.createdPlaylist.trackIds }
-        dispatch({ type: 'ADD_PLAYLIST', playlist })
-        void window.electronAPI.tasteLedgerAppend?.([{
-          surface: 'mm-playlist', verdict: 'accept',
-          key: { playlistId: playlist.id },
-          ctx: { name: playlist.name, trackCount: playlist.trackIds.length },
-        }])
-      }
-      // 4.5: store BOTH the stripped text (for display) and the raw text with
-      // [scoff]/[laughs] tags intact (for the speaker button to feed ElevenLabs
-      // v3). textRaw defaults to text on older builds + error paths.
-      const finalMessages: ChatMessage[] = [...newMessages, {
-        role: 'assistant',
-        content: result.text,
-        contentRaw: result.textRaw || result.text,
-      }]
-      setMessages(finalMessages)
-
-      // Auto-save to history
-      const chatId = activeChatId || `chat-${Date.now()}`
-      const title = newMessages[0]?.content.slice(0, 50) || 'Untitled'
-      const existing = conversations.find(c => c.id === chatId)
-      let updated: ChatConversation[]
-      if (existing) {
-        updated = conversations.map(c => c.id === chatId ? { ...c, messages: finalMessages } : c)
-      } else {
-        const newConv: ChatConversation = { id: chatId, title, messages: finalMessages, createdAt: new Date().toISOString() }
-        updated = [newConv, ...conversations]
-      }
-      setActiveChatId(chatId)
-      saveConversations(updated)
-    } catch (err) {
-      // Roll back the optimistic user bubble and restore their typed text so
-      // the message isn't lost when the chat IPC throws.
-      setMessages(messages)
-      setChatInput(text)
-      setNotice(err instanceof Error ? err.message : 'The Music Man could not respond.', { kind: 'error' })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const speakMessage = async (text: string, index: number) => {
-    if (isSpeaking && audioRef.current) {
-      detachClipFromBroadcast(audioRef.current)
-      audioRef.current.pause()
-      audioRef.current = null
-      window.dispatchEvent(new Event('musicman-speaking-end'))
-      if (speakingIdx === index) {
-        setIsSpeaking(false)
-        setSpeakingIdx(-1)
-        return
-      }
-    }
-    setIsSpeaking(true)
-    setSpeakingIdx(index)
-    try {
-      const tts = await window.electronAPI.musicmanSpeak(text)
-      if (tts.ok && tts.audio) {
-        const audio = audioFromBase64Mpeg(tts.audio)
-        attachClipToBroadcast(audio)
-        audioRef.current = audio
-        audio.onended = () => {
-          setIsSpeaking(false)
-          setSpeakingIdx(-1)
-          window.dispatchEvent(new Event('musicman-speaking-end'))
-        }
-        window.dispatchEvent(new Event('musicman-speaking-start'))
-        audio.play().catch(() => {
-          setIsSpeaking(false)
-          setSpeakingIdx(-1)
-          window.dispatchEvent(new Event('musicman-speaking-end'))
-        })
-      } else {
-        setIsSpeaking(false)
-        setSpeakingIdx(-1)
-      }
-    } catch (err) {
-      setIsSpeaking(false)
-      setSpeakingIdx(-1)
-      window.dispatchEvent(new Event('musicman-speaking-end'))
-      setNotice(err instanceof Error ? err.message : 'Could not play speech.', { kind: 'error' })
-    }
-  }
-
-  const handleChatKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-  }
 
   // ── Audio analysis backfill (BPM + key) ────────────────────────────────
   // Enqueue unanalyzed tracks (or, with force, every track with a path). The
@@ -435,84 +240,9 @@ export default function MusicManView() {
       })()}
 
       <div className="musicman-content musicman-content--chat">
-        <div className="musicman-chat-layout">
-          {conversations.length > 0 && (
-            <div className="musicman-chat-history">
-              <button className="musicman-chat-new" onClick={startNewChat}>+ New Chat</button>
-              <div className="musicman-chat-history-list">
-                {conversations.map(conv => (
-                  <div
-                    key={conv.id}
-                    className={`musicman-chat-history-item ${activeChatId === conv.id ? 'musicman-chat-history-item--active' : ''}`}
-                    onClick={() => loadChat(conv)}
-                  >
-                    <span className="musicman-chat-history-title">{conv.title}</span>
-                    <button
-                      className="musicman-chat-history-delete"
-                      onClick={(e) => { e.stopPropagation(); deleteChat(conv.id) }}
-                      title="Delete conversation"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="musicman-chat">
-            <div className="musicman-chat-messages">
-              <div className="musicman-chat-msg musicman-chat-msg--system">
-                <p>{CHAT_INTROS[Math.floor(new Date().getDate() + new Date().getMonth() * 31) % CHAT_INTROS.length]}</p>
-              </div>
-              {messages.map((msg, i) => (
-                <div key={i} className={`musicman-chat-msg ${msg.role === 'user' ? 'musicman-chat-msg--user' : 'musicman-chat-msg--assistant'}`}>
-                  {msg.role === 'assistant' ? (
-                    <>
-                      {msg.content.split('\n').map((line, j) => (
-                        <p key={j}>{line}</p>
-                      ))}
-                      <button
-                        className={`musicman-speak-btn ${isSpeaking && speakingIdx === i ? 'musicman-speak-btn--active' : ''}`}
-                        onClick={() => speakMessage(msg.contentRaw || msg.content, i)}
-                        title={isSpeaking && speakingIdx === i ? 'Stop' : 'Listen'}
-                      >
-                        {isSpeaking && speakingIdx === i ? (
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
-                        ) : (
-                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
-                            <path d="M1.5 5.5v3h2l3 3v-9l-3 3h-2z" fill="currentColor" stroke="none" />
-                            <path d="M9 5.5a2 2 0 010 3" />
-                            <path d="M10.5 4a4 4 0 010 6" />
-                          </svg>
-                        )}
-                      </button>
-                    </>
-                  ) : (
-                    <p>{msg.content}</p>
-                  )}
-                </div>
-              ))}
-              {isLoading && (
-                <div className="musicman-chat-msg musicman-chat-msg--assistant">
-                  <p className="musicman-typing">thinking...</p>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-            <div className="musicman-chat-input-row">
-              <input
-                className="musicman-chat-input"
-                type="text"
-                placeholder="Ask The Music Man anything..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={handleChatKeyDown}
-                disabled={isLoading}
-              />
-              <button className="musicman-chat-send" disabled={!chatInput.trim() || isLoading} onClick={sendMessage}>Ask</button>
-            </div>
-          </div>
-        </div>
+        {/* The conversation lives in MusicManChat — shared with the
+            right-hand drawer (2026-09-02) so the two never drift. */}
+        <MusicManChat variant="page" />
 
         {/* The one piece of his old repertoire with no other home: BPM/key
             analysis, which feeds DJ/vibe features. Compact strip, not a tab. */}

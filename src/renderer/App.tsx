@@ -14,6 +14,7 @@ import DeckBar from './components/DeckBar'
 import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
+import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
@@ -76,6 +77,10 @@ function AppInner() {
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
   const queueRef = useRef<QueuePanelHandle>(null)
+  // The Music Man drawer (2026-09-02) shares the right-hand slot with Up
+  // Next — opening one closes the other.
+  const [showMusicMan, setShowMusicMan] = useState(false)
+  const musicManRef = useRef<MusicManDrawerHandle>(null)
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
@@ -1345,6 +1350,11 @@ function AppInner() {
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
+        case 'toggle-music-man': {
+          if (showMusicMan) musicManRef.current?.requestClose()
+          else { if (showQueue) queueRef.current?.requestClose(); setShowMusicMan(true) }
+          break
+        }
         case 'open-import-convert': setImportConvertOpen(true); break
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
@@ -1725,10 +1735,15 @@ function AppInner() {
         <Toolbar
           onToggleQueue={() => {
             if (showQueue) queueRef.current?.requestClose()
-            else setShowQueue(true)
+            else { if (showMusicMan) musicManRef.current?.requestClose(); setShowQueue(true) }
           }}
-          onOpenQueue={() => setShowQueue(true)}
+          onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); setShowQueue(true) }}
           showQueue={showQueue}
+          onToggleMusicMan={() => {
+            if (showMusicMan) musicManRef.current?.requestClose()
+            else { if (showQueue) queueRef.current?.requestClose(); setShowMusicMan(true) }
+          }}
+          showMusicMan={showMusicMan}
         />
       </div>
       <div className="sidebar-area" style={{ width: sidebarWidth }}>
@@ -1740,6 +1755,7 @@ function AppInner() {
         <TapeMonitor />
         <DeckBar />
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
+        {showMusicMan && <MusicManDrawer ref={musicManRef} onClose={() => setShowMusicMan(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
         {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}

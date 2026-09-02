@@ -2858,6 +2858,8 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       { label: 'Albums', click: () => sendMenuAction('view-albums') },
       { label: 'Genres', click: () => sendMenuAction('view-genres') },
       { type: 'separator' },
+      { label: 'The Music Man', accelerator: 'Shift+CmdOrCtrl+M', click: () => sendMenuAction('toggle-music-man') },
+      { type: 'separator' },
       { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', role: 'toggleDevTools' }
     ]
   },
@@ -7379,8 +7381,11 @@ function buildCynthiaSweepHooks() {
 
 
 // Music Man chat
-ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
+ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[], context?: string) => {
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
+  // Drawer context (2026-09-02): what's playing / which page is open, so
+  // "is this any good?" means THIS song. Bounded; never trusted as fact.
+  const lookingAt = typeof context === 'string' && context.trim() ? context.trim().slice(0, 400) : ''
   // 4.5.0-87 — RAG retrieval kicks off in parallel with web search so
   // both round trips overlap. The retrieval result is injected as a
   // FOCUSED tracks block alongside the digest — model gets BOTH the
@@ -7437,7 +7442,7 @@ sneak in a track that violates a stated constraint. After the tool
 returns, confirm in 1-2 sentences with a couple of highlights — the
 playlist itself is already in their sidebar; don't recite it.
 
-This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}`
+This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}${lookingAt ? `\n\nWHAT THE LISTENER HAS IN FRONT OF THEM RIGHT NOW (the drawer is open beside the library): ${lookingAt}. When they say "this" or "it", they mean that.` : ''}`
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 
