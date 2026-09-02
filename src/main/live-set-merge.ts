@@ -31,7 +31,7 @@ import { createReadStream, createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { join } from 'node:path'
 import { convertAudio, type AudioTags } from './platform'
-import { rmsEnvelope, seamOverlapMs, overlapAdd, bytesForMs } from './live-set-seams'
+import { rmsEnvelope, seamOverlapMs, mixSeam, bufferRmsDb, bytesForMs } from './live-set-seams'
 
 const execP = promisify(execFile)
 
@@ -221,7 +221,11 @@ export async function mergeLiveSet(
         const ms = seamOverlapMs(rmsEnvelope(pendingTail, BYTES_PER_SEC), rmsEnvelope(head, BYTES_PER_SEC))
         overlap = Math.min(bytesForMs(ms, BYTES_PER_SEC, FRAME), pendingTail.length)
       }
-      const cueStart = cumBytes - overlap
+      // The cue sits at the CROSSOVER (mid-overlap), not where the overlap
+      // begins — otherwise the setlist flips to the next song while the old
+      // tail is still audible (Jake: "it jumped to Jet before the end of
+      // Drive My Car"). Durations become spans cue→cue below.
+      const cueStart = cumBytes - overlap + Math.floor(overlap / 2 / FRAME) * FRAME
       cues.push({
         trackId: seg.input.id,
         title: seg.input.title,
@@ -231,10 +235,18 @@ export async function mergeLiveSet(
       })
       if (pendingTail) {
         if (overlap > 0) {
-          // The previous tail's un-overlapped part, then the summed seam.
-          await writeBuf(pendingTail.subarray(0, pendingTail.length - overlap))
+          // The previous tail's un-overlapped part, then the mixed seam:
+          // tapered edges + make-up gain toward the quieter body level of
+          // the two neighbours (measured 2 s either side of the overlap).
+          const keep = pendingTail.subarray(0, pendingTail.length - overlap)
+          await writeBuf(keep)
           const head = await readRange(seg.path, offset, overlap)
-          await writeBuf(overlapAdd(pendingTail.subarray(pendingTail.length - overlap), head))
+          const afterBytes = bytesForMs(2000, BYTES_PER_SEC, FRAME)
+          const after = await readRange(seg.path, offset + overlap, afterBytes)
+          const refBefore = bufferRmsDb(keep.subarray(Math.max(0, keep.length - afterBytes)))
+          const refAfter = bufferRmsDb(after)
+          const refDb = Math.min(refBefore, refAfter)
+          await writeBuf(mixSeam(pendingTail.subarray(pendingTail.length - overlap), head, BYTES_PER_SEC, FRAME, refDb))
           cumBytes += pendingTail.length
           seamsCrossfaded++
         } else {
@@ -260,6 +272,13 @@ export async function mergeLiveSet(
       if (cumBytes > MAX_DATA_BYTES) throw new Error('combined audio exceeded the 4 GB WAV limit mid-merge')
     }
     if (pendingTail) { await writeBuf(pendingTail); cumBytes += pendingTail.length; pendingTail = null }
+    // Durations as SPANS (cue → next cue; last → end of set), so a song's
+    // progress bar ends exactly where the next song's cue begins.
+    const totalMsNow = Math.round((cumBytes / BYTES_PER_SEC) * 1000)
+    for (let i = 0; i < cues.length; i++) {
+      const next = i + 1 < cues.length ? cues[i + 1].startMs : totalMsNow
+      cues[i].durationMs = Math.max(0, next - cues[i].startMs)
+    }
     if (seamsCrossfaded > 0) console.log(`[live-set] ${seamsCrossfaded}/${Math.max(0, segs.length - 1)} seams crossfaded (album fades measured)`)
     await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())))
 

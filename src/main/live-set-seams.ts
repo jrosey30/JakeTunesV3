@@ -92,6 +92,78 @@ export function overlapAdd(a: Buffer, b: Buffer): Buffer {
   return out
 }
 
+/**
+ * Mix one seam properly (2026-09-02, after the first cut on the McCartney
+ * set — Jake: "a pop/crackle and a very slight fade out"):
+ *   • EDGE TAPERS: the old tail is ramped to zero over its last `taperMs`
+ *     and the new head from zero over its first `taperMs`, so neither side
+ *     ever stops or starts with a step. The step at −46 dB was the click.
+ *   • MAKE-UP GAIN: two album fades summed don't cancel exactly, leaving a
+ *     shallow dip. Per 100 ms window, the mix is lifted toward the quieter
+ *     of the two neighbouring body levels (`refDb`), capped at +6 dB,
+ *     interpolated between windows so the gain never steps.
+ * `tail` and `head` are the overlap region only (equal length).
+ */
+export function mixSeam(tail: Buffer, head: Buffer, bytesPerSec: number, frameBytes: number, refDb: number, opts: { taperMs?: number; maxGainDb?: number; windowMs?: number } = {}): Buffer {
+  const taperMs = opts.taperMs ?? 60
+  const maxGain = Math.pow(10, (opts.maxGainDb ?? 6) / 20)
+  const windowMs = opts.windowMs ?? 100
+  const n = Math.min(tail.length, head.length) & ~1
+  const frames = Math.floor(n / frameBytes)
+  const ch = frameBytes / 2
+  const taperFrames = Math.max(1, Math.floor((bytesPerSec * taperMs) / 1000 / frameBytes))
+  // 1. taper + sum into float
+  const mix = new Float32Array(frames * ch)
+  for (let f = 0; f < frames; f++) {
+    const tIn = f >= frames - taperFrames ? (frames - 1 - f) / taperFrames : 1   // tail → 0 at the end
+    const hIn = f < taperFrames ? f / taperFrames : 1                             // head from 0 at the start
+    for (let c = 0; c < ch; c++) {
+      const o = (f * ch + c) * 2
+      mix[f * ch + c] = (tail.readInt16LE(o) / 32768) * tIn + (head.readInt16LE(o) / 32768) * hIn
+    }
+  }
+  // 2. per-window gain toward the reference level
+  const winFrames = Math.max(1, Math.floor((bytesPerSec * windowMs) / 1000 / frameBytes))
+  const nWin = Math.max(1, Math.ceil(frames / winFrames))
+  const refRms = Math.pow(10, refDb / 20)
+  const gains = new Float32Array(nWin)
+  for (let w = 0; w < nWin; w++) {
+    let acc = 0, cnt = 0
+    for (let f = w * winFrames; f < Math.min(frames, (w + 1) * winFrames); f++) {
+      for (let c = 0; c < ch; c++) { const v = mix[f * ch + c]; acc += v * v; cnt++ }
+    }
+    const rms = Math.sqrt(acc / Math.max(1, cnt))
+    gains[w] = rms > 1e-6 ? Math.min(maxGain, Math.max(1, refRms / rms)) : 1
+  }
+  // 3. apply, linearly interpolated between window centres; unity at both
+  //    edges so the seam meets its neighbours at their own level.
+  const out = Buffer.alloc(frames * frameBytes)
+  for (let f = 0; f < frames; f++) {
+    const pos = (f + 0.5) / winFrames - 0.5
+    const w0 = Math.max(0, Math.min(nWin - 1, Math.floor(pos)))
+    const w1 = Math.min(nWin - 1, w0 + 1)
+    const t = Math.max(0, Math.min(1, pos - w0))
+    let g = gains[w0] * (1 - t) + gains[w1] * t
+    const edge = Math.min(f, frames - 1 - f) / Math.max(1, winFrames)   // 0 at the edges → unity
+    if (edge < 1) g = 1 + (g - 1) * edge
+    for (let c = 0; c < ch; c++) {
+      const v = Math.max(-1, Math.min(1, mix[f * ch + c] * g))
+      out.writeInt16LE(Math.round(v * 32767), (f * ch + c) * 2)
+    }
+  }
+  return out
+}
+
+/** Mean RMS (dBFS) of a whole buffer — the "body level" next to a seam. */
+export function bufferRmsDb(pcm: Buffer): number {
+  const n = pcm.length & ~1
+  if (n === 0) return SILENCE_DB
+  let acc = 0
+  for (let i = 0; i < n; i += 2) { const s = pcm.readInt16LE(i) / 32768; acc += s * s }
+  const rms = Math.sqrt(acc / (n / 2))
+  return rms > 0 ? Math.max(SILENCE_DB, 20 * Math.log10(rms)) : SILENCE_DB
+}
+
 /** Whole-frame byte count for a duration. */
 export function bytesForMs(ms: number, bytesPerSec: number, frameBytes: number): number {
   return Math.floor((bytesPerSec * ms) / 1000 / frameBytes) * frameBytes
