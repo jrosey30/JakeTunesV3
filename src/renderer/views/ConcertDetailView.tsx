@@ -122,8 +122,17 @@ export default function ConcertDetailView() {
   const applyPoster = useCallback(async (path: string) => {
     if (!path || !meta.band || !meta.show) return
     const r = await window.electronAPI.setCustomArtwork(meta.band, meta.show, path)
-    if (r.ok && r.key && r.hash) libDispatch({ type: 'ADD_ARTWORK', key: r.key, hash: r.hash })
-  }, [meta.band, meta.show, libDispatch])
+    if (r.ok && r.key && r.hash) {
+      libDispatch({ type: 'ADD_ARTWORK', key: r.key, hash: r.hash })
+      // 2026-09-02 — the image you just set IS the poster. Both this page
+      // and the Concerts tile prefer a persisted `concert.poster` over the
+      // looked-up artwork, so on any show that already carried one (the
+      // seeded posters) a swap wrote the new image and the old poster kept
+      // winning (Jake: "it won't let me swap out concert poster artwork").
+      // Clearing it makes the swap authoritative, versioned (cache-busted).
+      if (liveSet?.concert?.poster) void updateConcertMeta(albumKey, { poster: '' })
+    }
+  }, [meta.band, meta.show, libDispatch, liveSet?.concert?.poster, albumKey])
   const onPosterDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setPosterDrag(false)
     const f = e.dataTransfer.files?.[0] as (File & { path?: string }) | undefined
