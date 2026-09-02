@@ -96,10 +96,27 @@
   border-radius: 3px;
 }
 
-.sidebar-item--selected .sidebar-item-icon svg {
-  fill: #fff;
-  stroke: #fff;
+.sidebar-item--selected .sidebar-item-icon svg { color: #fff; }
+
+/* 2011 facelift, phase 2 (Jake 9/2: "do the sidebar icons") — iTunes 10.5's
+ * monochrome source list. Every glyph is drawn in one ink via currentColor,
+ * whatever color its SVG attributes carry; white fills (a record's label
+ * hole) stay white; the two featured rows and the selected row paint their
+ * glyph white through `color`. A 1px white emboss beneath is the Lion tell. */
+.sidebar-item .sidebar-item-icon svg {
+  color: #70767f;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.6));
 }
+.sidebar-item-icon svg[fill]:not([fill="none"]),
+.sidebar-item-icon svg [fill]:not([fill="none"]):not([fill="#fff"]):not([fill="#ffffff"]):not([fill="white"]) {
+  fill: currentColor;
+}
+.sidebar-item-icon svg[stroke]:not([stroke="none"]),
+.sidebar-item-icon svg [stroke]:not([stroke="none"]) {
+  stroke: currentColor;
+}
+.sidebar-item--selected .sidebar-item-icon svg,
+.sidebar-item--highlight .sidebar-item-icon svg { filter: none; }
 
 .sidebar-item-icon {
   flex-shrink: 0;
@@ -171,10 +188,7 @@
   filter: brightness(1.1);
 }
 
-.sidebar-item--highlight .sidebar-item-icon svg {
-  fill: #fff;
-  stroke: #fff;
-}
+.sidebar-item--highlight .sidebar-item-icon svg { color: #fff; }
 
 .sidebar-item--highlight-selected {
   background: #fff !important;
