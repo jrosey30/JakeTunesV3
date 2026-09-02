@@ -2,7 +2,6 @@ import { useState, useCallback, useImperativeHandle, forwardRef } from 'react'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
-import { setNotice } from '../../activity'
 import '../../styles/queue.css'
 
 function formatDuration(ms: number): string {
@@ -129,18 +128,13 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
     }
 
     // Player is active (playing or paused) — queue without interrupting.
-    // Queue honesty (2026-09-02): SAY where it landed. "End of queue" on a
-    // whole-library queue is thousands of songs away, and that used to be
-    // silent.
-    const noun = tracks.length === 1 ? tracks[0].title : `${tracks.length} songs`
+    // No notices (Jake 9/2: "it should just work") — the panel itself is
+    // the feedback: the song appears where it was dropped.
     if (dropIndex !== null) {
       const absIndex = state.queueIndex + 1 + dropIndex
       dispatch({ type: 'INSERT_IN_QUEUE', tracks, atIndex: absIndex })
-      setNotice(dropIndex === 0 ? `Playing next: ${noun}` : `Up Next: ${noun} — ${dropIndex} song${dropIndex === 1 ? '' : 's'} from now`, { kind: 'success' })
     } else {
       dispatch({ type: 'ADD_TO_QUEUE', tracks })
-      const away = state.queue.length - state.queueIndex - 1
-      setNotice(`Added to the END of Up Next: ${noun} — ${away.toLocaleString()} song${away === 1 ? '' : 's'} from now. Drop on Now Playing to play it next.`, { kind: away > 25 ? 'info' : 'success', durationMs: away > 25 ? 6000 : 3500 })
     }
     setDropIndex(null)
   }, [resolveTracks, dropIndex, state.queueIndex, state.queue, state.nowPlaying, dispatch, playTrack])
