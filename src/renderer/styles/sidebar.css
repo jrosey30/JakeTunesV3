@@ -96,7 +96,7 @@
   border-radius: 3px;
 }
 
-.sidebar-item--selected .sidebar-item-icon svg { color: #fff; }
+.sidebar-item.sidebar-item--selected .sidebar-item-icon svg { color: #fff; }   /* outranks the grey ink rule below */
 
 /* 2011 facelift, phase 2 (Jake 9/2: "do the sidebar icons") — iTunes 10.5's
  * monochrome source list. Every glyph is drawn in one ink via currentColor,
@@ -192,7 +192,7 @@
   filter: brightness(1.1);
 }
 
-.sidebar-item--highlight .sidebar-item-icon svg { color: #fff; }
+.sidebar-item.sidebar-item--highlight .sidebar-item-icon svg { color: #fff; }
 
 .sidebar-item--highlight-selected {
   background: #fff !important;
