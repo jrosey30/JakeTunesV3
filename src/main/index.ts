@@ -45,6 +45,7 @@ import {
 import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
+import { createPlayCache } from './play-cache.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
@@ -10383,245 +10384,19 @@ app.whenReady().then(async () => {
       .catch((err) => console.warn('[cynthia-sweep] boot failed:', err instanceof Error ? err.message : err))
   }, 30_000)
 
-  // Cache of transcoded AAC copies of ALAC sources. Chromium can't decode
-  // ALAC, so when the renderer asks for one we detect it and hand back a
-  // cached AAC transcode instead. The source ALAC file is preserved
-  // untouched on disk (the user wants lossless for iPod sync).
-  //
-  // Cache key: first 16 hex chars of sha1(path). Cache entry is stale if
-  // source mtime > cache mtime. Cache lives in userData/play-cache/.
-  const PLAY_CACHE = join(app.getPath('userData'), 'play-cache')
-  await mkdir(PLAY_CACHE, { recursive: true }).catch(() => {})
-
-  // In-flight transcodes, to coalesce concurrent range requests for the
-  // same source file into a single ffmpeg pass.
-  const transcodeInFlight = new Map<string, Promise<string>>()
-
-  // Codec-detection cache. ffprobe is ~200-500ms per call; running it
-  // on every play — even for AAC files that don't need any transcode —
-  // made first-play latency user-visible. Keyed by source path with
-  // the mtime at the time we probed, so the entry is invalidated if
-  // the source file changes.
-  const codecCache = new Map<string, { mtime: number; codec: string }>()
-
-  // Cache file name = <pathHash>-<contentTag>.m4a.
-  //
-  // ⚠️ The content tag is the whole point. This used to be <pathHash>.m4a with
-  // a freshness test of `cache.mtime >= source.mtime`, and that test is not an
-  // identity check — mtime moves BACKWARD all the time. Unzip a Bandcamp
-  // archive and the files carry their original timestamps; rsync -a, Finder
-  // copies and restores from backup all preserve the source mtime. So
-  // replacing a bad file with a good one left the old cache entry looking
-  // "fresh" forever, and the app kept serving the bad audio no matter how many
-  // times the user re-downloaded. That is exactly what happened: an audit
-  // found 11 tracks whose cache disagreed with their source, including two
-  // 30-second preview clips standing in for full songs ("The Sweet Escape",
-  // "Beaches In Tennessee") long after the real files had been put in place.
-  //
-  // Size+mtime as a TAG rather than an ordering has no direction to get wrong:
-  // any replacement changes the tag, which changes the file name, which misses
-  // the cache and re-transcodes. A file with identical size and mtime is the
-  // same file.
-  function cacheNameFor(src: string, size: number, mtimeMs: number): { pathHash: string; file: string } {
-    return {
-      pathHash: pathHashFor(src),
-      file: join(PLAY_CACHE, playCacheName(src, size, mtimeMs)),
-    }
-  }
-
-  // Drop every other cache entry for this source. Because the name encodes
-  // content, a superseded file is dead weight the moment we transcode a new
-  // one — without this the cache would grow one entry per edit, forever.
-  async function evictOtherCacheEntries(pathHash: string, keep: string): Promise<void> {
-    try {
-      const { readdir } = await import('fs/promises')
-      for (const name of await readdir(PLAY_CACHE)) {
-        if (!isEntryFor(name, pathHash)) continue
-        const full = join(PLAY_CACHE, name)
-        if (full === keep) continue
-        await unlink(full).catch(() => {})
-      }
-    } catch { /* cache dir unreadable — nothing to evict */ }
-  }
-
-  // ── cache size cap ────────────────────────────────────────────────────────
-  // FLAC entries are ~3x the old AAC ones, and a full-library lossless cache
-  // would be ~95 GB — the no-local-space rule caps it at ~20 GB (parity with
-  // the AAC cache it replaced). Least-recently-touched entries fall off; the
-  // hot set stays lossless-instant, cold tracks pay ~1s to re-transcode.
-  const PLAY_CACHE_CAP_BYTES = 20 * 1024 * 1024 * 1024
-  let enforcingCap = false
-  async function enforceCacheCap(justWritten: string): Promise<void> {
-    if (enforcingCap) return
-    enforcingCap = true
-    try {
-      const { readdir } = await import('fs/promises')
-      const names = await readdir(PLAY_CACHE)
-      const entries: Array<{ p: string; size: number; at: number }> = []
-      let total = 0
-      for (const n of names) {
-        if (!n.endsWith('.m4a') && !n.endsWith('.flac')) continue
-        const p = join(PLAY_CACHE, n)
-        try {
-          const st = await stat(p)
-          entries.push({ p, size: st.size, at: st.atimeMs || st.mtimeMs })
-          total += st.size
-        } catch { /* raced a delete */ }
-      }
-      if (total <= PLAY_CACHE_CAP_BYTES) return
-      entries.sort((a, b) => a.at - b.at)
-      for (const e of entries) {
-        if (total <= PLAY_CACHE_CAP_BYTES) break
-        if (e.p === justWritten) continue
-        try { await unlink(e.p); total -= e.size } catch { /* already gone */ }
-      }
-    } catch { /* cap enforcement must never break playback */ } finally {
-      enforcingCap = false
-    }
-  }
-
-  async function aacCachePath(
-    src: string,
-    srcMtime: number,
-    srcSize: number,
-  ): Promise<string | null> {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-
-    let codec = ''
-    const prev = codecCache.get(src)
-    if (prev && prev.mtime === srcMtime) {
-      codec = prev.codec
-    } else {
-      try {
-        const { stdout } = await execP('ffprobe', [
-          '-v', 'error', '-select_streams', 'a:0',
-          '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', src,
-        ], { timeout: 5000 })
-        codec = (stdout || '').trim().toLowerCase()
-        codecCache.set(src, { mtime: srcMtime, codec })
-      } catch {
-        return null  // ffprobe unavailable — fall through to raw file
-      }
-    }
-    if (codec !== 'alac') return null  // AAC and others play fine raw
-
-    const { pathHash, file: cached } = cacheNameFor(src, srcSize, srcMtime)
-    try {
-      const cStat = await stat(cached)
-      // Name match IS the freshness proof. Size guard only rejects the
-      // empty file a crashed transcode can leave behind.
-      if (cStat.size > 0) return cached
-    } catch { /* not cached yet */ }
-
-    // NOTE: pre-FLAC entries (.m4a, lossy AAC-256) are deliberately NOT
-    // adopted — a lossy mirror must not masquerade as the lossless cache.
-    // They are swept by evictOtherCacheEntries when the FLAC lands.
-
-    // Need to transcode. Dedupe concurrent requests.
-    const existing = transcodeInFlight.get(src)
-    if (existing) return existing
-
-    const p = (async () => {
-      // Atomic write: ffmpeg → tmp file → rename into place. Without
-      // this, a killed ffmpeg (app quit mid-transcode, OS reap, etc.)
-      // leaves a partial file at `cached` whose mtime still passes
-      // the freshness check, so the app would keep serving a
-      // truncated 42-second version of a 4-minute song. rename()
-      // guarantees the final path is either complete or absent.
-      // .partial.m4a (not .tmp) so ffmpeg recognizes the mp4 container
-      // format from the extension. Rename on success is still atomic.
-      const tmp = cached + '.partial.flac'
-      try {
-        // FLAC, not AAC (2026-08-06): the cache used to hand Chromium a lossy
-        // 256k mirror of every ALAC file — the single biggest quality ceiling
-        // in the whole playback path. FLAC decodes natively in Chromium and
-        // its decoded PCM is bit-identical to the ALAC source (proved by MD5
-        // of the decoded streams). compression_level 0 encodes ~100x realtime
-        // at ~1.03x the ALAC size, so a cache miss costs about a second.
-        await execP('ffmpeg', [
-          '-y', '-i', src, '-vn',
-          '-c:a', 'flac', '-compression_level', '0',
-          '-map_metadata', '0',
-          tmp,
-        ], { timeout: 300000 })
-        const { rename: renameFS } = await import('fs/promises')
-        await renameFS(tmp, cached)
-        await evictOtherCacheEntries(pathHash, cached)
-        void enforceCacheCap(cached)
-        return cached
-      } catch (err) {
-        // Clean up the partial tmp file so we don't leave garbage.
-        try { await unlink(tmp) } catch { /* already gone */ }
-        throw err
-      } finally {
-        transcodeInFlight.delete(src)
-      }
-    })()
-    transcodeInFlight.set(src, p)
-    return p
-  }
-
-  // Expose a module-visible pre-warm trigger so rip-cd-tracks (and the
-  // library-load path later, if we want) can kick off transcodes for
-  // newly-imported ALAC files before the user clicks play. Best-effort;
-  // failures log and skip.
-  //
-  // CRITICAL: cap concurrency at 4. The original implementation
-  // fire-and-forgot every file in the loop, which on a fresh install
-  // with 800 ALAC tracks meant 800 simultaneous ffmpeg processes. The
-  // box would peg every core, the UI would stutter on scroll, and the
-  // first-play latency we were trying to hide actually got WORSE
-  // because the on-demand transcode for the song the user just hit
-  // play on was queued behind 799 background jobs all fighting for
-  // CPU. Four workers = enough throughput to chew through 800 files
-  // in a few minutes without starving the renderer.
-  prewarmAlacCache = async (paths: string[]) => {
-    const CONCURRENCY = 4
-    // With the 20 GB cap, warming past the cap is pure churn — each new entry
-    // would evict another. Warm until full, then stop and say so.
-    let capReached = false
-    const atCap = async (): Promise<boolean> => {
-      try {
-        const { readdir } = await import('fs/promises')
-        let total = 0
-        for (const n of await readdir(PLAY_CACHE)) {
-          if (!n.endsWith('.m4a') && !n.endsWith('.flac')) continue
-          try { total += (await stat(join(PLAY_CACHE, n))).size } catch { /* raced */ }
-        }
-        return total >= PLAY_CACHE_CAP_BYTES
-      } catch { return false }
-    }
-    let i = 0
-    const worker = async (): Promise<void> => {
-      while (i < paths.length) {
-        if (capReached) return
-        const idx = i++
-        // Re-check the cap every 25 files — cheap, and bounds the overshoot.
-        if (idx % 25 === 0 && await atCap()) {
-          capReached = true
-          console.log(`[play-cache] prewarm stopped at the ${(PLAY_CACHE_CAP_BYTES / 1e9).toFixed(0)} GB cap — hot set is warm, cold tracks transcode on first play`)
-          return
-        }
-        const p = paths[idx]
-        try {
-          const s = await stat(p)
-          await aacCachePath(p, s.mtimeMs, s.size).catch(() => {})
-        } catch { /* file missing — skip */ }
-      }
-    }
-    const workers: Promise<void>[] = []
-    for (let w = 0; w < CONCURRENCY; w++) workers.push(worker())
-    await Promise.all(workers)
-  }
-
-  // Populate the codec cache with a codec we already know (from a rip
-  // we just wrote). Eliminates the ~300ms ffprobe delay that shows up
-  // on a track's first play even for AAC files.
-  registerKnownCodec = (path, mtime, codec) => {
-    codecCache.set(path, { mtime, codec })
-  }
+  // Play cache (6.0 caches seam, 2026-09-02): the lossless transcode cache
+  // is a STATE OBJECT now — src/main/play-cache.ts owns the dir, in-flight
+  // coalescing, the codec probe cache and the 20 GB cap (unit-tested there,
+  // which this closure never was). Serving policy stays in the ipod-audio://
+  // handler below, where the stream-playback-path locks can see it. Local
+  // names are kept so the handler and the maintenance IPCs read as before.
+  const playCache = createPlayCache({ dir: join(app.getPath('userData'), 'play-cache') })
+  await playCache.ensureDir()
+  const PLAY_CACHE = playCache.dir
+  const aacCachePath = playCache.cachePathFor
+  const cacheNameFor = playCache.entryFor
+  prewarmAlacCache = playCache.prewarm
+  registerKnownCodec = playCache.registerKnownCodec
 
   // ── 4.1 Library Maintenance: ALAC cache management ─────────────────
   //

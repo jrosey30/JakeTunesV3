@@ -49,7 +49,17 @@ Cut order (each ~1 brief):
    is a MOVE-ONLY cut.
 3. `download-search.ts` — the iTunes/Deezer search + rescue machinery
    (~800 lines, includes fetchExplicitAlbumMap + resolveExplicitEdition).
-4. `caches.ts` — RE-SCOPED after the P1C4 audit (2026-08-16): the
+4. `play-cache.ts` — DONE 2026-09-02 (was "caches.ts"). The precondition
+   below was met as designed: the play-cache machinery became a STATE
+   OBJECT (`createPlayCache` — dir, in-flight coalescing, codec probe cache,
+   20 GB cap, prewarm; ffprobe/ffmpeg injectable) handed to the
+   ipod-audio:// handler, whose serving policy stayed in index.ts byte-for-
+   byte so the stream-playback-path locks never moved. Local names
+   (`PLAY_CACHE`, `aacCachePath`, `cacheNameFor`) are aliases onto the
+   object, so the handler and the maintenance IPCs read exactly as before.
+   First unit coverage of coalescing / eviction / cap (play-cache.test.ts).
+   index.ts 11,442 → 11,203. ORIGINAL SCOPING NOTE (kept for the record):
+   RE-SCOPED after the P1C4 audit (2026-08-16): the
    play-cache machinery (PLAY_CACHE dir, transcode coalescing map, codec
    cache, prewarm/prune) lives INSIDE the ipod-audio:// protocol
    handler's closure and shares live state with the serving path — the
