@@ -28,7 +28,7 @@ import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resource
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
 import { fitSide, tapeTracks, MAX_TAPE_SONGS } from '../common/tape-physics'
 import { RADIO_CAST } from './cast'
-import { isSkitOrIntro } from './workout-sync.ts'
+import { isSkitOrIntro, isIntroTitled } from './workout-sync.ts'
 // Tombstone primitives are structural ({id, name, deletedAt}) — the same
 // machinery playlists use, pointed at mixtape-tombstones.json, so a tape
 // deleted on either machine stays deleted everywhere (the harvest unions
@@ -261,6 +261,20 @@ async function buildMixtapeProposal(
   if (!Array.isArray(tracks) || tracks.length < 2) {
     return { ok: false, error: 'Pick at least 2 songs for a mixtape.' }
   }
+  // Warehouse-drift gate (2026-09-01, Jake: "no intros should ever be on
+  // a mixtape... usually, no songs less than 1 minute"): the season
+  // picker has refused skits/intros/fragments all along; this AI builder
+  // never did — a 37s Drake "Intro" shipped at slot 23 of Warehouse
+  // Drift Inward. Same shared gate, applied to the INPUTS so the model
+  // never even sees them. Manual tape edits stay ungated — a human
+  // choosing a fragment on purpose is not drift.
+  // Refined mid-review: an INTRO-titled track is legitimate — but only
+  // as the tape's opener. Skits/interludes/fragments stay banned outright;
+  // intro-titled tracks pass this input gate and are position-locked below.
+  tracks = tracks.filter((t) => isIntroTitled(t.title) || !isSkitOrIntro(t))
+  if (tracks.length < 2) {
+    return { ok: false, error: 'After removing skits/fragments there are fewer than 2 real songs.' }
+  }
   if (tracks.length > MAX_INPUT_SONGS) {
     return { ok: false, error: `That's ${tracks.length} songs — narrow it down (${MAX_INPUT_SONGS} max).` }
   }
@@ -271,7 +285,7 @@ async function buildMixtapeProposal(
   ).join('\n')
 
   const user = [
-    `Make a mixtape from these songs. ONE continuous run — no sides, no flip. HARD LIMIT: ${MAX_TAPE_SONGS} songs. Fewer is fine and often better; never more.`,
+    `Make a mixtape from these songs. ONE continuous run — no sides, no flip. HARD LIMIT: ${MAX_TAPE_SONGS} songs. Fewer is fine and often better; never more. An intro-titled track may ONLY be track 1 — anywhere else it will be removed.`,
     '',
     `Songs (id | title | artist | album | genre | bpm | length):`,
     list,
@@ -321,6 +335,8 @@ async function buildMixtapeProposal(
 
   // Fallback: keep the given order, take the first MAX_TAPE_SONGS.
   if (!seq || seq.length < 2) seq = cleanSequence(tracks.map((t) => t.id), byId)
+  // Position lock: an intro-titled track may ONLY open the tape.
+  seq = seq.filter((id, i) => i === 0 || !isIntroTitled(byId.get(id)?.title))
   if (!title) title = `Mixtape · ${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })}`
   if (!commentary) commentary = 'Dubbed with love. Play loud, rewind with a pencil.'
 

@@ -92,6 +92,14 @@ const SHORT_OK_GENRE = /punk|hardcore|grind|powerviolence|thrash|crust|ska|garag
 const SHORT_MS = 75_000   // under this, a non-punk track needs evidence
 const MICRO_MS = 35_000   // under this, only punk-family survives
 
+/** Strictly INTRO-titled (not skit/interlude/outro). Mixtapes may seat
+ *  one of these ONLY as track 1 (Jake 2026-09-01: "intros should only be
+ *  the first track of a mixtape... if they arent the first track...they
+ *  arent on it"). */
+export function isIntroTitled(title: string | undefined): boolean {
+  return /\bintro\b/i.test(title || '')
+}
+
 export function isSkitOrIntro(t: WorkoutTrack): boolean {
   if (SKIT_TITLE.test(t.title || '')) return true
   const dur = Number(t.duration) || 0
