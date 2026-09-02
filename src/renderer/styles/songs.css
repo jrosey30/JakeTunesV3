@@ -22,9 +22,9 @@
   height: 19px;
   /* V5 facelift: iTunes-10 defined header — subtle sheen + inner bottom
    * catch-light, matching the Genres browser's column headers. */
-  background: linear-gradient(180deg, #e4e4e4, #d4d4d4);
-  border-bottom: 1px solid var(--border-subtle);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.4);
+  background: linear-gradient(180deg, #efefef, #e1e1e1);   /* 2011: flatter, lighter header */
+  border-bottom: 1px solid #b4b4b4;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.5);
   font-size: var(--font-label);
   font-weight: 700;
   color: #3a3a3a;
@@ -44,7 +44,7 @@
   display: flex;
   align-items: center;
   padding: 0 6px;
-  border-right: 1px solid #a8a8a8;
+  border-right: 1px solid #c4c4c4;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

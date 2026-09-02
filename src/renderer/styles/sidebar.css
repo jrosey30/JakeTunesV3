@@ -79,11 +79,10 @@
 .sidebar-item--selected {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
   color: #fff;
-  /* iTunes 8 selection pill carries a subtle inner top-edge highlight
-     and a 1px deeper-blue border, giving it a slightly lifted feel. */
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+  /* 2011: Lion's flat blue-grey band — one faint top edge, no lift. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+  font-weight: 700;
 }
 
 .sidebar-item--selected:hover {

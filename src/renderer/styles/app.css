@@ -455,15 +455,15 @@
    * window reads as one piece of brushed gray rather than two stacked
    * gradients meeting at a seam. V5 facelift: iTunes-10 brushed metal —
    * top catch-light sheen + fine banding over the same warm-silver base. */
+  /* 2011 facelift (Jake 9/2: "2011 level"): iTunes 10.5's unified
+   * titlebar — smooth silver with one soft catch-light, no brushed
+   * banding. The banding was the 2006 tell. */
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0) 45%),
-    repeating-linear-gradient(180deg,
-      rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
-      rgba(0, 0, 0, 0.035) 1px, rgba(0, 0, 0, 0.035) 2px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0) 55%),
     linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
 }
 
 /* Back/forward history controls, pinned left of the centered title. The
@@ -503,11 +503,7 @@
   padding: 0 12px;
   /* V5 facelift: same brushed banding as the titlebar (no catch-light —
    * the sheen lives at the window's top edge only). */
-  background:
-    repeating-linear-gradient(180deg,
-      rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
-      rgba(0, 0, 0, 0.035) 1px, rgba(0, 0, 0, 0.035) 2px),
-    linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
+  background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom));
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -574,8 +570,8 @@
   align-items: center;
   justify-content: center;
   padding: 0 12px;
-  background: #d4d4d4;
-  border-top: 1px solid #888;
+  background: linear-gradient(180deg, #e2e2e2, #d6d6d6);   /* 2011: lighter, flat-ish */
+  border-top: 1px solid #a6a6a6;
   font-size: var(--font-label);
   color: #3a3a3a;
 }

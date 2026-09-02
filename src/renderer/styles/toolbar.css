@@ -124,17 +124,20 @@
   /* V5 facelift: iTunes-10 LCD glass — same two pill hexes, but the light
    * tone holds through the upper third before falling off, so the face
    * reads "lit screen" instead of an even wash. */
-  background: linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
-  /* B+C hybrid: near-square bezel ("more square"), corners eased a
-   * touch on Jake's follow-up ("slightly round... very slightly"). */
-  border-radius: 6px;
-  border: 1px solid var(--pill-border);
-  /* Backlight ON: a soft luminous wash from inside the glass, layered
-   * under the original depth insets. */
+  /* 2011 facelift, Jake 9/2: keep the yellow LCD but "make it look even
+   * more like an ipod mini screen". The Mini's display: a rectangular
+   * LCD with a faint pixel grid, set into a dark bezel. Grid = two
+   * hairline repeats over the same two pill hexes. */
+  background:
+    repeating-linear-gradient(0deg, rgba(60, 56, 30, 0.045) 0px, rgba(60, 56, 30, 0.045) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(90deg, rgba(60, 56, 30, 0.035) 0px, rgba(60, 56, 30, 0.035) 1px, transparent 1px, transparent 3px),
+    linear-gradient(180deg, var(--pill-top) 0%, var(--pill-top) 35%, var(--pill-bottom) 100%);
+  border-radius: 4px;
+  border: 1px solid #4a4634;                 /* the Mini's dark screen bezel */
   box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.30), /* inner glass rim */
     inset 0 0 24px rgba(246, 244, 198, 0.5),
     inset 0 1px 2px rgba(0,0,0,0.18),
-    inset 0 1px 0 rgba(255,255,255,0.35),
     0 1px 0 rgba(255,255,255,0.5);
   /* 4.4.43: symmetric 22px padding now that the right-side mini
    * visualizer is gone (removed in 4.4.41). Before this fix the pill
@@ -156,9 +159,9 @@
 .now-playing-pill--backlit {
   filter: brightness(1.11) saturate(1.06);
   box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
     inset 0 0 30px rgba(252, 254, 214, 0.85),
     inset 0 1px 2px rgba(0,0,0,0.15),
-    inset 0 1px 0 rgba(255,255,255,0.4),
     0 0 10px rgba(235, 240, 175, 0.55),
     0 1px 0 rgba(255,255,255,0.5);
 }
@@ -654,22 +657,27 @@
 .scrubber-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 7px;
+  margin-top: 3px;
 }
 
+/* iPod mini Now Playing: the counters are bold LCD ink, a size up from
+ * the old 9.25px timestamp, and they HUG the bar — elapsed right-aligned
+ * against its left end, remaining left-aligned against its right end
+ * (Jake 9/2: "a tad bigger and less offset"). min-width still grows
+ * for H:MM:SS on hour-long tapes; nowrap + no-shrink keep it honest. */
 .scrubber-time {
-  font-size: var(--font-timestamp);
-  color: #6a6550;
-  /* 8ch fits -H:MM:SS (-0:28:19). 28px was M:SS-only; flex-shrink let
-     1:03:37 collapse against -28:19 on hour-long mixes. 8ch is ~8× the
-     width of a zero in --font-timestamp (9.25px). */
-  min-width: 8ch;
-  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #2f2c1a;
+  min-width: 4ch;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
+  letter-spacing: 0.2px;
 }
+.scrubber-row .scrubber-time:last-child { text-align: left; }
 
 /* 4.5: scrubber refinement — recessed groove track + warmer-tinted
  * fill + round chrome knob (replaces the diamond). Subtle gloss on
@@ -677,16 +685,15 @@
  * basic HTML slider. */
 .scrubber-track {
   flex: 1;
-  /* V5 facelift: 5px → 4px — iTunes 10's thinner groove. */
-  height: 4px;
-  background: rgba(0,0,0,0.10);
-  border-radius: 3px;
+  /* iPod mini progress bar: a hollow rectangle drawn in LCD ink, filled
+   * solid from the left. No groove, no gloss. */
+  height: 9px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid #3a3620;
+  border-radius: 2px;
   position: relative;
   cursor: pointer;
-  /* Deeper inset shadow + light bottom rim gives the groove real depth. */
-  box-shadow:
-    inset 0 1px 2px rgba(0,0,0,0.25),
-    inset 0 -0.5px 0 rgba(255,255,255,0.35);
+  box-sizing: border-box;
 }
 
 .scrubber-fill {
@@ -694,45 +701,31 @@
   left: 0;
   top: 0;
   height: 100%;
-  /* Warm bronze gradient (matches the pill's amber palette). Top
-   * highlight + darker bottom gives the fill subtle dimension instead
-   * of looking flat-painted. */
-  background: linear-gradient(180deg, #a8966c 0%, #8a7848 55%, #6f5d36 100%);
-  border-radius: 3px;
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.25),
-    inset 0 -1px 0 rgba(0,0,0,0.15);
+  /* Solid LCD ink — the Mini painted pixels, not gradients. */
+  background: #3a3620;
+  border-radius: 1px;
+  box-shadow: none;
 }
 
 /* Glossy round chrome knob — replaces the rotated-square diamond
  * with something that reads as a tactile bead. Radial gradient for
  * the cap highlight, dark outer ring for definition, soft drop
  * shadow for lift off the track. */
+.scrubber-track:hover .scrubber-knob, .scrubber-track:active .scrubber-knob { opacity: 1; }
 .scrubber-knob {
   position: absolute;
   top: 50%;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  /* 4.5: off-white bead — matches the search-pill + the app's --white
-   * baseline. Subtle radial highlight keeps the 3D gloss without the
-   * prior cream-bronze tint that fought the new orange pill. */
-  background:
-    radial-gradient(circle at 35% 30%, #ffffff 0%, var(--white) 45%, #ede9e0 100%);
-  border: 1px solid #8a8270;
+  /* The Mini had no knob on its bar; ours appears only under the cursor,
+   * as a small LCD-ink square (scrub mode), so the resting screen reads
+   * like the device. Drag logic is untouched — this is paint only. */
+  width: 7px;
+  height: 13px;
+  border-radius: 1px;
+  background: #3a3620;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease;
   transform: translate(-50%, -50%);
-  box-shadow:
-    0 1px 2px rgba(0,0,0,0.3),
-    0 0 0 0.5px rgba(255,255,255,0.5) inset;
-  transition: transform 80ms ease-out, box-shadow 80ms ease-out;
-}
-
-.scrubber-track:hover .scrubber-knob {
-  transform: translate(-50%, -50%) scale(1.12);
-  box-shadow:
-    0 2px 4px rgba(0,0,0,0.4),
-    0 0 0 0.5px rgba(255,255,255,0.5) inset,
-    0 0 0 2px rgba(var(--brand-orange-rgb), 0.18);
 }
 
 @media (prefers-reduced-motion: reduce) {
