@@ -1746,8 +1746,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       </div>
       <div className="volume-group">
       <VolumeSlider />
+      </div>
       {/* 2011 facelift (Jake 9/2): the Visualizer lives in View → Visualizer
-          (⌘T) like it did in iTunes; the toolbar button is gone. */}
+          (⌘T); the three panel buttons — AirPlay, the Music Man, Up Next —
+          sit as ONE evenly-spaced group behind a hairline, so the right
+          end of the toolbar reads as three things, not a pile. */}
+      <div className="toolbar-panels">
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
           className={`transport-toggle airplay-btn ${isExternalOutput ? 'airplay-btn--active' : ''}`}
@@ -1808,7 +1812,6 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           </div>
         )}
       </div>
-      </div>
       <button
         className={`transport-toggle queue-toggle ${showMusicMan ? 'queue-toggle--active' : ''}`}
         onClick={onToggleMusicMan}
@@ -1831,6 +1834,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       >
         <QueueIcon />
       </button>
+      </div>
       <SearchPill />
     </div>
   )

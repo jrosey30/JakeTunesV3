@@ -1271,6 +1271,19 @@
 }
 
 /* AirPlay / Audio Output */
+/* The three panel buttons, one group: even 8px gaps, a hairline on the
+ * left to separate them from the volume slider, and the same 28px box +
+ * 24px glyph for all three (AirPlay / Music Man / Up Next). */
+.toolbar-panels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  margin-left: 2px;
+  border-left: 1px solid rgba(0, 0, 0, 0.16);
+  box-shadow: -1px 0 0 rgba(255, 255, 255, 0.55);
+  flex-shrink: 0;
+}
 .airplay-wrapper {
   position: relative;
   flex-shrink: 0;
