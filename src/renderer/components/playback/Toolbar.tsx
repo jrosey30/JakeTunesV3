@@ -112,7 +112,7 @@ const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
 }
 
 export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggleMusicMan, showMusicMan }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean; onToggleMusicMan: () => void; showMusicMan: boolean }) {
-  const { state: pb } = usePlayback()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { state: lib } = useLibrary()
   const { setVolume, playTrack, stopPlayback } = useAudio()
   const [autoDj, setAutoDj] = useState(false)
@@ -1826,10 +1826,26 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}
-        title="Up Next"
+        title="Up Next — drop songs here to play them next"
         onDragOver={(e) => {
           e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
           if (!showQueue) onOpenQueue()
+        }}
+        onDrop={(e) => {
+          // Queue honesty (2026-09-02): a drop on THIS button used to be
+          // silently refused — the panel opened and the songs went nowhere.
+          // Now it means "play next", and it says so.
+          const raw = e.dataTransfer.getData('application/jaketunes-tracks')
+          if (!raw) return
+          e.preventDefault()
+          try {
+            const ids: number[] = JSON.parse(raw)
+            const tracks = ids.map((id) => lib.tracks.find((t) => t.id === id)).filter((t): t is NonNullable<typeof t> => !!t)
+            if (tracks.length === 0) return
+            pbDispatch({ type: 'PLAY_NEXT', tracks })
+            setNotice(tracks.length === 1 ? `Playing next: ${tracks[0].title}` : `Playing next: ${tracks.length} songs`, { kind: 'success' })
+          } catch { /* not ours */ }
         }}
       >
         <QueueIcon />

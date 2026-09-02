@@ -1,4 +1,5 @@
 import { albumAdjacent } from '../../common/album-adjacent'
+import { resolveSeamAdvance } from '../queue-seam'
 import { useRef, useEffect, useCallback } from 'react'
 import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
@@ -693,11 +694,14 @@ export function useAudio(opts?: { primary?: boolean }) {
             sharedRaf,
             isPaused,
           })
+          // Queue honesty (2026-09-02): the snapshot taken at crossfade
+          // start is NOT installed — the live queue stays, the track is
+          // located by id (pendingIdx is only a hint for duplicates).
           dispatchRef.current({
             type: 'PLAY_TRACK',
             track: pendingTrack,
-            queue: pendingQueue,
             queueIndex: pendingIdx,
+            locateInQueue: true,
             duration: crossfadeDur,
             position: crossfadePos,
           })
@@ -1410,7 +1414,11 @@ export function useAudio(opts?: { primary?: boolean }) {
       // because s.queueIndex read 12 while the reducer state was 13.
       // s.repeat / s.queue / s.isPlaying are NOT staleness-sensitive
       // in the same way and continue to read from stateRef.
-      const currentQueueIndex = freshQueueIndex ?? s.queueIndex
+      // Queue honesty (2026-09-02): the pinned index is a HINT. Find the
+      // track that just ended by id in the live queue, so an add / remove
+      // / reorder made after the next track was primed still lands.
+      const seam = resolveSeamAdvance(s.queue, track.id, freshQueueIndex ?? s.queueIndex, s.repeat)
+      const currentQueueIndex = seam.currentIndex >= 0 ? seam.currentIndex : (freshQueueIndex ?? s.queueIndex)
       // Brief 015: snapshot every state value the natural-end decision
       // reads, plus a couple of queue spot-checks (first/last titles)
       // to verify the queue is what we think it is.
@@ -1446,7 +1454,10 @@ export function useAudio(opts?: { primary?: boolean }) {
       }
       // Shuffle is queue-order-baked, not per-track-random — see
       // TOGGLE_SHUFFLE in PlaybackContext. Always sequential here.
-      let nextIdx = currentQueueIndex + 1
+      // Live-queue advance (queue-seam.ts): +1 from the located index; a
+      // track removed mid-play continues from its old slot.
+      let nextIdx = seam.currentIndex >= 0 ? currentQueueIndex + 1 : seam.nextIndex
+      if (nextIdx < 0) nextIdx = s.queue.length   // removed-mid-play at the end → exhausted branch below
       if (nextIdx >= s.queue.length) {
         if (DIAGNOSTIC_LOGGING) {
           logAudioEvent('dx.repeat.branch.queue-exhausted', {
@@ -1526,7 +1537,9 @@ export function useAudio(opts?: { primary?: boolean }) {
       ) {
         const next = gaplessNextHowl
         const nt = gaplessNextTrack
-        const nq = gaplessNextQueue || s.queue
+        // Queue honesty (2026-09-02): gaplessNextQueue (the ≤10 s prime
+        // snapshot) is NOT installed any more — the live queue stays and
+        // the reducer locates the promoted track by id. `ni` is a hint.
         const ni = gaplessNextIdx >= 0 ? gaplessNextIdx : nextIdx
         const wasPrewarmed = gaplessNextPrewarmed
         // Detach gapless state — we're handing off
@@ -1614,7 +1627,7 @@ export function useAudio(opts?: { primary?: boolean }) {
             sharedRaf,
             isPaused,
           })
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: playedSec })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queueIndex: ni, locateInQueue: true, duration: nextDur, position: playedSec })
           if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'sample-accurate-promote', nextIdx, ts: Date.now() })
           return
         }
@@ -1645,7 +1658,7 @@ export function useAudio(opts?: { primary?: boolean }) {
             isPaused,
             sharedHowl_playing: next.playing(),
           })
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: next.duration(), position: 0 })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queueIndex: ni, locateInQueue: true, duration: next.duration(), position: 0 })
           // Brief 012d: previous code was `if (!sharedRaf) sharedRaf = ...`
           // which silently failed because sharedRaf still holds the prior
           // track's pending handle. That pending tick fires once on the new
@@ -1695,7 +1708,7 @@ export function useAudio(opts?: { primary?: boolean }) {
             sharedRaf,
             isPaused,
           })
-          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queue: nq, queueIndex: ni, duration: nextDur, position: 0 })
+          dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queueIndex: ni, locateInQueue: true, duration: nextDur, position: 0 })
         }
         if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'gapless-promote', nextIdx, ts: Date.now() })
         return
@@ -1709,7 +1722,7 @@ export function useAudio(opts?: { primary?: boolean }) {
         sharedRaf,
         isPaused,
       })
-      dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queue: s.queue, queueIndex: nextIdx, duration: (nextTrack.duration || 0) / 1000 })
+      dispatchRef.current({ type: 'PLAY_TRACK', track: nextTrack, queueIndex: nextIdx, locateInQueue: true, duration: (nextTrack.duration || 0) / 1000 })
       loadAndPlay(nextTrack, s.queue, nextIdx)
       if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'standard-advance', nextIdx, ts: Date.now() })
     }
@@ -1839,7 +1852,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           sharedRaf,
           isPaused,
         })
-        dispatchRef.current({ type: 'PLAY_TRACK', track, queue: s.queue, queueIndex: prevIdx, skipHistory: true, duration: (track.duration || 0) / 1000 })
+        dispatchRef.current({ type: 'PLAY_TRACK', track, queueIndex: prevIdx, locateInQueue: true, skipHistory: true, duration: (track.duration || 0) / 1000 })
         loadAndPlay(track, s.queue, prevIdx)
       }
       return
