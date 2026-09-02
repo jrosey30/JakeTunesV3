@@ -85,10 +85,10 @@ Grades: **KEEP** · **MOVE** · **MERGE** · **DEMOTE** · **PROMOTE** · **VERI
 - **KEEP shelved** until you ask. The route works; the sidebar row is a one-line restore.
 
 ### A3. If you approve everything marked MOVE/MERGE, the work is:
-1. Download count badge — 30 min.
-2. Beck v. Prupis → LIBRARY tail (or ARCHIVE) — 15 min.
-3. Shows band merge on Home — 1–2 hr.
-4. Download → Record Shop counter — half a day, and only if you want it.
+1. Download count badge — DONE 9/2 (ef989ee): live count of jobs in flight on the sidebar row.
+2. Beck v. Prupis → ARCHIVE — DONE 9/2 (ef989ee): its own one-row section under STORE.
+3. Shows band merge on Home — DONE 9/2 (ef989ee): one "Shows" band, three sub-headed rows.
+4. Download → Record Shop counter — half a day, and only if you want it. (Not asked for; open.)
 
 ---
 
