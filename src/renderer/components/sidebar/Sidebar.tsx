@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from '
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { useLibrary } from '../../context/LibraryContext'
+import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
@@ -272,6 +273,12 @@ export default function Sidebar() {
   // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
   // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
   const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  // Placement audit 9/2 — "Download" carries a live count of jobs in flight
+  // (downloading + queued), the way iPod Pool does, so downloads are visible
+  // from anywhere without opening the page. `getQueue` returns the same array
+  // reference until the queue changes, which is what useSyncExternalStore wants.
+  const downloadQueue = useSyncExternalStore(subscribeQueue, getQueue)
+  const downloadsInFlight = downloadQueue.filter((q) => q.status === 'downloading' || q.status === 'queued').length
   useEffect(() => { void refreshPool() }, [])
 
   useEffect(() => {
@@ -455,6 +462,7 @@ export default function Sidebar() {
             )}
             selected={state.currentView === 'download'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
+            badge={downloadsInFlight > 0 ? downloadsInFlight.toLocaleString() : undefined}
           />
           {/* DJ booth — nav entry HIDDEN 2026-08-04 at Jake's request ("it needs to
               be on the shelf for a little bit"). The feature is intact and the 'dj'
@@ -475,18 +483,6 @@ export default function Sidebar() {
               onClick={() => dispatch({ type: 'SET_VIEW', view: 'dj' })}
               />
           */}
-          <SidebarItem
-            label="Beck v. Prupis"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 6 8 2.3 14 6" />
-                <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
-                <path d="M1.4 13h13.2" />
-              </svg>
-            )}
-            selected={state.currentView === 'scotus'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
-          />
           {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
               release (shipping listen-to-the-list only; Phase-2 store held).
               Re-add this SidebarItem when RECORD_STORE_ENABLED flips back on:
@@ -502,6 +498,23 @@ export default function Sidebar() {
                 selected={state.currentView === 'recordstore'}
                 onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
               /> */}
+        </SidebarSection>
+
+        {/* Placement audit 9/2 — Beck v. Prupis is a private archive (never a
+            track, never public), not a store. Its own one-row section says so. */}
+        <SidebarSection title="ARCHIVE">
+          <SidebarItem
+            label="Beck v. Prupis"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 6 8 2.3 14 6" />
+                <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
+                <path d="M1.4 13h13.2" />
+              </svg>
+            )}
+            selected={state.currentView === 'scotus'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
+          />
         </SidebarSection>
 
         {(ipodMounted || cdMounted) && (

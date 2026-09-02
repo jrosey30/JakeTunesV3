@@ -1177,130 +1177,141 @@ export default function HomeView() {
         </section>
       )}
 
-      {/* ── 4.4.32: Tour Dates (Bandsintown, 100% library-personalized) ──── */}
-      {tourDates !== null && tourDates.length > 0 && (
-        <section className="home-section">
+      {/* ── Placement audit 9/2: Live Near You + At Your Venues + On the Horizon
+            were three headed bands for one idea — the longest stretch of the
+            page. Now one "Shows" band with three rows. Each row keeps its own
+            data, cap, and ref; only the chrome merged. ─────────────────── */}
+      {((tourDates !== null && tourDates.length > 0) || (venueShows !== null && venueShows.length > 0) || (upcoming !== null && upcoming.length > 0)) && (
+        <section className="home-section home-section--shows">
           <div className="home-section-header">
-            <h2 className="home-section-title">Live Near You</h2>
-            <span className="home-section-source">via Bandsintown</span>
+            <h2 className="home-section-title">Shows</h2>
           </div>
-          <div className="home-card-row" role="list" ref={tourDatesRowRef}>
-            {tourRuns.slice(0, 20).map(({ ev, nights, lastDate }, i) => {
-              const d = new Date(ev.date)
-              const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : ''
-              return (
+        {/* ── 4.4.32: Tour Dates (Bandsintown, 100% library-personalized) ──── */}
+        {tourDates !== null && tourDates.length > 0 && (
+          <div className="home-shows-group">
+            <div className="home-section-subhead">
+              <h3 className="home-section-subtitle">Live Near You</h3>
+              <span className="home-section-source">via Bandsintown</span>
+            </div>
+            <div className="home-card-row" role="list" ref={tourDatesRowRef}>
+              {tourRuns.slice(0, 20).map(({ ev, nights, lastDate }, i) => {
+                const d = new Date(ev.date)
+                const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : ''
+                return (
+                  <div
+                    key={`${ev.url}-${i}`}
+                    className="home-tour-card"
+                    role="listitem"
+                    tabIndex={0}
+                    onClick={() => ev.url && openLink(ev.url)}
+                    onKeyDown={activateOnKey(() => { if (ev.url) openLink(ev.url) })}
+                    title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${nights > 1 && lastDate
+                      ? `${nights} nights: ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ${new Date(lastDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
+                      : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
+                  >
+                    <div className="home-tour-date">
+                      <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
+                      <div className={`home-tour-date-day${nights > 1 ? ' home-tour-date-day--range' : ''}`}>
+                        {d.getDate()}{nights > 1 && lastDate ? `–${new Date(lastDate).getDate()}` : ''}
+                      </div>
+                      {nights > 1 && <div className="home-tour-date-nights">{nights} nights</div>}
+                    </div>
+                    <div className="home-tour-info">
+                      <div className="home-tour-artist">{ev.artist}</div>
+                      <div className="home-tour-venue">{ev.venue}</div>
+                      <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── 2026-08-08: At Your Venues — the rooms Jake actually goes to,
+              regardless of whether the artist is in his library. Library
+              artists carry a mark so the "don't miss this" signal survives
+              inside the discovery lane. ──────────────────────────────────── */}
+        {venueShows !== null && venueShows.length > 0 && (
+          <div className="home-shows-group">
+            <div className="home-section-subhead">
+              <h3 className="home-section-subtitle">At Your Venues</h3>
+              <span className="home-section-source">Brooklyn rooms</span>
+            </div>
+            <div className="home-card-row" role="list" ref={venueRowRef}>
+              {venueShows.slice(0, 40).map((s, i) => {
+                const d = new Date(s.date)
+                return (
+                  <div
+                    key={`${s.venueKey}-${s.date}-${i}`}
+                    className={`home-tour-card${s.known ? ' home-tour-card--known' : ''}`}
+                    role="listitem"
+                    tabIndex={0}
+                    onClick={() => s.url && openLink(s.url)}
+                    onKeyDown={activateOnKey(() => { if (s.url) openLink(s.url) })}
+                    title={`${s.artist} — ${s.venue}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${s.known ? '\nIn your library' : ''}`}
+                  >
+                    <div className="home-tour-date">
+                      <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
+                      <div className="home-tour-date-day">{d.getDate()}</div>
+                    </div>
+                    <div className="home-tour-info">
+                      <div className="home-tour-artist">
+                        {s.artist}
+                        {s.known && <span className="home-venue-known" title="In your library"> ★</span>}
+                      </div>
+                      <div className="home-tour-venue">{s.venue}</div>
+                      <div className="home-tour-city">{s.city}</div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── 4.4.34: Upcoming Releases (MusicBrainz, library-personalized) ── */}
+        {upcoming !== null && upcoming.length > 0 && (
+          <div className="home-shows-group">
+            <div className="home-section-subhead">
+              <h3 className="home-section-subtitle">On the Horizon</h3>
+              <span className="home-section-source">via MusicBrainz</span>
+            </div>
+            <div className="home-card-row" role="list" ref={upcomingRowRef}>
+              {upcoming.map((item, i) => (
                 <div
-                  key={`${ev.url}-${i}`}
-                  className="home-tour-card"
+                  key={`${item.mbid}-${i}`}
+                  className="home-upcoming-card"
                   role="listitem"
                   tabIndex={0}
-                  onClick={() => ev.url && openLink(ev.url)}
-                  onKeyDown={activateOnKey(() => { if (ev.url) openLink(ev.url) })}
-                  title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${nights > 1 && lastDate
-                    ? `${nights} nights: ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ${new Date(lastDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
-                    : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
+                  onClick={() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`)}
+                  onKeyDown={activateOnKey(() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`))}
+                  title={`${item.title} — ${item.artist}\nReleases ${formatUpcomingDate(item.releaseDate)}\nOpen on MusicBrainz`}
                 >
-                  <div className="home-tour-date">
-                    <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
-                    <div className={`home-tour-date-day${nights > 1 ? ' home-tour-date-day--range' : ''}`}>
-                      {d.getDate()}{nights > 1 && lastDate ? `–${new Date(lastDate).getDate()}` : ''}
+                  <div className="home-upcoming-art">
+                    <img
+                      src={item.coverUrl}
+                      alt={item.title}
+                      draggable={false}
+                      onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                    />
+                    <div className="home-upcoming-art-fallback" aria-hidden="true">
+                      {item.title.charAt(0).toUpperCase() || '?'}
                     </div>
-                    {nights > 1 && <div className="home-tour-date-nights">{nights} nights</div>}
-                  </div>
-                  <div className="home-tour-info">
-                    <div className="home-tour-artist">{ev.artist}</div>
-                    <div className="home-tour-venue">{ev.venue}</div>
-                    <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* ── 2026-08-08: At Your Venues — the rooms Jake actually goes to,
-            regardless of whether the artist is in his library. Library
-            artists carry a mark so the "don't miss this" signal survives
-            inside the discovery lane. ──────────────────────────────────── */}
-      {venueShows !== null && venueShows.length > 0 && (
-        <section className="home-section">
-          <div className="home-section-header">
-            <h2 className="home-section-title">At Your Venues</h2>
-            <span className="home-section-source">Brooklyn rooms</span>
-          </div>
-          <div className="home-card-row" role="list" ref={venueRowRef}>
-            {venueShows.slice(0, 40).map((s, i) => {
-              const d = new Date(s.date)
-              return (
-                <div
-                  key={`${s.venueKey}-${s.date}-${i}`}
-                  className={`home-tour-card${s.known ? ' home-tour-card--known' : ''}`}
-                  role="listitem"
-                  tabIndex={0}
-                  onClick={() => s.url && openLink(s.url)}
-                  onKeyDown={activateOnKey(() => { if (s.url) openLink(s.url) })}
-                  title={`${s.artist} — ${s.venue}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${s.known ? '\nIn your library' : ''}`}
-                >
-                  <div className="home-tour-date">
-                    <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
-                    <div className="home-tour-date-day">{d.getDate()}</div>
-                  </div>
-                  <div className="home-tour-info">
-                    <div className="home-tour-artist">
-                      {s.artist}
-                      {s.known && <span className="home-venue-known" title="In your library"> ★</span>}
+                    <div className="home-upcoming-date-badge">
+                      {formatUpcomingDate(item.releaseDate)}
                     </div>
-                    <div className="home-tour-venue">{s.venue}</div>
-                    <div className="home-tour-city">{s.city}</div>
+                  </div>
+                  <div className="home-album-info">
+                    <div className="home-album-title">{item.title}</div>
+                    <div className="home-album-artist">{item.artist}</div>
                   </div>
                 </div>
-              )
-            })}
+              ))}
+            </div>
           </div>
-        </section>
-      )}
-
-      {/* ── 4.4.34: Upcoming Releases (MusicBrainz, library-personalized) ── */}
-      {upcoming !== null && upcoming.length > 0 && (
-        <section className="home-section">
-          <div className="home-section-header">
-            <h2 className="home-section-title">On the Horizon</h2>
-            <span className="home-section-source">via MusicBrainz</span>
-          </div>
-          <div className="home-card-row" role="list" ref={upcomingRowRef}>
-            {upcoming.map((item, i) => (
-              <div
-                key={`${item.mbid}-${i}`}
-                className="home-upcoming-card"
-                role="listitem"
-                tabIndex={0}
-                onClick={() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`)}
-                onKeyDown={activateOnKey(() => openLink(`https://musicbrainz.org/release-group/${item.mbid}`))}
-                title={`${item.title} — ${item.artist}\nReleases ${formatUpcomingDate(item.releaseDate)}\nOpen on MusicBrainz`}
-              >
-                <div className="home-upcoming-art">
-                  <img
-                    src={item.coverUrl}
-                    alt={item.title}
-                    draggable={false}
-                    onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                  />
-                  <div className="home-upcoming-art-fallback" aria-hidden="true">
-                    {item.title.charAt(0).toUpperCase() || '?'}
-                  </div>
-                  <div className="home-upcoming-date-badge">
-                    {formatUpcomingDate(item.releaseDate)}
-                  </div>
-                </div>
-                <div className="home-album-info">
-                  <div className="home-album-title">{item.title}</div>
-                  <div className="home-album-artist">{item.artist}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+        )}
         </section>
       )}
 

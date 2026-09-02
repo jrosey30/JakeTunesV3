@@ -550,6 +550,27 @@
   color: var(--text-secondary, #8a8275);
 }
 
+/* Placement audit 9/2 — a merged band's rows each get a quiet sub-heading
+   (title + source) instead of a full section header with its own rule. */
+.home-section-subhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 28px;
+  padding: 10px 0 6px 0;
+}
+.home-shows-group + .home-shows-group .home-section-subhead {
+  padding-top: 18px;
+}
+.home-section-subtitle {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary, #2b2823);
+  letter-spacing: 0.01em;
+}
+
 .home-section-more {
   background: none;
   border: 0;
