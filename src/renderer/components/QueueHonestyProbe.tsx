@@ -62,11 +62,22 @@ export default function QueueHonestyProbe() {
 
     if (trackChanged && nowId != null) {
       const promised = prev.ids[prev.idx + 1] ?? null
-      const honest = promised == null ? null : promised === nowId
-      const cause = honest === false
-        ? (editsSinceSeam.current.some((e) => e.includes('window≤10s')) ? 'snapshot-erased-late-edit'
-          : editsSinceSeam.current.length ? 'edit-lost-other' : 'no-edit-seen')
-        : 'ok'
+      // A promise only exists for a NATURAL advance: the index steps to
+      // idx+1 (or wraps to 0 from the tail under repeat-all). Anything else —
+      // Previous, a row click that locates in the queue, a fresh queue from a
+      // double-click (index lands at 0, ids rebuilt) — is the user's own jump
+      // and says nothing about honesty. 9/2: all 11 "dishonest" rows in the
+      // first afternoon were these jumps; the 25 real seams were honest.
+      const wrapped = prev.idx === prev.ids.length - 1 && state.queueIndex === 0 && state.repeat === 'all'
+      const advanced = state.queueIndex === prev.idx + 1 || wrapped
+      const userJump = !advanced || queueChanged
+      const honest = userJump || promised == null ? null : promised === nowId
+      const cause = userJump
+        ? (queueChanged ? 'user-jump:new-queue' : 'user-jump')
+        : honest === false
+          ? (editsSinceSeam.current.some((e) => e.includes('window≤10s')) ? 'snapshot-erased-late-edit'
+            : editsSinceSeam.current.length ? 'edit-lost-other' : 'no-edit-seen')
+          : 'ok'
       window.electronAPI.dxRecord?.('queue.seam', {
         from: prev.nowId, promisedNext: promised, actual: nowId, honest, cause,
         editsSinceLastSeam: editsSinceSeam.current.slice(-6),
