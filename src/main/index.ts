@@ -2859,6 +2859,9 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       { label: 'Genres', click: () => sendMenuAction('view-genres') },
       { type: 'separator' },
       { label: 'The Music Man', accelerator: 'Shift+CmdOrCtrl+M', click: () => sendMenuAction('toggle-music-man') },
+      // ⌘T is handled in the renderer (Visualizer.tsx keydown) — show the
+      // shortcut here without registering it, or one press toggles twice.
+      { label: 'Visualizer', accelerator: 'CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenuAction('toggle-visualizer') },
       { type: 'separator' },
       { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', role: 'toggleDevTools' }
     ]

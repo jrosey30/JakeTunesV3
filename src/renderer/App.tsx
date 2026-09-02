@@ -1350,6 +1350,7 @@ function AppInner() {
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
+        case 'toggle-visualizer': window.dispatchEvent(new CustomEvent('toggle-visualizer')); break
         case 'toggle-music-man': {
           if (showMusicMan) musicManRef.current?.requestClose()
           else { if (showQueue) queueRef.current?.requestClose(); setShowMusicMan(true) }

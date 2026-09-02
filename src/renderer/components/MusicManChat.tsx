@@ -62,15 +62,24 @@ export default function MusicManChat({ variant, contextLine }: Props) {
   const [speakingIdx, setSpeakingIdx] = useState(-1)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Scroll the MESSAGE LIST to its end — never scrollIntoView. That call
+  // scrolls every scrollable ancestor too, and in the drawer that meant the
+  // whole library shifted under a panel still sliding in (Jake 9/2: "the
+  // library like jiggles before eventually settling").
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = listRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  // The drawer opens to type — focus the box on mount.
+  // The drawer opens to type — focus the box once the slide has settled,
+  // and without letting the browser scroll anything to reveal it.
   useEffect(() => {
-    if (variant === 'drawer') inputRef.current?.focus()
+    if (variant !== 'drawer') return
+    const t = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 240)
+    return () => window.clearTimeout(t)
   }, [variant])
 
   // Stop any in-flight TTS when the surface unmounts (navigating away,
@@ -254,7 +263,7 @@ export default function MusicManChat({ variant, contextLine }: Props) {
         </div>
       )}
       <div className="musicman-chat">
-        <div className="musicman-chat-messages">
+        <div className="musicman-chat-messages" ref={listRef}>
           {variant === 'page' && (
             <div className="musicman-chat-msg musicman-chat-msg--system">
               <p>{intro}</p>

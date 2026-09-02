@@ -1746,17 +1746,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       </div>
       <div className="volume-group">
       <VolumeSlider />
-      <button
-        className="transport-toggle viz-btn"
-        onClick={() => window.dispatchEvent(new CustomEvent('toggle-visualizer'))}
-        title="Visualizer (⌘T) — fullscreen, reacts to what's playing"
-        aria-label="Visualizer"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
-          <circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none" />
-          <path d="M8 1.6V3.6M8 12.4V14.4M1.6 8H3.6M12.4 8H14.4M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" />
-        </svg>
-      </button>
+      {/* 2011 facelift (Jake 9/2): the Visualizer lives in View → Visualizer
+          (⌘T) like it did in iTunes; the toolbar button is gone. */}
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
           className={`transport-toggle airplay-btn ${isExternalOutput ? 'airplay-btn--active' : ''}`}
@@ -1824,9 +1815,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
         title="The Music Man (⇧⌘M) — ask about what's in front of you"
         aria-label="The Music Man"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />
-          <path d="M5.5 6.5h5M5.5 8.5h3" />
+        <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 4h15v9h-8l-4 3.5V13h-3z" />
+          <path d="M6 7.5h8M6 10h5" />
         </svg>
       </button>
       <button
