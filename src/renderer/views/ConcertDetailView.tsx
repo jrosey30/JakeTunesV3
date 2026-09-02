@@ -26,7 +26,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta, cleanLiveTitle as cleanTitle } from '../liveSets'
-import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled, getCrowdParams, setCrowdParams } from '../concertCrowd'
+import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getConcertKey, subscribeConcertKey } from '../concertNav'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
@@ -133,8 +133,6 @@ export default function ConcertDetailView() {
     setConcertCrowdEnabled(next)
     void updateConcertMeta(albumKey, { crowd: next })
   }, [albumKey])
-  const [crowdParams, setCrowdParamsLocal] = useState(getCrowdParams())
-  useEffect(() => subscribeConcertCrowd(() => setCrowdParamsLocal(getCrowdParams())), [])
   const crowdMergedId = mergedTrack?.id
   const crowdCues = liveSet?.cues
   const crowdTotalMs = liveSet?.totalDurationMs
@@ -279,29 +277,6 @@ export default function ConcertDetailView() {
               title="Remove this concert — the individual songs are unaffected"
             >{confirmRemove ? 'Remove concert?' : 'Undeclare'}</button>
           </div>
-          {crowdOn && crowdState === 'ready' && (
-            <div className="concert-crowd-panel">
-              <div className="ccp-title">Crowd — dial it in by ear (that night's audience, in the gaps)</div>
-              <label className="ccp-row">
-                <span>Level</span>
-                <input type="range" min="0" max="1" step="0.05" value={crowdParams.level}
-                  onChange={(e) => void setCrowdParams({ level: Number(e.target.value) })} />
-                <em>{crowdParams.level <= 0.02 ? 'off' : `${Math.round(crowdParams.level * 100)}%`}</em>
-              </label>
-              <label className="ccp-row">
-                <span>Rise</span>
-                <input type="range" min="0.5" max="8" step="0.5" value={crowdParams.rise}
-                  onChange={(e) => void setCrowdParams({ rise: Number(e.target.value) })} />
-                <em>{crowdParams.rise.toFixed(1)}s before</em>
-              </label>
-              <label className="ccp-row">
-                <span>Tail</span>
-                <input type="range" min="0.3" max="5" step="0.1" value={crowdParams.tail}
-                  onChange={(e) => void setCrowdParams({ tail: Number(e.target.value) })} />
-                <em>{crowdParams.tail.toFixed(1)}s after</em>
-              </label>
-            </div>
-          )}
         </div>
       </section>
 
