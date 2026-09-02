@@ -9,6 +9,8 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { join } from 'path'
+import { existsSync } from 'fs'
+import { homedir } from 'os'
 import { app } from 'electron'
 
 const IDLE_MS = 10 * 60 * 1000
@@ -20,8 +22,31 @@ let ready: Promise<boolean> | null = null
 let idleTimer: ReturnType<typeof setTimeout> | null = null
 let queue: Promise<unknown> = Promise.resolve()
 
-function repoRoot(): string {
-  return app.isPackaged ? process.resourcesPath : app.getAppPath()
+/**
+ * Where the CLAP helper lives. The venv (torch, ~850 MB) is NOT shipped
+ * inside the .app — the packaged build would spawn a path that doesn't
+ * exist and fusion would silently degrade to mood-only (caught 2026-09-02
+ * when the default flipped on). Probe, in order: JT_CLAP_ROOT, the app's
+ * resources / app path, then the dev checkout in $HOME. Logged once.
+ */
+let resolvedRoot: string | null | undefined
+function repoRoot(): string | null {
+  if (resolvedRoot !== undefined) return resolvedRoot
+  const candidates = [
+    process.env.JT_CLAP_ROOT,
+    app.isPackaged ? process.resourcesPath : app.getAppPath(),
+    join(homedir(), 'JakeTunesV3'),
+  ].filter((p): p is string => !!p)
+  for (const root of candidates) {
+    if (existsSync(join(root, '.venv-clap', 'bin', 'python')) && existsSync(join(root, 'scripts', 'audio-embed.py'))) {
+      console.log(`[audio-query] CLAP helper root: ${root}`)
+      resolvedRoot = root
+      return root
+    }
+  }
+  console.warn(`[audio-query] no CLAP helper found (tried ${candidates.join(', ')}) — audio fusion unavailable, mood-only retrieval`)
+  resolvedRoot = null
+  return null
 }
 
 function stopServer(): void {
@@ -40,8 +65,10 @@ function touchIdle(): void {
 
 function ensureServer(): Promise<boolean> {
   if (proc && ready) return ready
-  const py = join(repoRoot(), '.venv-clap', 'bin', 'python')
-  const script = join(repoRoot(), 'scripts', 'audio-embed.py')
+  const root = repoRoot()
+  if (!root) return Promise.resolve(false)
+  const py = join(root, '.venv-clap', 'bin', 'python')
+  const script = join(root, 'scripts', 'audio-embed.py')
   try {
     proc = spawn(py, [script, '--server'], { stdio: ['pipe', 'pipe', 'pipe'] })
   } catch {

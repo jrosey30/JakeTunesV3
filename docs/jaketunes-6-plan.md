@@ -91,7 +91,7 @@ Run-to-run jitter on the same brain is ≈0.005, so the fusion gain is real
 workout bangers" (bpm≥130) at 0.24 vs 0.76 — it hears texture, not tempo —
 and "reggae and ska" at 0.36 vs 1.00. As a SECOND OPINION on top of the
 mood pool it lifts every prompt it touches except a slight metal dip at
-W=1.0. Decision: **GO on fusion, W=0.5** (keeps reggae at 1.00 and metal
+W=1.0. Decision: **GO on fusion, W=0.5** — FLIPPED ON by default 2026-09-02 (Jake: "flip it") (keeps reggae at 1.00 and metal
 above baseline; W=1.0's extra +0.005 is inside jitter). Mechanics: union of
 the mood top-100 and audio top-100, score = mood cosine + W·z(audio)·σ(mood)
 (stays in cosine units so the 3c genre reranker's weight means the same

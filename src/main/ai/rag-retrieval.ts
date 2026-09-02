@@ -134,7 +134,10 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
   // 3d (gated): the AUDIO route — CLAP text query against how tracks
   // actually SOUND. Opt-in via JT_AUDIO_ROUTE until the production-path
   // eval says it beats the mood route; every failure falls through.
-  const audioMode = process.env.JT_AUDIO_ROUTE   // '1' = audio-only, 'fusion' = mood ⊕ audio
+  // 3d DEFAULT = fusion (Jake, 2026-09-02: "flip it" — measured 0.844 vs
+  // 0.812 mood-only on the production path). JT_AUDIO_ROUTE overrides:
+  // '1' = audio-only (loses, kept for evals), 'mood'/'0'/'off' = disable.
+  const audioMode = process.env.JT_AUDIO_ROUTE || 'fusion'
   if (route === 'mood' && (audioMode === '1' || audioMode === 'fusion') && !decade) {
     try {
       const amap = await getAudioIndexMap()
