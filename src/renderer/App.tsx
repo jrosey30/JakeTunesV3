@@ -453,14 +453,22 @@ function AppInner() {
   // and was disabled in 4.5.
   useEffect(() => {
     const cleanup = window.electronAPI.onLibrarySyncStatus((status) => {
-      if (!status.ok) {
-        setNotice(
-          status.error
+      if (status.ok) return
+      // 2026-09-02 (Jake: "why do i keep seeing this??"): a sync DEFERRED by
+      // the NAS breaker is not a failure — away from home the mount rides
+      // the tailnet and the probe misses now and then; four metadata edits
+      // in 40s posted four identical banners. Automatic triggers stay quiet
+      // (Settings → Sync shows the waiting state); only a sync Jake asked
+      // for himself, or a real failure, reaches the pill.
+      if (status.deferred && status.reason !== 'manual') return
+      setNotice(
+        status.deferred
+          ? 'Sync is waiting — the NAS isn’t answering right now (away from home?). It catches up on its own.'
+          : status.error
             ? `Couldn't sync to homemini: ${status.error}`
             : "Couldn't sync to homemini.",
-          { kind: 'error', durationMs: 6000 },
-        )
-      }
+        { kind: status.deferred ? 'info' : 'error', durationMs: 6000 },
+      )
     })
     return cleanup
   }, [])

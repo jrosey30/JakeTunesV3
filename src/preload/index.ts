@@ -943,6 +943,8 @@ const electronAPI = {
     ok: boolean
     reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
     error?: string
+    /** Deferred by the NAS breaker — not a failure; retries on its own. */
+    deferred?: boolean
     durationMs?: number
   }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof callback>[0]) => callback(status)

@@ -1023,6 +1023,8 @@ declare global {
         ok: boolean
         reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
         error?: string
+        /** Deferred by the NAS breaker — not a failure; retries on its own. */
+        deferred?: boolean
         durationMs?: number
       }) => void) => () => void
       // 4.4.28 — Home view: music news + notable releases.

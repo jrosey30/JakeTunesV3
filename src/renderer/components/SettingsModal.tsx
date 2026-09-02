@@ -121,6 +121,8 @@ interface LastSync {
   durationMs: number | null
   error: string | null
   scriptPresent: boolean
+  deferredAt?: number | null
+  remote?: boolean
 }
 
 export default function SettingsModal({ initial, onClose, onSaved }: Props) {
@@ -902,6 +904,12 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     </div>
                     {!lastSync.ok && lastSync.error && (
                       <div style={{ color: '#a23a2a', fontSize: 11 }}>{lastSync.error}</div>
+                    )}
+                    {lastSync.deferredAt != null && (
+                      <div style={{ color: '#8a6a1a', fontSize: 11 }}>
+                        Waiting for the NAS since {formatRelative(lastSync.deferredAt)}
+                        {lastSync.remote ? ' — away from home (over Tailscale); it catches up on its own, full pass when you’re back.' : ' — it retries on its own.'}
+                      </div>
                     )}
                   </div>
                 )}
