@@ -123,6 +123,16 @@ export default function ConcertDetailView() {
 
   // ── Crowd: readiness + attach ─────────────────────────────────────────
   const crowdOn = useSyncExternalStore(subscribeConcertCrowd, isConcertCrowdEnabled)
+  // Crowd is remembered PER SHOW (Jake, 2026-09-02: it suited a seated
+  // studio taping badly): the page sets the engine from this show's memory
+  // on open, and a toggle saves it back. Default off.
+  const crowdRemembered = !!liveSet?.concert?.crowd
+  useEffect(() => { setConcertCrowdEnabled(crowdRemembered) }, [albumKey, crowdRemembered])
+  const toggleCrowd = useCallback(() => {
+    const next = !isConcertCrowdEnabled()
+    setConcertCrowdEnabled(next)
+    void updateConcertMeta(albumKey, { crowd: next })
+  }, [albumKey])
   const [crowdParams, setCrowdParamsLocal] = useState(getCrowdParams())
   useEffect(() => subscribeConcertCrowd(() => setCrowdParamsLocal(getCrowdParams())), [])
   const crowdMergedId = mergedTrack?.id
@@ -258,7 +268,7 @@ export default function ConcertDetailView() {
             <button className="cd-btn cd-btn--play" onClick={() => playLiveSet()}>▶ {setPlaying ? 'Playing' : 'Play the show'}</button>
             <button
               className={`cd-btn cd-btn--crowd${crowdOn ? ' is-on' : ''}${crowdState === 'preparing' ? ' is-busy' : ''}`}
-              onClick={() => { if (crowdState !== 'preparing') setConcertCrowdEnabled(!crowdOn) }}
+              onClick={() => { if (crowdState !== 'preparing') toggleCrowd() }}
               disabled={crowdState === 'none'}
               title={crowdState === 'none' ? 'No usable crowd window was found on this tape' : "Swell that night's crowd in the gaps between songs — off by default"}
             >{crowdLabel}</button>

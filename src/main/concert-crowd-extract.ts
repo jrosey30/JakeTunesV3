@@ -25,8 +25,12 @@ import { dirname } from 'node:path'
 const execP = promisify(execFile)
 
 export const CLIP_SECONDS = 7
-const SCAN_BEFORE_S = 10   // how far before a boundary to start looking
-const SCAN_AFTER_S = 4     // …and after
+// Applause lives just AFTER a song ends. Windows that start before the
+// boundary reach back into the song's ending — the Unplugged cut (2026-09-02)
+// was the last 23 s of "Where Did You Sleep Last Night" swelled into every
+// gap of a seated studio taping. So: from the boundary itself forward.
+const SCAN_BEFORE_S = 1
+const SCAN_AFTER_S = 10
 const STEP_S = 1
 
 export interface WindowStats { startSec: number; flatness: number; flatnessSd: number; rmsDb: number; rmsSd: number }
@@ -53,6 +57,7 @@ export function candidateStarts(cueStartsMs: number[], totalMs: number, clip = C
 export function scoreWindow(w: WindowStats): number {
   if (!Number.isFinite(w.flatness) || !Number.isFinite(w.rmsDb)) return -Infinity
   if (w.rmsDb < -48) return -Infinity                    // effectively silence
+  if (w.flatness < 0.2) return -Infinity                 // still music (tonal) — never a room
   let s = w.flatness * 10                                // 0..~6
   if (w.rmsDb > -14) s -= (w.rmsDb + 14) * 0.6           // that's the band, not the room
   if (w.rmsDb < -36) s -= (-36 - w.rmsDb) * 0.15         // a whisper of a crowd is worth less

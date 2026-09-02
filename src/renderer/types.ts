@@ -170,6 +170,7 @@ export interface ConcertMeta {
   date?: string        // display string, e.g. "May 15–16, 1980"
   poster?: string      // artwork key/hash for the concert poster (portrait)
   blurb?: string       // one-line summary for the Live Concerts index (grounded; falls back to facts[0])
+  crowd?: boolean      // Crowd ambience remembered PER SHOW (an acoustic taping stays off; an arena can stay on)
   // Companion panel (tour-book layer). All grounded or user-authored, never
   // fabricated. facts = short grounded blurbs; notes = the user's own memories;
   // source/label = recording lineage; merchUrl = a real store link.
