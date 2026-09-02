@@ -31,6 +31,7 @@ import { createReadStream, createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { join } from 'node:path'
 import { convertAudio, type AudioTags } from './platform'
+import { rmsEnvelope, seamOverlapMs, overlapAdd, bytesForMs } from './live-set-seams'
 
 const execP = promisify(execFile)
 
@@ -187,25 +188,79 @@ export async function mergeLiveSet(
     let cumBytes = 0
 
     // Header first with a placeholder size; patched after the payloads.
+    // Seams (2026-09-02): each seam is measured — a track that fades the
+    // room out is overlapped with the next track's fade-in for the length
+    // of the fade (capped at 4 s), so the crowd stays continuous; a
+    // soundboard cut with no fades stays a gapless butt splice. See
+    // live-set-seams.ts. `pendingTail` is the previous segment's fade-out,
+    // held back until the next head arrives to be summed with it.
+    const FRAME = CHANNELS * BYTES_PER_SAMPLE
+    const PROBE_BYTES = bytesForMs(8000, BYTES_PER_SEC, FRAME)
+    const readRange = async (path: string, start: number, len: number): Promise<Buffer> => {
+      const fh = await open(path, 'r')
+      try {
+        const buf = Buffer.alloc(len)
+        const { bytesRead } = await fh.read(buf, 0, len, start)
+        return bytesRead === len ? buf : buf.subarray(0, bytesRead)
+      } finally { await fh.close() }
+    }
     const out = createWriteStream(combinedPath)
     out.write(wavHeader(0))
-    for (const seg of segs) {
+    const writeBuf = (b: Buffer): Promise<void> => new Promise((resolve, reject) => {
+      out.write(b, (err) => (err ? reject(err) : resolve()))
+    })
+    let pendingTail: Buffer | null = null
+    let seamsCrossfaded = 0
+    for (let si = 0; si < segs.length; si++) {
+      const seg = segs[si]
       const { offset, size } = await findWavData(seg.path)
+      // Overlap with the previous segment: measured off both fades.
+      let overlap = 0
+      if (pendingTail && size > PROBE_BYTES * 2) {
+        const head = await readRange(seg.path, offset, PROBE_BYTES)
+        const ms = seamOverlapMs(rmsEnvelope(pendingTail, BYTES_PER_SEC), rmsEnvelope(head, BYTES_PER_SEC))
+        overlap = Math.min(bytesForMs(ms, BYTES_PER_SEC, FRAME), pendingTail.length)
+      }
+      const cueStart = cumBytes - overlap
       cues.push({
         trackId: seg.input.id,
         title: seg.input.title,
         artist: seg.input.artist,
-        startMs: Math.round((cumBytes / BYTES_PER_SEC) * 1000),
+        startMs: Math.round((cueStart / BYTES_PER_SEC) * 1000),
         durationMs: Math.round((size / BYTES_PER_SEC) * 1000),
       })
-      await pipeline(
-        createReadStream(seg.path, { start: offset, end: offset + size - 1 }),
-        out,
-        { end: false },
-      )
-      cumBytes += size
+      if (pendingTail) {
+        if (overlap > 0) {
+          // The previous tail's un-overlapped part, then the summed seam.
+          await writeBuf(pendingTail.subarray(0, pendingTail.length - overlap))
+          const head = await readRange(seg.path, offset, overlap)
+          await writeBuf(overlapAdd(pendingTail.subarray(pendingTail.length - overlap), head))
+          cumBytes += pendingTail.length
+          seamsCrossfaded++
+        } else {
+          await writeBuf(pendingTail)
+          cumBytes += pendingTail.length
+        }
+        pendingTail = null
+      }
+      // Body: from after the overlapped head to before the held-back tail.
+      const isLast = si === segs.length - 1
+      const holdBack = isLast || size <= PROBE_BYTES * 2 ? 0 : PROBE_BYTES
+      const bodyStart = offset + overlap
+      const bodyEnd = offset + size - holdBack
+      if (bodyEnd > bodyStart) {
+        await pipeline(
+          createReadStream(seg.path, { start: bodyStart, end: bodyEnd - 1 }),
+          out,
+          { end: false },
+        )
+        cumBytes += bodyEnd - bodyStart
+      }
+      if (holdBack > 0) pendingTail = await readRange(seg.path, bodyEnd, holdBack)
       if (cumBytes > MAX_DATA_BYTES) throw new Error('combined audio exceeded the 4 GB WAV limit mid-merge')
     }
+    if (pendingTail) { await writeBuf(pendingTail); cumBytes += pendingTail.length; pendingTail = null }
+    if (seamsCrossfaded > 0) console.log(`[live-set] ${seamsCrossfaded}/${Math.max(0, segs.length - 1)} seams crossfaded (album fades measured)`)
     await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())))
 
     // Patch the real sizes into the header.
