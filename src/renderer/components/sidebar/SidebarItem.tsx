@@ -1,4 +1,5 @@
 import { ReactNode, useState, useCallback } from 'react'
+import { setAlbumDragPayload } from '../../utils/trackDrag'
 
 interface Props {
   label: string
@@ -12,9 +13,14 @@ interface Props {
   /** 4.4.0: extra className on the row — used for the WJLR Picks
    *  featured-section treatment. */
   className?: string
+  /** Small right-aligned count (iPod Pool: "812"). */
+  badge?: string
+  /** 2026-09-02: make the row a DRAG SOURCE carrying this whole list —
+   *  a playlist dragged onto the iPod Pool brings every song. */
+  dragTrackIds?: number[]
 }
 
-export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop, className }: Props) {
+export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop, className, badge, dragTrackIds }: Props) {
   const [dragOver, setDragOver] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -67,9 +73,12 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      draggable={!!dragTrackIds && dragTrackIds.length > 0}
+      onDragStart={dragTrackIds && dragTrackIds.length > 0 ? (e) => setAlbumDragPayload(e, dragTrackIds) : undefined}
     >
       {icon && <span className="sidebar-item-icon">{icon}</span>}
       <span className="sidebar-item-label">{label}</span>
+      {badge && <span className="sidebar-item-badge">{badge}</span>}
     </li>
   )
 }

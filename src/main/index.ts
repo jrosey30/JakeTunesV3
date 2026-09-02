@@ -60,6 +60,7 @@ import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type Reco
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
+import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
 import { registerAlbumInfoIpc } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
@@ -8728,6 +8729,9 @@ registerWorkoutSyncIpc({
   musicManCore: MUSIC_MAN_CORE,
   getIneligibleTrackIds: getConcertOwnedTrackIds,
 })
+// iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
+// onto the sidebar row); build-workout-sync-set reads it in pool mode.
+registerActivityPoolIpc(ipc)
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc(ipc)

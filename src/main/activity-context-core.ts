@@ -24,6 +24,12 @@ export interface ActivityBrief {
   updatedAt?: string
   /** Target set size, carried on saved profiles. */
   target?: number
+  /** 2026-09-02: 'pool' = Jake's hand-built pool (activity-pool.json) is
+   *  the set, optionally topped up by the brain; absent/'brain' = the
+   *  brain picks the whole set (the original behaviour). */
+  mode?: 'brain' | 'pool'
+  /** Pool mode: let the brain fill the gap between the pool and target. */
+  poolFill?: boolean
 }
 
 export interface ActivityWeather {

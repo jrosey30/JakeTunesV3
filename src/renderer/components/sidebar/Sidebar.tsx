@@ -11,6 +11,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
+import { getPoolIds, subscribePool, refreshPool, addTracksToPool } from '../../activityPool'
 import NewMixtapeSheet from '../NewMixtapeSheet'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
@@ -193,6 +194,17 @@ function EjectIcon() {
   )
 }
 
+function PoolIcon() {
+  // A record crate: the pool is the box of records you pull for the trip.
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#5a6b8a" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 6.5h11l-1 7h-9z" />
+      <path d="M1.8 6.5 3 3.2h10l1.2 3.3" />
+      <path d="M5.5 9.2h5" />
+    </svg>
+  )
+}
+
 function IpodIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1">
@@ -257,6 +269,10 @@ export default function Sidebar() {
   const [showBlankTape, setShowBlankTape] = useState(false)
 
   useEffect(() => { void refreshMixtapes() }, [])
+  // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
+  // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
+  const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  useEffect(() => { void refreshPool() }, [])
 
   useEffect(() => {
     if (creatingPlaylist) {
@@ -488,8 +504,7 @@ export default function Sidebar() {
               /> */}
         </SidebarSection>
 
-        {(ipodMounted || cdMounted) && (
-          <SidebarSection title="DEVICES">
+        <SidebarSection title="DEVICES">
             {ipodMounted && (
               <li
                 className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
@@ -528,8 +543,18 @@ export default function Sidebar() {
                 <button className="sidebar-eject-btn" title="Eject CD" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectCd().then(() => window.dispatchEvent(new Event('jaketunes-cd-ejected'))) }}><EjectIcon /></button>
               </li>
             )}
+            {/* Always present, iPod or not — a pool is built over days.
+                Drop songs, albums, artists or playlists here. */}
+            <SidebarItem
+              label="iPod Pool"
+              icon={<PoolIcon />}
+              badge={poolIds.length > 0 ? poolIds.length.toLocaleString() : undefined}
+              selected={state.currentView === 'activity-pool'}
+              onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
+              droppable
+              onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
+            />
           </SidebarSection>
-        )}
 
         {/* WJLR Picks moved INTO the Record Shop as the staff wall
             (2026-08-22, Jake: "move these into a row for each person on the
@@ -569,6 +594,7 @@ export default function Sidebar() {
                   icon={<SmartPlaylistIcon />}
                   selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  dragTrackIds={pl.trackIds}
                 />
               </div>
             ))}
@@ -603,6 +629,7 @@ export default function Sidebar() {
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
                   droppable
                   onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                  dragTrackIds={pl.trackIds}
                 />
               </div>
             )
@@ -646,6 +673,7 @@ export default function Sidebar() {
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
                   droppable
                   onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                  dragTrackIds={pl.trackIds}
                 />
               </div>
             )

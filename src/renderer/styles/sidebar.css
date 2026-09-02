@@ -121,6 +121,21 @@
   text-overflow: ellipsis;
 }
 
+.sidebar-item-badge {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 0 6px;
+  min-width: 14px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  border-radius: 8px;
+  background: #8e8b83;
+  color: #fff;
+}
+.sidebar-item--selected .sidebar-item-badge { background: rgba(255,255,255,0.9); color: #3b5a8f; }
+
 .sidebar-item-indicator {
   width: 6px;
   height: 6px;

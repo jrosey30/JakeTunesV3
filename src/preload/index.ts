@@ -573,7 +573,7 @@ const electronAPI = {
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
     path?: string; audioMissing?: boolean
-  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean }): Promise<{
+  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean } }): Promise<{
     ok: boolean
     trackIds?: number[]
     name?: string
@@ -625,6 +625,15 @@ const electronAPI = {
     ipcRenderer.invoke('get-workout-sync-state'),
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-activity-profiles'),
+  // iPod Pool (2026-09-02) — the hand-built activity set.
+  getActivityPool: (): Promise<{ ok: boolean; ids?: number[]; max?: number }> =>
+    ipcRenderer.invoke('activity-pool-get'),
+  addToActivityPool: (candidates: Array<{ id: number; title?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>): Promise<{ ok: boolean; ids?: number[]; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }> =>
+    ipcRenderer.invoke('activity-pool-add', candidates),
+  removeFromActivityPool: (ids: number[]): Promise<{ ok: boolean; ids?: number[] }> =>
+    ipcRenderer.invoke('activity-pool-remove', ids),
+  clearActivityPool: (): Promise<{ ok: boolean; ids?: number[] }> =>
+    ipcRenderer.invoke('activity-pool-clear'),
   getActivityBrainContext: (): Promise<{ ok: boolean; context?: unknown; promptBlock?: string }> =>
     ipcRenderer.invoke('get-activity-brain-context'),
   previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>

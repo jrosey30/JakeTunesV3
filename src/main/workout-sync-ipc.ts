@@ -24,6 +24,8 @@ import {
 } from './activity-context'
 import {
   selectWorkoutSyncSet,
+  artistCapKey,
+  isAlacCodec,
   type WorkoutTrack,
   type WorkoutVibe,
 } from './workout-sync.ts'
@@ -227,7 +229,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
   ipc.handle('build-workout-sync-set', async (
     _e,
     tracks: WorkoutTrack[],
-    opts?: { target?: number; brief?: ActivityBrief; saveProfile?: boolean },
+    opts?: { target?: number; brief?: ActivityBrief; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean } },
   ) => {
     try {
       if (!Array.isArray(tracks) || tracks.length === 0) {
@@ -254,6 +256,40 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         social: 'solo',
       }
 
+      // ── POOL MODE (2026-09-02) ─────────────────────────────────────
+      // Jake's hand-built pool IS the set. The brain only runs to fill the
+      // gap up to target when he asks it to; a pool alone syncs as-is (a
+      // 780-song pool is a legitimate 780-song sync). The pool is exempt
+      // from the 2-per-artist rule — the fill is not, and counts the pool.
+      const pool = opts?.pool
+      const poolMode = !!pool && Array.isArray(pool.ids) && pool.ids.length > 0
+      const byId = new Map(tracks.map((t) => [Number(t.id), t]))
+      const syncable = (t: WorkoutTrack): boolean =>
+        String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
+        && t.audioMissing !== true && (t.path === undefined || String(t.path).trim() !== '')
+      const target = Math.min(opts?.target ?? WORKOUT_TARGET, tracks.length)
+      let poolIds: number[] = []
+      if (poolMode) {
+        const seen = new Set<number>()
+        for (const raw of pool.ids) {
+          const id = Number(raw)
+          const t = byId.get(id)
+          if (!t || seen.has(id) || !syncable(t)) continue
+          seen.add(id)
+          poolIds.push(id)
+        }
+        if (poolIds.length !== pool.ids.length) {
+          console.log(`[workout-sync] pool: ${pool.ids.length - poolIds.length} id(s) not syncable/unknown — dropped from ${pool.ids.length}`)
+        }
+        if (poolIds.length > target) {
+          // HARD STOP, never a silent trim — the machine does not decide
+          // what comes off a hand-built list.
+          return { ok: false, error: `Your pool has ${poolIds.length} songs — ${poolIds.length - target} over the ${target} target. Remove some, or pick a bigger size.` }
+        }
+      }
+      const gap = poolMode ? target - poolIds.length : target
+      const wantBrain = !poolMode || (pool.fill === true && gap > 0)
+
       const wx = await getWeatherForPlace(brief.place || 'Brooklyn')
       const weather: ActivityWeather | null = wx
         ? {
@@ -269,84 +305,111 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       }
 
       const prev = await loadState()
-      // Learn from history: edits Jake made in review for THIS activity.
-      // Removed tracks get demoted hard; added tracks get boosted. The
-      // vibe prompt also sees a compact digest so Music Man's framing
-      // improves sync over sync.
-      const history = await loadSyncHistory()
-      const sameActivity = history.filter((h) => h?.brief?.activity === brief.activity).slice(0, 20)
-      const demoteIds = [...new Set(sameActivity.flatMap((h) => (h.removed || []).map((e) => e.id)))]
-      const boostIds = [...new Set(sameActivity.flatMap((h) => (h.added || []).map((e) => e.id)))]
-      const historyLines = sameActivity.slice(0, 8).map((h) => {
-        const rm = (h.removed || []).slice(0, 5).map((e) => `${e.title} — ${e.artist}`).join('; ')
-        const ad = (h.added || []).slice(0, 5).map((e) => `${e.title} — ${e.artist}`).join('; ')
-        return `• ${h.syncedAt.slice(0, 10)} "${h.name}" (${h.trackCount} tracks)${rm ? ` | removed: ${rm}` : ''}${ad ? ` | added: ${ad}` : ''}`
-      }).join('\n')
-      const vibe = await askActivityVibe(host, tracks, brief, weather, prev?.name, historyLines || undefined)
-      const target = Math.min(opts?.target ?? WORKOUT_TARGET, tracks.length)
+      let fillIds: number[] = []
+      let name = ''
+      let commentary = ''
+      if (wantBrain) {
+        // Learn from history: edits Jake made in review for THIS activity.
+        // Removed tracks get demoted hard; added tracks get boosted. The
+        // vibe prompt also sees a compact digest so Music Man's framing
+        // improves sync over sync.
+        const history = await loadSyncHistory()
+        const sameActivity = history.filter((h) => h?.brief?.activity === brief.activity).slice(0, 20)
+        const demoteIds = [...new Set(sameActivity.flatMap((h) => (h.removed || []).map((e) => e.id)))]
+        const boostIds = [...new Set(sameActivity.flatMap((h) => (h.added || []).map((e) => e.id)))]
+        const historyLines = sameActivity.slice(0, 8).map((h) => {
+          const rm = (h.removed || []).slice(0, 5).map((e) => `${e.title} — ${e.artist}`).join('; ')
+          const ad = (h.added || []).slice(0, 5).map((e) => `${e.title} — ${e.artist}`).join('; ')
+          return `• ${h.syncedAt.slice(0, 10)} "${h.name}" (${h.trackCount} tracks)${rm ? ` | removed: ${rm}` : ''}${ad ? ` | added: ${ad}` : ''}`
+        }).join('\n')
+        const vibe = await askActivityVibe(host, tracks, brief, weather, prev?.name, historyLines || undefined)
 
-      // Brain fit — the taste model finally decides the set (Jake 2026-07-23:
-      // "get better at picking… you pick a lot of shit and miss on a lot of
-      // shit"). taste = precomputed embeddings vs his starred/heavy-rotation
-      // corners (works offline); ctx = the free-text steer embedded into a
-      // query vector (best-effort — no key/offline just drops it). Any
-      // failure → null → the heuristic picker runs exactly as before.
-      let brainFit: BrainFitResult | null = null
-      try {
-        const embById = await getEmbeddingsMap()
-        if (embById.size >= 100) {
-          let queryVec: Float32Array | null = null
-          try {
-            const [qv] = await embedTexts([buildActivityQueryText(brief)])
-            queryVec = qv || null
-          } catch { queryVec = null }
-          const fit = computeActivityBrainFit({
-            eligibleIds: tracks.map((t) => Number(t.id)),
-            embById,
-            exemplarIds: pickTasteExemplars(tracks),
-            queryVec,
-          })
-          if (fit.usable) {
-            brainFit = fit
-            console.log(`[workout-sync] brain fit on ${fit.fitById.size}/${tracks.length} tracks (ctx=${queryVec ? 'yes' : 'no'})`)
+        // Brain fit — the taste model finally decides the set (Jake 2026-07-23:
+        // "get better at picking… you pick a lot of shit and miss on a lot of
+        // shit"). taste = precomputed embeddings vs his starred/heavy-rotation
+        // corners (works offline); ctx = the free-text steer embedded into a
+        // query vector (best-effort — no key/offline just drops it). Any
+        // failure → null → the heuristic picker runs exactly as before.
+        let brainFit: BrainFitResult | null = null
+        try {
+          const embById = await getEmbeddingsMap()
+          if (embById.size >= 100) {
+            let queryVec: Float32Array | null = null
+            try {
+              const [qv] = await embedTexts([buildActivityQueryText(brief)])
+              queryVec = qv || null
+            } catch { queryVec = null }
+            const fit = computeActivityBrainFit({
+              eligibleIds: tracks.map((t) => Number(t.id)),
+              embById,
+              exemplarIds: pickTasteExemplars(tracks),
+              queryVec,
+            })
+            if (fit.usable) {
+              brainFit = fit
+              console.log(`[workout-sync] brain fit on ${fit.fitById.size}/${tracks.length} tracks (ctx=${queryVec ? 'yes' : 'no'})`)
+            }
+          }
+        } catch (err) {
+          console.warn('[workout-sync] brain fit unavailable — heuristic only:', err instanceof Error ? err.message : err)
+        }
+
+        // Rotation memory across the last several syncs (2026-07-24, Jake: "more
+        // variety"). `prev` only carried the most recent set, so a track dropped
+        // one sync ago returned immediately. Count appearances across the recent
+        // history — ANY activity, since Jake notices repeats across the board —
+        // and let the picker apply a graded penalty.
+        const RECENT_SYNCS = 6
+        const recentCounts = new Map<number, number>()
+        for (const h of history.slice(0, RECENT_SYNCS)) {
+          for (const id of (h.trackIds || [])) {
+            recentCounts.set(Number(id), (recentCounts.get(Number(id)) || 0) + 1)
           }
         }
-      } catch (err) {
-        console.warn('[workout-sync] brain fit unavailable — heuristic only:', err instanceof Error ? err.message : err)
-      }
-
-      // Rotation memory across the last several syncs (2026-07-24, Jake: "more
-      // variety"). `prev` only carried the most recent set, so a track dropped
-      // one sync ago returned immediately. Count appearances across the recent
-      // history — ANY activity, since Jake notices repeats across the board —
-      // and let the picker apply a graded penalty.
-      const RECENT_SYNCS = 6
-      const recentCounts = new Map<number, number>()
-      for (const h of history.slice(0, RECENT_SYNCS)) {
-        for (const id of (h.trackIds || [])) {
-          recentCounts.set(Number(id), (recentCounts.get(Number(id)) || 0) + 1)
+        if (recentCounts.size) {
+          console.log(`[workout-sync] rotation memory: ${recentCounts.size} track(s) seen in the last ${RECENT_SYNCS} sync(s)`)
         }
-      }
-      if (recentCounts.size) {
-        console.log(`[workout-sync] rotation memory: ${recentCounts.size} track(s) seen in the last ${RECENT_SYNCS} sync(s)`)
+
+        // Pool fill: the picker never re-picks a pooled id, and the artist cap
+        // starts from what the pool already holds (same key function).
+        const seedArtistCounts = new Map<string, number>()
+        for (const id of poolIds) {
+          const k = artistCapKey(byId.get(id)?.artist)
+          seedArtistCounts.set(k, (seedArtistCounts.get(k) || 0) + 1)
+        }
+
+        const selected = selectWorkoutSyncSet(tracks, {
+          target: gap,
+          previousIds: prev?.trackIds,
+          recentCounts,
+          vibe,
+          brief,
+          weather,
+          seed: Date.now(),
+          demoteIds,
+          boostIds,
+          brainFitById: brainFit?.fitById,
+          tasteById: brainFit?.tasteById,
+          excludeIds: poolIds,
+          seedArtistCounts,
+        })
+        fillIds = selected.trackIds
+        name = selected.name
+        commentary = poolMode
+          ? `${selected.commentary} Built on your ${poolIds.length}-song pool; Music Man filled the last ${fillIds.length}.`
+          : selected.commentary
+      } else {
+        name = (brief.profileName || '').trim() || 'iPod Pool'
+        commentary = `Hand-built pool — ${poolIds.length} songs, in the order you dropped them.`
       }
 
-      const selected = selectWorkoutSyncSet(tracks, {
-        target,
-        previousIds: prev?.trackIds,
-        recentCounts,
-        vibe,
-        brief,
-        weather,
-        seed: Date.now(),
-        demoteIds,
-        boostIds,
-        brainFitById: brainFit?.fitById,
-        tasteById: brainFit?.tasteById,
-      })
-      if (selected.trackIds.length === 0) {
+      const trackIds = poolMode ? [...poolIds, ...fillIds] : fillIds
+      if (trackIds.length === 0) {
         return { ok: false, error: 'Could not build an activity set from this library.' }
       }
+      let alacCount = 0
+      for (const id of trackIds) if (isAlacCodec(byId.get(id)?.codec)) alacCount++
+      if (poolMode) console.log(`[workout-sync] pool mode: ${poolIds.length} pooled + ${fillIds.length} filled = ${trackIds.length}/${target}`)
 
       // REVIEW GATE (2026-07-18): building is now a PROPOSAL — nothing
       // persists here. The renderer shows the set for review (edits,
@@ -355,16 +418,18 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       // trace, so plug-in auto-sync can never chase a phantom set.
       return {
         ok: true,
-        trackIds: selected.trackIds,
-        name: selected.name,
-        commentary: selected.commentary,
-        alacCount: selected.alacCount,
-        total: selected.trackIds.length,
+        trackIds,
+        name,
+        commentary,
+        alacCount,
+        total: trackIds.length,
         rotatedFrom: prev?.trackIds?.length ?? 0,
         weather,
         brief,
+        pool: poolMode ? { pooled: poolIds.length, filled: fillIds.length } : undefined,
       }
     } catch (err) {
+      console.error('[workout-sync] build failed:', err)
       return { ok: false, error: 'api-failed' }
     }
   }, { refuse: REFUSED_SENDER })

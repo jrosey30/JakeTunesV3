@@ -16,6 +16,7 @@ import MusicManView from '../views/MusicManView'
 import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
+import ActivityPoolView from '../views/ActivityPoolView'
 import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
 import DownloadView from '../views/DownloadStore'
@@ -64,6 +65,7 @@ export default function MainContent() {
     case 'concerts': viewElement = <ConcertsView />; break
     case 'concert-detail': viewElement = <ConcertDetailView />; break
     case 'mixtape-detail': viewElement = <MixtapeView />; break
+    case 'activity-pool': viewElement = <ActivityPoolView />; break
     case 'mix-detail': viewElement = <MixDetailView />; break
     case 'genres': viewElement = <GenresView />; break
     case 'discovery': viewElement = <DiscoveryView />; break

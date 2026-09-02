@@ -292,3 +292,19 @@
 .sh-line { font-size: 11.5px; color: #3a3a3a; padding: 1px 0; }
 .sh-line--off { color: #8a5a5a; }
 .sh-line--dim { color: #9a948a; font-style: italic; }
+
+/* iPod Pool mode (2026-09-02) */
+.activity-pool-status {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #eef6f7;
+  border: 1px solid #c5dde2;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #2f4a50;
+}
+.activity-pool-status.is-blocked { background: #fbeeee; border-color: #e3b4b4; color: #7a2a2a; }
+.activity-pool-fill { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.activity-pool-fill input { margin: 2px 0 0; }
+.activity-btn:disabled { opacity: 0.45; cursor: default; }

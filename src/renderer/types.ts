@@ -135,7 +135,7 @@ export interface Mixtape {
   seasonal?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -869,7 +869,7 @@ declare global {
       }>, opts?: { target?: number; brief?: {
         id?: string; profileName?: string; activity: string; intensity: string; setting: string
         place: string; social: string; note?: string
-      }; saveProfile?: boolean }) => Promise<{
+      }; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean }  }) => Promise<{
         ok: boolean
         trackIds?: number[]
         name?: string
@@ -898,6 +898,11 @@ declare global {
       commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
       getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
+      // iPod Pool (2026-09-02)
+      getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; max?: number }>
+      addToActivityPool?: (candidates: Array<{ id: number; title?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>) => Promise<{ ok: boolean; ids?: number[]; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }>
+      removeFromActivityPool?: (ids: number[]) => Promise<{ ok: boolean; ids?: number[] }>
+      clearActivityPool?: () => Promise<{ ok: boolean; ids?: number[] }>
       getActivityBrainContext?: () => Promise<{ ok: boolean; context?: unknown; promptBlock?: string }>
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>

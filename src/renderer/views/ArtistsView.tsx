@@ -10,6 +10,7 @@ import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { consumeDrillIn } from '../utils/drillIn'
+import { setAlbumDragPayload } from '../utils/trackDrag'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries } from '../utils/downloadStore'
 import { useCynthia } from '../context/CynthiaContext'
@@ -555,6 +556,10 @@ export default function ArtistsView() {
           <div
             className="artist-row"
             onClick={() => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: artist.name })}
+            // 2026-09-02: an artist row drags as the whole discography —
+            // onto a playlist or the iPod Pool.
+            draggable
+            onDragStart={(e) => setAlbumDragPayload(e, artist.tracks.map((t) => t.id))}
           >
             {(() => {
               // 4.4.40: real artist photo via the artist-image:// scheme
