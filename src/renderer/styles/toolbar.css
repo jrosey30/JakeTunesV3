@@ -120,7 +120,7 @@
 .now-playing-pill {
   flex: 1;
   min-width: 0;
-  height: 62px;   /* 3 stacked lines (song/artist/album) + scrubber */
+  height: 68px;   /* 3 stacked lines (song/artist/album) + the iPod-mini bar row (9px bar, 11px counters); 62px clipped the album line's descenders (Jake 9/2) */
   /* V5 facelift: iTunes-10 LCD glass — same two pill hexes, but the light
    * tone holds through the upper third before falling off, so the face
    * reads "lit screen" instead of an even wash. */
