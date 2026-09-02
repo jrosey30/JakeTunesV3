@@ -8743,6 +8743,7 @@ registerMixtapesIpc({
   },
   loadPlayEvents: async () =>
     parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
+  materializeTrack: (colonPath, trackId) => materializeLibraryTrack(colonPath, trackId),
 })
 
 // Music Man metadata scanner

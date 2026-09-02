@@ -199,6 +199,8 @@ export default function MixtapeView() {
         label,
         songs: tracksOnSide.map((t, i) => ({
           absPath: abs(t),
+          id: t.id,
+          colonPath: String(t.path || ''),
           cutMs: cutMs !== undefined && i === tracksOnSide.length - 1 ? cutMs : undefined,
           startMs: tape.startOffsets?.[String(t.id)] || undefined,
         })),

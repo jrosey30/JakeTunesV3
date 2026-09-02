@@ -57,6 +57,9 @@ export interface MixtapesHost {
   /** Season tapes: real listening data, supplied by index.ts. */
   loadLibraryTracks?: () => Promise<Array<Record<string, unknown>>>
   loadPlayEvents?: () => Promise<Array<{ id: number; ts: number }>>
+  /** Pull an evicted track's audio back from homemini (activity-sync's
+   *  materializer) — the dub needs LOCAL files and eviction is design. */
+  materializeTrack?: (colonPath: string, trackId: number | string) => Promise<{ ok: boolean; error?: string }>
 }
 
 export interface MixtapeLinerNote { id: number; note: string }
@@ -636,7 +639,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       title: string
       sides: Array<{
         label: 'A' | 'B'
-        songs: Array<{ absPath: string; cutMs?: number; startMs?: number }>
+        songs: Array<{ absPath: string; cutMs?: number; startMs?: number; id?: number; colonPath?: string }>
         talkovers: Array<{ atMs: number; path: string }>
         introPath?: string
       }>
@@ -649,10 +652,18 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       const outputs: string[] = []
       for (const side of payload.sides) {
         if (side.songs.length === 0) continue
-        // Pre-flight: every source must exist (streamed/missing files fail loud).
+        // Pre-flight: every source must exist locally. An EVICTED track
+        // (local copy retired by design — pass-through storage) is pulled
+        // back from homemini first; only a track homemini can't serve
+        // either fails, loudly, by name.
         for (const sng of side.songs) {
-          const st = await stat(sng.absPath).catch(() => null)
-          if (!st) return { ok: false, error: `Missing audio file for Side ${side.label}: ${sng.absPath}` }
+          let st = await stat(sng.absPath).catch(() => null)
+          if (!st && sng.colonPath && sng.id != null && host.materializeTrack) {
+            console.log(`[dub] "${sng.colonPath}" evicted — pulling from homemini for the dub`)
+            const m = await host.materializeTrack(sng.colonPath, sng.id).catch(() => ({ ok: false }))
+            if (m.ok) st = await stat(sng.absPath).catch(() => null)
+          }
+          if (!st) return { ok: false, error: `Missing audio for Side ${side.label}: ${sng.absPath.split('/').pop()} — not local and homemini couldn't supply it.` }
         }
         const inputs: string[] = []
         const chains: string[] = []
