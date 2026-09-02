@@ -141,6 +141,11 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       const versionedHash = `${hash}_${Date.now()}`
       const index = await loadArtworkIndex()
       index[key] = versionedHash
+      // A declared live set's "(Live Set)" album aliases the source album's art
+      // (live-sets-ipc); keep the alias in step so the Albums grid and the concert
+      // poster never disagree after a swap (2026-09-02).
+      const aliasKey = `${key} (live set)`
+      if (index[aliasKey]) index[aliasKey] = versionedHash
       await saveArtworkIndex(index)
       // 4.4.57 — the user chose this cover: lock it so no auto-fetch path
       // (online fetcher, embedded-art extraction, forced re-fetch) ever
