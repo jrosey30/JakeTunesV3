@@ -504,7 +504,8 @@ export default function Sidebar() {
               /> */}
         </SidebarSection>
 
-        <SidebarSection title="DEVICES">
+        {(ipodMounted || cdMounted) && (
+          <SidebarSection title="DEVICES">
             {ipodMounted && (
               <li
                 className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
@@ -543,18 +544,25 @@ export default function Sidebar() {
                 <button className="sidebar-eject-btn" title="Eject CD" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectCd().then(() => window.dispatchEvent(new Event('jaketunes-cd-ejected'))) }}><EjectIcon /></button>
               </li>
             )}
-            {/* Always present, iPod or not — a pool is built over days.
-                Drop songs, albums, artists or playlists here. */}
-            <SidebarItem
-              label="iPod Pool"
-              icon={<PoolIcon />}
-              badge={poolIds.length > 0 ? poolIds.length.toLocaleString() : undefined}
-              selected={state.currentView === 'activity-pool'}
-              onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
-              droppable
-              onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
-            />
           </SidebarSection>
+        )}
+
+        {/* iPod Pool (2026-09-02): the hand-built Activity Sync set. Its own
+            section, named for what it feeds — Jake: a pool "listed as a
+            device and ipod not even plugged in" is wrong. Always present,
+            because a pool is built over days; drop songs, albums, artists
+            or playlists on the row. */}
+        <SidebarSection title="ACTIVITY SYNC">
+          <SidebarItem
+            label="iPod Pool"
+            icon={<PoolIcon />}
+            badge={poolIds.length > 0 ? poolIds.length.toLocaleString() : undefined}
+            selected={state.currentView === 'activity-pool'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
+            droppable
+            onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
+          />
+        </SidebarSection>
 
         {/* WJLR Picks moved INTO the Record Shop as the staff wall
             (2026-08-22, Jake: "move these into a row for each person on the
