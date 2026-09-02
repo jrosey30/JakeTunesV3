@@ -113,7 +113,7 @@ real, in which direction, how fast, and where can it silently drift.
 | Artwork | desktop → homemini | rsync + trigger | on change | — |
 | Brain: text embeddings + mood index | homemini owns; desktop reads | nightly trainer on homemini | nightly | desktop never pushes embeddings.bin (would clobber the enriched brain) |
 | Brain: CLAP audio index | **desktop only** | laptop batch | manual | **homemini has no CLAP text tower → fusion is desktop-only** (the one real twin gap from 6.0) |
-| Taste ledger (verdict stream) | **desktop local** | not in the mirror list | — | **VERIFY**: if the nightly weight learner runs on homemini, it cannot see the laptop's ledger. See B3. |
+| Taste ledger (verdict stream) | desktop local | not mirrored — and doesn't need to be | nightly (laptop launchd `taste-learn`) | Resolved on inspection: the weight learner runs on the laptop against the local ledger; phone verdicts (stars) reach it through the mobile-stars mirror. No gap. |
 | Made for You mixes (daily + vibe) | homemini generates for both | shared endpoint | daily / on request | generation has no skit/intro gate — see B2 |
 | iPod sync, Round Trip, pool, sync history | desktop only | — | — | **by design** (your rule) |
 
@@ -135,7 +135,7 @@ real, in which direction, how fast, and where can it silently drift.
 1. **Skit/intro gate in mix generation** (mixes.ts, djSet.ts) — twin of `isSkitOrIntro` + the "intro only at track 1" rule. ~1 hr, backend only, auto-deploys.
 2. **Zero-byte floor in streamrip.ts** — same 64 KB rule as desktop. ~30 min, backend only.
 3. **Parity probe**: one script that compares track count + newest `dateAdded` + playlist count on desktop vs homemini and prints a one-line verdict; run it from the Sunday KPI snapshot so drift is caught weekly, not by you. ~1 hr.
-4. **Taste ledger reach** — confirm where the nightly learner reads from; if it's homemini, add `taste-ledger.jsonl` to the mirror list (one line). VERIFY first.
+4. ~~Taste ledger reach~~ — checked: the learner is a laptop job reading the local ledger. Nothing to do.
 5. **Preview refresh on iOS** — resolve the Deezer URL at play time like desktop. ~2 hr; needs an iOS build and a phone install.
 6. **CLAP text tower on homemini + fusion twin** — closes the last brain gap. Half a day; the audio index (9,804 vectors) already exists, it just needs to be served from homemini.
 
