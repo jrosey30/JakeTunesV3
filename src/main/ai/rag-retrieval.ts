@@ -134,16 +134,53 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
   // 3d (gated): the AUDIO route — CLAP text query against how tracks
   // actually SOUND. Opt-in via JT_AUDIO_ROUTE until the production-path
   // eval says it beats the mood route; every failure falls through.
-  if (route === 'mood' && process.env.JT_AUDIO_ROUTE === '1' && !decade) {
+  const audioMode = process.env.JT_AUDIO_ROUTE   // '1' = audio-only, 'fusion' = mood ⊕ audio
+  if (route === 'mood' && (audioMode === '1' || audioMode === 'fusion') && !decade) {
     try {
       const amap = await getAudioIndexMap()
       if (amap.size > 0) {
         const aq = await clapEmbedText(query)
         if (aq) {
-          console.log(`[rag] route=audio k=${k} "${query.slice(0, 60)}"`)
           const poolK = Math.min(Math.max(k * RERANK_OVERFETCH, k), RERANK_POOL_CAP)
-          const pool = audioTopK(aq, amap, poolK)
-          return rerankHits(query, pool, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+          if (audioMode === '1') {
+            console.log(`[rag] route=audio k=${k} "${query.slice(0, 60)}"`)
+            const pool = audioTopK(aq, amap, poolK)
+            return rerankHits(query, pool, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+          }
+          // FUSION: union of the mood pool and the audio pool; every candidate
+          // gets both cosines. The audio term is added as a DEVIATION scaled
+          // into mood units (W × z_audio × σ_mood), so the score stays in
+          // cosine units and the 3c genre reranker's weight means the same
+          // thing it always did. A track with no audio vector sits at the
+          // audio mean (no bonus, no penalty).
+          const [qvec] = await ragEmbedTexts([query])
+          if (qvec) {
+            const W = Number(process.env.JT_AUDIO_W ?? '0.5')
+            const moodPool = ragTopK(qvec, map, poolK)
+            const audioPool = audioTopK(aq, amap, poolK)
+            const ids = new Set<number>([...moodPool.map((h) => h.trackId), ...audioPool.map((h) => h.trackId)])
+            const dot = (a: Float32Array, b: Float32Array): number => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i] * b[i]; return t }
+            const rows: Array<{ trackId: number; m: number; a: number | null }> = []
+            for (const id of ids) {
+              const mv = map.get(id)
+              if (!mv) continue
+              const av = amap.get(id)
+              rows.push({ trackId: id, m: dot(qvec, mv), a: av ? dot(aq, av) : null })
+            }
+            const stats = (xs: number[]): { mean: number; sd: number } => {
+              const mean = xs.reduce((t, x) => t + x, 0) / Math.max(1, xs.length)
+              const sd = Math.sqrt(xs.reduce((t, x) => t + (x - mean) ** 2, 0) / Math.max(1, xs.length)) || 1e-6
+              return { mean, sd }
+            }
+            const ms = stats(rows.map((r) => r.m))
+            const as = stats(rows.filter((r) => r.a != null).map((r) => r.a as number))
+            const fused = rows
+              .map((r) => ({ trackId: r.trackId, score: r.m + (r.a == null ? 0 : W * ((r.a - as.mean) / as.sd) * ms.sd) }))
+              .sort((x, y) => y.score - x.score)
+              .slice(0, poolK)
+            console.log(`[rag] route=fusion W=${W} pool=${rows.length} k=${k} "${query.slice(0, 60)}"`)
+            return rerankHits(query, fused, await ragTrackGenreMap(), k, RERANK_GENRE_W)
+          }
         }
       }
     } catch (err) {

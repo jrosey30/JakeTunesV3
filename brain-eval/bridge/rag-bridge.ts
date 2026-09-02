@@ -16,6 +16,7 @@ import { homedir } from 'os'
 import {
   initRagRetrieval, pickRetrievalIndex, ragRetrieveByQuery,
 } from '../../src/main/ai/rag-retrieval.ts'
+import { stopAudioQueryServer } from '../../src/main/ai/audio-query.ts'
 
 const STATE_DIR = process.env.JT_STATE_DIR
   || join(homedir(), 'Library', 'Application Support', 'JakeTunes')
@@ -41,5 +42,11 @@ async function main(): Promise<void> {
     const hits = await ragRetrieveByQuery(query, k)
     console.log(JSON.stringify({ query, index, hits }))
   }
+  // 3d (2026-09-02): with JT_AUDIO_ROUTE set, the CLAP helper child and
+  // its 10-minute idle timer kept the event loop alive after main()
+  // returned — run_eval's 300 s wait expired and the whole production
+  // bucket was SKIPPED. Kill the helper and exit explicitly.
+  stopAudioQueryServer()
+  process.exit(0)
 }
 void main()

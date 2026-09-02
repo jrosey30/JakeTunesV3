@@ -34,6 +34,8 @@ function stopServer(): void {
 function touchIdle(): void {
   if (idleTimer) clearTimeout(idleTimer)
   idleTimer = setTimeout(stopServer, IDLE_MS)
+  // Never let the idle timer alone keep a process alive (the eval bridge).
+  idleTimer.unref?.()
 }
 
 function ensureServer(): Promise<boolean> {

@@ -427,6 +427,7 @@ def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, e
         return round(sum(xs) / len(xs), 4) if xs else None
     summary = {
         "label": label, "brain_id": brain_id, "vectors": meta["count"],
+        "audio_route": os.environ.get("JT_AUDIO_ROUTE") or None, "audio_w": os.environ.get("JT_AUDIO_W") or None,
         "retrieval": mean(R["retrieval"]), "grounding": mean(R["grounding"]),
         "persona": mean(R["persona"]),
     }

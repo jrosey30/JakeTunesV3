@@ -75,6 +75,49 @@ Lanes, in build order:
    lyrics / descriptor / genre / embedding? Every hole is a song the brain
    guesses about. One report, then fill holes.
 
+**3d VERDICT (2026-09-02, measured on the production path, 15 V2 prompts,
+recall@k, brain f2559e48f72d / 10,085 text vectors / 9,804 CLAP vectors):**
+
+| route (mood-routed prompts only change) | retrieval_prod | the 7 vibe prompts |
+|---|---|---|
+| mood-only (today's baseline)            | 0.812 | 0.640 |
+| audio-only (CLAP text→audio, replaces mood) | **0.727** (−0.085) | 0.457 |
+| fusion W=0.25 (mood ⊕ audio deviation)  | 0.839 | 0.700 |
+| fusion W=0.5                            | 0.844 (+0.032) | 0.709 |
+| fusion W=1.0                            | 0.849 (+0.037) | 0.720 |
+
+Run-to-run jitter on the same brain is ≈0.005, so the fusion gain is real
+(6× jitter) and monotone in W. Audio ALONE loses: CLAP hears "aggressive
+workout bangers" (bpm≥130) at 0.24 vs 0.76 — it hears texture, not tempo —
+and "reggae and ska" at 0.36 vs 1.00. As a SECOND OPINION on top of the
+mood pool it lifts every prompt it touches except a slight metal dip at
+W=1.0. Decision: **GO on fusion, W=0.5** (keeps reggae at 1.00 and metal
+above baseline; W=1.0's extra +0.005 is inside jitter). Mechanics: union of
+the mood top-100 and audio top-100, score = mood cosine + W·z(audio)·σ(mood)
+(stays in cosine units so the 3c genre reranker's weight means the same
+thing), then the 3c rerank. Falls through to plain mood on any failure (no
+venv, helper down, decade-gated query). Cost: first vibe query after 10 idle
+minutes pays a ~5 s CLAP warm-up; every later query is milliseconds.
+
+The bridge timeout that blocked this yesterday was NOT the model: the helper
+child + its idle timer kept the bridge's event loop alive after the queries
+finished, so run_eval's 300 s wait expired and skipped the bucket. Fixed
+(explicit stop + exit; timer unref'd).
+
+Yacht-rock finding (the query that started 3d): the library holds 43
+yacht-ish tracks across 11 artists (Steely Dan, Doobies, McDonald, Toto,
+Boz Scaggs, Loggins, Rupert Holmes…). NO route puts one in the top 25 —
+mood best rank 82, fusion 33, audio 121. Every space reads "yacht rock" as
+the token "rock" (classic rock, hard rock). That is a LEXICON gap, not an
+ears gap: a subgenre → artist/era expansion for the 3c reranker ("yacht
+rock" → smooth soft rock, 1976–84, Steely Dan/McDonald/Toto…) is the fix,
+and it is cheap. Filed for 6.1 under "grow lexicons, never rewrite the
+matcher".
+
+Twin note: fusion runs on the DESKTOP only until homemini has the CLAP text
+tower (CPU is fine for text queries). Until then mobile vibe retrieval stays
+mood-only — an explicitly incomplete twin, recorded in mix-brain-twin.ts.
+
 Tie-back: pillar 1 (round trip) is the fuel for lanes 1 and 3 — real offline
 listens as eval ground truth and rerank signal. One sentence: better ears
 (audio vectors) + better judgment (reranking) + honest report cards (evals fed
