@@ -1,0 +1,96 @@
+/* 2011 facelift, phase 3 (Jake 9/2: "ok phase 3") — Lion's controls.
+ * Segmented switches become capsules whose active segment is PRESSED
+ * (darker grey, inset), not painted blue; push buttons take Lion's soft
+ * white→grey gradient with a hairline and capsule corners; the one blue
+ * button (Play All) takes Lion's default-button blue. Brand orange stays.
+ * `body` prefix outranks the per-view sheets without touching them. */
+
+/* ── segmented: Top 25 window (All Time / Last Month / Last Week) ── */
+body .top25-window-switch {
+  border: 1px solid #a3a3a3;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fcfcfc, #e9e9e9);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+body .top25-window-btn {
+  padding: 3px 13px;
+  color: #3a3a3a;
+  font-weight: 600;
+  border-right: 1px solid #b9b9b9;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+body .top25-window-btn:hover { background: rgba(0, 0, 0, 0.05); color: #1a1a1a; }
+body .top25-window-btn--active,
+body .top25-window-btn--active:hover {
+  background: linear-gradient(180deg, #c6c6c6, #d6d6d6);
+  color: #1a1a1a;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* ── segmented: view mode (list / grid / cover flow) ── */
+body .view-mode-toggle {
+  border: 1px solid #a3a3a3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fcfcfc, #e9e9e9);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+body .view-mode-segment {
+  background: transparent;
+  border-right: 1px solid #b9b9b9;
+  color: #444;
+}
+body .view-mode-segment:hover { background: rgba(0, 0, 0, 0.05); }
+body .view-mode-segment--active,
+body .view-mode-segment--active:hover {
+  background: linear-gradient(180deg, #c6c6c6, #d6d6d6);
+  color: #1a1a1a;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28);
+}
+
+/* ── push buttons ── */
+body .playlist-view-play {
+  border-radius: 12px;
+  border: 1px solid #3b66a8;
+  background: linear-gradient(180deg, #86aef0 0%, #5e8bdc 50%, #4a78cc 51%, #5b8ad9 100%);
+  color: #fff;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+body .playlist-view-play:hover { opacity: 1; filter: brightness(1.04); }
+body .playlist-view-save,
+body .pool-btn,
+body .titlebar-nav-btn {
+  border-radius: 12px;
+  border: 1px solid #a3a3a3;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6);
+  color: #333;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+body .playlist-view-save:hover:not(:disabled),
+body .pool-btn:hover:not(:disabled),
+body .titlebar-nav-btn:hover:not(:disabled) { background: linear-gradient(180deg, #ffffff, #dedede); }
+body .titlebar-nav-btn { border-radius: 9px; }
+body .pool-btn--go {
+  border-color: #3b66a8;
+  background: linear-gradient(180deg, #86aef0 0%, #5e8bdc 50%, #4a78cc 51%, #5b8ad9 100%);
+  color: #fff;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* album page: Play keeps the brand orange but loses the drop glow and
+ * takes the capsule; Shuffle is a Lion push button. */
+body .album-page-play {
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 0 rgba(255, 255, 255, 0.5);
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.2);
+}
+body .album-page-shuffle {
+  border-radius: 14px;
+  border: 1px solid #a3a3a3;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6);
+  color: #444;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+body .album-page-shuffle:hover { background: linear-gradient(180deg, #ffffff, #dedede); }
