@@ -118,6 +118,23 @@ def embed_track(model, processor, device, src: str, duration_s: float):
     v = v / (np.linalg.norm(v) or 1)
     return v.astype(np.float32).tobytes()
 
+NAS_LIB = os.environ.get("JT_NAS_LIB", "/Volumes/JakeShared/JakeTunesLibrary")
+
+def nas_available() -> bool:
+    """One cheap listability probe — a wedged SMB mount must not hang the batch."""
+    try:
+        import signal
+        class _T(Exception): pass
+        def _alarm(*_): raise _T()
+        signal.signal(signal.SIGALRM, _alarm); signal.alarm(5)
+        try:
+            os.listdir(NAS_LIB)
+            return True
+        finally:
+            signal.alarm(0)
+    except Exception:
+        return False
+
 def run_batch(limit: int) -> int:
     lib = json.load(open(LIB_PATH))
     tracks = lib.get("tracks", [])
@@ -128,7 +145,8 @@ def run_batch(limit: int) -> int:
     if not todo:
         return 0
     model, processor, device = load_model()
-    log(f"model {MODEL_ID} on {device}")
+    use_nas = nas_available()
+    log(f"model {MODEL_ID} on {device} | NAS vault {'available — preferred over homemini' if use_nas else 'absent — homemini HTTP fallback'}")
     n = ok = miss = err = 0
     t0 = time.time()
     for t in todo:
@@ -138,7 +156,18 @@ def run_batch(limit: int) -> int:
         tid = t["id"]
         colon = str(t.get("path") or "")
         local = colon_to_abs(colon, music_root) if colon else ""
-        src = local if local and os.path.exists(local) else f"{HOMEMINI_AUDIO}/{tid}"
+        # Source order (2026-09-01 EMFILE lesson): local file, then the NAS
+        # vault DIRECTLY, and homemini's LIVE backend only as a last resort —
+        # 29k HTTP range-reads from this batch once exhausted its
+        # descriptors and took mobile playback down with it.
+        rel = colon.replace(":", "/") if colon else ""
+        nas_path = (NAS_LIB + rel) if (rel and use_nas) else ""
+        if local and os.path.exists(local):
+            src = local
+        elif nas_path and os.path.exists(nas_path):
+            src = nas_path
+        else:
+            src = f"{HOMEMINI_AUDIO}/{tid}"
         try:
             dur_ms = float(t.get("duration") or 0)
             blob = embed_track(model, processor, device, src, dur_ms / 1000.0)
