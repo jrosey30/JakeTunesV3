@@ -24,7 +24,7 @@ import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
 import '../styles/songs.css'
-import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
 
 // Persist sort preferences per smart playlist across navigation
 const smartSortPrefs = new Map<string, { col: string | null; dir: 'asc' | 'desc' }>()
@@ -877,6 +877,7 @@ export default function SmartPlaylistView() {
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
       addToPlaylistEntry(selected, libState.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      addToIpodPoolEntry(selected),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
       { label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },

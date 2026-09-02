@@ -549,9 +549,12 @@ export default function Sidebar() {
 
         {/* iPod Pool (2026-09-02): the hand-built Activity Sync set. Its own
             section, named for what it feeds — Jake: a pool "listed as a
-            device and ipod not even plugged in" is wrong. Always present,
-            because a pool is built over days; drop songs, albums, artists
-            or playlists on the row. */}
+            device and ipod not even plugged in" is wrong, and a permanent
+            row is "still sitting there". So: shown ONLY while the pool has
+            songs. First songs enter via right-click → Add to iPod Pool;
+            after that the row is the drop target for whole albums,
+            artists and playlists. Clear the pool and the row goes. */}
+        {poolIds.length > 0 && (
         <SidebarSection title="ACTIVITY SYNC">
           <SidebarItem
             label="iPod Pool"
@@ -563,6 +566,7 @@ export default function Sidebar() {
             onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
           />
         </SidebarSection>
+        )}
 
         {/* WJLR Picks moved INTO the Record Shop as the staff wall
             (2026-08-22, Jake: "move these into a row for each person on the

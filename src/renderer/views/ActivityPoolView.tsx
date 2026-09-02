@@ -67,7 +67,7 @@ export default function ActivityPoolView() {
           <div className="pool-sub">
             {rows.length > 0
               ? <>{rows.length.toLocaleString()} of {max.toLocaleString()} songs · {fmtLong(totalMs)}{missing > 0 ? ` · ${missing} no longer in the library` : ''}</>
-              : <>Empty — drag songs, albums, artists or playlists here, or onto “iPod Pool” in the sidebar.</>}
+              : <>Empty — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
           </div>
         </div>
         <div className="pool-actions">

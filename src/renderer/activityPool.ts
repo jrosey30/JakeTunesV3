@@ -70,6 +70,11 @@ export async function addTracksToPool(dropped: number[], byId: Map<number, Track
   })
 }
 
+/** Context-menu path: the caller already holds the Track objects. */
+export function addTracksToPoolDirect(tracks: Track[]): Promise<void> {
+  return addTracksToPool(tracks.map((t) => t.id), new Map(tracks.map((t) => [t.id, t])))
+}
+
 export async function removeFromPool(remove: number[]): Promise<void> {
   const r = await window.electronAPI.removeFromActivityPool?.(remove)
   if (r?.ok && Array.isArray(r.ids)) { ids = r.ids; notify() }

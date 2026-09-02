@@ -163,7 +163,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           </div>
           {poolMode && (
             <div className={`activity-pool-status${poolOver || poolEmpty ? ' is-blocked' : ''}`}>
-              {poolEmpty && 'The pool is empty — drag songs, albums, artists or playlists onto “iPod Pool” in the sidebar first.'}
+              {poolEmpty && 'The pool is empty — right-click any song and choose “Add to iPod Pool”. Once it has songs, the pool shows in the sidebar and you can drag albums, artists and playlists onto it.'}
               {poolOver && `${poolCount.toLocaleString()} in the pool — ${(poolCount - target).toLocaleString()} over ${target.toLocaleString()}. Remove some, or pick a bigger size. Nothing gets trimmed for you.`}
               {!poolEmpty && !poolOver && poolGap === 0 && `${poolCount.toLocaleString()} in the pool — exactly ${target.toLocaleString()}. Ready.`}
               {!poolEmpty && !poolOver && poolGap > 0 && (

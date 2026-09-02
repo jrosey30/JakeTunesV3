@@ -30,7 +30,7 @@ import { setNotice } from '../activity'
 import type { Mixtape, Track } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
-import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
 import { setTrackDragPayload } from '../utils/trackDrag'
 
 const GRID = '44px minmax(0, 1.8fr) minmax(0, 1.2fr) 70px'
@@ -106,6 +106,7 @@ export default function MixDetailView() {
       { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
       addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      addToIpodPoolEntry(selectedTracks),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
       ...(track.album ? [{ label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: `${(track.albumArtist || track.artist || '').toLowerCase().trim()}|||${(track.album || '').toLowerCase().trim()}` }) }] : []),
