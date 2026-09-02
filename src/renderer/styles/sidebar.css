@@ -117,6 +117,10 @@
 }
 .sidebar-item--selected .sidebar-item-icon svg,
 .sidebar-item--highlight .sidebar-item-icon svg { filter: none; }
+/* On a colored row a white glyph's white "hole" (the record's label)
+ * vanishes — tint it so the Record Shop still reads as a record. */
+.sidebar-item--selected .sidebar-item-icon svg [fill="#fff"],
+.sidebar-item--highlight .sidebar-item-icon svg [fill="#fff"] { fill: rgba(0, 0, 0, 0.30); }
 
 .sidebar-item-icon {
   flex-shrink: 0;
