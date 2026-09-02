@@ -6,6 +6,7 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
+import { isTop25Rankable } from '../../common/top25-rankable'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -378,7 +379,7 @@ export default function SmartPlaylistView() {
       if (haveAnyEvents) {
         return Object.entries(windowedCounts)
           .map(([id, cnt]) => ({ track: trackById.get(Number(id)), cnt }))
-          .filter((x): x is { track: Track; cnt: number } => x.track !== undefined && x.cnt > 0)
+          .filter((x): x is { track: Track; cnt: number } => x.track !== undefined && x.cnt > 0 && isTop25Rankable(x.track))
           .sort((a, b) => b.cnt - a.cnt)
           .slice(0, 25)
           .map(x => x.track)
@@ -388,7 +389,7 @@ export default function SmartPlaylistView() {
       // tracks play). Same shape as the old approximation.
       const cutoff = Date.now() - WINDOW_MS
       return libState.tracks
-        .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff)
+        .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff && isTop25Rankable(t))
         .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
         .slice(0, 25)
     }
