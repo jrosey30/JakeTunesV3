@@ -125,10 +125,10 @@ real, in which direction, how fast, and where can it silently drift.
 | Subgenre lexicon (yacht rock) | ✓ | ✓ 3579773 live | — |
 | Serving-side fd leak fix | — | ✓ cc3c66f | — |
 | AUC drift alarm | — | ✓ | — |
-| Audio fusion (mood ⊕ CLAP) | ✓ on by default | ✗ | **CLAP text tower on homemini** (CPU is fine for text queries), then port the fusion scorer |
+| Audio fusion (mood ⊕ CLAP) | ✓ on by default | ✓ 0af8469 (9/2) | CLOSED — text tower at homemini ~/jt-clap (mps), audio-index.bin via NAS pull; `[rag] route=fusion` verified live |
 | Intro only as track 1 / skits, sub-minute fragments barred | ✓ mixtape builder + pool + picker | ✗ mixes.ts / djSet.ts have no gate | A 37-second "Intro" can land in a phone vibe mix today |
-| Zero-byte download stub refused | ✓ 64 KB floor | ✗ streamrip.ts has no size check | A phone download that serves 0 bytes becomes a ghost row |
-| Deezer preview refreshed at play time | ✓ | ✗ iOS caches `previewUrl` | Discovery previews on the phone will 403 after the URL expires |
+| Zero-byte download stub refused | ✓ 64 KB floor | ✓ 0af8469 (9/2) | CLOSED — MIN_RIP_BYTES in streamrip.ts |
+| Deezer preview refreshed at play time | ✓ | n/a | Not a gap: iOS never plays previews (`previewUrl` is decoded and unused); the feed's previews are iTunes, not Deezer |
 | Sync notices: breaker deferrals silent | ✓ | n/a | — |
 
 ### B3. Proposed mobile order (cheapest, highest-fidelity first)
