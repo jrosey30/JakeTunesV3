@@ -806,7 +806,9 @@
   width: 240px;
   height: 240px;
   display: block;
-  image-rendering: pixelated;
+  /* 2026-09-02: smooth — the 1024px art is downsampled anti-aliased on the
+     canvas now; `pixelated` here was doubling the blockiness. */
+  image-rendering: auto;
   filter: drop-shadow(0 10px 22px rgba(120, 40, 8, 0.28));
 }
 .app-splash--boot .app-splash-stage {
@@ -870,7 +872,9 @@
   height: 34px;
   width: auto;
   margin: 14px auto 0;
-  image-rendering: pixelated;
+  /* 8× downscale of the pixel lettering: `pixelated` aliased the strokes
+     into ragged steps; smooth downsampling keeps the pixel look and the edges. */
+  image-rendering: auto;
   opacity: 0;
   animation: splash-wordmark-in 420ms cubic-bezier(0.2, 0.9, 0.25, 1) 1500ms forwards;
 }

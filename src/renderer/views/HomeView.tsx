@@ -10,7 +10,6 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
-import PageGate from '../components/PageGate'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
 import { PlayIcon, PauseIcon } from '../components/TransportIcons'
 import { useLibrary } from '../context/LibraryContext'
@@ -749,14 +748,12 @@ export default function HomeView() {
       ? `Today’s pick is ${featuredAlbum.album} — play it, or open a shelf.`
       : 'Pick a shelf and start listening.'
 
-  // One paint for the whole page (or the 2.5s cap for cold network sections).
-  if (!pageReady) {
-    return (
-      <div className="home-view">
-        <PageGate title={greeting} note="Warming up the room…" layout="grid" />
-      </div>
-    )
-  }
+  // 2026-09-02 — no whole-page gate. A cold Home (every fresh launch, right
+  // after the splash) used to show "Warming up the room…" for up to 2.5 s.
+  // Now it paints whatever is ready on frame one and the network bands ease
+  // in as they land (`.home-section` mount fade in home.css) — arrivals read
+  // as intentional instead of as pops. `pageReady` stays for the bookkeeping.
+  void pageReady
 
   return (
     <div className="home-view" ref={rootRef}>

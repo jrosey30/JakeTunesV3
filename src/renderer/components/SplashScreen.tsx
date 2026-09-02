@@ -5,10 +5,14 @@
  * driven by the logo's own pixels rather than by CSS on a rectangle:
  *
  *   0.00s  dark. a single scanline snaps on and expands — CRT/LCD power-on.
- *   0.15s  the mark ASSEMBLES: the real logo bitmap is read into a canvas and
- *          revealed grid-cell by grid-cell on a diagonal sweep. Each cell
- *          IGNITES (a white flash that decays over ~180ms) at the moment it
- *          lands, so the tile writes itself on like pixels powering up.
+ *   0.15s  the mark COMES INTO FOCUS: the real logo bitmap, drawn smooth
+ *          (anti-aliased from the 1024px art), resolves out of a soft blur
+ *          while it scales up a hair and a warm sheen passes over it. One
+ *          continuous motion — no grid, no cells. (2026-09-02: the 2.0 boot
+ *          assembled the tile from 9px cells with per-cell ignition flashes
+ *          and a CRT scanline overlay; Jake: "a little blocky for some
+ *          reason… deserves to be more elegant". It was blocky on purpose,
+ *          and the purpose was wrong.)
  *   1.05s  the NOTE lights: a bloom rises off the glyph itself, so the note
  *          reads as struck-and-ringing rather than printed.
  *   1.45s  settle. the chord blooms (playIntroStinger), the wordmark springs,
@@ -50,8 +54,8 @@ const T_POWER_ON = 150     // scanline expand completes
 const T_ASSEMBLE = 1050    // last pixel cell lands
 const T_LIT = 1250         // the note's bloom reaches full
 const T_SETTLE = 1450      // boot complete, hand off to the settled frame
-const CELL = 9             // reveal grid, CSS px — reads as chunky pixels
-const IGNITE_MS = 190      // per-cell flash decay
+const FOCUS_BLUR_PX = 7    // how soft the mark starts before it resolves
+const FOCUS_SCALE = 0.955  // how far in it starts before settling at 1
 
 /** The dark "screen off" field the mark ignites against. Matches the shape of
  *  the art exactly: since brand/make-icons.py the in-app mark is a full-canvas
@@ -68,12 +72,6 @@ function getGreeting(): string {
   if (h >= 12 && h < 17) return 'Good afternoon, Jake.'
   if (h >= 17 && h < 22) return 'Good evening, Jake.'
   return 'Burning the midnight oil, Jake.'
-}
-
-/** Deterministic per-cell jitter so the sweep edge is ragged, not a ruler. */
-function hash01(x: number, y: number): number {
-  const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
-  return n - Math.floor(n)
 }
 
 interface Glyph { cx: number; cy: number; w: number; h: number }
@@ -156,7 +154,8 @@ export default function SplashScreen({ isReady }: Props) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.scale(dpr, dpr)
-    ctx.imageSmoothingEnabled = false   // pixel art stays pixel art
+    ctx.imageSmoothingEnabled = true    // the 1024px art downsamples smooth — no blocks
+    ctx.imageSmoothingQuality = 'high'
 
     let raf = 0
     let cancelled = false
@@ -165,35 +164,31 @@ export default function SplashScreen({ isReady }: Props) {
     img.onload = () => {
       if (cancelled) return
       // Bake the mark once at display size; every frame composites from here.
+      // Baked at device resolution so the settled frame is crisp on Retina.
       const off = document.createElement('canvas')
-      off.width = SIZE
-      off.height = SIZE
+      off.width = SIZE * dpr
+      off.height = SIZE * dpr
       const octx = off.getContext('2d')
       if (!octx) return
-      octx.imageSmoothingEnabled = false
-      octx.drawImage(img, 0, 0, SIZE, SIZE)
+      octx.imageSmoothingEnabled = true
+      octx.imageSmoothingQuality = 'high'
+      octx.drawImage(img, 0, 0, SIZE * dpr, SIZE * dpr)
+      const drawMark = (): void => { ctx.drawImage(off, 0, 0, SIZE, SIZE) }
 
       // Find the glyph now, off the same buffer every frame composites from,
       // so the bloom can never drift from the art it is lighting.
       let glyph: Glyph | null = null
       try {
-        glyph = markGlyph(octx.getImageData(0, 0, SIZE, SIZE).data, SIZE)
+        // Measure off a CSS-pixel copy so the glyph box is in draw units.
+        const m = document.createElement('canvas')
+        m.width = SIZE; m.height = SIZE
+        const mctx = m.getContext('2d')
+        if (mctx) { mctx.drawImage(img, 0, 0, SIZE, SIZE); glyph = markGlyph(mctx.getImageData(0, 0, SIZE, SIZE).data, SIZE) }
       } catch { glyph = null }   // tainted canvas: skip the bloom, keep the boot
-
-      const cols = Math.ceil(SIZE / CELL)
-      const rows = Math.ceil(SIZE / CELL)
-      // Per-cell arrival time along a diagonal sweep + jitter.
-      const arrival: number[] = new Array(cols * rows)
-      for (let gy = 0; gy < rows; gy++) {
-        for (let gx = 0; gx < cols; gx++) {
-          const diag = (gx / cols) * 0.55 + (gy / rows) * 0.45
-          arrival[gy * cols + gx] = Math.min(0.999, diag * 0.86 + hash01(gx, gy) * 0.14)
-        }
-      }
 
       if (reduce) {
         ctx.clearRect(0, 0, SIZE, SIZE)
-        ctx.drawImage(off, 0, 0)
+        drawMark()
         setPhase('settled')
         return
       }
@@ -234,25 +229,39 @@ export default function SplashScreen({ isReady }: Props) {
           return
         }
 
-        // 2. Assembly: reveal cells whose arrival time has passed, and flash
-        //    each one as it lands.
+        // 2. Focus: the whole mark resolves out of a soft blur while it eases
+        //    up from FOCUS_SCALE to 1 — one continuous, anti-aliased motion.
+        //    A warm sheen (a soft diagonal band) passes over it once as it
+        //    lands, so the tile reads as lit rather than switched on.
         const ap = Math.min(1, (t - T_POWER_ON) / (T_ASSEMBLE - T_POWER_ON))
-        const eased = 1 - Math.pow(1 - ap, 2)
-        for (let gy = 0; gy < rows; gy++) {
-          for (let gx = 0; gx < cols; gx++) {
-            const a = arrival[gy * cols + gx]
-            if (eased < a) continue
-            const x = gx * CELL
-            const y = gy * CELL
-            ctx.drawImage(off, x, y, CELL, CELL, x, y, CELL, CELL)
-            // ignition flash, decaying
-            const sinceLanded = (eased - a) * (T_ASSEMBLE - T_POWER_ON)
-            if (sinceLanded < IGNITE_MS) {
-              const f = 1 - sinceLanded / IGNITE_MS
-              ctx.fillStyle = `rgba(255, 246, 222, ${0.75 * f * f})`
-              ctx.fillRect(x, y, CELL, CELL)
-            }
-          }
+        const eased = 1 - Math.pow(1 - ap, 3)
+        const blur = FOCUS_BLUR_PX * (1 - eased)
+        const scale = FOCUS_SCALE + (1 - FOCUS_SCALE) * eased
+        ctx.save()
+        ctx.globalAlpha = Math.min(1, ap * 1.6)
+        ctx.filter = blur > 0.15 ? `blur(${blur.toFixed(2)}px)` : 'none'
+        ctx.translate(SIZE / 2, SIZE / 2)
+        ctx.scale(scale, scale)
+        ctx.translate(-SIZE / 2, -SIZE / 2)
+        drawMark()
+        ctx.restore()
+        if (ap > 0.35 && ap < 1) {
+          // sheen: a soft light band sweeping top-left → bottom-right, clipped
+          // to the tile's squircle so it never spills onto the paper.
+          const sp = (ap - 0.35) / 0.65
+          const x = -SIZE * 0.6 + sp * SIZE * 2.2
+          const g = ctx.createLinearGradient(x, 0, x + SIZE * 0.55, SIZE * 0.55)
+          g.addColorStop(0, 'rgba(255, 244, 220, 0)')
+          g.addColorStop(0.5, `rgba(255, 244, 220, ${0.28 * Math.sin(sp * Math.PI)})`)
+          g.addColorStop(1, 'rgba(255, 244, 220, 0)')
+          ctx.save()
+          ctx.globalCompositeOperation = 'lighter'
+          ctx.beginPath()
+          ctx.roundRect(0, 0, SIZE, SIZE, SIZE * PLATE_RADIUS)
+          ctx.clip()
+          ctx.fillStyle = g
+          ctx.fillRect(0, 0, SIZE, SIZE)
+          ctx.restore()
         }
 
         // 3. The note lights. Centred on the glyph the loader measured, and
@@ -283,7 +292,7 @@ export default function SplashScreen({ isReady }: Props) {
         }
 
         if (t < T_SETTLE + 260) raf = requestAnimationFrame(draw)
-        else { ctx.clearRect(0, 0, SIZE, SIZE); ctx.drawImage(off, 0, 0); setPhase('settled') }
+        else { ctx.clearRect(0, 0, SIZE, SIZE); drawMark(); setPhase('settled') }
       }
       raf = requestAnimationFrame(draw)
     }
@@ -326,7 +335,8 @@ export default function SplashScreen({ isReady }: Props) {
               old iPod mark and had nothing to sweep once the mark became a
               note.) */}
           <canvas ref={canvasRef} className="app-splash-canvas" width={240} height={240} />
-          <div className="app-splash-scanlines" />
+          {/* (The CRT scanline overlay is gone with the cell assembly — it was
+              the other half of the blockiness.) */}
           <div className="app-splash-device-glow" />
         </div>
         {/* The wordmark IS the logo's wordmark — the same pixels lifted off

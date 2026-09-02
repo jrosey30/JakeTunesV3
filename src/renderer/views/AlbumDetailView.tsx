@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
-import PageGate from '../components/PageGate'
+import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -420,6 +420,7 @@ export default function AlbumDetailView() {
     return () => clearTimeout(cap)
   }, [albumArtist, albumName])
   const pageReady = tracks.length === 0 || infoSettled || infoCapHit
+  const infoLoadingShown = useDelayedFlag(infoLoading)
 
   useEffect(() => {
     if (tracks.length === 0) return
@@ -509,13 +510,10 @@ export default function AlbumDetailView() {
       ].filter(Boolean).join(' · ')
     : ''
 
-  if (!pageReady) {
-    return (
-      <div className="album-page">
-        <PageGate title={albumName} note="Dropping the needle…" layout="hero" />
-      </div>
-    )
-  }
+  // 2026-09-02 — no whole-page gate: the tracks are in memory, so the album
+  // paints on frame one; the history blurb lands in its own line, with a
+  // placeholder only after 400 ms (see ArtistDetailView for the why).
+  void pageReady
 
   return (
     <div className="album-page">
@@ -601,7 +599,7 @@ export default function AlbumDetailView() {
             </div>
           )}
           {creditLine && <div className="album-page-creditline">{creditLine}</div>}
-          {infoLoading && !blurb && !creditLine && (
+          {infoLoadingShown && !blurb && !creditLine && (
             <p className="album-page-loading">Loading album history…</p>
           )}
           {infoError && !infoLoading && !blurb && !creditLine && (

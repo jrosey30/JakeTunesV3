@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import PageGate from '../components/PageGate'
+import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -438,16 +438,17 @@ export default function ArtistDetailView() {
     )
   }
 
-  // One paint: hold a quiet skeleton until every section is ready (or the
-  // discography cap fires). Library data is already in memory, so this gate
-  // costs at most the slowest of photo/related/wiki — typically <1s warm.
-  if (!pageReady) {
-    return (
-      <div className="artist-detail-view">
-        <PageGate title={artist} note="Pulling the records off the shelf…" layout="grid" />
-      </div>
-    )
-  }
+  // 2026-09-02 — NO whole-page gate. The library data is already in memory,
+  // so the page paints on frame one; Wikipedia / related / discography land
+  // in their own sections, each with a quiet placeholder that only appears
+  // if the lookup is still running after 400 ms (a cache hit never flashes).
+  // The gate held every artist open hostage to four lookups (the MusicBrainz
+  // one up to 5 s) — Jake: "the loading pages suck… they appear too
+  // frequently". `pageReady` stays computed for the settle bookkeeping.
+  const wikiLoadingShown = useDelayedFlag(wikiLoading)
+  const relatedLoadingShown = useDelayedFlag(relatedLoading)
+  const discoLoadingShown = useDelayedFlag([...discoByPersona.values()].some((v) => v === 'loading'))
+  void pageReady
 
   return (
     <div className="artist-detail" ref={scrollRef}>
@@ -527,7 +528,7 @@ export default function ArtistDetailView() {
       </header>
 
       <section className="artist-detail-wiki">
-        {wikiLoading ? (
+        {wikiLoadingShown ? (
           <div className="artist-detail-wiki-loading">
             <span className="artist-detail-wiki-spinner" />
             Looking up Wikipedia…
@@ -724,7 +725,7 @@ export default function ArtistDetailView() {
               <h2 className="artist-detail-section-title">
                 {isMulti ? `Full ${persona.name} discography` : 'Full discography'}
               </h2>
-              {discoLoading && mergedDisco.length === 0 && (
+              {discoLoading && discoLoadingShown && mergedDisco.length === 0 && (
                 <div className="artist-detail-disco-loading">
                   Loading from MusicBrainz… (first lookup per artist takes ~15s)
                 </div>
@@ -796,7 +797,7 @@ export default function ArtistDetailView() {
       {(related.length > 0 || relatedLoading) && (
         <section className="artist-detail-related artist-detail-related--bottom">
           <div className="artist-detail-related-head">Related artists</div>
-          {relatedLoading && related.length === 0 ? (
+          {relatedLoadingShown && related.length === 0 ? (
             <div className="artist-detail-related-loading">Finding connections…</div>
           ) : (
             <div className="artist-detail-related-row">

@@ -529,6 +529,16 @@
    voice that made the page read as two different apps. */
 .home-section {
   margin-bottom: 44px;
+  /* 2026-09-02 — bands ease in as their data lands (the page no longer waits
+     behind a gate), so a late arrival reads as intentional, not as a pop. */
+  animation: home-section-in 260ms ease-out both;
+}
+@keyframes home-section-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-section { animation: none; }
 }
 
 .home-section-header {
