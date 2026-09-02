@@ -609,6 +609,7 @@ declare global {
       getActiveHost: () => Promise<'mm' | 'megan'>
       audioLog: (line: string) => void
       // 2026-08-21 reliability P0: renderer crash net → main flight recorder.
+      dxRecord?: (tag: string, detail?: unknown) => void
       reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }) => void
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.

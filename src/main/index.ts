@@ -2462,6 +2462,14 @@ ipcMain.on('flight-record', (_e, payload: unknown) => {
   const p = sanitizeCrashPayload(payload)
   flightRecorder.record(p.kind.startsWith('boot.') ? 'info' : 'error', `renderer.${p.kind}`, p)
 })
+// dx rows from the renderer (queue honesty probe etc.) — info level, bounded.
+ipcMain.on('dx-record', (_e, payload: unknown) => {
+  const p = (payload && typeof payload === 'object' ? payload : {}) as { tag?: unknown; detail?: unknown }
+  const tag = String(p.tag || 'unknown').replace(/[^a-z0-9._-]/gi, '').slice(0, 60)
+  let detail = p.detail
+  try { if (JSON.stringify(detail ?? null).length > 2000) detail = { truncated: true } } catch { detail = { unserializable: true } }
+  flightRecorder.record('info', `dx.${tag}`, detail)
+})
 // Warn-once state for persisting conditions (flight-log stomp 2026-08-22:
 // one orphaned-edits condition = 23 identical lines; nine propagating
 // imports = 36 stream-404 lines). First occurrence is the signal.

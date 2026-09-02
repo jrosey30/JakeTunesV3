@@ -54,6 +54,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-active-host'),
   audioLog: (line: string): void => ipcRenderer.send('audio-log', line),
   reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }): void => ipcRenderer.send('flight-record', payload),
+  // Diagnostic rows (dx.*) into main.log — observation only, never load-bearing.
+  dxRecord: (tag: string, detail?: unknown): void => ipcRenderer.send('dx-record', { tag, detail }),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.

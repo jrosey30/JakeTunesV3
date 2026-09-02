@@ -15,6 +15,7 @@ import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
+import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
@@ -1754,6 +1755,7 @@ function AppInner() {
       <div className="content-area" style={{ position: 'relative' }}>
         <MainContent />
         <TapeMonitor />
+        <QueueHonestyProbe />
         <DeckBar />
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
         {showMusicMan && <MusicManDrawer ref={musicManRef} onClose={() => setShowMusicMan(false)} />}
