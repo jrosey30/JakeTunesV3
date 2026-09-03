@@ -6,7 +6,14 @@ after the repair, and the mechanism is now fully identified** (see the
 change → Jake's call. The nightly repairs (REPORT-20260818, REPORT-20260820)
 fix the data; this fixes the mechanism so it stops recurring.
 
-**RECURRENCE LOG:** 12th event detected 2026-09-02 (import day: library
+**RECURRENCE LOG:** 13th event detected 2026-09-03 (import day: library
+9,968→9,985, +17 imports; 125 orphans, 62 dup groups, 1,169 suspects).
+Repaired + applied same night — router-truth 0.736→**0.844** (NEW post-repair
+high; ret-012 0.30→1.00, ret-007 0.52→1.00, ret-011 0.48→0.92, ret-004
+0.00→0.50, ret-008 0.64→1.00), worst per-probe delta +0.00, strict bars PASS,
+hybrid fidelity gate 50/50 (35 trainer-fresh + 15 aged) min cos 0.9958
+(REPORT-20260903). Thirteen-for-thirteen on import days.
+12th event detected 2026-09-02 (import day: library
 9,925→9,968, +43 imports; 124 orphans, 62 dup groups, 1,121 suspects).
 Repaired + applied same night — router-truth 0.735→**0.841** (ties the
 post-repair high; ret-012 0.30→1.00, ret-007 0.52→1.00, ret-004 0.00→0.50,
