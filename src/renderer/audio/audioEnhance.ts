@@ -44,6 +44,8 @@
  * nodes into the live graph, exactly as eq.ts does for its analyser tap.
  */
 import { Howler } from 'howler'
+import { adaptiveWidthFor } from './adaptiveWidth'
+export { adaptiveWidthFor, ADAPT_WIDE_CORR, ADAPT_NARROW_CORR } from './adaptiveWidth'
 
 export interface EnhanceConfig {
   widthOn: boolean
@@ -56,6 +58,17 @@ export interface EnhanceConfig {
   crossfeedOn: boolean
   /** 0..1 scaling of the standard bs2b feed (700 Hz / −4.5 dB). */
   crossfeedAmount: number
+  /**
+   * 2026-09-02 ADAPTIVE width (default on): the mid/high widths above are
+   * CEILINGS, applied in proportion to how narrow the source already is.
+   * Measured offline on Jake's settings, the fixed chain narrowed every mix
+   * (crossfeed + mono bass) and only the >5 kHz band ever widened — and it
+   * pushed a hot 2024 master to +4 dBFS. Now: a mix that measures wide
+   * (L/R correlation ≤ 0.4 in that band) is left alone; a narrow one
+   * (≥ 0.9) gets the full ceiling; in between, proportionally. Followed by
+   * a safety limiter so the chain can never clip.
+   */
+  adaptiveWidth: boolean
 }
 
 export const ENHANCE_DEFAULTS: EnhanceConfig = {
@@ -65,8 +78,8 @@ export const ENHANCE_DEFAULTS: EnhanceConfig = {
   widthHigh: 1.6,
   crossfeedOn: false,
   crossfeedAmount: 1.0,
+  adaptiveWidth: true,
 }
-
 const XOVER_LOW_HZ = 250
 const XOVER_HIGH_HZ = 5000
 const LR_Q = Math.SQRT1_2          // two cascaded Butterworths = LR4
@@ -84,7 +97,12 @@ let input: GainNode | null = null
 let sumL: GainNode | null = null
 let sumR: GainNode | null = null
 let merger: ChannelMergerNode | null = null
-interface Band { filters: BiquadFilterNode[]; splitter: ChannelSplitterNode; gLL: GainNode; gRL: GainNode; gLR: GainNode; gRR: GainNode }
+interface Band { filters: BiquadFilterNode[]; splitter: ChannelSplitterNode; gLL: GainNode; gRL: GainNode; gLR: GainNode; gRR: GainNode; probeL: AnalyserNode; probeR: AnalyserNode; bufL: Float32Array; bufR: Float32Array }
+// safety limiter — the last node before the destination
+let limiter: DynamicsCompressorNode | null = null
+let adaptTimer: ReturnType<typeof setInterval> | null = null
+let lastBandCorr = { mid: 1, high: 1 }
+let lastBandWidth = { mid: 1, high: 1 }
 let bands: { low: Band; mid: Band; high: Band } | null = null
 
 // crossfeed nodes (after the width sum)
@@ -134,13 +152,59 @@ function makeBand(c: AudioContext, kind: 'low' | 'mid' | 'high'): Band {
   splitter.connect(gRL, 1)   // b·R → L
   splitter.connect(gLR, 0)   // b·L → R
   splitter.connect(gRR, 1)   // a·R → R
-  return { filters, splitter, gLL, gRL, gLR, gRR }
+  // Pre-width probes: what the SOURCE looks like in this band, for the
+  // adaptive decision (never the widened output — that would chase itself).
+  const probeL = c.createAnalyser(); probeL.fftSize = 2048
+  const probeR = c.createAnalyser(); probeR.fftSize = 2048
+  splitter.connect(probeL, 0); splitter.connect(probeR, 1)
+  return { filters, splitter, gLL, gRL, gLR, gRR, probeL, probeR, bufL: new Float32Array(2048), bufR: new Float32Array(2048) }
 }
 
-function applyBandWidth(b: Band, w: number): void {
+const ADAPT_INTERVAL_MS = 250
+const ADAPT_GLIDE_S = 0.25   // setTargetAtTime constant — no zipper, no pumping
+
+function applyBandWidth(b: Band, w: number, glide = false): void {
   const a = (1 + w) / 2, bb = (1 - w) / 2
+  if (glide && ctx) {
+    const t = ctx.currentTime
+    b.gLL.gain.setTargetAtTime(a, t, ADAPT_GLIDE_S); b.gRL.gain.setTargetAtTime(bb, t, ADAPT_GLIDE_S)
+    b.gLR.gain.setTargetAtTime(bb, t, ADAPT_GLIDE_S); b.gRR.gain.setTargetAtTime(a, t, ADAPT_GLIDE_S)
+    return
+  }
   b.gLL.gain.value = a; b.gRL.gain.value = bb
   b.gLR.gain.value = bb; b.gRR.gain.value = a
+}
+
+function bandCorrelation(b: Band): number {
+  b.probeL.getFloatTimeDomainData(b.bufL as Float32Array<ArrayBuffer>)
+  b.probeR.getFloatTimeDomainData(b.bufR as Float32Array<ArrayBuffer>)
+  const n = b.bufL.length
+  let sl = 0, sr = 0
+  for (let i = 0; i < n; i++) { sl += b.bufL[i]; sr += b.bufR[i] }
+  const ml = sl / n, mr = sr / n
+  let num = 0, dl = 0, dr = 0
+  for (let i = 0; i < n; i++) { const x = b.bufL[i] - ml, y = b.bufR[i] - mr; num += x * y; dl += x * x; dr += y * y }
+  const den = Math.sqrt(dl * dr)
+  return den < 1e-9 ? 1 : num / den
+}
+
+/** The adaptive tick: measure each widened band's SOURCE, glide its width. */
+function adaptTick(): void {
+  if (!bands || !inserted || !cfg.widthOn || !cfg.adaptiveWidth) return
+  const midC = bandCorrelation(bands.mid), highC = bandCorrelation(bands.high)
+  const midW = adaptiveWidthFor(clamp(cfg.widthMid, 0, 1.5), midC)
+  const highW = adaptiveWidthFor(clamp(cfg.widthHigh, 0, 2.2), highC)
+  lastBandCorr = { mid: midC, high: highC }
+  lastBandWidth = { mid: midW, high: highW }
+  applyBandWidth(bands.mid, midW, true)
+  applyBandWidth(bands.high, highW, true)
+}
+function startAdapt(): void { if (!adaptTimer) adaptTimer = setInterval(adaptTick, ADAPT_INTERVAL_MS) }
+function stopAdapt(): void { if (adaptTimer) { clearInterval(adaptTimer); adaptTimer = null } }
+
+/** For the meter / diagnostics: what the adaptive pass last saw and did. */
+export function getWidthState(): { corr: { mid: number; high: number }; width: { mid: number; high: number }; adaptive: boolean; inserted: boolean } {
+  return { corr: { ...lastBandCorr }, width: { ...lastBandWidth }, adaptive: cfg.adaptiveWidth, inserted }
 }
 
 function buildGraph(c: AudioContext): void {
@@ -176,14 +240,33 @@ function buildGraph(c: AudioContext): void {
   cfSumL.connect(cfMerger, 0, 0)
   cfSumR.connect(cfMerger, 0, 1)
 
+  // Safety limiter: a hard-knee, fast, high-ratio compressor at −1 dBFS on
+  // the way out. Width on a hot master otherwise clips at the destination
+  // (measured: +4 dBFS on a 2024 pop master at the 1.6× high ceiling).
+  // Transparent below threshold; it only ever catches overs.
+  limiter = c.createDynamicsCompressor()
+  limiter.threshold.value = -1
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.001
+  limiter.release.value = 0.06
+  cfMerger.connect(limiter)
+
   applyConfig()
 }
 
 function applyConfig(): void {
   if (!bands) return
   applyBandWidth(bands.low, cfg.widthOn ? clamp(cfg.widthLow, 0, 1.2) : 1)
-  applyBandWidth(bands.mid, cfg.widthOn ? clamp(cfg.widthMid, 0, 1.5) : 1)
-  applyBandWidth(bands.high, cfg.widthOn ? clamp(cfg.widthHigh, 0, 2.2) : 1)
+  if (cfg.widthOn && cfg.adaptiveWidth) {
+    // Start from the measured state (not the ceiling) and let the tick glide.
+    adaptTick()
+    startAdapt()
+  } else {
+    stopAdapt()
+    applyBandWidth(bands.mid, cfg.widthOn ? clamp(cfg.widthMid, 0, 1.5) : 1)
+    applyBandWidth(bands.high, cfg.widthOn ? clamp(cfg.widthHigh, 0, 2.2) : 1)
+  }
   // −1 dB engage trim. Widening raises side-channel peaks (worst case ×w in
   // the high band); without headroom a hot master clips at the destination —
   // and clipping is the one processing artifact that is never "taste". The
@@ -230,12 +313,12 @@ function insert(): boolean {
   if (!c || !master) return false
   ctx = c
   buildGraph(c)
-  if (!input || !cfMerger) return false
+  if (!input || !cfMerger || !limiter) return false
   try { master.disconnect(c.destination) } catch { /* wasn't directly connected */ }
   master.connect(input)
-  cfMerger.connect(c.destination)
+  limiter.connect(c.destination)
   inserted = true
-  attachCorrelation(c, cfMerger)
+  attachCorrelation(c, limiter)
   if (c.state === 'suspended') void c.resume()
   console.log('[audioEnhance] chain spliced into the master path')
   return true
@@ -244,12 +327,13 @@ function insert(): boolean {
 function bypass(): void {
   if (!inserted) return
   const c = ctx, master = howlerMaster()
-  if (c && master && input && cfMerger) {
+  if (c && master && input && limiter) {
     try { master.disconnect(input) } catch { /* ignore */ }
-    try { cfMerger.disconnect(c.destination) } catch { /* ignore */ }
+    try { limiter.disconnect(c.destination) } catch { /* ignore */ }
     try { master.connect(c.destination) } catch { /* ignore */ } // restore direct wiring
     attachCorrelation(c, master)   // the meter keeps reading the untouched master
   }
+  stopAdapt()
   inserted = false
 }
 
@@ -293,7 +377,7 @@ export function getCorrelation(): number {
     // No tap yet — try attaching to whatever exists so the meter works even
     // before the user enables any processing.
     const c = howlerCtx(), master = howlerMaster()
-    if (c && master) attachCorrelation(c, inserted && cfMerger ? cfMerger : master)
+    if (c && master) attachCorrelation(c, inserted && limiter ? limiter : master)
     if (!corrL || !corrR || !corrBufL || !corrBufR) return 1
   }
   corrL.getFloatTimeDomainData(corrBufL as Float32Array<ArrayBuffer>)

@@ -498,6 +498,9 @@ export interface AppSettings {
     // bs2b-style headphone crossfeed: separate toggle, one amount control.
     crossfeedOn: boolean
     crossfeedAmount: number   // 0..1 of the standard 700 Hz / −4.5 dB feed
+    // 2026-09-02: the mid/high widths are CEILINGS applied in proportion to
+    // how narrow the source measures; wide mixes are left alone.
+    adaptiveWidth: boolean
   }
   // Brief 023: removed `mobile.snapshotExportPath`. The mobile-sync
   // feature (Export Snapshot for Mobile / Apply Mobile Overrides) is
@@ -529,7 +532,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     // Width ON by default at the migration of the old 1.3 broadband default:
     // mono bass, gentle body, open air.
     widthOn: true, widthLow: 0, widthMid: 1.15, widthHigh: 1.6,
-    crossfeedOn: false, crossfeedAmount: 1.0,
+    crossfeedOn: false, crossfeedAmount: 1.0, adaptiveWidth: true,
   },
 }
 

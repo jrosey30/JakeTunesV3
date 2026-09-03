@@ -482,7 +482,7 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                   and ~260 µs late, the way a head does it for speakers. */}
               <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid #e0ded8' }}>
                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
-                  <span>Headphone crossfeed</span>
+                  <span>Headphone crossfeed <span style={{ fontWeight: 400, color: '#8a857c' }}>— headphones only; on speakers it just narrows the image</span></span>
                   <input
                     type="checkbox"
                     checked={draft.audio.crossfeedOn}
