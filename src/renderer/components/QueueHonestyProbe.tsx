@@ -19,7 +19,7 @@
 import { useEffect, useRef } from 'react'
 import { usePlayback } from '../context/PlaybackContext'
 
-const DIAGNOSTIC_LOGGING = true
+const DIAGNOSTIC_LOGGING = false  // 2026-09-02: OFF — 25/25 natural seams honest since the fix; flip on to re-arm
 
 type Snap = { ids: number[]; idx: number; nowId: number | null; remaining: number; at: number }
 
