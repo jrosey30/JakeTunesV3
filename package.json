@@ -1,7 +1,7 @@
 {
   "name": "JakeTunes",
   "productName": "JakeTunes",
-  "version": "5.1.0",
+  "version": "6.0.0",
   "description": "Classic iTunes replica \u2014 V5 iTunes-10 visuals, 2026 brain",
   "author": "Jacob Rosenbaum",
   "main": "out/main/index.js",
