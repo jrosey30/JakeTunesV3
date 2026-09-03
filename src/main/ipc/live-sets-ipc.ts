@@ -7,11 +7,11 @@
  */
 import { app } from 'electron'
 import { join } from 'path'
-import { readFile, stat, writeFile } from 'fs/promises'
+import { copyFile, mkdir, readFile, stat, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { IS_WINDOWS } from '../platform'
-import { STATE_DIR } from '../state-dir'
+import { STATE_DIR, NAS_STATE_DIR_PATH } from '../state-dir'
 import { allowImportPaths } from '../import-allowlist.ts'
 import { safeIpcError } from '../safe-ipc-error'
 import type { LiveSetEntry } from '../index.ts'
@@ -88,6 +88,14 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
         const out = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
         const r = await extractCrowdClip(src, cueStartsMs, totalMs, out)
         console.log(`[concert-crowd] ${mergedTrackId}: clip cut at ${r.startSec}s (score ${r.score.toFixed(2)}, ${r.scanned} windows)`)
+        // Mirror the clip into the NAS state dir so the phone's backend
+        // (homemini, STATE_DIR = NAS) can serve it: GET /api/live-sets/:id/crowd.
+        // Best effort — the NAS being away never fails the extraction.
+        try {
+          const nasDir = join(NAS_STATE_DIR_PATH, 'concert-crowd')
+          await mkdir(nasDir, { recursive: true })
+          await copyFile(out, join(nasDir, `${mergedTrackId}.m4a`))
+        } catch (e) { console.warn('[concert-crowd] NAS mirror skipped:', e instanceof Error ? e.message : e) }
         return { ok: true, startSec: r.startSec }
       } catch (err) {
         console.warn('[concert-crowd] extraction failed:', err instanceof Error ? err.message : err)
