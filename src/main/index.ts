@@ -5173,7 +5173,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
 // Solution: watch the file. When mtime changes AND it wasn't us who
 // wrote it, tell the renderer to reload. The renderer calls load-tracks
 // which reads the fresh disk state into memory.
-import { watch as fsWatch } from 'fs'
+import { watch as fsWatch, readFileSync, writeFileSync, renameSync } from 'fs'
 let libraryWatcherStarted = false
 let lastObservedLibraryMtimeMs = 0
 async function checkLibraryExternalChange(): Promise<void> {
@@ -8956,16 +8956,52 @@ import {
 // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
 // regardless of artist. The renderer then filters for freshness (new artists,
 // no same-album) + diversity. We return a generous pool so ↻ has real variety.
-// Playlist name + description → one embedding, cached per exact text (a
-// playlist's hint changes only when Jake renames it or edits the note).
+// Playlist name + description → a musical expectation → one embedding.
+// The raw name embeds badly ("Dinner Party" sat at z=0.04 against Jake's
+// actual dinner-party songs, same as "Baseball"); a one-line expansion
+// ("smooth soul, light '70s–'90s pop, relaxed…") is what the track texts
+// look like, so the agreement gate in playlist-vibes.ts can finally tell
+// Dinner Party (0.81) / Pool (0.54) / Q104.3 (1.48) from Baseball (0.24) /
+// Justification (−0.04). Expansions persist in STATE_DIR (one Haiku call per
+// distinct name+description, ever); vectors are per-session.
 const playlistHintVecs = new Map<string, Float32Array>()
+const PLAYLIST_HINT_CACHE = join(STATE_DIR, 'playlist-hint-cache.json')
+let playlistHintExpansions: Record<string, string> | null = null
+function loadHintExpansions(): Record<string, string> {
+  if (playlistHintExpansions) return playlistHintExpansions
+  try { playlistHintExpansions = JSON.parse(readFileSync(PLAYLIST_HINT_CACHE, 'utf8')) as Record<string, string> }
+  catch { playlistHintExpansions = {} }
+  return playlistHintExpansions
+}
+async function expandPlaylistHint(text: string): Promise<string> {
+  const cache = loadHintExpansions()
+  if (typeof cache[text] === 'string') return cache[text]
+  let expansion = ''
+  try {
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 120,
+      messages: [{ role: 'user', content: `A music fan named a playlist "${text}". In ONE line (max 30 words) describe the music someone would expect on it: genres, mood, era, tempo, typical artists. If the name is not about music at all (a private joke, a random word, a date), reply exactly: NOT MUSICAL. Output only the line.` }],
+    })
+    const out = msg.content.find((c) => c.type === 'text')
+    expansion = (out && out.type === 'text' ? out.text : '').trim()
+  } catch (err) {
+    console.warn('[playlist-similar] hint expansion skipped:', err instanceof Error ? err.message : err)
+    return ''   // not cached — try again next time
+  }
+  cache[text] = expansion
+  try { writeFileSync(PLAYLIST_HINT_CACHE + '.tmp', JSON.stringify(cache, null, 1)); renameSync(PLAYLIST_HINT_CACHE + '.tmp', PLAYLIST_HINT_CACHE) } catch { /* cache is a convenience */ }
+  return expansion
+}
 async function playlistHintVector(hint: string | undefined): Promise<Float32Array | null> {
   const text = (hint ?? '').replace(/\s+/g, ' ').trim()
   if (text.length < 3) return null
   const hit = playlistHintVecs.get(text)
   if (hit) return hit
   try {
-    const [v] = await ragEmbedTexts([`Playlist: ${text}`])
+    const expansion = await expandPlaylistHint(text)
+    const embedText = expansion && expansion !== 'NOT MUSICAL' ? `Playlist: ${text}. ${expansion}` : `Playlist: ${text}`
+    const [v] = await ragEmbedTexts([embedText])
     if (!v) return null
     if (playlistHintVecs.size > 200) playlistHintVecs.clear()
     playlistHintVecs.set(text, v)

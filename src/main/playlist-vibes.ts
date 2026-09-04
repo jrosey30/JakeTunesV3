@@ -92,13 +92,18 @@ const HINT_W = 0.15
 const HINT_SEED_SHARE = 0.2
 // The name only counts when the MUSIC agrees with it (Jake: "sometimes a
 // playlist name I use means absolutely nothing (baseball, fuck) but
-// sometimes they do mean something!!! it varies!"). Gate: how much closer
-// are the playlist's own songs to the hint text than the library at large,
-// in library-σ units. Calibrated on the real playlists 2026-09-04:
-// METAL VOL 1 2.05, Rhymes 1.47, Songs That Mix Well 1.49, Movies 1.20,
-// Weirdtronic 1.04, Salt Air Drift 0.81, Indie sleaze 0.68 → ON;
-// Fuck 0.43, Pool 0.42, Bops 0.21, Dinner Party 0.04, Baseball 0.03 → OFF.
-const HINT_MIN_Z = 0.6
+// sometimes they do mean something!!! it varies!" — and then: "pool,
+// q104.3, dinner party mean something"). Gate: how much closer are the
+// playlist's own songs to the hint text than the library at large, in
+// library-σ units. The hint text is the Claude-expanded musical expectation
+// (see index.ts expandPlaylistHint), calibrated 2026-09-04 on the real
+// playlists: Movies 2.98, METAL VOL 1 1.91, Rhymes 1.68, Songs That Mix
+// Well 1.57, Q104.3 1.48, Salt Air Drift 1.07, Weirdtronic 0.89, Pool Dos
+// 0.84, Dinner Party 0.81, Indie sleaze 0.73, 90's 0.61, Pool 0.54 → ON;
+// Greenpoint 0.31, Baseball 0.24, Bops 0.21, Justification −0.04 → OFF.
+// ("Fuck" lands at 0.63 — Claude reads it as aggressive punk, which is
+// what's on it, so its picks still sound right.)
+const HINT_MIN_Z = 0.5
 
 /**
  * The full scoring pass: k-means the seed vectors into sub-vibes, assign
