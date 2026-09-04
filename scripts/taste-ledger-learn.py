@@ -39,8 +39,9 @@ MARGIN = 0.03
 MIN_ACCEPTS = 3
 MIN_PASSES = 10
 BOUNDS = (0.5, 1.5)
-# ctx key -> weight key (SuggestDiag: vn=vibe-neighbor, g=genreFit, ta=taste)
-COMPONENTS = {'vn': 'vibe', 'g': 'genre', 'ta': 'taste'}
+# ctx key -> weight key (SuggestDiag: vn=vibe-neighbor, g=genreFit, ta=taste,
+# e=eraFit — ⚠️ TWIN: src/renderer/utils/playlistSuggest.ts SuggestBlendWeights)
+COMPONENTS = {'vn': 'vibe', 'g': 'genre', 'ta': 'taste', 'e': 'era'}
 
 
 def read_ledger(cutoff):

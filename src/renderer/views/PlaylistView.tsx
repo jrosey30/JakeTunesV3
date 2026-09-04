@@ -228,11 +228,11 @@ export default function PlaylistView() {
   const [vibeClusterSeeds, setVibeClusterSeeds] = useState<number[]>([])
   // Taste-ledger loop: learned per-playlist blend weights + the diag map
   // (each shown candidate's blend components) that verdict events carry.
-  const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number }>>({})
-  const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number }>())
+  const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }>>({})
+  const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number; e: number }>())
   useEffect(() => {
     void window.electronAPI.getTasteWeights?.().then((r) => {
-      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number }> })?.playlists
+      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }> })?.playlists
       if (pl) setTasteWeights(pl)
     })
   }, [])

@@ -172,8 +172,8 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
  * electronic / hip-hop corners). ↻ advances the rank within each cluster.
  * Falls back to suggestForPlaylist (metadata) when no embeddings exist.
  */
-export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number }
-export interface SuggestDiag { vn: number; g: number; b: number; ta: number }
+export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number; era?: number }
+export interface SuggestDiag { vn: number; g: number; b: number; ta: number; e: number }
 
 export function suggestFromVibeHits<T extends SuggestibleTrack>(
   playlistTracks: T[],
@@ -235,6 +235,24 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     if (c) for (const nb of camelotNeighbors(c)) compat.add(nb)
   }
   const keyWeight = compat.size > 0 && compat.size <= 14 ? 0.15 : 0   // only when key-cohesive
+  // ERA fit (2026-09-04, Jake: "playlist suggestions could be better via the
+  // brain"). Offline replay showed the vibe/genre/BPM blend has no sense of
+  // WHEN: "90's Music" got 2025 Soulwax and 2026 overpass, "Y2k Burnt CD"
+  // got 1991 Soundgarden — fair sound-alikes, wrong decade. Same adaptive
+  // shape as BPM: a Gaussian on the playlist's MEDIAN year with σ = its OWN
+  // year spread (floor 3). A 2002–2006 time capsule filters hard; Dinner
+  // Party (spread ~21y) barely notices. Undated candidates score neutral.
+  const plYears = playlistTracks.map(t => Number(t.year) || 0).filter(y => y > 1900).sort((a, b) => a - b)
+  const medianYear = plYears.length >= 3 ? plYears[plYears.length >> 1] : 0
+  let ySigma = 3
+  if (plYears.length > 1) {
+    const ymean = plYears.reduce((s, y) => s + y, 0) / plYears.length
+    ySigma = Math.max(3, Math.sqrt(plYears.reduce((s, y) => s + (y - ymean) ** 2, 0) / plYears.length))
+  }
+  const eraFit = (t: T): number => {
+    const y = Number(t.year) || 0
+    return (y > 1900 && medianYear > 0) ? Math.exp(-0.5 * ((y - medianYear) / ySigma) ** 2) : 0.5
+  }
 
   // Group candidates by their SUB-VIBE cluster (vibe score = sim to that cluster).
   const byCluster = new Map<number, Array<{ t: T; vibe: number }>>()
@@ -243,6 +261,13 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     if (!clusterEligible(h.cluster)) continue
     const t = byId.get(h.trackId)
     if (!t || inPlaylist.has(t.id) || t.audioMissing || plAlbums.has(albumKey(t))) continue
+    // Era CUT, not just a demotion: the round-robin hands every sub-vibe a
+    // seat, so a cluster whose candidates are ALL from the wrong decade kept
+    // serving 1991 grunge to a 2002–2006 CD no matter how the blend ranked
+    // it. On a playlist with a real character (≥7 dated songs), a candidate
+    // more than ~2.8σ from the era is out; a cluster with nothing left
+    // serves nothing, exactly like the quality floor. Undated stays neutral.
+    if (plYears.length >= 7 && eraFit(t) < 0.02) continue
     let arr = byCluster.get(h.cluster)
     if (!arr) { arr = []; byCluster.set(h.cluster, arr) }
     arr.push({ t, vibe: h.score })
@@ -270,9 +295,10 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       // stars + play history nudge the songs he'd actually ADD above
       // equal-vibe strangers. Small weight — fit still leads.
       const taste = Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
-      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste })
-      const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1
-      return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste }
+      const eFit = eraFit(t)
+      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste, e: eFit })
+      const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1, wE = weights.era ?? 1
+      return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste + 0.15 * wE * eFit }
     })
     scored.sort((a, b) => b.s - a.s)
     const fr = scored.filter(x => !plArtists.has(norm(x.t.albumArtist || x.t.artist))).map(x => x.t)
