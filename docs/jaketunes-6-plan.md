@@ -1,6 +1,19 @@
 # JakeTunes 6.0 — Planning Notes (started 2026-09-01)
 
-**Status:** brainstorm captured, nothing greenlit. Written the day the iPod
+**Status (updated 2026-09-04):** 6.0 is greenlit and defined. Pillar 1 —
+the Round Trip — shipped 2026-09-01 (7106975) as the foundation, and the
+package label moved to 6.0.0 on 2026-09-03. The **real 6.0 is the design
+program** that began 2026-09-04: the mature intelligence already inside the
+app finally feels native to the classic iTunes shell — "a 2006 iTunes shell
+with a 2040 brain inside, now expressed as one coherent product." Phase 1 is
+the playlist workspace (header · description · recommendation shelf · Quick
+Add · track-table hand-off). The week's preceding work (brain lanes 3a–3d,
+the 2011 facelift, concerts, downloader hardening, playlist intelligence) is
+recorded as the final **5.9 line** in `docs/CHANGELOG.md`, which now holds the
+5.9 → 6.0 release history. The brainstorm below is kept as written — it is
+the reasoning the direction came from.
+
+**Original status (2026-09-01):** brainstorm captured, nothing greenlit. Written the day the iPod
 binary-search id-order fix landed (see
 `postmortems/2026-09-01-ipod-binary-search-id-order.md`) — the win that
 reopened "anything can be built" ambitions. Jake's framing that day: the brain

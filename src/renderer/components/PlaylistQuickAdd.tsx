@@ -45,7 +45,12 @@ export function PlaylistQuickAdd({ pool, excludeIds, onAdd }: Props) {
 
   return (
     <div className="pl-quick" onMouseDown={(e) => { if (e.target !== inputRef.current) e.preventDefault() }}>
-      <span className="pl-quick-icon" aria-hidden="true">⌕</span>
+      {/* Same 12px magnifier the toolbar's search pill draws (SearchPill.tsx) —
+          the shelf's field reads as a sibling of that one, not a web pill. */}
+      <svg className="pl-quick-icon" aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="5" cy="5" r="3.5" />
+        <path d="M7.5 7.5L10.5 10.5" strokeLinecap="round" />
+      </svg>
       <input
         ref={inputRef}
         className="pl-quick-input"

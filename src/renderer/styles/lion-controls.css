@@ -59,6 +59,7 @@ body .playlist-view-play {
 }
 body .playlist-view-play:hover { opacity: 1; filter: brightness(1.04); }
 body .playlist-view-save,
+body .playlist-view-tape,
 body .pool-btn,
 body .titlebar-nav-btn {
   border-radius: 12px;
@@ -69,8 +70,39 @@ body .titlebar-nav-btn {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 body .playlist-view-save:hover:not(:disabled),
+body .playlist-view-tape:hover:not(:disabled),
 body .pool-btn:hover:not(:disabled),
 body .titlebar-nav-btn:hover:not(:disabled) { background: linear-gradient(180deg, #ffffff, #dedede); }
+
+/* playlist header (6.0 Phase 1, 2026-09-04): one control family. Play All
+ * is the only blue; Make a Mixtape is the plain push button above; Delete
+ * is the same button kept quiet — lighter ink and border — until hovered,
+ * so it never competes with Play All. Shared press / focus / disabled. */
+body .playlist-view-delete {
+  border-radius: 12px;
+  border: 1px solid #b8b8b8;
+  background: linear-gradient(180deg, #f7f7f7, #e9e9e9);
+  color: #8a8a8a;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+body .playlist-view-delete:hover:not(:disabled) {
+  border-color: #a3a3a3;
+  background: linear-gradient(180deg, #ffffff, #dedede);
+  color: #333;
+}
+body .playlist-view-play:active,
+body .playlist-view-save:active,
+body .playlist-view-tape:active,
+body .playlist-view-delete:active { box-shadow: var(--shadow-press); filter: brightness(0.96); }
+body .playlist-view-play:focus-visible,
+body .playlist-view-save:focus-visible,
+body .playlist-view-tape:focus-visible,
+body .playlist-view-delete:focus-visible { outline: none; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6), var(--ring-focus); }
+body .playlist-view-play:disabled,
+body .playlist-view-save:disabled,
+body .playlist-view-tape:disabled,
+body .playlist-view-delete:disabled { opacity: 0.5; cursor: default; filter: none; }
 body .titlebar-nav-btn { border-radius: 9px; }
 body .pool-btn--go {
   border-color: #3b66a8;

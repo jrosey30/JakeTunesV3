@@ -845,6 +845,12 @@
   padding: 1px 6px;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   PLAYLIST WORKSPACE (playlist-owned) — header · description · track table
+   hand-off. 6.0 Phase 1 (2026-09-04): one classic-iTunes language for the
+   whole page; the Lion push-button faces live in lion-controls.css, this
+   block owns size, rhythm and the description field. Behavior untouched.
+   ══════════════════════════════════════════════════════════════════════ */
 /* Saved Playlist View */
 .playlist-view {
   height: 100%;
@@ -943,7 +949,20 @@
 
 .playlist-view-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+/* Every header action is the same control: one height, one baseline, one
+   padding. Faces (Lion blue default / soft push / quiet Delete) come from
+   lion-controls.css; nothing here sets border, fill or color. */
+.playlist-view-actions > button {
+  height: 22px;
+  padding: 0 14px;
+  line-height: 20px;
+  font-size: var(--font-label);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .playlist-view-play {
@@ -985,28 +1004,31 @@
 
 /* "Make a Mixtape" (2026-08-09). Its own class rather than borrowing the
    Delete button's — a create action shouldn't wear the destructive one's
-   clothes just because they're the same size. Reads as a secondary action:
-   the accent as an outline, not a fill, so Play All stays the loud one. */
+   clothes just because they're the same size. 6.0 Phase 1: it is a normal
+   secondary Lion push button now (face in lion-controls.css) — the orange
+   outline was the one control in the header speaking a different language.
+   Play All stays the loud one by being the only blue. */
 .playlist-view-tape {
   padding: 5px 14px;
-  background: transparent;
-  color: var(--accent, #FC5501);
+  background: linear-gradient(180deg, #f0f0f0, #d0d0d0);
+  color: #555;
   font-weight: 600;
   font-size: var(--font-label);
   border-radius: 4px;
-  border: 1px solid var(--accent, #FC5501);
+  border: 1px solid #999;
 }
-.playlist-view-tape:hover { background: rgba(179, 84, 42, 0.08); }
 
+/* Description — a metadata line that belongs to the playlist identity: the
+   band directly under the header, editable in place. */
 .playlist-view-commentary {
-  padding: 12px 24px;
+  padding: 9px 24px;
   cursor: text;
   font-size: var(--font-body);
   font-style: italic;
   color: var(--text-secondary);
   background: var(--row-alt);
   border-bottom: 1px solid var(--border-subtle);
-  line-height: 1.5;
+  line-height: 1.45;
   flex-shrink: 0;
 }
 
@@ -1978,120 +2000,175 @@
   color: #8a7a60;
 }
 
-/* ── Playlist suggestions strip ("Suggested for this playlist") ── */
+/* ══════════════════════════════════════════════════════════════════════
+   PLAYLIST WORKSPACE (playlist-owned) — the recommendation shelf + Quick Add
+   6.0 Phase 1 (2026-09-04): "Suggested for this playlist" stops being five
+   floating cards on an orange-tinted panel and becomes a built-in shelf of
+   the classic workspace — Lion silver, hairlines, flat dense items, orange
+   only as a tiny marker, a hover, and the Add affordance. Suggestion
+   generation, rotation, the taste ledger and Quick Add matching are untouched.
+   ══════════════════════════════════════════════════════════════════════ */
 .pl-suggest {
-  padding: 10px 20px 12px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  background: rgba(252, 85, 1, 0.035);
+  padding: 6px 24px 8px;
+  background: linear-gradient(180deg, #f5f5f5, #ececec);
+  border-bottom: 1px solid #b4b4b4;              /* same hairline the track table's header carries */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  flex-shrink: 0;
 }
 .pl-suggest-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  min-height: 24px;
+  margin-bottom: 6px;
 }
+/* Eyebrow, on the canonical tokens; the 5px orange dot is the one
+   "intelligence" marker the shelf is allowed. */
 .pl-suggest-title {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-10);
+  font-weight: var(--fw-heavy);
+  letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
-  color: #9a857c;
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
 }
+.pl-suggest-title::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand-orange);
+  flex: none;
+}
+/* Refresh — a compact accessory control, not a bare glyph. */
 .pl-suggest-refresh {
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: var(--brand-orange, #FC5501);
-  font-size: 14px;
-  line-height: 1;
-  padding: 1px 4px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #a3a3a3;
   border-radius: 4px;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  color: #4a4a4a;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-settle), color var(--motion-fast) var(--ease-settle);
 }
-.pl-suggest-refresh:hover { background: rgba(252, 85, 1, 0.12); }
+.pl-suggest-refresh:hover { background: linear-gradient(180deg, #ffffff, #dedede); color: var(--brand-orange); }
+.pl-suggest-refresh:active { background: linear-gradient(180deg, #d6d6d6, #c6c6c6); box-shadow: var(--shadow-press); }
+.pl-suggest-refresh:focus-visible { outline: none; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6), var(--ring-focus); }
+.pl-suggest-refresh:disabled { opacity: 0.45; cursor: default; }
 .pl-suggest-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
-  padding-bottom: 2px;
+  padding-bottom: 1px;
 }
+/* Items: flat, dense, one hairline — a row of the library, not a card. */
 .pl-suggest-chip {
   flex: 1 1 0;
-  min-width: 150px;
-  max-width: 230px;
+  min-width: 140px;
+  max-width: 220px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--white, #fff);
-  border: 1px solid rgba(0, 0, 0, 0.09);
-  border-radius: 8px;
+  gap: 7px;
+  height: 36px;
+  padding: 0 5px 0 4px;
+  box-sizing: border-box;
+  background: var(--surface-content);
+  border: 1px solid #c6c6c6;
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 .pl-suggest-art {
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
-  border-radius: 4px;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 2px;
   overflow: hidden;
-  background: #eee8da;
+  background: #e6e6e6;
+  box-shadow: var(--ring-inset);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .pl-suggest-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.pl-suggest-ph { color: #c0b8a8; font-size: 14px; }
-.pl-suggest-meta { flex: 1; min-width: 0; }
+.pl-suggest-ph { color: #b3b3b3; font-size: 13px; }
+.pl-suggest-meta { flex: 1; min-width: 0; line-height: 1.2; }
 .pl-suggest-song {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary, #2a2018);
+  font-size: var(--font-11);
+  font-weight: var(--fw-semibold);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .pl-suggest-artist {
-  font-size: 11px;
-  color: var(--text-secondary, #8a8a8a);
+  font-size: var(--font-10);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Add — a 22px square accessory button; the glyph is ~60% of it and the
+   only orange on the item. Never a floating circle. */
 .pl-suggest-add {
-  flex: 0 0 auto;
+  flex: 0 0 22px;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
-  border: 1px solid rgba(252, 85, 1, 0.35);
-  background: rgba(252, 85, 1, 0.08);
-  color: var(--brand-orange, #FC5501);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid #a3a3a3;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  color: var(--brand-orange);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-settle), color var(--motion-fast) var(--ease-settle);
 }
-.pl-suggest-add:hover { background: var(--brand-orange, #FC5501); color: #fff; }
+.pl-suggest-add:hover { background: linear-gradient(180deg, #ffffff, #dedede); color: var(--brand-orange-dark); }
+.pl-suggest-add:active { background: linear-gradient(180deg, #d6d6d6, #c6c6c6); box-shadow: var(--shadow-press); }
+.pl-suggest-add:focus-visible { outline: none; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6), var(--ring-focus); }
+.pl-suggest-add:disabled { opacity: 0.45; cursor: default; }
 
-/* Quick add box at the right end of the strip head — a song Jake already
-   knows he wants, typed instead of waited for. Popover lists library hits. */
+/* Quick Add — a recessed iTunes search field in the shelf head. 240px on a
+   wide window; it is the first thing to give way when the head gets tight,
+   so the label and Refresh never clip or push off the edge. */
 .pl-quick {
   position: relative;
   margin-left: auto;
+  flex: 0 1 240px;
+  min-width: 120px;
   display: flex;
   align-items: center;
   gap: 5px;
-  width: 240px;
   height: 24px;
-  padding: 0 8px;
-  background: var(--white, #fff);
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 12px;
+  padding: 0 7px;
+  box-sizing: border-box;
+  background: var(--surface-content);
+  border: 1px solid #b5b5b5;
+  border-radius: 5px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12), 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: border-color var(--motion-fast) var(--ease-settle), box-shadow var(--motion-fast) var(--ease-settle);
 }
 .pl-quick:focus-within {
-  border-color: rgba(252, 85, 1, 0.55);
-  box-shadow: 0 0 0 2px rgba(252, 85, 1, 0.14);
+  border-color: var(--selection-top);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12), var(--ring-focus);
 }
-.pl-quick-icon { color: #b0a698; font-size: 12px; line-height: 1; }
+.pl-quick-icon { color: #8e8e8e; width: 12px; height: 12px; flex: none; }
 .pl-quick-input {
   flex: 1;
   min-width: 0;
@@ -2099,47 +2176,57 @@
   outline: none;
   background: transparent;
   font: inherit;
-  font-size: 11.5px;
-  color: var(--text-primary, #2a2018);
+  font-size: var(--font-11);
+  color: var(--text-primary);
 }
-.pl-quick-input::placeholder { color: #a89e92; }
+.pl-quick-input::placeholder { color: var(--text-dim); }
+/* The field's focus lives on the wrapper (:focus-within above); the bare
+   input must not add the app-wide orange input ring inside it. */
+.pl-quick-input:focus,
+.pl-quick-input:focus-visible { outline: none; box-shadow: none; border: none; }
+/* Results — an iTunes search-result panel: tight radius, hairline, one step
+   of shadow, compact rows, Lion blue-grey selection with white text. */
 .pl-quick-pop {
   position: absolute;
-  top: 28px;
+  top: 27px;
   right: 0;
   width: 320px;
+  max-width: min(320px, 70vw);
   max-height: 300px;
   overflow-y: auto;
-  z-index: 30;
-  background: var(--white, #fff);
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(40, 25, 10, 0.16);
-  padding: 4px;
+  z-index: var(--z-find);
+  background: var(--surface-content);
+  border: 1px solid #b5b5b5;
+  border-radius: 5px;
+  box-shadow: var(--shadow-2);
+  padding: 3px;
 }
 .pl-quick-hit {
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: auto auto;
   column-gap: 8px;
-  padding: 5px 8px;
-  border-radius: 6px;
+  padding: 3px 7px;
+  border-radius: 3px;
   cursor: pointer;
 }
-.pl-quick-hit--active { background: rgba(252, 85, 1, 0.1); }
+.pl-quick-hit--active { background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom)); }
+.pl-quick-hit--active .pl-quick-hit-title,
+.pl-quick-hit--active .pl-quick-hit-sub,
+.pl-quick-hit--active .pl-quick-hit-add { color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2); }
 .pl-quick-hit-title {
   grid-column: 1;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary, #2a2018);
+  font-size: var(--font-11);
+  font-weight: var(--fw-semibold);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .pl-quick-hit-sub {
   grid-column: 1;
-  font-size: 11px;
-  color: var(--text-secondary, #8a8a8a);
+  font-size: var(--font-10);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2148,10 +2235,13 @@
   grid-column: 2;
   grid-row: 1 / span 2;
   align-self: center;
-  color: var(--brand-orange, #FC5501);
-  font-size: 14px;
+  color: var(--brand-orange);
+  font-size: 13px;
 }
-.pl-quick-empty { padding: 8px 10px; font-size: 11.5px; color: #a89e92; }
+.pl-quick-empty { padding: 6px 8px; font-size: var(--font-11); color: var(--text-dim); }
+@media (prefers-reduced-motion: reduce) {
+  .pl-suggest-refresh, .pl-suggest-add, .pl-quick { transition: none; }
+}
 
 /* ── THE BRAIN — the Music Man's back wall (what he's actually learned) ── */
 .mm-wall {
@@ -2189,20 +2279,30 @@
 /* Playlist description (2026-08-09) — click the line to edit it. The empty
    state is deliberately visible rather than hidden: an affordance you can
    only find by guessing isn't one. */
-.playlist-view-commentary--empty { color: var(--text-secondary); opacity: 0.6; }
+/* Empty = an editable prompt in the dim ink, not disabled text. */
+.playlist-view-commentary--empty { color: var(--text-dim); }
 .playlist-view-commentary:hover { background: rgba(0, 0, 0, 0.025); }
+/* Editing: a recessed, compact iTunes field sized to the line it replaces
+   (rows=1, same 24px gutter) so entering edit mode moves nothing. Lion
+   blue-grey focus, not orange — a text field is not an accent. */
 .playlist-view-desc-input {
   display: block;
   width: calc(100% - 48px);
-  margin: 10px 24px;
-  padding: 7px 9px;
+  margin: 5px 24px;
+  padding: 4px 8px;
   font: inherit;
   font-size: var(--font-body);
   font-style: italic;
+  line-height: 1.45;
   color: var(--text-primary);
-  background: var(--white, #fdfdfd);
-  border: 1px solid var(--accent, #FC5501);
-  border-radius: 5px;
+  background: var(--surface-content);
+  border: 1px solid #b5b5b5;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
   resize: vertical;
 }
-.playlist-view-desc-input:focus { outline: none; }
+.playlist-view-desc-input:focus {
+  outline: none;
+  border-color: var(--selection-top);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12), var(--ring-focus);
+}

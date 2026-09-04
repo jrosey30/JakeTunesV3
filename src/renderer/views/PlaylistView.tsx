@@ -737,6 +737,32 @@ export default function PlaylistView() {
         </div>
       </div>
 
+      {/* Click to write or edit. Always present (as a prompt when empty) so
+          the ability is discoverable — a description you can only find by
+          guessing isn't one. Enter saves, Escape cancels, blur saves. */}
+      {descEditing ? (
+        <textarea
+          className="playlist-view-desc-input"
+          autoFocus
+          value={descDraft}
+          rows={1}
+          placeholder="What is this playlist for?"
+          onChange={(e) => setDescDraft(e.target.value)}
+          onBlur={() => { void commitDesc() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitDesc() }
+            if (e.key === 'Escape') { setDescDraft(savedNote); setDescEditing(false) }
+          }}
+        />
+      ) : (
+        <div
+          className={`playlist-view-commentary${shownDesc ? '' : ' playlist-view-commentary--empty'}`}
+          title="Click to write a description"
+          onClick={() => { setDescDraft(savedNote); setDescEditing(true) }}
+        >
+          {shownDesc || 'Add a description…'}
+        </div>
+      )}
       {playlist && (suggestions.length > 0 || allPlaylistTracks.length === 0) && (
         <div className="pl-suggest">
           <div className="pl-suggest-head">
@@ -792,32 +818,6 @@ export default function PlaylistView() {
               )
             })}
           </div>}
-        </div>
-      )}
-      {/* Click to write or edit. Always present (as a prompt when empty) so
-          the ability is discoverable — a description you can only find by
-          guessing isn't one. Enter saves, Escape cancels, blur saves. */}
-      {descEditing ? (
-        <textarea
-          className="playlist-view-desc-input"
-          autoFocus
-          value={descDraft}
-          rows={2}
-          placeholder="What is this playlist for?"
-          onChange={(e) => setDescDraft(e.target.value)}
-          onBlur={() => { void commitDesc() }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitDesc() }
-            if (e.key === 'Escape') { setDescDraft(savedNote); setDescEditing(false) }
-          }}
-        />
-      ) : (
-        <div
-          className={`playlist-view-commentary${shownDesc ? '' : ' playlist-view-commentary--empty'}`}
-          title="Click to write a description"
-          onClick={() => { setDescDraft(savedNote); setDescEditing(true) }}
-        >
-          {shownDesc || 'Add a description…'}
         </div>
       )}
       {/* V5 facelift: Grid / Cover Flow modes swap only the table below
