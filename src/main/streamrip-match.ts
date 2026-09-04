@@ -18,7 +18,24 @@ export function parseStreamripDesc(desc: string): { title: string; artist: strin
  *  Hold on Me (Rerecorded)" was result #0; the 1962 take sat at #2, and the
  *  old first-tie-wins picker shipped Jake the re-record). Note "remaster" is
  *  deliberately absent: a remaster IS the original recording. */
-const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecords|demo|karaoke|tribute|instrumental|remix|remixed|medley|sped|slowed|reverb|soundalike|cover|covers|bootleg|session|sessions|amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/
+// 6.0 Phase 1 (2026-09-04, the identity contract): the lexicon grows to
+// every alternate-version family Jake named — mixes and DJ/club/extended
+// mixes, mashups, rehearsals and alternate takes, a cappellas, nightcore /
+// chopped-and-screwed / 8D variants, concert cuts, dubs. Still count-based,
+// so a song NAMED with one of these words ("Live and Let Die", "Dub Be Good
+// to Me") never self-rejects. ⚠️ TWIN: JakeTunesMobile/backend/src/util/
+// streamripMatch.ts is the Brief-131 port of this file and predates the
+// wrong-version guard entirely (no marker lexicon there) — the phone's
+// Qobuz-only downloader is explicitly INCOMPLETE on identity as of
+// 2026-09-04; closing it is a mobile-phase change, not a desktop one.
+const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecords|demo|demos|karaoke|tribute|instrumental|instrumentals|remix|remixed|remixes|mix|mixes|extended|mashup|mashups|medley|sped|slowed|reverb|nightcore|chopped|screwed|8d|soundalike|cover|covers|bootleg|session|sessions|rehearsal|rehearsals|alternate|alt|acapella|acappella|concert|dub|amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/
+
+/** The version markers a request itself carries — what Jake asked for by
+ *  name ("Hallelujah (Live)"). Used by the identity contract to record that
+ *  an alternate version was DELIBERATELY requested. */
+export function requestedVersionMarkers(title: string): string[] {
+  return titleTokens(title).filter((w) => VERSION_MARKER.test(w))
+}
 
 /**
  * Decoration inside brackets that is EDITION metadata, not part of the song's
@@ -174,7 +191,9 @@ const titleTokens = (s: string): string[] =>
 export function unwantedVersionOf(wantTitle: string, gotTitle: string): string | null {
   const budget = new Map<string, number>()
   for (const w of titleTokens(wantTitle)) budget.set(w, (budget.get(w) ?? 0) + 1)
-  for (const w of titleTokens(gotTitle)) {
+  // "(Original Mix)" is how dance catalogues label THE recording, not a
+  // derivative — with "mix" now a marker it must not self-reject.
+  for (const w of titleTokens(gotTitle.replace(/\boriginal\s+mix\b/gi, ''))) {
     const left = budget.get(w) ?? 0
     if (left > 0) { budget.set(w, left - 1); continue }
     if (VERSION_MARKER.test(w)) return w
@@ -308,6 +327,41 @@ export function liveBrandMarker(wantText: string, gotText: string): string | nul
     if (got.includes(needle) && !want.includes(needle)) return b
   }
   return null
+}
+
+/**
+ * Every SoundCloud hit that could be the song, best first (6.0 Phase 1):
+ * the lane used to trust ONE top score; now it walks the top few and each
+ * must prove itself in staging through the identity contract.
+ */
+export function rankSoundcloudCandidates(
+  wantTitle: string,
+  wantArtist: string,
+  results: StreamripSearchHit[],
+): StreamripSearchHit[] {
+  const nTitle = recoNorm(wantTitle)
+  const nArtist = recoNorm(wantArtist)
+  if (!nTitle) return []
+  const scored: Array<{ r: StreamripSearchHit; score: number; i: number }> = []
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r.mediaType !== 'track') continue
+    const hay = recoNorm(r.desc)
+    if (!hay.includes(nTitle)) continue
+    if (unwantedVersionOf(`${wantTitle} ${wantArtist}`, r.desc)) continue
+    if (liveBrandMarker(`${wantTitle} ${wantArtist}`, r.desc)) continue
+    const tail = r.desc.slice(r.desc.lastIndexOf('('))
+    if (r.desc.includes('(') && !tail.includes(')')) continue
+    let score = 1
+    if (nArtist) {
+      if (!hay.includes(nArtist)) continue
+      score += 5
+    }
+    score += Math.max(0, 40 - r.desc.length / 4)
+    scored.push({ r, score, i })
+  }
+  scored.sort((a, b) => b.score - a.score || a.i - b.i)
+  return scored.map((s) => s.r)
 }
 
 /** Back-compat single-pick wrapper over rankStreamripCandidates. */

@@ -25,7 +25,8 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, pickBestSoundcloudMatch, unwantedVersionOf, liveBrandMarker, applyExplicitGate, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { buildRequestedRecording, verifyCandidate, finalOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
 import { quietWarn } from '../flight-recorder'
@@ -249,7 +250,11 @@ async function sweepOrphanedStaging(): Promise<void> {
 export function registerStreamripStore(deps: StreamripDeps): void {
   setTimeout(() => { void sweepOrphanedStaging() }, 30_000)
   const { ipc } = deps
-  type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string }
+  /** outcome + alternatives (6.0 Phase 1): the structured verdict behind the
+   *  message — 'exact-not-found' with the candidates that were judged and
+   *  why each failed, so a future approval UI can offer them instead of the
+   *  app silently picking one. */
+  type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: DownloadOutcome; alternatives?: Alternative[] }
 
   // Download stage 1: run a rip subcommand (`url …` or `id …`) into a fresh
   // staging dir and sweep it for audio. The caller decides whether to import
@@ -371,16 +376,16 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  guard and the duration gate sailed right past it. The downloaded
    *  file's own tags said "(Live at Cynthia Woods Mitchell Pavilion…)" /
    *  album "As/Is - Live". The file never lies about itself. */
-  async function probeStagedFile(file: string): Promise<{ durSec: number | null; title: string; album: string }> {
-    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:format_tags=title,album', '-of', 'json', file], 30_000)
+  async function probeStagedFile(file: string): Promise<{ durSec: number | null; title: string; album: string; artist: string }> {
+    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:format_tags=title,album,artist', '-of', 'json', file], 30_000)
     try {
       const parsed = JSON.parse(res.stdout || '{}') as { format?: { duration?: string; tags?: Record<string, string> } }
       const v = parseFloat(parsed.format?.duration || '')
       const tags = parsed.format?.tags || {}
       const tag = (k: string) => String(tags[k] ?? tags[k.toUpperCase()] ?? '').trim()
-      return { durSec: Number.isFinite(v) && v > 0 ? v : null, title: tag('title'), album: tag('album') }
+      return { durSec: Number.isFinite(v) && v > 0 ? v : null, title: tag('title'), album: tag('album'), artist: tag('artist') }
     } catch {
-      return { durSec: null, title: '', album: '' }
+      return { durSec: null, title: '', album: '', artist: '' }
     }
   }
 
@@ -596,7 +601,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
   const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
     lastStageFailure = null            // never let an OLD rip's error explain THIS request
     const clock = ladderClock()
@@ -686,6 +691,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           if (gate.kept.length === 0 && gate.refusedClean.length > 0) {
             return {
               ok: false,
+              outcome: 'exact-not-found',
+              alternatives: gate.refusedClean.map((c) => ({ provider: 'qobuz' as const, desc: c.desc, reason: 'is the clean edition; the explicit record was asked for' })),
               error: 'Qobuz only carries the CLEAN edition of this ' + (mediaType === 'album' ? 'album' : 'track') + ' (' + gate.refusedClean.length + ' candidate' + (gate.refusedClean.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
             }
           }
@@ -696,97 +703,90 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           ranked2 = [...gate.kept, ...ranked.slice(6)]
         }
       }
-    let qobuzMisses: string[] | null = null
-    if (ranked.length && durationMs) {
-      // Verified path: the caller knows the exact version. Try the top
-      // candidates in rank order; a wrong-length file never leaves staging.
-      const wantSec = durationMs / 1000
-      const albumHint = (opts?.album || '').trim()
-      const misses: string[] = []
-      // A clean file from the WRONG album (usually a compilation carrying the
-      // same studio master) is acceptable — but only if no candidate matches
-      // the album the user actually picked. Keep the best such file staged as
-      // a fallback while we keep looking for the canonical-album copy.
+    // ── The identity contract (6.0 Phase 1). ONE judge for every lane:
+    // the clicked row's identity, and each staged file must prove it is
+    // that recording before it can touch the library. Every rejection is
+    // kept as a structured alternative for the verdict at the end.
+    const req = buildRequestedRecording({
+      artist, title, album: opts?.album, durationMs, durationTolSec: durTol,
+      releaseYear: opts?.releaseYear, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource,
+    })
+    const alternatives: Alternative[] = []
+    // Qobuz rows that matched the song but were other versions are the first
+    // structured alternatives — "we found these, none was the exact one".
+    for (const rv of rejectedVersions.slice(0, 6)) alternatives.push({ provider: 'qobuz', desc: rv, reason: 'is a different version' })
+    let anyMatched = ranked.length > 0 || rejectedVersions.length > 0
+    let sawUnverifiable = false
+    /** Probe a staged rip and judge it. Multi-file stages (whole albums) are
+     *  judged by the catalogue pick, not per file. */
+    const judgeStaged = async (provider: Provider, staged: StagedRip, desc: string, extra: Partial<CandidateEvidence> = {}): Promise<ReturnType<typeof verifyCandidate>> => {
+      if (staged.files.length !== 1) return { verdict: 'exact', evidence: ['album rip'], albumMatches: true }
+      const probe = await probeStagedFile(staged.files[0])
+      return verifyCandidate(req, { provider, desc, title: probe.title, album: probe.album, artist: probe.artist, durationSec: probe.durSec, ...extra })
+    }
+    const noteReject = (provider: Provider, desc: string, verdict: ReturnType<typeof verifyCandidate>): void => {
+      if (verdict.verdict === 'exact') return
+      if (verdict.verdict === 'unverifiable') sawUnverifiable = true
+      alternatives.push({ provider, desc, reason: verdict.reason })
+      trace.push(`${provider} “${desc}”: ${verdict.verdict} — ${verdict.reason}`)
+      console.log(`[download] ${verdict.verdict === 'reject' ? 'rejected' : 'could not verify'} ${provider} candidate for “${title}”: “${desc}” ${verdict.reason}`)
+    }
+
+    if (ranked2.length) {
+      // Qobuz: try the top candidates in rank order. Every staged file is
+      // judged — with a known runtime AND without one (the old "no duration"
+      // path went stage → import with no witness at all). A clean file from
+      // the WRONG album (a compilation carrying the same master) is held as
+      // a fallback while a canonical-album copy is looked for.
+      const probeAnswered = metaMap.size > 0
       let fallback: { staged: StagedRip; desc: string } | null = null
+      let lastRipErr = ''
       for (const cand of ranked2.slice(0, 3)) {
-        if (cancelRequested) return { ok: false, error: 'canceled' }
-        if (clock.expired()) return gaveUp()
+        if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+        if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
+        if (probeAnswered && probed.has(cand.id) && !metaMap.has(cand.id)) {
+          trace.push(`skip “${cand.desc}”: gone from Qobuz's catalog (404)`)
+          continue
+        }
         const st = await stageRip(['id', cand.source, cand.mediaType, cand.id], clock.remaining())
         trace.push(`stage “${cand.desc}”: ${st.ok ? 'ok' : st.error}`)
-        if (!st.ok) { misses.push(`“${cand.desc}”: ${st.error}`); continue }
-        const probe = st.staged.files.length === 1 ? await probeStagedFile(st.staged.files[0]) : null
-        // Three independent witnesses, all from the actual file:
-        //  · length within tolerance of the version the user picked
-        //  · the file's TITLE tag carries no unrequested version marker
-        //  · the file's ALBUM tag carries none either (allowing the words of
-        //    the requested title + album hint) — catches live-album cuts
-        //    whose track title is clean and whose length matches the studio
-        //    take (the As/Is 249.75s-vs-249.6s case).
-        const durBad = probe?.durSec != null && Math.abs(probe.durSec - wantSec) > durTol
-        const titleMarker = probe?.title ? unwantedVersionOf(title, probe.title) : null
-        const albumMarker = probe?.album ? unwantedVersionOf(`${title} ${albumHint}`, probe.album) : null
-        // Fourth witness (2026-08-22, the Ed Sullivan case): a show-brand in
-        // the file's tags is a different RECORDING even when the title is
-        // clean and the runtime matches the studio take.
-        const brandMarker = probe ? liveBrandMarker(`${title} ${albumHint}`, `${probe.title ?? ''} ${probe.album ?? ''}`) : null
-        if (probe == null || (!durBad && !titleMarker && !albumMarker && !brandMarker)) {
-          const albumMatches = !albumHint || !probe?.album || recoTitleMatches(albumHint, probe.album)
-          if (albumMatches) {
+        if (!st.ok) {
+          // A dead id or a rip that died: the next-ranked candidate gets its
+          // turn either way (stageRip already retried once with backoff).
+          lastRipErr = st.error
+          continue
+        }
+        const meta = metaMap.get(cand.id)
+        const verdict = await judgeStaged('qobuz', st.staged, cand.desc, { parentalWarning: meta?.parentalWarning, version: meta?.version ?? undefined })
+        if (verdict.verdict === 'exact') {
+          if (verdict.albumMatches) {
             if (fallback) await discardStaged(fallback.staged)
+            trace.push(`exact: “${cand.desc}” (${verdict.evidence.join(', ')})`)
             const dl = await importStaged(st.staged)
-            return { ...dl, matchDesc: cand.desc }
+            return { ...dl, matchDesc: cand.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
           }
-          // Clean but off-album — hold it, prefer a canonical-album copy.
           if (!fallback) { fallback = { staged: st.staged, desc: cand.desc }; continue }
           await discardStaged(st.staged)
           continue
         }
         await discardStaged(st.staged)
-        const why = durBad ? `runs ${fmtDur(probe.durSec)}, wanted ${fmtDur(wantSec)}`
-          : titleMarker ? `is tagged “${probe.title}” (${titleMarker})`
-          : albumMarker ? `is from “${probe.album}” (${albumMarker})`
-          : `is a show recording (“${brandMarker}” in its tags)`
-        console.log(`[download] rejected wrong-version candidate for “${title}”: “${cand.desc}” ${why}`)
-        misses.push(`“${cand.desc}” ${why}`)
+        noteReject('qobuz', cand.desc, verdict)
       }
       if (fallback) {
-        console.log(`[download] no canonical-album copy of “${title}” on Qobuz — importing clean off-album master (“${fallback.desc}”)`)
+        console.log(`[download] no canonical-album copy of “${title}” on Qobuz — importing verified off-album master (“${fallback.desc}”)`)
         const dl = await importStaged(fallback.staged)
-        return { ...dl, matchDesc: fallback.desc }
+        return { ...dl, matchDesc: fallback.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
       }
-      // Do NOT return — Bandcamp gets its turn (2026-08-07, "use both
-      // equally"); the misses ride along for the final error message.
-      qobuzMisses = misses
-    }
-    if (ranked2.length && !qobuzMisses) {
-      // Walk the top candidates: skip ids the catalog probe could not reach
-      // (when the probe answered for anything at all), and move on when a
-      // rip dies with Qobuz's own "not available" instead of giving up.
-      const probeAnswered = metaMap.size > 0
-      let lastErr = ''
-      for (const qpick of ranked2.slice(0, 3)) {
-        if (cancelRequested) return { ok: false, error: 'canceled' }
-        if (clock.expired()) return gaveUp()
-        if (probeAnswered && probed.has(qpick.id) && !metaMap.has(qpick.id)) {
-          trace.push(`skip “${qpick.desc}”: gone from Qobuz's catalog (404)`)
-          continue
-        }
-        const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
-        trace.push(`download “${qpick.desc}”: ${dl.ok ? 'ok' : dl.error}`)
-        if (dl.ok) return { ...dl, matchDesc: qpick.desc }
-        lastErr = dl.error ?? ''
-        if (!/not available|No result matching|NonStreamable/i.test(lastErr)) return { ...dl, matchDesc: qpick.desc }
-      }
-      if (lastErr) trace.push(`all Qobuz candidates unavailable — last: ${lastErr}`)
+      if (lastRipErr) trace.push(`qobuz rips failed — last: ${lastRipErr}`)
     }
 
-    if (cancelRequested) return { ok: false, error: 'canceled' }
-    if (clock.expired()) return gaveUp()
+    if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+    if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
     // ── The ALBUM DOOR (2026-08-29, "another failed download. getting
     // ridiculous"): Qobuz's track search misses songs its own catalogue
     // carries. When the caller named the album, find the ALBUM, read its
     // tracklist, and download the wanted track by id — lossless, canonical
-    // album, duration verified against Qobuz's own clock.
+    // album, judged by the same contract (title + Qobuz's own runtime).
     if (!wantAlbum && (opts?.album || '').trim()) {
       const albName = (opts!.album as string).trim()
       const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
@@ -795,122 +795,127 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         : []
       for (const alb of albRanked.slice(0, 2)) {
         const tl = await qobuzAlbumTrackList(alb.id)
-        const hit = tl.tracks.find((t) =>
-          recoTitleMatches(lookFor || title, t.title) &&
-          !unwantedVersionOf(title, t.title) &&
-          (!durationMs || t.durationSec == null || Math.abs(t.durationSec - durationMs / 1000) <= durTol))
+        const hit = tl.tracks.find((t) => {
+          if (!recoTitleMatches(lookFor || title, t.title)) return false
+          const v = verifyCandidate(req, { provider: 'qobuz', desc: `${t.title} — ${alb.desc}`, title: t.title, durationSec: t.durationSec ?? null })
+          return v.verdict === 'exact'
+        })
         if (!hit) continue
+        anyMatched = true
         // "you could have said the album is not coming out until october 2"
         // (2026-08-29, verbatim): a PRE-RELEASE track is on the album page
         // with streamable=false — say WHEN instead of a bare Retry.
         if (hit.streamable === false) {
           const when = tl.releaseDate ? ` — releases ${tl.releaseDate}` : ''
           console.warn(`[download] “${title}” is on “${alb.desc}” but not out yet${when}`)
-          return { ok: false, error: `Not out yet: “${alb.desc}”${when}. It'll download once it releases.` }
+          return { ok: false, error: `Not out yet: “${alb.desc}”${when}. It'll download once it releases.`, outcome: 'not-released' }
         }
         console.log(`[download] album door: “${title}” found inside “${alb.desc}” (track ${hit.id}) — Qobuz track search had missed it`)
-        const dl = await runDownload(['id', 'qobuz', 'track', hit.id])
-        if (dl.ok) return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”` }
+        const st = await stageRip(['id', 'qobuz', 'track', hit.id], clock.remaining())
+        if (!st.ok) { trace.push(`album door stage: ${st.error}`); continue }
+        const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`)
+        if (verdict.verdict === 'exact') {
+          const dl = await importStaged(st.staged)
+          return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”`, outcome: dl.ok ? 'imported' : 'provider-failed' }
+        }
+        await discardStaged(st.staged)
+        noteReject('qobuz', `${hit.title} — via album “${alb.desc}”`, verdict)
       }
     }
 
-    if (cancelRequested) return { ok: false, error: 'canceled' }
-    if (clock.expired()) return gaveUp()
+    if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+    if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
     // ── Bandcamp — equal citizen (2026-08-07, Jake: "bandcamp is very
     // much used by me too. use both equally"). Scene bands live here when
-    // Qobuz has never heard of them. Full-track stream tier (same honesty
-    // class as the SoundCloud fallback); the store view stays the checkout
-    // for buying the record properly. Same guards as Qobuz: artist must
-    // match, version markers rejected, and with a known duration the
-    // staged file must prove itself before import.
+    // Qobuz has never heard of them. Full-track stream tier; the store view
+    // stays the checkout for buying the record properly. Same judge.
     const bcResults = await bandcampSearch(query, wantAlbum ? 'a' : 't')
     trace.push(`bandcamp: ${bcResults.length} results`)
-    const bcPick = bcResults.find((r) =>
+    const bcPicks = bcResults.filter((r) =>
       (!artist || recoArtistMatches(artist, r.band)) &&
       recoTitleMatches(title, r.name) &&
       !unwantedVersionOf(title, r.name) &&
-      !liveBrandMarker(title, r.name))
-    if (bcPick) {
+      !liveBrandMarker(title, r.name)).slice(0, 2)
+    for (const bcPick of bcPicks) {
+      if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+      anyMatched = true
       const st = await stageBandcamp(bcPick.url)
-      if (st.ok) {
-        let acceptable = true
-        if (!wantAlbum && durationMs && st.staged.files.length === 1) {
-          const probe = await probeStagedFile(st.staged.files[0])
-          const durBad = probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > durTol
-          const marker = probe.title ? unwantedVersionOf(title, probe.title) : null
-          const brand = liveBrandMarker(title, `${probe.title ?? ''} ${probe.album ?? ''}`)
-          if (durBad || marker || brand) acceptable = false
-        }
-        if (acceptable) {
-          console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
-          const dl = await importStaged(st.staged)
-          return { ...dl, matchDesc: `${bcPick.name} — ${bcPick.band} (Bandcamp stream)` }
-        }
-        await discardStaged(st.staged)
+      if (!st.ok) { trace.push(`bandcamp stage: ${st.error}`); continue }
+      const desc = `${bcPick.name} — ${bcPick.band} (Bandcamp stream)`
+      const verdict = wantAlbum ? { verdict: 'exact' as const, evidence: ['album'], albumMatches: true } : await judgeStaged('bandcamp', st.staged, desc, { artist: bcPick.band })
+      if (verdict.verdict === 'exact') {
+        console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
+        const dl = await importStaged(st.staged)
+        return { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
       }
+      await discardStaged(st.staged)
+      noteReject('bandcamp', desc, verdict)
     }
 
-    if (cancelRequested) return { ok: false, error: 'canceled' }
-    if (clock.expired()) return gaveUp()
+    if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+    if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
     // ── SoundCloud fallback (2026-07-22, Jake: "auto qobuz first"). Qobuz
-    // doesn't carry indie/underground singles (e.g. "Mr Vibe" by
-    // Villanova on Indie House Records); SoundCloud does, full-length.
-    // Only for single tracks — albums stay Qobuz-only (SoundCloud has no
-    // real album concept). Full track, ~128k MP3 (lossy but complete —
-    // beats a failed download for a track that exists nowhere lossless).
+    // doesn't carry indie/underground singles; SoundCloud does, full-length
+    // (~128k MP3 — lossy but complete). Single tracks only. It is NEVER a
+    // silent substitute: the walk tries a few uploads and each must pass
+    // the same judge as Qobuz — the 5 Years Time remix died here.
+    let scSearchErr = ''
     if (!wantAlbum) {
       const ssearch = await searchCatalog({ query, source: 'soundcloud', mediaType: 'track', numResults: 15 })
       trace.push(`soundcloud search: ${ssearch.ok ? `${ssearch.results?.length ?? 0} results` : `ERR ${ssearch.error}`}`)
-      const spick = ssearch.ok && ssearch.results?.length
-        ? pickBestSoundcloudMatch(title || query, artist, ssearch.results)
-        : null
-      if (spick) {
-        console.log(`[download] Qobuz had no match for "${query}" — falling back to SoundCloud: ${spick.desc}`)
-        // The file's own clock is the only trustworthy witness (2026-08-29,
-        // the TopKnot case: truncated descs hide "Remix"; a 357s file
-        // imported for a 187s song because this lane never probed). Same
-        // staging witnesses Bandcamp has had all along.
+      if (!ssearch.ok) scSearchErr = ssearch.error || 'search failed'
+      const spicks = ssearch.ok && ssearch.results?.length
+        ? rankSoundcloudCandidates(title || query, artist, ssearch.results).slice(0, 3)
+        : []
+      for (const spick of spicks) {
+        if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+        if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
+        anyMatched = true
+        console.log(`[download] Qobuz had no exact match for "${query}" — trying SoundCloud: ${spick.desc}`)
         const st = await stageRip(['id', spick.source, spick.mediaType, spick.id], clock.remaining())
-        if (st.ok) {
-          let acceptable = true
-          if (st.staged.files.length === 1) {
-            const probe = await probeStagedFile(st.staged.files[0])
-            const durBad = durationMs > 0 && probe.durSec != null && Math.abs(probe.durSec - durationMs / 1000) > durTol
-            const marker = probe.title ? unwantedVersionOf(`${title} ${artist}`, probe.title) : null
-            if (durBad || marker) {
-              acceptable = false
-              console.log(`[download] SoundCloud candidate rejected at staging: ${durBad ? `runs ${Math.round(probe.durSec!)}s, wanted ${Math.round(durationMs / 1000)}s` : `tagged “${probe.title}” (${marker})`}`)
-            }
-          }
-          if (acceptable) {
-            const dl = await importStaged(st.staged)
-            return { ...dl, matchDesc: `${spick.desc} (SoundCloud)` }
-          }
-          await discardStaged(st.staged)
+        if (!st.ok) { trace.push(`soundcloud stage “${spick.desc}”: ${st.error}`); continue }
+        const desc = `${spick.desc} (SoundCloud)`
+        // The file's own clock and tags are the only trustworthy witnesses
+        // here (2026-08-29, the TopKnot case) — probed explicitly in this
+        // lane, then judged by the same contract as every other provider.
+        const probe = st.staged.files.length === 1 ? await probeStagedFile(st.staged.files[0]) : null
+        const verdict = probe
+          ? verifyCandidate(req, { provider: 'soundcloud', desc: spick.desc, title: probe.title, album: probe.album, artist: probe.artist, durationSec: probe.durSec })
+          : await judgeStaged('soundcloud', st.staged, spick.desc)
+        if (verdict.verdict === 'exact') {
+          const dl = await importStaged(st.staged)
+          return { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
         }
+        await discardStaged(st.staged)
+        noteReject('soundcloud', desc, verdict)
       }
     }
 
     console.warn(`[download] trace “${title}” — ${artist}: ${trace.join(' | ')}`)
-    if (!qsearch.ok && !qsearch.results?.length) {
-      return { ok: false, error: qsearch.error || `No match for “${query}”.` }
+    // ── The verdict. Provider trouble stays distinct from "we looked and
+    // nothing was the exact recording", which stays distinct from "nothing
+    // resembled it at all". Prefer "Exact version not found" over a false
+    // success every time.
+    const providerFailure = (!qsearch.ok ? (qsearch.error || 'Qobuz search failed') : null) ?? lastStageFailure ?? (scSearchErr || null)
+    const outcome = finalOutcome({ alternatives, providerFailure, anyMatched, unverifiable: sawUnverifiable })
+    const listed = alternatives.slice(0, 3).map((a) => `${a.desc} ${a.reason}`).join(' · ')
+    if (outcome === 'exact-not-found') {
+      const other = rejectedVersions.length ? ` Other versions on Qobuz: ${rejectedVersions.slice(0, 3).join(', ')}.` : ''
+      console.warn(`[download] EXACT VERSION NOT FOUND “${title}” — ${artist}: ${listed || other}`)
+      return { ok: false, outcome, alternatives, error: `Exact version not found: “${title}” — ${artist}. ${listed ? `Judged and refused: ${listed}.` : ''}${other} Nothing was imported. Try pasting a link in the Download view.` }
     }
-    if (qobuzMisses) {
-      return { ok: false, error: `Neither Qobuz nor Bandcamp has the exact version you picked. Qobuz found: ${qobuzMisses.join(' · ')}. Try pasting a link in the Download view.` }
+    if (outcome === 'unverifiable') {
+      return { ok: false, outcome, alternatives, error: `Couldn’t verify what arrived for “${title}” (${alternatives[0]?.reason ?? 'no tags, no runtime'}) — not imported. Try pasting a link to the exact track.` }
     }
-    if (rejectedVersions.length) {
-      // Everything that matched was a different recording. Failing loudly beats
-      // silently shipping a re-record/live cut (Jake, 2026-08-07).
-      return { ok: false, error: `Qobuz only has other versions of “${title}” (${rejectedVersions.slice(0, 3).join(', ')}). Try pasting a link in the Download view.` }
-    }
-    if (lastStageFailure) {
-      // A source HAD it; the rip itself died (network, auth, Qobuz hiccup).
-      // Say so — "no source had it" sent Jake hunting the wrong problem.
-      console.warn(`[download] FAILED “${title}” — ${artist}: a source matched but the download failed: ${lastStageFailure} (query “${query}”)`)
-      return { ok: false, error: `Found “${query}” but the download failed (${lastStageFailure}). Check the connection and try again.` }
+    if (outcome === 'provider-failed') {
+      // A source HAD it (or could not be asked); the rip/search itself died
+      // (network, auth, Qobuz hiccup). Say so — "no source had it" sent Jake
+      // hunting the wrong problem.
+      console.warn(`[download] FAILED “${title}” — ${artist}: provider failure: ${providerFailure} (query “${query}”)`)
+      return { ok: false, outcome, alternatives, error: `Found “${query}” but the download failed (${providerFailure}). Check the connection or login and try again.` }
     }
     console.warn(`[download] FAILED “${title}” — ${artist}: no source had it (query “${query}”)`)
-    return { ok: false, error: `Not on Qobuz${wantAlbum ? '' : ' or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
+    return { ok: false, outcome, alternatives, error: `Not on Qobuz${wantAlbum ? '' : ', Bandcamp or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
   }, { refuse: REFUSED_SENDER })
 
   // Download a picked search result by its streamrip id.

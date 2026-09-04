@@ -30,6 +30,8 @@ export interface QResult {
    *  the guard to ±5s of the clean edit rejected every one of them. */
   cleanedSource?: boolean
   explicitSource?: boolean
+  /** Release year of the clicked row — part of the identity contract. */
+  releaseYear?: number
 }
 export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
@@ -39,6 +41,11 @@ export interface QItem {
   imported?: number
   dupes?: number
   error?: string
+  /** Structured verdict behind `error` (6.0 Phase 1): 'exact-not-found'
+   *  means sources answered and every candidate was judged and refused —
+   *  `alternatives` lists them with the reason each failed. */
+  outcome?: string
+  alternatives?: Array<{ provider: string; desc: string; reason: string }>
   startedAt?: number
   endedAt?: number
 }
@@ -148,10 +155,12 @@ async function pump(): Promise<void> {
       it.imported = undefined
       it.dupes = undefined
       it.error = undefined
+      it.outcome = undefined
+      it.alternatives = undefined
       emit()
       try {
-        const r = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource })
+        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> } | undefined = it.result.kind === 'query'
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates
@@ -168,6 +177,8 @@ async function pump(): Promise<void> {
         } else {
           it.status = 'failed'
           it.error = r?.error || 'Download failed.'
+          it.outcome = r?.outcome
+          it.alternatives = r?.alternatives
         }
       } catch (e) {
         const statusAfterThrow = it.status as QStatus

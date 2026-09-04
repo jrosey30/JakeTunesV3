@@ -169,6 +169,7 @@ const songQ = (r: SongRow): QResult => ({
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
   cleanedSource: r.explicitness === 'cleaned',
   explicitSource: r.explicitness === 'explicit',
+  releaseYear: r.releaseYear,
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
@@ -595,7 +596,11 @@ export default function DownloadView() {
       return <button className="download-retry" onClick={() => item && retry(item.key)} title="Download after all">Canceled — redo</button>
     }
     if (st === 'failed') {
-      return <button className="download-retry" onClick={() => item && retry(item.key)} title={item?.error || 'Retry'}>Retry</button>
+      // 6.0 Phase 1: say WHICH kind of failure. "Exact version not found"
+      // means the sources answered and nothing was the recording Jake
+      // picked — retrying will not change that; a link will.
+      const label = item?.outcome === 'exact-not-found' ? 'Not the exact version' : item?.outcome === 'provider-failed' ? 'Retry' : 'Retry'
+      return <button className="download-retry" onClick={() => item && retry(item.key)} title={item?.error || 'Retry'}>{label}</button>
     }
     return <button className="download-result-btn" onClick={() => enqueue(qres)}>Get</button>
   }
