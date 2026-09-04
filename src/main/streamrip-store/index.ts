@@ -169,8 +169,17 @@ async function ripDiagnosis(): Promise<string> {
 /** Last 1-3 non-empty lines of streamrip's output — its own "needs login" /
  *  bad-link / geo-block message, surfaced verbatim to the user. */
 function tailMessage(res: RunResult): string {
-  return (res.stderr || res.stdout || '')
-    .split('\n').map((l) => l.trim()).filter(Boolean).slice(-3).join(' ').slice(0, 300)
+  const lines = (res.stderr || res.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean)
+  // streamrip prints rich tracebacks in box-drawing frames; the last three
+  // lines are usually the frame, not the reason. Prefer the exception line.
+  const exc = [...lines].reverse().find((l) => /^[A-Za-z_.]*(Error|Exception)\b/.test(l))
+  if (exc) {
+    // SoundCloud moved its catalog behind encrypted HLS (2026-09): the plain
+    // MP3 stream 404s and streamrip's client dies on the missing key. Name it.
+    if (/KeyError: 'url'/.test(exc) && /soundcloud/i.test(res.stderr || '')) return 'SoundCloud no longer streams this track openly'
+    return exc.slice(0, 200)
+  }
+  return lines.filter((l) => !/^[│╭╰─┃┏┗━]/.test(l)).slice(-3).join(' ').slice(0, 300)
 }
 
 // ── Qobuz credentials (written into streamrip's own config.toml) ──────────
@@ -589,7 +598,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
   ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
+    lastStageFailure = null            // never let an OLD rip's error explain THIS request
     const clock = ladderClock()
+    /// Every decision on the ladder, printed with the failure so a "didn't
+    /// work" has a cause in main.log (2026-09-04: Watch the Throne failed with
+    /// no line saying why; info-level logs never reach main.log).
+    const trace: string[] = []
     const gaveUp = (): { ok: false; error: string } =>
       ({ ok: false, error: `Gave up after ${Math.round(LADDER_DEADLINE_MS / 60000)} minutes of fallbacks — the services are slow right now. Try again, or paste a link in the Download view.` })
     const artist = (opts?.artist || '').trim()
@@ -623,9 +637,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
 
     // ── Qobuz first (lossless when it has the track) ──
     const qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
+    trace.push(`qobuz search “${query}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
     const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
       ? rankStreamripCandidates(lookFor || query, artist, qsearch.results, mediaType)
       : { ranked: [], rejectedVersions: [] }
+      trace.push(`ranked ${ranked.length}${rejectedVersions.length ? `, rejected versions ${rejectedVersions.length}` : ''}${ranked[0] ? ` — top “${ranked[0].desc}”` : ''}`)
       // ── The clean-version gate (2026-08-16). Explicitness is an identity
       // axis resolved BEFORE any byte downloads: when the clicked row was
       // explicit, candidates Qobuz itself flags clean are refused, and if
@@ -643,6 +659,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
               error: 'Qobuz only carries the CLEAN edition of this ' + (mediaType === 'album' ? 'album' : 'track') + ' (' + gate.refusedClean.length + ' candidate' + (gate.refusedClean.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
             }
           }
+          trace.push(`explicit gate: kept ${gate.kept.length}, refused clean ${gate.refusedClean.length}`)
           if (gate.refusedClean.length > 0) {
             console.log('[streamrip] explicit gate refused ' + gate.refusedClean.length + ' clean candidate(s) for "' + title + '"')
           }
@@ -665,6 +682,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         if (cancelRequested) return { ok: false, error: 'canceled' }
         if (clock.expired()) return gaveUp()
         const st = await stageRip(['id', cand.source, cand.mediaType, cand.id], clock.remaining())
+        trace.push(`stage “${cand.desc}”: ${st.ok ? 'ok' : st.error}`)
         if (!st.ok) { misses.push(`“${cand.desc}”: ${st.error}`); continue }
         const probe = st.staged.files.length === 1 ? await probeStagedFile(st.staged.files[0]) : null
         // Three independent witnesses, all from the actual file:
@@ -713,6 +731,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     if (ranked2.length && !qobuzMisses) {
       const qpick = ranked2[0]
       const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
+      trace.push(`download “${qpick.desc}”: ${dl.ok ? 'ok' : dl.error}`)
       return { ...dl, matchDesc: qpick.desc }
     }
 
@@ -760,6 +779,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // match, version markers rejected, and with a known duration the
     // staged file must prove itself before import.
     const bcResults = await bandcampSearch(query, wantAlbum ? 'a' : 't')
+    trace.push(`bandcamp: ${bcResults.length} results`)
     const bcPick = bcResults.find((r) =>
       (!artist || recoArtistMatches(artist, r.band)) &&
       recoTitleMatches(title, r.name) &&
@@ -795,6 +815,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // beats a failed download for a track that exists nowhere lossless).
     if (!wantAlbum) {
       const ssearch = await searchCatalog({ query, source: 'soundcloud', mediaType: 'track', numResults: 15 })
+      trace.push(`soundcloud search: ${ssearch.ok ? `${ssearch.results?.length ?? 0} results` : `ERR ${ssearch.error}`}`)
       const spick = ssearch.ok && ssearch.results?.length
         ? pickBestSoundcloudMatch(title || query, artist, ssearch.results)
         : null
@@ -825,6 +846,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       }
     }
 
+    console.warn(`[download] trace “${title}” — ${artist}: ${trace.join(' | ')}`)
     if (!qsearch.ok && !qsearch.results?.length) {
       return { ok: false, error: qsearch.error || `No match for “${query}”.` }
     }
