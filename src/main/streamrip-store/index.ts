@@ -648,9 +648,19 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // every candidate is clean the download fails LOUDLY — a censored
       // file must never silently satisfy a request for the record.
       let ranked2 = ranked
+      // Qobuz's search index outlives its catalog (2026-09-04, Vampire
+      // Weekend: search returns album alk4osa4lhi6a and tracks 60132045…
+      // that album/get + track/get answer 404 "No result matching given
+      // argument"). The metadata probe below is also an availability probe:
+      // an id we asked about and got nothing back for is skipped, and the
+      // pick walks the next candidates instead of one-shotting the first.
+      const probed = new Set<string>()
+      let metaMap: Map<string, QobuzTrackMeta> = new Map()
       if (ranked.length) {
         const fetchMeta = mediaType === 'album' ? qobuzAlbumMeta : qobuzTrackMeta
         const meta = await fetchMeta(ranked.slice(0, 6).map((c) => c.id))
+        for (const c of ranked.slice(0, 6)) probed.add(c.id)
+        metaMap = meta
         // 2026-09-04 (Jake: "why do these clean versions keep appearing???"):
         // explicit wins by DEFAULT, not only when the clicked row said so.
         // Apple's listing was the clean edition of Watch the Throne, so
@@ -749,10 +759,25 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       qobuzMisses = misses
     }
     if (ranked2.length && !qobuzMisses) {
-      const qpick = ranked2[0]
-      const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
-      trace.push(`download “${qpick.desc}”: ${dl.ok ? 'ok' : dl.error}`)
-      return { ...dl, matchDesc: qpick.desc }
+      // Walk the top candidates: skip ids the catalog probe could not reach
+      // (when the probe answered for anything at all), and move on when a
+      // rip dies with Qobuz's own "not available" instead of giving up.
+      const probeAnswered = metaMap.size > 0
+      let lastErr = ''
+      for (const qpick of ranked2.slice(0, 3)) {
+        if (cancelRequested) return { ok: false, error: 'canceled' }
+        if (clock.expired()) return gaveUp()
+        if (probeAnswered && probed.has(qpick.id) && !metaMap.has(qpick.id)) {
+          trace.push(`skip “${qpick.desc}”: gone from Qobuz's catalog (404)`)
+          continue
+        }
+        const dl = await runDownload(['id', qpick.source, qpick.mediaType, qpick.id])
+        trace.push(`download “${qpick.desc}”: ${dl.ok ? 'ok' : dl.error}`)
+        if (dl.ok) return { ...dl, matchDesc: qpick.desc }
+        lastErr = dl.error ?? ''
+        if (!/not available|No result matching|NonStreamable/i.test(lastErr)) return { ...dl, matchDesc: qpick.desc }
+      }
+      if (lastErr) trace.push(`all Qobuz candidates unavailable — last: ${lastErr}`)
     }
 
     if (cancelRequested) return { ok: false, error: 'canceled' }
