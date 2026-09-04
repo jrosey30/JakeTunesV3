@@ -9,7 +9,7 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { itunesYear, ITUNES_JUNK_ARTIST, resolveExplicitEdition } from '../download-search.ts'
+import { itunesYear, ITUNES_JUNK_ARTIST, resolveExplicitEdition, explicitMapKey } from '../download-search.ts'
 
 describe('itunesYear — a year is not a timestamp', () => {
   test('parses off the string so timezones cannot shift the year', () => {
@@ -56,4 +56,14 @@ describe('resolveExplicitEdition — the rescue and its gate', () => {
   test('no parenthetical, no bridge', () => {
     assert.equal(resolveExplicitEdition('Different Album', 28, map), undefined)
   })
+})
+
+test('explicitMapKey: "(Deluxe Version)" and "(Deluxe)" file under one key; the resolver bridges them (Watch the Throne, 2026-09-04)', () => {
+  assert.equal(explicitMapKey('Watch the Throne (Deluxe Version)'), explicitMapKey('Watch the Throne (Deluxe)'))
+  const map = new Map<string, { id: number; trackCount?: number }>([
+    [explicitMapKey('Watch the Throne (Deluxe)'), { id: 1440845249, trackCount: 17 }],
+    [explicitMapKey('Watch the Throne'), { id: 1440848092, trackCount: 13 }],
+  ])
+  assert.deepEqual(resolveExplicitEdition('Watch the Throne (Deluxe Version)', 17, map), { id: 1440845249, trackCount: 17 })
+  assert.deepEqual(resolveExplicitEdition('Watch the Throne', 13, map), { id: 1440848092, trackCount: 13 })
 })

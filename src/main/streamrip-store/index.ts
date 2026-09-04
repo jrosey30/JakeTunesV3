@@ -651,6 +651,26 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       if (ranked.length) {
         const fetchMeta = mediaType === 'album' ? qobuzAlbumMeta : qobuzTrackMeta
         const meta = await fetchMeta(ranked.slice(0, 6).map((c) => c.id))
+        // 2026-09-04 (Jake: "why do these clean versions keep appearing???"):
+        // explicit wins by DEFAULT, not only when the clicked row said so.
+        // Apple's listing was the clean edition of Watch the Throne, so
+        // explicitSource was false, the gate stayed off, and Qobuz's edited
+        // edition was eligible. Now: among the top candidates, Qobuz's own
+        // explicit flag orders them explicit-first, and when an explicit
+        // master exists the clean ones are refused outright. A record with
+        // no explicit edition anywhere (parental_warning false across the
+        // board) still downloads — that is a genuinely clean record.
+        if (!opts?.explicitSource) {
+          const top = ranked.slice(0, 6)
+          const explicitExists = top.some((c) => meta.get(c.id)?.parentalWarning === true)
+          if (explicitExists) {
+            const kept = top.filter((c) => meta.get(c.id)?.parentalWarning !== false)
+            const refused = top.length - kept.length
+            trace.push(`explicit-first: kept ${kept.length}, refused clean ${refused}`)
+            if (refused > 0) console.log('[streamrip] explicit-first refused ' + refused + ' clean candidate(s) for "' + title + '" — an explicit master exists')
+            ranked2 = [...kept, ...ranked.slice(6)]
+          }
+        }
         if (opts?.explicitSource) {
           const gate = applyExplicitGate(ranked.slice(0, 6), meta, true)
           if (gate.kept.length === 0 && gate.refusedClean.length > 0) {

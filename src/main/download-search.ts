@@ -123,6 +123,19 @@ export async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestio
 // title-shaped queries harvest artistIds from their own results, artist-shaped
 // queries pass the resolved artist — so the two can never drift apart again
 // the way the original inline version did.
+/**
+ * The key an album is filed under in the explicit map. Apple names the same
+ * record "(Deluxe Version)" on one edition and "(Deluxe)" on the other
+ * (Watch the Throne, 2026-09-04), so the deluxe/edition suffix collapses
+ * before the fold.
+ */
+export function explicitMapKey(albumName: string): string {
+  return foldAccents(
+    albumName.replace(/\(\s*deluxe\s+(?:version|edition)\s*\)/gi, '(deluxe)')
+             .replace(/\bdeluxe\s+(?:version|edition)\b/gi, 'deluxe'),
+  ).replace(/[^a-z0-9]/g, '')
+}
+
 export async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number; trackCount?: number }>> {
   const map = new Map<string, { id: number; trackCount?: number }>()
   if (artistIds.length === 0) return map
@@ -141,7 +154,7 @@ export async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<st
       for (const c of abData.results || []) {
         if (c.wrapperType !== 'collection') continue
         if (c.collectionExplicitness !== 'explicit') continue
-        const name = foldAccents(String(c.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+        const name = explicitMapKey(String(c.collectionName ?? ''))
         if (!name || !c.collectionId) continue
         // First explicit wins: Apple lists deluxe/extended variants under
         // their own names, so a same-name hit is the album.
@@ -176,7 +189,7 @@ export function resolveExplicitEdition(
   rowTrackCount: number | undefined,
   map: Map<string, { id: number; trackCount?: number }>,
 ): { id: number } | undefined {
-  const folded = foldAccents(albumName).replace(/[^a-z0-9]/g, '')
+  const folded = explicitMapKey(albumName)
   if (!folded) return undefined
   const exact = map.get(folded)
   if (exact) return exact
@@ -325,7 +338,15 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
               // One implementation for both paths — see fetchExplicitAlbumMap
               // above the handler. This used to be inline here, which is how
               // the title-search path shipped without it.
-              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId)])
+              // The hit is the SOLO artist; a duo record (Watch the Throne
+              // under "JAŸ-Z & Kanye West") files its explicit edition under
+              // the duo's own artist id. Harvest the ids that own the cleaned
+              // rows too, exactly as the title-search path does.
+              const cleanedIds = [...new Set((lData.results || [])
+                .filter((r) => r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
+                .map((r) => Number(r.artistId))
+                .filter((id) => Number.isFinite(id) && id > 0 && id !== Number(hit.artistId)))].slice(0, 3)
+              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId), ...cleanedIds])
               const own = (lData.results || [])
                 .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
                 // PRIMARY artist only. The lookup also returns the guest spots
