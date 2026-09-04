@@ -785,7 +785,7 @@ declare global {
       embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number; stale: number }>
       embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
       // 4.5: brain-driven playlist suggestions — centroid nearest library tracks.
-      playlistSimilar: (playlistIds: number[], clusters?: number) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
+      playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
       onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
       // / mobileOverridesApply types — vestigial mobile-sync feature gone.

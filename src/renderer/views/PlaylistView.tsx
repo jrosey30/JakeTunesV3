@@ -246,11 +246,15 @@ export default function PlaylistView() {
   // `tracks` (suggestions are for the whole playlist), and NOT just length (a
   // same-size swap must still recompute). ↻ then re-pages this pool locally.
   const plMembershipKey = (playlist?.trackIds ?? []).join(',')
+  // The playlist's NAME and DESCRIPTION are clues too (2026-09-04) — the brain
+  // embeds them and gives the best text matches their own strip seat. Renaming
+  // or editing the description re-fetches, same as a membership change.
+  const plHint = playlist ? `${playlist.name}${shownDesc ? `. ${shownDesc}` : ''}` : ''
   useEffect(() => {
     let cancelled = false
     const ids = playlist?.trackIds ?? []
     if (ids.length === 0) { setVibeHits([]); return }
-    window.electronAPI.playlistSimilar(ids, 5)
+    window.electronAPI.playlistSimilar(ids, 5, plHint)
       .then(r => {
         if (cancelled) return
         setVibeHits(r.ok ? r.hits : [])
@@ -258,7 +262,7 @@ export default function PlaylistView() {
       })
       .catch(() => { if (!cancelled) { setVibeHits([]); setVibeClusterSeeds([]) } })
     return () => { cancelled = true }
-  }, [state.activePlaylistId, plMembershipKey])
+  }, [state.activePlaylistId, plMembershipKey, plHint])
   const suggestions = useMemo(
     () => {
       suggestDiag.current = new Map()

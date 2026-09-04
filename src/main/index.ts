@@ -8956,7 +8956,26 @@ import {
 // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
 // regardless of artist. The renderer then filters for freshness (new artists,
 // no same-album) + diversity. We return a generous pool so ↻ has real variety.
-ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
+// Playlist name + description → one embedding, cached per exact text (a
+// playlist's hint changes only when Jake renames it or edits the note).
+const playlistHintVecs = new Map<string, Float32Array>()
+async function playlistHintVector(hint: string | undefined): Promise<Float32Array | null> {
+  const text = (hint ?? '').replace(/\s+/g, ' ').trim()
+  if (text.length < 3) return null
+  const hit = playlistHintVecs.get(text)
+  if (hit) return hit
+  try {
+    const [v] = await ragEmbedTexts([`Playlist: ${text}`])
+    if (!v) return null
+    if (playlistHintVecs.size > 200) playlistHintVecs.clear()
+    playlistHintVecs.set(text, v)
+    return v
+  } catch (err) {
+    console.warn('[playlist-similar] hint embed skipped:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5, hint?: string): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
   try {
     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
     const m = await ragGetEmbeddingsMap()
@@ -8992,7 +9011,8 @@ ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: numbe
     function* candidateEntries(): Generator<[number, Float32Array]> {
       for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
-    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))))
+    const hintVec = await playlistHintVector(hint)
+    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))), hintVec)
     // Candidate DIVERSITY (2026-08-07, Jake: "it seems to only suggest
     // other songs by bands already in that playlist"): measured on Pool
     // Dos, 101 of 162 raw candidates were catalog-mates of the playlist's

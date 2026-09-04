@@ -412,8 +412,8 @@ const electronAPI = {
   // 4.5: brain-driven playlist suggestions — the playlist's embedding centroid's
   // nearest library tracks (vibe match). PlaylistView's "Suggested" strip filters
   // these for freshness + diversity instead of the old artist-match heuristic.
-  playlistSimilar: (playlistIds: number[], clusters?: number): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
-    ipcRenderer.invoke('playlist-similar', playlistIds, clusters),
+  playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
+    ipcRenderer.invoke('playlist-similar', playlistIds, clusters, hint),
   onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void): () => void => {
     const handler = (_e: unknown, p: { done: number; total: number }) => callback(p)
     ipcRenderer.on('embedding-backfill-progress', handler)

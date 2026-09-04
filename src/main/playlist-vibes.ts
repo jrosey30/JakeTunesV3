@@ -80,6 +80,25 @@ const FLOOR_PROBE_RANK = 9    // 10th-best candidate = the cluster's proven dept
 const MIN_SERVABLE_HITS = 40
 const LAMBDA = 0.3            // global-center penalty
 const PER_CLUSTER_POOL = 60
+// Playlist NAME + DESCRIPTION as a clue (2026-09-04, Jake: "use the playlist
+// title and description as clues as to what should be suggested as well as
+// the music inside"). The text is embedded with the same model as the
+// tracks, then (a) every candidate gets a small bonus for matching it and
+// (b) the best text matches form their OWN sub-vibe pool with a seat share,
+// so "Dinner Party" pulls dinner-party songs the audio alone wouldn't reach.
+// Text↔track cosines sit on a lower scale than track↔track, so the hint
+// pool is ranked on its own and never enters the quality-floor math.
+const HINT_W = 0.15
+const HINT_SEED_SHARE = 0.2
+// The name only counts when the MUSIC agrees with it (Jake: "sometimes a
+// playlist name I use means absolutely nothing (baseball, fuck) but
+// sometimes they do mean something!!! it varies!"). Gate: how much closer
+// are the playlist's own songs to the hint text than the library at large,
+// in library-σ units. Calibrated on the real playlists 2026-09-04:
+// METAL VOL 1 2.05, Rhymes 1.47, Songs That Mix Well 1.49, Movies 1.20,
+// Weirdtronic 1.04, Salt Air Drift 0.81, Indie sleaze 0.68 → ON;
+// Fuck 0.43, Pool 0.42, Bops 0.21, Dinner Party 0.04, Baseball 0.03 → OFF.
+const HINT_MIN_Z = 0.6
 
 /**
  * The full scoring pass: k-means the seed vectors into sub-vibes, assign
@@ -92,6 +111,7 @@ export function scorePlaylistCandidates(
   candidates: Iterable<[number, Float32Array]>,
   globalCentroid: Float32Array | null,
   clusters = 5,
+  hint: Float32Array | null = null,
 ): { hits: VibeHit[]; clusterSeeds: number[] } {
   if (seeds.length === 0) return { hits: [], clusterSeeds: [] }
   const cents = kmeansCentroids(seeds, Math.max(1, Math.min(clusters, seeds.length)))
@@ -106,13 +126,25 @@ export function scorePlaylistCandidates(
     for (let c = 0; c < cents.length; c++) { const sim = cosine(s, cents[c]); if (sim > bs) { bs = sim; bi = c } }
     clusterSeeds[bi]++
   }
-  const perCluster: Array<Array<{ trackId: number; score: number; rawSim: number }>> = cents.map(() => [])
+  const perCluster: Array<Array<{ trackId: number; score: number; rawSim: number; hs: number; gpen: number }>> = cents.map(() => [])
+  let hsSum = 0, hsSq = 0, hsN = 0
   for (const [tid, vec] of candidates) {
     let bi = 0, bs = -2
     for (let c = 0; c < cents.length; c++) { const s = cosine(vec, cents[c]); if (s > bs) { bs = s; bi = c } }
-    const score = bs - (globalCentroid ? LAMBDA * cosine(vec, globalCentroid) : 0)
-    perCluster[bi].push({ trackId: tid, score, rawSim: bs })
+    const gpen = globalCentroid ? LAMBDA * cosine(vec, globalCentroid) : 0
+    const hs = hint ? cosine(vec, hint) : 0
+    if (hint) { hsSum += hs; hsSq += hs * hs; hsN++ }
+    perCluster[bi].push({ trackId: tid, score: bs - gpen, rawSim: bs, hs, gpen })
   }
+  // Does the music agree with the name? (see HINT_MIN_Z)
+  let hintOn = false
+  if (hint && hsN > 1 && seeds.length > 0) {
+    const cmean = hsSum / hsN
+    const csd = Math.sqrt(Math.max(0, hsSq / hsN - cmean * cmean)) || 1
+    const smean = seeds.reduce((a, v) => a + cosine(v, hint), 0) / seeds.length
+    hintOn = (smean - cmean) / csd >= HINT_MIN_Z
+  }
+  if (hintOn) for (const list of perCluster) for (const h of list) h.score += HINT_W * h.hs
 
   // The floor: what does a GOOD match look like for this playlist? Median
   // of each cluster's 10th-best raw similarity, minus the margin. By
@@ -156,6 +188,19 @@ export function scorePlaylistCandidates(
       if (hits.length >= MIN_SERVABLE_HITS) break
       hits = collect(floor - relax)
     }
+  }
+  // The hint's own pool: cluster index K (after the audio sub-vibes), seeded
+  // as if a fifth of the playlist had voted for it (min 2 → seat-eligible),
+  // so the name/description always earns a strip seat but never outvotes
+  // the music. Ranked on its own scale; the floor above never sees it.
+  if (hintOn) {
+    const K = cents.length
+    // "Matches the name AND sounds like the playlist": text matches that
+    // fail the audio floor are lyrics-only coincidences ("Movies" pulled
+    // Arcade Fire's Everything Now, Tenacious D's The Metal) — out.
+    const hintPool = perCluster.flat().filter((h) => h.rawSim >= floor).map((h) => ({ trackId: h.trackId, score: h.hs - h.gpen })).sort((a, b) => b.score - a.score)
+    for (const h of hintPool.slice(0, PER_CLUSTER_POOL)) hits.push({ trackId: h.trackId, score: h.score, cluster: K })
+    clusterSeeds.push(Math.max(2, Math.round(seeds.length * HINT_SEED_SHARE)))
   }
   return { hits, clusterSeeds }
 }
