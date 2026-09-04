@@ -147,3 +147,18 @@ restored with its old id, `--mood-backfill` re-creates its vector.
 ## Evidence files
 REPORT-20260818-nightly.md (forensics + repair proof),
 repair_20260818_ids.json (the 514 repaired + 72 pruned ids).
+
+## 2026-09-04 — SEVERITY ESCALATION: the replay now reverts the TRAINER'S OWN NIGHT (both indexes)
+14th event (14/14 import days), but tonight the replay fired 02:18–02:25 — AFTER the
+trainer finished 02:09 — for the first time. Consequences beyond the usual mood clobber:
+- `embeddings.bin` was replaced by the desktop's stale map: 612 trainer re-embeds reverted
+  (500 tempo/key-v3 catch-up + 50 nightly enrich + 150 meaning re-embeds) while their
+  te=3/meaning stamps survived in brain-descriptors.json (not replayed) — so the trainer
+  would NEVER revisit them. Silent permanent staleness on the identity index, the exact
+  mechanism this proposal documents for mood.
+- Recovered tonight only because the replay's own `embeddings.bin.bak` happened to hold the
+  trainer's post-run state (restored + 12 new imports kept, eval-neutral, live-verified —
+  see REPORT-20260904-nightly.md). That backup is one overwrite away from being lost.
+- Fixes 4/5 (drop mood-index from autoBackupStateToNas + repair the app's local copy) should
+  now be read as: drop BOTH brain indexes from the mtime-wins replay, or make the replay
+  merge-aware. Until then every import day risks reverting the night's enrichment wholesale.
