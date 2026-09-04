@@ -647,8 +647,11 @@ async function main() {
   if (raFlag) {
     const fold = (x) => String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
     const want = new Set(raFlag.slice('--reembed-artists='.length).split(',').map(fold).filter(Boolean))
-    const sel = tracks.filter(t => (want.has(fold(t.artist)) || want.has(fold(t.albumArtist))) && desc[String(t.id)])
-    if (!sel.length) { log('reembed-artists: nothing matched'); return }
+    const byArtist = tracks.filter(t => want.has(fold(t.artist)) || want.has(fold(t.albumArtist)))
+    const sel = byArtist.filter(t => desc[String(t.id)])
+    const unenriched = byArtist.length - sel.length
+    if (unenriched) log(`reembed-artists: ${unenriched} matching track(s) have no descriptor yet — the nightly enrich pass embeds them WITH their members line; nothing to redo here`)
+    if (!sel.length) { log(`reembed-artists: nothing to re-embed (${byArtist.length} matched by artist)`); return }
     log(`reembed-artists: ${sel.length} track(s) for ${[...want].join(', ')}`)
     const vecs = await openaiEmbed(sel.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
     copyFileSync(EMB, EMB + '.bak')
