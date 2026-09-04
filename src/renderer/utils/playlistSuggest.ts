@@ -235,13 +235,22 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     if (c) for (const nb of camelotNeighbors(c)) compat.add(nb)
   }
   const keyWeight = compat.size > 0 && compat.size <= 14 ? 0.15 : 0   // only when key-cohesive
-  // ERA fit (2026-09-04, Jake: "playlist suggestions could be better via the
-  // brain"). Offline replay showed the vibe/genre/BPM blend has no sense of
-  // WHEN: "90's Music" got 2025 Soulwax and 2026 overpass, "Y2k Burnt CD"
-  // got 1991 Soundgarden — fair sound-alikes, wrong decade. Same adaptive
-  // shape as BPM: a Gaussian on the playlist's MEDIAN year with σ = its OWN
-  // year spread (floor 3). A 2002–2006 time capsule filters hard; Dinner
-  // Party (spread ~21y) barely notices. Undated candidates score neutral.
+  // ERA (2026-09-04, Jake: "wrong decade picks are unacceptable but not
+  // all of those are supposed to be centered around a decade"). Two kinds
+  // of playlist: ERA-CENTERED (Y2k Burnt CD, 90's Music, Q104.3, Weirdtronic
+  // — the middle half of its songs spans ≤10 years) and everything else
+  // (Dinner Party, Movies, METAL VOL 1 — a mood across decades). Centered:
+  // a dated candidate outside [Q1−3, Q3+3] is CUT outright (a demotion was
+  // not enough — the round-robin hands every sub-vibe a seat, so a cluster
+  // of 1991 grunge kept reaching a 2002–2006 CD) and the survivors rank by
+  // a Gaussian on the median year (σ = the playlist's own spread, floor 3).
+  // Not centered: era is switched OFF — neutral 0.5 for every candidate,
+  // no cut — a 1975 Zeppelin cut on Dinner Party is right; a 1975 cut
+  // because the median happens to be 1998 is not. Playlists with <7 dated
+  // songs rank by era but never cut (each song IS the vibe). Undated
+  // candidates are always neutral. Calibrated on the real playlists
+  // (IQR: Y2k 4, Weirdtronic 4, 90's 8, Q104.3 10 · Dinner Party 43,
+  // Movies 19, METAL VOL 1 23).
   const plYears = playlistTracks.map(t => Number(t.year) || 0).filter(y => y > 1900).sort((a, b) => a - b)
   const medianYear = plYears.length >= 3 ? plYears[plYears.length >> 1] : 0
   let ySigma = 3
@@ -249,9 +258,18 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     const ymean = plYears.reduce((s, y) => s + y, 0) / plYears.length
     ySigma = Math.max(3, Math.sqrt(plYears.reduce((s, y) => s + (y - ymean) ** 2, 0) / plYears.length))
   }
+  const q1 = plYears.length ? plYears[Math.floor(plYears.length / 4)] : 0
+  const q3 = plYears.length ? plYears[Math.floor((3 * plYears.length) / 4)] : 0
+  const eraCentered = plYears.length >= 7 && q3 - q1 <= 10
+  const eraRanks = eraCentered || plYears.length < 7
   const eraFit = (t: T): number => {
     const y = Number(t.year) || 0
-    return (y > 1900 && medianYear > 0) ? Math.exp(-0.5 * ((y - medianYear) / ySigma) ** 2) : 0.5
+    return (eraRanks && y > 1900 && medianYear > 0) ? Math.exp(-0.5 * ((y - medianYear) / ySigma) ** 2) : 0.5
+  }
+  const eraCut = (t: T): boolean => {
+    if (!eraCentered) return false
+    const y = Number(t.year) || 0
+    return y > 1900 && (y < q1 - 3 || y > q3 + 3)
   }
 
   // Group candidates by their SUB-VIBE cluster (vibe score = sim to that cluster).
@@ -261,13 +279,7 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     if (!clusterEligible(h.cluster)) continue
     const t = byId.get(h.trackId)
     if (!t || inPlaylist.has(t.id) || t.audioMissing || plAlbums.has(albumKey(t))) continue
-    // Era CUT, not just a demotion: the round-robin hands every sub-vibe a
-    // seat, so a cluster whose candidates are ALL from the wrong decade kept
-    // serving 1991 grunge to a 2002–2006 CD no matter how the blend ranked
-    // it. On a playlist with a real character (≥7 dated songs), a candidate
-    // more than ~2.8σ from the era is out; a cluster with nothing left
-    // serves nothing, exactly like the quality floor. Undated stays neutral.
-    if (plYears.length >= 7 && eraFit(t) < 0.02) continue
+    if (eraCut(t)) continue   // era-centered playlist, wrong decade — out (see above)
     let arr = byCluster.get(h.cluster)
     if (!arr) { arr = []; byCluster.set(h.cluster, arr) }
     arr.push({ t, vibe: h.score })
