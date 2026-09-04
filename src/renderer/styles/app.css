@@ -713,6 +713,17 @@
   outline: 1px solid rgba(252, 85, 1, 0.5);
   outline-offset: -1px;
 }
+/* The find jump also SELECTS the row, and --selected paints its text white
+   for the flat-blue fill. The find fill above replaces that blue with a
+   pale orange, so the white text vanished into it (Jake, 2026-09-04:
+   "it shouldn't highlight in white on that light orange"). Found rows keep
+   normal ink no matter what else they are. */
+.songs-row--selected.songs-row--find,
+.songs-row--selected.songs-row--find .title-row-dl,
+.songs-row--selected.songs-row--find .rank-lw,
+.songs-row--selected.songs-row--find [class*="rank-arrow"] {
+  color: inherit;
+}
 
 /* ── one-paint gate ────────────────────────────────────────────────────────
  * Shown while the page's sections finish loading so everything appears at
