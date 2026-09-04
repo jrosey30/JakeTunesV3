@@ -221,8 +221,10 @@ export default function DownloadView() {
       const next = new Set(prev)
       if (next.has(key)) { next.delete(key); return next }
       next.add(key)
-      // Lazy-fetch the tracklist the first time it's opened.
-      if (!albumTracks[key] && a.collectionId) {
+      // Lazy-fetch the tracklist the first time it's opened — and again
+      // after a failure, so a transient iTunes miss isn't pinned to the
+      // card until restart (2026-09-03).
+      if ((!albumTracks[key] || albumTracks[key].error) && a.collectionId) {
         setAlbumTracks((m) => ({ ...m, [key]: { loading: true } }))
         window.electronAPI.itunesAlbumTracks?.(a.collectionId)
           .then((r) => setAlbumTracks((m) => ({

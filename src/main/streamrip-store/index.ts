@@ -250,7 +250,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // (2026-08-07: Qobuz text search shipped a re-recorded Etta James and a
   // live John Mayer; the wrong version must die in staging, not in the app).
   interface StagedRip { staging: string; files: string[] }
+  /// The last staging failure's stderr tail, so the final "no source had it"
+  /// verdict can tell a NETWORK failure apart from a genuine miss (2026-09-03:
+  /// ten Sister Nancy tracks "no source had it" while the laptop's link was
+  /// flapping — streamrip exited 1 on every one and nothing said why).
+  let lastStageFailure: string | null = null
   async function stageRip(ripSubcmd: string[], maxMs = 1000 * 60 * 20): Promise<{ ok: true; staged: StagedRip } | { ok: false; error: string }> {
+    lastStageFailure = null
     const rip = await resolveRip()
     if (!rip) return { ok: false, error: await ripDiagnosis() }
     let staging = ''
@@ -286,7 +292,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const got = await collectAudio(staging)
         if (got.length > 0) return { ok: true, staged: { staging, files: got } }
         if (cancelRequested) break
-        console.warn(`[streamrip] attempt ${attempt}/${attempts} produced nothing (exit ${res.code})${attempt < attempts ? ' — retrying' : ''}`)
+        const why = tailMessage(res)
+        console.warn(`[streamrip] attempt ${attempt}/${attempts} produced nothing (exit ${res.code})${why ? ` — ${why}` : ''}${attempt < attempts ? ' — retrying' : ''}`)
+        if (res.code !== 0) lastStageFailure = why || `exit ${res.code}`
       }
       await wipeStaging(staging)
       if (cancelRequested) return { ok: false, error: 'canceled' }
@@ -827,6 +835,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // Everything that matched was a different recording. Failing loudly beats
       // silently shipping a re-record/live cut (Jake, 2026-08-07).
       return { ok: false, error: `Qobuz only has other versions of “${title}” (${rejectedVersions.slice(0, 3).join(', ')}). Try pasting a link in the Download view.` }
+    }
+    if (lastStageFailure) {
+      // A source HAD it; the rip itself died (network, auth, Qobuz hiccup).
+      // Say so — "no source had it" sent Jake hunting the wrong problem.
+      console.warn(`[download] FAILED “${title}” — ${artist}: a source matched but the download failed: ${lastStageFailure} (query “${query}”)`)
+      return { ok: false, error: `Found “${query}” but the download failed (${lastStageFailure}). Check the connection and try again.` }
     }
     console.warn(`[download] FAILED “${title}” — ${artist}: no source had it (query “${query}”)`)
     return { ok: false, error: `Not on Qobuz${wantAlbum ? '' : ' or SoundCloud'}: “${query}”. Try the Download view to search manually.` }

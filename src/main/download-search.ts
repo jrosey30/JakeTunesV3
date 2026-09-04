@@ -451,8 +451,18 @@ export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boo
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
   try {
     const url = `https://itunes.apple.com/lookup?id=${id}&entity=song&limit=200`
-    const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
-    if (!res.ok) return { ok: false, tracks: [] }
+    // Two tries, 8 s each: the lookup answers 403/timeout under a burst
+    // (2026-09-03, Sister Nancy "One Two": "Couldn't load the tracklist"
+    // while the same lookup returned 11 rows from a shell moments later).
+    let res: Response | null = null
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+        if (res.ok) break
+      } catch { res = null }
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1200))
+    }
+    if (!res || !res.ok) return { ok: false, tracks: [] }
     const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
     const rows = data.results || []
     const collection = rows.find((r) => r.wrapperType === 'collection' || r.collectionType)
