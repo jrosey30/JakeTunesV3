@@ -4,6 +4,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
+import { PlaylistQuickAdd } from '../components/PlaylistQuickAdd'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { getDeckState, layOnDeck } from '../mixtapes'
 import { MAX_TAPE_SONGS } from '../../common/tape-physics'
@@ -269,6 +270,7 @@ export default function PlaylistView() {
     [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
+  const quickAddExclude = useMemo(() => new Set(playlist?.trackIds ?? []), [plMembershipKey])
 
   const sortedTracks = useMemo(() => {
     if (!sortCol) return tracks // natural order
@@ -731,11 +733,11 @@ export default function PlaylistView() {
         </div>
       </div>
 
-      {suggestions.length > 0 && (
+      {playlist && (suggestions.length > 0 || allPlaylistTracks.length === 0) && (
         <div className="pl-suggest">
           <div className="pl-suggest-head">
             <span className="pl-suggest-title">Suggested for this playlist</span>
-            <button
+            {suggestions.length > 0 && <button
               className="pl-suggest-refresh"
               onClick={() => {
                 if (playlist) {
@@ -749,9 +751,18 @@ export default function PlaylistView() {
               }}
               title="Show different suggestions"
               aria-label="More suggestions"
-            >↻</button>
+            >↻</button>}
+            {/* Quick add — for the songs Jake already has in mind that the
+                strip didn't surface. Same ADD_TRACKS_TO_PLAYLIST as the +
+                chips; no taste-ledger verdict (it isn't a judgement on a
+                suggestion, so it must not train the strip's weights). */}
+            <PlaylistQuickAdd
+              pool={suggestPool}
+              excludeIds={quickAddExclude}
+              onAdd={(t) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [t.id] })}
+            />
           </div>
-          <div className="pl-suggest-row">
+          {suggestions.length > 0 && <div className="pl-suggest-row">
             {suggestions.map(s => {
               const hash = lookupArtwork(state.artworkMap, suggestArtIndex, s.albumArtist || s.artist, s.album)
               return (
@@ -776,7 +787,7 @@ export default function PlaylistView() {
                 </div>
               )
             })}
-          </div>
+          </div>}
         </div>
       )}
       {/* Click to write or edit. Always present (as a prompt when empty) so
