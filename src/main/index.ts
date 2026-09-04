@@ -3995,6 +3995,9 @@ const STATE_FILE_NAMES = [
   // concert declared on one machine lands as an orphan track on the others.
   // Single-writer (the desktop app), so no clobber risk like recommendations.json.
   'live-sets.json',
+  // Group membership grounded in MusicBrainz (scripts/artist-members.mjs) —
+  // the trainer on homemini folds `members:` into each track's text.
+  'artist-members.json',
 ] as const
 assertNoDesktopBluntPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
 interface StateConflict {

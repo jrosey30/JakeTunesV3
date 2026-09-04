@@ -240,6 +240,11 @@ function baseText(t) {
   if (t.album) lines.push(`album: ${String(t.album).trim()}${t.year ? ` (${t.year})` : ''}`)
   else if (t.year) lines.push(`year: ${t.year}`)
   if (t.genre) lines.push(`genre: ${String(t.genre).trim()}`)
+  // ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText — members line.
+  // Group membership from artist-members.json (MusicBrainz-grounded):
+  // "Huncho Jack" → Quavo, Travis Scott (Jake, 2026-09-04).
+  const members = (t.members || []).map(m => String(m).trim()).filter(m => m && m.toLowerCase() !== String(t.artist || '').trim().toLowerCase())
+  if (members.length) lines.push(`members: ${members.join(', ')}`)
   const sg = subgenreText(t); if (sg) lines.push(sg)
   const te = tempoEnergy(t); if (te) lines.push(te)
   const r = Number(t.rating) || 0, p = Number(t.playCount) || 0, sig = []
@@ -376,6 +381,27 @@ const NUMERIC_OVERRIDE_FIELDS = new Set([
   'bpm', 'audioAnalysisAt', 'keyConfidence',
 ])
 
+/**
+ * Attach group members to tracks from STATE_DIR/artist-members.json
+ * (scripts/artist-members.mjs, grounded in MusicBrainz). Missing file = no
+ * members anywhere; the text is unchanged for every track.
+ */
+function applyArtistMembers(tracks) {
+  const MEMBERS = join(STATE_DIR, 'artist-members.json')
+  let m = {}
+  try { m = JSON.parse(readFileSync(MEMBERS, 'utf8')) } catch { return 0 }
+  const fold = (x) => String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const byTag = new Map()
+  for (const [tag, v] of Object.entries(m)) if (v && Array.isArray(v.members) && v.members.length) byTag.set(fold(tag), v.members)
+  let n = 0
+  for (const t of tracks) {
+    const members = byTag.get(fold(t.artist)) || byTag.get(fold(t.albumArtist))
+    if (members) { t.members = members; n++ }
+  }
+  log(`artist members: ${byTag.size} group(s) known, ${n} track(s) carry members`)
+  return n
+}
+
 function applyMetadataOverrides(tracks) {
   if (!existsSync(OVERRIDES)) return
   let ov
@@ -413,6 +439,7 @@ async function main() {
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
   const tracks = Array.isArray(libRaw) ? libRaw : (libRaw.tracks || [])
   applyMetadataOverrides(tracks)
+  applyArtistMembers(tracks)
   const { map, dim } = readEmb(EMB)
   if (dim !== EMBED_DIM) fatal(`embeddings dim ${dim} != ${EMBED_DIM}`)
   const startCount = map.size
@@ -603,6 +630,28 @@ async function main() {
   const tempoStale = (t, e) => {
     if (e.te !== TEMPO_ENCODING_VERSION) return true
     return Math.abs((Number(t.bpm) || 0) - (Number(e.teb) || 0)) > TEMPO_DRIFT
+  }
+  // `--reembed-artists=Huncho Jack,The Beatles` — re-embed those artists'
+  // tracks now (their text gained a members line) and stop. Same backup +
+  // verify discipline as the tempo catch-up below.
+  const raFlag = process.argv.find(a => a.startsWith('--reembed-artists='))
+  if (raFlag) {
+    const fold = (x) => String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const want = new Set(raFlag.slice('--reembed-artists='.length).split(',').map(fold).filter(Boolean))
+    const sel = tracks.filter(t => (want.has(fold(t.artist)) || want.has(fold(t.albumArtist))) && desc[String(t.id)])
+    if (!sel.length) { log('reembed-artists: nothing matched'); return }
+    log(`reembed-artists: ${sel.length} track(s) for ${[...want].join(', ')}`)
+    const vecs = await openaiEmbed(sel.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
+    copyFileSync(EMB, EMB + '.bak')
+    let cn = 0
+    for (let i = 0; i < sel.length; i++) { const v = vecs[i]; if (v) { map.set(Number(sel[i].id), v); cn++ } }
+    writeEmb(EMB, map)
+    try {
+      const check = readEmb(EMB)
+      if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: count=${check.map.size}`)
+    } catch (e) { log('reembed-artists VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+    log(`reembed-artists: re-embedded ${cn}. Sample text:\n${enrichedText(sel[0], desc[String(sel[0].id)].d, desc[String(sel[0].id)].m)}`)
+    return
   }
   const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && tempoStale(t, desc[String(t.id)])).slice(0, CATCHUP_CAP)
   if (needTempo.length && !process.argv.includes('--meaning-catchup')) {   // --meaning-catchup isolates meaning: no tempo re-embeds to confound a before/after eval

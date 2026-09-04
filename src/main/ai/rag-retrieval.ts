@@ -6,6 +6,7 @@
  */
 import { join } from 'path'
 import { readFile } from 'fs/promises'
+import { STATE_DIR } from '../state-dir'
 import { foldAccents } from '../../common/fold-text.ts'
 import { DECADE_QUERY_RE, parseDecadeConstraint, yearInDecade } from './decade-query'
 import {
@@ -59,14 +60,21 @@ export async function ragLibraryArtistSet(): Promise<Set<string>> {
   const set = new Set<string>()
   try {
     const lib = (await ragHost.libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string }> }
-    for (const t of lib.tracks || []) {
-      for (const a of [t.artist, t.albumArtist]) {
-        // ⚠️ Must fold identically to pickRetrievalIndex's qNorm below, or an
-        //    accented artist is in this set under a name the query can't form.
-        const norm = foldAccents(a || '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
-        if (norm.length >= 4 && !GENRE_WORD_ARTISTS.has(norm)) set.add(norm)
-      }
+    const add = (a?: string) => {
+      // ⚠️ Must fold identically to pickRetrievalIndex's qNorm below, or an
+      //    accented artist is in this set under a name the query can't form.
+      const norm = foldAccents(a || '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+      if (norm.length >= 4 && !GENRE_WORD_ARTISTS.has(norm)) set.add(norm)
     }
+    for (const t of lib.tracks || []) {
+      for (const a of [t.artist, t.albumArtist]) add(a)
+    }
+    // Members of group acts count as library artists too ("some Travis
+    // Scott" must reach Huncho Jack) — artist-members.json, MusicBrainz-grounded.
+    try {
+      const members = JSON.parse(await readFile(join(STATE_DIR, 'artist-members.json'), 'utf-8')) as Record<string, { members?: string[] }>
+      for (const v of Object.values(members)) for (const m of v.members || []) add(m)
+    } catch { /* no sidecar yet */ }
   } catch { /* empty set = router falls back to the main index only on artist grounds */ }
   ragArtistSetCache = { at: Date.now(), set }
   return set

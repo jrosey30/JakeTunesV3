@@ -181,6 +181,10 @@ export interface EmbedTrackInput extends TempoEnergyInput {
   rating?: number
   subgenre?: string
   subgenrePath?: string
+  /// Members of a group act (artist-members.json, grounded in MusicBrainz):
+  /// Huncho Jack → Quavo, Travis Scott. Folded into the text so the brain
+  /// knows who is on the record (2026-09-04).
+  members?: string[]
 }
 
 // ⚠️ TWIN: scripts/brain-trainer.mjs subgenreText() — keep in sync. Folds the AI
@@ -201,6 +205,9 @@ export function buildEmbeddingText(t: EmbedTrackInput): string {
   if (album) lines.push(`album: ${album}${year ? ` (${year})` : ''}`)
   if (!album && year) lines.push(`year: ${year}`)
   if (genre) lines.push(`genre: ${genre}`)
+  // ⚠️ TWIN: scripts/brain-trainer.mjs baseText() — members line.
+  const members = (t.members || []).map((m) => String(m).trim()).filter((m) => m && m.toLowerCase() !== artist.toLowerCase())
+  if (members.length) lines.push(`members: ${members.join(', ')}`)
   const sg = subgenreText(t); if (sg) lines.push(sg)
   const te = tempoEnergyText(t); if (te) lines.push(te)
   const rating = Number(t.rating) || 0
