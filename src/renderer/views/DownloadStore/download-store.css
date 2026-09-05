@@ -780,7 +780,50 @@
 .dl-queue-art { width: 22px; height: 22px; border-radius: 3px; flex: none; object-fit: cover; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
 .dl-queue-name { font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
 .dl-queue-name--idle { color: var(--text-dim); font-weight: var(--fw-normal); }
-.dl-queue-name--err { color: var(--color-danger); font-weight: var(--fw-medium); max-width: 420px; }
+.dl-queue-name--err { color: var(--color-danger); font-weight: var(--fw-semibold); max-width: 420px; min-width: 0; }
+.dl-queue-name-sub { color: var(--text-secondary); font-weight: var(--fw-normal); }
+/* 6.0 Phase 1 — the failure reason is a real panel, not a hover. */
+.dl-queue-details-btn {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--font-10);
+  font-weight: var(--fw-semibold);
+  color: #333;
+  border: 1px solid #a3a3a3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6);
+  cursor: pointer;
+}
+.dl-queue-details-btn:hover { background: linear-gradient(180deg, #ffffff, #dedede); }
+.dl-queue-details-btn:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.dl-queue-details {
+  margin: 0 16px 8px;
+  padding: 8px 10px;
+  border: 1px solid #c8c8c8;
+  border-radius: 5px;
+  background: var(--surface-content);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+  max-height: 260px;
+  overflow: auto;
+}
+.dl-queue-detail + .dl-queue-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0, 0, 0, 0.08); }
+.dl-queue-detail-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dl-queue-detail-status { flex: none; color: var(--color-danger); font-weight: var(--fw-bold); font-size: var(--font-11); }
+.dl-queue-detail-req { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--font-11); color: var(--text-secondary); }
+.dl-queue-detail-head .download-retry { flex: none; }
+.dl-queue-detail-text {
+  margin: 6px 0 0;
+  font: inherit;
+  font-size: var(--font-11);
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dl-queue-detail-alts { margin: 6px 0 0; padding-left: 16px; font-size: var(--font-11); line-height: 1.45; }
+.dl-queue-detail-why { color: var(--text-secondary); }
+.download-retry--failed { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl-queue-bar { flex: 1; max-width: 200px; height: 4px; border-radius: 2px; background: rgba(0,0,0,0.11); overflow: hidden; }
 /* Indeterminate on purpose: streamrip reports no byte progress, so a filling
    bar would be a lie. This travels to say "working", and nothing more. */

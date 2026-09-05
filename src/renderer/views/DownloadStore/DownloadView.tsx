@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExte
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, type QItem, type QResult } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
@@ -214,6 +214,7 @@ export default function DownloadView() {
    *  Closed by default — these are things you do once, and they used to sit
    *  permanently under the results on the page you use every day. */
   const [setupOpen, setSetupOpen] = useState(false)
+  const [failDetailsOpen, setFailDetailsOpen] = useState(false)
   const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>>({})
 
   const toggleAlbum = (a: AlbumRow) => {
@@ -596,11 +597,11 @@ export default function DownloadView() {
       return <button className="download-retry" onClick={() => item && retry(item.key)} title="Download after all">Canceled — redo</button>
     }
     if (st === 'failed') {
-      // 6.0 Phase 1: say WHICH kind of failure. "Exact version not found"
-      // means the sources answered and nothing was the recording Jake
-      // picked — retrying will not change that; a link will.
-      const label = item?.outcome === 'exact-not-found' ? 'Not the exact version' : item?.outcome === 'provider-failed' ? 'Retry' : 'Retry'
-      return <button className="download-retry" onClick={() => item && retry(item.key)} title={item?.error || 'Retry'}>{label}</button>
+      // 6.0 Phase 1: the row shows the short primary status; the full
+      // explanation lives in the queue bar's Details panel (keyboard-
+      // reachable), never only in a hover or a truncated line.
+      const label = item?.primary || primaryFor(item?.outcome, item?.error)
+      return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
     }
     return <button className="download-result-btn" onClick={() => enqueue(qres)}>Get</button>
   }
@@ -898,9 +899,21 @@ export default function DownloadView() {
               <span className="dl-queue-meta">{mmss(active.startedAt ? Math.floor((Date.now() - active.startedAt) / 1000) : 0)}</span>
             </>
           ) : failedItems[0] ? (
-            <span className="dl-queue-name dl-queue-name--err" title={failedHint}>
-              {failedItems[0].error || 'Download failed.'}
-            </span>
+            <>
+              <span className="dl-queue-name dl-queue-name--err" title={failedItems[0].result.desc}>
+                {failedItems[0].primary || primaryFor(failedItems[0].outcome, failedItems[0].error)}
+                <span className="dl-queue-name-sub"> · {failedItems[0].result.desc}</span>
+              </span>
+              <button
+                type="button"
+                className="dl-queue-details-btn"
+                onClick={() => setFailDetailsOpen((o) => !o)}
+                aria-expanded={failDetailsOpen}
+                aria-controls="dl-queue-details"
+              >
+                {failDetailsOpen ? 'Hide details' : 'Details'}
+              </button>
+            </>
           ) : (
             <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
           )}
@@ -916,6 +929,28 @@ export default function DownloadView() {
           {summary.active === 0 && summary.queued === 0 && (summary.done + summary.failed) > 0 && (
             <button className="download-link-btn" onClick={() => clearFinished()}>Clear</button>
           )}
+        </div>
+      )}
+      {/* The full, untruncated reason for every failed item — what was asked
+          for, what each source answered, what to do next. Toggled by the
+          Details button above; reachable by keyboard; never hover-only. */}
+      {failDetailsOpen && failedItems.length > 0 && (
+        <div className="dl-queue-details" id="dl-queue-details" role="region" aria-label="Download failure details">
+          {failedItems.map((f) => (
+            <div key={f.key} className="dl-queue-detail">
+              <div className="dl-queue-detail-head">
+                <span className="dl-queue-detail-status">{f.primary || primaryFor(f.outcome, f.error)}</span>
+                <span className="dl-queue-detail-req">{f.result.desc}</span>
+                <button type="button" className="download-retry" onClick={() => retry(f.key)}>Retry</button>
+              </div>
+              <pre className="dl-queue-detail-text">{f.detail || f.error || 'Download failed.'}</pre>
+              {f.alternatives && f.alternatives.length > 0 && (
+                <ul className="dl-queue-detail-alts">
+                  {f.alternatives.map((a, i) => <li key={i}><b>{a.provider}</b> {a.desc} <span className="dl-queue-detail-why">{a.reason}</span></li>)}
+                </ul>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

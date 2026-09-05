@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRequestedRecording, verifyCandidate, finalOutcome, type CandidateEvidence } from '../exact-recording.ts'
-import { rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf } from '../streamrip-match.ts'
+import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type CandidateEvidence } from '../exact-recording.ts'
+import { rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf, searchTitle, isNoResultsMessage } from '../streamrip-match.ts'
 
 // The regression that started 6.0 Phase 1: Jake picked the regular album
 // version of "5 Years Time" by Noah and the Whale (3:37 on iTunes) and the
@@ -95,7 +95,7 @@ describe('the requested-recording identity contract', () => {
     assert.equal(remixByTags.verdict, 'reject')
     const nothing = verifyCandidate(req, sc({ title: '', artist: '', durationSec: null }))
     assert.equal(nothing.verdict, 'unverifiable')
-    assert.equal(finalOutcome({ alternatives: [], providerFailure: null, anyMatched: true, unverifiable: true }), 'unverifiable')
+    assert.equal(finalOutcome({ alternatives: [], ripFailure: null, searchFailure: null, anyMatched: true, unverifiable: true }), 'unverifiable')
   })
 
   it('incomplete tags: a runtime match alone is a witness', () => {
@@ -174,11 +174,45 @@ describe('the requested-recording identity contract', () => {
     assert.deepEqual(ranked.map((r) => r.id), ['b'])
   })
 
-  it('verdicts: provider failures stay distinct from exact-match failures and from nothing-found', () => {
-    assert.equal(finalOutcome({ alternatives: [], providerFailure: 'exit 1 — connection reset', anyMatched: true, unverifiable: false }), 'provider-failed')
-    assert.equal(finalOutcome({ alternatives: [{ provider: 'soundcloud', desc: 'x', reason: 'is tagged remix' }], providerFailure: null, anyMatched: true, unverifiable: false }), 'exact-not-found')
-    assert.equal(finalOutcome({ alternatives: [], providerFailure: null, anyMatched: false, unverifiable: false }), 'not-found')
-    assert.equal(finalOutcome({ alternatives: [], providerFailure: null, anyMatched: true, unverifiable: false }), 'exact-not-found')
+  it('verdicts: rip failures, provider outages, exact-match failures and nothing-found stay distinct', () => {
+    assert.equal(finalOutcome({ alternatives: [], ripFailure: 'exit 1 — connection reset', searchFailure: null, anyMatched: true, unverifiable: false }), 'provider-failed')
+    assert.equal(finalOutcome({ alternatives: [], ripFailure: null, searchFailure: 'streamrip: Qobuz login failed', anyMatched: false, unverifiable: false }), 'provider-unavailable')
+    assert.equal(finalOutcome({ alternatives: [{ provider: 'soundcloud', desc: 'x', reason: 'is tagged remix' }], ripFailure: null, searchFailure: null, anyMatched: true, unverifiable: false }), 'exact-not-found')
+    assert.equal(finalOutcome({ alternatives: [], ripFailure: null, searchFailure: null, anyMatched: false, unverifiable: false }), 'not-found')
+    assert.equal(finalOutcome({ alternatives: [], ripFailure: null, searchFailure: null, anyMatched: true, unverifiable: false }), 'exact-not-found')
+  })
+
+  // ── The XTC failure (2026-09-04, Jake's first manual test) ─────────────
+  // Requested: the ALBUM "Drums and Wires (Bonus Track Version)" by XTC.
+  // Qobuz was asked for that literal string, answered "No search results
+  // found", and the verdict read "Found … but the download failed" — a
+  // search that returned nothing was reported as a failed transfer, and the
+  // queue truncated even that.
+  it('XTC: "(Bonus Track Version)" is packaging — the catalogue is asked for the album by name', () => {
+    assert.equal(searchTitle('Drums and Wires (Bonus Track Version)'), 'Drums and Wires')
+    assert.equal(searchTitle('Drums and Wires (Bonus Tracks Edition)'), 'Drums and Wires')
+    assert.equal(searchTitle('Drums and Wires (Live Edition)'), 'Drums and Wires (Live Edition)')   // a different recording survives
+  })
+
+  it('XTC: an empty search is a catalogue answer, not a provider failure', () => {
+    assert.equal(isNoResultsMessage('No search results found for query XTC Drums and Wires (Bonus Track Version)'), true)
+    assert.equal(isNoResultsMessage('Qobuz login failed: invalid app id'), false)
+    const outcome = finalOutcome({ alternatives: [], ripFailure: null, searchFailure: null, anyMatched: false, unverifiable: false })
+    assert.equal(outcome, 'not-found')
+    const d = describeOutcome(outcome, { title: 'Drums and Wires (Bonus Track Version)', artist: 'XTC', query: 'XTC Drums and Wires', alternatives: [], wantAlbum: true })
+    assert.equal(d.primary, 'Not found')
+    assert.ok(!/found .* but the download failed/i.test(d.detail), d.detail)
+  })
+
+  it('every outcome has a short primary status and a full detail; the detail is never a one-liner of the primary', () => {
+    const base = { title: '5 Years Time', artist: 'Noah and the Whale', query: 'Noah and the Whale 5 Years Time', alternatives: [{ provider: 'soundcloud' as const, desc: '5 Years Time (TopKnot Remix)', reason: 'is tagged “5 Years Time (TopKnot Remix)” (remix)' }] }
+    assert.equal(describeOutcome('exact-not-found', base).primary, 'Exact version not found')
+    assert.match(describeOutcome('exact-not-found', base).detail, /TopKnot Remix/)
+    assert.equal(describeOutcome('provider-failed', { ...base, ripFailure: 'exit 1 — read timed out' }).primary, 'Download failed')
+    assert.match(describeOutcome('provider-failed', { ...base, ripFailure: 'exit 1 — read timed out' }).detail, /read timed out/)
+    assert.equal(describeOutcome('provider-unavailable', { ...base, searchFailure: 'Qobuz login failed' }).primary, 'Provider unavailable')
+    assert.equal(describeOutcome('unverifiable', base).primary, 'Couldn’t verify recording')
+    assert.equal(describeOutcome('not-found', base).primary, 'Not found')
   })
 
   it('requested markers are read off the title Jake clicked', () => {

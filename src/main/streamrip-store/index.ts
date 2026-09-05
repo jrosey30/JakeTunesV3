@@ -25,8 +25,8 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, type QobuzTrackMeta } from '../streamrip-match.ts'
-import { buildRequestedRecording, verifyCandidate, finalOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
 import { quietWarn } from '../flight-recorder'
@@ -254,7 +254,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  message — 'exact-not-found' with the candidates that were judged and
    *  why each failed, so a future approval UI can offer them instead of the
    *  app silently picking one. */
-  type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: DownloadOutcome; alternatives?: Alternative[] }
+  type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: DownloadOutcome; alternatives?: Alternative[]; primary?: string; detail?: string }
 
   // Download stage 1: run a rip subcommand (`url …` or `id …`) into a fresh
   // staging dir and sweep it for audio. The caller decides whether to import
@@ -558,7 +558,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       let raw = ''
       try { raw = await readFile(out, 'utf-8') } catch { /* no file written */ }
       if (!raw) {
-        return { ok: false, error: tailMessage(res) || `No results (exit ${res.code}). ${source} may need login in streamrip’s config.` }
+        const why = tailMessage(res)
+        // "No search results found for query …" is the catalogue answering
+        // "nothing here" — an EMPTY result, not a failed provider.
+        if (isNoResultsMessage(why)) return { ok: true, results: [] }
+        return { ok: false, error: why || `No results (exit ${res.code}). ${source} may need login in streamrip’s config.` }
       }
       const parsed = JSON.parse(raw) as Array<{ source?: string; media_type?: string; id?: string; desc?: string }>
       const results: SearchResult[] = parsed
@@ -641,8 +645,17 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const mediaType = wantAlbum ? 'album' : 'track'
 
     // ── Qobuz first (lossless when it has the track) ──
-    const qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
+    let qsearch = await searchCatalog({ query, source: 'qobuz', mediaType, numResults: 25 })
     trace.push(`qobuz search “${query}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
+    // Second chance (2026-09-04, XTC "Drums and Wires (Bonus Track Version)"):
+    // a packaging label the stripper did not know left the query too literal
+    // and Qobuz answered nothing. Ask again with every bracket dropped — the
+    // candidates that come back are still ranked and judged like any other.
+    const bare = [artist, (searchQueryTitle(title) || lookFor).replace(/\s*[([{][^)\]}]*[)\]}]/g, '').replace(/\s{2,}/g, ' ').trim()].filter(Boolean).join(' ')
+    if (qsearch.ok && (qsearch.results?.length ?? 0) === 0 && bare && bare !== query) {
+      qsearch = await searchCatalog({ query: bare, source: 'qobuz', mediaType, numResults: 25 })
+      trace.push(`qobuz retry “${bare}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
+    }
     const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
       ? rankStreamripCandidates(lookFor || query, artist, qsearch.results, mediaType)
       : { ranked: [], rejectedVersions: [] }
@@ -896,26 +909,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // nothing was the exact recording", which stays distinct from "nothing
     // resembled it at all". Prefer "Exact version not found" over a false
     // success every time.
-    const providerFailure = (!qsearch.ok ? (qsearch.error || 'Qobuz search failed') : null) ?? lastStageFailure ?? (scSearchErr || null)
-    const outcome = finalOutcome({ alternatives, providerFailure, anyMatched, unverifiable: sawUnverifiable })
-    const listed = alternatives.slice(0, 3).map((a) => `${a.desc} ${a.reason}`).join(' · ')
-    if (outcome === 'exact-not-found') {
-      const other = rejectedVersions.length ? ` Other versions on Qobuz: ${rejectedVersions.slice(0, 3).join(', ')}.` : ''
-      console.warn(`[download] EXACT VERSION NOT FOUND “${title}” — ${artist}: ${listed || other}`)
-      return { ok: false, outcome, alternatives, error: `Exact version not found: “${title}” — ${artist}. ${listed ? `Judged and refused: ${listed}.` : ''}${other} Nothing was imported. Try pasting a link in the Download view.` }
-    }
-    if (outcome === 'unverifiable') {
-      return { ok: false, outcome, alternatives, error: `Couldn’t verify what arrived for “${title}” (${alternatives[0]?.reason ?? 'no tags, no runtime'}) — not imported. Try pasting a link to the exact track.` }
-    }
-    if (outcome === 'provider-failed') {
-      // A source HAD it (or could not be asked); the rip/search itself died
-      // (network, auth, Qobuz hiccup). Say so — "no source had it" sent Jake
-      // hunting the wrong problem.
-      console.warn(`[download] FAILED “${title}” — ${artist}: provider failure: ${providerFailure} (query “${query}”)`)
-      return { ok: false, outcome, alternatives, error: `Found “${query}” but the download failed (${providerFailure}). Check the connection or login and try again.` }
-    }
-    console.warn(`[download] FAILED “${title}” — ${artist}: no source had it (query “${query}”)`)
-    return { ok: false, outcome, alternatives, error: `Not on Qobuz${wantAlbum ? '' : ', Bandcamp or SoundCloud'}: “${query}”. Try the Download view to search manually.` }
+    const searchFailure = (!qsearch.ok ? (qsearch.error || 'Qobuz search failed') : null) ?? (scSearchErr || null)
+    const ripFailure = lastStageFailure
+    const outcome = finalOutcome({ alternatives, ripFailure, searchFailure, anyMatched, unverifiable: sawUnverifiable })
+    const { primary, detail } = describeOutcome(outcome, { title, artist, query, alternatives, ripFailure, searchFailure, otherVersions: rejectedVersions, wantAlbum })
+    console.warn(`[download] ${primary.toUpperCase()} “${title}” — ${artist}: ${detail.replace(/\n/g, ' | ')}`)
+    return { ok: false, outcome, alternatives, primary, detail, error: `${primary}: ${detail.split('\n')[0]}` }
   }, { refuse: REFUSED_SENDER })
 
   // Download a picked search result by its streamrip id.

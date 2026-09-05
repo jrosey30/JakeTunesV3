@@ -217,17 +217,47 @@ export interface Alternative { provider: Provider; desc: string; reason: string 
 
 export type DownloadOutcome =
   | 'imported'
-  | 'exact-not-found'   // sources answered; nothing was the exact recording
-  | 'not-found'         // no source had anything resembling it
-  | 'unverifiable'      // a file arrived that could not be judged; not imported
-  | 'provider-failed'   // search/auth/network/rip failure — try again later
+  | 'exact-not-found'        // sources answered; nothing was the exact recording
+  | 'not-found'              // no source had anything resembling it
+  | 'unverifiable'           // a file arrived that could not be judged; not imported
+  | 'provider-failed'        // a match was found, the rip/transfer itself died — try again
+  | 'provider-unavailable'   // a service could not even be asked (auth, tool, network)
   | 'canceled'
   | 'not-released'
 
-/** Decide the honest final outcome once every lane has had its turn. */
-export function finalOutcome(o: { alternatives: Alternative[]; providerFailure: string | null; anyMatched: boolean; unverifiable: boolean }): DownloadOutcome {
+/** Decide the honest final outcome once every lane has had its turn.
+ *  `ripFailure` = a download of a matched candidate died; `searchFailure` =
+ *  a provider could not be searched at all. An empty search is NEITHER. */
+export function finalOutcome(o: { alternatives: Alternative[]; ripFailure: string | null; searchFailure: string | null; anyMatched: boolean; unverifiable: boolean }): DownloadOutcome {
   if (o.unverifiable && o.alternatives.length === 0) return 'unverifiable'
   if (o.alternatives.length > 0) return 'exact-not-found'
-  if (o.providerFailure) return 'provider-failed'
+  if (o.ripFailure) return 'provider-failed'
+  if (o.searchFailure && !o.anyMatched) return 'provider-unavailable'
   return o.anyMatched ? 'exact-not-found' : 'not-found'
+}
+
+/** Short readable primary status for a queue row + the full actionable
+ *  explanation for its detail panel. The queue always shows `primary`;
+ *  `detail` is never truncated into a one-liner. */
+export function describeOutcome(outcome: DownloadOutcome, ctx: { title: string; artist: string; query: string; alternatives: Alternative[]; ripFailure?: string | null; searchFailure?: string | null; otherVersions?: string[]; wantAlbum?: boolean }): { primary: string; detail: string } {
+  const who = `“${ctx.title}” — ${ctx.artist}`.trim()
+  const judged = ctx.alternatives.slice(0, 5).map((a) => `${a.provider}: ${a.desc} ${a.reason}`).join('\n')
+  switch (outcome) {
+    case 'imported': return { primary: 'In your library', detail: '' }
+    case 'canceled': return { primary: 'Canceled', detail: 'You stopped this one. Retry to download it after all.' }
+    case 'not-released': return { primary: 'Not out yet', detail: `${who} is listed but not streamable yet. It will download once it releases.` }
+    case 'exact-not-found': {
+      const other = ctx.otherVersions?.length ? `\nOther versions seen on Qobuz: ${ctx.otherVersions.slice(0, 5).join(', ')}.` : ''
+      return { primary: 'Exact version not found', detail: `Sources answered for ${who}, but nothing was the recording you picked, so nothing was imported.${judged ? `\nJudged and refused:\n${judged}` : ''}${other}\nRetrying will not change this. Paste a link to the exact track in the Download view.` }
+    }
+    case 'unverifiable':
+      return { primary: 'Couldn’t verify recording', detail: `A file arrived for ${who} but it could not be judged (${ctx.alternatives[0]?.reason ?? 'no tags, no runtime'}), so it was not imported. Paste a link to the exact track to download it deliberately.` }
+    case 'provider-failed':
+      return { primary: 'Download failed', detail: `A source matched ${who} but the transfer failed: ${ctx.ripFailure ?? 'unknown error'}.\nCheck the connection or the service login, then Retry.` }
+    case 'provider-unavailable':
+      return { primary: 'Provider unavailable', detail: `A service could not be searched for ${who}: ${ctx.searchFailure ?? 'unknown error'}.\nCheck the connection or the login in Setup, then Retry.` }
+    case 'not-found':
+    default:
+      return { primary: 'Not found', detail: `Nothing resembling ${who} on Qobuz${ctx.wantAlbum ? '' : ', Bandcamp or SoundCloud'} (searched “${ctx.query}”). Retrying repeats the same search; try a different spelling in the Download view, or paste a link.` }
+  }
 }

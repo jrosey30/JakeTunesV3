@@ -46,6 +46,10 @@ export interface QItem {
    *  `alternatives` lists them with the reason each failed. */
   outcome?: string
   alternatives?: Array<{ provider: string; desc: string; reason: string }>
+  /** Short readable status ("Exact version not found") + the full,
+   *  never-truncated explanation for the details panel. */
+  primary?: string
+  detail?: string
   startedAt?: number
   endedAt?: number
 }
@@ -157,9 +161,11 @@ async function pump(): Promise<void> {
       it.error = undefined
       it.outcome = undefined
       it.alternatives = undefined
+      it.primary = undefined
+      it.detail = undefined
       emit()
       try {
-        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> } | undefined = it.result.kind === 'query'
+        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }>; primary?: string; detail?: string } | undefined = it.result.kind === 'query'
           ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to
@@ -179,12 +185,16 @@ async function pump(): Promise<void> {
           it.error = r?.error || 'Download failed.'
           it.outcome = r?.outcome
           it.alternatives = r?.alternatives
+          it.primary = r?.primary || primaryFor(r?.outcome, it.error)
+          it.detail = r?.detail || it.error
         }
       } catch (e) {
         const statusAfterThrow = it.status as QStatus
         if (statusAfterThrow !== 'canceled') {
           it.status = 'failed'
           it.error = e instanceof Error ? e.message : 'Download failed.'
+          it.primary = 'Download failed'
+          it.detail = it.error
         }
       }
       it.endedAt = Date.now()
@@ -192,5 +202,20 @@ async function pump(): Promise<void> {
     }
   } finally {
     running = false
+  }
+}
+
+/** The short status for an outcome when main did not send one (older
+ *  paths, thrown errors). ⚠️ TWIN: src/main/exact-recording.ts describeOutcome. */
+export function primaryFor(outcome: string | undefined, error?: string): string {
+  switch (outcome) {
+    case 'exact-not-found': return 'Exact version not found'
+    case 'unverifiable': return 'Couldn’t verify recording'
+    case 'provider-unavailable': return 'Provider unavailable'
+    case 'not-found': return 'Not found'
+    case 'not-released': return 'Not out yet'
+    case 'canceled': return 'Canceled'
+    case 'provider-failed': return 'Download failed'
+    default: return /not out yet/i.test(error || '') ? 'Not out yet' : 'Download failed'
   }
 }

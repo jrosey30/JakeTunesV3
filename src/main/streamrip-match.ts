@@ -69,7 +69,7 @@ export function requestedVersionMarkers(title: string): string[] {
 // "edition"/"anniversary", plus reissue/expanded, is treated as PACKAGING.
 // The VERSION_MARKER guard still runs first, so "(Live Edition)" survives —
 // that names a different recording.
-const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?|album version|single version|original version|bonus(?: track)?s?|deluxe|mono|stereo|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|feat\.?\s.*|featuring\s.*|ft\.?\s.*|with\s.+|.*\bedition\b.*|.*\banniversar(?:y|ies)\b.*|reissue[ds]?|expanded|remastered\s+version)$/i
+const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?|album version|single version|original version|bonus(?: tracks?)?(?:\s+(?:version|edition))?|deluxe|mono|stereo|(?:digital(?:ly)? )?remaster(?:ed)?(?:\s*\d{4})?|\d{4}\s*(?:digital )?remaster(?:ed)?|feat\.?\s.*|featuring\s.*|ft\.?\s.*|with\s.+|.*\bedition\b.*|.*\banniversar(?:y|ies)\b.*|reissue[ds]?|expanded|remastered\s+version)$/i
 
 /**
  * Apple MASKS profanity inside track names — "N****s Bleed", "F!*@ You
@@ -362,6 +362,17 @@ export function rankSoundcloudCandidates(
   }
   scored.sort((a, b) => b.score - a.score || a.i - b.i)
   return scored.map((s) => s.r)
+}
+
+/**
+ * streamrip reports an EMPTY search as an error line ("No search results
+ * found for query …") and writes no results file. That is a catalogue
+ * answer — "nothing here" — not a provider failure (2026-09-04, XTC "Drums
+ * and Wires (Bonus Track Version)": the verdict read "Found … but the
+ * download failed" for a search that had simply returned nothing).
+ */
+export function isNoResultsMessage(msg: string): boolean {
+  return /no (search )?results? found/i.test(msg || '')
 }
 
 /** Back-compat single-pick wrapper over rankStreamripCandidates. */
