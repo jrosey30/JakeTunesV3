@@ -248,9 +248,17 @@ export function describeOutcome(outcome: DownloadOutcome, ctx: { title: string; 
     case 'not-released': return { primary: 'Not out yet', detail: `${who} is listed but not streamable yet. It will download once it releases.` }
     case 'exact-not-found': {
       const other = ctx.otherVersions?.length ? `\nOther versions seen on Qobuz: ${ctx.otherVersions.slice(0, 5).join(', ')}.` : ''
+      if (ctx.wantAlbum) {
+        // Album identity contract: every judged EDITION is listed, with why
+        // it is not the one Jake picked, so the choice is his — never the app's.
+        return { primary: 'Exact edition not found', detail: `Sources answered for ${who}, but no edition was the one you picked, so nothing was imported — not even part of another edition.${judged ? `\nEditions judged and refused:\n${judged}` : ''}${other}\nRetrying will not change this. Paste a link to the exact album in the Download view, or Get the tracks one by one.` }
+      }
       return { primary: 'Exact version not found', detail: `Sources answered for ${who}, but nothing was the recording you picked, so nothing was imported.${judged ? `\nJudged and refused:\n${judged}` : ''}${other}\nRetrying will not change this. Paste a link to the exact track in the Download view.` }
     }
     case 'unverifiable':
+      if (ctx.wantAlbum) {
+        return { primary: 'Couldn’t prove the edition', detail: `An album arrived for ${who} but it could not be proven to be the edition you picked (${ctx.alternatives[0]?.reason ?? 'no track count, no tracklist'}), so it was not imported.${judged ? `\nEditions seen:\n${judged}` : ''}\nPaste a link to the exact album to download it deliberately.` }
+      }
       return { primary: 'Couldn’t verify recording', detail: `A file arrived for ${who} but it could not be judged (${ctx.alternatives[0]?.reason ?? 'no tags, no runtime'}), so it was not imported. Paste a link to the exact track to download it deliberately.` }
     case 'provider-failed':
       return { primary: 'Download failed', detail: `A source matched ${who} but the transfer failed: ${ctx.ripFailure ?? 'unknown error'}.\nCheck the connection or the service login, then Retry.` }

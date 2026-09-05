@@ -25,7 +25,10 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
+import { loadLibraryTracksLite } from '../import-pipeline.ts'
+import { itunesAlbumTracks, itunesFindAlbum } from '../download-search'
 import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
@@ -115,11 +118,12 @@ function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 
 // download attempt has this much wall time TOTAL, and each stage's process
 // timeout is clamped to what remains.
 const LADDER_DEADLINE_MS = 12 * 60 * 1000
-function ladderClock(): { remaining: () => number; expired: () => boolean } {
-  const deadline = Date.now() + LADDER_DEADLINE_MS
+function ladderClock(budgetMs = LADDER_DEADLINE_MS): { remaining: () => number; expired: () => boolean; budgetMs: number } {
+  const deadline = Date.now() + budgetMs
   return {
     remaining: () => Math.max(0, deadline - Date.now()),
     expired: () => Date.now() >= deadline,
+    budgetMs,
   }
 }
 
@@ -254,7 +258,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  message — 'exact-not-found' with the candidates that were judged and
    *  why each failed, so a future approval UI can offer them instead of the
    *  app silently picking one. */
-  type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: DownloadOutcome; alternatives?: Alternative[]; primary?: string; detail?: string }
+  type DownloadResult = { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: DownloadOutcome; alternatives?: Alternative[]; primary?: string; detail?: string; importedTitles?: string[]; dupeFiles?: string[]; completion?: string }
 
   // Download stage 1: run a rip subcommand (`url …` or `id …`) into a fresh
   // staging dir and sweep it for audio. The caller decides whether to import
@@ -376,23 +380,29 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  guard and the duration gate sailed right past it. The downloaded
    *  file's own tags said "(Live at Cynthia Woods Mitchell Pavilion…)" /
    *  album "As/Is - Live". The file never lies about itself. */
-  async function probeStagedFile(file: string): Promise<{ durSec: number | null; title: string; album: string; artist: string }> {
-    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:format_tags=title,album,artist', '-of', 'json', file], 30_000)
+  interface StagedProbe { durSec: number | null; title: string; album: string; artist: string; albumArtist: string; trackNumber?: number; trackTotal?: number; discNumber?: number; discTotal?: number }
+  async function probeStagedFile(file: string): Promise<StagedProbe> {
+    // track/disc read "2/15" style; the album contract orders the staged
+    // files by them and checks the disc structure of the edition.
+    const res = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:format_tags=title,album,artist,album_artist,track,disc', '-of', 'json', file], 30_000)
     try {
       const parsed = JSON.parse(res.stdout || '{}') as { format?: { duration?: string; tags?: Record<string, string> } }
       const v = parseFloat(parsed.format?.duration || '')
       const tags = parsed.format?.tags || {}
       const tag = (k: string) => String(tags[k] ?? tags[k.toUpperCase()] ?? '').trim()
-      return { durSec: Number.isFinite(v) && v > 0 ? v : null, title: tag('title'), album: tag('album'), artist: tag('artist') }
+      const tr = parseCountTag(tag('track')), di = parseCountTag(tag('disc'))
+      return { durSec: Number.isFinite(v) && v > 0 ? v : null, title: tag('title'), album: tag('album'), artist: tag('artist'), albumArtist: tag('album_artist'), trackNumber: tr.n, trackTotal: tr.of, discNumber: di.n, discTotal: di.of }
     } catch {
-      return { durSec: null, title: '', album: '', artist: '' }
+      return { durSec: null, title: '', album: '', artist: '', albumArtist: '' }
     }
   }
 
   // Download stage 2: import staged audio into the library + tell the renderer.
-  async function importStaged(staged: StagedRip): Promise<DownloadResult> {
+  async function importStaged(staged: StagedRip, only?: string[]): Promise<DownloadResult> {
     try {
-      const summary = await deps.importDownloaded(staged.files, 'streamrip')
+      // `only` = the album contract's pick of files whose tracks are NOT
+      // already owned; everything else in staging is discarded with it.
+      const summary = await deps.importDownloaded(only ?? staged.files, 'streamrip')
       const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
         ? (summary as unknown as Array<Record<string, unknown>>)
         : ((summary as unknown as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
@@ -406,7 +416,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         for (const t of importedTracks) win.webContents.send('bandcamp:track-imported', t)
       }
       const dupes = Array.isArray(summary) ? 0 : ((summary as { dupeCount?: number }).dupeCount ?? 0)
-      return { ok: true, imported: importedTracks.length, dupes }
+      const dupeFiles = Array.isArray(summary) ? [] : (((summary as { dupes?: Array<{ src: string }> }).dupes ?? []).map((d) => d.src))
+      return { ok: true, imported: importedTracks.length, dupes, importedTitles: importedTracks.map((t) => String(t.title ?? '')), dupeFiles }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'tool-failed') }
     } finally {
@@ -495,7 +506,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  Vacations' "Pursuit of Anything" was downloadable by id while track
    *  search returned 1957 Mose Allison), so when the caller names the
    *  album we can walk in through album/get and pick the track by id. */
-  async function qobuzAlbumTrackList(albumId: string): Promise<{ releaseDate?: string; tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean }> }> {
+  interface QobuzAlbumListing {
+    title?: string; artist?: string; version?: string | null; tracksCount?: number; mediaCount?: number; upc?: string
+    releaseDate?: string; releaseYear?: number; parentalWarning?: boolean
+    tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean; trackNumber?: number; discNumber?: number }>
+  }
+  async function qobuzAlbumTrackList(albumId: string): Promise<QobuzAlbumListing> {
     const creds = await readQobuzCreds()
     if (!creds) return { tracks: [] }
     try {
@@ -504,12 +520,24 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) },
       )
       if (!res.ok) return { tracks: [] }
-      const d = await res.json() as { release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; duration?: number; streamable?: boolean }> } }
+      const d = await res.json() as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number }> } }
+      const releaseDate = typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined
+      const original = typeof d.release_date_original === 'string' ? d.release_date_original : releaseDate
       return {
-        releaseDate: typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined,
+        title: typeof d.title === 'string' ? d.title : undefined,
+        artist: typeof d.artist?.name === 'string' ? d.artist.name : undefined,
+        version: typeof d.version === 'string' ? d.version : null,
+        tracksCount: typeof d.tracks_count === 'number' ? d.tracks_count : undefined,
+        mediaCount: typeof d.media_count === 'number' ? d.media_count : undefined,
+        upc: typeof d.upc === 'string' ? d.upc : undefined,
+        parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
+        releaseDate,
+        releaseYear: original && /^\d{4}/.test(original) ? Number(original.slice(0, 4)) : undefined,
         tracks: (d.tracks?.items || [])
           .filter((t) => t && t.id != null && t.title)
-          .map((t) => ({ id: String(t.id), title: String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined })),
+          // Qobuz keeps "Live"/"Remix" in a separate version field; the
+          // tracklist compare must see it as part of the title.
+          .map((t) => ({ id: String(t.id), title: t.version ? `${t.title} (${t.version})` : String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined, trackNumber: typeof t.track_number === 'number' ? t.track_number : undefined, discNumber: typeof t.media_number === 'number' ? t.media_number : undefined })),
       }
     } catch { return { tracks: [] } }
   }
@@ -605,20 +633,25 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
   const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
     lastStageFailure = null            // never let an OLD rip's error explain THIS request
-    const clock = ladderClock()
-    /// Every decision on the ladder, printed with the failure so a "didn't
-    /// work" has a cause in main.log (2026-09-04: Watch the Throne failed with
-    /// no line saying why; info-level logs never reach main.log).
-    const trace: string[] = []
-    const gaveUp = (): { ok: false; error: string } =>
-      ({ ok: false, error: `Gave up after ${Math.round(LADDER_DEADLINE_MS / 60000)} minutes of fallbacks — the services are slow right now. Try again, or paste a link in the Download view.` })
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
     const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
+    // An album's clock is sized to the album (ladderBudgetMs) — the flat
+    // 12 minutes gave up mid-rip on a 12-track Deluxe on 2026-09-05.
+    const clock = ladderClock(ladderBudgetMs(wantAlbum, opts?.trackCount))
+    /// Every decision on the ladder, printed with the failure so a "didn't
+    /// work" has a cause in main.log (2026-09-04: Watch the Throne failed with
+    /// no line saying why; info-level logs never reach main.log).
+    const trace: string[] = []
+    const gaveUp = (): { ok: false; error: string } => {
+      // The trace used to die with the clock — "Gave up" left main.log empty.
+      console.warn(`[download] GAVE UP “${title}” — ${artist} after ${Math.round(clock.budgetMs / 60000)} min: ${trace.join(' | ')}`)
+      return { ok: false, error: `Gave up after ${Math.round(clock.budgetMs / 60000)} minutes of fallbacks — the services are slow right now. Try again, or paste a link in the Download view.` }
+    }
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
     const durationMs = !wantAlbum && typeof opts?.durationMs === 'number' && opts.durationMs > 1000 ? opts.durationMs : 0
     // Widen the length guard whenever we deliberately searched for the SONG
@@ -730,8 +763,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     for (const rv of rejectedVersions.slice(0, 6)) alternatives.push({ provider: 'qobuz', desc: rv, reason: 'is a different version' })
     let anyMatched = ranked.length > 0 || rejectedVersions.length > 0
     let sawUnverifiable = false
-    /** Probe a staged rip and judge it. Multi-file stages (whole albums) are
-     *  judged by the catalogue pick, not per file. */
+    /** Probe a staged rip and judge it as ONE recording. Album requests never
+     *  reach this — they go through the album identity contract below; a
+     *  multi-file stage on a TRACK request is left to the catalogue pick. */
     const judgeStaged = async (provider: Provider, staged: StagedRip, desc: string, extra: Partial<CandidateEvidence> = {}): Promise<ReturnType<typeof verifyCandidate>> => {
       if (staged.files.length !== 1) return { verdict: 'exact', evidence: ['album rip'], albumMatches: true }
       const probe = await probeStagedFile(staged.files[0])
@@ -743,6 +777,107 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       alternatives.push({ provider, desc, reason: verdict.reason })
       trace.push(`${provider} “${desc}”: ${verdict.verdict} — ${verdict.reason}`)
       console.log(`[download] ${verdict.verdict === 'reject' ? 'rejected' : 'could not verify'} ${provider} candidate for “${title}”: “${desc}” ${verdict.reason}`)
+    }
+
+    // ── The ALBUM identity contract (6.0 Phase 1, final slice). The row Jake
+    // clicked names an EDITION; its ordered tracklist comes from the same
+    // catalogue by collection id. Every candidate album is judged twice —
+    // on the provider's listing before a byte moves, and on the staged
+    // files before import. Not proven = not imported, never partially.
+    let reqAlbum: RequestedAlbum | null = null
+    if (wantAlbum) {
+      let cid = typeof opts?.collectionId === 'number' && opts.collectionId > 0 ? opts.collectionId : undefined
+      // Rows without a collection id can acquire a tracklist only from an
+      // unambiguous name/edition match. A bonus, live, or deluxe listing must
+      // never silently redefine a request for the plain record.
+      if (!cid) {
+        const found = await itunesFindAlbum(artist, title).catch(() => null)
+        if (found) { cid = found.collectionId; trace.push(`album resolved by name → iTunes ${found.collectionId} “${found.collectionName}”`) }
+        else trace.push('album could not be resolved by name on iTunes')
+      }
+      const lookup = cid ? await itunesAlbumTracks(cid).catch(() => null) : null
+      const rows = lookup?.ok ? lookup.tracks : []
+      reqAlbum = buildRequestedAlbum({
+        artist, title,
+        trackCount: opts?.trackCount ?? lookup?.trackCount,
+        tracks: rows.map((t) => ({ title: t.song, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSecs, explicitness: t.explicitness })),
+        discCount: rows.reduce((m, t) => Math.max(m, t.discCount ?? t.discNumber ?? 1), 0) || undefined,
+        releaseYear: lookup?.releaseYear ?? opts?.releaseYear,
+        collectionId: cid,
+        explicitSource: opts?.explicitSource,
+      })
+      trace.push(`album identity: ${reqAlbum.trackCount ?? '?'} tracks${reqAlbum.tracks.length ? ` (${reqAlbum.tracks.length} titled${rows.some((r) => r.durationSecs) ? ', timed' : ''})` : ' (no tracklist)'}${reqAlbum.discCount && reqAlbum.discCount > 1 ? `, ${reqAlbum.discCount} discs` : ''}${reqAlbum.packaging.length ? `, edition ${reqAlbum.packaging.join('+')}` : ''}${reqAlbum.versionMarkers.length ? `, ${reqAlbum.versionMarkers.join('+')}` : ''}${cid ? `, iTunes ${cid}` : ''}`)
+    }
+    // Ownership by identity BEFORE a byte moves: an album Jake already has is
+    // answered from the library, not re-ripped; a partly owned one stages
+    // whole (the edition must still be proven) and imports only the rest.
+    let ownership: Ownership | null = null
+    if (reqAlbum && reqAlbum.tracks.length) {
+      const lib = await loadLibraryTracksLite().catch(() => [] as LibraryTrackLite[])
+      ownership = matchLibraryOwnership(reqAlbum, lib)
+      trace.push(`library: ${ownership.ownedCount}/${reqAlbum.tracks.length} already owned by identity`)
+      if (ownership.missing.length === 0) {
+        const c = reconcileAlbumCompletion({ req: reqAlbum, staged: [], imported: [], dupes: ownership.owned.map((o) => ({ title: o.track.title, artist: o.track.artist, durationSec: o.track.durationSec })) })
+        const completion = describeCompletion(c)
+        console.warn(`[download] album “${title}” — ${artist}: already in your library — ${completion}; nothing downloaded`)
+        return { ok: true, imported: 0, dupes: ownership.ownedCount, outcome: 'imported', matchDesc: `${title} — ${completion}`, completion }
+      }
+    }
+    const stagedProbes = new Map<string, StagedProbe>()
+    /** What the staged files SAY they are, in catalogue order. */
+    const albumFromStaged = async (provider: Provider, staged: StagedRip, desc: string): Promise<CandidateAlbum> => {
+      const probes = await Promise.all(staged.files.map(async (f) => { const p = await probeStagedFile(f); stagedProbes.set(f, p); return p }))
+      const majority = (xs: string[]): string => {
+        const c = new Map<string, number>()
+        for (const x of xs) if (x) c.set(x, (c.get(x) ?? 0) + 1)
+        return [...c.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
+      }
+      const tracks = orderTracks(probes.map((p, i) => ({ title: p.title, trackNumber: p.trackNumber, discNumber: p.discNumber, durationSec: p.durSec, file: staged.files[i] })))
+      return {
+        provider, desc, staged: true,
+        title: majority(probes.map((p) => p.album)),
+        artist: majority(probes.map((p) => p.albumArtist || p.artist)),
+        trackCount: tracks.length,
+        discCount: Math.max(1, ...probes.map((p) => p.discTotal ?? p.discNumber ?? 1)),
+        tracks,
+      }
+    }
+    const noteAlbumReject = (provider: Provider, cand: CandidateAlbum, verdict: AlbumVerdict): void => {
+      if (verdict.verdict === 'exact') return
+      if (verdict.verdict === 'unverifiable') sawUnverifiable = true
+      const desc = albumAlternativeDesc(cand)
+      alternatives.push({ provider, desc, reason: verdict.reason })
+      trace.push(`${provider} edition “${desc}”: ${verdict.verdict} — ${verdict.reason}`)
+      console.log(`[download] ${verdict.verdict === 'reject' ? 'refused' : 'could not prove'} ${provider} edition for “${title}”: “${desc}” ${verdict.reason}`)
+    }
+    /** Import a verified album and account for it — duplicates count only
+     *  when the library copy IS the requested recording. */
+    const finishAlbum = async (staged: StagedRip, cand: CandidateAlbum, desc: string, evidence: string[]): Promise<DownloadResult & { matchDesc?: string }> => {
+      trace.push(`exact edition: “${desc}” (${evidence.join(', ')})`)
+      // The verified tracklist is positional: staged track i IS requested
+      // track i, so the files of already-owned tracks stay in staging and
+      // are discarded with it. Without a tracklist every file goes to the
+      // importer, whose key now ignores edition stamps.
+      const ownedIdx = new Set((ownership?.owned ?? []).map((o) => o.index))
+      const only = ownership && cand.tracks?.length ? cand.tracks.map((t, i) => (ownedIdx.has(i) ? null : t.file)).filter((f): f is string => Boolean(f)) : undefined
+      if (only) trace.push(`import ${only.length} of ${staged.files.length} staged files (${ownedIdx.size} already owned)`)
+      const dl = await importStaged(staged, only)
+      if (!dl.ok || !reqAlbum) return { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
+      const dupes = [
+        ...(ownership?.owned ?? []).map((o) => ({ title: o.track.title, artist: o.track.artist, durationSec: o.track.durationSec })),
+        ...(dl.dupeFiles ?? []).map((f) => stagedProbes.get(f)).filter((p): p is StagedProbe => Boolean(p)).map((p) => ({ title: p.title, artist: p.artist, durationSec: p.durSec })),
+      ]
+      const c = reconcileAlbumCompletion({ req: reqAlbum, staged: cand.tracks ?? [], imported: (dl.importedTitles ?? []).map((t) => ({ title: t })), dupes })
+      const completion = describeCompletion(c)
+      // warn-level on purpose: info never reaches main.log, and a successful
+      // album run left no trace at all on 2026-09-05.
+      console.warn(`[download] album “${title}” — ${artist}${c.complete ? '' : ' landed short'}: ${completion}`)
+      if (!c.complete) return {
+        ...dl, ok: false, matchDesc: desc, completion, outcome: 'provider-failed',
+        primary: 'Album import incomplete', error: completion,
+        detail: `${completion}. The tracks already imported are in your library. Retry to import the missing tracks.`,
+      }
+      return { ...dl, matchDesc: `${desc} — ${completion}`, completion, outcome: 'imported' }
     }
 
     if (ranked2.length) {
@@ -760,6 +895,34 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         if (probeAnswered && probed.has(cand.id) && !metaMap.has(cand.id)) {
           trace.push(`skip “${cand.desc}”: gone from Qobuz's catalog (404)`)
           continue
+        }
+        if (reqAlbum) {
+          // Pre-stage: the provider's own listing must not contradict the
+          // edition (cheap refusal); the staged files then have to prove it.
+          const meta = metaMap.get(cand.id)
+          const tl = await qobuzAlbumTrackList(cand.id)
+          const parsed = parseStreamripDesc(cand.desc)
+          const listing: CandidateAlbum = {
+            provider: 'qobuz', desc: cand.desc, id: cand.id,
+            title: tl.title ?? parsed.title, artist: tl.artist ?? parsed.artist, version: tl.version ?? meta?.version ?? null,
+            trackCount: tl.tracksCount ?? (tl.tracks.length || undefined), discCount: tl.mediaCount,
+            tracks: tl.tracks.length ? tl.tracks.map((t) => ({ title: t.title, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSec })) : undefined,
+            releaseYear: tl.releaseYear, upc: tl.upc, parentalWarning: tl.parentalWarning ?? meta?.parentalWarning,
+          }
+          const pre = verifyAlbumCandidate(reqAlbum, listing)
+          trace.push(`album listing “${cand.desc}”: ${pre.verdict}${pre.verdict === 'exact' ? ` (${pre.evidence.join(', ')})` : ` — ${pre.reason}`}`)
+          if (pre.verdict === 'reject') { noteAlbumReject('qobuz', listing, pre); continue }
+          anyMatched = true
+          const ast = await stageRip(['id', cand.source, cand.mediaType, cand.id], clock.remaining())
+          trace.push(`stage “${cand.desc}”: ${ast.ok ? `${ast.staged.files.length} file(s)` : ast.error}`)
+          if (!ast.ok) { lastRipErr = ast.error; continue }
+          const stagedAlbum = await albumFromStaged('qobuz', ast.staged, cand.desc)
+          // The listing's identifiers travel with the files it produced.
+          stagedAlbum.upc = listing.upc; stagedAlbum.releaseYear = listing.releaseYear; stagedAlbum.parentalWarning = listing.parentalWarning
+          const post = verifyAlbumCandidate(reqAlbum, stagedAlbum)
+          if (post.verdict !== 'exact') { await discardStaged(ast.staged); noteAlbumReject('qobuz', stagedAlbum, post); continue }
+          if (fallback) await discardStaged(fallback.staged)
+          return finishAlbum(ast.staged, stagedAlbum, cand.desc, [...pre.verdict === 'exact' ? pre.evidence : [], ...post.evidence])
         }
         const st = await stageRip(['id', cand.source, cand.mediaType, cand.id], clock.remaining())
         trace.push(`stage “${cand.desc}”: ${st.ok ? 'ok' : st.error}`)
@@ -855,7 +1018,16 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const st = await stageBandcamp(bcPick.url)
       if (!st.ok) { trace.push(`bandcamp stage: ${st.error}`); continue }
       const desc = `${bcPick.name} — ${bcPick.band} (Bandcamp stream)`
-      const verdict = wantAlbum ? { verdict: 'exact' as const, evidence: ['album'], albumMatches: true } : await judgeStaged('bandcamp', st.staged, desc, { artist: bcPick.band })
+      if (reqAlbum) {
+        // Same contract, staged files only — Bandcamp has no listing endpoint.
+        const stagedAlbum = await albumFromStaged('bandcamp', st.staged, desc)
+        if (!stagedAlbum.artist) stagedAlbum.artist = bcPick.band
+        const post = verifyAlbumCandidate(reqAlbum, stagedAlbum)
+        if (post.verdict !== 'exact') { await discardStaged(st.staged); noteAlbumReject('bandcamp', stagedAlbum, post); continue }
+        console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
+        return finishAlbum(st.staged, stagedAlbum, desc, post.evidence)
+      }
+      const verdict = await judgeStaged('bandcamp', st.staged, desc, { artist: bcPick.band })
       if (verdict.verdict === 'exact') {
         console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
         const dl = await importStaged(st.staged)

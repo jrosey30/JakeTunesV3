@@ -181,6 +181,11 @@ const albumQ = (r: AlbumRow): QResult => ({
   album: displayAlbumTitle(r.album) || r.album,
   cleanedSource: r.explicitness === 'cleaned',
   explicitSource: r.explicitness === 'explicit',
+  // The EDITION Jake picked, by id and size — main fetches the ordered
+  // tracklist and refuses any other edition (album identity contract).
+  collectionId: r.collectionId,
+  trackCount: r.trackCount,
+  releaseYear: r.releaseYear,
 })
 
 export default function DownloadView() {

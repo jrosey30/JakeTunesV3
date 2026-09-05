@@ -23,6 +23,9 @@
 
 import { foldAccents } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
+import { packagingMarkersOf } from './album-identity.ts'
+import { recoArtistMatches, recoTitleMatches } from './reco-match.ts'
+import { requestedVersionMarkers, searchTitle } from './streamrip-match.ts'
 
 /**
  * A catalogue row that is really a 30-second PREVIEW, not the song.
@@ -71,6 +74,14 @@ export interface ItunesSuggestion {
    *  carries that album as the Amended edition and nothing in the UI said so,
    *  so the clean cut was invisible until it was already in the library. */
   explicitness?: string
+  /** iTunes album (collection) id, track position, disc position and length —
+   *  the album-tracks lookup fills these so the album identity contract can
+   *  compare an edition's ORDERED tracklist, per disc (6.0 Phase 1). */
+  collectionId?: number
+  trackNumber?: number
+  discNumber?: number
+  discCount?: number
+  durationSecs?: number
 }
 /**
  * Year out of an iTunes releaseDate ("1994-09-13T07:00:00Z").
@@ -467,6 +478,52 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
 // returns the handful of songs that matched, so an album's real contents were
 // invisible. lookup?entity=song returns the collection record first, then every
 // track in order.
+/**
+ * Find the iTunes collection for an album named by artist + title, for rows
+ * that arrived WITHOUT a collection id (a library-derived card, the Deezer
+ * failover, a hub row). The album identity contract needs the edition's
+ * ordered tracklist, and this is the only way to reach one from a name.
+ *
+ * A name lookup may supply evidence only for matching edition and recording
+ * markers. A differently labelled result must not redefine what was requested.
+ * Ambiguous matches require a catalogue selection with a collection id.
+ */
+export interface ItunesCollectionRow { collectionId: number; collectionName: string; artistName?: string; trackCount?: number; releaseDate?: string }
+
+/** Pure choice among iTunes collections for a requested artist + album title
+ *  (see itunesFindAlbum). Exported so the tie-breaks are testable. */
+export function pickItunesCollection(rows: ItunesCollectionRow[], artist: string, title: string): ItunesCollectionRow | null {
+  const a = (artist || '').trim(), t = (title || '').trim()
+  if (!a || !t) return null
+  const markers = (x: string): string => JSON.stringify([packagingMarkersOf(x), requestedVersionMarkers(x).sort()])
+  const wantMarkers = markers(t)
+  const cands = rows.filter((r) => r.collectionId > 0 && r.collectionName)
+    .filter((r) => r.artistName && recoArtistMatches(a, r.artistName)
+      && recoTitleMatches(searchTitle(t) || t, searchTitle(r.collectionName) || r.collectionName)
+      && markers(r.collectionName) === wantMarkers)
+  const unique = [...new Map(cands.map((r) => [r.collectionId, r])).values()]
+  return unique.length === 1 ? unique[0] : null
+}
+
+export async function itunesFindAlbum(artist: string, title: string): Promise<{ collectionId: number; collectionName: string; trackCount?: number; releaseYear?: number } | null> {
+  const a = (artist || '').trim(), t = (title || '').trim()
+  if (!t) return null
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(`${a} ${t}`.trim())}&entity=album&limit=25`
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+    const rows: ItunesCollectionRow[] = (data.results || [])
+      .filter((r) => r.wrapperType === 'collection' && typeof r.collectionId === 'number' && typeof r.collectionName === 'string')
+      .map((r) => ({ collectionId: Number(r.collectionId), collectionName: String(r.collectionName), artistName: typeof r.artistName === 'string' ? r.artistName : undefined, trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined, releaseDate: typeof r.releaseDate === 'string' ? r.releaseDate : undefined }))
+    const pick = pickItunesCollection(rows, a, t)
+    if (!pick) return null
+    return { collectionId: pick.collectionId, collectionName: pick.collectionName, trackCount: pick.trackCount, releaseYear: itunesYear(pick.releaseDate) }
+  } catch {
+    return null
+  }
+}
+
 export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }> {
   const id = Number(collectionId)
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
@@ -498,6 +555,8 @@ export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boo
         appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
         collectionId: id,
         trackNumber: r.trackNumber ? Number(r.trackNumber) : undefined,
+        discNumber: r.discNumber ? Number(r.discNumber) : undefined,
+        discCount: r.discCount ? Number(r.discCount) : undefined,
         durationSecs: r.trackTimeMillis ? Math.round(Number(r.trackTimeMillis) / 1000) : undefined,
         releaseYear: itunesYear(r.releaseDate),
         genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
@@ -505,7 +564,7 @@ export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boo
       }))
       // A 30s snippet is not the song — see isPreviewLengthResult.
       .filter((t) => !isPreviewLengthResult(t.durationSecs, t.song))
-      .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
+      .sort((a, b) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
     return {
       ok: true,
       tracks,

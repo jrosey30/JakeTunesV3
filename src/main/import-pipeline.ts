@@ -44,6 +44,7 @@ import {
   type AudioFormat,
 } from './platform.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
+import { searchTitle } from './streamrip-match.ts'
 
 export interface SingleImportResult {
   ok: boolean
@@ -98,6 +99,15 @@ export const _normFingerprint = (s: unknown): string => String(s || '')
   .replace(/[()[\]{}"',.\-!?:;#/\\]+/g, ' ')
   .replace(/\s+/g, ' ').trim().toLowerCase()
 
+/** The TITLE half of the dupe key, with edition packaging stripped first.
+ *  2026-09-05, first live album run: Qobuz stamps every track of a reissue
+ *  "(2001 Digital Remaster)", the library's copies carry no stamp, so all
+ *  fourteen "Helicopter (2001 Digital Remaster)"-style titles missed the key
+ *  and an album Jake already owned was imported twice. A remaster is the
+ *  same recording (the identity contracts say so too); version markers
+ *  ("(Live)", "(Remix)") survive searchTitle and still split the key. */
+export const _normTitleFingerprint = (s: unknown): string => _normFingerprint(searchTitle(String(s || '')))
+
 // Why this set exists:
 // `save-library` on the renderer side is debounced ~1s, so during a
 // rapid multi-file drop every `import-track` call sees a stale
@@ -124,7 +134,7 @@ export function addSessionImportedFingerprint(fp: string): void {
 }
 
 export function fingerprintTrack(t: { title?: unknown; artist?: unknown; duration?: unknown }): string | null {
-  const title  = _normFingerprint(t.title)
+  const title  = _normTitleFingerprint(t.title)
   const artist = _normFingerprint(t.artist)
   const dur    = Math.round(Number(t.duration || 0) / 1000)
   if (!title || !artist || dur <= 0) return null
@@ -193,6 +203,34 @@ export async function loadDupeFingerprintsFromLibrary(): Promise<Set<string>> {
   return set
 }
 
+/** The library's playable rows, lite — what the album identity contract
+ *  needs to decide which requested tracks Jake already OWNS (by recording
+ *  identity, not by text key) before anything is downloaded. Same
+ *  fileless-row rule as the dupe set: a row with no playable file owns
+ *  nothing. */
+export interface LibraryTrackLite { id?: number; title: string; artist?: string; album?: string; durationSec?: number }
+export async function loadLibraryTracksLite(): Promise<LibraryTrackLite[]> {
+  const out: LibraryTrackLite[] = []
+  try {
+    const raw = await readFile(D().libraryPath(), 'utf-8')
+    const libData = JSON.parse(raw) as { tracks?: Array<Record<string, unknown>> }
+    const sep = IS_WINDOWS ? '\\' : '/'
+    const localRoot = D().musicDir().replace(/[/\\]iPod_Control[/\\]Music$/, '')
+    for (const t of libData.tracks || []) {
+      const rel = String(t.path || '')
+      if (rel) {
+        try {
+          const st = await lstat(join(localRoot, rel.replace(/:/g, sep)))
+          if (!(st.isFile() || st.isSymbolicLink())) continue
+        } catch { continue }
+      }
+      const dur = Number(t.duration || 0)
+      out.push({ id: typeof t.id === 'number' ? t.id : undefined, title: String(t.title || ''), artist: String(t.artist || ''), album: String(t.album || ''), durationSec: dur > 0 ? Math.round(dur / 1000) : undefined })
+    }
+  } catch { /* new library: owns nothing */ }
+  return out
+}
+
 /**
  * Returns the lowest `imported_NNNN` slot ≥ `startId` whose file path
  * is free in MUSIC_DIR (no file exists at any common audio extension).
@@ -247,7 +285,7 @@ export async function importOneFile(
     const common = metadata.common
     const format = metadata.format
 
-    const ft = _normFingerprint(common.title)
+    const ft = _normTitleFingerprint(common.title)
     const fa = _normFingerprint(common.artist)
     const fd = Math.round(Number(format.duration || 0))
     if (ft && fa && fd > 0 && dupeFingerprints.has(`${ft}|${fa}|${fd}`)) {
@@ -422,7 +460,7 @@ export async function nextLibraryId(): Promise<number> {
   }
 }
 
-export async function importDownloadedFiles(absPaths: string[], source?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number }> {
+export async function importDownloadedFiles(absPaths: string[], source?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   const preferred = await D().defaultImportFormat()
   const userPreferred: AudioFormat = validFormats.includes(preferred as AudioFormat)
@@ -440,6 +478,10 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
   let done = 0
   let errors = 0
   let dupes = 0
+  // Which staged files were skipped as library duplicates (6.0 Phase 1: the
+  // album contract credits a dupe toward completion only after re-checking
+  // the requested track's identity against the file the key came from).
+  const dupeFiles: Array<{ src: string; matchedTitle: string; matchedArtist: string }> = []
   for (const p of absPaths) {
     // Per-file format resolution so a FLAC track inside an album-zip
     // becomes AAC even when the user's default is ALAC (Jake's policy).
@@ -478,6 +520,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
       // of "import produced no tracks (all duplicates?)" (error) when
       // the whole zip is a re-purchase.
       dupes += 1
+      dupeFiles.push(r.dupe)
       cleanupSources.push(p)
     } else {
       errors += 1
@@ -527,5 +570,5 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
     }
     if (cleaned > 0) console.log(`[import] trashed ${cleaned}/${cleanupSources.length} spent download source(s)`)
   }
-  return { tracks, dupeCount: dupes, errorCount: errors }
+  return { tracks, dupeCount: dupes, errorCount: errors, dupes: dupeFiles }
 }
