@@ -47,8 +47,12 @@ Download route (page mode with its queue bar and Setup drawer), and the
 Bandcamp Store sidebar entry (the map keeps it through the transition).
 Retiring them is a problem-space audit (CLAUDE.md), not a slice.
 
-Next unfinished item: the **Desktop placement audit**, then the **Activity
-Sync front end**, per [jaketunes-6-plan.md](jaketunes-6-plan.md).
+Next unfinished item: the **Desktop placement audit** — first pass (the
+download flow) written as a document-only slice:
+[desktop-placement-audit-2026-09-06.md](desktop-placement-audit-2026-09-06.md);
+awaiting Jake's arbitration of P1–P5. Then the **Activity Sync front end**,
+per [jaketunes-6-plan.md](jaketunes-6-plan.md), on hold until the audit is
+reviewed.
 
 Follow-ups 4 and 6 above are resolved inside the Downloads panel (Choose
 edition/version for refused verdicts; canceled jobs visible) and remain true
