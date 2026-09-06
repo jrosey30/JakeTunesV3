@@ -4,7 +4,7 @@ import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { useLibrary } from '../../context/LibraryContext'
 import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
-import { toggleDownloadsPanel } from '../DownloadsPanel'
+import { toggleDownloadsPanel, subscribeDownloadsPanelOpen, getDownloadsPanelOpen } from '../DownloadsPanel'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
@@ -52,7 +52,6 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   // Music Man's #FC5501 below, which used to clash with New for You's orange.
   // 2026-08-07 rebrand: Discovery is now the Record Shop — copper vinyl,
   // same view id ('discovery') so nav history + ui-state stay valid.
-  { label: 'Record Shop', view: 'discovery', highlight: '#b87333' },
   { label: 'The Music Man', view: 'musicman', highlight: '#FC5501' },
 ]
 
@@ -284,6 +283,7 @@ export default function Sidebar() {
   // panel; the count inside it reads in-flight while jobs move, "N done"
   // once they settle, and is hidden when the queue is empty.
   const downloadsBadgeText = downloadsBadge(panelSummary(downloadsPanelRows(downloadQueue, Date.now())))
+  const downloadsPanelOpen = useSyncExternalStore(subscribeDownloadsPanelOpen, getDownloadsPanelOpen)
   useEffect(() => { void refreshPool() }, [])
 
   useEffect(() => {
@@ -444,6 +444,16 @@ export default function Sidebar() {
         </SidebarSection>
 
         <SidebarSection title="STORE">
+          {/* Placement audit P4 (Jake 2026-09-06): Record Shop lives under STORE —
+              LIBRARY is what you own, STORE is where you get more. Same view id
+              ('discovery'), same highlight; only the row moved. */}
+          <SidebarItem
+            label="Record Shop"
+            icon={LIBRARY_ICONS['discovery']}
+            selected={state.currentView === 'discovery' || state.currentView === 'listen-to-the-list' || state.currentView === 'new-for-you' || state.currentView === 'recordstore'}
+            highlight="#b87333"
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'discovery' })}
+          />
           <SidebarItem
             label="Bandcamp Store"
             icon={(
@@ -456,8 +466,12 @@ export default function Sidebar() {
             selected={state.currentView === 'store'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
           />
+          {/* Placement audit P1 (approved): the Downloads row IS the panel's door —
+              the whole row toggles it; the glyph stays visible when the queue is
+              empty and the count rides inside it. The legacy page keeps its own
+              row below until parity and everyday use retire it. */}
           <SidebarItem
-            label="Download"
+            label="Downloads"
             icon={(
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M8 2.5v6" />
@@ -465,8 +479,8 @@ export default function Sidebar() {
                 <path d="M3 11.5h10" />
               </svg>
             )}
-            selected={state.currentView === 'download'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
+            className={downloadsPanelOpen ? 'sidebar-item--panel-open' : undefined}
+            onClick={() => toggleDownloadsPanel('toggle')}
             door={{
               title: 'Show downloads',
               onClick: () => toggleDownloadsPanel('toggle'),
@@ -478,6 +492,18 @@ export default function Sidebar() {
                 </svg>
               ),
             }}
+          />
+          <SidebarItem
+            label="Download page"
+            className="sidebar-item--legacy"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a948a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+                <path d="M2.5 6h11" />
+              </svg>
+            )}
+            selected={state.currentView === 'download'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
           />
           {/* DJ booth — nav entry HIDDEN 2026-08-04 at Jake's request ("it needs to
               be on the shelf for a little bit"). The feature is intact and the 'dj'

@@ -15,7 +15,7 @@ import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
-import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, type DownloadsPanelHandle } from './components/DownloadsPanel'
+import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, setDownloadsPanelOpen, type DownloadsPanelHandle } from './components/DownloadsPanel'
 import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
 import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
@@ -91,6 +91,7 @@ function AppInner() {
   const downloadsRef = useRef<DownloadsPanelHandle>(null)
   const showDownloadsRef = useRef(false)
   showDownloadsRef.current = showDownloads
+  useEffect(() => { setDownloadsPanelOpen(showDownloads) }, [showDownloads])
   useEffect(() => {
     const onToggle = (e: Event) => {
       const action = (e as CustomEvent<'toggle' | 'open' | 'close'>).detail ?? 'toggle'

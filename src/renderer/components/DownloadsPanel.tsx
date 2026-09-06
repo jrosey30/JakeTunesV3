@@ -21,6 +21,14 @@ export function toggleDownloadsPanel(action: 'toggle' | 'open' | 'close' = 'togg
   window.dispatchEvent(new CustomEvent(DOWNLOADS_PANEL_EVENT, { detail: action }))
 }
 
+// Is the panel open? App owns the state; the sidebar's Downloads row reads it
+// to light up like a selected view.
+let panelOpen = false
+const openSubs = new Set<() => void>()
+export function setDownloadsPanelOpen(open: boolean): void { if (panelOpen !== open) { panelOpen = open; for (const f of openSubs) f() } }
+export function subscribeDownloadsPanelOpen(fn: () => void): () => void { openSubs.add(fn); return () => { openSubs.delete(fn) } }
+export function getDownloadsPanelOpen(): boolean { return panelOpen }
+
 const STATUS_LABEL: Record<PanelRow['status'], string> = {
   downloading: 'Downloading', queued: 'Queued', done: 'Done', failed: 'Failed', refused: 'Needs a choice', canceled: 'Canceled',
 }
