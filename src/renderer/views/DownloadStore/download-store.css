@@ -1112,3 +1112,10 @@
 .dl-rel { overflow: hidden; }
 .dl-rel-facts { flex-wrap: wrap; row-gap: 3px; }
 .dl-rel-title, .dl-rel-sub { max-width: 100%; }
+
+/* Music Sources panel (shared by Preferences → Music Sources and the
+   Download setup drawer). In the drawer it is a grid item; in Preferences
+   the two cards stack. */
+.music-sources { display: grid; gap: 10px; }
+.dl-setup-grid > .music-sources { display: contents; }
+.settings-music-sources .dl-setup-card { margin: 0; }

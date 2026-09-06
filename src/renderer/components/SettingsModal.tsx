@@ -4,6 +4,7 @@ import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import { getCorrelation, setEnhanceConfig } from '../audio/audioEnhance'
 import { getCaptionsOn, setCaptionsOn } from '../activity'
 import '../styles/import-convert.css'
+import MusicSourcesPanel from './MusicSourcesPanel'
 
 /**
  * App-level user preferences. Tabbed layout (Playback / Library / Sync /
@@ -23,8 +24,8 @@ interface Props {
   onSaved: (next: AppSettings) => void
 }
 
-type Tab = 'Playback' | 'EQ' | 'Library' | 'Sync' | 'Audio' | 'AI'
-const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'Audio', 'AI']
+type Tab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Sync' | 'Audio' | 'AI'
+const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Sync', 'Audio', 'AI']
 
 // Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
 // 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
@@ -644,6 +645,17 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
             </>
           )}
 
+          {tab === 'Music Sources' && (
+            <div className="settings-music-sources">
+              {/* Record Shop step 5 — provider setup lives with the other
+                  preferences, not on discovery cards or the search page.
+                  Links and searches stay in Record Shop → Download. */}
+              <MusicSourcesPanel />
+              <p style={{ margin: '10px 2px 0', fontSize: 12, color: '#666' }}>
+                Searching the catalogue and pasting a link live in Record Shop → Download.
+              </p>
+            </div>
+          )}
           {tab === 'Library' && (
             <>
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>

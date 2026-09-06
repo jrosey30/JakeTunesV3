@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
+import MusicSourcesPanel from '../../components/MusicSourcesPanel'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
@@ -213,14 +214,6 @@ export default function DownloadView() {
   const [pasteUrl, setPasteUrl] = useState(pageCache.pasteUrl)
   const [pasteBusy, setPasteBusy] = useState(false)
   const [qobuz, setQobuz] = useState<{ configured: boolean; email?: string } | null>(null)
-  const [qEmail, setQEmail] = useState('')
-  const [qPass, setQPass] = useState('')
-  const [qEditing, setQEditing] = useState(false)
-  const [qSaving, setQSaving] = useState(false)
-  const [qMsg, setQMsg] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [qMode, setQMode] = useState<'password' | 'token'>('password')
-  const [qUserId, setQUserId] = useState('')
-  const [qToken, setQToken] = useState('')
 
   // Album expansion — the search only surfaces a few of an album's songs, so
   // opening a card fetches its FULL tracklist from iTunes (2026-07-23, Jake:
@@ -555,50 +548,6 @@ export default function DownloadView() {
     }
   }
 
-  const saveQobuz = async () => {
-    const e = qEmail.trim()
-    if (!e || !qPass || qSaving) return
-    setQSaving(true)
-    setQMsg(null)
-    try {
-      const r = await window.electronAPI.streamripSetQobuz?.(e, qPass)
-      if (r?.ok) {
-        setQobuz({ configured: true, email: e })
-        setQPass('')
-        setQEditing(false)
-        setQMsg({ ok: true, msg: 'Qobuz connected — downloads now resolve there in hi-fi.' })
-      } else {
-        setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz login.' })
-      }
-    } catch (err) {
-      setQMsg({ ok: false, msg: err instanceof Error ? err.message : 'Couldn’t save Qobuz login.' })
-    } finally {
-      setQSaving(false)
-    }
-  }
-
-  const saveQobuzToken = async () => {
-    const u = qUserId.trim()
-    const t = qToken.trim()
-    if (!u || !t || qSaving) return
-    setQSaving(true)
-    setQMsg(null)
-    try {
-      const r = await window.electronAPI.streamripSetQobuzToken?.(u, t)
-      if (r?.ok) {
-        setQobuz({ configured: true, email: `user ${u}` })
-        setQToken('')
-        setQEditing(false)
-        setQMsg({ ok: true, msg: 'Qobuz connected via token — downloads now resolve there in hi-fi.' })
-      } else {
-        setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz token.' })
-      }
-    } catch (err) {
-      setQMsg({ ok: false, msg: err instanceof Error ? err.message : 'Couldn’t save Qobuz token.' })
-    } finally {
-      setQSaving(false)
-    }
-  }
 
   // Right-side action = the item's OWN lifecycle, with CANCEL at every stage
   // before "done" (a mis-click is never a commitment).
@@ -1048,56 +997,11 @@ export default function DownloadView() {
               )}
             </section>
 
-            {/* ── Qobuz account — password hashed locally, written to streamrip's config ── */}
-            <section className="dl-setup-card">
-              <div className="dl-setup-card-head">Qobuz account</div>
-              {qobuz?.configured && !qEditing ? (
-                <div className="download-account-row">
-                  <span className="download-account-status">Connected{qobuz.email ? ` · ${qobuz.email}` : ''}</span>
-                  <button className="download-link-btn" onClick={() => { setQEditing(true); setQMsg(null) }}>Change</button>
-                </div>
-              ) : qMode === 'token' ? (
-                <>
-                  <div className="download-account-form">
-                    <input className="download-input download-input--narrow" placeholder="Qobuz user ID" value={qUserId} onChange={(e) => setQUserId(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
-                    <input className="download-input" type="password" placeholder="Qobuz auth token" value={qToken} onChange={(e) => setQToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuzToken() }} disabled={qSaving} autoComplete="off" />
-                    <button className="download-btn" onClick={() => void saveQobuzToken()} disabled={qSaving || !qUserId.trim() || !qToken.trim()}>{qSaving ? 'Saving…' : 'Connect'}</button>
-                  </div>
-                  <details className="download-steps">
-                    <summary>How to get your user ID + token (Google sign-in)</summary>
-                    <ol>
-                      <li>Open <strong>play.qobuz.com</strong> in your browser and log out.</li>
-                      <li>Open dev tools (<strong>⌥⌘I</strong>) → <strong>Network</strong> tab; type <code>login</code> in the filter box.</li>
-                      <li>Log back in with Google. A request named <code>login</code> appears — click it → the <strong>Response</strong> tab.</li>
-                      <li>Copy <code>user_auth_token</code> → paste as <strong>auth token</strong>. Find <code>"user":&#123; "id": NUMBER</code> → paste that NUMBER as <strong>user ID</strong>.</li>
-                    </ol>
-                  </details>
-                  <button className="download-link-btn download-toggle" onClick={() => { setQMode('password'); setQMsg(null) }}>Have a Qobuz password instead?</button>
-                </>
-              ) : (
-                <>
-                  <div className="download-account-form">
-                    <input className="download-input" placeholder="Qobuz email" value={qEmail} onChange={(e) => setQEmail(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
-                    <input className="download-input" type="password" placeholder="Qobuz password" value={qPass} onChange={(e) => setQPass(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuz() }} disabled={qSaving} autoComplete="off" />
-                    <button className="download-btn" onClick={() => void saveQobuz()} disabled={qSaving || !qEmail.trim() || !qPass}>{qSaving ? 'Saving…' : 'Connect'}</button>
-                  </div>
-                  <button className="download-link-btn download-toggle" onClick={() => { setQMode('token'); setQMsg(null) }}>Sign in with Google? Use a token instead →</button>
-                </>
-              )}
-              {qMsg && <div className={`download-result ${qMsg.ok ? 'download-result--ok' : 'download-result--err'}`}>{qMsg.msg}</div>}
-              <div className="download-hint download-hint--sub">Saved to streamrip’s config on this Mac — your credentials never leave your machine or go through chat.</div>
-            </section>
+            {/* Music Sources (Qobuz account + download tool) — the same panel
+                Preferences → Music Sources shows (Record Shop step 5). This
+                drawer keeps it until that placement is verified. */}
+            <MusicSourcesPanel onQobuzChange={setQobuz} onStatusChange={(st) => setStatus(st)} />
           </div>
-
-          {status && !status.installed && (
-            <div className="download-warn">
-              {/* The reason comes from main, which tells "not installed" apart
-                  from "installed but can't start" — those need different fixes,
-                  and the old blanket message sent Jake to `pipx install
-                  streamrip` for a broken Homebrew dependency (2026-08-08). */}
-              {status.reason || <>streamrip (the <code>rip</code> command) wasn’t found. Install it with <code>pipx install streamrip</code>, then reopen this view.</>}
-            </div>
-          )}
 
           {failures.length > 0 && (
             <div className="download-failures">
