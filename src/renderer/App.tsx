@@ -16,6 +16,7 @@ import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
 import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, type DownloadsPanelHandle } from './components/DownloadsPanel'
+import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
 import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
@@ -108,6 +109,13 @@ function AppInner() {
   const [orphanCleanupOpen, setOrphanCleanupOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // A notice can ask for Preferences on a specific tab (Music Sources).
+  const [settingsTab, setSettingsTab] = useState<'Music Sources' | undefined>(undefined)
+  useEffect(() => {
+    const onOpen = (e: Event) => { setSettingsTab((e as CustomEvent<{ tab?: 'Music Sources' }>).detail?.tab); setSettingsOpen(true) }
+    window.addEventListener(OPEN_PREFERENCES_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_PREFERENCES_EVENT, onOpen)
+  }, [])
   // Brief 020: tag write-back batch UI state. Two phases:
   //   - applyOverridesConfirmOpen → confirm modal
   //   - applyOverridesProgress != null → in-flight modal (counter + bar)
@@ -1383,7 +1391,7 @@ function AppInner() {
         case 'prune-alac-cache':    setPlayCacheMode('prune'); break
         case 'clean-orphan-files':  setOrphanCleanupOpen(true); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
-        case 'open-preferences':    setSettingsOpen(true); break
+        case 'open-preferences':    setSettingsTab(undefined); setSettingsOpen(true); break
         // Brief 023: 'export-mobile-snapshot' and 'apply-mobile-overrides'
         // removed — vestigial mobile-sync feature that never shipped.
         // Tag write-back (Brief 020) is the path Plex/mobile consume now.
@@ -1796,6 +1804,7 @@ function AppInner() {
         {settingsOpen && (
           <SettingsModal
             initial={appSettings}
+            initialTab={settingsTab}
             onClose={() => setSettingsOpen(false)}
             onSaved={(next) => {
               setAppSettings(next)

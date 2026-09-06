@@ -22,6 +22,8 @@ interface Props {
   initial: AppSettings
   onClose: () => void
   onSaved: (next: AppSettings) => void
+  /** Open on a given tab (a notice deep-links to Music Sources). */
+  initialTab?: Tab
 }
 
 type Tab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Sync' | 'Audio' | 'AI'
@@ -126,7 +128,7 @@ interface LastSync {
   remote?: boolean
 }
 
-export default function SettingsModal({ initial, onClose, onSaved }: Props) {
+export default function SettingsModal({ initial, onClose, onSaved, initialTab }: Props) {
   // The width/crossfeed sliders apply LIVE while dragging (tuning by ear needs
   // to be audible), so Cancel must put the sound back the way it was. Wrap
   // onClose: revert the audio chain to the settings the modal OPENED with.
@@ -138,7 +140,7 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
 
   const [draft, setDraft] = useState<AppSettings>(initial)
   const [radioCaptions, setRadioCaptions] = useState(getCaptionsOn())  // 4.5 radioV2 CC toggle
-  const [tab, setTab] = useState<Tab>('Playback')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'Playback')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Spotify connect (AI tab) — status loads when the tab opens.

@@ -2,6 +2,9 @@ import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExte
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import MusicSourcesPanel from '../../components/MusicSourcesPanel'
+import CredentialNotice from './CredentialNotice'
+import { showCredentialNotice } from './credential-notice-store'
+import { qobuzNoticeFor } from '../../../common/qobuz-notice'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
@@ -428,6 +431,14 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
   // (and the friend gets credit). Cleared the moment the search changes.
   const pendingOriginRef = useRef<{ query: string; origin: QueueOrigin } | null>(null)
   const withOrigin = (q: QResult): QResult => pendingOriginRef.current ? { ...q, origin: pendingOriginRef.current.origin } : q
+  // Every Get goes through here: a missing Qobuz account is said out loud with
+  // its fix (Preferences → Music Sources); the job still runs so the other
+  // providers can answer for a song. Search and previews never ask.
+  const startGet = (q: QResult): void => {
+    const n = qobuzNoticeFor(qobuz, 'get', { kind: q.mediaType === 'album' ? 'album' : 'song', title: (q.mediaType === 'album' ? q.album : q.title) || q.desc })
+    if (n) showCredentialNotice(n)
+    enqueue(withOrigin(q))
+  }
   useEffect(() => {
     const applyPrefill = (d: DownloadPrefill | null | undefined) => {
       pendingPrefill = null
@@ -604,7 +615,7 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
       const label = item?.primary || primaryFor(item?.outcome, item?.error)
       return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
     }
-    return <button className="download-result-btn" onClick={() => enqueue(withOrigin(qres))}>Get</button>
+    return <button className="download-result-btn" onClick={() => startGet(qres)}>Get</button>
   }
 
   /** Cover art for a queue item, found in the results we already have. Not
@@ -767,7 +778,7 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
               </span>
               <span className="dl-rel-panel-spacer" />
               {cache?.tracks && cache.tracks.length > 0 && (
-                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(withOrigin(albumQ({ ...a, collectionId: a.collectionId ?? cache?.collectionId, trackCount: a.trackCount ?? cache?.trackCount, releaseYear: a.releaseYear ?? cache?.releaseYear }))) }}>Get all</button>
+                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) startGet(albumQ({ ...a, collectionId: a.collectionId ?? cache?.collectionId, trackCount: a.trackCount ?? cache?.trackCount, releaseYear: a.releaseYear ?? cache?.releaseYear })) }}>Get all</button>
               )}
               <button type="button" className="dl-rel-panel-close" onClick={() => toggleAlbum(a)} title="Close">✕</button>
             </div>
@@ -907,6 +918,7 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
         )}
         </div>
       </div>
+      <CredentialNotice />
 
       {/* ── the queue, as something you can actually read. Browse leaves this
              to the Downloads panel; the legacy route keeps it. ── */}

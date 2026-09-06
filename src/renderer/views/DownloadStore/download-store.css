@@ -1126,3 +1126,22 @@
 .dl-field-row .dl-field { flex: 1; min-width: 0; }
 .download-view--browse .dl-bar { padding-top: var(--space-5); }
 .download-view--browse .dl-setup-grid { grid-template-columns: minmax(340px, 560px); }
+
+/* Missing-account notice (placement audit P3): under the search, actionable,
+   dismissable; browsing and previews carry on around it. */
+.dl-cred-notice {
+  display: flex; align-items: center; gap: var(--space-4);
+  margin: var(--space-4) var(--space-8) 0; padding: var(--space-3) var(--space-4);
+  font-size: var(--font-11); color: #5a3d12;
+  background: rgba(255, 196, 92, 0.22);
+  border: 1px solid rgba(214, 140, 30, 0.45);
+  border-radius: var(--radius-md);
+}
+.dl-cred-notice-text { flex: 1; min-width: 0; line-height: 1.4; }
+.dl-cred-notice-btn {
+  flex: none; font-size: var(--font-11); font-weight: var(--fw-bold);
+  padding: 3px 10px; border-radius: var(--radius-md);
+  color: #fff; background: linear-gradient(180deg, #d9633f, #b8482b); border: 1px solid #8f3f2a;
+}
+.dl-cred-notice-btn:hover { background: linear-gradient(180deg, #e06c47, #c2502f); }
+.dl-cred-notice-close { flex: none; background: transparent; border: 0; color: #7a5a2a; font-size: 12px; padding: 0 4px; }
