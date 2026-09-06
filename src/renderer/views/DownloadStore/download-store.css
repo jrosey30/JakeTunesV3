@@ -812,6 +812,8 @@
 .dl-queue-detail-status { flex: none; color: var(--color-danger); font-weight: var(--fw-bold); font-size: var(--font-11); }
 .dl-queue-detail-req { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--font-11); color: var(--text-secondary); }
 .dl-queue-detail-head .download-retry { flex: none; }
+.dl-queue-detail-status--done { color: var(--color-success); }
+.dl-queue-detail-facts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 3px; font-size: var(--font-11); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .dl-queue-detail-text {
   margin: 6px 0 0;
   font: inherit;

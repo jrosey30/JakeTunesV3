@@ -878,6 +878,11 @@ export default function DownloadView() {
 
   const active = getQueue().find((q) => q.status === 'downloading')
   const failedItems = getQueue().filter((q) => q.status === 'failed')
+  // Finished jobs stay inspectable here after the Listen List has taken
+  // the row off (its own rule): the edition, the counts and the completion
+  // line are the record of what happened (2026-09-06).
+  const doneItems = getQueue().filter((q) => q.status === 'done')
+  const editionFacts = (r: QResult): string => [r.mediaType === 'album' ? 'album' : 'song', r.trackCount ? `${r.trackCount} tracks` : null, r.releaseYear ? String(r.releaseYear) : null, r.collectionId ? `iTunes ${r.collectionId}` : null].filter(Boolean).join(' · ')
   const failedHint = failedItems.map((f) => `${f.result.desc}: ${f.error || 'Download failed.'}`).join('\n')
   const hasResults = !!(ranked.hero || ranked.songs.length || ranked.albums.length)
 
@@ -952,7 +957,20 @@ export default function DownloadView() {
               </button>
             </>
           ) : (
-            <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
+            <>
+              <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
+              {doneItems.length > 0 && (
+                <button
+                  type="button"
+                  className="dl-queue-details-btn"
+                  onClick={() => setFailDetailsOpen((o) => !o)}
+                  aria-expanded={failDetailsOpen}
+                  aria-controls="dl-queue-details"
+                >
+                  {failDetailsOpen ? 'Hide details' : 'Details'}
+                </button>
+              )}
+            </>
           )}
           <span className="dl-queue-counts">
             {summary.queued > 0 && <span className="dq-part">{summary.queued} queued</span>}
@@ -971,8 +989,21 @@ export default function DownloadView() {
       {/* The full, untruncated reason for every failed item — what was asked
           for, what each source answered, what to do next. Toggled by the
           Details button above; reachable by keyboard; never hover-only. */}
-      {failDetailsOpen && failedItems.length > 0 && (
-        <div className="dl-queue-details" id="dl-queue-details" role="region" aria-label="Download failure details">
+      {failDetailsOpen && (failedItems.length > 0 || doneItems.length > 0) && (
+        <div className="dl-queue-details" id="dl-queue-details" role="region" aria-label="Download details">
+          {doneItems.map((d) => (
+            <div key={d.key} className="dl-queue-detail dl-queue-detail--done">
+              <div className="dl-queue-detail-head">
+                <span className="dl-queue-detail-status dl-queue-detail-status--done">In your library</span>
+                <span className="dl-queue-detail-req">{d.result.desc}</span>
+              </div>
+              <div className="dl-queue-detail-facts">
+                <span>{editionFacts(d.result)}</span>
+                <span>{d.imported ?? 0} imported · {d.dupes ?? 0} already in your library</span>
+              </div>
+              {(d.completion || d.matchDesc) && <pre className="dl-queue-detail-text">{d.completion || d.matchDesc}</pre>}
+            </div>
+          ))}
           {failedItems.map((f) => (
             <div key={f.key} className="dl-queue-detail">
               <div className="dl-queue-detail-head">
