@@ -83,6 +83,8 @@ export interface QItem {
   completion?: string
   startedAt?: number
   endedAt?: number
+  /** How many times this job has been armed (1 = first try). */
+  attempt?: number
 }
 
 export function queueKey(r: QResult): string {
@@ -133,7 +135,7 @@ export function enqueue(r: QResult): void {
   const existing = queue.find((q) => q.key === key)
   if (existing) {
     mergeOrigin(existing.result, r.origin)
-    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; emit(); void pump() }
+    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; emit(); void pump() }
     else emit()
     return
   }
@@ -167,6 +169,7 @@ export function retry(key: string): void {
   it.error = undefined
   it.imported = undefined
   it.dupes = undefined
+  it.attempt = (it.attempt ?? 1) + 1
   emit()
   void pump()
 }
@@ -181,6 +184,7 @@ export function retryFailed(): void {
     it.error = undefined
     it.imported = undefined
     it.dupes = undefined
+    it.attempt = (it.attempt ?? 1) + 1
     any = true
   }
   if (!any) return

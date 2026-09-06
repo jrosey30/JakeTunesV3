@@ -869,6 +869,10 @@ const electronAPI = {
     cancelSpeech: (args: { audioId: string }): Promise<{ ok: true }> =>
       ipcRenderer.invoke('record-store:cancel-speech', args),
   },
+  // ── Record Shop (6.0): an item's catalogue identity + library ownership by recording identity ──
+  recordShop: {
+    resolve: (req: unknown): Promise<unknown> => ipcRenderer.invoke('record-shop:resolve', req),
+  },
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)

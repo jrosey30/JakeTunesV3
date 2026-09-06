@@ -95,6 +95,17 @@ export interface ShopAcquisitionJob {
   result?: ShopAcquisitionResult
 }
 
+/** Everything a presentation reads: the same shape whether it came from
+ *  fixtures or from the live list + scheduler + ownership. */
+export interface ShopSession {
+  items: Snapshot<ShopItem>[]
+  entries: Snapshot<ShopListEntry>[]
+  recommendations: Snapshot<ShopRecommendation>[]
+  ownership: Record<string, Snapshot<ShopOwnership>>
+  jobs: Record<string, Snapshot<ShopAcquisitionJob>>
+  shelves: Snapshot<ShopShelf>[]
+}
+
 export interface ShopShelf {
   shelfId: string
   title: string

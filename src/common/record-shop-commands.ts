@@ -51,7 +51,8 @@ export function shopActions(item: Snapshot<ShopItem>, ownership: Snapshot<ShopOw
   // A stalled or canceled job keeps its selection: Retry IS the acquisition
   // action, so Get is not offered beside it.
   if (job && (job.status === 'failed' || job.status === 'canceled')) { verbs.push('retryJob'); return { verbs, getBlocked: 'retry' } }
-  if (!item.selection) return { verbs, getBlocked: item.kind === 'release' ? 'select-edition' : 'select-recording' }
+  // Nothing chosen yet: the way forward is to choose, in the catalogue.
+  if (!item.selection) { verbs.push('chooseEdition'); return { verbs, getBlocked: item.kind === 'release' ? 'select-edition' : 'select-recording' } }
   if (ownership && ownership.status === 'complete') return { verbs, getBlocked: 'owned' }
   verbs.push('getSelection')
   return { verbs }

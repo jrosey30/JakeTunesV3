@@ -43,7 +43,7 @@ describe('the Record Shop fixtures and command vocabulary', () => {
 
   it('offers the same verbs from the same facts: owned albums cannot be Got, unselected ones select first, browse-only never downloads', () => {
     assert.deepEqual(actions('fx:xtc-bonus'), { verbs: ['inspectSelection', 'playOwned'], getBlocked: 'owned' })
-    assert.deepEqual(actions('fx:xtc-plain'), { verbs: ['inspectSelection'], getBlocked: 'select-edition' })
+    assert.deepEqual(actions('fx:xtc-plain'), { verbs: ['inspectSelection', 'chooseEdition'], getBlocked: 'select-edition' })
     assert.deepEqual(actions('fx:lc-deluxe'), { verbs: ['previewItem', 'inspectSelection', 'playOwned'], getBlocked: 'owned' })
     assert.deepEqual(actions('fx:ril-deluxe'), { verbs: ['inspectSelection', 'playOwned', 'getSelection'] })
     // refused by the sources: Details + a new choice, never Retry/Get of the refused one

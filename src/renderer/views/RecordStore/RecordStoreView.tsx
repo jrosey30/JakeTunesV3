@@ -13,7 +13,7 @@
 // Real covers come from the live library artwork (album-art:// protocol).
 // Playback / Library / useAudio are READ here, never edited.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
@@ -24,6 +24,8 @@ import { CrateBrowse } from './components/CrateBrowse'
 import { CounterDesk } from './components/CounterDesk'
 import { shopFixtureSession } from '../../../common/record-shop-fixtures'
 import { recordingShopCommands } from '../../../common/record-shop-commands'
+import { useShopSession } from '../../record-shop/useShopSession'
+import { liveShopCommands } from '../../record-shop/liveShopCommands'
 import type { Blurb, Persona, ShelfId, ShelfItem } from './types'
 import storefrontBg from './art/storefront.png'
 import mmSmug from './art/musicman-smug.png'
@@ -44,8 +46,11 @@ type TakeState =
   | { status: 'ready'; item: ShelfItem; text: string | null }
 
 // 6.0 Record Shop: the counter is the shop's shared session (saved items,
-// orders, what's on the shelf) shown in this room. Fixtures until the
-// visual review passes; then the live session, same component.
+// orders, what's on the shelf) shown in this room. Live by default; the
+// frozen fixture set (and its recording-only command bus) appears ONLY
+// when the window hash carries #shopFixtures — a review aid, never a
+// default, and fixture ids are refused by the live bus regardless.
+const fixtureModeRequested = (): boolean => typeof window !== 'undefined' && /shopFixtures/.test(window.location.hash)
 type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId } | { view: 'counter' }
 const COUNTER_RECT: CSSProperties = { left: '3%', top: '52%', width: '17%', height: '30%' }
 
@@ -70,11 +75,15 @@ export default function RecordStoreView() {
   const { state, refresh } = useShelves()
   const [take, setTake] = useState<TakeState>({ status: 'idle' })
   const [scene, setScene] = useState<Scene>({ view: 'wide' })
-  // The shared shop session this room presents. Prototype: the fixture set
-  // through the same model the regular shop reads; commands are recorded,
-  // not performed, until live wiring (after visual review).
-  const session = useMemo(() => shopFixtureSession(), [])
-  const commands = useMemo(() => recordingShopCommands((c) => console.log('[record-store] command', c.verb, c.id)), [])
+  // The shared shop session this room presents: the live list + scheduler
+  // + ownership, through the same model the regular shop reads.
+  const fixtureMode = useMemo(fixtureModeRequested, [])
+  const live = useShopSession()
+  const fixtureSession = useMemo(() => (fixtureMode ? shopFixtureSession() : null), [fixtureMode])
+  const session = fixtureSession ?? live.session
+  const sessionRef = useRef(session); sessionRef.current = session
+  const recById = useMemo(() => new Map(live.recs.map((r) => [r.id, r] as const)), [live.recs])
+  const recRef = useRef(recById); recRef.current = recById
   // The clear way OUT: back to the regular Record Shop, same items.
   const leaveShop = useCallback(() => dispatch({ type: 'SET_VIEW', view: 'discovery' }), [dispatch])
   useEffect(() => {
@@ -89,6 +98,15 @@ export default function RecordStoreView() {
     for (const t of lib.tracks) m.set(t.id, t)
     return m
   }, [lib.tracks])
+
+  const playOwnedTracks = useCallback((ids: number[]) => {
+    const ts = ids.map((id) => trackById.get(Number(id))).filter((t): t is NonNullable<typeof t> => Boolean(t))
+    if (ts.length) playTrack(ts[0], ts, 0, undefined, true, true)   // the running order is the record
+  }, [trackById, playTrack])
+  const commands = useMemo(() => fixtureMode
+    ? recordingShopCommands((c) => console.log('[record-store] fixture command', c.verb, c.id))
+    : liveShopCommands({ session: () => sessionRef.current, recById: () => recRef.current, playTracks: playOwnedTracks, openDownloadView: () => dispatch({ type: 'SET_VIEW', view: 'download' }), refresh: live.refresh }),
+  [fixtureMode, playOwnedTracks, dispatch, live.refresh])
 
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
@@ -244,7 +262,7 @@ export default function RecordStoreView() {
 
         {/* COUNTER: the shared shop session, in this room's voice. */}
         {scene.view === 'counter' && (
-          <CounterDesk session={session} commands={commands} onBack={() => setScene({ view: 'wide' })} fixtureMode />
+          <CounterDesk session={session} commands={commands} onBack={() => setScene({ view: 'wide' })} fixtureMode={fixtureMode} loading={!fixtureMode && live.loading} />
         )}
 
         {/* Music Man pops in to talk (any view). */}

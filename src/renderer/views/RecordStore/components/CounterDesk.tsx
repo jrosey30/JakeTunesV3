@@ -8,8 +8,7 @@
 // verb, Escape steps back to the shop. Every button is focusable.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ShopFixtureSession } from '../../../../common/record-shop-fixtures'
-import type { ShopItem, Snapshot } from '../../../../common/record-shop'
+import type { ShopItem, ShopSession, Snapshot } from '../../../../common/record-shop'
 import { shopActions, ownershipLabel, editionLabel, jobLabel, refusedSelection, type ShopCommands, type ShopVerb } from '../../../../common/record-shop-commands'
 
 const VERB_LABEL: Record<ShopVerb, string> = {
@@ -32,11 +31,12 @@ const BLOCKED_LABEL = {
 const kindWord = (item: Snapshot<ShopItem>): string =>
   item.kind === 'release' ? 'Record' : item.kind === 'recording' ? 'Song' : item.kind === 'artist' ? 'Artist' : item.kind === 'concert' ? 'Concert' : 'Note'
 
-export function CounterDesk({ session, commands, onBack, fixtureMode }: {
-  session: ShopFixtureSession
+export function CounterDesk({ session, commands, onBack, fixtureMode, loading = false }: {
+  session: ShopSession
   commands: ShopCommands
   onBack: () => void
   fixtureMode: boolean
+  loading?: boolean
 }) {
   const items = session.items
   const [idx, setIdx] = useState(0)
@@ -83,6 +83,9 @@ export function CounterDesk({ session, commands, onBack, fixtureMode }: {
         {fixtureMode && <span className="counter__pill" title="Showing the fixture set — live data is wired after visual review">Prototype · fixtures</span>}
       </div>
 
+      {items.length === 0 && (
+        <p className="counter__empty">{loading ? 'Reading your list…' : 'Nothing at the counter yet. Jot a song or a record in the Listen List and it turns up here.'}</p>
+      )}
       <ol className="counter__list">
         {items.map((item, i) => {
           const own = session.ownership[item.itemId]

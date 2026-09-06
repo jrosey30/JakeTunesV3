@@ -446,6 +446,7 @@
   align-content: start;
 }
 .counter__row { min-width: 0; }
+.counter__empty { margin: 24px 0 0; color: #cdbfa9; font-size: 14px; max-width: 46ch; }
 .counter__card {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) auto;

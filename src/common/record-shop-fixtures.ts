@@ -23,7 +23,7 @@
 import type { RequestedAlbum, RequestedRecording } from './acquisition-identity.ts'
 import {
   saveShopItem, draftShopJob, shopSnapshot,
-  type ShopItem, type ShopListEntry, type ShopRecommendation, type ShopOwnership, type ShopAcquisitionJob, type ShopShelf, type Snapshot, type ShopSelection,
+  type ShopItem, type ShopListEntry, type ShopRecommendation, type ShopOwnership, type ShopAcquisitionJob, type ShopSession, type ShopShelf, type Snapshot, type ShopSelection,
 } from './record-shop.ts'
 import { shopItemFromFeed, shopItemWithSelection, shopResultFromDownload } from './record-shop-adapters.ts'
 
@@ -63,14 +63,7 @@ const LC_DELUXE: Array<[string, number]> = [
   ['Walk It Down', 283], ['Television Man', 370], ['Road to Nowhere', 259], ['Road to Nowhere (Early Version)', 277], ['And She Was (Early Version)', 216], ['Television Man (Extended Mix)', 473],
 ]
 
-export interface ShopFixtureSession {
-  items: Snapshot<ShopItem>[]
-  entries: Snapshot<ShopListEntry>[]
-  recommendations: Snapshot<ShopRecommendation>[]
-  ownership: Record<string, Snapshot<ShopOwnership>>
-  jobs: Record<string, Snapshot<ShopAcquisitionJob>>
-  shelves: Snapshot<ShopShelf>[]
-}
+export type ShopFixtureSession = ShopSession
 
 /** The whole fixture set, frozen. Ids are stable so blurbs, focus and
  *  selection can key on them across presentations. */
