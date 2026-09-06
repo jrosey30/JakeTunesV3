@@ -12,7 +12,7 @@ import { recoKindForInput, preserveAlbumIdentity, type RecoKind } from '../reco-
 import { BrowserWindow, app } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { open, readFile, rename, unlink, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
@@ -30,6 +30,7 @@ import { type RecoOutboxOp, parseOutbox, scrubOutboxAgainstBackend, scrubOutboxF
 import { computeMirror, computeNasFallback, identitiesForDelete } from '../reco-sync'
 import type { ClaudeCall } from './library-ipc.ts'
 import { safeIpcError } from '../safe-ipc-error'
+import { selectRecoHub } from '../reco-hub.ts'
 
 // The Mini backend owns enrichment for adds; reachable on the tailnet.
 // Override for a local dev backend via JAKETUNES_MOBILE_BACKEND.
@@ -79,8 +80,21 @@ export interface RecommendationsHost {
 
 export function registerRecommendations(ipc: IpcRegistrar, host: RecommendationsHost) {
 
+  // The ONE hub transport (reco-hub.ts). JT_RECO_FIXTURE=<seed.json> in a dev
+  // build swaps in an in-memory hub: reads AND mutations (adds, completion
+  // releases, deletes) stay inside it, and the local cache/outbox move to
+  // fixture-scoped files so the real ones are untouched. Live is unchanged.
+  const hub = selectRecoHub({
+    fixturePath: process.env.JT_RECO_FIXTURE,
+    packaged: app.isPackaged,
+    loadSeed: (path) => JSON.parse(readFileSync(path, 'utf-8')) as RecommendationRecord[],
+    baseUrl: MOBILE_BACKEND_URL,
+  })
+  const fixtureMode = hub.mode === 'fixture'
+  if (fixtureMode) console.log('[reco] FIXTURE hub —', process.env.JT_RECO_FIXTURE, '(no homemini I/O, no NAS fallback, fixture-scoped local files)')
+
   function recommendationsPath(): string {
-    return join(STATE_DIR, 'recommendations.json')
+    return join(STATE_DIR, fixtureMode ? 'recommendations.fixture.json' : 'recommendations.json')
   }
 
   // Brief 126: V3 keeps ZERO tombstone state of its own. The backend's LIVE
@@ -90,6 +104,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   // powered the stray-migration resurrections — is removed by the one-time
   // boot reset.)
   async function readNasRecoTombstones(): Promise<Set<string>> {
+    if (!hub.nasFallback) return new Set()          // fixture hub: no second door to shared state
     if (!(await nasAvailable())) return new Set()   // breaker open: no NAS IO
     try {
       // Async readFile ONLY — never existsSync/statSync here: this path is an
@@ -510,14 +525,12 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
 
   async function fetchRecommendationsFromBackend(): Promise<RecommendationRecord[] | null> {
     try {
-      const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!res.ok) {
-        console.warn('[reco] backend GET failed:', res.status)
+      const list = await hub.list()
+      if (list === null) {
+        console.warn('[reco] backend GET failed')
         return null
       }
-      return parseRecommendationsPayload(await res.json() as unknown)
+      return list as unknown as RecommendationRecord[]
     } catch (err) {
       quietWarn('reco-backend-unreachable', '[reco] backend GET unreachable:', err instanceof Error ? err.message : err)
       return null
@@ -525,6 +538,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   }
 
   async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | null> {
+    if (!hub.nasFallback) return null          // fixture hub: no second door to shared state
     if (!(await nasAvailable())) return null   // breaker open: no NAS IO
     try {
       // Async readFile ONLY — no existsSync on the SMB mount (see
@@ -543,7 +557,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   // files. V3 mutates only via its HTTP API; when the Mini is unreachable the
   // mutation is queued here (V3-private file) and replayed on a later sync.
   function recommendationsOutboxPath(): string {
-    return join(STATE_DIR, 'recommendations-outbox.json')
+    return join(STATE_DIR, fixtureMode ? 'recommendations-outbox.fixture.json' : 'recommendations-outbox.json')
   }
 
   async function readRecoOutbox(): Promise<RecoOutboxOp[]> {
@@ -597,14 +611,9 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
       for (const op of ops) {
         if (op.op === 'add') {
           try {
-            const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ ...op.input, origin: 'user', clientQueuedAt: op.queuedAt || undefined }),
-              signal: AbortSignal.timeout(10000),
-            })
+            const res = await hub.add({ ...op.input, origin: 'user', clientQueuedAt: op.queuedAt || undefined })
             if (!res.ok) { remaining.push(op); continue }
-            const parsed = (await res.json().catch(() => null)) as (RecommendationRecord & { suppressed?: boolean }) | { item?: RecommendationRecord } | null
+            const parsed = res.json as (RecommendationRecord & { suppressed?: boolean }) | { item?: RecommendationRecord } | null
             if (parsed && typeof parsed === 'object' && (parsed as { suppressed?: boolean }).suppressed) {
               landedAdds++   // backend said no (tombstoned system-class row) — op is settled
               continue
@@ -620,19 +629,12 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
             remaining.push(op)   // Mini unreachable — retry next sync
           }
         } else {
-          const identityParams = op.identities
-            .slice(0, 8)
-            .map((k) => `identity=${encodeURIComponent(k)}`)
-            .join('&')
           const stillDoomed: string[] = []
           for (const did of op.ids) {
             try {
-              const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}${identityParams ? `?${identityParams}` : ''}`, {
-                method: 'DELETE',
-                signal: AbortSignal.timeout(8000),
-              })
+              const res = await hub.remove(did, op.identities)
               if (!res.ok && res.status !== 404) { stillDoomed.push(did); continue }
-              const body = (await res.json().catch(() => null)) as { existed?: boolean } | null
+              const body = res.json as { existed?: boolean } | null
               if (body && body.existed === false) {
                 console.log(`[reco] delete no-op'd on backend (id ${did} unknown) — identity keys tombstoned anyway`)
               }
@@ -656,7 +658,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
         await writeRecommendationsFile([...byId.values()])
       }
       if (landedAdds > 0 || landedDeletes > 0) {
-        console.log(`[reco] outbox replay: ${landedAdds} add(s), ${landedDeletes} delete(s) landed on homemini; ${remaining.length} op(s) still queued`)
+        console.log(`[reco] outbox replay: ${landedAdds} add(s), ${landedDeletes} delete(s) landed on ${hub.mode === 'live' ? 'homemini' : 'the FIXTURE hub'}; ${remaining.length} op(s) still queued`)
       }
       return remaining
     })
@@ -759,16 +761,16 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   // Safety-gated: aborts (and retries next boot) when the backend is
   // unreachable — the reset never runs blind. ──
   async function runRecoResetV2IfNeeded(): Promise<void> {
+    if (fixtureMode) return   // one-time real-state migration; nothing to do for a fixture
     const marker = join(STATE_DIR, 'reco-reset-v2.done')
     const { existsSync } = await import('fs')
     if (existsSync(marker)) return
     try {
       const backend = await fetchRecommendationsFromBackend()
       if (backend === null) { console.log('[reco] reset-v2 deferred — backend unreachable'); return }
-      const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/deleted`, { signal: AbortSignal.timeout(8000) })
-      if (!res.ok) { console.log('[reco] reset-v2 deferred — /deleted', res.status); return }
-      const deleted = (await res.json()) as { keys?: string[] }
-      const tombstoneEntries = new Set((deleted.keys || []).map(String))
+      const deletedKeys = await hub.deletedKeys()
+      if (deletedKeys === null) { console.log('[reco] reset-v2 deferred — /deleted unreachable'); return }
+      const tombstoneEntries = new Set(deletedKeys)
       const backendKeys = new Set(backend.flatMap((r) => recordIdentityKeys(r)))
       await withRecoOutbox(async (ops) => {
         const { ops: kept, dropped } = scrubOutboxAgainstBackend(ops, backendKeys, tombstoneEntries)
@@ -898,29 +900,19 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     // Un-deleting on re-add is the backend's job (it clears the identity
     // tombstone on a genuine re-add through POST) — V3 keeps no tombstones.
 
-    const url = `${MOBILE_BACKEND_URL}/api/recommendations`
-    console.log('[reco] POST →', url, JSON.stringify(trimmed))
+    console.log('[reco] POST →', hub.mode === 'live' ? `${MOBILE_BACKEND_URL}/api/recommendations` : 'fixture hub', JSON.stringify(trimmed))
     let recommendation: RecommendationRecord | null = null
     let backendStatus: number | null = null
 
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // origin:'user' — a deliberate human add; may un-delete (Brief 126).
-        body: JSON.stringify({ ...trimmed, origin: 'user' }),
-        signal: AbortSignal.timeout(10000),
-      })
+      // origin:'user' — a deliberate human add; may un-delete (Brief 126).
+      const res = await hub.add({ ...trimmed, origin: 'user' })
       backendStatus = res.status
       if (res.ok) {
-        try {
-          const parsed = await res.json() as RecommendationRecord | { item?: RecommendationRecord }
-          recommendation = ('id' in parsed && parsed.id)
-            ? parsed as RecommendationRecord
-            : (parsed as { item?: RecommendationRecord }).item ?? null
-        } catch {
-          recommendation = null
-        }
+        const parsed = res.json as RecommendationRecord | { item?: RecommendationRecord } | null
+        recommendation = parsed && typeof parsed === 'object' && 'id' in parsed && parsed.id
+          ? parsed as RecommendationRecord
+          : (parsed as { item?: RecommendationRecord } | null)?.item ?? null
       } else {
         console.warn('[reco] POST failed — backend', res.status)
       }
