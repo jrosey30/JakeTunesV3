@@ -58,9 +58,14 @@ const PARITY_FIXTURES: Array<{ name: string; record: Record<string, string | und
     keys: ['artist:diespitz'],
   },
   {
-    name: 'artist + album, no song → artist key alone (album omitted) — Victoryland',
+    name: 'artist + album, no song → the RECORD is the identity (2026-09-06; was artist alone) — Victoryland',
     record: { artist: 'Victoryland', album: 'My Heart is a Room with no cameras in it' },
-    keys: ['artist:victoryland'],
+    keys: ['album:victoryland~myheartisaroomwithnocamerasinit'],
+  },
+  {
+    name: 'two records by one artist never collapse; an edition is its own record (2026-09-06)',
+    record: { artist: 'Talking Heads', album: 'Little Creatures (Deluxe Version)' },
+    keys: ['album:talkingheads~littlecreaturesdeluxeversion'],
   },
   {
     name: 'matched artist only, no song → artist key from matchedArtist',
@@ -73,9 +78,9 @@ const PARITY_FIXTURES: Array<{ name: string; record: Record<string, string | und
     keys: ['partial:checkthatbandfromtheparty'],
   },
   {
-    name: 'album-only jot → partial key from album',
+    name: 'album-only jot → album key, no artist (2026-09-06; was partial:)',
     record: { album: 'Mezzanine' },
-    keys: ['partial:mezzanine'],
+    keys: ['album:~mezzanine'],
   },
 ]
 

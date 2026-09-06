@@ -166,15 +166,18 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
 
   const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
 
-  function recoMatchKey(input: { song?: string; artist?: string; note?: string }): string {
+  function recoMatchKey(input: { song?: string; artist?: string; album?: string; note?: string }): string {
     const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')   // ⚠️ NOT folded: feeds recoMatchKey, a PERSISTED identity key.
-    return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.note || '')}`
+    // The album is part of the strict key: two records by one artist, or two
+    // editions of one record, are different jots (2026-09-06).
+    return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.album || '')}|${norm(input.note || '')}`
   }
 
   function recoRecordKey(r: RecommendationRecord): string {
     return recoMatchKey({
       song: r.song || r.matchedTitle,
       artist: r.artist || r.matchedArtist,
+      album: r.album,
       note: r.note,
     })
   }
@@ -872,11 +875,14 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     try {
       // Local rows are all live now (mirror + outbox — no tombstone filter needed).
       const existing = await readRecommendationsFile()
-      const idKey = recoIdentityKey(trimmed.song, trimmed.artist)
+      // Same identity = any shared identity key (song|artist pairs, the
+      // album key for a record jot, ext ids); a keyless jot falls back to the
+      // strict full key. Album-aware since 2026-09-06.
+      const idKeys = new Set(recordIdentityKeys(trimmed))
       const fullKey = recoMatchKey(trimmed)
       const dupe = existing.find((r) => {
-        const rid = recoRecordIdentityKey(r)
-        return idKey && rid ? rid === idKey : recoRecordKey(r) === fullKey
+        const rk = recordIdentityKeys(r)
+        return idKeys.size && rk.length ? rk.some((k) => idKeys.has(k)) : recoRecordKey(r) === fullKey
       })
       if (dupe) {
         console.log('[reco] add deduped — already on list:', dupe.id)
