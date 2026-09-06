@@ -15,6 +15,7 @@ import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
+import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, type DownloadsPanelHandle } from './components/DownloadsPanel'
 import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
@@ -83,6 +84,24 @@ function AppInner() {
   // Next — opening one closes the other.
   const [showMusicMan, setShowMusicMan] = useState(false)
   const musicManRef = useRef<MusicManDrawerHandle>(null)
+  // Downloads panel (Record Shop step 5 slice 3): one right-hand drawer at a
+  // time — opening it closes the play queue / Music Man, and vice versa.
+  const [showDownloads, setShowDownloads] = useState(false)
+  const downloadsRef = useRef<DownloadsPanelHandle>(null)
+  const showDownloadsRef = useRef(false)
+  showDownloadsRef.current = showDownloads
+  useEffect(() => {
+    const onToggle = (e: Event) => {
+      const action = (e as CustomEvent<'toggle' | 'open' | 'close'>).detail ?? 'toggle'
+      const cur = showDownloadsRef.current
+      const next = action === 'toggle' ? !cur : action === 'open'
+      if (next === cur) return
+      if (next) { queueRef.current?.requestClose(); musicManRef.current?.requestClose(); setShowDownloads(true) }
+      else downloadsRef.current?.requestClose()
+    }
+    window.addEventListener(DOWNLOADS_PANEL_EVENT, onToggle)
+    return () => window.removeEventListener(DOWNLOADS_PANEL_EVENT, onToggle)
+  }, [])
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
@@ -1738,13 +1757,13 @@ function AppInner() {
         <Toolbar
           onToggleQueue={() => {
             if (showQueue) queueRef.current?.requestClose()
-            else { if (showMusicMan) musicManRef.current?.requestClose(); setShowQueue(true) }
+            else { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowQueue(true) }
           }}
-          onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); setShowQueue(true) }}
+          onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowQueue(true) }}
           showQueue={showQueue}
           onToggleMusicMan={() => {
             if (showMusicMan) musicManRef.current?.requestClose()
-            else { if (showQueue) queueRef.current?.requestClose(); setShowMusicMan(true) }
+            else { if (showQueue) queueRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowMusicMan(true) }
           }}
           showMusicMan={showMusicMan}
         />
@@ -1760,6 +1779,7 @@ function AppInner() {
         <DeckBar />
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
         {showMusicMan && <MusicManDrawer ref={musicManRef} onClose={() => setShowMusicMan(false)} />}
+        {showDownloads && <DownloadsPanel ref={downloadsRef} onClose={() => setShowDownloads(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
         {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}

@@ -15,12 +15,16 @@ interface Props {
   className?: string
   /** Small right-aligned count (iPod Pool: "812"). */
   badge?: string
+  /** A persistent trailing control on the row (its own click, never the
+   *  row's). The Download row's door to the Downloads panel: always shown;
+   *  `badge` inside it only while there is something to count. */
+  door?: { onClick: () => void; title: string; icon: ReactNode; badge?: string }
   /** 2026-09-02: make the row a DRAG SOURCE carrying this whole list —
    *  a playlist dragged onto the iPod Pool brings every song. */
   dragTrackIds?: number[]
 }
 
-export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop, className, badge, dragTrackIds }: Props) {
+export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop, className, badge, door, dragTrackIds }: Props) {
   const [dragOver, setDragOver] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -79,6 +83,12 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
       {icon && <span className="sidebar-item-icon">{icon}</span>}
       <span className="sidebar-item-label">{label}</span>
       {badge && <span className="sidebar-item-badge">{badge}</span>}
+      {door && (
+        <button type="button" className={`sidebar-item-door${door.badge ? ' sidebar-item-door--counted' : ''}`} title={door.title} aria-label={door.title} onClick={(e) => { e.stopPropagation(); door.onClick() }}>
+          {door.badge && <span className="sidebar-item-badge sidebar-item-door-badge">{door.badge}</span>}
+          <span className="sidebar-item-door-icon" aria-hidden="true">{door.icon}</span>
+        </button>
+      )}
     </li>
   )
 }

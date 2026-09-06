@@ -3,6 +3,8 @@ import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { useLibrary } from '../../context/LibraryContext'
 import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
+import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
+import { toggleDownloadsPanel } from '../DownloadsPanel'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
@@ -278,7 +280,10 @@ export default function Sidebar() {
   // from anywhere without opening the page. `getQueue` returns the same array
   // reference until the queue changes, which is what useSyncExternalStore wants.
   const downloadQueue = useSyncExternalStore(subscribeQueue, getQueue)
-  const downloadsInFlight = downloadQueue.filter((q) => q.status === 'downloading' || q.status === 'queued').length
+  // Step 5 slice 3 — the row carries a persistent door to the Downloads
+  // panel; the count inside it reads in-flight while jobs move, "N done"
+  // once they settle, and is hidden when the queue is empty.
+  const downloadsBadgeText = downloadsBadge(panelSummary(downloadsPanelRows(downloadQueue, Date.now())))
   useEffect(() => { void refreshPool() }, [])
 
   useEffect(() => {
@@ -462,7 +467,17 @@ export default function Sidebar() {
             )}
             selected={state.currentView === 'download'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
-            badge={downloadsInFlight > 0 ? downloadsInFlight.toLocaleString() : undefined}
+            door={{
+              title: 'Show downloads',
+              onClick: () => toggleDownloadsPanel('toggle'),
+              badge: downloadsBadgeText,
+              icon: (
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1.5" y="2" width="9" height="8" rx="1.2" />
+                  <path d="M7 2v8" />
+                </svg>
+              ),
+            }}
           />
           {/* DJ booth — nav entry HIDDEN 2026-08-04 at Jake's request ("it needs to
               be on the shelf for a little bit"). The feature is intact and the 'dj'

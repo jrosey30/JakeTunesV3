@@ -94,7 +94,11 @@ export function queueKey(r: QResult): string {
 let queue: QItem[] = []
 let running = false
 const subs = new Set<() => void>()
-const emit = (): void => { for (const f of subs) f() }
+// Jobs are mutated in place (pump/cancel/retry hold the object across
+// awaits), so every emit hands out a FRESH array: useSyncExternalStore
+// readers (sidebar badge, Downloads panel) compare snapshots by reference
+// and would otherwise miss queued→downloading→done on the same object.
+const emit = (): void => { queue = [...queue]; for (const f of subs) f() }
 
 export function subscribeQueue(fn: () => void): () => void {
   subs.add(fn)

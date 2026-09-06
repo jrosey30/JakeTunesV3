@@ -155,6 +155,28 @@
   color: #fff;
 }
 .sidebar-item--selected .sidebar-item-badge { background: rgba(255,255,255,0.9); color: #3b5a8f; }
+/* The Download row's door to the Downloads panel — always there, the count
+   rides inside it only while the queue has something to say. */
+.sidebar-item-door {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0 3px;
+  height: 16px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8e8b83;
+  font-family: inherit;
+  cursor: default;
+}
+.sidebar-item-door:hover { background: rgba(0,0,0,0.08); color: #4a4841; }
+.sidebar-item-door-icon { display: inline-flex; }
+.sidebar-item-door-badge { margin-left: 0; }
+.sidebar-item--selected .sidebar-item-door { color: rgba(255,255,255,0.85); }
+.sidebar-item--selected .sidebar-item-door:hover { background: rgba(255,255,255,0.18); color: #fff; }
 
 .sidebar-item-indicator {
   width: 6px;

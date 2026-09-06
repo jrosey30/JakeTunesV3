@@ -29,7 +29,7 @@ export interface QueueItemLike {
   key: string; result: QueueResultLike; status: 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'; attempt?: number
   imported?: number; dupes?: number; error?: string; outcome?: string
   alternatives?: ReadonlyArray<{ provider: string; desc: string; reason: string }>
-  primary?: string; detail?: string; completion?: string; startedAt?: number; endedAt?: number
+  primary?: string; detail?: string; completion?: string; matchDesc?: string; startedAt?: number; endedAt?: number
 }
 
 const norm = (s: string): string => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
