@@ -203,7 +203,7 @@ const electronAPI = {
   // (next to library.json on the NAS); add/delete route through the Mini
   // backend so it stays the single writer.
   loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
-  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string }) =>
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string; kind?: 'track' | 'album' | 'concert' }) =>
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   // Brief 126 — main pushes when the mirror changed (60s timer / mutations);

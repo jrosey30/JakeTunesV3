@@ -8,6 +8,7 @@
  * inits, and album-info lookups that were interleaved with this code
  * deliberately stay behind.
  */
+import { recoKindForInput, preserveAlbumIdentity, type RecoKind } from '../reco-kind-core.ts'
 import { BrowserWindow, app } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
@@ -820,7 +821,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   // Shared by the renderer's omnibox AND the iMessage watcher — one add path,
   // so attribution, friends-ledger ticks, identity dedupe, and outbox replay
   // behave identically no matter where a song came from.
-  async function addRecommendationCore(input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string; sentAt?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> {
+  async function addRecommendationCore(input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string; sentAt?: string; kind?: RecoKind }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> {
     // v2 capture: friend attribution + source link ride the synced `note`
     // field (backend passes note through verbatim), and the friend gets an
     // 'add' tick in the local ledger for the Scouts ranking.
@@ -830,6 +831,10 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
       artist: input.artist?.trim() || undefined,
       album: input.album?.trim() || undefined,
       note: noteBits.length ? noteBits.join(' · ') : undefined,
+      // Album intent travels with the jot (see reco-kind-core.ts): the hub
+      // keeps `kind`, and the list + Record Shop route an album to edition
+      // selection instead of downloading its first song.
+      kind: recoKindForInput(input),
     }
     // The 'add' tick fires ONLY when a row actually lands on the list — at the
     // success returns below, never up front. The old top-of-function tick
@@ -933,7 +938,10 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
           album: recommendation.album || recommendation.matchedAlbum,
           note: recommendation.note,
         })
-        recommendation = { ...recommendation, ...enriched, id: recommendation.id, createdAt: recommendation.createdAt, source: recommendation.source || source }
+        recommendation = { ...recommendation, ...enriched, id: recommendation.id, createdAt: recommendation.createdAt, source: recommendation.source || source, kind: recommendation.kind || trimmed.kind }
+        // An album jot's iTunes enrichment names a hook track for preview and
+        // artwork; it must not turn the album into that song or rename it.
+        recommendation = preserveAlbumIdentity(recommendation, trimmed)
         await appendRecommendationLocal(recommendation)
         suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
       } catch (err) {
@@ -949,7 +957,8 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     // the add for replay through the backend API (single-writer: the fallback is
     // never a direct write to the shared NAS files).
     try {
-      const local = await buildLocalRecommendation(trimmed, source)
+      let local = await buildLocalRecommendation(trimmed, source)
+      local = preserveAlbumIdentity({ ...local, kind: trimmed.kind }, trimmed)
       await appendRecommendationLocal(local)
       await enqueueRecoOps((ops) => [
         ...ops,

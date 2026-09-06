@@ -214,6 +214,64 @@ function albumTitleReads(wantBase: string, got: string): boolean {
  *  ("Real By Reel" vs "Reel By Reel", first live run 2026-09-05) put the
  *  two beyond the lenient matcher's reach. Version markers are judged on the
  *  RAW titles by the caller, so "(Live)" still never reads as the studio cut. */
+/** Alternate-TAKE labels. Catalogues name the same early take differently:
+ *  iTunes lists Little Creatures' bonus cuts as "(Early Version)", Qobuz
+ *  tags the identical files "(Demo)" (live, 2026-09-05: the ownership check
+ *  called two owned tracks missing and imported them again). When BOTH
+ *  sides carry a label from this family, the base titles read as one song
+ *  and the runtimes agree, they are the same take. Live, remix, instrumental
+ *  and the rest stay different recordings — this family only. */
+const ALTERNATE_TAKE = /\b(demo|demos|early|alternate|alternative|alt|rough|outtake|outtakes|rehearsal|rehearsals|sketch|work in progress|first take|take \d+)\b/i
+export function alternateTakeLabel(title: string): boolean {
+  return decorations(title).some((d) => ALTERNATE_TAKE.test(d))
+}
+/** Two takes of one song can be the same length; a remaster of ONE take
+ *  drifts a second or two. Equivalence across differently-worded take
+ *  labels therefore needs both runtimes known and this close. */
+export const TAKE_EQUIVALENCE_TOLERANCE_SEC = 5
+/** "Take 3", "Demo 2", "Version 1" — a numbered take is that take. */
+const TAKE_NUMBER = /\b(?:take|demo|version|mix)\s*#?\s*(\d+)\b/i
+function takeNumberOf(title: string): string | null {
+  for (const d of decorations(title)) { const m = d.match(TAKE_NUMBER); if (m) return m[1] }
+  return null
+}
+
+/** Is `got` an unwanted version of `want`? The alternate-take family
+ *  ("(Early Version)" on iTunes, "(Demo)" on Qobuz for the same file) may
+ *  differ in WORDING only under sufficient evidence: both sides carry a take
+ *  label, the offending marker is itself a take word, neither side names a
+ *  different take number, and both runtimes are known and within
+ *  TAKE_EQUIVALENCE_TOLERANCE_SEC. Anything less keeps them distinct —
+ *  labels and a similar length alone do not prove two takes are one. */
+export function unwantedVersionForTrack(want: string, got: string, wantDur?: number | null, gotDur?: number | null): string | null {
+  const wantTake = alternateTakeLabel(want), gotTake = alternateTakeLabel(got)
+  const marker = unwantedVersionOf(want, got)
+  // A take label on ONE side only is a different recording either way —
+  // "(Early Version)" is not a marker word, so the plain matcher would let a
+  // studio cut satisfy the early take (and the reverse). The word returned
+  // names what the candidate IS: its own marker, its take word, or "studio".
+  if (wantTake !== gotTake) {
+    if (marker) return marker
+    if (gotTake) return (decorations(got).join(' ').match(ALTERNATE_TAKE)?.[0] ?? 'alternate').toLowerCase()
+    return 'studio'
+  }
+  const wn = takeNumberOf(want), gn = takeNumberOf(got)
+  if (wn && gn && wn !== gn) return marker ?? `take ${gn}`
+  if (!marker) return null
+  // Every unwanted marker on the candidate must itself be a take word — a
+  // "(Demo) [Live]" is live first. Peel take words off and look again.
+  let rest = got
+  for (let i = 0; i < 4; i++) {
+    const m = unwantedVersionOf(want, rest)
+    if (!m) break
+    if (!ALTERNATE_TAKE.test(m)) return m
+    rest = rest.replace(new RegExp(`\\b${m}\\b`, 'i'), '')
+  }
+  if (!wantDur || !gotDur) return marker
+  if (Math.abs(wantDur - gotDur) > TAKE_EQUIVALENCE_TOLERANCE_SEC) return marker
+  return null
+}
+
 function trackTitleReads(want: string, got: string): boolean {
   const w = searchTitle(want) || want, g = searchTitle(got) || got
   return recoTitleMatches(w, g) || maskedTitleMatches(w, g) || subtitleVariantMatches(w, g)
@@ -283,7 +341,7 @@ export function verifyAlbumCandidate(req: RequestedAlbum, cand: CandidateAlbum, 
         return { verdict: 'reject', kind: 'disc', reason: `${pos} sits on disc ${g.discNumber}; the edition you picked has it on disc ${w.discNumber}` }
       }
       if (!trackTitleReads(w.title, g.title)) return { verdict: 'reject', kind: 'tracklist', reason: `${pos} is “${g.title}”; the edition you picked has “${w.title}”` }
-      const marker = unwantedVersionOf(w.title, g.title)
+      const marker = unwantedVersionForTrack(w.title, g.title, w.durationSec, g.durationSec)
       if (marker) return { verdict: 'reject', kind: 'tracklist', reason: `${pos} is the ${marker} version (“${g.title}”)` }
       if (w.durationSec && g.durationSec != null && g.durationSec > 0 && Math.abs(g.durationSec - w.durationSec) > tolSec) {
         return { verdict: 'reject', kind: 'tracklist', reason: `${pos} “${g.title}” runs ${fmt(g.durationSec)}; the edition you picked runs ${fmt(w.durationSec)}` }
@@ -346,9 +404,9 @@ export function matchLibraryOwnership(req: RequestedAlbum, library: LibraryTrack
       if (used.has(j)) continue
       const l = pool[j]
       if (!trackTitleReads(w.title, l.title)) continue
-      if (unwantedVersionOf(w.title, l.title)) continue
+      if (unwantedVersionForTrack(w.title, l.title, w.durationSec, l.durationSec)) continue
       const wantMarkers = requestedVersionMarkers(w.title)
-      if (wantMarkers.length) {
+      if (wantMarkers.length && !(alternateTakeLabel(w.title) && alternateTakeLabel(l.title))) {
         const got = new Set(requestedVersionMarkers(l.title))
         if (wantMarkers.some((m) => !got.has(m))) continue
       }
@@ -407,7 +465,7 @@ export function reconcileAlbumCompletion(inp: CompletionInput, tolSec = ALBUM_TR
     for (let i = 0; i < wanted.length; i++) {
       if (claimed.has(i)) continue
       const w = wanted[i]
-      if (!trackTitleReads(w.title, d.title) || unwantedVersionOf(w.title, d.title)) continue
+      if (!trackTitleReads(w.title, d.title) || unwantedVersionForTrack(w.title, d.title, w.durationSec, d.durationSec)) continue
       if (inp.req.artist && d.artist && !recoArtistMatches(inp.req.artist, d.artist)) { reason = `“${d.title}” in your library is by ${d.artist}`; continue }
       if (w.durationSec && d.durationSec && Math.abs(w.durationSec - d.durationSec) > tolSec) { reason = `“${d.title}” in your library runs ${fmt(d.durationSec)}, this edition's runs ${fmt(w.durationSec)}`; continue }
       claimed.add(i); ok = true; break

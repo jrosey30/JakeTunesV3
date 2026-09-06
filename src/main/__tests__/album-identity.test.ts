@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion,
-  albumAlternativeDesc, orderTracks, packagingMarkersOf, parseCountTag, matchLibraryOwnership, ladderBudgetMs,
+  albumAlternativeDesc, orderTracks, packagingMarkersOf, parseCountTag, matchLibraryOwnership, ladderBudgetMs, unwantedVersionForTrack, alternateTakeLabel,
   type CandidateAlbum, type RequestedAlbumTrack,
 } from '../album-identity.ts'
 import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative } from '../exact-recording.ts'
@@ -319,6 +319,33 @@ describe('the requested-album identity contract', () => {
     assert.equal(ladderBudgetMs(true, 5), 12 * 60 * 1000)       // never below the ladder floor
     assert.equal(ladderBudgetMs(true, 40), 40 * 60 * 1000)      // capped
     assert.equal(ladderBudgetMs(true, undefined), 25 * 60 * 1000) // unknown size assumes a full album
+  })
+
+  it('live run 2026-09-05: the same early take labelled "(Early Version)" by iTunes and "(Demo)" by Qobuz is one recording', () => {
+    assert.ok(alternateTakeLabel('Road to Nowhere (Early Version)')); assert.ok(alternateTakeLabel('Road to Nowhere (Demo)')); assert.ok(!alternateTakeLabel('Road to Nowhere'))
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Demo)', 277, 277), null)
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Demo)', 277, 279), null)      // remaster drift
+    // ── the exception needs EVIDENCE; labels alone never equate two takes ──
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Demo)', 277, 340), 'demo')     // a different runtime is a different take
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Demo)', 277, 290), 'demo')     // 13 s apart: two takes, not one
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Demo)', undefined, 277), 'demo')  // a runtime missing on either side
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Demo)', 277, null), 'demo')
+    assert.equal(unwantedVersionForTrack('Song (Demo 1)', 'Song (Demo 2)', 200, 200), 'take 2')                                // numbered takes are those takes
+    assert.equal(unwantedVersionForTrack('Song (Take 3)', 'Song (Alternate Take 1)', 200, 200), 'alternate')
+    assert.equal(unwantedVersionForTrack('Song (Demo)', 'Song (Rough Mix)', 200, 200), 'mix')                                 // a mix is not a take word
+    assert.equal(unwantedVersionForTrack('Song (Demo)', 'Song (Acoustic Demo)', 200, 200), 'acoustic')                        // an extra non-take marker stays
+    assert.equal(unwantedVersionForTrack('Song (Early Version)', 'Song (Demo) [Live]', 200, 200), 'live')
+    assert.equal(unwantedVersionForTrack('Road to Nowhere', 'Road to Nowhere (Demo)', 259, 277), 'demo')                    // the studio cut was asked for
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere', 277, 277), 'studio')          // the early take was asked for
+    assert.equal(unwantedVersionForTrack('Road to Nowhere (Early Version)', 'Road to Nowhere (Live)', 277, 277), 'live')    // live is not a take label
+    const rows = [{ title: 'And She Was', trackNumber: 1, durationSec: 218 }, { title: 'Road to Nowhere (Early Version)', trackNumber: 2, durationSec: 277 }, { title: 'And She Was (Early Version)', trackNumber: 3, durationSec: 216 }]
+    const req = buildRequestedAlbum({ artist: 'Talking Heads', title: 'Little Creatures (Deluxe Version)', tracks: rows })
+    const lib = [{ title: 'And She Was', artist: 'Talking Heads', durationSec: 218 }, { title: 'Road to Nowhere (Demo)', artist: 'Talking Heads', durationSec: 277 }, { title: 'And She Was (Demo)', artist: 'Talking Heads', durationSec: 216 }]
+    assert.equal(matchLibraryOwnership(req, lib).ownedCount, 3)
+    const staged = verifyAlbumCandidate(req, { provider: 'qobuz', desc: 'x', title: 'Little Creatures', artist: 'Talking Heads', staged: true, tracks: lib.map((l, i) => ({ title: l.title, trackNumber: i + 1, durationSec: l.durationSec })) })
+    assert.equal(staged.verdict, 'exact', JSON.stringify(staged))
+    // the plain studio track never satisfies a request for the early take, and vice versa
+    assert.equal(matchLibraryOwnership(req, [{ title: 'Road to Nowhere', artist: 'Talking Heads', durationSec: 259 }]).ownedCount, 0)
   })
 
   it('individual-track behaviour is untouched: a studio master on a compilation is still the track', () => {
