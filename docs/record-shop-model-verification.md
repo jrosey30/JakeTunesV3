@@ -431,3 +431,16 @@ same blind spot.
 | Count inside the door | "1 done" after the owned Deluxe Get, "2 done" with the fixture, hidden again after Clear finished (`door-3-count-closed.png`). |
 | Refused candidates | Temporary in-memory fixture (an exact-not-found Remain in Light deluxe with two refused candidates pushed into the live queue array; no request made, nothing acquired): row reads Needs a choice · from Alex · edition line · Exact edition not found · Choose edition; Details lists both candidates with reason and provider (`fixture-1-refused-candidates.png`). Cleared afterwards. |
 | Snapshot regression | `download-queue-snapshots.test.ts`: queued → downloading → done each reach a subscriber as a new array; cancel mid-flight publishes a new snapshot equal to `getQueue()`. |
+
+## Browse migration acceptance — 2026-09-06 (dev instance, playback idle)
+
+| Check | Result |
+|---|---|
+| Tab | Record Shop tabs read For You · Browse · Listen List; Browse mounts the Download view in `browse` mode: no page heading, no Qobuz/streamrip chips, no Setup, no queue bar; "Add by link" beside the search field (`browse-1-empty.png`). |
+| Search + Get | "Talking Heads Little Creatures" → Top match (owned) + the Deluxe release card; Get on the owned Deluxe → done through the one scheduler, the sidebar door reads "1 done", no queue bar inside Browse (`browse-2-results.png`, `browse-3-got-owned.png`). No import, no rip. |
+| Add by link | Opens the paste card retitled "Add by link", no Music Sources panel inside it (`browse-4-add-by-link.png`). |
+| Legacy route | Sidebar Download still renders the full page: heading, Qobuz + streamrip chips, Setup, queue bar showing the same done job (`browse-5-legacy-download-route.png`). |
+| Tab memory | Leaving Record Shop and returning lands on Browse again. |
+
+Follow-up recorded: prefill from the Counter / Listen List still opens the
+legacy Download route; point it at Record Shop → Browse once Browse is verified.

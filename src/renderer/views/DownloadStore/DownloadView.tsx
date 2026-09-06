@@ -201,7 +201,13 @@ const albumQ = (r: AlbumRow): QResult => ({
   releaseYear: r.releaseYear,
 })
 
-export default function DownloadView() {
+/** `browse` (Record Shop → Browse, step 5 slice 4): the same catalogue search,
+ *  results and exact-selection Get, without the page chrome that moved
+ *  elsewhere — the Downloads panel carries activity, Preferences → Music
+ *  Sources carries setup. Paste a link stays as "Add by link". The `page`
+ *  mode is the legacy Download route, unchanged until Browse is verified. */
+export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'browse' } = {}) {
+  const browse = mode === 'browse'
   const downloadPageRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('download-page', downloadPageRef)
   const [status, setStatus] = useState<RipStatus | null>(null)
@@ -836,11 +842,11 @@ export default function DownloadView() {
   const hasResults = !!(ranked.hero || ranked.songs.length || ranked.albums.length)
 
   return (
-    <div className="download-view" ref={downloadPageRef}>
+    <div className={`download-view${browse ? ' download-view--browse' : ''}`} ref={downloadPageRef}>
       {/* ── command bar. Pinned, because the search field IS the page and it
              used to scroll away the moment results arrived. ── */}
       <div className="dl-bar">
-        <div className="dl-bar-top">
+        {!browse && <div className="dl-bar-top">
           <div className="dl-bar-id">
             <span className="dl-eyebrow">Get music</span>
             <h1 className="dl-h1">Download</h1>
@@ -863,7 +869,8 @@ export default function DownloadView() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg>
             Setup
           </button>
-        </div>
+        </div>}
+        <div className="dl-field-row">
         <div className="dl-field">
           <svg className="dl-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
           <input
@@ -877,10 +884,23 @@ export default function DownloadView() {
           {searching && <span className="dl-spinner dl-field-spin" aria-hidden="true" />}
           {!searching && query && <button type="button" className="dl-field-clear" onClick={() => setQuery('')} title="Clear">✕</button>}
         </div>
+        {browse && (
+          <button
+            type="button"
+            className={`dl-setup-btn${setupOpen ? ' is-open' : ''}`}
+            onClick={() => setSetupOpen((o) => !o)}
+            aria-expanded={setupOpen}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg>
+            Add by link
+          </button>
+        )}
+        </div>
       </div>
 
-      {/* ── the queue, as something you can actually read ── */}
-      {(summary.active + summary.queued + summary.done + summary.failed) > 0 && (
+      {/* ── the queue, as something you can actually read. Browse leaves this
+             to the Downloads panel; the legacy route keeps it. ── */}
+      {!browse && (summary.active + summary.queued + summary.done + summary.failed) > 0 && (
         <div className="dl-queue">
           {active ? (
             <>
@@ -938,7 +958,7 @@ export default function DownloadView() {
       {/* The full, untruncated reason for every failed item — what was asked
           for, what each source answered, what to do next. Toggled by the
           Details button above; reachable by keyboard; never hover-only. */}
-      {failDetailsOpen && (failedItems.length > 0 || doneItems.length > 0) && (
+      {!browse && failDetailsOpen && (failedItems.length > 0 || doneItems.length > 0) && (
         <div className="dl-queue-details" id="dl-queue-details" role="region" aria-label="Download details">
           {doneItems.map((d) => (
             <div key={d.key} className="dl-queue-detail dl-queue-detail--done">
@@ -976,7 +996,7 @@ export default function DownloadView() {
           <div className="dl-setup-grid">
             {/* ── Direct link ── */}
             <section className="dl-setup-card">
-              <div className="dl-setup-card-head">Paste a link</div>
+              <div className="dl-setup-card-head">{browse ? 'Add by link' : 'Paste a link'}</div>
               <div className="download-row">
                 <input
                   className="download-input"
@@ -991,7 +1011,7 @@ export default function DownloadView() {
                   {pasteBusy ? 'Downloading…' : 'Download'}
                 </button>
               </div>
-              <div className="download-hint">YouTube needs no login. For lossless Qobuz, connect your account.</div>
+              <div className="download-hint">{browse ? 'YouTube needs no login. For lossless Qobuz, connect your account in Preferences → Music Sources.' : 'YouTube needs no login. For lossless Qobuz, connect your account.'}</div>
               {notice && (
                 <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>{notice.msg}</div>
               )}
@@ -1000,7 +1020,7 @@ export default function DownloadView() {
             {/* Music Sources (Qobuz account + download tool) — the same panel
                 Preferences → Music Sources shows (Record Shop step 5). This
                 drawer keeps it until that placement is verified. */}
-            <MusicSourcesPanel onQobuzChange={setQobuz} onStatusChange={(st) => setStatus(st)} />
+            {!browse && <MusicSourcesPanel onQobuzChange={setQobuz} onStatusChange={(st) => setStatus(st)} />}
           </div>
 
           {failures.length > 0 && (
@@ -1056,11 +1076,13 @@ export default function DownloadView() {
         {!hasResults && !searching && (
           <div className="dl-empty">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-            <span className="dl-empty-title">{query ? 'Nothing matched that.' : 'Search anything.'}</span>
+            <span className="dl-empty-title">{query ? 'Nothing matched that.' : browse ? 'Search for songs, albums or artists.' : 'Search anything.'}</span>
             <span className="dl-empty-sub">
               {query
                 ? 'Try the artist and the song together — "when you die mgmt".'
-                : 'Results are instant, with 30-second previews. Get resolves it on Qobuz in hi-fi.'}
+                : browse
+                  ? 'Preview where available, then choose what to get.'
+                  : 'Results are instant, with 30-second previews. Get resolves it on Qobuz in hi-fi.'}
             </span>
           </div>
         )}

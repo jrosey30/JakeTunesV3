@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import NewForYouView from './NewForYouView'
 import ListenToTheListView from './ListenToTheListView'
+import DownloadView from './DownloadStore/DownloadView'
 import { useShopList } from '../record-shop/useShopSession'
 import '../styles/discovery.css'
 
@@ -11,7 +12,7 @@ import '../styles/discovery.css'
 // the wrapper just toggles which one is mounted. Recolored teal (see the
 // sidebar entry + discovery.css) so it reads cool vs. the Music Man's orange.
 
-export type DiscoveryTab = 'new-for-you' | 'your-list'
+export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list'
 
 // Remembered across remounts (MainContent unmounts views on navigation), so
 // returning to Discovery keeps the tab you were last on.
@@ -40,6 +41,15 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
           className={`discovery-tab ${tab === 'new-for-you' ? 'discovery-tab--on' : ''}`}
           onClick={() => select('new-for-you')}
         >For You<span className="discovery-tab__sub">The Racks</span></button>
+        {/* Browse (step 5 slice 4): the catalogue search, inside the shop —
+            the Download view in its trimmed mode, same Get pipeline. The
+            sidebar Download route stays until this is verified. */}
+        <button
+          role="tab"
+          aria-selected={tab === 'browse'}
+          className={`discovery-tab ${tab === 'browse' ? 'discovery-tab--on' : ''}`}
+          onClick={() => select('browse')}
+        >Browse</button>
         <button
           role="tab"
           aria-selected={tab === 'your-list'}
@@ -48,7 +58,7 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
         >Listen List{recs.length > 0 && <span className="discovery-tab__count" aria-label={`${recs.length} saved`}>{recs.length.toLocaleString()}</span>}</button>
       </div>
       <div className="discovery-body">
-        {tab === 'new-for-you' ? <NewForYouView /> : <ListenToTheListView />}
+        {tab === 'new-for-you' ? <NewForYouView /> : tab === 'browse' ? <DownloadView mode="browse" /> : <ListenToTheListView />}
       </div>
     </div>
   )

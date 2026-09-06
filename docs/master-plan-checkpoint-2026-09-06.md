@@ -81,7 +81,7 @@ end per [jaketunes-6-plan.md](jaketunes-6-plan.md).
   Captures `sources-1-preferences-tab.png`, `sources-2-download-drawer.png`.
   Approved by Jake; committed. Not installed yet.
 
-## In progress — step 5, slice 3: the Downloads panel (uncommitted)
+## Done — step 5, slice 3: the Downloads panel (5643d10)
 
 - `src/common/downloads-panel-model.ts` (pure, tested): each scheduler job →
   one row with status, provenance ("from Alex" / "from your Listen List" /
@@ -131,3 +131,18 @@ end per [jaketunes-6-plan.md](jaketunes-6-plan.md).
   morning), and the hub tombstone `identity:cups|dstone` is the newest entry.
   None of this session's work touched the jot or the track; who acquired it is
   unconfirmed.
+
+## Done — step 5, slice 4: Browse migration
+
+- Record Shop gains a **Browse** tab (For You · Browse · Listen List): the
+  Download view mounted in a new `browse` mode — same search, ranking,
+  previews, edition cards and the exact-selection Get through the one
+  scheduler. Trimmed of what moved: no page heading, no Qobuz/streamrip chips
+  or Setup (Preferences → Music Sources), no queue bar (the Downloads panel).
+  "Paste a link" survives as **Add by link** beside the search field. Layout
+  approved by Jake; empty state reads "Search for songs, albums or artists.
+  Preview where available, then choose what to get."; the link card points
+  account setup at Preferences → Music Sources. Captures `browse-1…5`.
+- The sidebar Download route is the untouched `page` mode; prefill from the
+  Counter / Listen List still opens that route until Browse is verified
+  (recorded follow-up: point prefill at Record Shop → Browse).

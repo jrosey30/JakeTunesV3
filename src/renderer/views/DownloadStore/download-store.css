@@ -1119,3 +1119,10 @@
 .music-sources { display: grid; gap: 10px; }
 .dl-setup-grid > .music-sources { display: contents; }
 .settings-music-sources .dl-setup-card { margin: 0; }
+
+/* Record Shop → Browse (step 5 slice 4): the search field shares its row
+   with "Add by link"; no page heading, the tab is the heading. */
+.dl-field-row { display: flex; align-items: center; gap: var(--space-4); }
+.dl-field-row .dl-field { flex: 1; min-width: 0; }
+.download-view--browse .dl-bar { padding-top: var(--space-5); }
+.download-view--browse .dl-setup-grid { grid-template-columns: minmax(340px, 560px); }
