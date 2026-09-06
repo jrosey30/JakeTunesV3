@@ -1,5 +1,15 @@
 # Master plan checkpoint — 2026-09-05
 
+**Later status:** the downloader slice is now committed as `f11314a`. Jake
+reported live acceptance on the installed build: XTC bonus answered fully
+owned without a rip; Little Creatures Deluxe imported 10 with 2 already owned;
+Little Creatures standard answered all 9 owned without a rip. XTC standard had
+no catalogue row and was not runnable. The reported final suite passed 1,091
+tests. The earlier uncommitted state and remaining-live-test notes below are
+historical. Current next work is the
+[Record Shop structure and shared domain proposal](record-shop-structure-and-domain.md),
+before the Step Inside prototype.
+
 Current phase: Desktop exact-download reliability, album-edition slice.
 The playlist workspace is preserved in commit c1430b2. Do not restart Phase 0
 or treat the older NAS migration plan as the current product roadmap.
